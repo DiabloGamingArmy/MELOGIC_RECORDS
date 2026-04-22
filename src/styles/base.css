@@ -58,9 +58,22 @@ main {
 }
 
 .brand {
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  font-size: 0.93rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.58rem;
+}
+
+.brand-logo {
+  width: auto;
+  height: 38px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 10px rgba(107, 145, 216, 0.22));
+}
+
+.brand-text {
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-size: 0.83rem;
 }
 
 .main-nav {
@@ -277,5 +290,14 @@ main {
   .nav-inner,
   .section-inner {
     width: min(1320px, 92vw);
+  }
+
+  .brand-logo {
+    height: 32px;
+  }
+
+  .brand-text {
+    font-size: 0.76rem;
+    letter-spacing: 0.12em;
   }
 }
