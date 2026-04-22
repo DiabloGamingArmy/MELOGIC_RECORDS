@@ -1,6 +1,7 @@
 import './styles/base.css'
 import { navShell } from './components/navShell'
 import { floatingCard } from './components/floatingCard'
+import navBrandLogo from './assets/hero.png'
 
 const heroCards = [
   floatingCard({
@@ -20,7 +21,7 @@ const heroCards = [
 const app = document.querySelector('#app')
 
 app.innerHTML = `
-  ${navShell()}
+  ${navShell(navBrandLogo)}
 
   <main>
     <section class="hero" id="explore">
