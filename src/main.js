@@ -1,7 +1,7 @@
 import './styles/base.css'
 import { navShell } from './components/navShell'
 import { floatingCard } from './components/floatingCard'
-import navBrandLogo from './assets/hero.png'
+import navBrandLogo from './assets/brand/melogic-logo-mark-glow-black.png'
 
 const heroCards = [
   floatingCard({
