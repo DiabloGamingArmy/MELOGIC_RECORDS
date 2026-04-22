@@ -10,12 +10,6 @@ const heroCards = [
     body: 'Transient-rich snapshots for fast auditioning.',
   }),
   floatingCard({
-    className: 'product-card',
-    meta: 'Product Teaser',
-    title: 'Color Bass Expansion',
-    body: '24 presets and 80 one-shots mapped for modern drops.',
-  }),
-  floatingCard({
     className: 'creator-chip',
     meta: 'Creator Stat',
     title: 'Nyteform',
@@ -26,11 +20,11 @@ const heroCards = [
 const app = document.querySelector('#app')
 
 app.innerHTML = `
-  <div class="site-shell">
-    ${navShell()}
+  ${navShell()}
 
-    <main>
-      <section class="hero" id="explore">
+  <main>
+    <section class="hero" id="explore">
+      <div class="section-inner hero-inner">
         <span class="pill">Label Pipeline</span>
         <h1>Audio tools, creator commerce, and label discovery in one ecosystem.</h1>
         <p>
@@ -44,9 +38,11 @@ app.innerHTML = `
         <div class="hero-floaters">
           ${heroCards.join('')}
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="section" id="vision">
+    <section class="section" id="vision">
+      <div class="section-inner">
         <div class="section-head">
           <p class="eyebrow">Platform pillars</p>
           <h2>Built for creators, community, and discovery.</h2>
@@ -65,9 +61,11 @@ app.innerHTML = `
             <p>A discovery layer for finding standout artists and turning community momentum into real releases.</p>
           </article>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="section" id="store">
+    <section class="section" id="store">
+      <div class="section-inner">
         <div class="section-head">
           <p class="eyebrow">Featured previews</p>
           <h2>Mock packs designed for fast auditioning and workflow context.</h2>
@@ -92,9 +90,11 @@ app.innerHTML = `
             <div class="tile-footer"><span>$24 — placeholder</span><button type="button">▶ Preview</button></div>
           </article>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <section class="section split" id="community">
+    <section class="section" id="community">
+      <div class="section-inner split">
         <div>
           <p class="eyebrow">Community layer</p>
           <h2>More than downloads: identity, feedback, and momentum.</h2>
@@ -113,12 +113,14 @@ app.innerHTML = `
             <span>↗ Share</span>
           </div>
         </article>
-      </section>
+      </div>
+    </section>
 
-      <section class="section closing">
+    <section class="section closing">
+      <div class="section-inner closing-inner">
         <h2>Built for the producers who want more than a download page.</h2>
         <a class="button button-accent" href="#app">Enter Melogic</a>
-      </section>
-    </main>
-  </div>
+      </div>
+    </section>
+  </main>
 `
