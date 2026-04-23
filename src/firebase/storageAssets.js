@@ -3,9 +3,16 @@ import { storage } from './storage.js'
 
 const resolvedAssetCache = new Map()
 const pendingAssetCache = new Map()
+let hasWarnedNoStorage = false
 
 export async function getStorageAssetUrl(path) {
-  if (!path) return null
+  if (!path || !storage) {
+    if (!hasWarnedNoStorage) {
+      hasWarnedNoStorage = true
+      console.warn('[storageAssets] Storage unavailable; asset URLs cannot be resolved.')
+    }
+    return null
+  }
 
   if (resolvedAssetCache.has(path)) {
     return resolvedAssetCache.get(path)
