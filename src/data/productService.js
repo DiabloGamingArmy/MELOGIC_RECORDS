@@ -1,0 +1,184 @@
+import { collection, doc, getDoc, getDocs, setDoc, writeBatch } from 'firebase/firestore'
+import { getDownloadURL, ref } from 'firebase/storage'
+import { db } from '../firebase/firestore'
+import { storage } from '../firebase/storage'
+import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
+import { STORAGE_PATHS } from '../config/storagePaths'
+
+let hasWarnedProductFetch = false
+let hasWarnedProductMedia = false
+
+function warnOnce(type, ...details) {
+  if (type === 'fetch') {
+    if (hasWarnedProductFetch) return
+    hasWarnedProductFetch = true
+  } else if (type === 'media') {
+    if (hasWarnedProductMedia) return
+    hasWarnedProductMedia = true
+  }
+  console.warn(...details)
+}
+
+function toIsoDate(value) {
+  if (!value) return null
+  if (typeof value?.toDate === 'function') {
+    return value.toDate().toISOString()
+  }
+  if (value instanceof Date) return value.toISOString()
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+function toPriceLabel(product) {
+  if (product?.isFree) return 'Free'
+  if (!Number.isFinite(product?.priceCents)) return null
+  const amount = product.priceCents / 100
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: product.currency || 'USD',
+      maximumFractionDigits: 2
+    }).format(amount)
+  } catch {
+    return `$${amount.toFixed(2)}`
+  }
+}
+
+async function safeStorageUrl(path, fallback = '') {
+  if (!path || !storage) return fallback
+  try {
+    return await getDownloadURL(ref(storage, path))
+  } catch (error) {
+    warnOnce('media', '[productService] Storage URL resolution failed.', error?.message || error)
+    return fallback
+  }
+}
+
+export async function resolveProductMedia(product) {
+  const productId = product.id
+  const thumbnailPath = product.thumbnailPath || STORAGE_PATHS.productThumb(productId)
+  const coverPath = product.coverPath || STORAGE_PATHS.productCover(productId)
+
+  const thumbnailURL = await safeStorageUrl(thumbnailPath)
+  const coverURL = await safeStorageUrl(coverPath, thumbnailURL)
+  const previewAudioURLs = await Promise.all((product.previewAudioPaths || []).map((path) => safeStorageUrl(path)))
+
+  return {
+    thumbnailPath,
+    coverPath,
+    thumbnailURL,
+    coverURL,
+    previewAudioURLs: previewAudioURLs.filter(Boolean)
+  }
+}
+
+export function normalizeProduct(productId, rawProduct = {}, media = {}) {
+  const counts = rawProduct.counts || {}
+  return {
+    id: rawProduct.id || productId,
+    slug: rawProduct.slug || '',
+    status: rawProduct.status || 'draft',
+    visibility: rawProduct.visibility || 'private',
+    title: rawProduct.title || 'Untitled product',
+    shortDescription: rawProduct.shortDescription || '',
+    description: rawProduct.description || '',
+    productType: rawProduct.productType || 'Release',
+    categories: rawProduct.categories || [],
+    genres: rawProduct.genres || [],
+    tags: rawProduct.tags || [],
+    artistId: rawProduct.artistId || '',
+    artistName: rawProduct.artistName || 'Unknown artist',
+    artistUsername: rawProduct.artistUsername || '',
+    artistProfilePath: rawProduct.artistProfilePath || '',
+    contributorIds: rawProduct.contributorIds || [],
+    contributorNames: rawProduct.contributorNames || [],
+    coverPath: media.coverPath || rawProduct.coverPath || '',
+    thumbnailPath: media.thumbnailPath || rawProduct.thumbnailPath || '',
+    thumbnailURL: media.thumbnailURL || '',
+    coverURL: media.coverURL || '',
+    galleryPaths: rawProduct.galleryPaths || [],
+    previewAudioPaths: rawProduct.previewAudioPaths || [],
+    previewAudioURLs: media.previewAudioURLs || [],
+    downloadPath: rawProduct.downloadPath || '',
+    licensePath: rawProduct.licensePath || '',
+    priceCents: Number.isFinite(rawProduct.priceCents) ? rawProduct.priceCents : 0,
+    currency: rawProduct.currency || 'USD',
+    isFree: Boolean(rawProduct.isFree),
+    priceLabel: toPriceLabel(rawProduct),
+    counts: {
+      likes: Number(counts.likes || 0),
+      dislikes: Number(counts.dislikes || 0),
+      saves: Number(counts.saves || 0),
+      shares: Number(counts.shares || 0),
+      comments: Number(counts.comments || 0),
+      downloads: Number(counts.downloads || 0),
+      follows: Number(counts.follows || 0)
+    },
+    featured: Boolean(rawProduct.featured),
+    releasedAt: toIsoDate(rawProduct.releasedAt),
+    createdAt: toIsoDate(rawProduct.createdAt),
+    updatedAt: toIsoDate(rawProduct.updatedAt)
+  }
+}
+
+export async function getPublicProducts() {
+  if (!db) return []
+
+  try {
+    const snapshot = await getDocs(collection(db, FIRESTORE_COLLECTIONS.products))
+    const rows = snapshot.docs
+      .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
+      .filter((item) => item.status === 'published' && item.visibility === 'public')
+
+    const products = await Promise.all(rows.map(async (row) => {
+      const media = await resolveProductMedia({ id: row.id, ...row })
+      return normalizeProduct(row.id, row, media)
+    }))
+
+    return products.sort((a, b) => {
+      if (a.featured !== b.featured) return a.featured ? -1 : 1
+      const dateA = a.releasedAt || a.createdAt || ''
+      const dateB = b.releasedAt || b.createdAt || ''
+      return dateA < dateB ? 1 : -1
+    })
+  } catch (error) {
+    warnOnce('fetch', '[productService] Failed to fetch products.', error?.message || error)
+    return []
+  }
+}
+
+export async function getProductById(productId) {
+  if (!db || !productId) return null
+
+  try {
+    const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
+    const snapshot = await getDoc(productRef)
+    if (!snapshot.exists()) return null
+    const raw = snapshot.data()
+    const media = await resolveProductMedia({ id: productId, ...raw })
+    return normalizeProduct(productId, raw, media)
+  } catch (error) {
+    warnOnce('fetch', '[productService] Failed to fetch product by id.', error?.message || error)
+    return null
+  }
+}
+
+export async function seedProducts(productObjects = []) {
+  if (!db || !Array.isArray(productObjects) || !productObjects.length) return 0
+
+  const batch = writeBatch(db)
+  productObjects.forEach((item) => {
+    const id = item.id || item.slug
+    if (!id) return
+    const refDoc = doc(db, FIRESTORE_COLLECTIONS.products, id)
+    batch.set(refDoc, { ...item, id }, { merge: true })
+  })
+  await batch.commit()
+  return productObjects.length
+}
+
+export async function seedProduct(productObject = {}) {
+  if (!db || !productObject?.id) return false
+  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productObject.id), productObject, { merge: true })
+  return true
+}

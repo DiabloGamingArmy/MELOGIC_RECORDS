@@ -4,44 +4,95 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
+import { getPublicProducts } from './data/productService'
 
 const app = document.querySelector('#app')
 
-const productCatalog = [
-  { title: 'Aether Pulse Vol. 1', creator: 'NOVA//CTRL', type: 'Sample Pack', genres: ['Melodic Bass', 'Future'], price: '$19' },
-  { title: 'Fracture Grid', creator: 'Iron Arc', type: 'Serum Presets', genres: ['Color Bass', 'Heavy'], price: '$24' },
-  { title: 'Glass Impact', creator: 'SYNTHRUNE', type: 'Vital Bank', genres: ['Dubstep', 'Cinematic'], price: '$17' },
-  { title: 'Voltage Bloom', creator: 'MIRA WAVE', type: 'Wavetables', genres: ['Hybrid Trap', 'EDM'], price: '$12' },
-  { title: 'Black Alloy Drums', creator: 'KROVAK', type: 'Drum Kit', genres: ['Metalcore', 'Hybrid'], price: '$21' },
-  { title: 'Skyline Lift FX', creator: 'Arcline Studio', type: 'FX Toolkit', genres: ['Festival', 'Transitions'], price: '$15' },
-  { title: 'Nightframe Leads', creator: 'VEXA', type: 'Preset Bank', genres: ['Electro', 'Synthwave'], price: '$18' },
-  { title: 'Ghostform Vocals', creator: 'Helix North', type: 'Vocal Chop Kit', genres: ['Future Bass', 'Vocal'], price: '$16' },
-  { title: 'Riftweight Textures', creator: 'Null Harbor', type: 'One-Shot Pack', genres: ['Bass Music', 'Industrial'], price: '$14' },
-  { title: 'Hyperline Motion', creator: 'Prismforge', type: 'Creator Release', genres: ['Electronic', 'Melodic'], price: '$27' }
-]
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
-const cardMarkup = productCatalog
-  .map(
-    (product) => `
-      <article class="product-card" role="listitem">
-        <div class="product-cover" aria-hidden="true"></div>
-        <div class="product-content">
-          <div class="product-meta-row">
-            <p class="product-type">${product.type}</p>
-            <p class="product-price">${product.price}</p>
-          </div>
-          <h3>${product.title}</h3>
-          <p class="product-creator">by ${product.creator}</p>
-          <p class="product-tags">${product.genres.map((genre) => `#${genre.replace(/\s+/g, '')}`).join(' · ')}</p>
-          <div class="product-actions">
-            <button type="button" class="preview-btn" aria-label="Preview ${product.title}">▶ Preview</button>
-            <button type="button" class="add-btn" aria-label="Add ${product.title} to cart">Add to cart</button>
-          </div>
+function productCardMarkup(product) {
+  const artistHref = product.artistUsername
+    ? `/profile.html?u=${encodeURIComponent(product.artistUsername)}`
+    : '/profile.html'
+  const contributorList = product.contributorNames.length
+    ? product.contributorNames.map((name) => `<span>${escapeHtml(name)}</span>`).join(' · ')
+    : 'No contributors listed'
+  const tags = product.genres?.length
+    ? product.genres.map((genre) => `#${escapeHtml(String(genre).replace(/\s+/g, ''))}`).join(' · ')
+    : (product.tags || []).slice(0, 3).map((tag) => `#${escapeHtml(tag)}`).join(' · ')
+
+  const mediaMarkup = product.thumbnailURL || product.coverURL
+    ? `<img src="${product.thumbnailURL || product.coverURL}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`
+    : '<div class="product-cover-fallback" aria-hidden="true"></div>'
+
+  return `
+    <article class="product-card" role="listitem" data-product-id="${escapeHtml(product.id)}">
+      <div class="product-cover">
+        ${mediaMarkup}
+      </div>
+      <div class="product-content">
+        <div class="product-meta-row">
+          <p class="product-type">${escapeHtml(product.productType || 'Release')}</p>
+          <p class="product-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
         </div>
+        <h3>${escapeHtml(product.title)}</h3>
+        <p class="product-creator">by ${escapeHtml(product.artistName)}</p>
+        <p class="product-description">${escapeHtml(product.shortDescription || 'No description available yet.')}</p>
+        <p class="product-tags">${tags || '#new'}</p>
+
+        <div class="product-stats" aria-label="Product engagement stats">
+          <span>👍 ${product.counts.likes}</span>
+          <span>👎 ${product.counts.dislikes}</span>
+          <span>💾 ${product.counts.saves}</span>
+          <span>🔁 ${product.counts.shares}</span>
+          <span>💬 ${product.counts.comments}</span>
+          <span>👥 ${product.counts.follows}</span>
+        </div>
+
+        <p class="product-contributors"><strong>Contributors:</strong> ${contributorList}</p>
+        <p class="product-artist-link"><a href="${artistHref}">@${escapeHtml(product.artistUsername || 'artist')}</a></p>
+
+        <div class="product-actions">
+          <button type="button" class="preview-btn" ${product.previewAudioURLs.length ? '' : 'disabled'} aria-label="Preview ${escapeHtml(product.title)}">▶ Preview</button>
+          <button type="button" class="add-btn" aria-label="Add ${escapeHtml(product.title)} to cart">Add to cart</button>
+        </div>
+      </div>
+    </article>
+  `
+}
+
+function updateCatalogStatus(message, state = 'info') {
+  const statusEl = app.querySelector('[data-products-status]')
+  if (!statusEl) return
+  statusEl.textContent = message
+  statusEl.dataset.state = state
+}
+
+function renderProducts(products) {
+  const grid = app.querySelector('[data-products-grid]')
+  if (!grid) return
+
+  if (!products.length) {
+    grid.innerHTML = `
+      <article class="product-empty-state">
+        <h3>No products available yet</h3>
+        <p>Published catalog items will appear here when creators release them.</p>
       </article>
     `
-  )
-  .join('')
+    updateCatalogStatus('No published products found.', 'info')
+    return
+  }
+
+  grid.innerHTML = products.map((product) => productCardMarkup(product)).join('')
+  updateCatalogStatus(`Loaded ${products.length} product${products.length === 1 ? '' : 's'} from Firebase.`, 'success')
+}
 
 app.innerHTML = `
   ${navShell({ currentPage: 'products' })}
@@ -74,42 +125,31 @@ app.innerHTML = `
         <div class="products-filter-row" aria-label="Catalog controls">
           <label class="filter-control">
             <span>Search</span>
-            <input type="search" placeholder="Search products or creators" />
+            <input type="search" placeholder="Search products or creators" disabled />
           </label>
           <label class="filter-control">
             <span>Category</span>
-            <select>
+            <select disabled>
               <option>All categories</option>
-              <option>Sample Packs</option>
-              <option>Presets</option>
-              <option>Wavetables</option>
-              <option>Tools</option>
             </select>
           </label>
           <label class="filter-control">
             <span>Genre</span>
-            <select>
+            <select disabled>
               <option>All genres</option>
-              <option>Melodic Bass</option>
-              <option>Dubstep</option>
-              <option>Metalcore</option>
-              <option>Hybrid Trap</option>
             </select>
           </label>
           <label class="filter-control">
             <span>Sort</span>
-            <select>
+            <select disabled>
               <option>Featured</option>
-              <option>Newest</option>
-              <option>Price: Low to High</option>
-              <option>Price: High to Low</option>
             </select>
           </label>
         </div>
 
-        <div class="products-grid" role="list" aria-label="Product catalog">
-          ${cardMarkup}
-        </div>
+        <p class="products-status" data-products-status data-state="info">Loading products from Firebase...</p>
+
+        <div class="products-grid" role="list" aria-label="Product catalog" data-products-grid></div>
       </div>
     </section>
 
@@ -133,5 +173,16 @@ function initProductsHeroVideo() {
   })
 }
 
+async function initProductCatalog() {
+  try {
+    const products = await getPublicProducts()
+    renderProducts(products)
+  } catch (error) {
+    console.warn('[products] Failed to initialize catalog.', error?.message || error)
+    updateCatalogStatus('Could not load products right now. Please try again.', 'error')
+  }
+}
+
 initShellChrome()
 initProductsHeroVideo()
+initProductCatalog()
