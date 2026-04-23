@@ -88,6 +88,19 @@ app.innerHTML = `
 
   <main>
     <section class="hero" id="explore">
+      <div class="hero-media" aria-hidden="true">
+        <video
+          id="hero-bg-video"
+          class="hero-bg-video"
+          muted
+          loop
+          autoplay
+          playsinline
+          preload="metadata"
+        ></video>
+        <div class="hero-media-overlay"></div>
+      </div>
+
       <div class="section-inner hero-inner">
         <div class="hero-copy">
           <h1>Where heavy sound design becomes a release pipeline.</h1>
@@ -240,6 +253,61 @@ app.innerHTML = `
   </main>
 `
 
+
+async function initHeroBackgroundVideo() {
+  const heroVideo = document.querySelector('#hero-bg-video')
+  if (!heroVideo) return
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (prefersReducedMotion) {
+    heroVideo.remove()
+    return
+  }
+
+  const webmPath = 'assets/site/backgrounds/hero-loop.webm'
+  const mp4Path = 'assets/site/backgrounds/hero-loop.mp4'
+
+  const [webmUrl, mp4Url] = await Promise.all([
+    getStorageAssetUrl(webmPath, { warnOnFail: false }),
+    getStorageAssetUrl(mp4Path, { warnOnFail: false })
+  ])
+
+  if (!webmUrl && !mp4Url) {
+    console.warn('[hero-video] Background video unavailable; using static hero background.')
+    heroVideo.remove()
+    return
+  }
+
+  if (webmUrl) {
+    const webmSource = document.createElement('source')
+    webmSource.src = webmUrl
+    webmSource.type = 'video/webm'
+    heroVideo.append(webmSource)
+  }
+
+  if (mp4Url) {
+    const mp4Source = document.createElement('source')
+    mp4Source.src = mp4Url
+    mp4Source.type = 'video/mp4'
+    heroVideo.append(mp4Source)
+  }
+
+  heroVideo.addEventListener(
+    'error',
+    () => {
+      console.warn('[hero-video] Background video failed to load; using static hero background.')
+      heroVideo.remove()
+    },
+    { once: true }
+  )
+
+  const playPromise = heroVideo.play()
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch(() => {
+      heroVideo.remove()
+    })
+  }
+}
 
 async function initNavBrandLogo() {
   const brandLogo = document.querySelector('[data-brand-logo]')
@@ -407,5 +475,6 @@ function initLowerBackground() {
 }
 
 initNavBrandLogo()
+initHeroBackgroundVideo()
 initCarousel()
 initLowerBackground()

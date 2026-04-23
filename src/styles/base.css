@@ -233,6 +233,8 @@ main {
 }
 
 .hero {
+  position: relative;
+  overflow: clip;
   padding: clamp(3.4rem, 8vw, 6rem) 0 clamp(3rem, 6vw, 4rem);
   border-bottom: 1px solid rgba(151, 165, 197, 0.11);
   background:
@@ -241,7 +243,31 @@ main {
     var(--bg);
 }
 
+.hero-media {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.hero-bg-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: brightness(0.48) saturate(0.88);
+}
+
+.hero-media-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(to bottom, rgba(2, 4, 9, 0.58), rgba(3, 5, 10, 0.68)),
+    radial-gradient(900px 460px at 75% -10%, rgba(86, 117, 190, 0.16), transparent 70%);
+}
+
 .hero-inner {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: 1fr;
   gap: 2rem;
