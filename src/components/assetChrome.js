@@ -1,5 +1,5 @@
 import { getStorageAssetUrl } from '../firebase/storageAssets'
-import { signOutUser, subscribeToAuthState } from '../firebase/auth'
+import { signOutUser, subscribeToAuthState, waitForInitialAuthState } from '../firebase/auth'
 
 export function syncNavOffset() {
   const nav = document.querySelector('.nav-shell')
@@ -91,6 +91,14 @@ function initNavAuthState() {
       authLink.textContent = 'Sign Out'
     } finally {
       authLink.removeAttribute('aria-busy')
+    }
+  })
+
+  waitForInitialAuthState().then((user) => {
+    if (user) {
+      setSignedInView(user)
+    } else {
+      setSignedOutView()
     }
   })
 

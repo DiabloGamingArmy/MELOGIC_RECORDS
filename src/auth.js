@@ -10,6 +10,8 @@ import {
   signInWithGoogle,
   subscribeToAuthState,
   authPersistenceReady,
+  auth,
+  waitForInitialAuthState,
   updateCurrentUserProfile
 } from './firebase/auth'
 import { upsertUserProfile } from './firebase/firestore'
@@ -139,8 +141,13 @@ function warnProfileWriteFailure(error, context) {
   console.warn(`[auth] Firestore profile ${context} failed.`, error?.code || error?.message || error)
 }
 
-function waitForAuthenticatedUser(timeoutMs = 2500) {
+function waitForAuthenticatedUser(timeoutMs = 3000) {
   return new Promise((resolve) => {
+    if (auth.currentUser) {
+      resolve(auth.currentUser)
+      return
+    }
+
     let settled = false
     const timeout = window.setTimeout(() => {
       if (settled) return
@@ -160,6 +167,7 @@ function waitForAuthenticatedUser(timeoutMs = 2500) {
 }
 
 async function redirectToProfile() {
+  await waitForInitialAuthState()
   await waitForAuthenticatedUser()
   window.location.assign('/profile.html')
 }
@@ -321,6 +329,13 @@ signupForm?.addEventListener('submit', handleSignUpSubmit)
 googleButton?.addEventListener('click', handleGoogleSignIn)
 
 let hasHandledInitialUser = false
+waitForInitialAuthState().then((user) => {
+  if (!user || hasHandledInitialUser) return
+  hasHandledInitialUser = true
+  setFeedback('You are already signed in. Redirecting to profile...', 'success')
+  redirectToProfile()
+})
+
 subscribeToAuthState((user) => {
   if (hasHandledInitialUser) return
   hasHandledInitialUser = true

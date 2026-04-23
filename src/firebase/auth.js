@@ -14,6 +14,7 @@ import { app } from './firebaseConfig.js'
 
 export const auth = getAuth(app)
 let hasWarnedPersistence = false
+let initialAuthStatePromise = null
 
 export const authPersistenceReady = setPersistence(auth, browserLocalPersistence).catch((error) => {
   if (!hasWarnedPersistence) {
@@ -28,6 +29,22 @@ googleProvider.setCustomParameters({ prompt: 'select_account' })
 
 export function subscribeToAuthState(callback) {
   return onAuthStateChanged(auth, callback)
+}
+
+export async function waitForInitialAuthState() {
+  if (initialAuthStatePromise) return initialAuthStatePromise
+
+  initialAuthStatePromise = authPersistenceReady.then(
+    () =>
+      new Promise((resolve) => {
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+          unsubscribe()
+          resolve(user)
+        })
+      })
+  )
+
+  return initialAuthStatePromise
 }
 
 export function signInWithEmail(email, password) {

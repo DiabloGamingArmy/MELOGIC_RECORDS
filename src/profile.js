@@ -2,7 +2,7 @@ import './styles/base.css'
 import './styles/profile.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
-import { subscribeToAuthState, signOutUser } from './firebase/auth'
+import { subscribeToAuthState, signOutUser, waitForInitialAuthState } from './firebase/auth'
 import { getUserProfile } from './firebase/firestore'
 
 const app = document.querySelector('#app')
@@ -36,6 +36,7 @@ initShellChrome()
 const profileRoot = document.querySelector('[data-profile-root]')
 let hasWarnedProfileFallback = false
 let hasWarnedNoAuthUser = false
+let hasInitializedProfile = false
 
 function fallbackInitials(nameOrEmail) {
   if (!nameOrEmail) return 'MR'
@@ -112,14 +113,14 @@ function renderSignedInState(user, storedProfile = null) {
   })
 }
 
-subscribeToAuthState(async (user) => {
+async function loadAndRenderProfile(user) {
   if (!user) {
     if (!hasWarnedNoAuthUser) {
       hasWarnedNoAuthUser = true
       console.warn('[profile] No authenticated user; showing sign-in required state.')
     }
     renderSignedOutState()
-    return
+    return false
   }
 
   let storedProfile = null
@@ -132,4 +133,15 @@ subscribeToAuthState(async (user) => {
     }
   }
   renderSignedInState(user, storedProfile)
+  return true
+}
+
+waitForInitialAuthState().then((user) => {
+  hasInitializedProfile = true
+  loadAndRenderProfile(user)
+})
+
+subscribeToAuthState((user) => {
+  if (!hasInitializedProfile) return
+  loadAndRenderProfile(user)
 })
