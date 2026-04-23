@@ -325,10 +325,6 @@ async function initNavBrandLogo() {
     brandLogo.remove()
   }, { once: true })
 
-  brandLogo.addEventListener('load', () => {
-    brandLogo.dataset.loaded = 'true'
-  }, { once: true })
-
   brandLogo.src = logoUrl
 }
 
@@ -340,43 +336,74 @@ function initCarousel() {
   const controls = carousel.querySelectorAll('.carousel-control')
   if (!track || !controls.length) return
 
-  let autoTimer
-  let resumeTimer
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const step = () => Math.max(track.clientWidth * 0.55, 280)
+  const baseSpeed = reducedMotion ? 0 : 0.28
+  const manualStep = () => Math.max(track.clientWidth * 0.72, 320)
 
-  const runAuto = () => {
-    if (reducedMotion) return
-    autoTimer = window.setInterval(() => {
-      track.scrollBy({ left: 1.2, behavior: 'auto' })
-      const reachedEnd = track.scrollLeft + track.clientWidth >= track.scrollWidth - 4
-      if (reachedEnd) {
-        track.scrollTo({ left: 0, behavior: 'smooth' })
-      }
-    }, 16)
-  }
+  let animationFrame = null
+  let resumeTimer = null
+  let isAutoRunning = false
+  let lastTimestamp = 0
 
   const stopAuto = () => {
-    window.clearInterval(autoTimer)
+    isAutoRunning = false
+    if (animationFrame) {
+      window.cancelAnimationFrame(animationFrame)
+      animationFrame = null
+    }
+    lastTimestamp = 0
+  }
+
+  const tick = (timestamp) => {
+    if (!isAutoRunning) return
+
+    if (!lastTimestamp) {
+      lastTimestamp = timestamp
+    }
+
+    const delta = timestamp - lastTimestamp
+    lastTimestamp = timestamp
+
+    track.scrollLeft += baseSpeed * delta
+
+    const endThreshold = track.scrollWidth - track.clientWidth - 2
+    if (track.scrollLeft >= endThreshold) {
+      track.scrollLeft = 0
+    }
+
+    animationFrame = window.requestAnimationFrame(tick)
+  }
+
+  const startAuto = () => {
+    if (isAutoRunning || reducedMotion) return
+    isAutoRunning = true
+    animationFrame = window.requestAnimationFrame(tick)
   }
 
   const pauseAndResume = () => {
     stopAuto()
     window.clearTimeout(resumeTimer)
-    resumeTimer = window.setTimeout(runAuto, 20000)
+    resumeTimer = window.setTimeout(startAuto, 20000)
   }
 
   controls.forEach((control) => {
     control.addEventListener('click', () => {
-      const dir = control.dataset.dir === 'left' ? -1 : 1
-      track.scrollBy({ left: dir * step(), behavior: 'smooth' })
+      const direction = control.dataset.dir === 'left' ? -1 : 1
       pauseAndResume()
+      track.scrollBy({ left: direction * manualStep(), behavior: 'smooth' })
     })
   })
 
   track.addEventListener('pointerdown', pauseAndResume)
   track.addEventListener('wheel', pauseAndResume, { passive: true })
-  runAuto()
+
+  startAuto()
+}
+
+function syncNavOffset() {
+  const nav = document.querySelector('.nav-shell')
+  if (!nav) return
+  document.documentElement.style.setProperty('--nav-offset', `${nav.offsetHeight}px`)
 }
 
 function initLowerBackground() {
@@ -473,6 +500,9 @@ function initLowerBackground() {
   resize()
   draw()
 }
+
+syncNavOffset()
+window.addEventListener('resize', syncNavOffset, { passive: true })
 
 initNavBrandLogo()
 initHeroBackgroundVideo()
