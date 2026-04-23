@@ -97,7 +97,7 @@ function renderSignedInState(user, storedProfile = null) {
         </div>
 
         <div class="profile-actions">
-          <button type="button" class="button button-muted" data-edit-profile>Edit Profile</button>
+          <a class="button button-muted" href="/edit-profile.html">Edit Profile</a>
           <button type="button" class="button button-accent" data-signout-profile>Sign Out</button>
         </div>
       </article>
@@ -170,9 +170,6 @@ function renderSignedInState(user, storedProfile = null) {
       </div>
     </section>
 
-    <div class="profile-edit-note" data-edit-note hidden>
-      Edit profile tools are coming soon. Display name, username, bio, and avatar editing will be added here.
-    </div>
   `
 
   const signOutButton = profileRoot.querySelector('[data-signout-profile]')
@@ -186,17 +183,6 @@ function renderSignedInState(user, storedProfile = null) {
       signOutButton.disabled = false
       signOutButton.textContent = 'Sign Out'
     }
-  })
-
-  const editButton = profileRoot.querySelector('[data-edit-profile]')
-  const editNote = profileRoot.querySelector('[data-edit-note]')
-  editButton?.addEventListener('click', () => {
-    const currentlyHidden = editNote.hasAttribute('hidden')
-    if (currentlyHidden) {
-      editNote.removeAttribute('hidden')
-      return
-    }
-    editNote.setAttribute('hidden', '')
   })
 
   const tabButtons = profileRoot.querySelectorAll('.profile-tab')
