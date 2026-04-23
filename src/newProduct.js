@@ -216,6 +216,22 @@ function setStatus(message, state = 'info') {
   editorState.status = { message, state }
 }
 
+function getPublishValidationMessage(draft = {}) {
+  const missingTitle = !String(draft.title || '').trim()
+  const missingProductType = !String(draft.productType || '').trim()
+
+  if (missingTitle && missingProductType) {
+    return 'Title and product type are required before publishing.'
+  }
+  if (missingTitle) {
+    return 'Title is required before publishing.'
+  }
+  if (missingProductType) {
+    return 'Product type is required before publishing.'
+  }
+  return ''
+}
+
 function renderSignedOut() {
   editorRoot.innerHTML = `
     <article class="product-editor-card signed-out">
@@ -460,7 +476,16 @@ function renderEditor() {
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
 
-    setStatus('Saving draft...', 'info')
+    if (desiredStatus === 'published') {
+      const publishValidationMessage = getPublishValidationMessage(editorState.draft)
+      if (publishValidationMessage) {
+        setStatus(publishValidationMessage, 'error')
+        renderEditor()
+        return
+      }
+    }
+
+    setStatus(desiredStatus === 'published' ? 'Publishing product...' : 'Saving draft...', 'info')
     renderEditor()
 
     try {
@@ -500,10 +525,14 @@ function renderEditor() {
     } catch (error) {
       console.warn('[new-product] Draft save flow failed.', error?.code || error?.message || error)
       const friendlyMessage = error?.code === 'permission-denied'
-        ? 'Could not initialize draft.'
+        ? desiredStatus === 'published'
+          ? 'Could not publish product.'
+          : 'Could not save draft.'
         : error?.code?.startsWith?.('storage/')
           ? 'Could not upload media.'
-          : 'Could not save draft.'
+          : desiredStatus === 'published'
+            ? 'Could not publish product.'
+            : 'Could not save draft.'
       setStatus(friendlyMessage, 'error')
       renderEditor()
     }
