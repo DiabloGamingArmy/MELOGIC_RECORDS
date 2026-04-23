@@ -5,9 +5,9 @@ const resolvedAssetCache = new Map()
 const pendingAssetCache = new Map()
 let hasWarnedNoStorage = false
 
-export async function getStorageAssetUrl(path) {
+export async function getStorageAssetUrl(path, options = {}) {
   if (!path || !storage) {
-    if (!hasWarnedNoStorage) {
+    if (!hasWarnedNoStorage && options.warnOnFail !== false) {
       hasWarnedNoStorage = true
       console.warn('[storageAssets] Storage unavailable; asset URLs cannot be resolved.')
     }
@@ -30,7 +30,9 @@ export async function getStorageAssetUrl(path) {
     })
     .catch((error) => {
       pendingAssetCache.delete(path)
-      console.warn(`[storageAssets] Failed to resolve asset: ${path}`, error?.message || error)
+      if (options.warnOnFail !== false) {
+        console.warn(`[storageAssets] Failed to resolve asset: ${path}`, error?.message || error)
+      }
       return null
     })
 
