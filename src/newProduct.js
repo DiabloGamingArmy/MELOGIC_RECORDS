@@ -3,7 +3,7 @@ import './styles/newProduct.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState } from './firebase/auth'
-import { buildProductPayload, saveProductDraft } from './data/productService'
+import { buildProductPayload, initializeProductDraft, isPlaceholderProductId, saveProductDraft } from './data/productService'
 
 const PRODUCT_SECTIONS = [
   { key: 'basics', label: 'Basics' },
@@ -155,11 +155,15 @@ function loadDraftState(user) {
       ...editorState.mediaPreview,
       ...(parsed?.mediaPreview || {})
     }
-    return {
+    const hydratedDraft = {
       ...empty,
       ...(parsed?.draft || {}),
       artistId: parsed?.draft?.artistId || user.uid || ''
     }
+    if (isPlaceholderProductId(hydratedDraft.id)) {
+      hydratedDraft.id = ''
+    }
+    return hydratedDraft
   } catch {
     return empty
   }
@@ -169,6 +173,27 @@ function updateDraftField(path, value) {
   if (!editorState.draft) return
   editorState.draft[path] = value
   saveDraftState()
+}
+
+async function ensureDraftDocumentInitialized() {
+  if (!editorState.user || !editorState.draft) {
+    throw new Error('Draft not initialized in editor state.')
+  }
+
+  const draftInput = serializeDraftForFirestore({
+    ...editorState.draft,
+    status: 'draft',
+    visibility: editorState.draft.visibility || 'private'
+  })
+  const existingId = !isPlaceholderProductId(editorState.draft.id) ? editorState.draft.id : ''
+  const productId = await initializeProductDraft(editorState.user, draftInput, existingId)
+
+  if (editorState.draft.id !== productId) {
+    editorState.draft.id = productId
+    saveDraftState()
+  }
+
+  return productId
 }
 
 function hydrateSectionFields(sectionName) {
@@ -453,18 +478,19 @@ function renderEditor() {
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
 
-    const draftForSave = serializeDraftForFirestore({
-      ...editorState.draft,
-      status: desiredStatus
-    })
-
-    const payload = buildProductPayload(draftForSave, editorState.user)
-
     try {
+      const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
+      const productId = await ensureDraftDocumentInitialized()
+      const draftForSave = serializeDraftForFirestore({
+        ...editorState.draft,
+        id: productId,
+        status: desiredStatus
+      })
+      const payload = buildProductPayload(draftForSave, editorState.user)
       const result = await saveProductDraft(editorState.user, payload, {
-        productId: payload.id,
+        productId,
         status: desiredStatus,
-        isNew: true,
+        isNew: wasNewDraft,
         mediaFiles: editorState.mediaFiles
       })
 
@@ -478,10 +504,10 @@ function renderEditor() {
       )
       renderEditor()
     } catch (error) {
-      console.warn('[new-product] Save/upload failed.', error?.code || error?.message || error)
+      console.warn('[new-product] Draft initialization or media upload failed.', error?.code || error?.message || error)
       const friendlyMessage = error?.code === 'storage/unauthorized'
-        ? 'Media upload was blocked. We could not verify draft ownership for storage yet. Please save draft again and retry.'
-        : 'Could not save product right now. Your local draft is still preserved.'
+        ? 'Upload failed because draft ownership could not be verified. Please save the draft first, then retry upload.'
+        : 'We could not initialize or save your draft upload flow right now. Your local draft is still preserved.'
       setStatus(friendlyMessage, 'error')
       renderEditor()
     }
@@ -505,6 +531,12 @@ async function initPage() {
 
   editorState.user = user
   editorState.draft = loadDraftState(user)
+  try {
+    await ensureDraftDocumentInitialized()
+  } catch (error) {
+    console.warn('[new-product] Draft initialization failed on load.', error?.code || error?.message || error)
+    setStatus('We could not initialize your cloud draft yet. Your local draft is saved; use Save Draft to retry.', 'error')
+  }
   renderEditor()
 }
 
