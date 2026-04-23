@@ -1,9 +1,11 @@
-export function navShell(logoSrc) {
+export function navShell() {
   return `
     <header class="nav-shell">
       <div class="nav-inner">
         <a class="brand" href="/index.html" aria-label="Melogic Records home">
-          <img src="${logoSrc}" alt="Melogic logo mark" class="brand-logo" />
+          <span class="brand-logo-shell" aria-hidden="true">
+            <img alt="Melogic logo mark" class="brand-logo" data-brand-logo loading="eager" decoding="async" />
+          </span>
           <span class="brand-text">MELOGIC RECORDS</span>
         </a>
 
