@@ -4,7 +4,7 @@ export function navShell() {
       <div class="nav-inner">
         <a class="brand" href="/index.html" aria-label="Melogic Records home">
           <span class="brand-logo-shell" aria-hidden="true">
-            <img alt="Melogic logo mark" class="brand-logo" data-brand-logo loading="eager" decoding="async" />
+            <img alt="Melogic logo mark" class="brand-logo" data-brand-logo loading="eager" decoding="async" width="38" height="38" />
           </span>
           <span class="brand-text">MELOGIC RECORDS</span>
         </a>
