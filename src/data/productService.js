@@ -334,6 +334,13 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     updatedAt: serverTimestamp(),
     createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
   }
+  const isPublishing = (options.status || basePayload.status || 'draft') === 'published'
+  if (!isPublishing && !String(input.title || '').trim()) {
+    delete payload.title
+  }
+  if (!isPublishing && !String(input.productType || '').trim()) {
+    delete payload.productType
+  }
 
   await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
 
