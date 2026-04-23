@@ -111,12 +111,15 @@ app.innerHTML = `
         ></video>
         <div class="hero-media-overlay"></div>
       </div>
-      <div class="section-inner hero-content-layer">
-        <p class="eyebrow">Marketplace</p>
-        <h1>Products</h1>
-        <p class="products-intro">
-          Browse sample packs, presets, wavetables, tools, and creator-made releases across the Melogic catalog.
-        </p>
+      <div class="section-inner hero-content-layer products-hero-shell">
+        <div>
+          <p class="eyebrow">Marketplace</p>
+          <h1>Products</h1>
+          <p class="products-intro">
+            Browse sample packs, presets, wavetables, tools, and creator-made releases across the Melogic catalog.
+          </p>
+        </div>
+        <a class="new-product-btn" href="/new-product.html" aria-label="Create a new product">+ Product</a>
       </div>
     </section>
 

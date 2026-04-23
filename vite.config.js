@@ -16,7 +16,8 @@ export default defineConfig({
         auth: resolve(__dirname, 'auth.html'),
         product: resolve(__dirname, 'product.html'),
         profile: resolve(__dirname, 'profile.html'),
-        editProfile: resolve(__dirname, 'edit-profile.html')
+        editProfile: resolve(__dirname, 'edit-profile.html'),
+        newProduct: resolve(__dirname, 'new-product.html')
       }
     }
   }

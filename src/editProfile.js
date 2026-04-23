@@ -41,7 +41,7 @@ const app = document.querySelector('#app')
 app.innerHTML = `
   ${navShell({ currentPage: 'profile' })}
   <main>
-    <section class="standard-hero section">
+    <section class="standard-hero utility-hero section">
       <div class="section-inner hero-inner hero-content-layer">
         <div class="hero-copy">
           <p class="eyebrow">Account Settings</p>
