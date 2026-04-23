@@ -231,6 +231,32 @@ export function buildProductPayload(input = {}, user = null) {
   }
 }
 
+function createProductId() {
+  if (!db) return `product-${Date.now()}`
+  return doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
+}
+
+async function ensureDraftProductDocument(user, input = {}, productId = '') {
+  if (!db || !user?.uid || !productId) return
+
+  const now = serverTimestamp()
+  await setDoc(
+    doc(db, FIRESTORE_COLLECTIONS.products, productId),
+    {
+      id: productId,
+      artistId: user.uid,
+      artistName: input.artistName || user.displayName || '',
+      title: input.title || '',
+      slug: input.slug || productId,
+      status: 'draft',
+      visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private'),
+      createdAt: now,
+      updatedAt: now
+    },
+    { merge: true }
+  )
+}
+
 export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
   if (!storage || !productId) return {}
   const uploads = {}
@@ -255,14 +281,19 @@ export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
 export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
 
-  const basePayload = buildProductPayload(input, user)
-  const productId = options.productId || basePayload.id || basePayload.slug
+  const requestedId = options.productId || input.id || ''
+  const productId = requestedId || createProductId()
+  const basePayload = buildProductPayload({ ...input, id: productId }, user)
+
+  await ensureDraftProductDocument(user, basePayload, productId)
   const mediaUploads = await uploadProductMediaFiles(productId, options.mediaFiles || {})
 
   const payload = {
     ...basePayload,
     id: productId,
+    artistId: user.uid,
     status: options.status || basePayload.status || 'draft',
+    visibility: basePayload.visibility || 'private',
     coverPath: mediaUploads.coverPath || basePayload.coverPath,
     thumbnailPath: mediaUploads.thumbnailPath || basePayload.thumbnailPath,
     updatedAt: serverTimestamp(),
