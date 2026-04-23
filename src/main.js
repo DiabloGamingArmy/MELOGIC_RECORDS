@@ -3,87 +3,45 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
+import { getPublicProducts } from './data/productService'
 
 const app = document.querySelector('#app')
 
-const releaseProducts = [
-  {
-    title: 'Aether Pulse Vol. 1',
-    creator: 'NOVA//CTRL',
-    type: 'Sample Pack',
-    tags: ['#MelodicBass', '#Future'],
-    price: '$19'
-  },
-  {
-    title: 'Fracture Grid',
-    creator: 'Iron Arc',
-    type: 'Serum Presets',
-    tags: ['#ColorBass', '#Heavy'],
-    price: '$24'
-  },
-  {
-    title: 'Glass Impact',
-    creator: 'SYNTHRUNE',
-    type: 'Vital Bank',
-    tags: ['#Dubstep', '#Cinematic'],
-    price: '$17'
-  },
-  {
-    title: 'Voltage Bloom',
-    creator: 'MIRA WAVE',
-    type: 'Wavetables',
-    tags: ['#HybridTrap', '#EDM'],
-    price: '$12'
-  },
-  {
-    title: 'Black Alloy Drums',
-    creator: 'KROVAK',
-    type: 'Drum Kit',
-    tags: ['#Metalcore', '#Hybrid'],
-    price: '$21'
-  },
-  {
-    title: 'Skyline Lift FX',
-    creator: 'Arcline Studio',
-    type: 'FX Toolkit',
-    tags: ['#Transitions', '#Festival'],
-    price: '$15'
-  },
-  {
-    title: 'Nightframe Leads',
-    creator: 'VEXA',
-    type: 'Preset Bank',
-    tags: ['#Electro', '#Synthwave'],
-    price: '$18'
-  },
-  {
-    title: 'Ghostform Vocals',
-    creator: 'Helix North',
-    type: 'Vocal Chop Kit',
-    tags: ['#Vocal', '#FutureBass'],
-    price: '$16'
-  }
-]
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
 
-const cardsMarkup = releaseProducts
-  .map(
-    (product) => `
-      <article class="release-card" role="listitem">
-        <div class="release-topline">
-          <p class="product-type">${product.type}</p>
-          <p class="release-price">${product.price}</p>
-        </div>
-        <h3>${product.title}</h3>
-        <p class="release-creator">by ${product.creator}</p>
-        <p class="tags">${product.tags.join(' · ')}</p>
-        <div class="release-actions">
-          <button type="button" class="preview-btn" aria-label="Preview ${product.title}">▶ Preview</button>
-          <button type="button" class="add-btn" aria-label="Add ${product.title} to cart">Add to cart</button>
-        </div>
-      </article>
-    `
-  )
-  .join('')
+function buildReleaseCard(product) {
+  const title = product?.title || 'Untitled product'
+  const type = product?.productType || 'Release'
+  const creator = product?.artistName || 'Unknown creator'
+  const price = product?.priceLabel || (product?.isFree ? 'Free' : '—')
+  const tags = (product?.genres?.length ? product.genres : product?.tags || [])
+    .slice(0, 3)
+    .map((tag) => `#${escapeHtml(String(tag).replace(/\s+/g, ''))}`)
+    .join(' · ')
+
+  return `
+    <article class="release-card" role="listitem">
+      <div class="release-topline">
+        <p class="product-type">${escapeHtml(type)}</p>
+        <p class="release-price">${escapeHtml(price)}</p>
+      </div>
+      <h3>${escapeHtml(title)}</h3>
+      <p class="release-creator">by ${escapeHtml(creator)}</p>
+      <p class="tags">${tags || '#new'}</p>
+      <div class="release-actions">
+        <button type="button" class="preview-btn" aria-label="Preview ${escapeHtml(title)}" ${product?.previewAudioURLs?.length ? '' : 'disabled'}>▶ Preview</button>
+        <button type="button" class="add-btn" aria-label="Add ${escapeHtml(title)} to cart">Add to cart</button>
+      </div>
+    </article>
+  `
+}
 
 app.innerHTML = `
   <div class="page-preloader" id="page-preloader" role="status" aria-live="polite" aria-label="Loading page">
@@ -112,14 +70,14 @@ app.innerHTML = `
 
       <div class="section-inner hero-inner">
         <div class="hero-copy">
-          <h1>Where heavy sound design becomes a release pipeline.</h1>
+          <h1>From Sample Pack to Soundtrack...</h1>
           <p>
             Melogic Records builds tools, sample libraries, and artist infrastructure for producers
             pushing electronic music, melodic bass, and metalcore into the same future.
           </p>
           <div class="hero-actions">
-            <a class="button button-accent" href="#products">Explore the Catalog</a>
-            <a class="button button-muted" href="#community">Submit / Connect</a>
+            <a class="button button-accent" href="/products.html">Explore the Catalog</a>
+            <a class="button button-muted" href="/support.html">Connect with us</a>
           </div>
         </div>
       </div>
@@ -139,8 +97,12 @@ app.innerHTML = `
 
             <div class="releases-carousel" data-carousel>
               <button class="carousel-control" type="button" data-dir="left" aria-label="Scroll products left">←</button>
-              <div class="releases-track" role="list" aria-label="Community release products">
-                ${cardsMarkup}
+              <div class="releases-track-wrap">
+                <div class="releases-track" role="list" aria-label="Community release products" data-home-release-track>
+                  <article class="release-card release-card-loading" role="listitem">
+                    <p class="release-creator">Loading catalog products...</p>
+                  </article>
+                </div>
               </div>
               <button class="carousel-control" type="button" data-dir="right" aria-label="Scroll products right">→</button>
             </div>
@@ -283,7 +245,7 @@ function initCarousel() {
   if (!track || !controls.length) return
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const baseSpeed = reducedMotion ? 0 : 0.093
+  const baseSpeed = reducedMotion ? 0 : 0.279
   const manualStep = () => Math.max(track.clientWidth * 0.72, 320)
 
   let animationFrame = null
@@ -344,6 +306,32 @@ function initCarousel() {
   track.addEventListener('wheel', pauseAndResume, { passive: true })
 
   startAuto()
+}
+
+function renderHomeReleaseCards(products = []) {
+  const track = document.querySelector('[data-home-release-track]')
+  if (!track) return
+
+  if (!products.length) {
+    track.innerHTML = `
+      <article class="release-card release-card-loading" role="listitem">
+        <p class="release-creator">No published products available yet.</p>
+      </article>
+    `
+    return
+  }
+
+  track.innerHTML = products.slice(0, 12).map((product) => buildReleaseCard(product)).join('')
+}
+
+async function initHomeReleaseProducts() {
+  try {
+    const products = await getPublicProducts()
+    renderHomeReleaseCards(products)
+  } catch (error) {
+    console.warn('[home] Failed to load release carousel products.', error?.code || error?.message || error)
+    renderHomeReleaseCards([])
+  }
 }
 
 function initPagePreloader(logoReadyPromise, heroReadyPromise) {
@@ -466,4 +454,5 @@ const logoReadyPromise = initShellChrome()
 const heroReadyPromise = initHeroBackgroundVideo()
 initPagePreloader(logoReadyPromise, heroReadyPromise)
 initCarousel()
+initHomeReleaseProducts()
 initLowerBackground()
