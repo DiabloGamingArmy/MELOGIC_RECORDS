@@ -52,6 +52,21 @@
   font-size: 1.22rem;
 }
 
+.auth-status-message {
+  min-height: 1.2rem;
+  margin: 0;
+  font-size: 0.84rem;
+  color: #afc0e4;
+}
+
+.auth-status-message[data-state='error'] {
+  color: #ffadb8;
+}
+
+.auth-status-message[data-state='success'] {
+  color: #9aeec6;
+}
+
 .auth-form {
   margin-top: 0.62rem;
   display: grid;

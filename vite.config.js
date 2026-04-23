@@ -14,7 +14,8 @@ export default defineConfig({
         support: resolve(__dirname, 'support.html'),
         cart: resolve(__dirname, 'cart.html'),
         auth: resolve(__dirname, 'auth.html'),
-        product: resolve(__dirname, 'product.html')
+        product: resolve(__dirname, 'product.html'),
+        profile: resolve(__dirname, 'profile.html')
       }
     }
   }
