@@ -479,6 +479,7 @@ function renderEditor() {
     if (desiredStatus === 'published') {
       const publishValidationMessage = getPublishValidationMessage(editorState.draft)
       if (publishValidationMessage) {
+        console.warn('[new-product] Publish validation failed', publishValidationMessage)
         setStatus(publishValidationMessage, 'error')
         renderEditor()
         return
@@ -495,6 +496,12 @@ function renderEditor() {
         status: desiredStatus
       })
       const payload = buildProductPayload(draftForSave, editorState.user)
+      console.info('[new-product] Save flow debug.', {
+        productId: wasNewDraft ? '(new draft id pending)' : editorState.draft.id,
+        pendingCover: editorState.mediaFiles.cover instanceof File,
+        pendingThumbnail: editorState.mediaFiles.thumbnail instanceof File,
+        desiredStatus
+      })
       const result = await saveProductDraft(editorState.user, payload, {
         productId: wasNewDraft ? '' : editorState.draft.id,
         status: desiredStatus,
@@ -523,16 +530,34 @@ function renderEditor() {
       )
       renderEditor()
     } catch (error) {
-      console.warn('[new-product] Draft save flow failed.', error?.code || error?.message || error)
-      const friendlyMessage = error?.code === 'permission-denied'
-        ? desiredStatus === 'published'
-          ? 'Could not publish product.'
-          : 'Could not save draft.'
-        : error?.code?.startsWith?.('storage/')
-          ? 'Could not upload media.'
-          : desiredStatus === 'published'
-            ? 'Could not publish product.'
-            : 'Could not save draft.'
+      const stage = error?.stage || 'unknown'
+      if (stage === 'draft-initialization' || stage === 'draft-verification') {
+        console.warn('[new-product] Draft initialization failed', error?.code || error?.message || error)
+      } else if (stage === 'cover-upload') {
+        console.warn('[new-product] Cover upload failed', error?.code || error?.message || error)
+      } else if (stage === 'thumbnail-upload') {
+        console.warn('[new-product] Thumbnail upload failed', error?.code || error?.message || error)
+      } else if (stage === 'final-firestore-merge') {
+        console.warn('[new-product] Final Firestore merge failed', error?.code || error?.message || error)
+      } else if (stage === 'publish-transition') {
+        console.warn('[new-product] Publish state update failed', error?.code || error?.message || error)
+      } else {
+        console.warn('[new-product] Draft save flow failed', error?.code || error?.message || error)
+      }
+
+      const friendlyMessage = stage === 'draft-initialization' || stage === 'draft-verification'
+        ? 'Could not initialize draft.'
+        : stage === 'cover-upload'
+          ? 'Cover upload failed.'
+          : stage === 'thumbnail-upload'
+            ? 'Thumbnail upload failed.'
+            : stage === 'final-firestore-merge'
+              ? 'Final product metadata save failed.'
+              : stage === 'publish-transition'
+                ? 'Publish update failed.'
+                : desiredStatus === 'published'
+                  ? 'Could not publish product.'
+                  : 'Could not save draft.'
       setStatus(friendlyMessage, 'error')
       renderEditor()
     }

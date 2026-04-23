@@ -240,6 +240,27 @@ function createProductId() {
 
 const PLACEHOLDER_PRODUCT_IDS = new Set(['test', 'temp', 'tmp', 'placeholder', 'fake'])
 
+function createStageError(stage, message, cause = null) {
+  const error = new Error(message)
+  error.stage = stage
+  error.cause = cause || undefined
+  error.code = cause?.code || error.code
+  return error
+}
+
+async function waitForDraftDocument(productId, attempts = 4, delayMs = 120) {
+  if (!db || !productId) return false
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const snapshot = await getDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId))
+    if (snapshot.exists()) return true
+    if (attempt < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+  return false
+}
+
 export function isPlaceholderProductId(productId = '') {
   const normalized = String(productId || '').trim().toLowerCase()
   if (!normalized) return true
@@ -274,17 +295,25 @@ export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
   const uploads = {}
 
   if (mediaFiles.cover instanceof File) {
-    const coverPath = STORAGE_PATHS.productCover(productId)
-    await uploadBytes(ref(storage, coverPath), mediaFiles.cover, { contentType: mediaFiles.cover.type || 'image/webp' })
-    uploads.coverPath = coverPath
-    uploads.coverURL = await safeStorageUrl(coverPath)
+    try {
+      const coverPath = STORAGE_PATHS.productCover(productId)
+      await uploadBytes(ref(storage, coverPath), mediaFiles.cover, { contentType: mediaFiles.cover.type || 'image/webp' })
+      uploads.coverPath = coverPath
+      uploads.coverURL = await safeStorageUrl(coverPath)
+    } catch (error) {
+      throw createStageError('cover-upload', 'Cover upload failed.', error)
+    }
   }
 
   if (mediaFiles.thumbnail instanceof File) {
-    const thumbnailPath = STORAGE_PATHS.productThumb(productId)
-    await uploadBytes(ref(storage, thumbnailPath), mediaFiles.thumbnail, { contentType: mediaFiles.thumbnail.type || 'image/webp' })
-    uploads.thumbnailPath = thumbnailPath
-    uploads.thumbnailURL = await safeStorageUrl(thumbnailPath)
+    try {
+      const thumbnailPath = STORAGE_PATHS.productThumb(productId)
+      await uploadBytes(ref(storage, thumbnailPath), mediaFiles.thumbnail, { contentType: mediaFiles.thumbnail.type || 'image/webp' })
+      uploads.thumbnailPath = thumbnailPath
+      uploads.thumbnailURL = await safeStorageUrl(thumbnailPath)
+    } catch (error) {
+      throw createStageError('thumbnail-upload', 'Thumbnail upload failed.', error)
+    }
   }
 
   return uploads
@@ -305,36 +334,56 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
 
   const requestedId = options.productId || input.id || ''
-  const initialization = await initializeProductDraft(user, input, requestedId)
-  const { productId, created } = initialization
-  if (typeof options.onStatus === 'function' && created) {
-    options.onStatus('Draft created.')
+  let productId = ''
+  let created = false
+  try {
+    const initialization = await initializeProductDraft(user, input, requestedId)
+    productId = initialization.productId
+    created = initialization.created
+    if (typeof options.onStatus === 'function' && created) {
+      options.onStatus('Draft document created.')
+    }
+    const existsAfterInit = await waitForDraftDocument(productId)
+    if (!existsAfterInit) {
+      throw createStageError('draft-verification', 'Draft existence check failed after initialization.')
+    }
+  } catch (error) {
+    throw createStageError('draft-initialization', 'Draft initialization failed.', error)
   }
+
   const basePayload = buildProductPayload({ ...input, id: productId }, user)
-  if (typeof options.onStatus === 'function' && (options.mediaFiles?.cover || options.mediaFiles?.thumbnail)) {
-    options.onStatus('Upload started.')
+  let mediaUploads = {}
+  try {
+    if (typeof options.onStatus === 'function' && options.mediaFiles?.cover) {
+      options.onStatus('Cover upload started.')
+    }
+    if (typeof options.onStatus === 'function' && options.mediaFiles?.thumbnail) {
+      options.onStatus('Thumbnail upload started.')
+    }
+    mediaUploads = await uploadProductMediaFiles(productId, options.mediaFiles || {})
+    if (typeof options.onStatus === 'function' && mediaUploads.coverPath) {
+      options.onStatus('Cover uploaded successfully.')
+    }
+    if (typeof options.onStatus === 'function' && mediaUploads.thumbnailPath) {
+      options.onStatus('Thumbnail uploaded successfully.')
+    }
+  } catch (error) {
+    throw error?.stage ? error : createStageError('media-upload', 'Media upload failed.', error)
   }
 
-  const mediaUploads = await uploadProductMediaFiles(productId, options.mediaFiles || {})
-  if (typeof options.onStatus === 'function' && mediaUploads.coverPath) {
-    options.onStatus('Cover uploaded successfully.')
-  }
-  if (typeof options.onStatus === 'function' && mediaUploads.thumbnailPath) {
-    options.onStatus('Thumbnail uploaded successfully.')
-  }
-
+  const desiredStatus = options.status || basePayload.status || 'draft'
   const payload = {
     ...basePayload,
     id: productId,
     artistId: user.uid,
-    status: options.status || basePayload.status || 'draft',
+    status: desiredStatus === 'published' ? 'draft' : desiredStatus,
     visibility: basePayload.visibility || 'private',
     coverPath: mediaUploads.coverPath || basePayload.coverPath,
     thumbnailPath: mediaUploads.thumbnailPath || basePayload.thumbnailPath,
     updatedAt: serverTimestamp(),
     createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
   }
-  const isPublishing = (options.status || basePayload.status || 'draft') === 'published'
+  const isPublishing = desiredStatus === 'published'
   if (!isPublishing && !String(input.title || '').trim()) {
     delete payload.title
   }
@@ -342,7 +391,32 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     delete payload.productType
   }
 
-  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
+  try {
+    await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
+    if (typeof options.onStatus === 'function') {
+      options.onStatus('Final product metadata saved.')
+    }
+  } catch (error) {
+    throw createStageError('final-firestore-merge', 'Final product metadata save failed.', error)
+  }
+
+  if (isPublishing) {
+    try {
+      await setDoc(
+        doc(db, FIRESTORE_COLLECTIONS.products, productId),
+        {
+          status: 'published',
+          updatedAt: serverTimestamp()
+        },
+        { merge: true }
+      )
+      if (typeof options.onStatus === 'function') {
+        options.onStatus('Publish transition completed.')
+      }
+    } catch (error) {
+      throw createStageError('publish-transition', 'Publish update failed.', error)
+    }
+  }
 
   return {
     productId,
