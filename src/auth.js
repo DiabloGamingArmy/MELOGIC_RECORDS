@@ -4,6 +4,14 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
+import {
+  createAccountWithEmail,
+  signInWithEmail,
+  signInWithGoogle,
+  subscribeToAuthState,
+  updateCurrentUserProfile
+} from './firebase/auth'
+import { upsertUserProfile } from './firebase/firestore'
 
 const app = document.querySelector('#app')
 
@@ -43,6 +51,7 @@ app.innerHTML = `
           </div>
 
           <h2 id="auth-card-title" class="auth-card-title">Welcome back to Melogic.</h2>
+          <p class="auth-status-message" data-auth-feedback role="status" aria-live="polite"></p>
 
           <form class="auth-form" data-panel="signin">
             <label>
@@ -53,7 +62,7 @@ app.innerHTML = `
               <span>Password</span>
               <input type="password" name="signin-password" placeholder="••••••••" autocomplete="current-password" required />
             </label>
-            <button type="submit" class="button button-accent auth-submit">Sign In</button>
+            <button type="submit" class="button button-accent auth-submit" data-signin-btn>Sign In</button>
             <a class="auth-link" href="#" aria-label="Forgot password">Forgot password?</a>
           </form>
 
@@ -74,14 +83,14 @@ app.innerHTML = `
               <span>Password</span>
               <input type="password" name="signup-password" placeholder="Create a secure password" autocomplete="new-password" required />
             </label>
-            <button type="submit" class="button button-accent auth-submit">Create Account</button>
+            <button type="submit" class="button button-accent auth-submit" data-signup-btn>Create Account</button>
           </form>
 
           <div class="auth-divider"><span>or continue with</span></div>
 
           <div class="social-auth-actions" aria-label="Social sign in options">
-            <button type="button" class="button button-muted social-auth-btn">Continue with Google</button>
-            <button type="button" class="button button-muted social-auth-btn">Continue with Apple</button>
+            <button type="button" class="button button-muted social-auth-btn" data-google-btn>Continue with Google</button>
+            <button type="button" class="button button-muted social-auth-btn" disabled>Continue with Apple</button>
           </div>
         </article>
 
@@ -113,6 +122,14 @@ if (heroPaths) {
 
 const tabButtons = document.querySelectorAll('.auth-tab')
 const panels = document.querySelectorAll('.auth-form')
+const signinForm = document.querySelector('[data-panel="signin"]')
+const signupForm = document.querySelector('[data-panel="signup"]')
+const googleButton = document.querySelector('[data-google-btn]')
+const signinButton = document.querySelector('[data-signin-btn]')
+const signupButton = document.querySelector('[data-signup-btn]')
+const feedback = document.querySelector('[data-auth-feedback]')
+const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
+let isSubmitting = false
 
 function setAuthTab(activeTab) {
   tabButtons.forEach((button) => {
@@ -124,6 +141,143 @@ function setAuthTab(activeTab) {
   panels.forEach((panel) => {
     panel.classList.toggle('is-hidden', panel.dataset.panel !== activeTab)
   })
+
+  setFeedback('')
+}
+
+function setFeedback(message, type = 'info') {
+  if (!feedback) return
+  feedback.textContent = message
+  feedback.dataset.state = type
+}
+
+function setLoadingState(enabled, buttonTextMap = {}) {
+  isSubmitting = enabled
+  actionButtons.forEach((button) => {
+    if (enabled && !button.dataset.originalText) {
+      button.dataset.originalText = button.textContent
+    }
+    button.disabled = enabled
+  })
+
+  if (enabled) {
+    if (signinButton && buttonTextMap.signin) signinButton.textContent = buttonTextMap.signin
+    if (signupButton && buttonTextMap.signup) signupButton.textContent = buttonTextMap.signup
+    if (googleButton && buttonTextMap.google) googleButton.textContent = buttonTextMap.google
+  } else {
+    actionButtons.forEach((button) => {
+      button.textContent = button.dataset.originalText
+    })
+  }
+}
+
+function friendlyAuthError(errorCode) {
+  const map = {
+    'auth/invalid-email': 'Please enter a valid email address.',
+    'auth/user-not-found': 'No account exists with that email yet.',
+    'auth/wrong-password': 'Incorrect password. Please try again.',
+    'auth/invalid-credential': 'Email or password is incorrect.',
+    'auth/email-already-in-use': 'That email is already in use.',
+    'auth/weak-password': 'Password should be at least 6 characters.',
+    'auth/popup-closed-by-user': 'Google sign-in was cancelled before completion.',
+    'auth/cancelled-popup-request': 'Another sign-in popup is already open.'
+  }
+
+  return map[errorCode] || 'We could not complete that auth request. Please try again.'
+}
+
+async function handleSignInSubmit(event) {
+  event.preventDefault()
+  if (isSubmitting) return
+
+  const email = signinForm.querySelector('[name="signin-email"]').value.trim()
+  const password = signinForm.querySelector('[name="signin-password"]').value
+
+  setFeedback('Signing in...', 'info')
+  setLoadingState(true, { signin: 'Signing In...' })
+
+  try {
+    await signInWithEmail(email, password)
+    setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
+    window.setTimeout(() => {
+      window.location.assign('/profile.html')
+    }, 550)
+  } catch (error) {
+    setFeedback(friendlyAuthError(error?.code), 'error')
+  } finally {
+    setLoadingState(false)
+  }
+}
+
+async function handleSignUpSubmit(event) {
+  event.preventDefault()
+  if (isSubmitting) return
+
+  const displayName = signupForm.querySelector('[name="display-name"]').value.trim()
+  const username = signupForm.querySelector('[name="username"]').value.trim()
+  const email = signupForm.querySelector('[name="signup-email"]').value.trim()
+  const password = signupForm.querySelector('[name="signup-password"]').value
+
+  setFeedback('Creating your account...', 'info')
+  setLoadingState(true, { signup: 'Creating Account...' })
+
+  try {
+    const credential = await createAccountWithEmail(email, password)
+
+    if (displayName) {
+      await updateCurrentUserProfile({ displayName })
+    }
+
+    try {
+      await upsertUserProfile(credential.user, {
+        displayName,
+        username,
+        email,
+        isNewUser: true
+      })
+    } catch {
+      // Non-blocking: account creation should still complete if profile write fails.
+    }
+
+    setFeedback('Account created. Redirecting to your profile...', 'success')
+    window.setTimeout(() => {
+      window.location.assign('/profile.html')
+    }, 550)
+  } catch (error) {
+    setFeedback(friendlyAuthError(error?.code), 'error')
+  } finally {
+    setLoadingState(false)
+  }
+}
+
+async function handleGoogleSignIn() {
+  if (isSubmitting) return
+
+  setFeedback('Opening Google sign-in...', 'info')
+  setLoadingState(true, { google: 'Connecting...' })
+
+  try {
+    const credential = await signInWithGoogle()
+
+    try {
+      await upsertUserProfile(credential.user, {
+        displayName: credential.user.displayName || '',
+        email: credential.user.email || '',
+        isNewUser: false
+      })
+    } catch {
+      // Non-blocking: social auth should remain usable even if profile write fails.
+    }
+
+    setFeedback('Signed in with Google. Redirecting...', 'success')
+    window.setTimeout(() => {
+      window.location.assign('/profile.html')
+    }, 550)
+  } catch (error) {
+    setFeedback(friendlyAuthError(error?.code), 'error')
+  } finally {
+    setLoadingState(false)
+  }
 }
 
 tabButtons.forEach((button) => {
@@ -132,8 +286,14 @@ tabButtons.forEach((button) => {
   })
 })
 
-panels.forEach((form) => {
-  form.addEventListener('submit', (event) => {
-    event.preventDefault()
-  })
+signinForm?.addEventListener('submit', handleSignInSubmit)
+signupForm?.addEventListener('submit', handleSignUpSubmit)
+googleButton?.addEventListener('click', handleGoogleSignIn)
+
+subscribeToAuthState((user) => {
+  if (!user) return
+  setFeedback('You are already signed in. Redirecting to profile...', 'success')
+  window.setTimeout(() => {
+    window.location.assign('/profile.html')
+  }, 400)
 })

@@ -24,9 +24,9 @@ export function navShell(options = {}) {
         </nav>
 
         <div class="nav-actions" aria-label="Account and cart actions">
-          <a class="button button-muted nav-auth" href="/auth.html">Sign In / Sign Up</a>
-          <a class="profile-button" href="/auth.html" aria-label="Account" title="Account">
-            <span class="profile-avatar" aria-hidden="true"></span>
+          <a class="button button-muted nav-auth" data-nav-auth href="/auth.html">Sign In / Sign Up</a>
+          <a class="profile-button" data-nav-profile href="/auth.html" aria-label="Account" title="Account">
+            <span class="profile-avatar" data-profile-avatar aria-hidden="true"></span>
           </a>
           <a class="button button-cart" href="/cart.html" aria-label="Open cart">
             <span class="cart-icon" aria-hidden="true">🛒</span>
