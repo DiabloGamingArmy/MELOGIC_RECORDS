@@ -11,13 +11,49 @@ function normalizeUsername(username) {
     .toLowerCase()
 }
 
+function validateUsername(username) {
+  if (!username) return { valid: true }
+  if (/\s/.test(username)) {
+    return { valid: false, message: 'Username cannot include spaces.' }
+  }
+  if (!/^[a-z0-9_-]+$/.test(username)) {
+    return { valid: false, message: 'Use only lowercase letters, numbers, underscores, or hyphens.' }
+  }
+  return { valid: true }
+}
+
+function sanitizeFirestorePayload(value) {
+  if (value === undefined) return undefined
+  if (typeof File !== 'undefined' && value instanceof File) return undefined
+  if (typeof Blob !== 'undefined' && value instanceof Blob) return undefined
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeFirestorePayload(item))
+      .filter((item) => item !== undefined)
+  }
+
+  if (value && typeof value === 'object') {
+    if (value instanceof Date) return value
+    const clean = {}
+    Object.entries(value).forEach(([key, nestedValue]) => {
+      const sanitized = sanitizeFirestorePayload(nestedValue)
+      if (sanitized !== undefined) clean[key] = sanitized
+    })
+    return clean
+  }
+
+  if (typeof value === 'number' && !Number.isFinite(value)) return undefined
+  return value
+}
+
 function buildPublicProfile(uid, authUser, profileInput = {}) {
-  const username = (profileInput.username || '').trim()
+  const username = normalizeUsername(profileInput.username)
   return {
     uid,
     displayName: profileInput.displayName || authUser?.displayName || '',
     username,
-    usernameLower: normalizeUsername(username),
+    usernameLower: username,
     bio: profileInput.bio || '',
     avatarPath: profileInput.avatarPath || '',
     avatarURL: profileInput.avatarURL || profileInput.photoURL || authUser?.photoURL || '',
@@ -48,7 +84,7 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
     creatorSettings: profileInput.creatorSettings || {},
     // Backward-compat profile fields while migrating to profiles/{uid}
     displayName: profileInput.displayName || authUser?.displayName || '',
-    username: profileInput.username || '',
+    username: normalizeUsername(profileInput.username),
     bio: profileInput.bio || '',
     photoURL: profileInput.photoURL || authUser?.photoURL || null,
     location: profileInput.location || '',
@@ -66,7 +102,7 @@ export async function upsertUserProfile(user, profileInput = {}) {
     payload.createdAt = serverTimestamp()
   }
 
-  await setDoc(userRef, payload, { merge: true })
+  await setDoc(userRef, sanitizeFirestorePayload(payload), { merge: true })
   return true
 }
 
@@ -130,15 +166,25 @@ export async function saveProfileChanges(user, payload = {}) {
   const userRef = doc(db, 'users', uid)
 
   await runTransaction(db, async (transaction) => {
-    const [profileSnap, userSnap] = await Promise.all([transaction.get(profileRef), transaction.get(userRef)])
+    const profileSnap = await transaction.get(profileRef)
+    const userSnap = await transaction.get(userRef)
     const existingProfile = profileSnap.exists() ? profileSnap.data() : {}
     const existingUser = userSnap.exists() ? userSnap.data() : {}
 
     const previousUsernameLower =
       existingProfile.usernameLower || normalizeUsername(existingProfile.username || existingUser.username)
     const nextUsernameLower = normalizeUsername(payload.username)
+    const usernameValidation = validateUsername(nextUsernameLower)
 
-    if (nextUsernameLower) {
+    if (!usernameValidation.valid) {
+      const usernameError = new Error(usernameValidation.message)
+      usernameError.code = 'profile/invalid-username'
+      throw usernameError
+    }
+
+    const usernameChanged = previousUsernameLower !== nextUsernameLower
+
+    if (nextUsernameLower && usernameChanged) {
       const claimRef = doc(db, 'usernameClaims', nextUsernameLower)
       const claimSnap = await transaction.get(claimRef)
       if (claimSnap.exists() && claimSnap.data()?.uid !== uid) {
@@ -149,26 +195,31 @@ export async function saveProfileChanges(user, payload = {}) {
 
       transaction.set(
         claimRef,
-        {
+        sanitizeFirestorePayload({
           uid,
-          username: payload.username,
+          username: nextUsernameLower,
           usernameLower: nextUsernameLower,
           createdAt: claimSnap.exists() ? claimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
-        },
+        }),
         { merge: true }
       )
+    }
 
-      if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
-        const previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
-        const previousClaimSnap = await transaction.get(previousClaimRef)
-        if (previousClaimSnap.exists() && previousClaimSnap.data()?.uid === uid) {
-          transaction.delete(previousClaimRef)
-        }
+    if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
+      const previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
+      const previousClaimSnap = await transaction.get(previousClaimRef)
+      if (previousClaimSnap.exists() && previousClaimSnap.data()?.uid === uid) {
+        transaction.delete(previousClaimRef)
       }
     }
 
-    const publicPayload = buildPublicProfile(uid, user, payload)
-    const privatePayload = buildPrivateProfile(uid, user, payload)
+    const normalizedPayload = {
+      ...payload,
+      username: nextUsernameLower
+    }
+
+    const publicPayload = sanitizeFirestorePayload(buildPublicProfile(uid, user, normalizedPayload))
+    const privatePayload = sanitizeFirestorePayload(buildPrivateProfile(uid, user, normalizedPayload))
 
     if (!profileSnap.exists()) {
       publicPayload.createdAt = serverTimestamp()
