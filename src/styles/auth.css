@@ -99,9 +99,37 @@
   font: inherit;
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  padding-right: 4.25rem;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 0.42rem;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 1px solid rgba(128, 150, 198, 0.36);
+  border-radius: 999px;
+  background: rgba(18, 28, 47, 0.9);
+  color: #d5e4ff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.22rem 0.56rem;
+  cursor: pointer;
+}
+
+.password-toggle:hover {
+  border-color: rgba(133, 198, 241, 0.72);
+}
+
 .auth-form input:focus-visible,
 .auth-tab:focus-visible,
-.social-auth-btn:focus-visible {
+.social-auth-btn:focus-visible,
+.password-toggle:focus-visible {
   outline: 2px solid rgba(125, 203, 183, 0.8);
   outline-offset: 2px;
 }
