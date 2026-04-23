@@ -14,9 +14,13 @@ export async function upsertUserProfile(user, profileInput = {}) {
     displayName: profileInput.displayName || user.displayName || '',
     username: profileInput.username || '',
     email: user.email || profileInput.email || '',
-    photoURL: user.photoURL || null,
+    photoURL: profileInput.photoURL || user.photoURL || null,
     bio: profileInput.bio || '',
-    role: 'user',
+    role: profileInput.role || 'user',
+    location: profileInput.location || '',
+    website: profileInput.website || '',
+    socials: profileInput.socials || {},
+    settings: profileInput.settings || {},
     updatedAt: serverTimestamp()
   }
 
