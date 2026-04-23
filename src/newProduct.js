@@ -74,7 +74,7 @@ function createEmptyProductDraft(user = null) {
     artistUsername: '',
     artistProfilePath: '',
     status: 'draft',
-    visibility: 'public',
+    visibility: 'private',
     price: '0',
     currency: 'USD',
     isFree: true,
@@ -478,8 +478,11 @@ function renderEditor() {
       )
       renderEditor()
     } catch (error) {
-      console.warn('[new-product] Save failed.', error?.message || error)
-      setStatus('Could not save product right now. Your local draft is still preserved.', 'error')
+      console.warn('[new-product] Save/upload failed.', error?.code || error?.message || error)
+      const friendlyMessage = error?.code === 'storage/unauthorized'
+        ? 'Media upload was blocked. We could not verify draft ownership for storage yet. Please save draft again and retry.'
+        : 'Could not save product right now. Your local draft is still preserved.'
+      setStatus(friendlyMessage, 'error')
       renderEditor()
     }
   }
