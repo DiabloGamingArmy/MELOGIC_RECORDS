@@ -63,7 +63,10 @@ app.innerHTML = `
             </label>
             <label>
               <span>Password</span>
-              <input type="password" name="signin-password" placeholder="••••••••" autocomplete="current-password" required />
+              <div class="password-field">
+                <input type="password" name="signin-password" placeholder="••••••••" autocomplete="current-password" required />
+                <button type="button" class="password-toggle" data-password-toggle data-target="signin-password" aria-label="Show password" aria-pressed="false">Show</button>
+              </div>
             </label>
             <button type="submit" class="button button-accent auth-submit" data-signin-btn>Sign In</button>
             <a class="auth-link" href="#" aria-label="Forgot password">Forgot password?</a>
@@ -84,7 +87,10 @@ app.innerHTML = `
             </label>
             <label>
               <span>Password</span>
-              <input type="password" name="signup-password" placeholder="Create a secure password" autocomplete="new-password" required />
+              <div class="password-field">
+                <input type="password" name="signup-password" placeholder="Create a secure password" autocomplete="new-password" required />
+                <button type="button" class="password-toggle" data-password-toggle data-target="signup-password" aria-label="Show password" aria-pressed="false">Show</button>
+              </div>
             </label>
             <button type="submit" class="button button-accent auth-submit" data-signup-btn>Create Account</button>
           </form>
@@ -134,6 +140,27 @@ const feedback = document.querySelector('[data-auth-feedback]')
 const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
 let isSubmitting = false
 let hasWarnedProfileWrite = false
+
+function initPasswordToggles() {
+  const toggles = document.querySelectorAll('[data-password-toggle]')
+  if (!toggles.length) return
+
+  toggles.forEach((toggle) => {
+    const targetName = toggle.dataset.target
+    if (!targetName) return
+
+    const input = document.querySelector(`input[name="${targetName}"]`)
+    if (!input) return
+
+    toggle.addEventListener('click', () => {
+      const showPassword = input.type === 'password'
+      input.type = showPassword ? 'text' : 'password'
+      toggle.textContent = showPassword ? 'Hide' : 'Show'
+      toggle.setAttribute('aria-pressed', String(showPassword))
+      toggle.setAttribute('aria-label', `${showPassword ? 'Hide' : 'Show'} password`)
+    })
+  })
+}
 
 function warnProfileWriteFailure(error, context) {
   if (hasWarnedProfileWrite) return
@@ -327,6 +354,7 @@ tabButtons.forEach((button) => {
 signinForm?.addEventListener('submit', handleSignInSubmit)
 signupForm?.addEventListener('submit', handleSignUpSubmit)
 googleButton?.addEventListener('click', handleGoogleSignIn)
+initPasswordToggles()
 
 let hasHandledInitialUser = false
 waitForInitialAuthState().then((user) => {
