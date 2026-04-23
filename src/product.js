@@ -2,9 +2,10 @@ import './styles/base.css'
 import { mountStandardPage } from './components/standardPage'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 mountStandardPage({
-  currentPage: 'product' === 'community' ? 'community' : 'product',
+  currentPage: 'product',
   pageId: 'product',
   eyebrow: 'Melogic Product',
   title: 'Product',
@@ -13,8 +14,11 @@ mountStandardPage({
 
 initShellChrome()
 
-attachHeroVideo(document.querySelector('#product-hero-video'), {
-  webmPath: 'assets/site/backgrounds/product-hero.webm',
-  mp4Path: 'assets/site/backgrounds/product-hero.mp4',
-  warningKey: 'product'
-})
+const heroPaths = getPageHeroVideoPaths('product-detail')
+if (heroPaths) {
+  attachHeroVideo(document.querySelector('#product-hero-video'), {
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
+    warningKey: 'product'
+  })
+}

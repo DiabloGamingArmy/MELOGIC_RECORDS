@@ -2,9 +2,10 @@ import './styles/base.css'
 import { mountStandardPage } from './components/standardPage'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 mountStandardPage({
-  currentPage: 'forms' === 'community' ? 'community' : 'forms',
+  currentPage: 'forms',
   pageId: 'forms',
   eyebrow: 'Melogic Forms',
   title: 'Forms',
@@ -13,8 +14,11 @@ mountStandardPage({
 
 initShellChrome()
 
-attachHeroVideo(document.querySelector('#forms-hero-video'), {
-  webmPath: 'assets/site/backgrounds/forms-hero.webm',
-  mp4Path: 'assets/site/backgrounds/forms-hero.mp4',
-  warningKey: 'forms'
-})
+const heroPaths = getPageHeroVideoPaths('forms')
+if (heroPaths) {
+  attachHeroVideo(document.querySelector('#forms-hero-video'), {
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
+    warningKey: 'forms'
+  })
+}

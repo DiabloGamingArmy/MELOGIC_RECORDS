@@ -3,6 +3,7 @@ import './styles/products.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 const app = document.querySelector('#app')
 
@@ -123,9 +124,11 @@ app.innerHTML = `
 
 function initProductsHeroVideo() {
   const heroVideo = document.querySelector('#products-hero-video')
+  const heroPaths = getPageHeroVideoPaths('products')
+  if (!heroPaths) return false
   return attachHeroVideo(heroVideo, {
-    webmPath: 'assets/site/backgrounds/products-hero.webm',
-    mp4Path: 'assets/site/backgrounds/products-hero.mp4',
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
     warningKey: 'products'
   })
 }

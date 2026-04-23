@@ -2,9 +2,10 @@ import './styles/base.css'
 import { mountStandardPage } from './components/standardPage'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 mountStandardPage({
-  currentPage: 'support' === 'community' ? 'community' : 'support',
+  currentPage: 'support',
   pageId: 'support',
   eyebrow: 'Melogic Support',
   title: 'Support',
@@ -13,8 +14,11 @@ mountStandardPage({
 
 initShellChrome()
 
-attachHeroVideo(document.querySelector('#support-hero-video'), {
-  webmPath: 'assets/site/backgrounds/support-hero.webm',
-  mp4Path: 'assets/site/backgrounds/support-hero.mp4',
-  warningKey: 'support'
-})
+const heroPaths = getPageHeroVideoPaths('support')
+if (heroPaths) {
+  attachHeroVideo(document.querySelector('#support-hero-video'), {
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
+    warningKey: 'support'
+  })
+}
