@@ -1,7 +1,8 @@
 import './styles/base.css'
 import './styles/products.css'
 import { navShell } from './components/navShell'
-import { getStorageAssetUrl } from './firebase/storageAssets'
+import { initShellChrome } from './components/assetChrome'
+import { attachHeroVideo } from './components/heroVideo'
 
 const app = document.querySelector('#app')
 
@@ -46,6 +47,18 @@ app.innerHTML = `
 
   <main>
     <section class="products-hero section" id="products-top">
+      <div class="hero-media" aria-hidden="true">
+        <video
+          id="products-hero-video"
+          class="hero-bg-video"
+          muted
+          loop
+          autoplay
+          playsinline
+          preload="metadata"
+        ></video>
+        <div class="hero-media-overlay"></div>
+      </div>
       <div class="section-inner">
         <p class="eyebrow">Marketplace</p>
         <h1>Products</h1>
@@ -108,41 +121,14 @@ app.innerHTML = `
   </main>
 `
 
-async function initNavBrandLogo() {
-  const brandLogo = document.querySelector('[data-brand-logo]')
-  if (!brandLogo) return
-
-  const logoUrl = await getStorageAssetUrl('assets/brand/melogic-logo-mark-glow.png', { warnOnFail: false })
-  if (!logoUrl) {
-    brandLogo.remove()
-    return
-  }
-
-  brandLogo.addEventListener(
-    'load',
-    () => {
-      brandLogo.dataset.loaded = 'true'
-    },
-    { once: true }
-  )
-
-  brandLogo.addEventListener(
-    'error',
-    () => {
-      brandLogo.remove()
-    },
-    { once: true }
-  )
-
-  brandLogo.src = logoUrl
+function initProductsHeroVideo() {
+  const heroVideo = document.querySelector('#products-hero-video')
+  return attachHeroVideo(heroVideo, {
+    webmPath: 'assets/site/backgrounds/products-hero.webm',
+    mp4Path: 'assets/site/backgrounds/products-hero.mp4',
+    warningKey: 'products'
+  })
 }
 
-function syncNavOffset() {
-  const nav = document.querySelector('.nav-shell')
-  if (!nav) return
-  document.documentElement.style.setProperty('--nav-offset', `${nav.offsetHeight}px`)
-}
-
-syncNavOffset()
-window.addEventListener('resize', syncNavOffset, { passive: true })
-initNavBrandLogo()
+initShellChrome()
+initProductsHeroVideo()

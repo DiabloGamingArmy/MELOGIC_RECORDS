@@ -1,4 +1,6 @@
 .products-hero {
+  position: relative;
+  overflow: clip;
   padding-top: clamp(3.2rem, 8vw, 5.4rem);
   padding-bottom: clamp(1.2rem, 3vw, 2rem);
   border-bottom: 1px solid rgba(151, 165, 197, 0.11);
