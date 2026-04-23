@@ -299,6 +299,11 @@ main {
   box-shadow: 0 0 0 1px rgba(88, 150, 234, 0.2), 0 0 16px rgba(84, 157, 245, 0.2);
 }
 
+.profile-button.is-active {
+  border-color: rgba(121, 164, 245, 0.62);
+  box-shadow: 0 0 0 1px rgba(88, 150, 234, 0.22), 0 0 18px rgba(84, 157, 245, 0.24);
+}
+
 .cart-badge {
   min-width: 1.15rem;
   height: 1.15rem;

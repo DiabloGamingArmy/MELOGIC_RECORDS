@@ -16,7 +16,7 @@ app.innerHTML = `
         <div class="hero-copy">
           <p class="eyebrow">Melogic Account</p>
           <h1>Your Profile</h1>
-          <p>Manage your account, review your creator identity, and track your activity across the Melogic platform.</p>
+          <p>Manage your account, creator identity, and platform activity from a single profile workspace.</p>
         </div>
       </div>
     </section>
@@ -45,6 +45,13 @@ function fallbackInitials(nameOrEmail) {
   return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase()
 }
 
+function normalizeRole(value) {
+  const role = String(value || 'user').toLowerCase()
+  if (role === 'artist') return 'Artist'
+  if (role === 'creator') return 'Creator'
+  return 'User'
+}
+
 function renderSignedOutState() {
   profileRoot.innerHTML = `
     <article class="profile-card profile-empty">
@@ -55,47 +62,116 @@ function renderSignedOutState() {
   `
 }
 
+function getMetrics(profile) {
+  return [
+    { label: 'Products', value: profile.productsCount ?? 0 },
+    { label: 'Saved Items', value: profile.savedCount ?? 12 },
+    { label: 'Comments', value: profile.commentsCount ?? 4 },
+    { label: 'Likes', value: profile.likesCount ?? 18 },
+    { label: 'Downloads', value: profile.downloadsCount ?? 3 }
+  ]
+}
+
 function renderSignedInState(user, storedProfile = null) {
   const profile = storedProfile || {}
   const displayName = profile.displayName || user.displayName || 'Melogic User'
-  const username = profile.username || 'Not set'
+  const username = profile.username || 'not-set'
   const email = profile.email || user.email || 'No email available'
-  const bio = profile.bio || 'No bio yet. Update your profile details soon.'
+  const bio = profile.bio || 'No bio yet. Add context about your sound, tools, or creator direction.'
   const photoURL = profile.photoURL || user.photoURL || ''
+  const role = normalizeRole(profile.role)
+  const metrics = getMetrics(profile)
+  const createdAt = profile.createdAt?.toDate ? profile.createdAt.toDate().toLocaleDateString() : 'Recently'
 
   profileRoot.innerHTML = `
     <div class="profile-grid">
-      <article class="profile-card">
-        <div class="profile-header">
+      <article class="profile-card profile-header-card">
+        <div class="profile-header-main">
           ${photoURL ? `<img class="profile-photo" src="${photoURL}" alt="${displayName} profile photo" />` : `<div class="profile-photo profile-photo-fallback">${fallbackInitials(displayName || email)}</div>`}
-          <div>
+          <div class="profile-identity">
+            <p class="profile-role">${role}</p>
             <h2>${displayName}</h2>
             <p class="profile-handle">@${username}</p>
+            <p class="profile-bio-preview">${bio}</p>
           </div>
         </div>
 
-        <dl class="profile-meta">
-          <div><dt>Email</dt><dd>${email}</dd></div>
-          <div><dt>Bio</dt><dd>${bio}</dd></div>
-          <div><dt>Account ID</dt><dd>${user.uid}</dd></div>
-          <div><dt>Status</dt><dd>Authenticated</dd></div>
-        </dl>
-
         <div class="profile-actions">
-          <button type="button" class="button button-muted" data-edit-profile>Edit Profile (Soon)</button>
+          <button type="button" class="button button-muted" data-edit-profile>Edit Profile</button>
           <button type="button" class="button button-accent" data-signout-profile>Sign Out</button>
         </div>
       </article>
 
       <aside class="profile-card profile-side">
-        <p class="eyebrow">My Activity</p>
-        <h3>Quick account snapshots</h3>
-        <ul>
-          <li>My Products (coming soon)</li>
-          <li>My Downloads (coming soon)</li>
-          <li>Community Responses (coming soon)</li>
-        </ul>
+        <p class="eyebrow">Account Snapshot</p>
+        <h3>Identity + status</h3>
+        <dl class="profile-meta compact">
+          <div><dt>Email</dt><dd>${email}</dd></div>
+          <div><dt>Account ID</dt><dd>${user.uid}</dd></div>
+          <div><dt>Role</dt><dd>${role}</dd></div>
+          <div><dt>Joined</dt><dd>${createdAt}</dd></div>
+        </dl>
       </aside>
+    </div>
+
+    <section class="profile-stats" aria-label="Profile metrics">
+      ${metrics
+        .map(
+          (metric) => `
+            <article class="profile-stat-card">
+              <p>${metric.label}</p>
+              <strong>${metric.value}</strong>
+            </article>
+          `
+        )
+        .join('')}
+    </section>
+
+    <section class="profile-card profile-tabs-shell">
+      <div class="profile-tabs" role="tablist" aria-label="Profile sections">
+        <button type="button" class="profile-tab is-active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+        <button type="button" class="profile-tab" data-tab="activity" role="tab" aria-selected="false">Activity</button>
+        <button type="button" class="profile-tab" data-tab="library" role="tab" aria-selected="false">Library</button>
+        <button type="button" class="profile-tab" data-tab="creator" role="tab" aria-selected="false">Creator</button>
+      </div>
+
+      <div class="profile-tab-content is-active" data-panel="overview">
+        <h3>Account overview</h3>
+        <p class="muted">${bio}</p>
+        <ul>
+          <li>Account email: ${email}</li>
+          <li>Profile role: ${role}</li>
+          <li>Creator tools access: ${role === 'User' ? 'Coming soon' : 'Enabled soon'}</li>
+        </ul>
+      </div>
+
+      <div class="profile-tab-content" data-panel="activity">
+        <h3>Recent activity</h3>
+        <ul>
+          <li>Liked “Aether Pulse Vol. 1”</li>
+          <li>Saved “Fracture Grid” to library</li>
+          <li>Commented on a community release thread</li>
+        </ul>
+      </div>
+
+      <div class="profile-tab-content" data-panel="library">
+        <h3>Library placeholders</h3>
+        <div class="profile-mini-grid">
+          <article><h4>Purchases</h4><p>Catalog receipts and downloads appear here.</p></article>
+          <article><h4>Saved for later</h4><p>Bookmark packs and tools for later sessions.</p></article>
+          <article><h4>Download history</h4><p>Track file versions and re-download links.</p></article>
+        </div>
+      </div>
+
+      <div class="profile-tab-content" data-panel="creator">
+        <h3>Creator workspace</h3>
+        <p class="muted">Uploads, creator analytics, release submissions, and publishing tools will appear here.</p>
+        <p class="creator-lock ${role === 'User' ? 'is-locked' : ''}">${role === 'User' ? 'Creator mode is locked until your creator profile is enabled.' : 'Creator mode ready for expansion.'}</p>
+      </div>
+    </section>
+
+    <div class="profile-edit-note" data-edit-note hidden>
+      Edit profile tools are coming soon. Display name, username, bio, and avatar editing will be added here.
     </div>
   `
 
@@ -110,6 +186,34 @@ function renderSignedInState(user, storedProfile = null) {
       signOutButton.disabled = false
       signOutButton.textContent = 'Sign Out'
     }
+  })
+
+  const editButton = profileRoot.querySelector('[data-edit-profile]')
+  const editNote = profileRoot.querySelector('[data-edit-note]')
+  editButton?.addEventListener('click', () => {
+    const currentlyHidden = editNote.hasAttribute('hidden')
+    if (currentlyHidden) {
+      editNote.removeAttribute('hidden')
+      return
+    }
+    editNote.setAttribute('hidden', '')
+  })
+
+  const tabButtons = profileRoot.querySelectorAll('.profile-tab')
+  const tabPanels = profileRoot.querySelectorAll('.profile-tab-content')
+
+  tabButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const tabKey = button.dataset.tab
+      tabButtons.forEach((tab) => {
+        const isActive = tab === button
+        tab.classList.toggle('is-active', isActive)
+        tab.setAttribute('aria-selected', String(isActive))
+      })
+      tabPanels.forEach((panel) => {
+        panel.classList.toggle('is-active', panel.dataset.panel === tabKey)
+      })
+    })
   })
 }
 
