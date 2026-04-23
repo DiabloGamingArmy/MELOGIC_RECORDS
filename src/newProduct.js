@@ -57,6 +57,46 @@ let editorState = {
   status: {
     message: '',
     state: 'info'
+  },
+  draft: null
+}
+
+function createEmptyProductDraft(user = null) {
+  return {
+    id: '',
+    title: '',
+    slug: '',
+    shortDescription: '',
+    description: '',
+    productType: 'Sample Pack',
+    artistId: user?.uid || '',
+    artistName: user?.displayName || '',
+    artistUsername: '',
+    artistProfilePath: '',
+    status: 'draft',
+    visibility: 'public',
+    price: '0',
+    currency: 'USD',
+    isFree: true,
+    featured: false,
+    saleEnabled: false,
+    licensePath: '',
+    categories: '',
+    genres: '',
+    tags: '',
+    formatNotes: '',
+    compatibilityNotes: '',
+    includedFiles: '',
+    contributorNames: '',
+    contributorIds: '',
+    downloadPath: '',
+    previewAudioPaths: '',
+    previewVideoPaths: '',
+    releasedAt: '',
+    storefrontVisible: true,
+    galleryPaths: '',
+    coverPath: '',
+    thumbnailPath: ''
   }
 }
 
@@ -72,6 +112,97 @@ function slugify(value) {
     .replace(/[^a-z0-9\s-]/g, '')
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-')
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+}
+
+function getDraftStorageKey(user) {
+  return `melogic:new-product-draft:${user?.uid || 'anonymous'}:v1`
+}
+
+function saveDraftState() {
+  if (!editorState.user || !editorState.draft) return
+  try {
+    const payload = {
+      draft: editorState.draft,
+      slugLocked: editorState.slugLocked,
+      mediaPreview: editorState.mediaPreview,
+      updatedAt: Date.now()
+    }
+    sessionStorage.setItem(getDraftStorageKey(editorState.user), JSON.stringify(payload))
+  } catch {
+    // ignore storage issues
+  }
+}
+
+function loadDraftState(user) {
+  const empty = createEmptyProductDraft(user)
+  if (!user) return empty
+
+  try {
+    const raw = sessionStorage.getItem(getDraftStorageKey(user))
+    if (!raw) return empty
+    const parsed = JSON.parse(raw)
+    editorState.slugLocked = Boolean(parsed?.slugLocked)
+    editorState.mediaPreview = {
+      ...editorState.mediaPreview,
+      ...(parsed?.mediaPreview || {})
+    }
+    return {
+      ...empty,
+      ...(parsed?.draft || {}),
+      artistId: parsed?.draft?.artistId || user.uid || ''
+    }
+  } catch {
+    return empty
+  }
+}
+
+function updateDraftField(path, value) {
+  if (!editorState.draft) return
+  editorState.draft[path] = value
+  saveDraftState()
+}
+
+function hydrateSectionFields(sectionName) {
+  if (!editorState.draft) return
+  const panel = editorRoot.querySelector(`.editor-panel.${sectionName === readSectionHash() ? 'is-active' : ''}`)
+  const target = panel || editorRoot
+  const fields = target.querySelectorAll('[name]')
+
+  fields.forEach((field) => {
+    const key = field.name
+    if (!(key in editorState.draft)) return
+
+    if (field.type === 'checkbox') {
+      field.checked = Boolean(editorState.draft[key])
+      return
+    }
+
+    const nextValue = editorState.draft[key]
+    field.value = nextValue == null ? '' : String(nextValue)
+  })
+}
+
+function serializeDraftForFirestore(draft) {
+  const safeDraft = { ...(draft || {}) }
+  const numericPrice = Number(safeDraft.price || 0)
+
+  return {
+    ...safeDraft,
+    priceCents: Math.max(0, Math.round((Number.isFinite(numericPrice) ? numericPrice : 0) * 100)),
+    isFree: Boolean(safeDraft.isFree),
+    featured: Boolean(safeDraft.featured),
+    saleEnabled: Boolean(safeDraft.saleEnabled),
+    storefrontVisible: Boolean(safeDraft.storefrontVisible)
+  }
 }
 
 function setStatus(message, state = 'info') {
@@ -97,13 +228,13 @@ function previewCardMarkup(formData) {
           : '<div class="preview-cover-fallback">No media</div>'}
       </div>
       <div class="preview-content">
-        <p class="preview-type">${formData.productType || 'Sample Pack'}</p>
-        <h3>${formData.title || 'Untitled product'}</h3>
-        <p class="preview-artist">by ${formData.artistName || editorState.user?.displayName || 'Artist'}</p>
-        <p class="preview-short">${formData.shortDescription || 'Short description preview appears here.'}</p>
-        <p class="preview-tags">${formData.tags || '#tag1, #tag2'}</p>
+        <p class="preview-type">${escapeHtml(formData.productType || 'Sample Pack')}</p>
+        <h3>${escapeHtml(formData.title || 'Untitled product')}</h3>
+        <p class="preview-artist">by ${escapeHtml(formData.artistName || editorState.user?.displayName || 'Artist')}</p>
+        <p class="preview-short">${escapeHtml(formData.shortDescription || 'Short description preview appears here.')}</p>
+        <p class="preview-tags">${escapeHtml(formData.tags || '#tag1, #tag2')}</p>
         <div class="preview-meta">
-          <span>${formData.isFree ? 'Free' : `${formData.currency || 'USD'} ${(Number(formData.price || 0)).toFixed(2)}`}</span>
+          <span>${formData.isFree ? 'Free' : `${escapeHtml(formData.currency || 'USD')} ${(Number(formData.price || 0)).toFixed(2)}`}</span>
           <span>👍 0</span><span>💾 0</span><span>💬 0</span>
         </div>
       </div>
@@ -114,6 +245,7 @@ function previewCardMarkup(formData) {
 function renderEditor() {
   const section = readSectionHash()
   const statusClass = editorState.status.message ? `is-visible is-${editorState.status.state}` : ''
+  const draft = editorState.draft || createEmptyProductDraft(editorState.user)
 
   editorRoot.innerHTML = `
     <div class="product-layout">
@@ -132,26 +264,26 @@ function renderEditor() {
             <h2>Basics</h2>
             <p class="panel-copy">Core listing identity and publication status.</p>
             <div class="field-grid two-col">
-              <label><span>Product Title</span><input name="title" required /></label>
-              <label><span>Slug</span><input name="slug" placeholder="auto-generated-from-title" /></label>
+              <label><span>Product Title</span><input name="title" required value="${escapeHtml(draft.title)}" /></label>
+              <label><span>Slug</span><input name="slug" placeholder="auto-generated-from-title" value="${escapeHtml(draft.slug)}" /></label>
             </div>
             <div class="field-grid two-col">
               <label><span>Product Type</span>
                 <select name="productType">
-                  <option>VST</option><option>Sample Pack</option><option>Preset Bank</option><option>Wavetables</option><option>Drum Kit</option><option>Vocal Pack</option>
+                  <option ${draft.productType === 'VST' ? 'selected' : ''}>VST</option><option ${draft.productType === 'Sample Pack' ? 'selected' : ''}>Sample Pack</option><option ${draft.productType === 'Preset Bank' ? 'selected' : ''}>Preset Bank</option><option ${draft.productType === 'Wavetables' ? 'selected' : ''}>Wavetables</option><option ${draft.productType === 'Drum Kit' ? 'selected' : ''}>Drum Kit</option><option ${draft.productType === 'Vocal Pack' ? 'selected' : ''}>Vocal Pack</option>
                 </select>
               </label>
-              <label><span>Artist / Primary Creator</span><input name="artistName" value="${editorState.user?.displayName || ''}" /></label>
+              <label><span>Artist / Primary Creator</span><input name="artistName" value="${escapeHtml(draft.artistName)}" /></label>
             </div>
-            <label><span>Short Description</span><textarea name="shortDescription" rows="2"></textarea></label>
-            <label><span>Full Description</span><textarea name="description" rows="5"></textarea></label>
+            <label><span>Short Description</span><textarea name="shortDescription" rows="2">${escapeHtml(draft.shortDescription)}</textarea></label>
+            <label><span>Full Description</span><textarea name="description" rows="5">${escapeHtml(draft.description)}</textarea></label>
             <div class="field-grid two-col">
-              <label><span>Artist Username</span><input name="artistUsername" placeholder="artist-handle" /></label>
-              <label><span>Artist Profile Path</span><input name="artistProfilePath" placeholder="profiles/uid" /></label>
+              <label><span>Artist Username</span><input name="artistUsername" placeholder="artist-handle" value="${escapeHtml(draft.artistUsername)}" /></label>
+              <label><span>Artist Profile Path</span><input name="artistProfilePath" placeholder="profiles/uid" value="${escapeHtml(draft.artistProfilePath)}" /></label>
             </div>
             <div class="field-grid two-col">
-              <label><span>Status</span><select name="status"><option value="draft">Draft</option><option value="published">Published</option><option value="archived">Archived</option></select></label>
-              <label><span>Visibility</span><select name="visibility"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
+              <label><span>Status</span><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="published" ${draft.status === 'published' ? 'selected' : ''}>Published</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></label>
+              <label><span>Visibility</span><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
             </div>
           </article>
 
@@ -187,44 +319,44 @@ function renderEditor() {
             <h2>Pricing</h2>
             <p class="panel-copy">Set sale settings and currency metadata.</p>
             <div class="field-grid two-col">
-              <label><span>Price</span><input type="number" step="0.01" min="0" name="price" value="0" /></label>
-              <label><span>Currency</span><select name="currency"><option>USD</option><option>EUR</option><option>GBP</option></select></label>
+              <label><span>Price</span><input type="number" step="0.01" min="0" name="price" value="${escapeHtml(draft.price)}" /></label>
+              <label><span>Currency</span><select name="currency"><option ${draft.currency === 'USD' ? 'selected' : ''}>USD</option><option ${draft.currency === 'EUR' ? 'selected' : ''}>EUR</option><option ${draft.currency === 'GBP' ? 'selected' : ''}>GBP</option></select></label>
             </div>
             <div class="toggle-grid">
-              <label><input type="checkbox" name="isFree" checked /> Free product</label>
-              <label><input type="checkbox" name="featured" /> Featured listing</label>
-              <label><input type="checkbox" name="saleEnabled" /> Sale enabled (placeholder)</label>
+              <label><input type="checkbox" name="isFree" ${draft.isFree ? 'checked' : ''} /> Free product</label>
+              <label><input type="checkbox" name="featured" ${draft.featured ? 'checked' : ''} /> Featured listing</label>
+              <label><input type="checkbox" name="saleEnabled" ${draft.saleEnabled ? 'checked' : ''} /> Sale enabled (placeholder)</label>
             </div>
-            <label><span>License path / notes</span><input name="licensePath" placeholder="products/{id}/licenses/license.pdf" /></label>
+            <label><span>License path / notes</span><input name="licensePath" placeholder="products/{id}/licenses/license.pdf" value="${escapeHtml(draft.licensePath)}" /></label>
           </article>
 
           <article class="editor-panel ${section === 'details' ? 'is-active' : ''}">
             <h2>Details</h2>
             <p class="panel-copy">Catalog metadata used for filtering and display.</p>
-            <label><span>Categories (comma separated)</span><input name="categories" placeholder="Samples, Bass, Cinematic" /></label>
-            <label><span>Genres (comma separated)</span><input name="genres" placeholder="Dubstep, Melodic Bass" /></label>
-            <label><span>Tags (comma separated)</span><input name="tags" placeholder="Heavy, Hybrid, Dark" /></label>
-            <label><span>Version / format notes</span><textarea name="formatNotes" rows="2"></textarea></label>
-            <label><span>Compatibility notes</span><textarea name="compatibilityNotes" rows="2"></textarea></label>
-            <label><span>Included files</span><textarea name="includedFiles" rows="2"></textarea></label>
+            <label><span>Categories (comma separated)</span><input name="categories" placeholder="Samples, Bass, Cinematic" value="${escapeHtml(draft.categories)}" /></label>
+            <label><span>Genres (comma separated)</span><input name="genres" placeholder="Dubstep, Melodic Bass" value="${escapeHtml(draft.genres)}" /></label>
+            <label><span>Tags (comma separated)</span><input name="tags" placeholder="Heavy, Hybrid, Dark" value="${escapeHtml(draft.tags)}" /></label>
+            <label><span>Version / format notes</span><textarea name="formatNotes" rows="2">${escapeHtml(draft.formatNotes)}</textarea></label>
+            <label><span>Compatibility notes</span><textarea name="compatibilityNotes" rows="2">${escapeHtml(draft.compatibilityNotes)}</textarea></label>
+            <label><span>Included files</span><textarea name="includedFiles" rows="2">${escapeHtml(draft.includedFiles)}</textarea></label>
           </article>
 
           <article class="editor-panel ${section === 'contributors' ? 'is-active' : ''}">
             <h2>Contributors</h2>
             <p class="panel-copy">Add collaborator display names and optional profile IDs.</p>
-            <label><span>Contributor names (comma separated)</span><input name="contributorNames" placeholder="Artist A, Artist B" /></label>
-            <label><span>Contributor profile IDs (comma separated)</span><input name="contributorIds" placeholder="uid1, uid2" /></label>
+            <label><span>Contributor names (comma separated)</span><input name="contributorNames" placeholder="Artist A, Artist B" value="${escapeHtml(draft.contributorNames)}" /></label>
+            <label><span>Contributor profile IDs (comma separated)</span><input name="contributorIds" placeholder="uid1, uid2" value="${escapeHtml(draft.contributorIds)}" /></label>
           </article>
 
           <article class="editor-panel ${section === 'distribution' ? 'is-active' : ''}">
             <h2>Distribution</h2>
             <p class="panel-copy">Control release and storefront visibility settings.</p>
-            <label><span>Download path</span><input name="downloadPath" placeholder="products/{id}/downloads/file.zip" /></label>
-            <label><span>Audio preview paths (comma separated)</span><input name="previewAudioPaths" placeholder="products/{id}/audio-previews/demo.mp3" /></label>
-            <label><span>Video preview paths (comma separated)</span><input name="previewVideoPaths" placeholder="products/{id}/video-previews/demo.mp4" /></label>
-            <label><span>Release date</span><input type="date" name="releasedAt" /></label>
+            <label><span>Download path</span><input name="downloadPath" placeholder="products/{id}/downloads/file.zip" value="${escapeHtml(draft.downloadPath)}" /></label>
+            <label><span>Audio preview paths (comma separated)</span><input name="previewAudioPaths" placeholder="products/{id}/audio-previews/demo.mp3" value="${escapeHtml(draft.previewAudioPaths)}" /></label>
+            <label><span>Video preview paths (comma separated)</span><input name="previewVideoPaths" placeholder="products/{id}/video-previews/demo.mp4" value="${escapeHtml(draft.previewVideoPaths)}" /></label>
+            <label><span>Release date</span><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></label>
             <div class="toggle-grid">
-              <label><input type="checkbox" name="storefrontVisible" checked /> Storefront visibility enabled</label>
+              <label><input type="checkbox" name="storefrontVisible" ${draft.storefrontVisible ? 'checked' : ''} /> Storefront visibility enabled</label>
             </div>
           </article>
 
@@ -232,7 +364,7 @@ function renderEditor() {
             <h2>Preview</h2>
             <p class="panel-copy">Live listing card preview based on current form values.</p>
             <div data-preview-card>
-              ${previewCardMarkup({})}
+              ${previewCardMarkup(draft)}
             </div>
           </article>
 
@@ -249,6 +381,8 @@ function renderEditor() {
       </section>
     </div>
   `
+
+  hydrateSectionFields(section)
 
   const navButtons = editorRoot.querySelectorAll('[data-section]')
   const form = editorRoot.querySelector('[data-product-form]')
@@ -271,6 +405,7 @@ function renderEditor() {
     editorState.mediaFiles.cover = file
     editorState.mediaPreview.cover = URL.createObjectURL(file)
     setStatus('Cover image selected. Save draft to upload.', 'info')
+    saveDraftState()
     renderEditor()
   })
 
@@ -280,39 +415,50 @@ function renderEditor() {
     editorState.mediaFiles.thumbnail = file
     editorState.mediaPreview.thumbnail = URL.createObjectURL(file)
     setStatus('Thumbnail selected. Save draft to upload.', 'info')
+    saveDraftState()
     renderEditor()
   })
 
-  form?.addEventListener('input', (event) => {
-    const titleInput = form.querySelector('input[name="title"]')
-    const slugInput = form.querySelector('input[name="slug"]')
-    if (event.target === slugInput) {
-      editorState.slugLocked = Boolean(slugInput.value.trim())
+  function syncFieldFromEvent(event) {
+    const target = event.target
+    if (!target?.name) return
+
+    if (!(target.name in editorState.draft)) return
+
+    const value = target.type === 'checkbox' ? target.checked : target.value
+    updateDraftField(target.name, value)
+
+    if (target.name === 'slug') {
+      editorState.slugLocked = Boolean(String(value || '').trim())
+      saveDraftState()
       return
     }
-    if (event.target === titleInput && !editorState.slugLocked) {
-      slugInput.value = slugify(titleInput.value)
+
+    if (target.name === 'title' && !editorState.slugLocked) {
+      const nextSlug = slugify(value)
+      updateDraftField('slug', nextSlug)
+      const slugInput = form?.querySelector('input[name="slug"]')
+      if (slugInput) slugInput.value = nextSlug
     }
 
     if (readSectionHash() === 'preview') {
-      const data = Object.fromEntries(new FormData(form).entries())
       const previewEl = editorRoot.querySelector('[data-preview-card]')
-      if (previewEl) previewEl.innerHTML = previewCardMarkup(data)
+      if (previewEl) previewEl.innerHTML = previewCardMarkup(editorState.draft)
     }
-  })
+  }
+
+  form?.addEventListener('input', syncFieldFromEvent)
+  form?.addEventListener('change', syncFieldFromEvent)
 
   async function persistProduct(desiredStatus = 'draft') {
-    if (!form || !editorState.user) return
-    const data = Object.fromEntries(new FormData(form).entries())
-    const numericPrice = Number(data.price || 0)
+    if (!editorState.user || !editorState.draft) return
 
-    const payload = buildProductPayload({
-      ...data,
-      status: desiredStatus,
-      isFree: data.isFree === 'on',
-      featured: data.featured === 'on',
-      priceCents: Math.max(0, Math.round(numericPrice * 100))
-    }, editorState.user)
+    const draftForSave = serializeDraftForFirestore({
+      ...editorState.draft,
+      status: desiredStatus
+    })
+
+    const payload = buildProductPayload(draftForSave, editorState.user)
 
     try {
       const result = await saveProductDraft(editorState.user, payload, {
@@ -322,16 +468,18 @@ function renderEditor() {
         mediaFiles: editorState.mediaFiles
       })
 
+      updateDraftField('id', result.productId)
+      updateDraftField('slug', payload.slug)
       setStatus(
         desiredStatus === 'published'
           ? `Product ${result.productId} published successfully.`
-          : `Draft ${result.productId} saved successfully.`,
+          : `Draft ${result.productId} saved successfully. Local autosave is active.`,
         'success'
       )
       renderEditor()
     } catch (error) {
       console.warn('[new-product] Save failed.', error?.message || error)
-      setStatus('Could not save product right now. Please try again.', 'error')
+      setStatus('Could not save product right now. Your local draft is still preserved.', 'error')
       renderEditor()
     }
   }
@@ -340,7 +488,7 @@ function renderEditor() {
   editorRoot.querySelector('[data-publish-product]')?.addEventListener('click', () => persistProduct('published'))
   editorRoot.querySelector('[data-preview-listing]')?.addEventListener('click', () => {
     window.location.hash = 'preview'
-    setStatus('Preview panel updated with current form values.', 'info')
+    setStatus('Preview panel updated from current draft state.', 'info')
     renderEditor()
   })
 }
@@ -353,6 +501,7 @@ async function initPage() {
   }
 
   editorState.user = user
+  editorState.draft = loadDraftState(user)
   renderEditor()
 }
 

@@ -97,6 +97,36 @@ function setGlobalEditStatus(message = '', state = 'info') {
   }
 }
 
+function normalizeUsername(raw) {
+  return String(raw || '').trim().toLowerCase()
+}
+
+function validateUsername(raw) {
+  const value = String(raw || '').trim()
+  if (!value) return { valid: true, normalized: '' }
+  if (/\s/.test(value)) {
+    return { valid: false, normalized: normalizeUsername(value), message: 'Username cannot include spaces.' }
+  }
+  const normalized = normalizeUsername(value)
+  if (!/^[a-z0-9_-]+$/.test(normalized)) {
+    return { valid: false, normalized, message: 'Use only lowercase letters, numbers, underscores, or hyphens.' }
+  }
+  if (normalized.length < 3) {
+    return { valid: false, normalized, message: 'Username must be at least 3 characters.' }
+  }
+  if (normalized.length > 30) {
+    return { valid: false, normalized, message: 'Username must be 30 characters or less.' }
+  }
+  return { valid: true, normalized }
+}
+
+function toHumanProfileError(error) {
+  if (error?.code === 'profile/username-taken') return 'That username is already taken. Please choose another.'
+  if (error?.code === 'profile/invalid-username') return error?.message || 'Username is invalid. Use lowercase letters, numbers, underscores, or hyphens only.'
+  if (error?.code === 'invalid-argument') return 'Some profile fields were not valid for saving. Please check your username and links, then try again.'
+  return 'Could not save profile changes. Please try again.'
+}
+
 function getMergedState(user, profileResult) {
   const profileData = profileResult?.publicProfile || {}
   const userData = profileResult?.privateProfile || {}
@@ -134,6 +164,9 @@ function getMergedState(user, profileResult) {
     feedback: {
       message: '',
       state: 'info'
+    },
+    validation: {
+      username: ''
     }
   }
 }
@@ -555,7 +588,7 @@ function renderSettingsPage() {
           <form data-profile-form>
             <div class="field-grid">
               <label><span>Display Name</span><input name="displayName" value="${state.displayName}" /></label>
-              <label><span>Username</span><input name="username" value="${state.username}" /></label>
+              <label><span>Username</span><input name="username" value="${state.username}" class="${state.validation?.username ? 'is-invalid' : ''}" data-username-input /><small class="field-error ${state.validation?.username ? 'is-visible' : ''}" data-username-error>${state.validation?.username || ''}</small></label>
             </div>
             <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
@@ -662,6 +695,8 @@ function renderSettingsPage() {
   const bannerInput = editRoot.querySelector('[data-banner-input]')
   const changeMediaButtons = editRoot.querySelectorAll('[data-change-media]')
   const removeMediaButtons = editRoot.querySelectorAll('[data-remove-media]')
+  const usernameInput = editRoot.querySelector('[data-username-input]')
+  const usernameErrorEl = editRoot.querySelector('[data-username-error]')
 
   if (!state.feedback.message && feedback) {
     feedback.textContent = ''
@@ -711,6 +746,28 @@ function renderSettingsPage() {
     bannerInput.value = ''
   })
 
+
+  function updateUsernameValidationUI(message = '') {
+    if (!pageState) return
+    pageState.validation = {
+      ...(pageState.validation || {}),
+      username: message
+    }
+
+    if (usernameInput) {
+      usernameInput.classList.toggle('is-invalid', Boolean(message))
+    }
+    if (usernameErrorEl) {
+      usernameErrorEl.textContent = message
+      usernameErrorEl.classList.toggle('is-visible', Boolean(message))
+    }
+  }
+
+  usernameInput?.addEventListener('input', () => {
+    const validation = validateUsername(usernameInput.value)
+    updateUsernameValidationUI(validation.valid ? '' : validation.message)
+  })
+
   signOutButton?.addEventListener('click', async () => {
     signOutButton.disabled = true
     signOutButton.textContent = 'Signing out...'
@@ -727,9 +784,19 @@ function renderSettingsPage() {
     event.preventDefault()
     const formData = new FormData(profileForm)
 
+    const usernameValidation = validateUsername(formData.get('username'))
+    if (!usernameValidation.valid) {
+      updateUsernameValidationUI(usernameValidation.message)
+      setGlobalEditStatus('Please fix the username field before saving.', 'error')
+      renderSettingsPage()
+      return
+    }
+
+    updateUsernameValidationUI('')
+
     const nextPayload = {
       displayName: String(formData.get('displayName') || '').trim(),
-      username: String(formData.get('username') || '').trim(),
+      username: usernameValidation.normalized,
       bio: String(formData.get('bio') || '').trim(),
       role: state.userData.role || 'user',
       roleLabel: String(formData.get('roleLabel') || '').trim() || 'User',
@@ -816,16 +883,21 @@ function renderSettingsPage() {
           bannerPreview: '',
           avatarRemoved: false,
           bannerRemoved: false
+        },
+        validation: {
+          username: ''
         }
       }
       renderSettingsPage()
     } catch (error) {
-      setGlobalEditStatus(
-        error?.code === 'profile/username-taken'
-          ? 'That username is already taken. Please choose another.'
-          : 'Could not save profile changes. Please try again.',
-        'error'
-      )
+      if (error?.code === 'profile/username-taken') {
+        updateUsernameValidationUI('That username is already taken.')
+      }
+      if (error?.code === 'profile/invalid-username') {
+        updateUsernameValidationUI(error?.message || 'Username format is invalid.')
+      }
+
+      setGlobalEditStatus(toHumanProfileError(error), 'error')
       renderSettingsPage()
       if (!hasWarnedEditProfile) {
         hasWarnedEditProfile = true
