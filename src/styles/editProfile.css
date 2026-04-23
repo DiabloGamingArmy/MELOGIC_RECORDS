@@ -1,0 +1,210 @@
+.edit-shell {
+  padding-top: clamp(1.2rem, 2.5vw, 2rem);
+}
+
+.edit-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 0.95rem;
+}
+
+.edit-card,
+.settings-sidebar,
+.settings-content {
+  background: linear-gradient(180deg, rgba(14, 19, 31, 0.94), rgba(9, 13, 23, 0.9));
+  border: 1px solid rgba(129, 147, 191, 0.24);
+  border-radius: 1rem;
+  box-shadow: inset 0 1px 0 rgba(192, 210, 247, 0.08), 0 16px 34px rgba(5, 8, 16, 0.34);
+}
+
+.settings-sidebar {
+  padding: 0.8rem;
+  position: sticky;
+  top: calc(var(--nav-offset) + 1rem);
+  height: fit-content;
+}
+
+.back-link {
+  display: inline-flex;
+  margin-bottom: 0.6rem;
+  color: #b9c9ea;
+  font-size: 0.85rem;
+}
+
+.settings-sidebar nav {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.settings-nav-btn {
+  text-align: left;
+  border: 1px solid rgba(122, 140, 180, 0.24);
+  background: rgba(11, 16, 26, 0.7);
+  color: #c2d1f1;
+  border-radius: 0.72rem;
+  padding: 0.52rem 0.62rem;
+  cursor: pointer;
+}
+
+.settings-nav-btn.is-active {
+  border-color: rgba(119, 155, 225, 0.55);
+  background: linear-gradient(120deg, rgba(145, 121, 255, 0.22), rgba(88, 157, 246, 0.2));
+  color: #eff5ff;
+}
+
+.settings-content {
+  padding: 1rem;
+}
+
+.settings-panel {
+  display: none;
+}
+
+.settings-panel.is-active {
+  display: block;
+}
+
+.settings-panel h2 {
+  margin: 0 0 0.7rem;
+}
+
+.edit-feedback {
+  min-height: 1.2rem;
+  margin: 0 0 0.45rem;
+  color: #a9bee7;
+}
+
+.edit-feedback[data-state='success'] {
+  color: #9aeec6;
+}
+
+.edit-feedback[data-state='error'] {
+  color: #ffadb8;
+}
+
+.avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-bottom: 0.9rem;
+}
+
+.avatar-lg {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(159, 181, 229, 0.44);
+}
+
+.avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #ebf2ff;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(151, 231, 211, 0.24), transparent 52%),
+    linear-gradient(130deg, rgba(145, 121, 255, 0.55), rgba(86, 150, 245, 0.5));
+}
+
+label {
+  display: grid;
+  gap: 0.28rem;
+}
+
+label span {
+  font-size: 0.74rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #b8c6e7;
+}
+
+input,
+textarea,
+select {
+  width: 100%;
+  border-radius: 0.72rem;
+  border: 1px solid rgba(141, 162, 207, 0.26);
+  background: rgba(11, 15, 25, 0.9);
+  color: #dbe6ff;
+  padding: 0.68rem 0.78rem;
+  font: inherit;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.actions-row {
+  margin-top: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.settings-list {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.settings-list div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.settings-list dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #9fb0d8;
+}
+
+.settings-list dd {
+  margin: 0;
+  color: #dce6ff;
+}
+
+.toggle-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.toggle-list label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.button-danger {
+  border-color: rgba(230, 118, 137, 0.6);
+  color: #ffd7df;
+  background: rgba(58, 23, 31, 0.62);
+}
+
+.danger-copy {
+  color: #ffc5d0;
+}
+
+.signed-out {
+  text-align: center;
+  padding: 1rem;
+}
+
+@media (max-width: 980px) {
+  .edit-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-sidebar {
+    position: static;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}
