@@ -1,6 +1,8 @@
 import {
   getAuth,
   onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -11,6 +13,14 @@ import {
 import { app } from './firebaseConfig.js'
 
 export const auth = getAuth(app)
+let hasWarnedPersistence = false
+
+export const authPersistenceReady = setPersistence(auth, browserLocalPersistence).catch((error) => {
+  if (!hasWarnedPersistence) {
+    hasWarnedPersistence = true
+    console.warn('[firebase/auth] Failed to enable local persistence.', error?.code || error?.message || error)
+  }
+})
 
 const googleProvider = new GoogleAuthProvider()
 

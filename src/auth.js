@@ -9,6 +9,7 @@ import {
   signInWithEmail,
   signInWithGoogle,
   subscribeToAuthState,
+  authPersistenceReady,
   updateCurrentUserProfile
 } from './firebase/auth'
 import { upsertUserProfile } from './firebase/firestore'
@@ -130,6 +131,38 @@ const signupButton = document.querySelector('[data-signup-btn]')
 const feedback = document.querySelector('[data-auth-feedback]')
 const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
 let isSubmitting = false
+let hasWarnedProfileWrite = false
+
+function warnProfileWriteFailure(error, context) {
+  if (hasWarnedProfileWrite) return
+  hasWarnedProfileWrite = true
+  console.warn(`[auth] Firestore profile ${context} failed.`, error?.code || error?.message || error)
+}
+
+function waitForAuthenticatedUser(timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    let settled = false
+    const timeout = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      unsubscribe()
+      resolve(null)
+    }, timeoutMs)
+
+    const unsubscribe = subscribeToAuthState((user) => {
+      if (!user || settled) return
+      settled = true
+      window.clearTimeout(timeout)
+      unsubscribe()
+      resolve(user)
+    })
+  })
+}
+
+async function redirectToProfile() {
+  await waitForAuthenticatedUser()
+  window.location.assign('/profile.html')
+}
 
 function setAuthTab(activeTab) {
   tabButtons.forEach((button) => {
@@ -197,11 +230,10 @@ async function handleSignInSubmit(event) {
   setLoadingState(true, { signin: 'Signing In...' })
 
   try {
+    await authPersistenceReady
     await signInWithEmail(email, password)
     setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
-    window.setTimeout(() => {
-      window.location.assign('/profile.html')
-    }, 550)
+    await redirectToProfile()
   } catch (error) {
     setFeedback(friendlyAuthError(error?.code), 'error')
   } finally {
@@ -222,6 +254,7 @@ async function handleSignUpSubmit(event) {
   setLoadingState(true, { signup: 'Creating Account...' })
 
   try {
+    await authPersistenceReady
     const credential = await createAccountWithEmail(email, password)
 
     if (displayName) {
@@ -235,14 +268,12 @@ async function handleSignUpSubmit(event) {
         email,
         isNewUser: true
       })
-    } catch {
-      // Non-blocking: account creation should still complete if profile write fails.
+    } catch (error) {
+      warnProfileWriteFailure(error, 'write')
     }
 
     setFeedback('Account created. Redirecting to your profile...', 'success')
-    window.setTimeout(() => {
-      window.location.assign('/profile.html')
-    }, 550)
+    await redirectToProfile()
   } catch (error) {
     setFeedback(friendlyAuthError(error?.code), 'error')
   } finally {
@@ -257,6 +288,7 @@ async function handleGoogleSignIn() {
   setLoadingState(true, { google: 'Connecting...' })
 
   try {
+    await authPersistenceReady
     const credential = await signInWithGoogle()
 
     try {
@@ -265,14 +297,12 @@ async function handleGoogleSignIn() {
         email: credential.user.email || '',
         isNewUser: false
       })
-    } catch {
-      // Non-blocking: social auth should remain usable even if profile write fails.
+    } catch (error) {
+      warnProfileWriteFailure(error, 'upsert')
     }
 
     setFeedback('Signed in with Google. Redirecting...', 'success')
-    window.setTimeout(() => {
-      window.location.assign('/profile.html')
-    }, 550)
+    await redirectToProfile()
   } catch (error) {
     setFeedback(friendlyAuthError(error?.code), 'error')
   } finally {
@@ -290,10 +320,11 @@ signinForm?.addEventListener('submit', handleSignInSubmit)
 signupForm?.addEventListener('submit', handleSignUpSubmit)
 googleButton?.addEventListener('click', handleGoogleSignIn)
 
+let hasHandledInitialUser = false
 subscribeToAuthState((user) => {
+  if (hasHandledInitialUser) return
+  hasHandledInitialUser = true
   if (!user) return
   setFeedback('You are already signed in. Redirecting to profile...', 'success')
-  window.setTimeout(() => {
-    window.location.assign('/profile.html')
-  }, 400)
+  redirectToProfile()
 })

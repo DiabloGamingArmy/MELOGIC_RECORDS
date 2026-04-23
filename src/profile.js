@@ -35,6 +35,7 @@ initShellChrome()
 
 const profileRoot = document.querySelector('[data-profile-root]')
 let hasWarnedProfileFallback = false
+let hasWarnedNoAuthUser = false
 
 function fallbackInitials(nameOrEmail) {
   if (!nameOrEmail) return 'MR'
@@ -113,6 +114,10 @@ function renderSignedInState(user, storedProfile = null) {
 
 subscribeToAuthState(async (user) => {
   if (!user) {
+    if (!hasWarnedNoAuthUser) {
+      hasWarnedNoAuthUser = true
+      console.warn('[profile] No authenticated user; showing sign-in required state.')
+    }
     renderSignedOutState()
     return
   }
