@@ -84,6 +84,13 @@ const cardsMarkup = releaseProducts
   .join('')
 
 app.innerHTML = `
+  <div class="page-preloader" id="page-preloader" role="status" aria-live="polite" aria-label="Loading page">
+    <div class="preloader-core">
+      <span class="preloader-ring" aria-hidden="true"></span>
+      <p>Loading</p>
+    </div>
+  </div>
+
   ${navShell()}
 
   <main>
@@ -256,12 +263,12 @@ app.innerHTML = `
 
 async function initHeroBackgroundVideo() {
   const heroVideo = document.querySelector('#hero-bg-video')
-  if (!heroVideo) return
+  if (!heroVideo) return false
 
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   if (prefersReducedMotion) {
     heroVideo.remove()
-    return
+    return true
   }
 
   const webmPath = 'assets/site/backgrounds/hero-loop.webm'
@@ -275,7 +282,7 @@ async function initHeroBackgroundVideo() {
   if (!webmUrl && !mp4Url) {
     console.warn('[hero-video] Background video unavailable; using static hero background.')
     heroVideo.remove()
-    return
+    return false
   }
 
   if (webmUrl) {
@@ -292,40 +299,80 @@ async function initHeroBackgroundVideo() {
     heroVideo.append(mp4Source)
   }
 
-  heroVideo.addEventListener(
-    'error',
-    () => {
-      console.warn('[hero-video] Background video failed to load; using static hero background.')
-      heroVideo.remove()
-    },
-    { once: true }
-  )
+  const readiness = await new Promise((resolve) => {
+    let settled = false
+
+    const finish = (isReady) => {
+      if (settled) return
+      settled = true
+      heroVideo.removeEventListener('loadeddata', onReady)
+      heroVideo.removeEventListener('canplay', onReady)
+      heroVideo.removeEventListener('canplaythrough', onReady)
+      heroVideo.removeEventListener('error', onError)
+      if (!isReady) {
+        console.warn('[hero-video] Background video failed to load; using static hero background.')
+        heroVideo.remove()
+      }
+      resolve(isReady)
+    }
+
+    const onReady = () => finish(true)
+    const onError = () => finish(false)
+
+    heroVideo.addEventListener('loadeddata', onReady, { once: true })
+    heroVideo.addEventListener('canplay', onReady, { once: true })
+    heroVideo.addEventListener('canplaythrough', onReady, { once: true })
+    heroVideo.addEventListener('error', onError, { once: true })
+
+    heroVideo.load()
+  })
 
   const playPromise = heroVideo.play()
   if (playPromise && typeof playPromise.catch === 'function') {
     playPromise.catch(() => {
-      heroVideo.remove()
+      // No-op: autoplay can be blocked in some contexts, but we still keep video attached.
     })
   }
+
+  return readiness
 }
 
 async function initNavBrandLogo() {
   const brandLogo = document.querySelector('[data-brand-logo]')
-  if (!brandLogo) return
+  if (!brandLogo) return false
 
   const logoPath = 'assets/brand/melogic-logo-mark-glow.png'
   const logoUrl = await getStorageAssetUrl(logoPath)
 
   if (!logoUrl) {
     brandLogo.remove()
-    return
+    return false
   }
 
-  brandLogo.addEventListener('error', () => {
-    brandLogo.remove()
-  }, { once: true })
+  const isLoaded = await new Promise((resolve) => {
+    let settled = false
 
-  brandLogo.src = logoUrl
+    const finish = (ok) => {
+      if (settled) return
+      settled = true
+      if (!ok) brandLogo.remove()
+      resolve(ok)
+    }
+
+    brandLogo.addEventListener(
+      'load',
+      () => {
+        brandLogo.dataset.loaded = 'true'
+        finish(true)
+      },
+      { once: true }
+    )
+    brandLogo.addEventListener('error', () => finish(false), { once: true })
+
+    brandLogo.src = logoUrl
+  })
+
+  return isLoaded
 }
 
 function initCarousel() {
@@ -337,7 +384,7 @@ function initCarousel() {
   if (!track || !controls.length) return
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const baseSpeed = reducedMotion ? 0 : 0.28
+  const baseSpeed = reducedMotion ? 0 : 0.093
   const manualStep = () => Math.max(track.clientWidth * 0.72, 320)
 
   let animationFrame = null
@@ -398,6 +445,27 @@ function initCarousel() {
   track.addEventListener('wheel', pauseAndResume, { passive: true })
 
   startAuto()
+}
+
+function initPagePreloader(logoReadyPromise, heroReadyPromise) {
+  const preloader = document.querySelector('#page-preloader')
+  if (!preloader) return
+
+  const fallbackMs = 3800
+  const fadeDurationMs = 500
+  let hidden = false
+
+  const hidePreloader = () => {
+    if (hidden) return
+    hidden = true
+    preloader.classList.add('is-hidden')
+    window.setTimeout(() => {
+      preloader.remove()
+    }, fadeDurationMs + 40)
+  }
+
+  Promise.allSettled([logoReadyPromise, heroReadyPromise]).then(hidePreloader)
+  window.setTimeout(hidePreloader, fallbackMs)
 }
 
 function syncNavOffset() {
@@ -504,7 +572,8 @@ function initLowerBackground() {
 syncNavOffset()
 window.addEventListener('resize', syncNavOffset, { passive: true })
 
-initNavBrandLogo()
-initHeroBackgroundVideo()
+const logoReadyPromise = initNavBrandLogo()
+const heroReadyPromise = initHeroBackgroundVideo()
+initPagePreloader(logoReadyPromise, heroReadyPromise)
 initCarousel()
 initLowerBackground()
