@@ -85,7 +85,15 @@ main {
   height: 38px;
   max-width: 100%;
   object-fit: contain;
+  opacity: 0;
+  visibility: hidden;
   filter: drop-shadow(0 0 8px rgba(97, 132, 206, 0.18));
+  transition: opacity 220ms ease;
+}
+
+.brand-logo[data-loaded='true'] {
+  opacity: 1;
+  visibility: visible;
 }
 
 .brand-text {
@@ -537,6 +545,7 @@ main {
     padding: 0.25rem 0 0.35rem;
     border-top: 1px solid rgba(132, 151, 190, 0.14);
   }
+}
 
 }
 
