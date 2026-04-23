@@ -1,6 +1,8 @@
 import './styles/base.css'
 import { navShell } from './components/navShell'
-import { getStorageAssetUrl } from './firebase/storageAssets'
+import { initShellChrome } from './components/assetChrome'
+import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 const app = document.querySelector('#app')
 
@@ -84,7 +86,14 @@ const cardsMarkup = releaseProducts
   .join('')
 
 app.innerHTML = `
-  ${navShell()}
+  <div class="page-preloader" id="page-preloader" role="status" aria-live="polite" aria-label="Loading page">
+    <div class="preloader-core">
+      <span class="preloader-ring" aria-hidden="true"></span>
+      <p>Loading</p>
+    </div>
+  </div>
+
+  ${navShell({ currentPage: 'home' })}
 
   <main>
     <section class="hero" id="explore">
@@ -256,76 +265,13 @@ app.innerHTML = `
 
 async function initHeroBackgroundVideo() {
   const heroVideo = document.querySelector('#hero-bg-video')
-  if (!heroVideo) return
-
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  if (prefersReducedMotion) {
-    heroVideo.remove()
-    return
-  }
-
-  const webmPath = 'assets/site/backgrounds/hero-loop.webm'
-  const mp4Path = 'assets/site/backgrounds/hero-loop.mp4'
-
-  const [webmUrl, mp4Url] = await Promise.all([
-    getStorageAssetUrl(webmPath, { warnOnFail: false }),
-    getStorageAssetUrl(mp4Path, { warnOnFail: false })
-  ])
-
-  if (!webmUrl && !mp4Url) {
-    console.warn('[hero-video] Background video unavailable; using static hero background.')
-    heroVideo.remove()
-    return
-  }
-
-  if (webmUrl) {
-    const webmSource = document.createElement('source')
-    webmSource.src = webmUrl
-    webmSource.type = 'video/webm'
-    heroVideo.append(webmSource)
-  }
-
-  if (mp4Url) {
-    const mp4Source = document.createElement('source')
-    mp4Source.src = mp4Url
-    mp4Source.type = 'video/mp4'
-    heroVideo.append(mp4Source)
-  }
-
-  heroVideo.addEventListener(
-    'error',
-    () => {
-      console.warn('[hero-video] Background video failed to load; using static hero background.')
-      heroVideo.remove()
-    },
-    { once: true }
-  )
-
-  const playPromise = heroVideo.play()
-  if (playPromise && typeof playPromise.catch === 'function') {
-    playPromise.catch(() => {
-      heroVideo.remove()
-    })
-  }
-}
-
-async function initNavBrandLogo() {
-  const brandLogo = document.querySelector('[data-brand-logo]')
-  if (!brandLogo) return
-
-  const logoPath = 'assets/brand/melogic-logo-mark-glow.png'
-  const logoUrl = await getStorageAssetUrl(logoPath)
-
-  if (!logoUrl) {
-    brandLogo.remove()
-    return
-  }
-
-  brandLogo.addEventListener('error', () => {
-    brandLogo.remove()
-  }, { once: true })
-
-  brandLogo.src = logoUrl
+  const heroPaths = getPageHeroVideoPaths('home')
+  if (!heroPaths) return false
+  return attachHeroVideo(heroVideo, {
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
+    warningKey: 'home'
+  })
 }
 
 function initCarousel() {
@@ -337,7 +283,7 @@ function initCarousel() {
   if (!track || !controls.length) return
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const baseSpeed = reducedMotion ? 0 : 0.28
+  const baseSpeed = reducedMotion ? 0 : 0.093
   const manualStep = () => Math.max(track.clientWidth * 0.72, 320)
 
   let animationFrame = null
@@ -400,10 +346,25 @@ function initCarousel() {
   startAuto()
 }
 
-function syncNavOffset() {
-  const nav = document.querySelector('.nav-shell')
-  if (!nav) return
-  document.documentElement.style.setProperty('--nav-offset', `${nav.offsetHeight}px`)
+function initPagePreloader(logoReadyPromise, heroReadyPromise) {
+  const preloader = document.querySelector('#page-preloader')
+  if (!preloader) return
+
+  const fallbackMs = 3800
+  const fadeDurationMs = 500
+  let hidden = false
+
+  const hidePreloader = () => {
+    if (hidden) return
+    hidden = true
+    preloader.classList.add('is-hidden')
+    window.setTimeout(() => {
+      preloader.remove()
+    }, fadeDurationMs + 40)
+  }
+
+  Promise.allSettled([logoReadyPromise, heroReadyPromise]).then(hidePreloader)
+  window.setTimeout(hidePreloader, fallbackMs)
 }
 
 function initLowerBackground() {
@@ -501,10 +462,8 @@ function initLowerBackground() {
   draw()
 }
 
-syncNavOffset()
-window.addEventListener('resize', syncNavOffset, { passive: true })
-
-initNavBrandLogo()
-initHeroBackgroundVideo()
+const logoReadyPromise = initShellChrome()
+const heroReadyPromise = initHeroBackgroundVideo()
+initPagePreloader(logoReadyPromise, heroReadyPromise)
 initCarousel()
 initLowerBackground()
