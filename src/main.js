@@ -1,6 +1,6 @@
 import './styles/base.css'
 import { navShell } from './components/navShell'
-import navBrandLogo from './assets/brand/melogic-logo-mark-glow-black.png'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 
 const app = document.querySelector('#app')
 
@@ -84,7 +84,7 @@ const cardsMarkup = releaseProducts
   .join('')
 
 app.innerHTML = `
-  ${navShell(navBrandLogo)}
+  ${navShell()}
 
   <main>
     <section class="hero" id="explore">
@@ -240,6 +240,30 @@ app.innerHTML = `
   </main>
 `
 
+
+async function initNavBrandLogo() {
+  const brandLogo = document.querySelector('[data-brand-logo]')
+  if (!brandLogo) return
+
+  const logoPath = 'assets/brand/melogic-logo-mark-glow.png'
+  const logoUrl = await getStorageAssetUrl(logoPath)
+
+  if (!logoUrl) {
+    brandLogo.remove()
+    return
+  }
+
+  brandLogo.addEventListener('error', () => {
+    brandLogo.remove()
+  }, { once: true })
+
+  brandLogo.addEventListener('load', () => {
+    brandLogo.dataset.loaded = 'true'
+  }, { once: true })
+
+  brandLogo.src = logoUrl
+}
+
 function initCarousel() {
   const carousel = document.querySelector('[data-carousel]')
   if (!carousel) return
@@ -382,5 +406,6 @@ function initLowerBackground() {
   draw()
 }
 
+initNavBrandLogo()
 initCarousel()
 initLowerBackground()
