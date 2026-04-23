@@ -236,6 +236,15 @@ function createProductId() {
   return doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
 }
 
+const PLACEHOLDER_PRODUCT_IDS = new Set(['test', 'temp', 'tmp', 'placeholder', 'fake'])
+
+export function isPlaceholderProductId(productId = '') {
+  const normalized = String(productId || '').trim().toLowerCase()
+  if (!normalized) return true
+  if (PLACEHOLDER_PRODUCT_IDS.has(normalized)) return true
+  return normalized.startsWith('test-') || normalized.startsWith('temp-') || normalized.startsWith('fake-')
+}
+
 async function ensureDraftProductDocument(user, input = {}, productId = '') {
   if (!db || !user?.uid || !productId) return
 
@@ -246,7 +255,8 @@ async function ensureDraftProductDocument(user, input = {}, productId = '') {
       id: productId,
       artistId: user.uid,
       artistName: input.artistName || user.displayName || '',
-      title: input.title || '',
+      title: String(input.title || '').trim() || 'Untitled product',
+      productType: input.productType || 'Sample Pack',
       slug: input.slug || productId,
       status: 'draft',
       visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private'),
@@ -278,14 +288,21 @@ export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
   return uploads
 }
 
+export async function initializeProductDraft(user, input = {}, requestedId = '') {
+  if (!db || !user?.uid) throw new Error('Authenticated user required.')
+  const productId = !isPlaceholderProductId(requestedId) ? requestedId : createProductId()
+  const basePayload = buildProductPayload({ ...input, id: productId }, user)
+  await ensureDraftProductDocument(user, basePayload, productId)
+  return productId
+}
+
 export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
 
   const requestedId = options.productId || input.id || ''
-  const productId = requestedId || createProductId()
+  const productId = await initializeProductDraft(user, input, requestedId)
   const basePayload = buildProductPayload({ ...input, id: productId }, user)
 
-  await ensureDraftProductDocument(user, basePayload, productId)
   const mediaUploads = await uploadProductMediaFiles(productId, options.mediaFiles || {})
 
   const payload = {
