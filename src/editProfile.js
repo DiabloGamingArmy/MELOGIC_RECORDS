@@ -1,9 +1,11 @@
 import './styles/base.css'
 import './styles/editProfile.css'
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from './firebase/auth'
-import { getUserProfile, upsertUserProfile } from './firebase/firestore'
+import { getEffectiveProfile, saveProfileChanges } from './firebase/firestore'
+import { storage } from './firebase/storage'
 
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
@@ -44,6 +46,7 @@ initShellChrome()
 
 const editRoot = document.querySelector('[data-edit-root]')
 let hasWarnedEditProfile = false
+let pageState = null
 
 function fallbackInitials(nameOrEmail) {
   if (!nameOrEmail) return 'MR'
@@ -67,22 +70,65 @@ function renderSignedOutState() {
   `
 }
 
-function renderSettingsPage(user, profileData = {}) {
-  const profile = profileData || {}
-  const displayName = profile.displayName || user.displayName || ''
-  const username = profile.username || ''
-  const bio = profile.bio || ''
-  const role = profile.role || 'user'
-  const photoURL = profile.photoURL || user.photoURL || ''
-  const location = profile.location || ''
-  const website = profile.website || ''
-  const socials = profile.socials || {}
-  const settings = profile.settings || {}
-  const appearance = settings.appearance || {}
-  const creator = settings.creator || {}
-  const notifications = settings.notifications || {}
+function getMergedState(user, profileResult) {
+  const profileData = profileResult?.publicProfile || {}
+  const userData = profileResult?.privateProfile || {}
+  const effective = profileResult?.effectiveProfile || {}
+
+  return {
+    user,
+    profileData,
+    userData,
+    displayName: effective.displayName || user.displayName || '',
+    username: effective.username || '',
+    bio: effective.bio || '',
+    roleLabel: profileData.roleLabel || userData.role || 'User',
+    photoURL: effective.photoURL || user.photoURL || '',
+    avatarPath: profileData.avatarPath || '',
+    bannerPath: profileData.bannerPath || '',
+    bannerURL: profileData.bannerURL || '',
+    location: profileData.location || userData.location || '',
+    website: profileData.website || userData.website || '',
+    socials: profileData.socials || userData.socials || {},
+    settings: userData.settings || {
+      appearance: {},
+      notifications: {},
+      privacy: {}
+    },
+    creatorSettings: userData.creatorSettings || {}
+  }
+}
+
+async function uploadProfileMedia(uid, files) {
+  if (!storage) return {}
+  const result = {}
+
+  if (files.avatar instanceof File && files.avatar.size > 0) {
+    const avatarPath = `users/${uid}/avatar/current.webp`
+    await uploadBytes(ref(storage, avatarPath), files.avatar, { contentType: files.avatar.type || 'image/webp' })
+    result.avatarPath = avatarPath
+    result.avatarURL = await getDownloadURL(ref(storage, avatarPath))
+  }
+
+  if (files.banner instanceof File && files.banner.size > 0) {
+    const bannerPath = `users/${uid}/banner/current.webp`
+    await uploadBytes(ref(storage, bannerPath), files.banner, { contentType: files.banner.type || 'image/webp' })
+    result.bannerPath = bannerPath
+    result.bannerURL = await getDownloadURL(ref(storage, bannerPath))
+  }
+
+  return result
+}
+
+function renderSettingsPage() {
+  const state = pageState
+  if (!state) return
+
   const activeSection = readHashSection()
-  const providerIds = user.providerData.map((provider) => provider.providerId)
+  const providerIds = state.user.providerData.map((provider) => provider.providerId)
+  const appearance = state.settings.appearance || {}
+  const notifications = state.settings.notifications || {}
+  const creatorSettings = state.creatorSettings || {}
 
   editRoot.innerHTML = `
     <div class="edit-layout">
@@ -101,32 +147,32 @@ function renderSettingsPage(user, profileData = {}) {
         <div class="settings-panel ${activeSection === 'public-profile' ? 'is-active' : ''}" data-panel="public-profile">
           <h2>Public Profile</h2>
           <div class="avatar-row">
-            ${photoURL ? `<img class="avatar-lg" src="${photoURL}" alt="${displayName || 'Profile'}" />` : `<div class="avatar-lg avatar-fallback">${fallbackInitials(displayName || user.email)}</div>`}
+            ${state.photoURL ? `<img class="avatar-lg" src="${state.photoURL}" alt="${state.displayName || 'Profile'}" />` : `<div class="avatar-lg avatar-fallback">${fallbackInitials(state.displayName || state.user.email)}</div>`}
             <div>
-              <p>Avatar uploads are coming soon.</p>
-              <button type="button" class="button button-muted" disabled>Upload Avatar (Soon)</button>
+              <label><span>Avatar</span><input type="file" accept="image/*" name="avatarFile" data-avatar-input /></label>
+              <label><span>Banner</span><input type="file" accept="image/*" name="bannerFile" data-banner-input /></label>
             </div>
           </div>
 
           <form data-profile-form>
             <div class="field-grid">
-              <label><span>Display Name</span><input name="displayName" value="${displayName}" /></label>
-              <label><span>Username</span><input name="username" value="${username}" /></label>
+              <label><span>Display Name</span><input name="displayName" value="${state.displayName}" /></label>
+              <label><span>Username</span><input name="username" value="${state.username}" /></label>
             </div>
-            <label><span>Bio</span><textarea name="bio" rows="3">${bio}</textarea></label>
+            <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
-              <label><span>Role</span><input name="role" value="${role}" readonly /></label>
-              <label><span>Location</span><input name="location" value="${location}" /></label>
+              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" /></label>
+              <label><span>Location</span><input name="location" value="${state.location}" /></label>
             </div>
-            <label><span>Website</span><input name="website" value="${website}" placeholder="https://" /></label>
+            <label><span>Website</span><input name="website" value="${state.website}" placeholder="https://" /></label>
             <h3>Social Links</h3>
             <div class="field-grid">
-              <label><span>Instagram</span><input name="instagram" value="${socials.instagram || ''}" /></label>
-              <label><span>SoundCloud</span><input name="soundcloud" value="${socials.soundcloud || ''}" /></label>
-              <label><span>Spotify</span><input name="spotify" value="${socials.spotify || ''}" /></label>
-              <label><span>YouTube</span><input name="youtube" value="${socials.youtube || ''}" /></label>
-              <label><span>Discord</span><input name="discord" value="${socials.discord || ''}" /></label>
-              <label><span>TikTok</span><input name="tiktok" value="${socials.tiktok || ''}" /></label>
+              <label><span>Instagram</span><input name="instagram" value="${state.socials.instagram || ''}" /></label>
+              <label><span>SoundCloud</span><input name="soundcloud" value="${state.socials.soundcloud || ''}" /></label>
+              <label><span>Spotify</span><input name="spotify" value="${state.socials.spotify || ''}" /></label>
+              <label><span>YouTube</span><input name="youtube" value="${state.socials.youtube || ''}" /></label>
+              <label><span>Discord</span><input name="discord" value="${state.socials.discord || ''}" /></label>
+              <label><span>TikTok</span><input name="tiktok" value="${state.socials.tiktok || ''}" /></label>
             </div>
             <div class="actions-row">
               <button type="submit" class="button button-accent" data-save-profile>Save Changes</button>
@@ -138,41 +184,39 @@ function renderSettingsPage(user, profileData = {}) {
         <div class="settings-panel ${activeSection === 'account' ? 'is-active' : ''}" data-panel="account">
           <h2>Account</h2>
           <dl class="settings-list">
-            <div><dt>Email</dt><dd>${user.email || 'Unavailable'}</dd></div>
-            <div><dt>Account ID</dt><dd>${user.uid}</dd></div>
-            <div><dt>Created</dt><dd>${user.metadata?.creationTime || 'Unavailable'}</dd></div>
-            <div><dt>Plan</dt><dd>Standard (expandable)</dd></div>
+            <div><dt>Email</dt><dd>${state.user.email || 'Unavailable'}</dd></div>
+            <div><dt>Account ID</dt><dd>${state.user.uid}</dd></div>
+            <div><dt>Created</dt><dd>${state.user.metadata?.creationTime || 'Unavailable'}</dd></div>
+            <div><dt>Role</dt><dd>${state.userData.role || 'user'}</dd></div>
           </dl>
-          <p class="muted">Email updates and advanced account controls are coming in a future release.</p>
+          <p class="muted">Email updates are view-only for now.</p>
         </div>
 
         <div class="settings-panel ${activeSection === 'appearance' ? 'is-active' : ''}" data-panel="appearance">
           <h2>Appearance</h2>
           <div class="toggle-list">
-            <label><span>Theme</span><select><option>Dark (Default)</option><option>System</option></select></label>
-            <label><span>Accent Intensity</span><input type="range" min="0" max="100" value="${appearance.accentIntensity ?? 65}" /></label>
-            <label><input type="checkbox" ${appearance.reduceMotion ? 'checked' : ''} /> Reduce motion</label>
-            <label><input type="checkbox" ${appearance.compactLayout ? 'checked' : ''} /> Compact layout</label>
+            <label><span>Theme</span><select name="theme"><option ${appearance.theme === 'dark' ? 'selected' : ''}>dark</option><option ${appearance.theme === 'system' ? 'selected' : ''}>system</option></select></label>
+            <label><input type="checkbox" name="compactMode" ${appearance.compactMode ? 'checked' : ''} /> Compact mode</label>
+            <label><input type="checkbox" name="reducedMotion" ${appearance.reducedMotion ? 'checked' : ''} /> Reduced motion</label>
           </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'creator-settings' ? 'is-active' : ''}" data-panel="creator-settings">
           <h2>Creator Settings</h2>
           <div class="toggle-list">
-            <label><input type="checkbox" ${creator.creatorMode ? 'checked' : ''} /> Creator display mode</label>
-            <label><input type="checkbox" ${creator.publicProfile ?? true ? 'checked' : ''} /> Allow public creator profile</label>
-            <label><input type="checkbox" ${creator.featuredReleases ?? true ? 'checked' : ''} /> Featured releases visibility</label>
-            <label><input type="checkbox" ${creator.marketplaceParticipation ?? true ? 'checked' : ''} /> Marketplace participation</label>
+            <label><input type="checkbox" name="creatorMode" ${creatorSettings.creatorMode ? 'checked' : ''} /> Creator mode</label>
+            <label><input type="checkbox" name="publicCreatorProfile" ${creatorSettings.publicCreatorProfile ?? true ? 'checked' : ''} /> Public creator profile</label>
+            <label><input type="checkbox" name="storefrontVisible" ${creatorSettings.storefrontVisible ?? false ? 'checked' : ''} /> Storefront visibility</label>
+            <label><span>Submission preferences</span><input name="submissionPreferences" value="${creatorSettings.submissionPreferences || ''}" /></label>
           </div>
-          <p class="muted">Storefront publishing tools and creator analytics are coming soon.</p>
         </div>
 
         <div class="settings-panel ${activeSection === 'security' ? 'is-active' : ''}" data-panel="security">
           <h2>Security</h2>
           <ul>
-            <li>Password is managed via your current provider.</li>
+            <li>Password status is managed by your auth provider.</li>
             <li>Signed in providers: ${providerIds.join(', ') || 'email/password'}</li>
-            <li>Session controls and multi-device sign-out are coming soon.</li>
+            <li>Sign out all devices is coming soon.</li>
           </ul>
           <button type="button" class="button button-muted" disabled>Change Password (Soon)</button>
         </div>
@@ -180,11 +224,11 @@ function renderSettingsPage(user, profileData = {}) {
         <div class="settings-panel ${activeSection === 'notifications' ? 'is-active' : ''}" data-panel="notifications">
           <h2>Notifications</h2>
           <div class="toggle-list">
-            <label><input type="checkbox" ${notifications.productUpdates ?? true ? 'checked' : ''} /> Product updates</label>
-            <label><input type="checkbox" ${notifications.communityReplies ?? true ? 'checked' : ''} /> Community replies</label>
-            <label><input type="checkbox" ${notifications.creatorNews ?? true ? 'checked' : ''} /> Creator news</label>
-            <label><input type="checkbox" ${notifications.releaseAlerts ?? true ? 'checked' : ''} /> Release alerts</label>
-            <label><input type="checkbox" ${notifications.marketing ?? false ? 'checked' : ''} /> Marketing updates</label>
+            <label><input type="checkbox" name="productUpdates" ${notifications.productUpdates ?? true ? 'checked' : ''} /> Product updates</label>
+            <label><input type="checkbox" name="replies" ${notifications.replies ?? true ? 'checked' : ''} /> Replies</label>
+            <label><input type="checkbox" name="creatorNews" ${notifications.creatorNews ?? true ? 'checked' : ''} /> Creator news</label>
+            <label><input type="checkbox" name="releaseAlerts" ${notifications.releaseAlerts ?? true ? 'checked' : ''} /> Release alerts</label>
+            <label><input type="checkbox" name="marketing" ${notifications.marketing ?? false ? 'checked' : ''} /> Marketing</label>
           </div>
         </div>
 
@@ -193,13 +237,13 @@ function renderSettingsPage(user, profileData = {}) {
           <ul>
             <li>Google: ${providerIds.includes('google.com') ? 'Connected' : 'Not connected'}</li>
             <li>Email/Password: ${providerIds.includes('password') ? 'Connected' : 'Not connected'}</li>
-            <li>Spotify / YouTube / Discord integrations are placeholder-only for now.</li>
+            <li>Spotify / YouTube / Discord links are managed in Public Profile for now.</li>
           </ul>
         </div>
 
         <div class="settings-panel ${activeSection === 'danger-zone' ? 'is-active' : ''}" data-panel="danger-zone">
           <h2>Danger Zone</h2>
-          <p class="danger-copy">Take care with account actions below. Destructive actions cannot be undone.</p>
+          <p class="danger-copy">Destructive account actions are intentionally restricted for safety.</p>
           <div class="actions-row">
             <button type="button" class="button button-muted" data-signout>Sign Out</button>
             <button type="button" class="button button-danger" disabled>Delete Account (Soon)</button>
@@ -217,9 +261,8 @@ function renderSettingsPage(user, profileData = {}) {
 
   navButtons.forEach((button) => {
     button.addEventListener('click', () => {
-      const section = button.dataset.sectionBtn
-      window.location.hash = section
-      renderSettingsPage(user, profile)
+      window.location.hash = button.dataset.sectionBtn
+      renderSettingsPage()
     })
   })
 
@@ -238,11 +281,15 @@ function renderSettingsPage(user, profileData = {}) {
   profileForm?.addEventListener('submit', async (event) => {
     event.preventDefault()
     const formData = new FormData(profileForm)
-    const nextProfile = {
+    const avatarInput = editRoot.querySelector('[data-avatar-input]')
+    const bannerInput = editRoot.querySelector('[data-banner-input]')
+
+    const nextPayload = {
       displayName: String(formData.get('displayName') || '').trim(),
       username: String(formData.get('username') || '').trim(),
       bio: String(formData.get('bio') || '').trim(),
-      role,
+      role: state.userData.role || 'user',
+      roleLabel: String(formData.get('roleLabel') || '').trim() || 'User',
       location: String(formData.get('location') || '').trim(),
       website: String(formData.get('website') || '').trim(),
       socials: {
@@ -254,9 +301,27 @@ function renderSettingsPage(user, profileData = {}) {
         tiktok: String(formData.get('tiktok') || '').trim()
       },
       settings: {
-        appearance,
-        notifications,
-        creator
+        appearance: {
+          theme: String(formData.get('theme') || 'dark'),
+          compactMode: formData.get('compactMode') === 'on',
+          reducedMotion: formData.get('reducedMotion') === 'on'
+        },
+        notifications: {
+          productUpdates: formData.get('productUpdates') === 'on',
+          replies: formData.get('replies') === 'on',
+          creatorNews: formData.get('creatorNews') === 'on',
+          releaseAlerts: formData.get('releaseAlerts') === 'on',
+          marketing: formData.get('marketing') === 'on'
+        },
+        privacy: {
+          profileVisibility: 'public'
+        }
+      },
+      creatorSettings: {
+        creatorMode: formData.get('creatorMode') === 'on',
+        publicCreatorProfile: formData.get('publicCreatorProfile') === 'on',
+        storefrontVisible: formData.get('storefrontVisible') === 'on',
+        submissionPreferences: String(formData.get('submissionPreferences') || '').trim()
       }
     }
 
@@ -266,24 +331,41 @@ function renderSettingsPage(user, profileData = {}) {
     }
 
     try {
-      await upsertUserProfile(user, nextProfile)
-      if (nextProfile.displayName && nextProfile.displayName !== user.displayName) {
-        await updateCurrentUserProfile({ displayName: nextProfile.displayName })
+      const mediaResult = await uploadProfileMedia(state.user.uid, {
+        avatar: avatarInput?.files?.[0],
+        banner: bannerInput?.files?.[0]
+      })
+
+      Object.assign(nextPayload, {
+        avatarPath: mediaResult.avatarPath || state.avatarPath,
+        avatarURL: mediaResult.avatarURL || state.photoURL,
+        photoURL: mediaResult.avatarURL || state.photoURL,
+        bannerPath: mediaResult.bannerPath || state.bannerPath,
+        bannerURL: mediaResult.bannerURL || state.bannerURL
+      })
+
+      await saveProfileChanges(state.user, nextPayload)
+
+      if (nextPayload.displayName && nextPayload.displayName !== state.user.displayName) {
+        await updateCurrentUserProfile({ displayName: nextPayload.displayName })
       }
-      profile.displayName = nextProfile.displayName || profile.displayName
-      profile.username = nextProfile.username
-      profile.bio = nextProfile.bio
-      profile.location = nextProfile.location
-      profile.website = nextProfile.website
-      profile.socials = nextProfile.socials
+      if (nextPayload.avatarURL && nextPayload.avatarURL !== state.user.photoURL) {
+        await updateCurrentUserProfile({ photoURL: nextPayload.avatarURL })
+      }
+
       if (feedback) {
         feedback.dataset.state = 'success'
         feedback.textContent = 'Profile changes saved.'
       }
+
+      pageState = { ...state, ...nextPayload, photoURL: nextPayload.avatarURL }
+      renderSettingsPage()
     } catch (error) {
       if (feedback) {
         feedback.dataset.state = 'error'
-        feedback.textContent = 'Could not save profile changes. Please try again.'
+        feedback.textContent = error?.code === 'profile/username-taken'
+          ? 'That username is already taken. Please choose another.'
+          : 'Could not save profile changes. Please try again.'
       }
       if (!hasWarnedEditProfile) {
         hasWarnedEditProfile = true
@@ -305,21 +387,14 @@ async function initEditProfile() {
     return
   }
 
-  let storedProfile = null
-  try {
-    storedProfile = await getUserProfile(user.uid)
-  } catch (error) {
-    if (!hasWarnedEditProfile) {
-      hasWarnedEditProfile = true
-      console.warn('[edit-profile] Profile read failed; using Auth fallback.', error?.code || error?.message || error)
-    }
-  }
-
-  renderSettingsPage(user, storedProfile || {})
+  const profileResult = await getEffectiveProfile(user.uid, user)
+  pageState = getMergedState(user, profileResult)
+  renderSettingsPage()
 }
 
 window.addEventListener('hashchange', () => {
-  initEditProfile()
+  if (!pageState) return
+  renderSettingsPage()
 })
 
 initEditProfile()
