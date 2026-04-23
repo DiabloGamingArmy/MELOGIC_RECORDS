@@ -207,6 +207,8 @@ export function buildProductPayload(input = {}, user = null) {
     contributorNames,
     coverPath: input.coverPath || '',
     thumbnailPath: input.thumbnailPath || '',
+    coverURL: input.coverURL || '',
+    thumbnailURL: input.thumbnailURL || '',
     galleryPaths: Array.isArray(input.galleryPaths) ? input.galleryPaths : parseCsv(input.galleryPaths),
     previewAudioPaths: Array.isArray(input.previewAudioPaths) ? input.previewAudioPaths : parseCsv(input.previewAudioPaths),
     previewVideoPaths: Array.isArray(input.previewVideoPaths) ? input.previewVideoPaths : parseCsv(input.previewVideoPaths),
@@ -291,19 +293,35 @@ export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
 export async function initializeProductDraft(user, input = {}, requestedId = '') {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
   const productId = !isPlaceholderProductId(requestedId) ? requestedId : createProductId()
+  const draftRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
+  const draftSnapshot = await getDoc(draftRef)
+  const created = !draftSnapshot.exists()
   const basePayload = buildProductPayload({ ...input, id: productId }, user)
   await ensureDraftProductDocument(user, basePayload, productId)
-  return productId
+  return { productId, created }
 }
 
 export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
 
   const requestedId = options.productId || input.id || ''
-  const productId = await initializeProductDraft(user, input, requestedId)
+  const initialization = await initializeProductDraft(user, input, requestedId)
+  const { productId, created } = initialization
+  if (typeof options.onStatus === 'function' && created) {
+    options.onStatus('Draft created.')
+  }
   const basePayload = buildProductPayload({ ...input, id: productId }, user)
+  if (typeof options.onStatus === 'function' && (options.mediaFiles?.cover || options.mediaFiles?.thumbnail)) {
+    options.onStatus('Upload started.')
+  }
 
   const mediaUploads = await uploadProductMediaFiles(productId, options.mediaFiles || {})
+  if (typeof options.onStatus === 'function' && mediaUploads.coverPath) {
+    options.onStatus('Cover uploaded successfully.')
+  }
+  if (typeof options.onStatus === 'function' && mediaUploads.thumbnailPath) {
+    options.onStatus('Thumbnail uploaded successfully.')
+  }
 
   const payload = {
     ...basePayload,
@@ -322,7 +340,8 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   return {
     productId,
     payload,
-    mediaUploads
+    mediaUploads,
+    draftCreated: created
   }
 }
 
