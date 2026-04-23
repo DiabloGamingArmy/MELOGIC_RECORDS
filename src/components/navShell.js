@@ -16,20 +16,20 @@ export function navShell(options = {}) {
         <nav class="main-nav" aria-label="Primary">
           <a href="/index.html" ${isHome ? 'aria-current="page"' : ''}>Home</a>
           <a href="/products.html" ${isProducts ? 'aria-current="page"' : ''}>Products</a>
-          <a href="/index.html#community">Community</a>
-          <a href="/index.html#live">Live</a>
-          <a href="/index.html#forms">Forms</a>
-          <a href="/index.html#faq">FAQ</a>
-          <a href="/index.html#support">Support</a>
+          <a href="/community.html">Community</a>
+          <a href="/live.html">Live</a>
+          <a href="/forms.html">Forms</a>
+          <a href="/faq.html">FAQ</a>
+          <a href="/support.html">Support</a>
         </nav>
 
         <div class="nav-actions" aria-label="Account and cart actions">
-          <a class="button button-muted nav-auth" href="#forms">Sign In / Sign Up</a>
-          <button class="button button-cart" type="button" aria-label="Open cart">
+          <a class="button button-muted nav-auth" href="/auth.html">Sign In / Sign Up</a>
+          <a class="button button-cart" href="/cart.html" aria-label="Open cart">
             <span class="cart-icon" aria-hidden="true">🛒</span>
             <span>Cart</span>
             <span class="cart-badge" aria-label="0 items in cart">0</span>
-          </button>
+          </a>
         </div>
       </div>
     </header>

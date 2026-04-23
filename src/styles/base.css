@@ -301,6 +301,17 @@ main {
     var(--bg);
 }
 
+.standard-hero {
+  position: relative;
+  overflow: clip;
+  padding: clamp(3.4rem, 8vw, 6rem) 0 clamp(3rem, 6vw, 4rem);
+  border-bottom: 1px solid rgba(151, 165, 197, 0.11);
+  background:
+    radial-gradient(900px 420px at 75% -12%, rgba(86, 117, 190, 0.12), transparent 70%),
+    radial-gradient(1000px 420px at 10% -18%, rgba(81, 64, 152, 0.11), transparent 68%),
+    var(--bg);
+}
+
 .hero-media {
   position: absolute;
   inset: 0;
