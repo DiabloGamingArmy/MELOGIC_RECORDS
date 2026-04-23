@@ -2,9 +2,10 @@ import './styles/base.css'
 import { mountStandardPage } from './components/standardPage'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 mountStandardPage({
-  currentPage: 'auth' === 'community' ? 'community' : 'auth',
+  currentPage: 'auth',
   pageId: 'auth',
   eyebrow: 'Melogic Auth',
   title: 'Auth',
@@ -13,8 +14,11 @@ mountStandardPage({
 
 initShellChrome()
 
-attachHeroVideo(document.querySelector('#auth-hero-video'), {
-  webmPath: 'assets/site/backgrounds/auth-hero.webm',
-  mp4Path: 'assets/site/backgrounds/auth-hero.mp4',
-  warningKey: 'auth'
-})
+const heroPaths = getPageHeroVideoPaths('auth')
+if (heroPaths) {
+  attachHeroVideo(document.querySelector('#auth-hero-video'), {
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
+    warningKey: 'auth'
+  })
+}

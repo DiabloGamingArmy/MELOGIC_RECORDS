@@ -2,9 +2,10 @@ import './styles/base.css'
 import { mountStandardPage } from './components/standardPage'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 mountStandardPage({
-  currentPage: 'live' === 'community' ? 'community' : 'live',
+  currentPage: 'live',
   pageId: 'live',
   eyebrow: 'Melogic Live',
   title: 'Live',
@@ -13,8 +14,11 @@ mountStandardPage({
 
 initShellChrome()
 
-attachHeroVideo(document.querySelector('#live-hero-video'), {
-  webmPath: 'assets/site/backgrounds/live-hero.webm',
-  mp4Path: 'assets/site/backgrounds/live-hero.mp4',
-  warningKey: 'live'
-})
+const heroPaths = getPageHeroVideoPaths('live')
+if (heroPaths) {
+  attachHeroVideo(document.querySelector('#live-hero-video'), {
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
+    warningKey: 'live'
+  })
+}

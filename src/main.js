@@ -2,6 +2,7 @@ import './styles/base.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 
 const app = document.querySelector('#app')
 
@@ -264,9 +265,11 @@ app.innerHTML = `
 
 async function initHeroBackgroundVideo() {
   const heroVideo = document.querySelector('#hero-bg-video')
+  const heroPaths = getPageHeroVideoPaths('home')
+  if (!heroPaths) return false
   return attachHeroVideo(heroVideo, {
-    webmPath: 'assets/site/backgrounds/hero-loop.webm',
-    mp4Path: 'assets/site/backgrounds/hero-loop.mp4',
+    webmPath: heroPaths.webm,
+    mp4Path: heroPaths.mp4,
     warningKey: 'home'
   })
 }
