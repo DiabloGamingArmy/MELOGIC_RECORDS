@@ -1,4 +1,8 @@
-export function navShell() {
+export function navShell(options = {}) {
+  const currentPage = options.currentPage || ''
+  const isHome = currentPage === 'home'
+  const isProducts = currentPage === 'products'
+
   return `
     <header class="nav-shell">
       <div class="nav-inner">
@@ -10,13 +14,13 @@ export function navShell() {
         </a>
 
         <nav class="main-nav" aria-label="Primary">
-          <a href="#explore">Home</a>
-          <a href="#products">Products</a>
-          <a href="#community">Community</a>
-          <a href="#live">Live</a>
-          <a href="#forms">Forms</a>
-          <a href="#faq">FAQ</a>
-          <a href="#support">Support</a>
+          <a href="/index.html" ${isHome ? 'aria-current="page"' : ''}>Home</a>
+          <a href="/products.html" ${isProducts ? 'aria-current="page"' : ''}>Products</a>
+          <a href="/index.html#community">Community</a>
+          <a href="/index.html#live">Live</a>
+          <a href="/index.html#forms">Forms</a>
+          <a href="/index.html#faq">FAQ</a>
+          <a href="/index.html#support">Support</a>
         </nav>
 
         <div class="nav-actions" aria-label="Account and cart actions">

@@ -91,7 +91,7 @@ app.innerHTML = `
     </div>
   </div>
 
-  ${navShell()}
+  ${navShell({ currentPage: 'home' })}
 
   <main>
     <section class="hero" id="explore">
