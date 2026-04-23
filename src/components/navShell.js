@@ -2,6 +2,7 @@ export function navShell(options = {}) {
   const currentPage = options.currentPage || ''
   const isHome = currentPage === 'home'
   const isProducts = currentPage === 'products'
+  const isProfile = currentPage === 'profile'
 
   return `
     <header class="nav-shell">
@@ -25,7 +26,7 @@ export function navShell(options = {}) {
 
         <div class="nav-actions" aria-label="Account and cart actions">
           <a class="button button-muted nav-auth" data-nav-auth href="/auth.html">Sign In / Sign Up</a>
-          <a class="profile-button" data-nav-profile href="/auth.html" aria-label="Account" title="Account">
+          <a class="profile-button ${isProfile ? 'is-active' : ''}" data-nav-profile href="/auth.html" aria-label="Account" title="Account" ${isProfile ? 'aria-current="page"' : ''}>
             <span class="profile-avatar" data-profile-avatar aria-hidden="true"></span>
           </a>
           <a class="button button-cart" href="/cart.html" aria-label="Open cart">
