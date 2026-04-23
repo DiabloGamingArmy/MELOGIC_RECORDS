@@ -1,18 +1,9 @@
 import { doc, getDoc, getFirestore, serverTimestamp, setDoc } from 'firebase/firestore'
 import { app } from './firebaseConfig.js'
 
-let hasWarnedFirestore = false
+let hasWarnedProfileRead = false
 
-export let db = null
-
-try {
-  db = getFirestore(app)
-} catch (error) {
-  if (!hasWarnedFirestore) {
-    hasWarnedFirestore = true
-    console.warn('[firebase/firestore] Firestore initialization failed.', error?.message || error)
-  }
-}
+export const db = getFirestore(app)
 
 export async function upsertUserProfile(user, profileInput = {}) {
   if (!db || !user?.uid) return false
@@ -39,7 +30,15 @@ export async function upsertUserProfile(user, profileInput = {}) {
 
 export async function getUserProfile(uid) {
   if (!db || !uid) return null
-  const profileRef = doc(db, 'users', uid)
-  const snapshot = await getDoc(profileRef)
-  return snapshot.exists() ? snapshot.data() : null
+  try {
+    const profileRef = doc(db, 'users', uid)
+    const snapshot = await getDoc(profileRef)
+    return snapshot.exists() ? snapshot.data() : null
+  } catch (error) {
+    if (!hasWarnedProfileRead) {
+      hasWarnedProfileRead = true
+      console.warn('[firebase/firestore] Profile read failed; falling back to Auth user.', error?.message || error)
+    }
+    return null
+  }
 }
