@@ -34,6 +34,7 @@ app.innerHTML = `
 initShellChrome()
 
 const profileRoot = document.querySelector('[data-profile-root]')
+let hasWarnedProfileFallback = false
 
 function fallbackInitials(nameOrEmail) {
   if (!nameOrEmail) return 'MR'
@@ -116,6 +117,14 @@ subscribeToAuthState(async (user) => {
     return
   }
 
-  const storedProfile = await getUserProfile(user.uid)
+  let storedProfile = null
+  try {
+    storedProfile = await getUserProfile(user.uid)
+  } catch (error) {
+    if (!hasWarnedProfileFallback) {
+      hasWarnedProfileFallback = true
+      console.warn('[profile] Could not load Firestore profile; using Auth fallback.', error?.message || error)
+    }
+  }
   renderSignedInState(user, storedProfile)
 })
