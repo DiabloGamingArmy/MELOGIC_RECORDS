@@ -30,7 +30,7 @@ export function mountStandardPage({
           <div class="hero-media-overlay"></div>
         </div>
 
-        <div class="section-inner hero-inner">
+        <div class="section-inner hero-inner hero-content-layer">
           <div class="hero-copy">
             <p class="eyebrow">${eyebrow}</p>
             <h1>${title}</h1>

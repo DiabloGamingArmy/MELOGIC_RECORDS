@@ -60,7 +60,7 @@ app.innerHTML = `
         ></video>
         <div class="hero-media-overlay"></div>
       </div>
-      <div class="section-inner">
+      <div class="section-inner hero-content-layer">
         <p class="eyebrow">Marketplace</p>
         <h1>Products</h1>
         <p class="products-intro">
