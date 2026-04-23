@@ -1,3 +1,13 @@
+
+.utility-hero {
+  padding-top: clamp(1.4rem, 3.2vw, 2.2rem);
+  padding-bottom: clamp(0.55rem, 1.8vw, 1rem);
+  min-height: 23vh;
+}
+
+.utility-hero .hero-copy p {
+  margin-bottom: 0.45rem;
+}
 .edit-shell {
   padding-top: clamp(1.2rem, 2.5vw, 2rem);
 }

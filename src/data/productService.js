@@ -1,5 +1,5 @@
-import { collection, doc, getDoc, getDocs, setDoc, writeBatch } from 'firebase/firestore'
-import { getDownloadURL, ref } from 'firebase/storage'
+import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { storage } from '../firebase/storage'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
@@ -160,6 +160,121 @@ export async function getProductById(productId) {
   } catch (error) {
     warnOnce('fetch', '[productService] Failed to fetch product by id.', error?.message || error)
     return null
+  }
+}
+
+
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+}
+
+function parseCsv(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+export function buildProductPayload(input = {}, user = null) {
+  const nowIso = new Date().toISOString()
+  const counts = input.counts || {}
+  const slug = input.slug || slugify(input.title) || `product-${Date.now()}`
+  const contributorNames = Array.isArray(input.contributorNames) ? input.contributorNames : parseCsv(input.contributorNames)
+
+  return {
+    id: input.id || slug,
+    slug,
+    status: input.status || 'draft',
+    visibility: input.visibility || 'private',
+    title: input.title || '',
+    shortDescription: input.shortDescription || '',
+    description: input.description || '',
+    productType: input.productType || 'Sample Pack',
+    categories: Array.isArray(input.categories) ? input.categories : parseCsv(input.categories),
+    genres: Array.isArray(input.genres) ? input.genres : parseCsv(input.genres),
+    tags: Array.isArray(input.tags) ? input.tags : parseCsv(input.tags),
+    artistId: input.artistId || user?.uid || '',
+    artistName: input.artistName || user?.displayName || '',
+    artistUsername: input.artistUsername || '',
+    artistProfilePath: input.artistProfilePath || '',
+    contributorIds: Array.isArray(input.contributorIds) ? input.contributorIds : parseCsv(input.contributorIds),
+    contributorNames,
+    coverPath: input.coverPath || '',
+    thumbnailPath: input.thumbnailPath || '',
+    galleryPaths: Array.isArray(input.galleryPaths) ? input.galleryPaths : parseCsv(input.galleryPaths),
+    previewAudioPaths: Array.isArray(input.previewAudioPaths) ? input.previewAudioPaths : parseCsv(input.previewAudioPaths),
+    previewVideoPaths: Array.isArray(input.previewVideoPaths) ? input.previewVideoPaths : parseCsv(input.previewVideoPaths),
+    downloadPath: input.downloadPath || '',
+    licensePath: input.licensePath || '',
+    priceCents: Number.isFinite(input.priceCents) ? input.priceCents : 0,
+    currency: input.currency || 'USD',
+    isFree: Boolean(input.isFree),
+    counts: {
+      likes: Number(counts.likes || 0),
+      dislikes: Number(counts.dislikes || 0),
+      saves: Number(counts.saves || 0),
+      shares: Number(counts.shares || 0),
+      comments: Number(counts.comments || 0),
+      downloads: Number(counts.downloads || 0),
+      follows: Number(counts.follows || 0)
+    },
+    featured: Boolean(input.featured),
+    releasedAt: input.releasedAt || null,
+    createdAt: input.createdAt || nowIso,
+    updatedAt: nowIso
+  }
+}
+
+export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
+  if (!storage || !productId) return {}
+  const uploads = {}
+
+  if (mediaFiles.cover instanceof File) {
+    const coverPath = STORAGE_PATHS.productCover(productId)
+    await uploadBytes(ref(storage, coverPath), mediaFiles.cover, { contentType: mediaFiles.cover.type || 'image/webp' })
+    uploads.coverPath = coverPath
+    uploads.coverURL = await safeStorageUrl(coverPath)
+  }
+
+  if (mediaFiles.thumbnail instanceof File) {
+    const thumbnailPath = STORAGE_PATHS.productThumb(productId)
+    await uploadBytes(ref(storage, thumbnailPath), mediaFiles.thumbnail, { contentType: mediaFiles.thumbnail.type || 'image/webp' })
+    uploads.thumbnailPath = thumbnailPath
+    uploads.thumbnailURL = await safeStorageUrl(thumbnailPath)
+  }
+
+  return uploads
+}
+
+export async function saveProductDraft(user, input = {}, options = {}) {
+  if (!db || !user?.uid) throw new Error('Authenticated user required.')
+
+  const basePayload = buildProductPayload(input, user)
+  const productId = options.productId || basePayload.id || basePayload.slug
+  const mediaUploads = await uploadProductMediaFiles(productId, options.mediaFiles || {})
+
+  const payload = {
+    ...basePayload,
+    id: productId,
+    status: options.status || basePayload.status || 'draft',
+    coverPath: mediaUploads.coverPath || basePayload.coverPath,
+    thumbnailPath: mediaUploads.thumbnailPath || basePayload.thumbnailPath,
+    updatedAt: serverTimestamp(),
+    createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
+  }
+
+  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
+
+  return {
+    productId,
+    payload,
+    mediaUploads
   }
 }
 
