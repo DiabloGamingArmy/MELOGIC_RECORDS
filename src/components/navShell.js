@@ -6,13 +6,25 @@ export function navShell(logoSrc) {
           <img src="${logoSrc}" alt="Melogic logo mark" class="brand-logo" />
           <span class="brand-text">MELOGIC RECORDS</span>
         </a>
+
         <nav class="main-nav" aria-label="Primary">
-          <a href="#store">Store</a>
+          <a href="#explore">Home</a>
+          <a href="#products">Products</a>
           <a href="#community">Community</a>
           <a href="#live">Live</a>
-          <a href="#label">Label</a>
+          <a href="#forms">Forms</a>
+          <a href="#faq">FAQ</a>
+          <a href="#support">Support</a>
         </nav>
-        <a class="button button-accent" href="#explore">Start Exploring</a>
+
+        <div class="nav-actions" aria-label="Account and cart actions">
+          <a class="button button-muted nav-auth" href="#forms">Sign In / Sign Up</a>
+          <button class="button button-cart" type="button" aria-label="Open cart">
+            <span class="cart-icon" aria-hidden="true">🛒</span>
+            <span>Cart</span>
+            <span class="cart-badge" aria-label="0 items in cart">0</span>
+          </button>
+        </div>
       </div>
     </header>
   `
