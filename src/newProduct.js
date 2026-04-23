@@ -3,7 +3,7 @@ import './styles/newProduct.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState } from './firebase/auth'
-import { buildProductPayload, saveProductDraft } from './data/productService'
+import { buildProductPayload, isPlaceholderProductId, saveProductDraft } from './data/productService'
 
 const PRODUCT_SECTIONS = [
   { key: 'basics', label: 'Basics' },
@@ -96,7 +96,9 @@ function createEmptyProductDraft(user = null) {
     storefrontVisible: true,
     galleryPaths: '',
     coverPath: '',
-    thumbnailPath: ''
+    thumbnailPath: '',
+    coverURL: '',
+    thumbnailURL: ''
   }
 }
 
@@ -133,7 +135,6 @@ function saveDraftState() {
     const payload = {
       draft: editorState.draft,
       slugLocked: editorState.slugLocked,
-      mediaPreview: editorState.mediaPreview,
       updatedAt: Date.now()
     }
     sessionStorage.setItem(getDraftStorageKey(editorState.user), JSON.stringify(payload))
@@ -151,15 +152,15 @@ function loadDraftState(user) {
     if (!raw) return empty
     const parsed = JSON.parse(raw)
     editorState.slugLocked = Boolean(parsed?.slugLocked)
-    editorState.mediaPreview = {
-      ...editorState.mediaPreview,
-      ...(parsed?.mediaPreview || {})
-    }
-    return {
+    const hydratedDraft = {
       ...empty,
       ...(parsed?.draft || {}),
       artistId: parsed?.draft?.artistId || user.uid || ''
     }
+    if (isPlaceholderProductId(hydratedDraft.id)) {
+      hydratedDraft.id = ''
+    }
+    return hydratedDraft
   } catch {
     return empty
   }
@@ -169,6 +170,12 @@ function updateDraftField(path, value) {
   if (!editorState.draft) return
   editorState.draft[path] = value
   saveDraftState()
+}
+
+function syncPreviewFromDraft() {
+  if (!editorState.draft) return
+  editorState.mediaPreview.cover = /^https?:\/\//i.test(editorState.draft.coverURL || '') ? editorState.draft.coverURL : ''
+  editorState.mediaPreview.thumbnail = /^https?:\/\//i.test(editorState.draft.thumbnailURL || '') ? editorState.draft.thumbnailURL : ''
 }
 
 function hydrateSectionFields(sectionName) {
@@ -207,6 +214,22 @@ function serializeDraftForFirestore(draft) {
 
 function setStatus(message, state = 'info') {
   editorState.status = { message, state }
+}
+
+function getPublishValidationMessage(draft = {}) {
+  const missingTitle = !String(draft.title || '').trim()
+  const missingProductType = !String(draft.productType || '').trim()
+
+  if (missingTitle && missingProductType) {
+    return 'Title and product type are required before publishing.'
+  }
+  if (missingTitle) {
+    return 'Title is required before publishing.'
+  }
+  if (missingProductType) {
+    return 'Product type is required before publishing.'
+  }
+  return ''
 }
 
 function renderSignedOut() {
@@ -453,35 +476,63 @@ function renderEditor() {
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
 
-    const draftForSave = serializeDraftForFirestore({
-      ...editorState.draft,
-      status: desiredStatus
-    })
+    if (desiredStatus === 'published') {
+      const publishValidationMessage = getPublishValidationMessage(editorState.draft)
+      if (publishValidationMessage) {
+        setStatus(publishValidationMessage, 'error')
+        renderEditor()
+        return
+      }
+    }
 
-    const payload = buildProductPayload(draftForSave, editorState.user)
+    setStatus(desiredStatus === 'published' ? 'Publishing product...' : 'Saving draft...', 'info')
+    renderEditor()
 
     try {
+      const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
+      const draftForSave = serializeDraftForFirestore({
+        ...editorState.draft,
+        status: desiredStatus
+      })
+      const payload = buildProductPayload(draftForSave, editorState.user)
       const result = await saveProductDraft(editorState.user, payload, {
-        productId: payload.id,
+        productId: wasNewDraft ? '' : editorState.draft.id,
         status: desiredStatus,
-        isNew: true,
-        mediaFiles: editorState.mediaFiles
+        isNew: wasNewDraft,
+        mediaFiles: editorState.mediaFiles,
+        onStatus: (message) => {
+          setStatus(message, 'info')
+          renderEditor()
+        }
       })
 
       updateDraftField('id', result.productId)
       updateDraftField('slug', payload.slug)
+      updateDraftField('coverPath', result.mediaUploads.coverPath || payload.coverPath || '')
+      updateDraftField('thumbnailPath', result.mediaUploads.thumbnailPath || payload.thumbnailPath || '')
+      updateDraftField('coverURL', result.mediaUploads.coverURL || payload.coverURL || editorState.draft.coverURL || '')
+      updateDraftField('thumbnailURL', result.mediaUploads.thumbnailURL || payload.thumbnailURL || editorState.draft.thumbnailURL || '')
+      syncPreviewFromDraft()
+      editorState.mediaFiles.cover = null
+      editorState.mediaFiles.thumbnail = null
       setStatus(
         desiredStatus === 'published'
           ? `Product ${result.productId} published successfully.`
-          : `Draft ${result.productId} saved successfully. Local autosave is active.`,
+          : 'Draft saved.',
         'success'
       )
       renderEditor()
     } catch (error) {
-      console.warn('[new-product] Save/upload failed.', error?.code || error?.message || error)
-      const friendlyMessage = error?.code === 'storage/unauthorized'
-        ? 'Media upload was blocked. We could not verify draft ownership for storage yet. Please save draft again and retry.'
-        : 'Could not save product right now. Your local draft is still preserved.'
+      console.warn('[new-product] Draft save flow failed.', error?.code || error?.message || error)
+      const friendlyMessage = error?.code === 'permission-denied'
+        ? desiredStatus === 'published'
+          ? 'Could not publish product.'
+          : 'Could not save draft.'
+        : error?.code?.startsWith?.('storage/')
+          ? 'Could not upload media.'
+          : desiredStatus === 'published'
+            ? 'Could not publish product.'
+            : 'Could not save draft.'
       setStatus(friendlyMessage, 'error')
       renderEditor()
     }
@@ -505,6 +556,7 @@ async function initPage() {
 
   editorState.user = user
   editorState.draft = loadDraftState(user)
+  syncPreviewFromDraft()
   renderEditor()
 }
 
