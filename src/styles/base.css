@@ -29,6 +29,58 @@ body {
   background: var(--bg);
 }
 
+.page-preloader {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(700px 300px at 70% -15%, rgba(95, 121, 214, 0.2), transparent 70%),
+    radial-gradient(680px 320px at 15% 120%, rgba(98, 209, 214, 0.14), transparent 72%),
+    rgba(3, 6, 12, 0.94);
+  backdrop-filter: blur(8px);
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 500ms ease, visibility 500ms ease;
+}
+
+.page-preloader.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.preloader-core {
+  display: grid;
+  justify-items: center;
+  gap: 0.8rem;
+}
+
+.preloader-ring {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid rgba(150, 166, 209, 0.23);
+  border-top-color: rgba(109, 208, 224, 0.96);
+  box-shadow: 0 0 26px rgba(102, 156, 235, 0.24);
+  animation: preloader-spin 850ms linear infinite;
+}
+
+.preloader-core p {
+  margin: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(220, 230, 250, 0.88);
+}
+
+@keyframes preloader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -80,9 +132,14 @@ main {
   flex: 0 0 42px;
 }
 
+.brand-logo-shell:empty {
+  display: none;
+}
+
 .brand-logo {
-  width: auto;
+  width: 38px;
   height: 38px;
+  display: block;
   max-width: 100%;
   object-fit: contain;
   opacity: 0;
@@ -234,6 +291,17 @@ main {
 }
 
 .hero {
+  position: relative;
+  overflow: clip;
+  padding: clamp(3.4rem, 8vw, 6rem) 0 clamp(3rem, 6vw, 4rem);
+  border-bottom: 1px solid rgba(151, 165, 197, 0.11);
+  background:
+    radial-gradient(900px 420px at 75% -12%, rgba(86, 117, 190, 0.12), transparent 70%),
+    radial-gradient(1000px 420px at 10% -18%, rgba(81, 64, 152, 0.11), transparent 68%),
+    var(--bg);
+}
+
+.standard-hero {
   position: relative;
   overflow: clip;
   padding: clamp(3.4rem, 8vw, 6rem) 0 clamp(3rem, 6vw, 4rem);
