@@ -213,40 +213,31 @@ export async function saveProfileChanges(user, payload = {}) {
 
       const usernameChanged = previousUsernameLower !== nextUsernameLower
 
-      if (nextUsernameLower && usernameChanged) {
-        try {
-          saveStage = 'username-claim-transaction'
-          const claimRef = doc(db, 'usernameClaims', nextUsernameLower)
-          const claimSnap = await transaction.get(claimRef)
-          if (claimSnap.exists() && claimSnap.data()?.uid !== uid) {
+      let nextClaimRef = null
+      let nextClaimSnap = null
+      let previousClaimRef = null
+      let previousClaimSnap = null
+
+      try {
+        if (nextUsernameLower && usernameChanged) {
+          saveStage = 'username-claim-read-next'
+          nextClaimRef = doc(db, 'usernameClaims', nextUsernameLower)
+          nextClaimSnap = await transaction.get(nextClaimRef)
+          if (nextClaimSnap.exists() && nextClaimSnap.data()?.uid !== uid) {
             const usernameError = new Error('Username already taken.')
             usernameError.code = 'profile/username-taken'
             throw usernameError
           }
-
-          transaction.set(
-            claimRef,
-            {
-              uid,
-              username: nextUsernameLower,
-              usernameLower: nextUsernameLower,
-              createdAt: claimSnap.exists() ? claimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
-            },
-            { merge: true }
-          )
-        } catch (error) {
-          if (!error?.code) error.code = 'profile/username-claim-write-failed'
-          throw error
         }
-      }
 
-      if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
-        saveStage = 'username-claim-cleanup'
-        const previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
-        const previousClaimSnap = await transaction.get(previousClaimRef)
-        if (previousClaimSnap.exists() && previousClaimSnap.data()?.uid === uid) {
-          transaction.delete(previousClaimRef)
+        if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
+          saveStage = 'username-claim-read-previous'
+          previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
+          previousClaimSnap = await transaction.get(previousClaimRef)
         }
+      } catch (error) {
+        if (!error?.code) error.code = 'profile/username-claim-write-failed'
+        throw error
       }
 
       const normalizedPayload = {
@@ -263,6 +254,25 @@ export async function saveProfileChanges(user, payload = {}) {
       if (!profileSnap.exists()) publicPayload.createdAt = serverTimestamp()
       if (!userSnap.exists()) privatePayload.createdAt = serverTimestamp()
 
+      if (nextClaimRef && nextClaimSnap) {
+        saveStage = 'username-claim-write-next'
+        transaction.set(
+          nextClaimRef,
+          {
+            uid,
+            username: nextUsernameLower,
+            usernameLower: nextUsernameLower,
+            createdAt: nextClaimSnap.exists() ? nextClaimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
+          },
+          { merge: true }
+        )
+      }
+
+      if (previousClaimRef && previousClaimSnap?.exists() && previousClaimSnap.data()?.uid === uid) {
+        saveStage = 'username-claim-write-previous-delete'
+        transaction.delete(previousClaimRef)
+      }
+
       saveStage = 'public-profile-write'
       transaction.set(profileRef, publicPayload, { merge: true })
 
@@ -272,7 +282,12 @@ export async function saveProfileChanges(user, payload = {}) {
     })
   } catch (error) {
     if (!error?.code) {
-      if (saveStage === 'username-claim-transaction' || saveStage === 'username-claim-cleanup') {
+      if (
+        saveStage === 'username-claim-read-next' ||
+        saveStage === 'username-claim-read-previous' ||
+        saveStage === 'username-claim-write-next' ||
+        saveStage === 'username-claim-write-previous-delete'
+      ) {
         error.code = 'profile/username-claim-write-failed'
       } else if (saveStage === 'public-profile-write') {
         error.code = 'profile/public-profile-write-failed'
