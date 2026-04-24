@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -32,6 +33,31 @@ function normalizeMessage(messageId, raw = {}) {
     createdAt: toIsoDate(raw.createdAt),
     updatedAt: toIsoDate(raw.updatedAt),
     deleted: Boolean(raw.deleted)
+  }
+}
+
+function normalizeParticipant(participantId, raw = {}) {
+  return {
+    id: participantId,
+    uid: raw.uid || participantId,
+    role: raw.role || 'member',
+    displayName: String(raw.displayName || '').trim(),
+    username: String(raw.username || '').trim(),
+    avatarURL: String(raw.avatarURL || '').trim(),
+    photoURL: String(raw.photoURL || '').trim(),
+    lastReadAt: toIsoDate(raw.lastReadAt),
+    lastDeliveredAt: toIsoDate(raw.lastDeliveredAt),
+    joinedAt: toIsoDate(raw.joinedAt)
+  }
+}
+
+function normalizeTypingState(typingId, raw = {}) {
+  return {
+    id: typingId,
+    uid: raw.uid || typingId,
+    displayName: String(raw.displayName || '').trim(),
+    username: String(raw.username || '').trim(),
+    updatedAt: toIsoDate(raw.updatedAt)
   }
 }
 
@@ -101,6 +127,12 @@ export async function sendMessage(threadId, payload = {}) {
       lastMessageSenderId: payload.senderId,
       lastMessageType: payload.type || 'text'
     })
+
+    transaction.set(participantRef, {
+      uid: payload.senderId,
+      lastDeliveredAt: serverTimestamp(),
+      lastReadAt: serverTimestamp()
+    }, { merge: true })
   })
 
   await setDoc(
@@ -126,9 +158,11 @@ export async function markThreadRead({ threadId, uid }) {
   if (!threadSnap.exists()) return false
 
   await Promise.all([
-    updateDoc(doc(db, 'threads', threadId, 'participants', uid), {
+    setDoc(doc(db, 'threads', threadId, 'participants', uid), {
+      uid,
+      lastDeliveredAt: serverTimestamp(),
       lastReadAt: serverTimestamp()
-    }),
+    }, { merge: true }),
     setDoc(
       doc(db, 'users', uid, 'inboxThreads', threadId),
       {
@@ -140,5 +174,45 @@ export async function markThreadRead({ threadId, uid }) {
     )
   ])
 
+  return true
+}
+
+export async function markThreadDelivered({ threadId, uid }) {
+  if (!db || !threadId || !uid) return false
+  await setDoc(doc(db, 'threads', threadId, 'participants', uid), {
+    uid,
+    lastDeliveredAt: serverTimestamp()
+  }, { merge: true })
+  return true
+}
+
+export function subscribeToThreadParticipants(threadId, callback) {
+  if (!db || !threadId || typeof callback !== 'function') return () => {}
+  return onSnapshot(collection(db, 'threads', threadId, 'participants'), (snapshot) => {
+    callback(snapshot.docs.map((docSnap) => normalizeParticipant(docSnap.id, docSnap.data())))
+  })
+}
+
+export function subscribeToTypingState(threadId, callback) {
+  if (!db || !threadId || typeof callback !== 'function') return () => {}
+  return onSnapshot(collection(db, 'threads', threadId, 'typing'), (snapshot) => {
+    callback(snapshot.docs.map((docSnap) => normalizeTypingState(docSnap.id, docSnap.data())))
+  })
+}
+
+export async function setTypingState({ threadId, uid, displayName = '', username = '', isTyping }) {
+  if (!db || !threadId || !uid) return false
+  const typingRef = doc(db, 'threads', threadId, 'typing', uid)
+  if (isTyping) {
+    await setDoc(typingRef, {
+      uid,
+      displayName: String(displayName || '').trim(),
+      username: String(username || '').trim(),
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+    return true
+  }
+
+  await deleteDoc(typingRef)
   return true
 }

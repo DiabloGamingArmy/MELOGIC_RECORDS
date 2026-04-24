@@ -139,6 +139,7 @@ async function upsertParticipants(threadId, participantIds = [], ownerId = '') {
         uid,
         role,
         joinedAt: serverTimestamp(),
+        lastDeliveredAt: null,
         lastReadAt: null,
         muted: false,
         archived: false

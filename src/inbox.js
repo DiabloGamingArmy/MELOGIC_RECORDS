@@ -6,10 +6,14 @@ import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import {
   createGroupThread,
   createOrGetDm,
+  markThreadDelivered,
   markThreadRead,
   sendMessage,
+  setTypingState,
   subscribeToInboxThreads,
-  subscribeToMessages
+  subscribeToMessages,
+  subscribeToThreadParticipants,
+  subscribeToTypingState
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
 
@@ -56,10 +60,14 @@ const appState = {
   threads: [],
   selectedThreadId: '',
   messagesByThreadId: {},
+  participantsByThreadId: {},
+  typingUsersByThreadId: {},
   loadingMessageThreadId: '',
   activeFilter: 'Messages',
   threadUnsubscribe: () => {},
   messageUnsubscribe: () => {},
+  participantsUnsubscribe: () => {},
+  typingUnsubscribe: () => {},
   errorMessage: '',
   isCreateChatOpen: false,
   chatSearchQuery: '',
@@ -68,10 +76,13 @@ const appState = {
   isSearchingUsers: false,
   isCreatingChat: false,
   createChatError: '',
-  chatSearchRequestId: 0
+  chatSearchRequestId: 0,
+  composerDraftByThreadId: {}
 }
 
 let searchDebounceTimer = null
+let typingStopTimer = null
+let activeTypingThreadId = ''
 
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
@@ -108,7 +119,7 @@ function escapeHtml(value) {
 }
 
 function getInitials(user = {}) {
-  const source = user.displayName || user.username || '?'
+  const source = user.displayName || user.username || user.title || '?'
   return source
     .split(' ')
     .map((part) => part[0] || '')
@@ -117,15 +128,72 @@ function getInitials(user = {}) {
     .toUpperCase()
 }
 
+function formatTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+function formatThreadTimestamp(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+
+  const now = new Date()
+  const sameDay = date.toDateString() === now.toDateString()
+  if (sameDay) return formatTime(value)
+
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+function formatDaySeparator(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const sameDay = date.toDateString() === now.toDateString()
+  if (sameDay) return 'Today'
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function getSelectedThread() {
   return appState.threads.find((thread) => thread.id === appState.selectedThreadId) || null
+}
+
+function getThreadParticipants(threadId) {
+  return appState.participantsByThreadId[threadId] || []
+}
+
+function getTypingUsers(threadId) {
+  const all = appState.typingUsersByThreadId[threadId] || []
+  const now = Date.now()
+  return all.filter((entry) => {
+    if (!entry?.uid || entry.uid === appState.user?.uid) return false
+    const stamp = entry.updatedAt ? new Date(entry.updatedAt).getTime() : 0
+    return stamp && now - stamp < 7000
+  })
 }
 
 function clearRealtimeListeners() {
   appState.threadUnsubscribe()
   appState.messageUnsubscribe()
+  appState.participantsUnsubscribe()
+  appState.typingUnsubscribe()
   appState.threadUnsubscribe = () => {}
   appState.messageUnsubscribe = () => {}
+  appState.participantsUnsubscribe = () => {}
+  appState.typingUnsubscribe = () => {}
+}
+
+function clearTypingForThread(threadId) {
+  if (!threadId || !appState.user?.uid) return
+  setTypingState({ threadId, uid: appState.user.uid, isTyping: false })
 }
 
 function resetCreateChatState() {
@@ -150,17 +218,6 @@ function openCreateChatModal() {
 function closeCreateChatModal() {
   resetCreateChatState()
   renderCreateChatModal()
-}
-
-function renderSignedOutState() {
-  inboxRoot.innerHTML = `
-    <article class="inbox-auth-card">
-      <h2>Sign in required</h2>
-      <p>Inbox is available for signed-in members so your conversations stay private and synced.</p>
-      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
-    </article>
-  `
-  modalRoot.innerHTML = ''
 }
 
 function getMessagesSidebarMarkup() {
@@ -225,7 +282,7 @@ function getRecentThreadsSidebarMarkup() {
       return `
       <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-thread-id="${thread.id}">
         <strong>${escapeHtml(thread.title)}</strong>
-        ${thread.type === 'group' ? '<small>Group</small>' : ''}
+        ${thread.type === 'group' ? '<small>Group</small>' : '<small>Direct</small>'}
       </button>
     `
     })
@@ -239,6 +296,148 @@ function getRecentThreadsSidebarMarkup() {
   `
 }
 
+function getConversationSubtitle(thread) {
+  if (!thread) return 'No thread selected'
+  const typingUsers = getTypingUsers(thread.id)
+  if (typingUsers.length === 1) return `${typingUsers[0].displayName || typingUsers[0].username || 'Someone'} is typing…`
+  if (typingUsers.length > 1) return 'Several people are typing…'
+
+  if (thread.type === 'group') {
+    return `${Math.max(1, Number(thread.participantCount || thread.participantIds?.length || 0))} members`
+  }
+
+  const participants = getThreadParticipants(thread.id).filter((entry) => entry.uid !== appState.user?.uid)
+  const other = participants[0]
+  if (other?.lastReadAt) return `Seen ${formatTime(other.lastReadAt)}`
+  if (other?.lastDeliveredAt) return 'Active recently'
+  return 'Direct message'
+}
+
+function groupMessages(messages = []) {
+  const groups = []
+  let lastDateKey = ''
+
+  messages.forEach((message) => {
+    const createdAt = message.createdAt || ''
+    const dateKey = createdAt ? new Date(createdAt).toDateString() : 'unknown'
+    if (dateKey !== lastDateKey) {
+      groups.push({ kind: 'separator', id: `sep-${createdAt || Math.random()}`, label: createdAt ? formatDaySeparator(createdAt) : 'Earlier' })
+      lastDateKey = dateKey
+    }
+
+    const prev = groups[groups.length - 1]
+    const prevGroup = prev?.kind === 'messages' ? prev : null
+    const sameSender = prevGroup && prevGroup.senderId === message.senderId
+    const closeInTime = (() => {
+      if (!sameSender) return false
+      const last = prevGroup.messages[prevGroup.messages.length - 1]
+      const a = new Date(last.createdAt || 0).getTime()
+      const b = new Date(message.createdAt || 0).getTime()
+      return b - a < 5 * 60 * 1000
+    })()
+
+    if (sameSender && closeInTime) {
+      prevGroup.messages.push(message)
+      return
+    }
+
+    groups.push({ kind: 'messages', id: `group-${message.id}`, senderId: message.senderId, messages: [message] })
+  })
+
+  return groups
+}
+
+function getParticipantMeta(thread, uid) {
+  const participants = getThreadParticipants(thread.id)
+  const direct = participants.find((entry) => entry.uid === uid)
+  if (direct) return direct
+
+  if (thread.type === 'dm' && uid !== appState.user?.uid) {
+    return {
+      uid,
+      displayName: thread.title,
+      avatarURL: thread.imageURL,
+      username: ''
+    }
+  }
+
+  return { uid, displayName: uid === appState.user?.uid ? 'You' : 'Member', username: '' }
+}
+
+function getOutgoingStatusLabel(thread, message) {
+  const participants = getThreadParticipants(thread.id).filter((entry) => entry.uid && entry.uid !== appState.user?.uid)
+  const createdAt = new Date(message.createdAt || 0).getTime()
+  if (!createdAt || !participants.length) return `Sent · ${formatTime(message.createdAt)}`
+
+  if (thread.type === 'group') {
+    const seenBy = participants.filter((entry) => entry.lastReadAt && new Date(entry.lastReadAt).getTime() >= createdAt).length
+    if (seenBy > 0) return `Seen by ${seenBy} · ${formatTime(message.createdAt)}`
+    return `Sent · ${formatTime(message.createdAt)}`
+  }
+
+  const other = participants[0]
+  const readAt = other?.lastReadAt ? new Date(other.lastReadAt).getTime() : 0
+  if (readAt >= createdAt) return `Read ${formatTime(other.lastReadAt)}`
+  const deliveredAt = other?.lastDeliveredAt ? new Date(other.lastDeliveredAt).getTime() : 0
+  if (deliveredAt >= createdAt) return `Delivered · ${formatTime(message.createdAt)}`
+  return `Sent · ${formatTime(message.createdAt)}`
+}
+
+function getMessageGroupsMarkup(thread) {
+  const messages = appState.messagesByThreadId[thread.id] || []
+  if (!messages.length) {
+    return `
+      <section class="inbox-empty-panel inbox-empty-panel-inline">
+        <h3>No messages yet.</h3>
+        <p>Start this conversation with your first message.</p>
+      </section>
+    `
+  }
+
+  const grouped = groupMessages(messages)
+  const messageGroups = grouped
+    .map((entry, index) => {
+      if (entry.kind === 'separator') {
+        return `<p class="message-date-separator"><span>${escapeHtml(entry.label)}</span></p>`
+      }
+
+      const isSelf = entry.senderId === appState.user?.uid
+      const sender = getParticipantMeta(thread, entry.senderId)
+      const lastMessage = entry.messages[entry.messages.length - 1]
+      const isLatestOutgoingGroup = isSelf && [...grouped].reverse().find((item) => item.kind === 'messages' && item.senderId === appState.user?.uid)?.id === entry.id
+      const statusLine = isLatestOutgoingGroup ? `<p class="message-status-line">${escapeHtml(getOutgoingStatusLabel(thread, lastMessage))}</p>` : `<p class="message-status-line is-muted">${escapeHtml(formatTime(lastMessage.createdAt))}</p>`
+      const avatarMarkup = !isSelf
+        ? `<div class="cluster-avatar ${sender.avatarURL || sender.photoURL ? 'has-image' : ''}">${sender.avatarURL || sender.photoURL ? `<img src="${escapeHtml(sender.avatarURL || sender.photoURL)}" alt="" />` : `<span>${getInitials(sender)}</span>`}</div>`
+        : '<div class="cluster-avatar-spacer" aria-hidden="true"></div>'
+
+      const bubbles = entry.messages
+        .map((message, messageIndex) => {
+          const isFirst = messageIndex === 0
+          const isLast = messageIndex === entry.messages.length - 1
+          return `
+            <article class="message-bubble ${isFirst ? 'is-first' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''}">
+              <p>${escapeHtml(message.deleted ? 'Message removed.' : message.body)}</p>
+            </article>
+          `
+        })
+        .join('')
+
+      return `
+        <div class="message-cluster ${isSelf ? 'is-self' : 'is-other'}" data-index="${index}">
+          ${avatarMarkup}
+          <div class="message-cluster-body">
+            ${!isSelf ? `<p class="cluster-sender">${escapeHtml(sender.displayName || sender.username || 'Member')}</p>` : ''}
+            <div class="message-bubble-stack">${bubbles}</div>
+            ${statusLine}
+          </div>
+        </div>
+      `
+    })
+    .join('')
+
+  return `<div class="message-list" data-message-list>${messageGroups}</div>`
+}
+
 function getConversationBodyMarkup() {
   const thread = getSelectedThread()
   if (!thread) {
@@ -250,9 +449,7 @@ function getConversationBodyMarkup() {
     `
   }
 
-  const messages = appState.messagesByThreadId[thread.id] || []
   const isLoading = appState.loadingMessageThreadId === thread.id
-
   if (isLoading) {
     return `
       <section class="inbox-empty-panel">
@@ -262,29 +459,16 @@ function getConversationBodyMarkup() {
     `
   }
 
-  const messageMarkup = messages.length
-    ? messages
-        .map(
-          (message) => `
-        <article class="message-item ${message.senderId === appState.user?.uid ? 'is-self' : ''}">
-          <p>${escapeHtml(message.deleted ? 'Message removed.' : message.body)}</p>
-        </article>
-      `
-        )
-        .join('')
-    : `
-      <section class="inbox-empty-panel inbox-empty-panel-inline">
-        <h3>No messages yet.</h3>
-        <p>Start this conversation with your first message.</p>
-      </section>
-    `
+  const draft = appState.composerDraftByThreadId[thread.id] || ''
+  const typingUsers = getTypingUsers(thread.id)
 
   return `
     <div class="conversation-stack">
-      <div class="message-list">${messageMarkup}</div>
+      ${getMessageGroupsMarkup(thread)}
+      ${typingUsers.length ? `<p class="typing-indicator">${escapeHtml(getConversationSubtitle(thread))}</p>` : ''}
       <form class="message-composer" data-message-form>
         <label class="sr-only" for="message-input">Message</label>
-        <textarea id="message-input" name="message" rows="2" maxlength="1200" placeholder="Write a message..." required></textarea>
+        <textarea id="message-input" name="message" rows="2" maxlength="1200" placeholder="Write a message..." required>${escapeHtml(draft)}</textarea>
         <div class="message-composer-footer">
           ${appState.errorMessage ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>` : '<span></span>'}
           <button type="submit" class="button button-accent">Send</button>
@@ -324,26 +508,23 @@ function getMessagesThreadListMarkup() {
 
   const rows = appState.threads
     .map((thread) => {
-      const initials = (thread.title || '?')
-        .split(' ')
-        .map((part) => part[0] || '')
-        .join('')
-        .slice(0, 2)
-        .toUpperCase()
+      const initials = getInitials({ title: thread.title })
+      const isActive = thread.id === appState.selectedThreadId
+      const unread = Number(thread.unreadCount || 0)
 
       return `
-        <button class="thread-row ${thread.id === appState.selectedThreadId ? 'is-active' : ''}" type="button" data-thread-id="${thread.id}">
+        <button class="thread-row ${isActive ? 'is-active' : ''}" type="button" data-thread-id="${thread.id}">
           <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
             ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${initials || '?'}</span>`}
           </div>
           <div class="thread-meta">
             <div class="thread-title-row">
               <strong>${escapeHtml(thread.title)}</strong>
-              <span>${escapeHtml(thread.formattedTime || '')}</span>
+              <span>${escapeHtml(formatThreadTimestamp(thread.lastMessageAt || thread.updatedAt || thread.createdAt))}</span>
             </div>
             <div class="thread-preview-row">
               <p>${escapeHtml(thread.subtitle || 'No messages yet.')}</p>
-              ${thread.type === 'group' ? '<small class="thread-badge">Group</small>' : ''}
+              ${unread > 0 ? `<small class="thread-unread">${unread > 9 ? '9+' : unread}</small>` : thread.type === 'group' ? '<small class="thread-badge">Group</small>' : ''}
             </div>
           </div>
         </button>
@@ -375,6 +556,31 @@ function getFilterContentMarkup(filterName) {
   `
 }
 
+function getConversationHeaderMarkup(thread) {
+  if (!thread) {
+    return `
+      <header class="conversation-header">
+        <div class="conversation-header-meta">
+          <h3>Conversation</h3>
+          <p>No thread selected</p>
+        </div>
+      </header>
+    `
+  }
+
+  return `
+    <header class="conversation-header">
+      <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
+        ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${getInitials(thread)}</span>`}
+      </div>
+      <div class="conversation-header-meta">
+        <h3>${escapeHtml(thread.title)}</h3>
+        <p>${escapeHtml(getConversationSubtitle(thread))}</p>
+      </div>
+    </header>
+  `
+}
+
 function renderMessagesLayout() {
   const selectedThread = getSelectedThread()
 
@@ -396,10 +602,7 @@ function renderMessagesLayout() {
       </section>
 
       <section class="inbox-main-panel">
-        <header class="panel-header">
-          <h3>${escapeHtml(selectedThread?.title || 'Conversation')}</h3>
-          <p>${selectedThread ? (selectedThread.type === 'group' ? 'Group thread' : 'Direct message') : 'No thread selected'}</p>
-        </header>
+        ${getConversationHeaderMarkup(selectedThread)}
         ${getConversationBodyMarkup()}
       </section>
     </div>
@@ -500,13 +703,13 @@ async function runProfileSearch(queryText, requestId) {
     appState.chatSearchResults = result.filter((profile) => profile.uid !== appState.user?.uid && !selectedIds.has(profile.uid))
     appState.isSearchingUsers = false
     appState.createChatError = ''
-    renderCreateChatModal()
+    renderCreateChatModal({ keepSearchFocus: true })
   } catch {
     if (requestId !== appState.chatSearchRequestId) return
     appState.isSearchingUsers = false
     appState.chatSearchResults = []
     appState.createChatError = 'Unable to search users.'
-    renderCreateChatModal()
+    renderCreateChatModal({ keepSearchFocus: true })
   }
 }
 
@@ -519,7 +722,7 @@ function scheduleSearch(queryValue) {
   if (normalized.length < 2) {
     appState.isSearchingUsers = false
     appState.chatSearchResults = []
-    renderCreateChatModal()
+    renderCreateChatModal({ keepSearchFocus: true })
     return
   }
 
@@ -527,18 +730,70 @@ function scheduleSearch(queryValue) {
   appState.chatSearchResults = []
   const requestId = appState.chatSearchRequestId + 1
   appState.chatSearchRequestId = requestId
-  renderCreateChatModal()
+  renderCreateChatModal({ keepSearchFocus: true })
 
   searchDebounceTimer = setTimeout(() => {
     runProfileSearch(normalized, requestId)
   }, 250)
 }
 
-function renderCreateChatModal() {
-  if (!appState.isCreateChatOpen) {
-    modalRoot.innerHTML = ''
-    return
-  }
+function ensureCreateChatModalShell() {
+  if (modalRoot.querySelector('.create-chat-backdrop')) return
+
+  modalRoot.innerHTML = `
+    <div class="create-chat-backdrop" data-close-chat-modal>
+      <section class="create-chat-modal" role="dialog" aria-modal="true" aria-labelledby="create-chat-title">
+        <header class="create-chat-header">
+          <h2 id="create-chat-title">Create chat</h2>
+          <button type="button" class="create-chat-close" data-close-chat-modal aria-label="Close create chat modal">×</button>
+        </header>
+        <p class="create-chat-subtitle">Search by username and add people to the conversation.</p>
+        <input class="create-chat-search" type="search" placeholder="Search username…" data-chat-search autocomplete="off" />
+        <div class="create-chat-selected" data-chat-selected></div>
+        <div class="create-chat-results" data-chat-results></div>
+        <p class="modal-error" data-chat-error hidden></p>
+        <footer class="create-chat-footer">
+          <button type="button" class="button button-muted" data-close-chat-modal>Cancel</button>
+          <button type="button" class="button button-accent" data-create-chat>Create Chat</button>
+        </footer>
+      </section>
+    </div>
+  `
+
+  const backdrop = modalRoot.querySelector('.create-chat-backdrop')
+  const modalCard = modalRoot.querySelector('.create-chat-modal')
+  const searchInput = modalRoot.querySelector('[data-chat-search]')
+
+  backdrop?.addEventListener('click', (event) => {
+    if (event.target === backdrop) closeCreateChatModal()
+  })
+
+  modalCard?.addEventListener('click', (event) => {
+    event.stopPropagation()
+  })
+
+  modalRoot.querySelectorAll('[data-close-chat-modal]').forEach((button) => {
+    button.addEventListener('click', () => closeCreateChatModal())
+  })
+
+  searchInput?.addEventListener('input', (event) => {
+    scheduleSearch(event.target.value)
+  })
+
+  modalRoot.querySelector('[data-create-chat]')?.addEventListener('click', async () => {
+    await handleCreateChatSubmit()
+  })
+}
+
+function updateCreateChatModalContent({ keepSearchFocus = false } = {}) {
+  const searchInput = modalRoot.querySelector('[data-chat-search]')
+  const selectedRoot = modalRoot.querySelector('[data-chat-selected]')
+  const resultsRoot = modalRoot.querySelector('[data-chat-results]')
+  const errorRoot = modalRoot.querySelector('[data-chat-error]')
+  const createButton = modalRoot.querySelector('[data-create-chat]')
+  const cancelButtons = modalRoot.querySelectorAll('[data-close-chat-modal]')
+
+  if (!searchInput || !selectedRoot || !resultsRoot || !errorRoot || !createButton) return
 
   const selectedMarkup = appState.selectedChatUsers.length
     ? appState.selectedChatUsers
@@ -581,82 +836,62 @@ function renderCreateChatModal() {
             .join('')
         : '<p class="modal-hint">No users found.</p>'
 
-  modalRoot.innerHTML = `
-    <div class="create-chat-backdrop" data-close-chat-modal>
-      <section class="create-chat-modal" role="dialog" aria-modal="true" aria-labelledby="create-chat-title">
-        <header class="create-chat-header">
-          <h2 id="create-chat-title">Create chat</h2>
-          <button type="button" class="create-chat-close" data-close-chat-modal aria-label="Close create chat modal">×</button>
-        </header>
-        <p class="create-chat-subtitle">Search by username and add people to the conversation.</p>
-        <input
-          class="create-chat-search"
-          type="search"
-          placeholder="Search username…"
-          value="${escapeHtml(appState.chatSearchQuery)}"
-          data-chat-search
-          autocomplete="off"
-        />
-        <div class="create-chat-selected">${selectedMarkup}</div>
-        <div class="create-chat-results">${resultsStateMarkup}</div>
-        ${appState.createChatError ? `<p class="modal-error">${escapeHtml(appState.createChatError)}</p>` : ''}
-        <footer class="create-chat-footer">
-          <button type="button" class="button button-muted" data-close-chat-modal ${appState.isCreatingChat ? 'disabled' : ''}>Cancel</button>
-          <button type="button" class="button button-accent" data-create-chat ${appState.selectedChatUsers.length ? '' : 'disabled'} ${appState.isCreatingChat ? 'disabled' : ''}>
-            ${appState.isCreatingChat ? 'Creating…' : 'Create Chat'}
-          </button>
-        </footer>
-      </section>
-    </div>
-  `
+  if (searchInput.value !== appState.chatSearchQuery) searchInput.value = appState.chatSearchQuery
+  selectedRoot.innerHTML = selectedMarkup
+  resultsRoot.innerHTML = resultsStateMarkup
 
-  const backdrop = modalRoot.querySelector('.create-chat-backdrop')
-  const modalCard = modalRoot.querySelector('.create-chat-modal')
-  const searchInput = modalRoot.querySelector('[data-chat-search]')
+  errorRoot.textContent = appState.createChatError || ''
+  errorRoot.hidden = !appState.createChatError
 
-  if (searchInput && document.activeElement !== searchInput) searchInput.focus()
-
-  backdrop?.addEventListener('click', (event) => {
-    if (event.target === backdrop) closeCreateChatModal()
+  createButton.disabled = !appState.selectedChatUsers.length || appState.isCreatingChat
+  createButton.textContent = appState.isCreatingChat ? 'Creating…' : 'Create Chat'
+  cancelButtons.forEach((button) => {
+    button.disabled = appState.isCreatingChat
   })
 
-  modalCard?.addEventListener('click', (event) => {
-    event.stopPropagation()
-  })
-
-  modalRoot.querySelectorAll('[data-close-chat-modal]').forEach((button) => {
-    button.addEventListener('click', () => closeCreateChatModal())
-  })
-
-  searchInput?.addEventListener('input', (event) => {
-    scheduleSearch(event.target.value)
-  })
-
-  modalRoot.querySelectorAll('[data-add-user]').forEach((button) => {
+  resultsRoot.querySelectorAll('[data-add-user]').forEach((button) => {
     button.addEventListener('click', () => {
       const uid = button.getAttribute('data-add-user')
       const user = appState.chatSearchResults.find((row) => row.uid === uid)
       if (!user || appState.selectedChatUsers.some((row) => row.uid === uid)) return
       appState.selectedChatUsers = [...appState.selectedChatUsers, user]
-      appState.chatSearchResults = appState.chatSearchResults.filter((row) => row.uid !== uid)
-      renderCreateChatModal()
+      appState.chatSearchResults = []
+      appState.chatSearchQuery = ''
+      appState.isSearchingUsers = false
+      updateCreateChatModalContent({ keepSearchFocus: true })
     })
   })
 
-  modalRoot.querySelectorAll('[data-remove-selected]').forEach((button) => {
+  selectedRoot.querySelectorAll('[data-remove-selected]').forEach((button) => {
     button.addEventListener('click', () => {
       const uid = button.getAttribute('data-remove-selected')
       appState.selectedChatUsers = appState.selectedChatUsers.filter((user) => user.uid !== uid)
-      renderCreateChatModal()
-      if (appState.chatSearchQuery.trim().length >= 2) {
-        scheduleSearch(appState.chatSearchQuery)
-      }
+      updateCreateChatModalContent({ keepSearchFocus: true })
     })
   })
 
-  modalRoot.querySelector('[data-create-chat]')?.addEventListener('click', async () => {
-    await handleCreateChatSubmit()
-  })
+  if (keepSearchFocus) searchInput.focus()
+}
+
+function renderCreateChatModal(options = {}) {
+  if (!appState.isCreateChatOpen) {
+    modalRoot.innerHTML = ''
+    return
+  }
+
+  ensureCreateChatModalShell()
+  updateCreateChatModalContent(options)
+}
+
+function renderSignedOutState() {
+  inboxRoot.innerHTML = `
+    <article class="inbox-auth-card">
+      <h2>Sign in required</h2>
+      <p>Inbox is available for signed-in members so your conversations stay private and synced.</p>
+      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+    </article>
+  `
+  modalRoot.innerHTML = ''
 }
 
 function bindSharedEvents() {
@@ -675,6 +910,7 @@ function bindSharedEvents() {
 
       const { threadId } = button.dataset
       if (!threadId) return
+      if (activeTypingThreadId && activeTypingThreadId !== threadId) clearTypingForThread(activeTypingThreadId)
 
       appState.selectedThreadId = threadId
       appState.errorMessage = ''
@@ -693,6 +929,35 @@ function bindSharedEvents() {
   }
 
   const messageForm = inboxRoot.querySelector('[data-message-form]')
+  const textarea = messageForm?.querySelector('textarea[name="message"]')
+  const thread = getSelectedThread()
+
+  if (textarea && thread) {
+    textarea.addEventListener('input', () => {
+      appState.composerDraftByThreadId[thread.id] = textarea.value
+      if (typingStopTimer) clearTimeout(typingStopTimer)
+      activeTypingThreadId = thread.id
+      setTypingState({
+        threadId: thread.id,
+        uid: appState.user?.uid,
+        displayName: appState.user?.displayName || appState.user?.email?.split('@')[0] || 'Member',
+        username: appState.user?.username || '',
+        isTyping: Boolean(textarea.value.trim())
+      })
+
+      typingStopTimer = setTimeout(() => {
+        clearTypingForThread(thread.id)
+      }, 1500)
+    })
+
+    textarea.addEventListener('keydown', async (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        await handleMessageSubmit(messageForm)
+      }
+    })
+  }
+
   if (messageForm) {
     messageForm.addEventListener('submit', async (event) => {
       event.preventDefault()
@@ -705,6 +970,9 @@ function renderSignedInState() {
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
   renderCreateChatModal()
+
+  const list = inboxRoot.querySelector('[data-message-list]')
+  if (list) list.scrollTop = list.scrollHeight
 }
 
 async function handleMessageSubmit(form) {
@@ -721,6 +989,8 @@ async function handleMessageSubmit(form) {
     await sendMessage(thread.id, { senderId: appState.user.uid, body, type: 'text' })
     appState.errorMessage = ''
     field.value = ''
+    appState.composerDraftByThreadId[thread.id] = ''
+    clearTypingForThread(thread.id)
     await markThreadRead({ threadId: thread.id, uid: appState.user.uid })
   } catch (error) {
     appState.errorMessage = error?.message || 'Unable to send message.'
@@ -729,14 +999,32 @@ async function handleMessageSubmit(form) {
   renderSignedInState()
 }
 
+function startThreadDetailSubscriptions(threadId) {
+  appState.participantsUnsubscribe()
+  appState.typingUnsubscribe()
+
+  appState.participantsUnsubscribe = subscribeToThreadParticipants(threadId, (participants) => {
+    appState.participantsByThreadId[threadId] = participants
+    if (appState.selectedThreadId === threadId) renderSignedInState()
+  })
+
+  appState.typingUnsubscribe = subscribeToTypingState(threadId, (typingRows) => {
+    appState.typingUsersByThreadId[threadId] = typingRows
+    if (appState.selectedThreadId === threadId) renderSignedInState()
+  })
+}
+
 function startMessageSubscription(threadId) {
   if (!threadId || !appState.user?.uid) return
   appState.messageUnsubscribe()
   appState.loadingMessageThreadId = threadId
+  startThreadDetailSubscriptions(threadId)
 
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
     appState.messagesByThreadId[threadId] = messages
     appState.loadingMessageThreadId = ''
+
+    await markThreadDelivered({ threadId, uid: appState.user.uid })
     if (appState.selectedThreadId === threadId) {
       renderSignedInState()
       await markThreadRead({ threadId, uid: appState.user.uid })
@@ -801,8 +1089,11 @@ subscribeToAuthState(async (user) => {
     appState.threads = []
     appState.selectedThreadId = ''
     appState.messagesByThreadId = {}
+    appState.participantsByThreadId = {}
+    appState.typingUsersByThreadId = {}
     clearRealtimeListeners()
     closeCreateChatModal()
+    if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     renderSignedOutState()
     return
   }
