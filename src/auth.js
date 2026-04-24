@@ -14,7 +14,7 @@ import {
   waitForInitialAuthState,
   updateCurrentUserProfile
 } from './firebase/auth'
-import { upsertUserProfile } from './firebase/firestore'
+import { ensureUserProvisioned, provisionNewUserAccount } from './firebase/firestore'
 
 const app = document.querySelector('#app')
 
@@ -254,6 +254,30 @@ function friendlyAuthError(errorCode) {
   return map[errorCode] || 'We could not complete that auth request. Please try again.'
 }
 
+function friendlyProvisioningError(error) {
+  if (error?.code === 'profile/username-taken') return 'That username is already taken. Please choose another one.'
+  if (error?.code === 'profile/invalid-username') return error?.message || 'Username is invalid.'
+  if (error?.code === 'profile/invalid-display-name') return error?.message || 'Display name is required.'
+  return 'Account created, but profile setup is incomplete. Please retry or finish setup in Edit Profile.'
+}
+
+function validateSignupFields(displayName, username) {
+  const normalizedDisplayName = String(displayName || '').trim()
+  const normalizedUsername = String(username || '').trim().toLowerCase()
+
+  if (!normalizedDisplayName) return { valid: false, message: 'Display name is required.' }
+  if (normalizedDisplayName.length > 80) return { valid: false, message: 'Display name must be 80 characters or less.' }
+  if (!normalizedUsername) return { valid: false, message: 'Username is required.' }
+  if (/\s/.test(normalizedUsername)) return { valid: false, message: 'Username cannot contain spaces.' }
+  if (!/^[a-z0-9_-]+$/.test(normalizedUsername)) {
+    return { valid: false, message: 'Username can only contain lowercase letters, numbers, underscores, and hyphens.' }
+  }
+  if (normalizedUsername.length < 3) return { valid: false, message: 'Username must be at least 3 characters.' }
+  if (normalizedUsername.length > 30) return { valid: false, message: 'Username must be 30 characters or less.' }
+
+  return { valid: true, displayName: normalizedDisplayName, username: normalizedUsername }
+}
+
 async function handleSignInSubmit(event) {
   event.preventDefault()
   if (isSubmitting) return
@@ -281,9 +305,15 @@ async function handleSignUpSubmit(event) {
   if (isSubmitting) return
 
   const displayName = signupForm.querySelector('[name="display-name"]').value.trim()
-  const username = signupForm.querySelector('[name="username"]').value.trim()
+  const username = signupForm.querySelector('[name="username"]').value.trim().toLowerCase()
   const email = signupForm.querySelector('[name="signup-email"]').value.trim()
   const password = signupForm.querySelector('[name="signup-password"]').value
+  const signupValidation = validateSignupFields(displayName, username)
+
+  if (!signupValidation.valid) {
+    setFeedback(signupValidation.message, 'error')
+    return
+  }
 
   setFeedback('Creating your account...', 'info')
   setLoadingState(true, { signup: 'Creating Account...' })
@@ -296,21 +326,23 @@ async function handleSignUpSubmit(event) {
       await updateCurrentUserProfile({ displayName })
     }
 
-    try {
-      await upsertUserProfile(credential.user, {
-        displayName,
-        username,
-        email,
-        isNewUser: true
-      })
-    } catch (error) {
-      warnProfileWriteFailure(error, 'write')
-    }
+    await provisionNewUserAccount(credential.user, {
+      displayName: signupValidation.displayName,
+      username: signupValidation.username,
+      email,
+      photoURL: credential.user.photoURL || '',
+      requireUsername: true
+    })
 
     setFeedback('Account created. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
-    setFeedback(friendlyAuthError(error?.code), 'error')
+    if (String(error?.code || '').startsWith('profile/')) {
+      warnProfileWriteFailure(error, 'provision')
+      setFeedback(friendlyProvisioningError(error), 'error')
+    } else {
+      setFeedback(friendlyAuthError(error?.code), 'error')
+    }
   } finally {
     setLoadingState(false)
   }
@@ -326,20 +358,26 @@ async function handleGoogleSignIn() {
     await authPersistenceReady
     const credential = await signInWithGoogle()
 
-    try {
-      await upsertUserProfile(credential.user, {
-        displayName: credential.user.displayName || '',
-        email: credential.user.email || '',
-        isNewUser: false
-      })
-    } catch (error) {
-      warnProfileWriteFailure(error, 'upsert')
+    const provisioning = await ensureUserProvisioned(credential.user, {
+      displayName: credential.user.displayName || '',
+      email: credential.user.email || ''
+    })
+
+    if (provisioning.onboardingRequired) {
+      setFeedback('Signed in. Please choose a username to finish setup.', 'info')
+      window.location.assign('/edit-profile.html')
+      return
     }
 
     setFeedback('Signed in with Google. Redirecting...', 'success')
     await redirectToProfile()
   } catch (error) {
-    setFeedback(friendlyAuthError(error?.code), 'error')
+    if (String(error?.code || '').startsWith('profile/')) {
+      warnProfileWriteFailure(error, 'google-provision')
+      setFeedback(friendlyProvisioningError(error), 'error')
+    } else {
+      setFeedback(friendlyAuthError(error?.code), 'error')
+    }
   } finally {
     setLoadingState(false)
   }
