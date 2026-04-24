@@ -15,6 +15,7 @@ export default defineConfig({
         cart: resolve(__dirname, 'cart.html'),
         auth: resolve(__dirname, 'auth.html'),
         product: resolve(__dirname, 'product.html'),
+        inbox: resolve(__dirname, 'inbox.html'),
         profile: resolve(__dirname, 'profile.html'),
         editProfile: resolve(__dirname, 'edit-profile.html'),
         newProduct: resolve(__dirname, 'new-product.html')
