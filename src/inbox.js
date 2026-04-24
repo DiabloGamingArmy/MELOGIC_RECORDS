@@ -152,6 +152,26 @@ function closeCreateChatModal() {
   renderCreateChatModal()
 }
 
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;')
+}
+
+function getSelectedThread() {
+  return appState.threads.find((thread) => thread.id === appState.selectedThreadId) || null
+}
+
+function clearRealtimeListeners() {
+  appState.threadUnsubscribe()
+  appState.messageUnsubscribe()
+  appState.threadUnsubscribe = () => {}
+  appState.messageUnsubscribe = () => {}
+}
+
 function renderSignedOutState() {
   inboxRoot.innerHTML = `
     <article class="inbox-auth-card">
