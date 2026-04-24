@@ -1,10 +1,30 @@
 rules_version = '2';
 
-// Craft rules based on data in your Firestore database
-// allow write: if firestore.get(
-//    /databases/(default)/documents/users/$(request.auth.uid)).data.isAdmin;
 service firebase.storage {
   match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Public brand/site assets (logos, hero videos, etc.) used across unauthenticated pages.
+    match /assets/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User-owned profile media uploads (avatar/banner).
+    match /users/{uid}/{allPaths=**} {
+      allow read: if true;
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Product media is public to support storefront display.
+    // TODO: tighten write controls with Firestore-backed ownership checks for productId.
+    match /products/{productId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if signedIn();
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

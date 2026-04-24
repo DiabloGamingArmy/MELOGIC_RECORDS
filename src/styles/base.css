@@ -206,6 +206,54 @@ main {
   gap: 0.55rem;
 }
 
+.nav-inbox {
+  min-width: 2.5rem;
+  padding: 0.58rem 0.74rem;
+  position: relative;
+}
+
+.nav-inbox.is-active {
+  border-color: rgba(129, 169, 248, 0.6);
+  box-shadow: 0 0 0 1px rgba(88, 150, 234, 0.2), 0 0 18px rgba(98, 171, 255, 0.18);
+}
+
+.inbox-icon {
+  width: 1.04rem;
+  height: 1.04rem;
+  display: inline-flex;
+}
+
+.inbox-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentcolor;
+}
+
+.inbox-label {
+  font-size: 0.8rem;
+}
+
+.inbox-badge {
+  position: absolute;
+  top: 0.28rem;
+  right: 0.28rem;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.95);
+  background: rgba(110, 128, 166, 0.45);
+  box-shadow: 0 0 0 1px rgba(112, 130, 170, 0.25);
+}
+
+.inbox-badge[data-has-unread='true'] {
+  background: linear-gradient(130deg, var(--cyan), var(--green));
+  box-shadow: 0 0 8px rgba(103, 219, 231, 0.45);
+}
+
+.profile-menu {
+  position: relative;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -305,6 +353,48 @@ main {
 .profile-button.is-active {
   border-color: rgba(121, 164, 245, 0.62);
   box-shadow: 0 0 0 1px rgba(88, 150, 234, 0.22), 0 0 18px rgba(84, 157, 245, 0.24);
+}
+
+.profile-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  min-width: 11.6rem;
+  border-radius: 0.9rem;
+  border: 1px solid rgba(141, 162, 206, 0.34);
+  background: linear-gradient(180deg, rgba(13, 19, 31, 0.98), rgba(8, 12, 20, 0.98));
+  box-shadow: 0 18px 48px rgba(4, 8, 16, 0.52), 0 0 0 1px rgba(101, 128, 194, 0.18);
+  overflow: hidden;
+  padding: 0.28rem;
+  display: grid;
+  gap: 0.1rem;
+  z-index: 150;
+}
+
+.profile-dropdown[hidden] {
+  display: none !important;
+}
+
+.profile-dropdown a,
+.profile-dropdown button {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #dbe7ff;
+  font: inherit;
+  font-size: 0.84rem;
+  text-align: left;
+  border-radius: 0.58rem;
+  padding: 0.58rem 0.62rem;
+  cursor: pointer;
+}
+
+.profile-dropdown a:hover,
+.profile-dropdown button:hover,
+.profile-dropdown a:focus-visible,
+.profile-dropdown button:focus-visible {
+  background: rgba(83, 110, 172, 0.24);
+  outline: none;
 }
 
 .cart-badge {
@@ -745,10 +835,15 @@ main {
 @media (max-width: 560px) {
   .nav-actions {
     width: 100%;
+    justify-content: space-between;
   }
 
-  .nav-actions .button {
+  .nav-actions .button-cart {
     flex: 1;
+  }
+
+  .inbox-label {
+    display: none;
   }
 
 }
