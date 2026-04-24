@@ -22,6 +22,12 @@ function validateUsername(username) {
   return { valid: true }
 }
 
+function isPlainObject(value) {
+  if (!value || typeof value !== 'object') return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
 function sanitizeFirestorePayload(value) {
   if (value === undefined) return undefined
   if (typeof File !== 'undefined' && value instanceof File) return undefined
@@ -35,6 +41,7 @@ function sanitizeFirestorePayload(value) {
 
   if (value && typeof value === 'object') {
     if (value instanceof Date) return value
+    if (!isPlainObject(value)) return value
     const clean = {}
     Object.entries(value).forEach(([key, nestedValue]) => {
       const sanitized = sanitizeFirestorePayload(nestedValue)
@@ -69,8 +76,7 @@ function buildPublicProfile(uid, authUser, profileInput = {}) {
       comments: 0,
       likes: 0,
       downloads: 0
-    },
-    updatedAt: serverTimestamp()
+    }
   }
 }
 
@@ -79,7 +85,6 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
     uid,
     email: authUser?.email || profileInput.email || '',
     role: profileInput.role || 'user',
-    updatedAt: serverTimestamp(),
     settings: profileInput.settings || {},
     creatorSettings: profileInput.creatorSettings || {},
     // Backward-compat profile fields while migrating to profiles/{uid}
@@ -96,13 +101,10 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
 export async function upsertUserProfile(user, profileInput = {}) {
   if (!db || !user?.uid) return false
   const userRef = doc(db, 'users', user.uid)
-  const payload = buildPrivateProfile(user.uid, user, profileInput)
-
-  if (profileInput.isNewUser) {
-    payload.createdAt = serverTimestamp()
-  }
-
-  await setDoc(userRef, sanitizeFirestorePayload(payload), { merge: true })
+  const payload = sanitizeFirestorePayload(buildPrivateProfile(user.uid, user, profileInput))
+  payload.updatedAt = serverTimestamp()
+  if (profileInput.isNewUser) payload.createdAt = serverTimestamp()
+  await setDoc(userRef, payload, { merge: true })
   return true
 }
 
@@ -165,70 +167,95 @@ export async function saveProfileChanges(user, payload = {}) {
   const profileRef = doc(db, 'profiles', uid)
   const userRef = doc(db, 'users', uid)
 
-  await runTransaction(db, async (transaction) => {
-    const profileSnap = await transaction.get(profileRef)
-    const userSnap = await transaction.get(userRef)
-    const existingProfile = profileSnap.exists() ? profileSnap.data() : {}
-    const existingUser = userSnap.exists() ? userSnap.data() : {}
+  try {
+    await runTransaction(db, async (transaction) => {
+      const profileSnap = await transaction.get(profileRef)
+      const userSnap = await transaction.get(userRef)
+      const existingProfile = profileSnap.exists() ? profileSnap.data() : {}
+      const existingUser = userSnap.exists() ? userSnap.data() : {}
 
-    const previousUsernameLower =
-      existingProfile.usernameLower || normalizeUsername(existingProfile.username || existingUser.username)
-    const nextUsernameLower = normalizeUsername(payload.username)
-    const usernameValidation = validateUsername(nextUsernameLower)
+      const previousUsernameLower =
+        existingProfile.usernameLower || normalizeUsername(existingProfile.username || existingUser.username)
+      const nextUsernameLower = normalizeUsername(payload.username)
+      const usernameValidation = validateUsername(nextUsernameLower)
 
-    if (!usernameValidation.valid) {
-      const usernameError = new Error(usernameValidation.message)
-      usernameError.code = 'profile/invalid-username'
-      throw usernameError
-    }
-
-    const usernameChanged = previousUsernameLower !== nextUsernameLower
-
-    if (nextUsernameLower && usernameChanged) {
-      const claimRef = doc(db, 'usernameClaims', nextUsernameLower)
-      const claimSnap = await transaction.get(claimRef)
-      if (claimSnap.exists() && claimSnap.data()?.uid !== uid) {
-        const usernameError = new Error('Username already taken.')
-        usernameError.code = 'profile/username-taken'
+      if (!usernameValidation.valid) {
+        const usernameError = new Error(usernameValidation.message)
+        usernameError.code = 'profile/invalid-username'
         throw usernameError
       }
 
-      transaction.set(
-        claimRef,
-        sanitizeFirestorePayload({
-          uid,
-          username: nextUsernameLower,
-          usernameLower: nextUsernameLower,
-          createdAt: claimSnap.exists() ? claimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
-        }),
-        { merge: true }
-      )
-    }
+      const usernameChanged = previousUsernameLower !== nextUsernameLower
 
-    if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
-      const previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
-      const previousClaimSnap = await transaction.get(previousClaimRef)
-      if (previousClaimSnap.exists() && previousClaimSnap.data()?.uid === uid) {
-        transaction.delete(previousClaimRef)
+      if (nextUsernameLower && usernameChanged) {
+        try {
+          const claimRef = doc(db, 'usernameClaims', nextUsernameLower)
+          const claimSnap = await transaction.get(claimRef)
+          if (claimSnap.exists() && claimSnap.data()?.uid !== uid) {
+            const usernameError = new Error('Username already taken.')
+            usernameError.code = 'profile/username-taken'
+            throw usernameError
+          }
+
+          transaction.set(
+            claimRef,
+            {
+              uid,
+              username: nextUsernameLower,
+              usernameLower: nextUsernameLower,
+              createdAt: claimSnap.exists() ? claimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
+            },
+            { merge: true }
+          )
+        } catch (error) {
+          if (!error?.code) error.code = 'profile/username-claim-write-failed'
+          throw error
+        }
       }
-    }
 
-    const normalizedPayload = {
-      ...payload,
-      username: nextUsernameLower
-    }
+      if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
+        const previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
+        const previousClaimSnap = await transaction.get(previousClaimRef)
+        if (previousClaimSnap.exists() && previousClaimSnap.data()?.uid === uid) {
+          transaction.delete(previousClaimRef)
+        }
+      }
 
-    const publicPayload = sanitizeFirestorePayload(buildPublicProfile(uid, user, normalizedPayload))
-    const privatePayload = sanitizeFirestorePayload(buildPrivateProfile(uid, user, normalizedPayload))
+      const normalizedPayload = {
+        ...payload,
+        username: nextUsernameLower
+      }
 
-    if (!profileSnap.exists()) {
-      publicPayload.createdAt = serverTimestamp()
-    }
-    if (!userSnap.exists()) {
-      privatePayload.createdAt = serverTimestamp()
-    }
+      const publicPayload = sanitizeFirestorePayload(buildPublicProfile(uid, user, normalizedPayload))
+      const privatePayload = sanitizeFirestorePayload(buildPrivateProfile(uid, user, normalizedPayload))
+      publicPayload.updatedAt = serverTimestamp()
+      privatePayload.updatedAt = serverTimestamp()
 
-    transaction.set(profileRef, publicPayload, { merge: true })
-    transaction.set(userRef, privatePayload, { merge: true })
-  })
+      if (!profileSnap.exists()) publicPayload.createdAt = serverTimestamp()
+      if (!userSnap.exists()) privatePayload.createdAt = serverTimestamp()
+
+      try {
+        transaction.set(profileRef, publicPayload, { merge: true })
+      } catch (error) {
+        if (!error?.code) error.code = 'profile/public-profile-write-failed'
+        throw error
+      }
+
+      try {
+        transaction.set(userRef, privatePayload, { merge: true })
+      } catch (error) {
+        if (!error?.code) error.code = 'profile/private-profile-write-failed'
+        throw error
+      }
+    })
+  } catch (error) {
+    if (error?.code === 'profile/username-claim-write-failed') {
+      console.warn('[firebase/firestore] Username claim write failed.', error?.message || error)
+    } else if (error?.code === 'profile/public-profile-write-failed') {
+      console.warn('[firebase/firestore] Public profile write failed.', error?.message || error)
+    } else if (error?.code === 'profile/private-profile-write-failed') {
+      console.warn('[firebase/firestore] Private profile write failed.', error?.message || error)
+    }
+    throw error
+  }
 }
