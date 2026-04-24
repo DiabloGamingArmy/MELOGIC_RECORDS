@@ -3,7 +3,14 @@ import './styles/inbox.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
-import { listInboxThreads, listMessages } from './data/inboxService'
+import {
+  createGroupThread,
+  createOrGetDm,
+  markThreadRead,
+  sendMessage,
+  subscribeToInboxThreads,
+  subscribeToMessages
+} from './data/inboxService'
 
 const app = document.querySelector('#app')
 
@@ -13,7 +20,7 @@ const activityCopy = {
   Calls: {
     title: 'Calls',
     emptyTitle: 'No calls yet.',
-    emptyBody: 'Your audio and video call history will appear here once activity starts.'
+    emptyBody: 'Calls are out of scope for this pass and will be added later.'
   },
   Likes: {
     title: 'Likes',
@@ -49,7 +56,10 @@ const appState = {
   selectedThreadId: '',
   messagesByThreadId: {},
   loadingMessageThreadId: '',
-  activeFilter: 'Messages'
+  activeFilter: 'Messages',
+  threadUnsubscribe: () => {},
+  messageUnsubscribe: () => {},
+  errorMessage: ''
 }
 
 app.innerHTML = `
@@ -85,6 +95,13 @@ function escapeHtml(value) {
 
 function getSelectedThread() {
   return appState.threads.find((thread) => thread.id === appState.selectedThreadId) || null
+}
+
+function clearRealtimeListeners() {
+  appState.threadUnsubscribe()
+  appState.messageUnsubscribe()
+  appState.threadUnsubscribe = () => {}
+  appState.messageUnsubscribe = () => {}
 }
 
 function renderSignedOutState() {
@@ -152,15 +169,18 @@ function getRecentThreadsSidebarMarkup() {
     `
   }
 
-  const pills = appState.threads.slice(0, 4).map((thread) => {
-    const isActive = appState.selectedThreadId === thread.id
-    return `
+  const pills = appState.threads
+    .slice(0, 4)
+    .map((thread) => {
+      const isActive = appState.selectedThreadId === thread.id
+      return `
       <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-thread-id="${thread.id}">
         <strong>${escapeHtml(thread.title)}</strong>
         ${thread.type === 'group' ? '<small>Group</small>' : ''}
       </button>
     `
-  }).join('')
+    })
+    .join('')
 
   return `
     <section class="sidebar-recent-block">
@@ -193,26 +213,36 @@ function getConversationBodyMarkup() {
     `
   }
 
-  if (!messages.length) {
-    return `
-      <section class="inbox-empty-panel">
+  const messageMarkup = messages.length
+    ? messages
+        .map(
+          (message) => `
+        <article class="message-item ${message.senderId === appState.user?.uid ? 'is-self' : ''}">
+          <p>${escapeHtml(message.deleted ? 'Message removed.' : message.body)}</p>
+        </article>
+      `
+        )
+        .join('')
+    : `
+      <section class="inbox-empty-panel inbox-empty-panel-inline">
         <h3>No messages yet.</h3>
         <p>Start this conversation with your first message.</p>
       </section>
     `
-  }
 
-  const messageMarkup = messages
-    .map(
-      (message) => `
-        <article class="message-item ${message.senderId === appState.user?.uid ? 'is-self' : ''}">
-          <p>${escapeHtml(message.body)}</p>
-        </article>
-      `
-    )
-    .join('')
-
-  return `<div class="message-list">${messageMarkup}</div>`
+  return `
+    <div class="conversation-stack">
+      <div class="message-list">${messageMarkup}</div>
+      <form class="message-composer" data-message-form>
+        <label class="sr-only" for="message-input">Message</label>
+        <textarea id="message-input" name="message" rows="2" maxlength="1200" placeholder="Write a message..." required></textarea>
+        <div class="message-composer-footer">
+          ${appState.errorMessage ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>` : '<span></span>'}
+          <button type="submit" class="button button-accent">Send</button>
+        </div>
+      </form>
+    </div>
+  `
 }
 
 function getMessagesThreadListMarkup() {
@@ -304,9 +334,15 @@ function renderMessagesLayout() {
       <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
 
       <section class="inbox-thread-panel">
-        <header class="panel-header">
-          <h3>Messages</h3>
-          <p>Direct and group conversations</p>
+        <header class="panel-header panel-header-row">
+          <div>
+            <h3>Messages</h3>
+            <p>Direct and group conversations</p>
+          </div>
+          <div class="panel-actions">
+            <button type="button" class="button button-muted" data-action="new-dm">New DM</button>
+            <button type="button" class="button button-muted" data-action="new-group">New Group</button>
+          </div>
         </header>
         ${getMessagesThreadListMarkup()}
       </section>
@@ -333,6 +369,77 @@ function renderActivityLayout(filterName) {
   `
 }
 
+async function handleCreateDm() {
+  const targetUid = window.prompt('Enter the target user UID for this DM:')?.trim()
+  if (!targetUid || !appState.user?.uid) return
+
+  try {
+    const thread = await createOrGetDm({ creatorId: appState.user.uid, targetUid })
+    if (thread?.id) {
+      appState.activeFilter = 'Messages'
+      appState.selectedThreadId = thread.id
+      appState.errorMessage = ''
+      startMessageSubscription(thread.id)
+      renderSignedInState()
+    }
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Unable to create DM.'
+    renderSignedInState()
+  }
+}
+
+async function handleCreateGroup() {
+  const title = window.prompt('Group title:')?.trim()
+  if (!title || !appState.user?.uid) return
+
+  const participantInput = window.prompt('Participant UIDs (comma separated):') || ''
+  const participantIds = participantInput
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  try {
+    const thread = await createGroupThread({
+      creatorId: appState.user.uid,
+      participantIds,
+      title
+    })
+
+    if (thread?.id) {
+      appState.activeFilter = 'Messages'
+      appState.selectedThreadId = thread.id
+      appState.errorMessage = ''
+      startMessageSubscription(thread.id)
+      renderSignedInState()
+    }
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Unable to create group.'
+    renderSignedInState()
+  }
+}
+
+async function handleMessageSubmit(form) {
+  const thread = getSelectedThread()
+  if (!thread || !appState.user?.uid) return
+
+  const field = form.querySelector('textarea[name="message"]')
+  const body = String(field?.value || '').trim()
+  if (!body) return
+
+  form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
+
+  try {
+    await sendMessage(thread.id, { senderId: appState.user.uid, body, type: 'text' })
+    appState.errorMessage = ''
+    field.value = ''
+    await markThreadRead({ threadId: thread.id, uid: appState.user.uid })
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Unable to send message.'
+  }
+
+  renderSignedInState()
+}
+
 function bindSharedEvents() {
   inboxRoot.querySelectorAll('[data-inbox-filter]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -348,16 +455,30 @@ function bindSharedEvents() {
       }
 
       const { threadId } = button.dataset
-      if (!threadId || threadId === appState.selectedThreadId) {
-        renderSignedInState()
-        return
-      }
+      if (!threadId) return
 
       appState.selectedThreadId = threadId
+      appState.errorMessage = ''
+      startMessageSubscription(threadId)
       renderSignedInState()
-      await loadMessages(threadId)
+
+      await markThreadRead({ threadId, uid: appState.user?.uid })
     })
   })
+
+  const newDmButton = inboxRoot.querySelector('[data-action="new-dm"]')
+  if (newDmButton) newDmButton.addEventListener('click', handleCreateDm)
+
+  const newGroupButton = inboxRoot.querySelector('[data-action="new-group"]')
+  if (newGroupButton) newGroupButton.addEventListener('click', handleCreateGroup)
+
+  const messageForm = inboxRoot.querySelector('[data-message-form]')
+  if (messageForm) {
+    messageForm.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      await handleMessageSubmit(messageForm)
+    })
+  }
 }
 
 function renderSignedInState() {
@@ -365,57 +486,62 @@ function renderSignedInState() {
   bindSharedEvents()
 }
 
-async function loadThreads() {
+function startMessageSubscription(threadId) {
+  if (!threadId || !appState.user?.uid) return
+  appState.messageUnsubscribe()
+  appState.loadingMessageThreadId = threadId
+
+  appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
+    appState.messagesByThreadId[threadId] = messages
+    appState.loadingMessageThreadId = ''
+    if (appState.selectedThreadId === threadId) {
+      renderSignedInState()
+      await markThreadRead({ threadId, uid: appState.user.uid })
+    }
+  })
+}
+
+function startThreadSubscription() {
   if (!appState.user?.uid) return
+
   appState.isLoadingThreads = true
   renderSignedInState()
 
-  try {
-    const threads = await listInboxThreads(appState.user.uid)
+  appState.threadUnsubscribe()
+  appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, (threads) => {
     appState.threads = threads
-    if (!threads.some((thread) => thread.id === appState.selectedThreadId)) {
-      appState.selectedThreadId = threads[0]?.id || ''
+    appState.isLoadingThreads = false
+
+    if (!threads.length) {
+      appState.selectedThreadId = ''
+      appState.messageUnsubscribe()
+      renderSignedInState()
+      return
     }
-  } catch (error) {
-    console.warn('[inbox] Failed to load threads.', error?.message || error)
-    appState.threads = []
-    appState.selectedThreadId = ''
-  }
 
-  appState.isLoadingThreads = false
-  renderSignedInState()
+    if (!threads.some((thread) => thread.id === appState.selectedThreadId)) {
+      appState.selectedThreadId = threads[0].id
+    }
 
-  if (appState.selectedThreadId) {
-    await loadMessages(appState.selectedThreadId)
-  }
-}
+    if (!appState.messagesByThreadId[appState.selectedThreadId]) {
+      startMessageSubscription(appState.selectedThreadId)
+    }
 
-async function loadMessages(threadId) {
-  if (!threadId || !appState.user?.uid) return
-  appState.loadingMessageThreadId = threadId
-  renderSignedInState()
-
-  try {
-    appState.messagesByThreadId[threadId] = await listMessages(threadId)
-  } catch (error) {
-    console.warn('[inbox] Failed to load messages.', error?.message || error)
-    appState.messagesByThreadId[threadId] = []
-  }
-
-  appState.loadingMessageThreadId = ''
-  renderSignedInState()
+    renderSignedInState()
+  })
 }
 
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
     appState.user = null
+    clearRealtimeListeners()
     renderSignedOutState()
     return
   }
 
   appState.user = user
   renderSignedInState()
-  await loadThreads()
+  startThreadSubscription()
 })
 
 subscribeToAuthState(async (user) => {
@@ -424,6 +550,7 @@ subscribeToAuthState(async (user) => {
     appState.threads = []
     appState.selectedThreadId = ''
     appState.messagesByThreadId = {}
+    clearRealtimeListeners()
     renderSignedOutState()
     return
   }
@@ -431,5 +558,5 @@ subscribeToAuthState(async (user) => {
   appState.user = user
   appState.activeFilter = appState.activeFilter || 'Messages'
   renderSignedInState()
-  await loadThreads()
+  startThreadSubscription()
 })

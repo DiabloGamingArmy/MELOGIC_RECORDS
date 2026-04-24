@@ -1,7 +1,15 @@
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
-import { createDmThread, createGroupThread, getThread, listThreadsForUser } from './threadService'
-import { listMessages, sendMessage } from './messageService'
+import {
+  addParticipantsToThread,
+  createGroupThread,
+  createOrGetDm,
+  getThread,
+  listThreadsForUser,
+  removeParticipantFromThread,
+  subscribeToThreadsForUser
+} from './threadService'
+import { listMessages, markThreadRead, sendMessage, subscribeToMessages } from './messageService'
 
 const profileCache = new Map()
 
@@ -28,6 +36,14 @@ async function getProfile(uid) {
 
   const profileDoc = await getDoc(doc(db, 'profiles', uid))
   const profile = profileDoc.exists() ? profileDoc.data() : null
+
+  if (!profile) {
+    const userDoc = await getDoc(doc(db, 'users', uid))
+    const fallback = userDoc.exists() ? userDoc.data() : null
+    profileCache.set(uid, fallback)
+    return fallback
+  }
+
   profileCache.set(uid, profile)
   return profile
 }
@@ -54,18 +70,34 @@ async function decorateThread(thread, currentUid) {
   return {
     ...thread,
     title,
-    imageURL: thread.imageURL || otherProfile?.avatarURL || '',
+    imageURL: thread.imageURL || otherProfile?.avatarURL || otherProfile?.photoURL || '',
     subtitle: thread.lastMessageText || 'No messages yet.',
     formattedTime: formatThreadTime(thread.lastMessageAt || thread.updatedAt || thread.createdAt),
-    unreadCount: 0,
+    unreadCount: Number(thread.unreadCount || 0),
     isGroup
   }
 }
 
 export async function listInboxThreads(uid) {
   const threads = await listThreadsForUser(uid)
-  const decorated = await Promise.all(threads.map((thread) => decorateThread(thread, uid)))
-  return decorated
+  return Promise.all(threads.map((thread) => decorateThread(thread, uid)))
 }
 
-export { getThread, listMessages, createDmThread, createGroupThread, sendMessage }
+export function subscribeToInboxThreads(uid, callback) {
+  return subscribeToThreadsForUser(uid, async (threads) => {
+    const decorated = await Promise.all(threads.map((thread) => decorateThread(thread, uid)))
+    callback(decorated)
+  })
+}
+
+export {
+  getThread,
+  listMessages,
+  subscribeToMessages,
+  createOrGetDm,
+  createGroupThread,
+  addParticipantsToThread,
+  removeParticipantFromThread,
+  sendMessage,
+  markThreadRead
+}
