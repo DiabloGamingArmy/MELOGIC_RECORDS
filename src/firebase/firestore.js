@@ -5,6 +5,46 @@ let hasWarnedProfileRead = false
 
 export const db = getFirestore(app)
 
+function defaultSocials() {
+  return {
+    instagram: '',
+    soundcloud: '',
+    spotify: '',
+    youtube: '',
+    discord: '',
+    tiktok: ''
+  }
+}
+
+function defaultSettings() {
+  return {
+    appearance: {
+      theme: 'dark',
+      compactMode: false,
+      reducedMotion: false
+    },
+    notifications: {
+      productUpdates: false,
+      replies: false,
+      creatorNews: false,
+      releaseAlerts: false,
+      marketing: false
+    },
+    privacy: {
+      profileVisibility: 'public'
+    }
+  }
+}
+
+function defaultCreatorSettings() {
+  return {
+    creatorMode: false,
+    publicCreatorProfile: false,
+    storefrontVisible: false,
+    submissionPreferences: ''
+  }
+}
+
 function normalizeUsername(username) {
   return String(username || '')
     .trim()
@@ -115,6 +155,62 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
   }
 }
 
+function buildProvisionedUserDoc(uid, authUser, profileInput = {}) {
+  const username = normalizeUsername(profileInput.username)
+  return {
+    uid,
+    email: authUser?.email || profileInput.email || '',
+    role: 'user',
+    displayName: String(profileInput.displayName || authUser?.displayName || '').trim(),
+    username,
+    bio: '',
+    photoURL: profileInput.photoURL || authUser?.photoURL || '',
+    location: '',
+    website: '',
+    socials: defaultSocials(),
+    settings: defaultSettings(),
+    creatorSettings: defaultCreatorSettings(),
+    onboardingRequired: false
+  }
+}
+
+function buildProvisionedProfileDoc(uid, authUser, profileInput = {}) {
+  const username = normalizeUsername(profileInput.username)
+  return {
+    uid,
+    displayName: String(profileInput.displayName || authUser?.displayName || '').trim(),
+    username,
+    usernameLower: username,
+    bio: '',
+    avatarPath: '',
+    avatarURL: profileInput.photoURL || authUser?.photoURL || '',
+    bannerPath: '',
+    bannerURL: '',
+    location: '',
+    website: '',
+    roleLabel: 'user',
+    socials: defaultSocials(),
+    stats: {
+      products: 0,
+      savedItems: 0,
+      comments: 0,
+      likes: 0,
+      downloads: 0
+    }
+  }
+}
+
+function buildMinimalProvisionedUserDoc(uid, authUser, profileInput = {}) {
+  return {
+    uid,
+    email: authUser?.email || profileInput.email || '',
+    displayName: String(profileInput.displayName || authUser?.displayName || '').trim(),
+    photoURL: profileInput.photoURL || authUser?.photoURL || '',
+    role: 'user',
+    onboardingRequired: true
+  }
+}
+
 export async function upsertUserProfile(user, profileInput = {}) {
   if (!db || !user?.uid) return false
   const userRef = doc(db, 'users', user.uid)
@@ -123,6 +219,196 @@ export async function upsertUserProfile(user, profileInput = {}) {
   if (profileInput.isNewUser) payload.createdAt = serverTimestamp()
   await setDoc(userRef, payload, { merge: true })
   return true
+}
+
+export async function provisionNewUserAccount(user, options = {}) {
+  if (!db || !user?.uid) throw new Error('Missing authenticated user for provisioning.')
+
+  const uid = user.uid
+  const userRef = doc(db, 'users', uid)
+  const profileRef = doc(db, 'profiles', uid)
+  const nextDisplayName = String(options.displayName || user.displayName || '').trim()
+  const nextUsernameLower = normalizeUsername(options.username)
+  const requireUsername = options.requireUsername !== false
+  const nextPhotoURL = options.photoURL || user.photoURL || ''
+
+  if (requireUsername) {
+    const displayNameValidation = validateDisplayName(nextDisplayName)
+    if (!displayNameValidation.valid) {
+      const error = new Error(displayNameValidation.message)
+      error.code = 'profile/invalid-display-name'
+      throw error
+    }
+
+    const usernameValidation = validateUsername(nextUsernameLower)
+    if (!usernameValidation.valid) {
+      const error = new Error(usernameValidation.message)
+      error.code = 'profile/invalid-username'
+      throw error
+    }
+  }
+
+  let onboardingRequired = !requireUsername
+  let claimReserved = false
+
+  await runTransaction(db, async (transaction) => {
+    const userSnap = await transaction.get(userRef)
+    const profileSnap = await transaction.get(profileRef)
+
+    const hasValidUsername = validateUsername(nextUsernameLower).valid
+    const claimRef = hasValidUsername ? doc(db, 'usernameClaims', nextUsernameLower) : null
+    const claimSnap = claimRef ? await transaction.get(claimRef) : null
+
+    if (claimSnap?.exists() && claimSnap.data()?.uid !== uid) {
+      const usernameError = new Error('Username already taken.')
+      usernameError.code = 'profile/username-taken'
+      throw usernameError
+    }
+
+    const userPayload = hasValidUsername
+      ? sanitizeFirestorePayload(
+          buildProvisionedUserDoc(uid, user, {
+            ...options,
+            displayName: nextDisplayName,
+            username: nextUsernameLower,
+            photoURL: nextPhotoURL
+          })
+        )
+      : sanitizeFirestorePayload(
+          buildMinimalProvisionedUserDoc(uid, user, {
+            ...options,
+            displayName: nextDisplayName,
+            photoURL: nextPhotoURL
+          })
+        )
+
+    onboardingRequired = !hasValidUsername
+    userPayload.updatedAt = serverTimestamp()
+    if (!userSnap.exists()) userPayload.createdAt = serverTimestamp()
+    transaction.set(userRef, userPayload, { merge: true })
+
+    if (!hasValidUsername || !claimRef || !claimSnap) return
+
+    const profilePayload = sanitizeFirestorePayload(
+      buildProvisionedProfileDoc(uid, user, {
+        ...options,
+        displayName: nextDisplayName,
+        username: nextUsernameLower,
+        photoURL: nextPhotoURL
+      })
+    )
+
+    profilePayload.updatedAt = serverTimestamp()
+    if (!profileSnap.exists()) profilePayload.createdAt = serverTimestamp()
+    transaction.set(profileRef, profilePayload, { merge: true })
+
+    transaction.set(
+      claimRef,
+      {
+        uid,
+        username: nextUsernameLower,
+        usernameLower: nextUsernameLower,
+        createdAt: claimSnap.exists() ? claimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
+      },
+      { merge: true }
+    )
+
+    claimReserved = true
+  })
+
+  return {
+    onboardingRequired,
+    claimReserved,
+    usernameLower: nextUsernameLower || ''
+  }
+}
+
+export async function ensureUserProvisioned(user, options = {}) {
+  if (!db || !user?.uid) return { onboardingRequired: true, repaired: false }
+
+  const uid = user.uid
+  const userRef = doc(db, 'users', uid)
+  const profileRef = doc(db, 'profiles', uid)
+  const explicitUsername = normalizeUsername(options.username || '')
+  const explicitDisplayName = String(options.displayName || user.displayName || '').trim()
+
+  let onboardingRequired = false
+  let repaired = false
+
+  await runTransaction(db, async (transaction) => {
+    const userSnap = await transaction.get(userRef)
+    const profileSnap = await transaction.get(profileRef)
+    const userData = userSnap.exists() ? userSnap.data() : {}
+    const profileData = profileSnap.exists() ? profileSnap.data() : {}
+
+    const fallbackUsername = normalizeUsername(
+      explicitUsername || profileData.usernameLower || profileData.username || userData.username || ''
+    )
+    const hasValidUsername = validateUsername(fallbackUsername).valid
+
+    const claimRef = hasValidUsername ? doc(db, 'usernameClaims', fallbackUsername) : null
+    const claimSnap = claimRef ? await transaction.get(claimRef) : null
+    const claimOwnedByOther = Boolean(claimSnap?.exists() && claimSnap.data()?.uid && claimSnap.data()?.uid !== uid)
+
+    onboardingRequired = !hasValidUsername || claimOwnedByOther
+
+    if (!userSnap.exists()) {
+      const userPayload = onboardingRequired
+        ? sanitizeFirestorePayload(
+            buildMinimalProvisionedUserDoc(uid, user, {
+              ...options,
+              displayName: explicitDisplayName,
+              photoURL: user.photoURL || ''
+            })
+          )
+        : sanitizeFirestorePayload(
+            buildProvisionedUserDoc(uid, user, {
+              ...options,
+              displayName: explicitDisplayName,
+              username: fallbackUsername,
+              photoURL: user.photoURL || ''
+            })
+          )
+      userPayload.updatedAt = serverTimestamp()
+      userPayload.createdAt = serverTimestamp()
+      transaction.set(userRef, userPayload, { merge: true })
+      repaired = true
+    } else if (userData.onboardingRequired !== onboardingRequired) {
+      transaction.set(userRef, { onboardingRequired, updatedAt: serverTimestamp() }, { merge: true })
+      repaired = true
+    }
+
+    if (!onboardingRequired && !profileSnap.exists()) {
+      const profilePayload = sanitizeFirestorePayload(
+        buildProvisionedProfileDoc(uid, user, {
+          ...options,
+          displayName: explicitDisplayName || userData.displayName || profileData.displayName || '',
+          username: fallbackUsername,
+          photoURL: user.photoURL || userData.photoURL || ''
+        })
+      )
+      profilePayload.updatedAt = serverTimestamp()
+      profilePayload.createdAt = serverTimestamp()
+      transaction.set(profileRef, profilePayload, { merge: true })
+      repaired = true
+    }
+
+    if (!onboardingRequired && claimRef && claimSnap && !claimSnap.exists()) {
+      transaction.set(
+        claimRef,
+        {
+          uid,
+          username: fallbackUsername,
+          usernameLower: fallbackUsername,
+          createdAt: serverTimestamp()
+        },
+        { merge: true }
+      )
+      repaired = true
+    }
+  })
+
+  return { onboardingRequired, repaired }
 }
 
 export async function getEffectiveProfile(uid, authUser = null) {
@@ -213,40 +499,31 @@ export async function saveProfileChanges(user, payload = {}) {
 
       const usernameChanged = previousUsernameLower !== nextUsernameLower
 
-      if (nextUsernameLower && usernameChanged) {
-        try {
-          saveStage = 'username-claim-transaction'
-          const claimRef = doc(db, 'usernameClaims', nextUsernameLower)
-          const claimSnap = await transaction.get(claimRef)
-          if (claimSnap.exists() && claimSnap.data()?.uid !== uid) {
+      let nextClaimRef = null
+      let nextClaimSnap = null
+      let previousClaimRef = null
+      let previousClaimSnap = null
+
+      try {
+        if (nextUsernameLower && usernameChanged) {
+          saveStage = 'username-claim-read-next'
+          nextClaimRef = doc(db, 'usernameClaims', nextUsernameLower)
+          nextClaimSnap = await transaction.get(nextClaimRef)
+          if (nextClaimSnap.exists() && nextClaimSnap.data()?.uid !== uid) {
             const usernameError = new Error('Username already taken.')
             usernameError.code = 'profile/username-taken'
             throw usernameError
           }
-
-          transaction.set(
-            claimRef,
-            {
-              uid,
-              username: nextUsernameLower,
-              usernameLower: nextUsernameLower,
-              createdAt: claimSnap.exists() ? claimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
-            },
-            { merge: true }
-          )
-        } catch (error) {
-          if (!error?.code) error.code = 'profile/username-claim-write-failed'
-          throw error
         }
-      }
 
-      if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
-        saveStage = 'username-claim-cleanup'
-        const previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
-        const previousClaimSnap = await transaction.get(previousClaimRef)
-        if (previousClaimSnap.exists() && previousClaimSnap.data()?.uid === uid) {
-          transaction.delete(previousClaimRef)
+        if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
+          saveStage = 'username-claim-read-previous'
+          previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
+          previousClaimSnap = await transaction.get(previousClaimRef)
         }
+      } catch (error) {
+        if (!error?.code) error.code = 'profile/username-claim-write-failed'
+        throw error
       }
 
       const normalizedPayload = {
@@ -263,6 +540,25 @@ export async function saveProfileChanges(user, payload = {}) {
       if (!profileSnap.exists()) publicPayload.createdAt = serverTimestamp()
       if (!userSnap.exists()) privatePayload.createdAt = serverTimestamp()
 
+      if (nextClaimRef && nextClaimSnap) {
+        saveStage = 'username-claim-write-next'
+        transaction.set(
+          nextClaimRef,
+          {
+            uid,
+            username: nextUsernameLower,
+            usernameLower: nextUsernameLower,
+            createdAt: nextClaimSnap.exists() ? nextClaimSnap.data()?.createdAt || serverTimestamp() : serverTimestamp()
+          },
+          { merge: true }
+        )
+      }
+
+      if (previousClaimRef && previousClaimSnap?.exists() && previousClaimSnap.data()?.uid === uid) {
+        saveStage = 'username-claim-write-previous-delete'
+        transaction.delete(previousClaimRef)
+      }
+
       saveStage = 'public-profile-write'
       transaction.set(profileRef, publicPayload, { merge: true })
 
@@ -272,7 +568,12 @@ export async function saveProfileChanges(user, payload = {}) {
     })
   } catch (error) {
     if (!error?.code) {
-      if (saveStage === 'username-claim-transaction' || saveStage === 'username-claim-cleanup') {
+      if (
+        saveStage === 'username-claim-read-next' ||
+        saveStage === 'username-claim-read-previous' ||
+        saveStage === 'username-claim-write-next' ||
+        saveStage === 'username-claim-write-previous-delete'
+      ) {
         error.code = 'profile/username-claim-write-failed'
       } else if (saveStage === 'public-profile-write') {
         error.code = 'profile/public-profile-write-failed'
