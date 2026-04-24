@@ -1,18 +1,50 @@
-rules_version='2'
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function isUsernameDocIdValid(usernameLower) {
+      return request.resource.data.usernameLower == usernameLower
+        && request.resource.data.username == usernameLower;
+    }
+
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /profiles/{uid} {
+      allow read: if true;
+      allow create, update: if isOwner(uid) && request.resource.data.uid == uid;
+      allow delete: if isOwner(uid);
+    }
+
+    match /usernameClaims/{usernameLower} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && isUsernameDocIdValid(usernameLower);
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && isUsernameDocIdValid(usernameLower);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.artistId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.artistId == request.auth.uid;
+    }
+
     match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2026, 5, 22);
+      allow read, write: if false;
     }
   }
 }
