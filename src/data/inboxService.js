@@ -9,7 +9,16 @@ import {
   removeParticipantFromThread,
   subscribeToThreadsForUser
 } from './threadService'
-import { listMessages, markThreadRead, sendMessage, subscribeToMessages } from './messageService'
+import {
+  listMessages,
+  markThreadDelivered,
+  markThreadRead,
+  sendMessage,
+  setTypingState,
+  subscribeToMessages,
+  subscribeToThreadParticipants,
+  subscribeToTypingState
+} from './messageService'
 
 const profileCache = new Map()
 
@@ -99,5 +108,9 @@ export {
   addParticipantsToThread,
   removeParticipantFromThread,
   sendMessage,
-  markThreadRead
+  markThreadRead,
+  markThreadDelivered,
+  subscribeToThreadParticipants,
+  subscribeToTypingState,
+  setTypingState
 }
