@@ -48,26 +48,38 @@ export function initShellChrome() {
 }
 
 function initNavAuthState() {
-  const authLink = document.querySelector('[data-nav-auth]')
-  const profileLink = document.querySelector('[data-nav-profile]')
+  const profileMenu = document.querySelector('[data-profile-menu]')
+  const profileTrigger = document.querySelector('[data-nav-profile-trigger]')
+  const profileDropdown = document.querySelector('[data-nav-profile-dropdown]')
   const profileAvatar = document.querySelector('[data-profile-avatar]')
-  if (!authLink || !profileLink || !profileAvatar) return
+  const viewProfileLink = document.querySelector('[data-nav-menu-view]')
+  const editProfileLink = document.querySelector('[data-nav-menu-edit]')
+  const signOutButton = document.querySelector('[data-nav-menu-signout]')
+  const authEntryLink = document.querySelector('[data-nav-menu-auth]')
+  if (!profileMenu || !profileTrigger || !profileDropdown || !profileAvatar || !authEntryLink || !signOutButton) return
+
+  const setMenuOpen = (open) => {
+    profileTrigger.setAttribute('aria-expanded', String(open))
+    profileDropdown.hidden = !open
+    profileMenu.classList.toggle('is-open', open)
+  }
 
   const setSignedOutView = () => {
-    authLink.textContent = 'Sign In / Sign Up'
-    authLink.href = '/auth.html'
-    authLink.dataset.mode = 'signin'
-    profileLink.href = '/auth.html'
     profileAvatar.classList.remove('has-photo')
     profileAvatar.style.backgroundImage = ''
     profileAvatar.setAttribute('aria-label', 'Guest account icon')
+    authEntryLink.hidden = false
+    signOutButton.hidden = true
+    if (viewProfileLink) viewProfileLink.hidden = true
+    if (editProfileLink) editProfileLink.hidden = true
   }
 
   const setSignedInView = (user) => {
-    authLink.textContent = 'Sign Out'
-    authLink.href = '#'
-    authLink.dataset.mode = 'signout'
-    profileLink.href = '/profile.html'
+    signOutButton.textContent = 'Log Out'
+    authEntryLink.hidden = true
+    signOutButton.hidden = false
+    if (viewProfileLink) viewProfileLink.hidden = false
+    if (editProfileLink) editProfileLink.hidden = false
 
     if (user?.photoURL) {
       profileAvatar.classList.add('has-photo')
@@ -80,19 +92,62 @@ function initNavAuthState() {
     }
   }
 
-  authLink.addEventListener('click', async (event) => {
-    if (authLink.dataset.mode !== 'signout') return
+  profileTrigger.addEventListener('click', () => {
+    const isOpen = profileTrigger.getAttribute('aria-expanded') === 'true'
+    setMenuOpen(!isOpen)
+  })
+
+  profileTrigger.addEventListener('keydown', (event) => {
+    if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
-    authLink.textContent = 'Signing out...'
-    authLink.setAttribute('aria-busy', 'true')
-    try {
-      await signOutUser()
-    } catch {
-      authLink.textContent = 'Sign Out'
-    } finally {
-      authLink.removeAttribute('aria-busy')
+    setMenuOpen(true)
+  })
+
+  profileDropdown.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      setMenuOpen(false)
+      profileTrigger.focus()
     }
   })
+
+  document.addEventListener('click', (event) => {
+    if (!profileMenu.contains(event.target)) {
+      setMenuOpen(false)
+    }
+  })
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') setMenuOpen(false)
+  })
+
+  authEntryLink.addEventListener('click', () => {
+    setMenuOpen(false)
+  })
+
+  if (viewProfileLink) {
+    viewProfileLink.addEventListener('click', () => setMenuOpen(false))
+  }
+  if (editProfileLink) {
+    editProfileLink.addEventListener('click', () => setMenuOpen(false))
+  }
+
+  signOutButton.addEventListener('click', async (event) => {
+    event.preventDefault()
+    signOutButton.textContent = 'Logging Out...'
+    signOutButton.setAttribute('aria-busy', 'true')
+    signOutButton.disabled = true
+    try {
+      await signOutUser()
+      setMenuOpen(false)
+    } catch {
+      signOutButton.textContent = 'Log Out'
+    } finally {
+      signOutButton.removeAttribute('aria-busy')
+      signOutButton.disabled = false
+    }
+  })
+
+  setMenuOpen(false)
 
   waitForInitialAuthState().then((user) => {
     if (user) {
