@@ -11,6 +11,7 @@ import {
   subscribeToInboxThreads,
   subscribeToMessages
 } from './data/inboxService'
+import { searchProfilesByUsername } from './data/profileSearchService'
 
 const app = document.querySelector('#app')
 
@@ -59,8 +60,18 @@ const appState = {
   activeFilter: 'Messages',
   threadUnsubscribe: () => {},
   messageUnsubscribe: () => {},
-  errorMessage: ''
+  errorMessage: '',
+  isCreateChatOpen: false,
+  chatSearchQuery: '',
+  chatSearchResults: [],
+  selectedChatUsers: [],
+  isSearchingUsers: false,
+  isCreatingChat: false,
+  createChatError: '',
+  chatSearchRequestId: 0
 }
+
+let searchDebounceTimer = null
 
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
@@ -83,6 +94,63 @@ app.innerHTML = `
 initShellChrome()
 
 const inboxRoot = document.querySelector('[data-inbox-root]')
+const modalRoot = document.createElement('div')
+modalRoot.className = 'create-chat-modal-root'
+document.body.append(modalRoot)
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;')
+}
+
+function getInitials(user = {}) {
+  const source = user.displayName || user.username || '?'
+  return source
+    .split(' ')
+    .map((part) => part[0] || '')
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
+}
+
+function getSelectedThread() {
+  return appState.threads.find((thread) => thread.id === appState.selectedThreadId) || null
+}
+
+function clearRealtimeListeners() {
+  appState.threadUnsubscribe()
+  appState.messageUnsubscribe()
+  appState.threadUnsubscribe = () => {}
+  appState.messageUnsubscribe = () => {}
+}
+
+function resetCreateChatState() {
+  appState.isCreateChatOpen = false
+  appState.chatSearchQuery = ''
+  appState.chatSearchResults = []
+  appState.selectedChatUsers = []
+  appState.isSearchingUsers = false
+  appState.isCreatingChat = false
+  appState.createChatError = ''
+  appState.chatSearchRequestId += 1
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = null
+}
+
+function openCreateChatModal() {
+  appState.isCreateChatOpen = true
+  appState.createChatError = ''
+  renderCreateChatModal()
+}
+
+function closeCreateChatModal() {
+  resetCreateChatState()
+  renderCreateChatModal()
+}
 
 function escapeHtml(value) {
   return String(value || '')
@@ -112,6 +180,7 @@ function renderSignedOutState() {
       <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
     </article>
   `
+  modalRoot.innerHTML = ''
 }
 
 function getMessagesSidebarMarkup() {
@@ -340,8 +409,7 @@ function renderMessagesLayout() {
             <p>Direct and group conversations</p>
           </div>
           <div class="panel-actions">
-            <button type="button" class="button button-muted" data-action="new-dm">New DM</button>
-            <button type="button" class="button button-muted" data-action="new-group">New Group</button>
+            <button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button>
           </div>
         </header>
         ${getMessagesThreadListMarkup()}
@@ -369,75 +437,246 @@ function renderActivityLayout(filterName) {
   `
 }
 
-async function handleCreateDm() {
-  const targetUid = window.prompt('Enter the target user UID for this DM:')?.trim()
-  if (!targetUid || !appState.user?.uid) return
+function buildGroupTitle(selectedUsers = []) {
+  const labels = selectedUsers.map((user) => user.displayName || user.username || 'User').filter(Boolean)
+  if (labels.length <= 2) return labels.join(', ')
+  return `${labels[0]}, ${labels[1]} + ${labels.length - 2}`
+}
 
-  try {
-    const thread = await createOrGetDm({ creatorId: appState.user.uid, targetUid })
-    if (thread?.id) {
-      appState.activeFilter = 'Messages'
-      appState.selectedThreadId = thread.id
-      appState.errorMessage = ''
-      startMessageSubscription(thread.id)
-      renderSignedInState()
-    }
-  } catch (error) {
-    appState.errorMessage = error?.message || 'Unable to create DM.'
-    renderSignedInState()
+function optimisticThreadFromSelection(threadId, selectedUsers, createdType, groupTitle) {
+  const participantIds = [appState.user?.uid, ...selectedUsers.map((user) => user.uid)].filter(Boolean)
+  const dmUser = selectedUsers[0]
+
+  return {
+    id: threadId,
+    type: createdType,
+    title: createdType === 'dm' ? dmUser?.displayName || dmUser?.username || 'Direct message' : groupTitle || 'New group',
+    subtitle: 'No messages yet.',
+    formattedTime: 'Now',
+    imageURL: createdType === 'dm' ? dmUser?.avatarURL || dmUser?.photoURL || '' : '',
+    participantIds,
+    participantCount: participantIds.length,
+    lastMessageText: '',
+    lastMessageAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    lastMessageSenderId: '',
+    isGroup: createdType === 'group'
   }
 }
 
-async function handleCreateGroup() {
-  const title = window.prompt('Group title:')?.trim()
-  if (!title || !appState.user?.uid) return
+async function handleCreateChatSubmit() {
+  if (!appState.user?.uid || !appState.selectedChatUsers.length || appState.isCreatingChat) return
 
-  const participantInput = window.prompt('Participant UIDs (comma separated):') || ''
-  const participantIds = participantInput
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
+  appState.isCreatingChat = true
+  appState.createChatError = ''
+  renderCreateChatModal()
 
   try {
-    const thread = await createGroupThread({
-      creatorId: appState.user.uid,
-      participantIds,
-      title
-    })
+    const selectedUsers = [...appState.selectedChatUsers]
+    let thread
+    let createdType = 'dm'
 
-    if (thread?.id) {
-      appState.activeFilter = 'Messages'
-      appState.selectedThreadId = thread.id
-      appState.errorMessage = ''
-      startMessageSubscription(thread.id)
-      renderSignedInState()
+    if (selectedUsers.length === 1) {
+      thread = await createOrGetDm({ creatorId: appState.user.uid, targetUid: selectedUsers[0].uid })
+      createdType = 'dm'
+    } else {
+      const groupTitle = buildGroupTitle(selectedUsers)
+      thread = await createGroupThread({
+        creatorId: appState.user.uid,
+        participantIds: selectedUsers.map((user) => user.uid),
+        title: groupTitle
+      })
+      createdType = 'group'
     }
-  } catch (error) {
-    appState.errorMessage = error?.message || 'Unable to create group.'
-    renderSignedInState()
-  }
-}
 
-async function handleMessageSubmit(form) {
-  const thread = getSelectedThread()
-  if (!thread || !appState.user?.uid) return
+    const threadId = thread?.id || thread?.threadId
+    if (!threadId) throw new Error('Unable to create chat.')
 
-  const field = form.querySelector('textarea[name="message"]')
-  const body = String(field?.value || '').trim()
-  if (!body) return
+    if (!appState.threads.some((item) => item.id === threadId)) {
+      const optimistic = optimisticThreadFromSelection(threadId, selectedUsers, createdType, buildGroupTitle(selectedUsers))
+      appState.threads = [optimistic, ...appState.threads]
+    }
 
-  form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
-
-  try {
-    await sendMessage(thread.id, { senderId: appState.user.uid, body, type: 'text' })
+    appState.activeFilter = 'Messages'
+    appState.selectedThreadId = threadId
     appState.errorMessage = ''
-    field.value = ''
-    await markThreadRead({ threadId: thread.id, uid: appState.user.uid })
+    startMessageSubscription(threadId)
+    closeCreateChatModal()
+    renderSignedInState()
   } catch (error) {
-    appState.errorMessage = error?.message || 'Unable to send message.'
+    appState.isCreatingChat = false
+    appState.createChatError = error?.message || 'Unable to create chat.'
+    renderCreateChatModal()
+  }
+}
+
+async function runProfileSearch(queryText, requestId) {
+  try {
+    const result = await searchProfilesByUsername(queryText)
+    if (requestId !== appState.chatSearchRequestId) return
+
+    const selectedIds = new Set(appState.selectedChatUsers.map((user) => user.uid))
+    appState.chatSearchResults = result.filter((profile) => profile.uid !== appState.user?.uid && !selectedIds.has(profile.uid))
+    appState.isSearchingUsers = false
+    appState.createChatError = ''
+    renderCreateChatModal()
+  } catch {
+    if (requestId !== appState.chatSearchRequestId) return
+    appState.isSearchingUsers = false
+    appState.chatSearchResults = []
+    appState.createChatError = 'Unable to search users.'
+    renderCreateChatModal()
+  }
+}
+
+function scheduleSearch(queryValue) {
+  appState.chatSearchQuery = queryValue
+  appState.createChatError = ''
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+
+  const normalized = String(queryValue || '').trim().toLowerCase()
+  if (normalized.length < 2) {
+    appState.isSearchingUsers = false
+    appState.chatSearchResults = []
+    renderCreateChatModal()
+    return
   }
 
-  renderSignedInState()
+  appState.isSearchingUsers = true
+  appState.chatSearchResults = []
+  const requestId = appState.chatSearchRequestId + 1
+  appState.chatSearchRequestId = requestId
+  renderCreateChatModal()
+
+  searchDebounceTimer = setTimeout(() => {
+    runProfileSearch(normalized, requestId)
+  }, 250)
+}
+
+function renderCreateChatModal() {
+  if (!appState.isCreateChatOpen) {
+    modalRoot.innerHTML = ''
+    return
+  }
+
+  const selectedMarkup = appState.selectedChatUsers.length
+    ? appState.selectedChatUsers
+        .map(
+          (user) => `
+      <article class="chat-chip">
+        <div class="chat-chip-avatar ${user.avatarURL || user.photoURL ? 'has-image' : ''}">
+          ${user.avatarURL || user.photoURL ? `<img src="${escapeHtml(user.avatarURL || user.photoURL)}" alt="" />` : `<span>${getInitials(user)}</span>`}
+        </div>
+        <div>
+          <strong>${escapeHtml(user.displayName || user.username || 'User')}</strong>
+          <small>@${escapeHtml(user.username || 'unknown')}</small>
+        </div>
+        <button type="button" data-remove-selected="${user.uid}" aria-label="Remove user">×</button>
+      </article>
+    `
+        )
+        .join('')
+    : '<p class="modal-hint">No users selected yet.</p>'
+
+  const resultsStateMarkup = appState.isSearchingUsers
+    ? '<p class="modal-hint">Searching…</p>'
+    : appState.chatSearchQuery.trim().length < 2
+      ? '<p class="modal-hint">Type at least 2 characters to search.</p>'
+      : appState.chatSearchResults.length
+        ? appState.chatSearchResults
+            .map(
+              (user) => `
+            <button type="button" class="chat-search-row" data-add-user="${user.uid}">
+              <div class="chat-chip-avatar ${user.avatarURL || user.photoURL ? 'has-image' : ''}">
+                ${user.avatarURL || user.photoURL ? `<img src="${escapeHtml(user.avatarURL || user.photoURL)}" alt="" />` : `<span>${getInitials(user)}</span>`}
+              </div>
+              <div class="chat-search-meta">
+                <strong>${escapeHtml(user.displayName || user.username || 'User')}</strong>
+                <small>@${escapeHtml(user.username || 'unknown')}</small>
+              </div>
+            </button>
+          `
+            )
+            .join('')
+        : '<p class="modal-hint">No users found.</p>'
+
+  modalRoot.innerHTML = `
+    <div class="create-chat-backdrop" data-close-chat-modal>
+      <section class="create-chat-modal" role="dialog" aria-modal="true" aria-labelledby="create-chat-title">
+        <header class="create-chat-header">
+          <h2 id="create-chat-title">Create chat</h2>
+          <button type="button" class="create-chat-close" data-close-chat-modal aria-label="Close create chat modal">×</button>
+        </header>
+        <p class="create-chat-subtitle">Search by username and add people to the conversation.</p>
+        <input
+          class="create-chat-search"
+          type="search"
+          placeholder="Search username…"
+          value="${escapeHtml(appState.chatSearchQuery)}"
+          data-chat-search
+          autocomplete="off"
+        />
+        <div class="create-chat-selected">${selectedMarkup}</div>
+        <div class="create-chat-results">${resultsStateMarkup}</div>
+        ${appState.createChatError ? `<p class="modal-error">${escapeHtml(appState.createChatError)}</p>` : ''}
+        <footer class="create-chat-footer">
+          <button type="button" class="button button-muted" data-close-chat-modal ${appState.isCreatingChat ? 'disabled' : ''}>Cancel</button>
+          <button type="button" class="button button-accent" data-create-chat ${appState.selectedChatUsers.length ? '' : 'disabled'} ${appState.isCreatingChat ? 'disabled' : ''}>
+            ${appState.isCreatingChat ? 'Creating…' : 'Create Chat'}
+          </button>
+        </footer>
+      </section>
+    </div>
+  `
+
+  const backdrop = modalRoot.querySelector('.create-chat-backdrop')
+  const modalCard = modalRoot.querySelector('.create-chat-modal')
+  const searchInput = modalRoot.querySelector('[data-chat-search]')
+
+  if (searchInput && document.activeElement !== searchInput) searchInput.focus()
+
+  backdrop?.addEventListener('click', (event) => {
+    if (event.target === backdrop) closeCreateChatModal()
+  })
+
+  modalCard?.addEventListener('click', (event) => {
+    event.stopPropagation()
+  })
+
+  modalRoot.querySelectorAll('[data-close-chat-modal]').forEach((button) => {
+    button.addEventListener('click', () => closeCreateChatModal())
+  })
+
+  searchInput?.addEventListener('input', (event) => {
+    scheduleSearch(event.target.value)
+  })
+
+  modalRoot.querySelectorAll('[data-add-user]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const uid = button.getAttribute('data-add-user')
+      const user = appState.chatSearchResults.find((row) => row.uid === uid)
+      if (!user || appState.selectedChatUsers.some((row) => row.uid === uid)) return
+      appState.selectedChatUsers = [...appState.selectedChatUsers, user]
+      appState.chatSearchResults = appState.chatSearchResults.filter((row) => row.uid !== uid)
+      renderCreateChatModal()
+    })
+  })
+
+  modalRoot.querySelectorAll('[data-remove-selected]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const uid = button.getAttribute('data-remove-selected')
+      appState.selectedChatUsers = appState.selectedChatUsers.filter((user) => user.uid !== uid)
+      renderCreateChatModal()
+      if (appState.chatSearchQuery.trim().length >= 2) {
+        scheduleSearch(appState.chatSearchQuery)
+      }
+    })
+  })
+
+  modalRoot.querySelector('[data-create-chat]')?.addEventListener('click', async () => {
+    await handleCreateChatSubmit()
+  })
 }
 
 function bindSharedEvents() {
@@ -466,11 +705,12 @@ function bindSharedEvents() {
     })
   })
 
-  const newDmButton = inboxRoot.querySelector('[data-action="new-dm"]')
-  if (newDmButton) newDmButton.addEventListener('click', handleCreateDm)
-
-  const newGroupButton = inboxRoot.querySelector('[data-action="new-group"]')
-  if (newGroupButton) newGroupButton.addEventListener('click', handleCreateGroup)
+  const openCreateChatButton = inboxRoot.querySelector('[data-action="open-create-chat"]')
+  if (openCreateChatButton) {
+    openCreateChatButton.addEventListener('click', () => {
+      openCreateChatModal()
+    })
+  }
 
   const messageForm = inboxRoot.querySelector('[data-message-form]')
   if (messageForm) {
@@ -484,6 +724,29 @@ function bindSharedEvents() {
 function renderSignedInState() {
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
+  renderCreateChatModal()
+}
+
+async function handleMessageSubmit(form) {
+  const thread = getSelectedThread()
+  if (!thread || !appState.user?.uid) return
+
+  const field = form.querySelector('textarea[name="message"]')
+  const body = String(field?.value || '').trim()
+  if (!body) return
+
+  form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
+
+  try {
+    await sendMessage(thread.id, { senderId: appState.user.uid, body, type: 'text' })
+    appState.errorMessage = ''
+    field.value = ''
+    await markThreadRead({ threadId: thread.id, uid: appState.user.uid })
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Unable to send message.'
+  }
+
+  renderSignedInState()
 }
 
 function startMessageSubscription(threadId) {
@@ -531,6 +794,14 @@ function startThreadSubscription() {
   })
 }
 
+function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && appState.isCreateChatOpen && !appState.isCreatingChat) {
+    closeCreateChatModal()
+  }
+}
+
+document.addEventListener('keydown', handleGlobalKeydown)
+
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
     appState.user = null
@@ -551,6 +822,7 @@ subscribeToAuthState(async (user) => {
     appState.selectedThreadId = ''
     appState.messagesByThreadId = {}
     clearRealtimeListeners()
+    closeCreateChatModal()
     renderSignedOutState()
     return
   }
