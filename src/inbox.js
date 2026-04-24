@@ -9,6 +9,39 @@ const app = document.querySelector('#app')
 
 const inboxFilters = ['Messages', 'Calls', 'Likes', 'Follows', 'Comments', 'Mentions', 'System']
 
+const activityCopy = {
+  Calls: {
+    title: 'Calls',
+    emptyTitle: 'No calls yet.',
+    emptyBody: 'Your audio and video call history will appear here once activity starts.'
+  },
+  Likes: {
+    title: 'Likes',
+    emptyTitle: 'No likes yet.',
+    emptyBody: 'New likes on your products and profile activity will appear here.'
+  },
+  Follows: {
+    title: 'Follows',
+    emptyTitle: 'No new follows yet.',
+    emptyBody: 'When someone follows your profile, it will show up here.'
+  },
+  Comments: {
+    title: 'Comments',
+    emptyTitle: 'No comments yet.',
+    emptyBody: 'Replies and comments tied to your content will appear here.'
+  },
+  Mentions: {
+    title: 'Mentions',
+    emptyTitle: 'No mentions yet.',
+    emptyBody: 'Mentions from group threads and community spaces will appear here.'
+  },
+  System: {
+    title: 'System',
+    emptyTitle: 'No notifications yet.',
+    emptyBody: 'Important platform notices and updates will appear here.'
+  }
+}
+
 const appState = {
   user: null,
   isLoadingThreads: false,
@@ -64,16 +97,80 @@ function renderSignedOutState() {
   `
 }
 
-function getConversationBodyMarkup() {
-  if (appState.activeFilter !== 'Messages') {
+function getMessagesSidebarMarkup() {
+  const filterMarkup = inboxFilters
+    .map(
+      (filter) => `
+        <button type="button" class="inbox-filter ${appState.activeFilter === filter ? 'is-active' : ''}" data-inbox-filter="${filter}">
+          <span>${filter}</span>
+        </button>
+      `
+    )
+    .join('')
+
+  return `
+    <div class="inbox-panel-title">
+      <h2>Inbox</h2>
+      <p>Messages and activity</p>
+    </div>
+    <div class="inbox-filters" data-inbox-filters>${filterMarkup}</div>
+    ${getRecentThreadsSidebarMarkup()}
+  `
+}
+
+function getRecentThreadsSidebarMarkup() {
+  const isMessages = appState.activeFilter === 'Messages'
+
+  if (appState.isLoadingThreads && isMessages) {
     return `
-      <section class="inbox-empty-panel">
-        <h3>No ${escapeHtml(appState.activeFilter.toLowerCase())} yet.</h3>
-        <p>This category is ready for live activity when new events come in.</p>
+      <section class="sidebar-recent-block">
+        <p class="sidebar-label">Recent threads</p>
+        <div class="sidebar-recent-list">
+          <div class="sidebar-thread-pill is-skeleton"></div>
+          <div class="sidebar-thread-pill is-skeleton"></div>
+          <div class="sidebar-thread-pill is-skeleton"></div>
+        </div>
       </section>
     `
   }
 
+  if (!isMessages) {
+    return `
+      <section class="sidebar-recent-block">
+        <p class="sidebar-label">Recent threads</p>
+        <p class="sidebar-note">Open Messages to access recent direct and group chats.</p>
+      </section>
+    `
+  }
+
+  if (!appState.threads.length) {
+    return `
+      <section class="sidebar-recent-block">
+        <p class="sidebar-label">Recent threads</p>
+        <p class="sidebar-note">No conversations yet.</p>
+      </section>
+    `
+  }
+
+  const pills = appState.threads.slice(0, 4).map((thread) => {
+    const isActive = appState.selectedThreadId === thread.id
+    return `
+      <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-thread-id="${thread.id}">
+        <strong>${escapeHtml(thread.title)}</strong>
+        ${thread.type === 'group' ? '<small>Group</small>' : ''}
+      </button>
+    `
+  }).join('')
+
+  return `
+    <section class="sidebar-recent-block">
+      <p class="sidebar-label">Recent threads</p>
+      <div class="sidebar-recent-list">${pills}</div>
+    </section>
+  `
+}
+
+function getConversationBodyMarkup() {
   const thread = getSelectedThread()
   if (!thread) {
     return `
@@ -118,17 +215,9 @@ function getConversationBodyMarkup() {
   return `<div class="message-list">${messageMarkup}</div>`
 }
 
-function getThreadListMarkup() {
-  if (appState.activeFilter !== 'Messages') {
-    return `
-      <div class="inbox-thread-list is-empty">
-        <p class="inbox-list-hint">Messages are available under the Messages category.</p>
-      </div>
-    `
-  }
-
+function getMessagesThreadListMarkup() {
   if (appState.isLoadingThreads) {
-    const skeleton = Array.from({ length: 4 })
+    const skeleton = Array.from({ length: 5 })
       .map(
         () => `
           <article class="thread-row is-skeleton" aria-hidden="true">
@@ -186,34 +275,40 @@ function getThreadListMarkup() {
   return `<div class="inbox-thread-list">${rows}</div>`
 }
 
-function renderSignedInState() {
-  const filterMarkup = inboxFilters
-    .map(
-      (filter) => `
-        <button type="button" class="inbox-filter ${appState.activeFilter === filter ? 'is-active' : ''}" data-inbox-filter="${filter}">
-          <span>${filter}</span>
-        </button>
-      `
-    )
-    .join('')
+function getFilterContentMarkup(filterName) {
+  const copy = activityCopy[filterName] || {
+    title: filterName,
+    emptyTitle: `No ${String(filterName).toLowerCase()} yet.`,
+    emptyBody: 'New activity will appear here.'
+  }
 
+  return `
+    <section class="activity-panel">
+      <header class="panel-header activity-header">
+        <h3>${escapeHtml(copy.title)}</h3>
+        <p>Inbox activity category</p>
+      </header>
+      <section class="inbox-empty-panel activity-empty-panel">
+        <h3>${escapeHtml(copy.emptyTitle)}</h3>
+        <p>${escapeHtml(copy.emptyBody)}</p>
+      </section>
+    </section>
+  `
+}
+
+function renderMessagesLayout() {
   const selectedThread = getSelectedThread()
-  inboxRoot.innerHTML = `
-    <div class="inbox-layout">
-      <aside class="inbox-sidebar">
-        <div class="inbox-panel-title">
-          <h2>Inbox</h2>
-          <p>Messages and activity</p>
-        </div>
-        <div class="inbox-filters" data-inbox-filters>${filterMarkup}</div>
-      </aside>
+
+  return `
+    <div class="inbox-layout inbox-layout-messages">
+      <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
 
       <section class="inbox-thread-panel">
         <header class="panel-header">
           <h3>Messages</h3>
           <p>Direct and group conversations</p>
         </header>
-        ${getThreadListMarkup()}
+        ${getMessagesThreadListMarkup()}
       </section>
 
       <section class="inbox-main-panel">
@@ -225,9 +320,22 @@ function renderSignedInState() {
       </section>
     </div>
   `
+}
 
+function renderActivityLayout(filterName) {
+  return `
+    <div class="inbox-layout inbox-layout-activity">
+      <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
+      <section class="inbox-main-panel inbox-main-panel-full">
+        ${getFilterContentMarkup(filterName)}
+      </section>
+    </div>
+  `
+}
+
+function bindSharedEvents() {
   inboxRoot.querySelectorAll('[data-inbox-filter]').forEach((button) => {
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', () => {
       appState.activeFilter = button.dataset.inboxFilter || 'Messages'
       renderSignedInState()
     })
@@ -235,13 +343,26 @@ function renderSignedInState() {
 
   inboxRoot.querySelectorAll('[data-thread-id]').forEach((button) => {
     button.addEventListener('click', async () => {
+      if (appState.activeFilter !== 'Messages') {
+        appState.activeFilter = 'Messages'
+      }
+
       const { threadId } = button.dataset
-      if (!threadId || threadId === appState.selectedThreadId) return
+      if (!threadId || threadId === appState.selectedThreadId) {
+        renderSignedInState()
+        return
+      }
+
       appState.selectedThreadId = threadId
       renderSignedInState()
       await loadMessages(threadId)
     })
   })
+}
+
+function renderSignedInState() {
+  inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
+  bindSharedEvents()
 }
 
 async function loadThreads() {
