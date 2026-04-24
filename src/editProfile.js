@@ -101,15 +101,28 @@ function normalizeUsername(raw) {
   return String(raw || '').trim().toLowerCase()
 }
 
+function validateDisplayName(raw) {
+  const value = String(raw || '').trim()
+  if (!value) {
+    return { valid: false, value: '', message: 'Display name is required.' }
+  }
+  if (value.length > 80) {
+    return { valid: false, value, message: 'Display name must be 80 characters or less.' }
+  }
+  return { valid: true, value }
+}
+
 function validateUsername(raw) {
   const value = String(raw || '').trim()
-  if (!value) return { valid: true, normalized: '' }
+  if (!value) {
+    return { valid: false, normalized: '', message: 'Username is required.' }
+  }
   if (/\s/.test(value)) {
-    return { valid: false, normalized: normalizeUsername(value), message: 'Username cannot include spaces.' }
+    return { valid: false, normalized: normalizeUsername(value), message: 'Username cannot contain spaces.' }
   }
   const normalized = normalizeUsername(value)
   if (!/^[a-z0-9_-]+$/.test(normalized)) {
-    return { valid: false, normalized, message: 'Use only lowercase letters, numbers, underscores, or hyphens.' }
+    return { valid: false, normalized, message: 'Username can only contain lowercase letters, numbers, underscores, and hyphens.' }
   }
   if (normalized.length < 3) {
     return { valid: false, normalized, message: 'Username must be at least 3 characters.' }
@@ -122,7 +135,11 @@ function validateUsername(raw) {
 
 function toHumanProfileError(error) {
   if (error?.code === 'profile/username-taken') return 'That username is already taken. Please choose another.'
+  if (error?.code === 'profile/invalid-display-name') return error?.message || 'Display name is required.'
   if (error?.code === 'profile/invalid-username') return error?.message || 'Username is invalid. Use lowercase letters, numbers, underscores, or hyphens only.'
+  if (error?.code === 'profile/username-claim-write-failed') return 'Could not reserve that username. Please try again.'
+  if (error?.code === 'profile/public-profile-write-failed') return 'Could not save your public profile right now. Please try again.'
+  if (error?.code === 'profile/private-profile-write-failed') return 'Could not save your private profile settings right now. Please try again.'
   if (error?.code === 'invalid-argument') return 'Some profile fields were not valid for saving. Please check your username and links, then try again.'
   return 'Could not save profile changes. Please try again.'
 }
@@ -166,6 +183,7 @@ function getMergedState(user, profileResult) {
       state: 'info'
     },
     validation: {
+      displayName: '',
       username: ''
     }
   }
@@ -587,8 +605,16 @@ function renderSettingsPage() {
 
           <form data-profile-form>
             <div class="field-grid">
-              <label><span>Display Name</span><input name="displayName" value="${state.displayName}" /></label>
-              <label><span>Username</span><input name="username" value="${state.username}" class="${state.validation?.username ? 'is-invalid' : ''}" data-username-input /><small class="field-error ${state.validation?.username ? 'is-visible' : ''}" data-username-error>${state.validation?.username || ''}</small></label>
+              <label>
+                <span>Display Name <em class="required-indicator">Required</em></span>
+                <input name="displayName" value="${state.displayName}" class="${state.validation?.displayName ? 'is-invalid' : ''}" data-display-name-input />
+                <small class="field-error ${state.validation?.displayName ? 'is-visible' : ''}" data-display-name-error>${state.validation?.displayName || ''}</small>
+              </label>
+              <label>
+                <span>Username <em class="required-indicator">Required</em></span>
+                <input name="username" value="${state.username}" class="${state.validation?.username ? 'is-invalid' : ''}" data-username-input />
+                <small class="field-error ${state.validation?.username ? 'is-visible' : ''}" data-username-error>${state.validation?.username || ''}</small>
+              </label>
             </div>
             <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
@@ -695,6 +721,8 @@ function renderSettingsPage() {
   const bannerInput = editRoot.querySelector('[data-banner-input]')
   const changeMediaButtons = editRoot.querySelectorAll('[data-change-media]')
   const removeMediaButtons = editRoot.querySelectorAll('[data-remove-media]')
+  const displayNameInput = editRoot.querySelector('[data-display-name-input]')
+  const displayNameErrorEl = editRoot.querySelector('[data-display-name-error]')
   const usernameInput = editRoot.querySelector('[data-username-input]')
   const usernameErrorEl = editRoot.querySelector('[data-username-error]')
 
@@ -747,6 +775,22 @@ function renderSettingsPage() {
   })
 
 
+  function updateDisplayNameValidationUI(message = '') {
+    if (!pageState) return
+    pageState.validation = {
+      ...(pageState.validation || {}),
+      displayName: message
+    }
+
+    if (displayNameInput) {
+      displayNameInput.classList.toggle('is-invalid', Boolean(message))
+    }
+    if (displayNameErrorEl) {
+      displayNameErrorEl.textContent = message
+      displayNameErrorEl.classList.toggle('is-visible', Boolean(message))
+    }
+  }
+
   function updateUsernameValidationUI(message = '') {
     if (!pageState) return
     pageState.validation = {
@@ -762,6 +806,11 @@ function renderSettingsPage() {
       usernameErrorEl.classList.toggle('is-visible', Boolean(message))
     }
   }
+
+  displayNameInput?.addEventListener('input', () => {
+    const validation = validateDisplayName(displayNameInput.value)
+    updateDisplayNameValidationUI(validation.valid ? '' : validation.message)
+  })
 
   usernameInput?.addEventListener('input', () => {
     const validation = validateUsername(usernameInput.value)
@@ -783,19 +832,24 @@ function renderSettingsPage() {
   profileForm?.addEventListener('submit', async (event) => {
     event.preventDefault()
     const formData = new FormData(profileForm)
-
+    const displayNameValidation = validateDisplayName(formData.get('displayName'))
     const usernameValidation = validateUsername(formData.get('username'))
-    if (!usernameValidation.valid) {
-      updateUsernameValidationUI(usernameValidation.message)
-      setGlobalEditStatus('Please fix the username field before saving.', 'error')
+
+    updateDisplayNameValidationUI(displayNameValidation.valid ? '' : displayNameValidation.message)
+    updateUsernameValidationUI(usernameValidation.valid ? '' : usernameValidation.message)
+
+    if (!displayNameValidation.valid || !usernameValidation.valid) {
+      setGlobalEditStatus('Please fix the highlighted fields before saving.', 'error')
       renderSettingsPage()
+      if (!hasWarnedEditProfile) {
+        hasWarnedEditProfile = true
+        console.warn('[edit-profile] Save blocked by local validation.')
+      }
       return
     }
 
-    updateUsernameValidationUI('')
-
     const nextPayload = {
-      displayName: String(formData.get('displayName') || '').trim(),
+      displayName: displayNameValidation.value,
       username: usernameValidation.normalized,
       bio: String(formData.get('bio') || '').trim(),
       role: state.userData.role || 'user',
@@ -885,6 +939,7 @@ function renderSettingsPage() {
           bannerRemoved: false
         },
         validation: {
+          displayName: '',
           username: ''
         }
       }
@@ -901,7 +956,16 @@ function renderSettingsPage() {
       renderSettingsPage()
       if (!hasWarnedEditProfile) {
         hasWarnedEditProfile = true
-        console.warn('[edit-profile] Save failed.', error?.code || error?.message || error)
+        const code = error?.code || 'unknown-error'
+        if (code === 'profile/username-claim-write-failed') {
+          console.warn('[edit-profile] Save failed during username claim transaction.', error?.message || error)
+        } else if (code === 'profile/public-profile-write-failed') {
+          console.warn('[edit-profile] Save failed during Firestore profile write.', error?.message || error)
+        } else if (code === 'profile/private-profile-write-failed') {
+          console.warn('[edit-profile] Save failed during private user doc write.', error?.message || error)
+        } else {
+          console.warn('[edit-profile] Save failed.', code, error?.message || error)
+        }
       }
     } finally {
       if (saveButton) {
