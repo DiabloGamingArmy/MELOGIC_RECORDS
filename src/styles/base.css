@@ -371,6 +371,10 @@ main {
   z-index: 150;
 }
 
+.profile-dropdown[hidden] {
+  display: none !important;
+}
+
 .profile-dropdown a,
 .profile-dropdown button {
   width: 100%;
