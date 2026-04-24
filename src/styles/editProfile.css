@@ -226,6 +226,14 @@ label span {
   color: #b8c6e7;
 }
 
+.required-indicator {
+  font-style: normal;
+  margin-left: 0.35rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  color: #ffb7c6;
+}
+
 input,
 textarea,
 select {
@@ -411,7 +419,9 @@ select {
   display: block;
 }
 
-input.is-invalid {
+input.is-invalid,
+textarea.is-invalid,
+select.is-invalid {
   border-color: rgba(238, 127, 149, 0.8);
   box-shadow: 0 0 0 1px rgba(238, 127, 149, 0.35);
 }

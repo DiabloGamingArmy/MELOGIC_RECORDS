@@ -12,14 +12,31 @@ function normalizeUsername(username) {
 }
 
 function validateUsername(username) {
-  if (!username) return { valid: true }
+  if (!username) return { valid: false, message: 'Username is required.' }
   if (/\s/.test(username)) {
-    return { valid: false, message: 'Username cannot include spaces.' }
+    return { valid: false, message: 'Username cannot contain spaces.' }
   }
   if (!/^[a-z0-9_-]+$/.test(username)) {
-    return { valid: false, message: 'Use only lowercase letters, numbers, underscores, or hyphens.' }
+    return { valid: false, message: 'Username can only contain lowercase letters, numbers, underscores, and hyphens.' }
+  }
+  if (username.length < 3) {
+    return { valid: false, message: 'Username must be at least 3 characters.' }
+  }
+  if (username.length > 30) {
+    return { valid: false, message: 'Username must be 30 characters or less.' }
   }
   return { valid: true }
+}
+
+function validateDisplayName(displayName) {
+  const value = String(displayName || '').trim()
+  if (!value) {
+    return { valid: false, message: 'Display name is required.' }
+  }
+  if (value.length > 80) {
+    return { valid: false, message: 'Display name must be 80 characters or less.' }
+  }
+  return { valid: true, value }
 }
 
 function isPlainObject(value) {
@@ -166,9 +183,18 @@ export async function saveProfileChanges(user, payload = {}) {
   const uid = user.uid
   const profileRef = doc(db, 'profiles', uid)
   const userRef = doc(db, 'users', uid)
+  const displayNameValidation = validateDisplayName(payload.displayName)
+  if (!displayNameValidation.valid) {
+    const displayNameError = new Error(displayNameValidation.message)
+    displayNameError.code = 'profile/invalid-display-name'
+    throw displayNameError
+  }
+
+  let saveStage = 'init'
 
   try {
     await runTransaction(db, async (transaction) => {
+      saveStage = 'read-current-profile'
       const profileSnap = await transaction.get(profileRef)
       const userSnap = await transaction.get(userRef)
       const existingProfile = profileSnap.exists() ? profileSnap.data() : {}
@@ -189,6 +215,7 @@ export async function saveProfileChanges(user, payload = {}) {
 
       if (nextUsernameLower && usernameChanged) {
         try {
+          saveStage = 'username-claim-transaction'
           const claimRef = doc(db, 'usernameClaims', nextUsernameLower)
           const claimSnap = await transaction.get(claimRef)
           if (claimSnap.exists() && claimSnap.data()?.uid !== uid) {
@@ -214,6 +241,7 @@ export async function saveProfileChanges(user, payload = {}) {
       }
 
       if (previousUsernameLower && previousUsernameLower !== nextUsernameLower) {
+        saveStage = 'username-claim-cleanup'
         const previousClaimRef = doc(db, 'usernameClaims', previousUsernameLower)
         const previousClaimSnap = await transaction.get(previousClaimRef)
         if (previousClaimSnap.exists() && previousClaimSnap.data()?.uid === uid) {
@@ -223,6 +251,7 @@ export async function saveProfileChanges(user, payload = {}) {
 
       const normalizedPayload = {
         ...payload,
+        displayName: displayNameValidation.value,
         username: nextUsernameLower
       }
 
@@ -234,21 +263,24 @@ export async function saveProfileChanges(user, payload = {}) {
       if (!profileSnap.exists()) publicPayload.createdAt = serverTimestamp()
       if (!userSnap.exists()) privatePayload.createdAt = serverTimestamp()
 
-      try {
-        transaction.set(profileRef, publicPayload, { merge: true })
-      } catch (error) {
-        if (!error?.code) error.code = 'profile/public-profile-write-failed'
-        throw error
-      }
+      saveStage = 'public-profile-write'
+      transaction.set(profileRef, publicPayload, { merge: true })
 
-      try {
-        transaction.set(userRef, privatePayload, { merge: true })
-      } catch (error) {
-        if (!error?.code) error.code = 'profile/private-profile-write-failed'
-        throw error
-      }
+      saveStage = 'private-profile-write'
+      transaction.set(userRef, privatePayload, { merge: true })
+      saveStage = 'transaction-commit'
     })
   } catch (error) {
+    if (!error?.code) {
+      if (saveStage === 'username-claim-transaction' || saveStage === 'username-claim-cleanup') {
+        error.code = 'profile/username-claim-write-failed'
+      } else if (saveStage === 'public-profile-write') {
+        error.code = 'profile/public-profile-write-failed'
+      } else if (saveStage === 'private-profile-write' || saveStage === 'transaction-commit') {
+        error.code = 'profile/private-profile-write-failed'
+      }
+    }
+
     if (error?.code === 'profile/username-claim-write-failed') {
       console.warn('[firebase/firestore] Username claim write failed.', error?.message || error)
     } else if (error?.code === 'profile/public-profile-write-failed') {
