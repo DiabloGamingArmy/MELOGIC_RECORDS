@@ -1,11 +1,13 @@
 .inbox-main-shell {
-  padding: 0.6rem 0 0.85rem;
+  background: var(--bg);
+  width: 100%;
+  padding: clamp(0.4rem, 1vw, 0.9rem);
   min-height: calc(100vh - var(--nav-offset));
 }
 
-.inbox-main-shell .section-inner {
-  width: min(1680px, 97vw);
-  min-height: calc(100vh - var(--nav-offset) - 1.45rem);
+.inbox-app-shell {
+  width: 100%;
+  min-height: calc(100vh - var(--nav-offset) - clamp(0.8rem, 2vw, 1.6rem));
   display: grid;
 }
 
@@ -30,8 +32,7 @@
 
 .inbox-layout {
   border: 1px solid rgba(154, 168, 198, 0.2);
-  background: radial-gradient(circle at top right, rgba(37, 60, 103, 0.22), transparent 46%),
-    linear-gradient(180deg, rgba(10, 14, 24, 0.94), rgba(8, 11, 19, 0.94));
+  background: linear-gradient(180deg, rgba(10, 14, 24, 0.94), rgba(8, 11, 19, 0.94));
   border-radius: 1rem;
   display: grid;
   min-height: 100%;
