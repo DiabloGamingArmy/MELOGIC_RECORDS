@@ -213,6 +213,7 @@ function renderProducts() {
     `
     return
   }
+}
 
   const filtered = applyClientFilters(state.products)
   if (!filtered.length) {
