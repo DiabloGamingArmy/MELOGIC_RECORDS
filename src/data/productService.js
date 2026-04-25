@@ -365,6 +365,43 @@ export async function getProductById(productId) {
   }
 }
 
+function recommendationScore(baseProduct, candidate) {
+  let score = 0
+  const baseGenres = new Set(baseProduct.genreKeys || [])
+  const baseCategories = new Set(baseProduct.categoryKeys || [])
+
+  score += (candidate.genreKeys || []).reduce((total, key) => total + (baseGenres.has(key) ? 4 : 0), 0)
+  score += (candidate.categoryKeys || []).reduce((total, key) => total + (baseCategories.has(key) ? 3 : 0), 0)
+
+  if ((candidate.productType || '') === (baseProduct.productType || '')) score += 2
+  if (candidate.artistId && candidate.artistId === baseProduct.artistId) score += 2
+  if (candidate.featured) score += 1
+
+  const freshness = new Date(candidate.releasedAt || candidate.createdAt || 0).getTime() || 0
+  return score * 10000000000000 + freshness
+}
+
+export async function listRecommendedProducts({ product, pageSize = 8 } = {}) {
+  if (!product?.id) return []
+
+  const targetSize = Math.max(1, Math.min(Number(pageSize) || 8, 12))
+  const { products } = await listPublicProductsPage({
+    sort: 'featured',
+    pageSize: Math.max(12, targetSize + 4)
+  })
+
+  if (!products.length) return []
+
+  const scored = products
+    .filter((candidate) => candidate.id !== product.id)
+    .map((candidate) => ({ candidate, score: recommendationScore(product, candidate) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, targetSize)
+    .map((entry) => entry.candidate)
+
+  return scored
+}
+
 
 
 function slugify(value) {
