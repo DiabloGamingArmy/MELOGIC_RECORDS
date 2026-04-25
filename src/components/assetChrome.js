@@ -137,10 +137,13 @@ function initCartDrawer() {
   const closeDrawer = () => {
     if (!backdrop) return
     backdrop.hidden = true
+    document.documentElement.style.setProperty('--scrollbar-compensation', '0px')
     document.body.classList.remove('has-cart-drawer-open')
   }
   const openDrawer = () => {
     if (!backdrop) return
+    const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth)
+    document.documentElement.style.setProperty('--scrollbar-compensation', `${scrollbarWidth}px`)
     backdrop.hidden = false
     document.body.classList.add('has-cart-drawer-open')
     drawer?.focus()

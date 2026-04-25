@@ -89,7 +89,7 @@ function productCardMarkup(product) {
     : '<div class="product-cover-fallback" aria-hidden="true"></div>'
 
   return `
-    <article class="product-card" role="listitem" data-product-id="${escapeHtml(product.id)}">
+    <article class="product-card product-card-link" role="listitem" data-open-product data-product-id="${escapeHtml(product.id)}" tabindex="0" aria-label="Open ${escapeHtml(product.title)} details">
       <div class="product-cover">
         ${mediaMarkup}
       </div>
@@ -111,7 +111,7 @@ function productCardMarkup(product) {
         </div>
 
         <p class="product-contributors"><strong>Contributors:</strong> ${contributorList}</p>
-        <p class="product-artist-link"><a href="${artistHref}">@${escapeHtml(product.artistUsername || 'artist')}</a></p>
+        <p class="product-artist-link"><a href="${artistHref}" data-artist-link>@${escapeHtml(product.artistUsername || 'artist')}</a></p>
 
         <div class="product-actions">
           <button type="button" class="preview-btn" ${product.previewAudioURLs.length ? '' : 'disabled'} aria-label="Preview ${escapeHtml(product.title)}">▶ Preview</button>
@@ -215,27 +215,6 @@ function renderProducts() {
   }
 }
 
-function bindProductActions(visibleProducts = []) {
-  app.querySelectorAll('[data-add-to-cart]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const id = button.getAttribute('data-product-id')
-      const product = state.products.find((entry) => entry.id === id) || visibleProducts.find((entry) => entry.id === id)
-      if (!product) return
-      addToCart(product)
-      button.textContent = 'Added'
-      setTimeout(() => {
-        button.textContent = 'Add to cart'
-      }, 900)
-      document.querySelector('[data-cart-trigger]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    })
-  })
-}
-
-function setFilter(key, value) {
-  state.filters[key] = value
-  loadNextPage({ reset: true })
-}
-
   const filtered = applyClientFilters(state.products)
   if (!filtered.length) {
     grid.innerHTML = `
@@ -318,8 +297,35 @@ async function loadNextPage({ reset = false } = {}) {
 }
 
 function bindProductActions(visibleProducts = []) {
+  app.querySelectorAll('[data-open-product]').forEach((card) => {
+    const openDashboard = () => {
+      const productId = card.getAttribute('data-product-id')
+      if (!productId) return
+      window.location.href = `/product-dashboard.html?id=${encodeURIComponent(productId)}`
+    }
+
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('[data-add-to-cart], .preview-btn, [data-artist-link]')) return
+      openDashboard()
+    })
+
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      if (event.target.closest('[data-add-to-cart], .preview-btn, [data-artist-link]')) return
+      event.preventDefault()
+      openDashboard()
+    })
+  })
+
+  app.querySelectorAll('.preview-btn').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+    })
+  })
+
   app.querySelectorAll('[data-add-to-cart]').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
       const id = button.getAttribute('data-product-id')
       const product = state.products.find((entry) => entry.id === id) || visibleProducts.find((entry) => entry.id === id)
       if (!product) return

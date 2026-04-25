@@ -80,17 +80,23 @@ export async function resolveProductMedia(product) {
   const productId = product.id
   const thumbnailPath = product.thumbnailPath || STORAGE_PATHS.productThumb(productId)
   const coverPath = product.coverPath || STORAGE_PATHS.productCover(productId)
+  const galleryPaths = Array.isArray(product.galleryPaths) ? product.galleryPaths.slice(0, 12) : []
+  const previewVideoPaths = Array.isArray(product.previewVideoPaths) ? product.previewVideoPaths.slice(0, 6) : []
 
   const thumbnailURL = await safeStorageUrl(thumbnailPath)
   const coverURL = await safeStorageUrl(coverPath, thumbnailURL)
   const previewAudioURLs = await Promise.all((product.previewAudioPaths || []).map((path) => safeStorageUrl(path)))
+  const galleryURLs = await Promise.all(galleryPaths.map((path) => safeStorageUrl(path)))
+  const previewVideoURLs = await Promise.all(previewVideoPaths.map((path) => safeStorageUrl(path)))
 
   return {
     thumbnailPath,
     coverPath,
     thumbnailURL,
     coverURL,
-    previewAudioURLs: previewAudioURLs.filter(Boolean)
+    previewAudioURLs: previewAudioURLs.filter(Boolean),
+    galleryURLs: galleryURLs.filter(Boolean),
+    previewVideoURLs: previewVideoURLs.filter(Boolean)
   }
 }
 
@@ -136,7 +142,10 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     coverURL: media.coverURL || '',
     galleryPaths: rawProduct.galleryPaths || [],
     previewAudioPaths: rawProduct.previewAudioPaths || [],
+    previewVideoPaths: rawProduct.previewVideoPaths || [],
     previewAudioURLs: media.previewAudioURLs || [],
+    galleryURLs: media.galleryURLs || [],
+    previewVideoURLs: media.previewVideoURLs || [],
     downloadPath: rawProduct.downloadPath || '',
     licensePath: rawProduct.licensePath || '',
     priceCents: Number.isFinite(rawProduct.priceCents) ? rawProduct.priceCents : 0,

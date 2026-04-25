@@ -56,6 +56,14 @@ service cloud.firestore {
         ]);
     }
 
+    function validMessageCreate() {
+      let body = request.resource.data.body;
+      let attachments = request.resource.data.attachments;
+      let hasBody = body is string && body.size() > 0;
+      let hasAttachments = attachments is list && attachments.size() > 0;
+      return hasBody || hasAttachments;
+    }
+
     function isUsernameDocIdValid(usernameLower) {
       return request.resource.data.usernameLower == usernameLower
         && request.resource.data.username == usernameLower;
@@ -113,9 +121,10 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if isThreadParticipant(threadId);
         allow create: if isThreadParticipant(threadId)
-          && request.resource.data.senderId == request.auth.uid;
-        allow update: if false;
-        allow delete: if false;
+          && request.resource.data.senderId == request.auth.uid
+          && validMessageCreate();
+        allow update, delete: if isThreadParticipant(threadId)
+          && resource.data.senderId == request.auth.uid;
       }
 
       match /typing/{uid} {
