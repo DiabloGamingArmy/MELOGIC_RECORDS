@@ -131,8 +131,11 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     tags,
     artistId: rawProduct.artistId || '',
     artistName: rawProduct.artistName || 'Unknown artist',
+    artistDisplayName: rawProduct.artistDisplayName || rawProduct.artistName || 'Unknown artist',
     artistUsername: rawProduct.artistUsername || '',
     artistProfilePath: rawProduct.artistProfilePath || '',
+    artistAvatarURL: rawProduct.artistAvatarURL || rawProduct.artistPhotoURL || '',
+    artistPhotoURL: rawProduct.artistPhotoURL || rawProduct.artistAvatarURL || '',
     contributorIds: rawProduct.contributorIds || [],
     contributorNames,
     contributorCount,
@@ -420,11 +423,31 @@ function parseCsv(value) {
     .filter(Boolean)
 }
 
+export function getCreatorIdentity(user = null, input = {}) {
+  const artistId = user?.uid || String(input.artistId || '')
+  const artistName = String(user?.displayName || input.artistDisplayName || input.artistName || 'Creator')
+  const artistUsername = String(input.artistUsername || '')
+  const artistProfilePath = String(input.artistProfilePath || (artistId ? `profiles/${artistId}` : ''))
+  const artistAvatarURL = String(input.artistAvatarURL || input.artistPhotoURL || user?.photoURL || '')
+  const artistPhotoURL = String(input.artistPhotoURL || input.artistAvatarURL || user?.photoURL || '')
+
+  return {
+    artistId,
+    artistName,
+    artistDisplayName: artistName,
+    artistUsername,
+    artistProfilePath,
+    artistAvatarURL,
+    artistPhotoURL
+  }
+}
+
 export function buildProductPayload(input = {}, user = null) {
   const nowIso = new Date().toISOString()
   const counts = input.counts || {}
   const slug = input.slug || slugify(input.title) || `product-${Date.now()}`
   const contributorNames = Array.isArray(input.contributorNames) ? input.contributorNames : parseCsv(input.contributorNames)
+  const creator = getCreatorIdentity(user, input)
 
   return {
     id: input.id || slug,
@@ -438,10 +461,13 @@ export function buildProductPayload(input = {}, user = null) {
     categories: Array.isArray(input.categories) ? input.categories : parseCsv(input.categories),
     genres: Array.isArray(input.genres) ? input.genres : parseCsv(input.genres),
     tags: Array.isArray(input.tags) ? input.tags : parseCsv(input.tags),
-    artistId: input.artistId || user?.uid || '',
-    artistName: input.artistName || user?.displayName || '',
-    artistUsername: input.artistUsername || '',
-    artistProfilePath: input.artistProfilePath || '',
+    artistId: creator.artistId,
+    artistName: creator.artistName,
+    artistDisplayName: creator.artistDisplayName,
+    artistUsername: creator.artistUsername,
+    artistProfilePath: creator.artistProfilePath,
+    artistAvatarURL: creator.artistAvatarURL,
+    artistPhotoURL: creator.artistPhotoURL,
     contributorIds: Array.isArray(input.contributorIds) ? input.contributorIds : parseCsv(input.contributorIds),
     contributorNames,
     coverPath: input.coverPath || '',
@@ -457,13 +483,13 @@ export function buildProductPayload(input = {}, user = null) {
     currency: input.currency || 'USD',
     isFree: Boolean(input.isFree),
     titleLower: String(input.title || '').toLowerCase(),
-    artistNameLower: String(input.artistName || user?.displayName || '').toLowerCase(),
-    artistUsernameLower: String(input.artistUsername || '').toLowerCase(),
+    artistNameLower: String(creator.artistName || '').toLowerCase(),
+    artistUsernameLower: String(creator.artistUsername || '').toLowerCase(),
     searchKeywords: Array.from(new Set([
       ...parseCsv(input.searchKeywords),
       ...String(input.title || '').toLowerCase().split(/\s+/),
-      ...String(input.artistName || user?.displayName || '').toLowerCase().split(/\s+/),
-      ...String(input.artistUsername || '').toLowerCase().split(/\s+/),
+      ...String(creator.artistName || '').toLowerCase().split(/\s+/),
+      ...String(creator.artistUsername || '').toLowerCase().split(/\s+/),
       ...parseCsv(input.tags).map((tag) => String(tag).toLowerCase()),
       ...parseCsv(input.genres).map((genre) => String(genre).toLowerCase()),
       ...parseCsv(input.categories).map((category) => String(category).toLowerCase())
@@ -531,14 +557,20 @@ export function isPlaceholderProductId(productId = '') {
 
 async function ensureDraftProductDocument(user, input = {}, productId = '') {
   if (!db || !user?.uid || !productId) return
+  const creator = getCreatorIdentity(user, input)
 
   const now = serverTimestamp()
   await setDoc(
     doc(db, FIRESTORE_COLLECTIONS.products, productId),
     {
       id: productId,
-      artistId: user.uid,
-      artistName: input.artistName || user.displayName || '',
+      artistId: creator.artistId || user.uid,
+      artistName: creator.artistName,
+      artistDisplayName: creator.artistDisplayName,
+      artistUsername: creator.artistUsername,
+      artistProfilePath: creator.artistProfilePath,
+      artistAvatarURL: creator.artistAvatarURL,
+      artistPhotoURL: creator.artistPhotoURL,
       title: String(input.title || '').trim() || 'Untitled product',
       productType: input.productType || 'Sample Pack',
       slug: input.slug || productId,
@@ -612,7 +644,8 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     throw createStageError('draft-initialization', 'Draft initialization failed.', error)
   }
 
-  const basePayload = buildProductPayload({ ...input, id: productId }, user)
+  const creator = getCreatorIdentity(user, input)
+  const basePayload = buildProductPayload({ ...input, ...creator, id: productId }, user)
   let mediaUploads = {}
   try {
     if (typeof options.onStatus === 'function' && options.mediaFiles?.cover) {
@@ -636,6 +669,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   const payload = {
     ...basePayload,
     id: productId,
+    ...creator,
     artistId: user.uid,
     status: desiredStatus === 'published' ? 'draft' : desiredStatus,
     visibility: basePayload.visibility || 'private',
