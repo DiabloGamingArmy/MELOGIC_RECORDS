@@ -7,6 +7,7 @@ import {
   getThread,
   listThreadsForUser,
   removeParticipantFromThread,
+  updateThreadDetails,
   subscribeToThreadsForUser
 } from './threadService'
 import {
@@ -21,6 +22,7 @@ import {
 } from './messageService'
 
 const profileCache = new Map()
+let profileLookupWarningShown = false
 
 function formatThreadTime(value) {
   if (!value) return ''
@@ -43,18 +45,33 @@ async function getProfile(uid) {
   if (!db || !uid) return null
   if (profileCache.has(uid)) return profileCache.get(uid)
 
-  const profileDoc = await getDoc(doc(db, 'profiles', uid))
-  const profile = profileDoc.exists() ? profileDoc.data() : null
-
-  if (!profile) {
-    const userDoc = await getDoc(doc(db, 'users', uid))
-    const fallback = userDoc.exists() ? userDoc.data() : null
-    profileCache.set(uid, fallback)
-    return fallback
+  try {
+    const profileDoc = await getDoc(doc(db, 'profiles', uid))
+    const profile = profileDoc.exists() ? profileDoc.data() : null
+    profileCache.set(uid, profile)
+    return profile
+  } catch (error) {
+    if (!profileLookupWarningShown) {
+      profileLookupWarningShown = true
+      console.warn('Inbox profile lookup failed for /profiles reads.', error)
+    }
+    profileCache.set(uid, null)
+    return null
   }
+}
 
-  profileCache.set(uid, profile)
-  return profile
+export async function loadProfilesByUids(uids = []) {
+  const unique = Array.from(new Set((uids || []).filter(Boolean)))
+  if (!unique.length) return {}
+
+  const profilePairs = await Promise.all(
+    unique.map(async (uid) => [uid, await getProfile(uid)])
+  )
+
+  return profilePairs.reduce((acc, [uid, profile]) => {
+    acc[uid] = profile
+    return acc
+  }, {})
 }
 
 function buildFallbackTitle(thread, currentUid) {
@@ -107,6 +124,7 @@ export {
   createGroupThread,
   addParticipantsToThread,
   removeParticipantFromThread,
+  updateThreadDetails,
   sendMessage,
   markThreadRead,
   markThreadDelivered,
