@@ -36,16 +36,20 @@ function formatReleaseDate(value) {
 }
 
 function buildMediaItems(product) {
+  const leadImage = product.coverURL || product.thumbnailURL
   const media = [
-    ...(product.coverURL ? [{ type: 'image', url: product.coverURL, label: `${product.title} cover` }] : []),
+    ...(leadImage ? [{ type: 'image', url: leadImage, label: `${product.title} cover` }] : []),
     ...(product.galleryURLs || []).map((url, index) => ({ type: 'image', url, label: `${product.title} gallery ${index + 1}` })),
     ...(product.previewVideoURLs || []).map((url, index) => ({ type: 'video', url, label: `${product.title} video ${index + 1}` }))
   ]
 
-  if (!media.length && product.thumbnailURL) {
-    media.push({ type: 'image', url: product.thumbnailURL, label: `${product.title} thumbnail` })
-  }
-  return media
+  const seen = new Set()
+  return media.filter((item) => {
+    const key = `${item.type}:${item.url}`
+    if (!item.url || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function renderMainMedia() {
@@ -100,7 +104,6 @@ function renderSkeleton() {
           <div class="dashboard-skeleton dashboard-skeleton-header"></div>
           <div class="dashboard-skeleton dashboard-skeleton-media"></div>
           <div class="dashboard-skeleton dashboard-skeleton-overview"></div>
-          <div class="dashboard-skeleton dashboard-skeleton-rail"></div>
           <div class="dashboard-skeleton dashboard-skeleton-content"></div>
           <div class="dashboard-skeleton dashboard-skeleton-sidebar"></div>
         </div>
@@ -213,45 +216,38 @@ function renderProduct(product, recommendations = []) {
             <a class="button button-muted" href="${creatorHref}">View Creator</a>
           </section>
 
-          <aside class="dashboard-rail panel-surface">
-            <h3>Recommended products</h3>
-            ${recommendations.length
-              ? `<div class="dashboard-recommend-list">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>`
-              : '<p class="dashboard-rail-note">More recommendations will improve as the catalog grows.</p>'}
-          </aside>
-
-          <section class="dashboard-main-sections">
-            <article class="dashboard-section-card panel-surface">
+          <section class="dashboard-main-sections panel-surface">
+            <article class="dashboard-section-card dashboard-section-about">
               <h2>About this product</h2>
               <p>${escapeHtml(product.description || product.shortDescription || 'No full description has been provided yet.')}</p>
             </article>
-            <article class="dashboard-section-card panel-surface">
+            <article class="dashboard-section-card">
               <h2>What’s included</h2>
               <p>${escapeHtml((product.categories || []).join(', ') || 'Details were not provided.')}</p>
             </article>
-            <article class="dashboard-section-card panel-surface">
+            <article class="dashboard-section-card">
               <h2>Compatibility</h2>
               <p>${escapeHtml((product.dawCompatibility || []).join(', ') || 'Compatibility details are based on creator-provided metadata.')}</p>
             </article>
-            <article class="dashboard-section-card panel-surface">
+            <article class="dashboard-section-card">
               <h2>License / usage</h2>
               <p>${product.licensePath ? 'License included.' : 'License details were not uploaded yet.'}</p>
             </article>
-            <article class="dashboard-section-card panel-surface">
+            <article class="dashboard-section-card">
               <h2>Creator notes</h2>
               <p>${escapeHtml(product.shortDescription || 'Creator notes will appear here when provided.')}</p>
             </article>
-            <article class="dashboard-section-card panel-surface">
+            <article class="dashboard-section-card">
               <h2>Tags</h2>
               <div class="dashboard-tag-row">
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
               </div>
             </article>
-            <article class="dashboard-section-card panel-surface">
+            <article class="dashboard-section-card">
               <h2>Stats</h2>
               <p>👍 ${likeCount} · 👎 ${dislikeCount} · Saves ${product.saveCount ?? product.counts?.saves ?? 0} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
             </article>
-            <article class="dashboard-section-card panel-surface">
+            <article class="dashboard-section-card">
               <h2>Reviews</h2>
               <p>Reviews are coming soon.</p>
             </article>
@@ -295,6 +291,15 @@ function renderProduct(product, recommendations = []) {
               <p>${escapeHtml(product.artistName)}</p>
               <a class="button button-muted" href="${creatorHref}">View creator</a>
             </article>
+
+            ${recommendations.length
+              ? `
+                <article class="panel-surface dashboard-side-card">
+                  <h3>Recommended products</h3>
+                  <div class="dashboard-recommend-list">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>
+                </article>
+              `
+              : ''}
           </aside>
         </div>
       </section>
