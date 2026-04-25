@@ -6,6 +6,16 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function isThreadParticipant(threadId) {
+      return signedIn()
+        && request.auth.uid in firestore.get(/databases/(default)/documents/threads/$(threadId)).data.participantIds;
+    }
+
+    function isThreadOwner(threadId) {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/threads/$(threadId)).data.createdBy == request.auth.uid;
+    }
+
     // Public brand/site assets (logos, hero videos, etc.) used across unauthenticated pages.
     match /assets/{allPaths=**} {
       allow read: if true;
@@ -23,6 +33,15 @@ service firebase.storage {
     match /products/{productId}/{allPaths=**} {
       allow read: if true;
       allow write: if signedIn();
+    }
+
+    match /threads/{threadId}/messages/{messageId}/attachments/{fileName} {
+      allow read, write: if isThreadParticipant(threadId);
+    }
+
+    match /threads/{threadId}/avatar/{fileName} {
+      allow read: if isThreadParticipant(threadId);
+      allow write: if isThreadOwner(threadId);
     }
 
     match /{allPaths=**} {

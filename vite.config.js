@@ -13,6 +13,7 @@ export default defineConfig({
         faq: resolve(__dirname, 'faq.html'),
         support: resolve(__dirname, 'support.html'),
         cart: resolve(__dirname, 'cart.html'),
+        productDashboard: resolve(__dirname, 'product-dashboard.html'),
         auth: resolve(__dirname, 'auth.html'),
         product: resolve(__dirname, 'product.html'),
         inbox: resolve(__dirname, 'inbox.html'),
