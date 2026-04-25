@@ -213,9 +213,9 @@ function renderProducts() {
     `
     return
   }
-}
 
   const filtered = applyClientFilters(state.products)
+
   if (!filtered.length) {
     grid.innerHTML = `
       <article class="product-empty-state">
