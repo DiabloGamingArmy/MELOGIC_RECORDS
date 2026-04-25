@@ -5,5 +5,7 @@ export const STORAGE_PATHS = {
   productVideoPreviewsRoot: (productId) => `products/${productId}/video-previews`,
   productDownloadsRoot: (productId) => `products/${productId}/downloads`,
   productThumb: (productId) => `products/${productId}/thumbnails/thumb.webp`,
-  productManifest: (productId) => `products/${productId}/metadata/manifest.json`
+  productManifest: (productId) => `products/${productId}/metadata/manifest.json`,
+  threadMessageAttachment: (threadId, messageId, filename) => `threads/${threadId}/messages/${messageId}/attachments/${filename}`,
+  threadAvatar: (threadId, filename = 'avatar.webp') => `threads/${threadId}/avatar/${filename}`
 }

@@ -260,6 +260,9 @@ export async function addParticipantsToThread({ threadId, actorUid, participantI
     if (!Array.isArray(thread.participantIds) || !thread.participantIds.includes(actorUid)) {
       throw new Error('Only participants can add members.')
     }
+    if (thread.createdBy && thread.createdBy !== actorUid) {
+      throw new Error('Only owner can add members.')
+    }
   })
 
   const uniqueNewParticipants = Array.from(new Set(participantIds.filter(Boolean)))
@@ -312,5 +315,22 @@ export async function removeParticipantFromThread({ threadId, actorUid, particip
 
   const thread = await getThread(threadId)
   await updateDoc(threadRef, { participantCount: (thread?.participantIds || []).length })
+  return true
+}
+
+export async function updateThreadDetails({ threadId, actorUid, title = '', imageURL = '', imagePath = '' }) {
+  if (!db || !threadId || !actorUid) return false
+  const thread = await getThread(threadId)
+  if (!thread) throw new Error('Thread not found.')
+  if (thread.type !== 'group') throw new Error('Only group chats can be renamed.')
+  if (thread.createdBy && thread.createdBy !== actorUid) throw new Error('Only the group owner can edit chat details.')
+
+  await updateDoc(doc(db, 'threads', threadId), {
+    title: String(title || '').trim(),
+    imageURL: String(imageURL || '').trim(),
+    imagePath: String(imagePath || '').trim(),
+    updatedAt: serverTimestamp()
+  })
+
   return true
 }
