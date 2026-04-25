@@ -1,4 +1,17 @@
-import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore'
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  startAfter,
+  where,
+  writeBatch
+} from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { storage } from '../firebase/storage'
@@ -27,6 +40,15 @@ function toIsoDate(value) {
   if (value instanceof Date) return value.toISOString()
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+function normalizeKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, '-')
 }
 
 function toPriceLabel(product) {
@@ -74,6 +96,21 @@ export async function resolveProductMedia(product) {
 
 export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const counts = rawProduct.counts || {}
+  const categories = rawProduct.categories || []
+  const genres = rawProduct.genres || []
+  const tags = rawProduct.tags || []
+  const contributorNames = rawProduct.contributorNames || []
+  const contributorCount = Number(rawProduct.contributorCount ?? rawProduct.contributorIds?.length ?? contributorNames.length ?? 0)
+  const likeCount = Number(rawProduct.likeCount ?? counts.likes ?? 0)
+  const saveCount = Number(rawProduct.saveCount ?? counts.saves ?? 0)
+  const downloadCount = Number(rawProduct.downloadCount ?? counts.downloads ?? 0)
+  const commentCount = Number(rawProduct.commentCount ?? counts.comments ?? 0)
+  const categoryKeys = Array.isArray(rawProduct.categoryKeys) && rawProduct.categoryKeys.length ? rawProduct.categoryKeys : categories.map(normalizeKey).filter(Boolean)
+  const genreKeys = Array.isArray(rawProduct.genreKeys) && rawProduct.genreKeys.length ? rawProduct.genreKeys : genres.map(normalizeKey).filter(Boolean)
+  const tagKeys = Array.isArray(rawProduct.tagKeys) && rawProduct.tagKeys.length ? rawProduct.tagKeys : tags.map(normalizeKey).filter(Boolean)
+  const dawCompatibility = Array.isArray(rawProduct.dawCompatibility) ? rawProduct.dawCompatibility : []
+  const formatKeys = Array.isArray(rawProduct.formatKeys) ? rawProduct.formatKeys : []
+  const searchKeywords = Array.isArray(rawProduct.searchKeywords) ? rawProduct.searchKeywords : []
   return {
     id: rawProduct.id || productId,
     slug: rawProduct.slug || '',
@@ -83,15 +120,16 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     shortDescription: rawProduct.shortDescription || '',
     description: rawProduct.description || '',
     productType: rawProduct.productType || 'Release',
-    categories: rawProduct.categories || [],
-    genres: rawProduct.genres || [],
-    tags: rawProduct.tags || [],
+    categories,
+    genres,
+    tags,
     artistId: rawProduct.artistId || '',
     artistName: rawProduct.artistName || 'Unknown artist',
     artistUsername: rawProduct.artistUsername || '',
     artistProfilePath: rawProduct.artistProfilePath || '',
     contributorIds: rawProduct.contributorIds || [],
-    contributorNames: rawProduct.contributorNames || [],
+    contributorNames,
+    contributorCount,
     coverPath: media.coverPath || rawProduct.coverPath || '',
     thumbnailPath: media.thumbnailPath || rawProduct.thumbnailPath || '',
     thumbnailURL: media.thumbnailURL || '',
@@ -105,6 +143,19 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     currency: rawProduct.currency || 'USD',
     isFree: Boolean(rawProduct.isFree),
     priceLabel: toPriceLabel(rawProduct),
+    likeCount,
+    saveCount,
+    downloadCount,
+    commentCount,
+    categoryKeys,
+    genreKeys,
+    tagKeys,
+    dawCompatibility,
+    formatKeys,
+    titleLower: String(rawProduct.titleLower || rawProduct.title || '').toLowerCase(),
+    artistNameLower: String(rawProduct.artistNameLower || rawProduct.artistName || '').toLowerCase(),
+    artistUsernameLower: String(rawProduct.artistUsernameLower || rawProduct.artistUsername || '').toLowerCase(),
+    searchKeywords,
     counts: {
       likes: Number(counts.likes || 0),
       dislikes: Number(counts.dislikes || 0),
@@ -121,10 +172,98 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   }
 }
 
+function sortQueryFor(sort = 'featured') {
+  switch (sort) {
+    case 'newest':
+      return [orderBy('releasedAt', 'desc'), orderBy('createdAt', 'desc')]
+    case 'oldest':
+      return [orderBy('releasedAt', 'asc'), orderBy('createdAt', 'asc')]
+    case 'priceLow':
+      return [orderBy('priceCents', 'asc'), orderBy('createdAt', 'desc')]
+    case 'priceHigh':
+      return [orderBy('priceCents', 'desc'), orderBy('createdAt', 'desc')]
+    case 'mostLiked':
+      return [orderBy('likeCount', 'desc'), orderBy('createdAt', 'desc')]
+    case 'mostSaved':
+      return [orderBy('saveCount', 'desc'), orderBy('createdAt', 'desc')]
+    case 'mostDownloaded':
+      return [orderBy('downloadCount', 'desc'), orderBy('createdAt', 'desc')]
+    case 'mostCommented':
+      return [orderBy('commentCount', 'desc'), orderBy('createdAt', 'desc')]
+    case 'featured':
+    default:
+      return [orderBy('featured', 'desc'), orderBy('releasedAt', 'desc'), orderBy('createdAt', 'desc')]
+  }
+}
+
+function buildProductsPageQuery({ filters = {}, sort = 'featured', pageSize = 10, cursor = null }) {
+  const constraints = [
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public')
+  ]
+
+  const firstToken = String(filters.searchToken || '').trim().toLowerCase()
+  const categoryKey = String(filters.categoryKey || '').trim().toLowerCase()
+  const genreKey = String(filters.genreKey || '').trim().toLowerCase()
+  const daw = String(filters.daw || '').trim().toLowerCase()
+  const format = String(filters.format || '').trim().toLowerCase()
+  const tag = String(filters.tagKey || '').trim().toLowerCase()
+
+  if (firstToken) {
+    constraints.push(where('searchKeywords', 'array-contains', firstToken))
+  } else if (categoryKey) {
+    constraints.push(where('categoryKeys', 'array-contains', categoryKey))
+  } else if (genreKey) {
+    constraints.push(where('genreKeys', 'array-contains', genreKey))
+  } else if (daw) {
+    constraints.push(where('dawCompatibility', 'array-contains', daw))
+  } else if (format) {
+    constraints.push(where('formatKeys', 'array-contains', format))
+  } else if (tag) {
+    constraints.push(where('tagKeys', 'array-contains', tag))
+  }
+
+  if (filters.priceType === 'free') constraints.push(where('isFree', '==', true))
+  if (filters.priceType === 'paid') constraints.push(where('isFree', '==', false))
+  if (Number.isFinite(filters.minPriceCents)) constraints.push(where('priceCents', '>=', filters.minPriceCents))
+  if (Number.isFinite(filters.maxPriceCents)) constraints.push(where('priceCents', '<=', filters.maxPriceCents))
+  if (Number.isFinite(filters.minContributorCount) && filters.minContributorCount > 0) {
+    constraints.push(where('contributorCount', '>=', filters.minContributorCount))
+  }
+
+  constraints.push(...sortQueryFor(sort))
+  if (cursor) constraints.push(startAfter(cursor))
+  constraints.push(limit(pageSize))
+  return query(collection(db, FIRESTORE_COLLECTIONS.products), ...constraints)
+}
+
+export async function listPublicProductsPage({ filters = {}, sort = 'featured', pageSize = 10, cursor = null } = {}) {
+  if (!db) return { products: [], nextCursor: null, hasMore: false }
+
+  try {
+    const snapshot = await getDocs(buildProductsPageQuery({ filters, sort, pageSize, cursor }))
+    const products = await Promise.all(snapshot.docs.map(async (docSnap) => {
+      const raw = docSnap.data()
+      const media = await resolveProductMedia({ id: docSnap.id, ...raw })
+      return normalizeProduct(docSnap.id, raw, media)
+    }))
+
+    return {
+      products,
+      nextCursor: snapshot.docs[snapshot.docs.length - 1] || null,
+      hasMore: snapshot.docs.length === pageSize
+    }
+  } catch (error) {
+    warnOnce('fetch', '[productService] Paginated fetch failed, falling back to lightweight query.', error?.message || error)
+    return { products: [], nextCursor: null, hasMore: false }
+  }
+}
+
 export async function getPublicProducts() {
   if (!db) return []
 
   try {
+    // Legacy helper: avoid using this on large marketplace catalog pages.
     const snapshot = await getDocs(collection(db, FIRESTORE_COLLECTIONS.products))
     const rows = snapshot.docs
       .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
@@ -217,6 +356,28 @@ export function buildProductPayload(input = {}, user = null) {
     priceCents: Number.isFinite(input.priceCents) ? input.priceCents : 0,
     currency: input.currency || 'USD',
     isFree: Boolean(input.isFree),
+    titleLower: String(input.title || '').toLowerCase(),
+    artistNameLower: String(input.artistName || user?.displayName || '').toLowerCase(),
+    artistUsernameLower: String(input.artistUsername || '').toLowerCase(),
+    searchKeywords: Array.from(new Set([
+      ...parseCsv(input.searchKeywords),
+      ...String(input.title || '').toLowerCase().split(/\s+/),
+      ...String(input.artistName || user?.displayName || '').toLowerCase().split(/\s+/),
+      ...String(input.artistUsername || '').toLowerCase().split(/\s+/),
+      ...parseCsv(input.tags).map((tag) => String(tag).toLowerCase()),
+      ...parseCsv(input.genres).map((genre) => String(genre).toLowerCase()),
+      ...parseCsv(input.categories).map((category) => String(category).toLowerCase())
+    ].map((token) => token.trim()).filter((token) => token.length > 1))),
+    categoryKeys: (Array.isArray(input.categories) ? input.categories : parseCsv(input.categories)).map(normalizeKey).filter(Boolean),
+    genreKeys: (Array.isArray(input.genres) ? input.genres : parseCsv(input.genres)).map(normalizeKey).filter(Boolean),
+    tagKeys: (Array.isArray(input.tags) ? input.tags : parseCsv(input.tags)).map(normalizeKey).filter(Boolean),
+    dawCompatibility: (Array.isArray(input.dawCompatibility) ? input.dawCompatibility : parseCsv(input.dawCompatibility)).map(normalizeKey).filter(Boolean),
+    formatKeys: (Array.isArray(input.formatKeys) ? input.formatKeys : parseCsv(input.formatKeys)).map(normalizeKey).filter(Boolean),
+    contributorCount: Number(input.contributorCount || (Array.isArray(input.contributorIds) ? input.contributorIds.length : parseCsv(input.contributorIds).length)),
+    likeCount: Number(input.likeCount ?? counts.likes ?? 0),
+    saveCount: Number(input.saveCount ?? counts.saves ?? 0),
+    downloadCount: Number(input.downloadCount ?? counts.downloads ?? 0),
+    commentCount: Number(input.commentCount ?? counts.comments ?? 0),
     counts: {
       likes: Number(counts.likes || 0),
       dislikes: Number(counts.dislikes || 0),

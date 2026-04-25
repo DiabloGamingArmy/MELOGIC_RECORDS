@@ -1,24 +1,110 @@
 import './styles/base.css'
-import { mountStandardPage } from './components/standardPage'
+import './styles/cart.css'
+import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
-import { attachHeroVideo } from './components/heroVideo'
-import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
+import { getCartItems, removeFromCart, subscribeToCart } from './data/cartService'
 
-mountStandardPage({
-  currentPage: 'cart',
-  pageId: 'cart',
-  eyebrow: 'Melogic Cart',
-  title: 'Cart',
-  description: 'Melogic cart systems are being prepared with marketplace-grade tooling and creator-first workflows.'
-})
+const app = document.querySelector('#app')
 
-initShellChrome()
+function escapeHtml(value) {
+  return String(value || '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;')
+}
 
-const heroPaths = getPageHeroVideoPaths('cart')
-if (heroPaths) {
-  attachHeroVideo(document.querySelector('#cart-hero-video'), {
-    webmPath: heroPaths.webm,
-    mp4Path: heroPaths.mp4,
-    warningKey: 'cart'
+function formatCurrencyFromCents(cents = 0) {
+  const value = Number(cents || 0) / 100
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
+}
+
+function getSubtotal(items) {
+  return items.reduce((sum, item) => sum + Number(item.priceCents || 0), 0)
+}
+
+function renderCart(items = []) {
+  const list = app.querySelector('[data-cart-items]')
+  const summary = app.querySelector('[data-cart-summary]')
+  if (!list || !summary) return
+
+  if (!items.length) {
+    list.innerHTML = `
+      <article class="cart-empty-state">
+        <h2>Your cart is empty.</h2>
+        <p>Find sample packs, presets, and tools in Products.</p>
+        <a class="button button-accent" href="/products.html">Browse Products</a>
+      </article>
+    `
+    summary.innerHTML = `
+      <h3>Order summary</h3>
+      <p>No items yet.</p>
+      <a class="button button-muted" href="/products.html">Continue Shopping</a>
+    `
+    return
+  }
+
+  list.innerHTML = items.map((item) => `
+    <article class="cart-page-item">
+      <div class="cart-page-thumb ${item.thumbnailURL ? 'has-image' : ''}">
+        ${item.thumbnailURL ? `<img src="${escapeHtml(item.thumbnailURL)}" alt="" loading="lazy" />` : '<span>♪</span>'}
+      </div>
+      <div class="cart-page-meta">
+        <h3>${escapeHtml(item.title)}</h3>
+        <p>by ${escapeHtml(item.artistName || 'Unknown artist')}</p>
+      </div>
+      <div class="cart-page-actions">
+        <strong>${escapeHtml(item.priceLabel || (item.isFree ? 'Free' : formatCurrencyFromCents(item.priceCents)))}</strong>
+        <button type="button" data-remove-cart-item="${escapeHtml(item.id)}">Remove</button>
+      </div>
+    </article>
+  `).join('')
+
+  const subtotal = getSubtotal(items)
+  summary.innerHTML = `
+    <h3>Order summary</h3>
+    <div class="cart-summary-line">
+      <span>Items</span>
+      <span>${items.length}</span>
+    </div>
+    <div class="cart-summary-line">
+      <span>Subtotal</span>
+      <strong>${formatCurrencyFromCents(subtotal)}</strong>
+    </div>
+    <button class="button button-accent" type="button" disabled aria-disabled="true">Checkout (Coming soon)</button>
+    <a class="button button-muted" href="/products.html">Continue Shopping</a>
+  `
+
+  list.querySelectorAll('[data-remove-cart-item]').forEach((button) => {
+    button.addEventListener('click', () => {
+      removeFromCart(button.getAttribute('data-remove-cart-item'))
+    })
   })
 }
+
+app.innerHTML = `
+  ${navShell({ currentPage: 'cart' })}
+  <main>
+    <section class="section cart-page-shell">
+      <div class="section-inner cart-page-inner">
+        <header class="cart-page-header">
+          <p class="eyebrow">Marketplace</p>
+          <h1>Cart</h1>
+          <p>Review your selected releases, sample packs, presets, and tools before checkout.</p>
+        </header>
+
+        <section class="cart-page-layout">
+          <div class="cart-page-items" data-cart-items></div>
+          <aside class="cart-page-summary" data-cart-summary></aside>
+        </section>
+      </div>
+    </section>
+  </main>
+`
+
+initShellChrome()
+renderCart(getCartItems())
+subscribeToCart((items) => {
+  renderCart(items)
+})
