@@ -204,6 +204,38 @@ function renderProducts() {
     return
   }
 
+  if (state.hasFatalError && !state.products.length) {
+    grid.innerHTML = `
+      <article class="product-empty-state">
+        <h3>Could not load products</h3>
+        <p>We couldn’t reach the catalog right now. Please refresh and try again.</p>
+      </article>
+    `
+    return
+  }
+}
+
+function bindProductActions(visibleProducts = []) {
+  app.querySelectorAll('[data-add-to-cart]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const id = button.getAttribute('data-product-id')
+      const product = state.products.find((entry) => entry.id === id) || visibleProducts.find((entry) => entry.id === id)
+      if (!product) return
+      addToCart(product)
+      button.textContent = 'Added'
+      setTimeout(() => {
+        button.textContent = 'Add to cart'
+      }, 900)
+      document.querySelector('[data-cart-trigger]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+  })
+}
+
+function setFilter(key, value) {
+  state.filters[key] = value
+  loadNextPage({ reset: true })
+}
+
   const filtered = applyClientFilters(state.products)
   if (!filtered.length) {
     grid.innerHTML = `

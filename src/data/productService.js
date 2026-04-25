@@ -196,6 +196,36 @@ function sortQueryFor(sort = 'featured') {
   }
 }
 
+function sortProductsClientSide(products = [], sort = 'featured') {
+  const rows = [...products]
+  const toStamp = (item) => new Date(item.releasedAt || item.createdAt || 0).getTime() || 0
+
+  switch (sort) {
+    case 'oldest':
+      return rows.sort((a, b) => toStamp(a) - toStamp(b))
+    case 'priceLow':
+      return rows.sort((a, b) => Number(a.priceCents || 0) - Number(b.priceCents || 0))
+    case 'priceHigh':
+      return rows.sort((a, b) => Number(b.priceCents || 0) - Number(a.priceCents || 0))
+    case 'mostLiked':
+      return rows.sort((a, b) => Number(b.likeCount || b.counts?.likes || 0) - Number(a.likeCount || a.counts?.likes || 0))
+    case 'mostSaved':
+      return rows.sort((a, b) => Number(b.saveCount || b.counts?.saves || 0) - Number(a.saveCount || a.counts?.saves || 0))
+    case 'mostDownloaded':
+      return rows.sort((a, b) => Number(b.downloadCount || b.counts?.downloads || 0) - Number(a.downloadCount || a.counts?.downloads || 0))
+    case 'mostCommented':
+      return rows.sort((a, b) => Number(b.commentCount || b.counts?.comments || 0) - Number(a.commentCount || a.counts?.comments || 0))
+    case 'featured':
+      return rows.sort((a, b) => {
+        if (Boolean(a.featured) !== Boolean(b.featured)) return a.featured ? -1 : 1
+        return toStamp(b) - toStamp(a)
+      })
+    case 'newest':
+    default:
+      return rows.sort((a, b) => toStamp(b) - toStamp(a))
+  }
+}
+
 function buildProductsPageQuery({ filters = {}, sort = 'featured', pageSize = 10, cursor = null }) {
   const constraints = [
     where('status', '==', 'published'),
@@ -254,8 +284,32 @@ export async function listPublicProductsPage({ filters = {}, sort = 'featured', 
       hasMore: snapshot.docs.length === pageSize
     }
   } catch (error) {
-    warnOnce('fetch', '[productService] Paginated fetch failed, falling back to lightweight query.', error?.message || error)
-    return { products: [], nextCursor: null, hasMore: false }
+    warnOnce('fetch', '[productService] Paginated product query failed; running lightweight fallback query.', error?.message || error)
+
+    const fallbackConstraints = [
+      where('status', '==', 'published'),
+      where('visibility', '==', 'public')
+    ]
+    if (cursor) fallbackConstraints.push(startAfter(cursor))
+    fallbackConstraints.push(limit(pageSize))
+
+    try {
+      const fallbackSnapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.products), ...fallbackConstraints))
+      const fallbackProducts = await Promise.all(fallbackSnapshot.docs.map(async (docSnap) => {
+        const raw = docSnap.data()
+        const media = await resolveProductMedia({ id: docSnap.id, ...raw })
+        return normalizeProduct(docSnap.id, raw, media)
+      }))
+
+      return {
+        products: sortProductsClientSide(fallbackProducts, sort),
+        nextCursor: fallbackSnapshot.docs[fallbackSnapshot.docs.length - 1] || null,
+        hasMore: fallbackSnapshot.docs.length === pageSize
+      }
+    } catch (fallbackError) {
+      warnOnce('fetch', '[productService] Paginated product query failed. Missing Firestore index or invalid query.', fallbackError?.message || fallbackError)
+      return { products: [], nextCursor: null, hasMore: false }
+    }
   }
 }
 
