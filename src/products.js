@@ -74,15 +74,12 @@ function normalizeSearchTokens(value) {
 }
 
 function productCardMarkup(product) {
-  const artistHref = product.artistUsername
-    ? `/profile.html?u=${encodeURIComponent(product.artistUsername)}`
-    : '/profile.html'
-  const contributorList = product.contributorNames.length
-    ? product.contributorNames.map((name) => `<span>${escapeHtml(name)}</span>`).join(' · ')
-    : 'No contributors listed'
+  const artistHref = product.artistUsername ? `/profile.html?u=${encodeURIComponent(product.artistUsername)}` : '/profile.html'
   const tags = product.genres?.length
     ? product.genres.map((genre) => `#${escapeHtml(String(genre).replace(/\s+/g, ''))}`).join(' · ')
     : (product.tags || []).slice(0, 3).map((tag) => `#${escapeHtml(tag)}`).join(' · ')
+  const likes = product.likeCount ?? product.counts?.likes ?? 0
+  const dislikes = product.counts?.dislikes ?? 0
 
   const mediaMarkup = product.thumbnailURL || product.coverURL
     ? `<img src="${escapeHtml(product.thumbnailURL || product.coverURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`
@@ -99,19 +96,14 @@ function productCardMarkup(product) {
           <p class="product-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
         </div>
         <h3>${escapeHtml(product.title)}</h3>
-        <p class="product-creator">by ${escapeHtml(product.artistName)}</p>
+        <p class="product-creator">by <a href="${artistHref}" data-artist-link>${escapeHtml(product.artistName)}</a></p>
         <p class="product-description">${escapeHtml(product.shortDescription || 'No description available yet.')}</p>
         <p class="product-tags">${tags || '#new'}</p>
 
         <div class="product-stats" aria-label="Product engagement stats">
-          <span>👍 ${product.likeCount ?? product.counts.likes}</span>
-          <span>💾 ${product.saveCount ?? product.counts.saves}</span>
-          <span>⬇️ ${product.downloadCount ?? product.counts.downloads}</span>
-          <span>💬 ${product.commentCount ?? product.counts.comments}</span>
+          <span>👍 ${likes}</span>
+          <span>👎 ${dislikes}</span>
         </div>
-
-        <p class="product-contributors"><strong>Contributors:</strong> ${contributorList}</p>
-        <p class="product-artist-link"><a href="${artistHref}" data-artist-link>@${escapeHtml(product.artistUsername || 'artist')}</a></p>
 
         <div class="product-actions">
           <button type="button" class="preview-btn" ${product.previewAudioURLs.length ? '' : 'disabled'} aria-label="Preview ${escapeHtml(product.title)}">▶ Preview</button>
@@ -131,7 +123,7 @@ function renderProductSkeletons(count = 6, loadingMore = false) {
         <div class="product-skeleton-line medium"></div>
         <div class="product-skeleton-line tiny"></div>
         <div class="product-skeleton-line"></div>
-        <div class="product-skeleton-line"></div>
+        <div class="product-skeleton-line short"></div>
         <div class="product-skeleton-actions">
           <div class="product-skeleton-pill"></div>
           <div class="product-skeleton-pill"></div>
