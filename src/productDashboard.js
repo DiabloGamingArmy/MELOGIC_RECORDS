@@ -36,7 +36,7 @@ function formatReleaseDate(value) {
 }
 
 function buildMediaItems(product) {
-  const leadImage = product.coverURL || product.thumbnailURL
+  const leadImage = [product.coverURL, product.thumbnailURL].find(Boolean) || ''
   const media = [
     ...(leadImage ? [{ type: 'image', url: leadImage, label: `${product.title} cover` }] : []),
     ...(product.galleryURLs || []).map((url, index) => ({ type: 'image', url, label: `${product.title} gallery ${index + 1}` })),
@@ -101,7 +101,6 @@ function renderSkeleton() {
     <main>
       <section class="section product-dashboard-shell">
         <div class="section-inner product-dashboard-layout">
-          <div class="dashboard-skeleton dashboard-skeleton-header"></div>
           <div class="dashboard-skeleton dashboard-skeleton-media"></div>
           <div class="dashboard-skeleton dashboard-skeleton-overview"></div>
           <div class="dashboard-skeleton dashboard-skeleton-content"></div>
@@ -134,16 +133,25 @@ function recommendationCardMarkup(product) {
   `
 }
 
+function creatorInitials(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return 'CR'
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')
+}
+
 function renderProduct(product, recommendations = []) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
   state.selectedMediaIndex = 0
 
+  const listingThumbnailURL = product.thumbnailURL || product.coverURL || ''
   const typeLabel = product.productType || 'Product'
-  const categoryLabel = product.categories?.[0] || 'Catalog'
   const creatorHref = product.artistUsername ? `/profile.html?u=${encodeURIComponent(product.artistUsername)}` : '/profile.html'
   const likeCount = product.likeCount ?? product.counts?.likes ?? 0
   const dislikeCount = product.counts?.dislikes ?? 0
+  const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
+  const artistHandle = product.artistUsername ? `@${product.artistUsername}` : '@creator'
+  const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
 
   const thumbMarkup = mediaItems.map((item, index) => `
     <button type="button" class="dashboard-thumb" data-media-index="${index}" aria-label="Show media ${index + 1}" aria-pressed="${index === 0 ? 'true' : 'false'}">
@@ -159,16 +167,6 @@ function renderProduct(product, recommendations = []) {
     <main>
       <section class="section product-dashboard-shell">
         <div class="section-inner product-dashboard-layout">
-          <header class="dashboard-header-card">
-            <p class="dashboard-breadcrumbs"><a href="/products.html">Products</a> <span>&gt;</span> <span>${escapeHtml(categoryLabel)}</span> <span>&gt;</span> <span>${escapeHtml(typeLabel)}</span></p>
-            <h1>${escapeHtml(product.title)}</h1>
-            <p class="dashboard-byline">By <a href="${creatorHref}">${escapeHtml(product.artistName)}</a></p>
-            <div class="dashboard-top-badges">
-              <span class="dashboard-pill">${escapeHtml(typeLabel)}</span>
-              ${(product.genres || []).slice(0, 3).map((genre) => `<span class="dashboard-pill">${escapeHtml(genre)}</span>`).join('')}
-            </div>
-          </header>
-
           <section class="dashboard-media-area panel-surface" aria-label="Product media gallery">
             <div class="dashboard-main-media" data-dashboard-main-media></div>
             ${thumbMarkup ? `
@@ -227,9 +225,14 @@ function renderProduct(product, recommendations = []) {
 
           <aside class="dashboard-lower-sidebar">
             <article class="panel-surface dashboard-overview">
-              ${(product.coverURL || product.thumbnailURL) ? `<img class="dashboard-cover-banner" src="${escapeHtml(product.coverURL || product.thumbnailURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />` : ''}
+              <p class="dashboard-breadcrumbs"><a href="/products.html">Products</a> <span>&gt;</span> <span>${escapeHtml((product.categories || [])[0] || 'Catalog')}</span> <span>&gt;</span> <span>${escapeHtml(typeLabel)}</span></p>
+              ${listingThumbnailURL ? `<img class="dashboard-cover-banner" src="${escapeHtml(listingThumbnailURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />` : ''}
               <h2>${escapeHtml(product.title)}</h2>
               <p class="dashboard-short-description">${escapeHtml(product.shortDescription || product.description || 'No description has been shared yet.')}</p>
+              <div class="dashboard-top-badges">
+                <span class="dashboard-pill">${escapeHtml(typeLabel)}</span>
+                ${(product.genres || []).slice(0, 3).map((genre) => `<span class="dashboard-pill">${escapeHtml(genre)}</span>`).join('')}
+              </div>
               <dl class="dashboard-overview-grid">
                 <div><dt>Type</dt><dd>${escapeHtml(typeLabel)}</dd></div>
                 <div><dt>Release date</dt><dd>${escapeHtml(formatReleaseDate(product.releasedAt || product.createdAt))}</dd></div>
@@ -243,7 +246,17 @@ function renderProduct(product, recommendations = []) {
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
               </div>
               <p class="dashboard-engagement">👍 ${likeCount} · 👎 ${dislikeCount}</p>
-              <a class="button button-muted" href="${creatorHref}">View Creator</a>
+
+              <div class="dashboard-creator-block">
+                ${creatorAvatar
+                  ? `<img src="${escapeHtml(creatorAvatar)}" alt="${escapeHtml(artistDisplayName)} avatar" class="dashboard-creator-avatar" loading="lazy" />`
+                  : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(creatorInitials(artistDisplayName))}</span>`}
+                <div>
+                  <p class="dashboard-creator-name">${escapeHtml(artistDisplayName)}</p>
+                  <p class="dashboard-creator-handle">${escapeHtml(artistHandle)}</p>
+                </div>
+                <a class="button button-muted" href="${creatorHref}">View Creator</a>
+              </div>
             </article>
 
             <article class="panel-surface dashboard-side-card">
@@ -269,12 +282,6 @@ function renderProduct(product, recommendations = []) {
               <p>Saves: ${product.saveCount ?? product.counts?.saves ?? 0}</p>
               <p>Downloads: ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
               <p>Comments: ${product.commentCount ?? product.counts?.comments ?? 0}</p>
-            </article>
-
-            <article class="panel-surface dashboard-side-card">
-              <h3>Creator</h3>
-              <p>${escapeHtml(product.artistName)}</p>
-              <a class="button button-muted" href="${creatorHref}">View creator</a>
             </article>
 
             ${recommendations.length

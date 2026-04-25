@@ -205,7 +205,9 @@
 }
 
 .product-cover {
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  overflow: hidden;
   background:
     linear-gradient(120deg, rgba(146, 122, 255, 0.2), rgba(66, 143, 255, 0.14)),
     radial-gradient(circle at 16% 22%, rgba(115, 211, 224, 0.55), transparent 42%),
@@ -218,6 +220,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   display: block;
 }
 
