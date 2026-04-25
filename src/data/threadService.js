@@ -314,3 +314,20 @@ export async function removeParticipantFromThread({ threadId, actorUid, particip
   await updateDoc(threadRef, { participantCount: (thread?.participantIds || []).length })
   return true
 }
+
+export async function updateThreadDetails({ threadId, actorUid, title = '', imageURL = '', imagePath = '' }) {
+  if (!db || !threadId || !actorUid) return false
+  const thread = await getThread(threadId)
+  if (!thread) throw new Error('Thread not found.')
+  if (thread.type !== 'group') throw new Error('Only group chats can be renamed.')
+  if (thread.createdBy && thread.createdBy !== actorUid) throw new Error('Only the group owner can edit chat details.')
+
+  await updateDoc(doc(db, 'threads', threadId), {
+    title: String(title || '').trim(),
+    imageURL: String(imageURL || '').trim(),
+    imagePath: String(imagePath || '').trim(),
+    updatedAt: serverTimestamp()
+  })
+
+  return true
+}
