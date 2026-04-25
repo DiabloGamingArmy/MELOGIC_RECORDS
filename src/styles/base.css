@@ -412,6 +412,11 @@ main {
 
 body.has-cart-drawer-open {
   overflow: hidden;
+  padding-right: var(--scrollbar-compensation, 0px);
+}
+
+body.has-cart-drawer-open .nav-shell {
+  padding-right: var(--scrollbar-compensation, 0px);
 }
 
 .cart-drawer-root {

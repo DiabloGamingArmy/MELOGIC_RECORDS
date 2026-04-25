@@ -1,8 +1,11 @@
 import './styles/base.css'
 import './styles/inbox.css'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
+import { storage } from './firebase/storage'
+import { STORAGE_PATHS } from './config/storagePaths'
 import {
   addParticipantsToThread,
   createGroupThread,
@@ -88,14 +91,17 @@ const appState = {
   chatSettingsError: '',
   isSavingChatSettings: false,
   chatSettingsDraftTitle: '',
+  chatSettingsImageFile: null,
   chatSettingsSearchQuery: '',
   chatSettingsSearchResults: [],
-  isSearchingChatSettingsUsers: false
+  isSearchingChatSettingsUsers: false,
+  attachmentDraftByThreadId: {}
 }
 
 let searchDebounceTimer = null
 let typingStopTimer = null
 let activeTypingThreadId = ''
+let chatSettingsSearchSelection = { start: null, end: null }
 
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
@@ -111,6 +117,7 @@ app.innerHTML = `
 `
 
 initShellChrome()
+document.body.classList.add('is-inbox-page')
 
 const inboxRoot = document.querySelector('[data-inbox-root]')
 const modalRoot = document.createElement('div')
@@ -451,9 +458,19 @@ function getMessageGroupsMarkup(thread) {
         .map((message, messageIndex) => {
           const isFirst = messageIndex === 0
           const isLast = messageIndex === entry.messages.length - 1
+          const attachmentsMarkup = Array.isArray(message.attachments) && message.attachments.length
+            ? `<div class="message-attachment-list">${message.attachments.map((attachment) => {
+              const mime = String(attachment.mimeType || '')
+              if (mime.startsWith('image/')) return `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener"><img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" /></a>`
+              if (mime.startsWith('video/')) return `<video src="${escapeHtml(attachment.url)}" controls preload="metadata"></video>`
+              if (mime.startsWith('audio/')) return `<audio src="${escapeHtml(attachment.url)}" controls></audio>`
+              return `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener" class="message-file-link">${escapeHtml(attachment.name || 'Download attachment')}</a>`
+            }).join('')}</div>`
+            : ''
           return `
             <article class="message-bubble ${isFirst ? 'is-first' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''}">
               <p>${escapeHtml(message.deleted ? 'Message removed.' : message.body)}</p>
+              ${attachmentsMarkup}
             </article>
           `
         })
@@ -497,6 +514,7 @@ function getConversationBodyMarkup() {
   }
 
   const draft = appState.composerDraftByThreadId[thread.id] || ''
+  const attachments = appState.attachmentDraftByThreadId[thread.id] || []
   const typingUsers = getTypingUsers(thread.id)
 
   return `
@@ -505,10 +523,15 @@ function getConversationBodyMarkup() {
       ${typingUsers.length ? `<p class="typing-indicator">${escapeHtml(getConversationSubtitle(thread))}</p>` : ''}
       <form class="message-composer" data-message-form>
         <label class="sr-only" for="message-input">Message</label>
+        ${attachments.length ? `<div class="composer-attachment-list">${attachments.map((file, index) => `<article class="composer-attachment-chip"><span>${escapeHtml(file.name || 'Attachment')}</span><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`).join('')}</div>` : ''}
         <textarea id="message-input" name="message" rows="2" maxlength="1200" placeholder="Write a message..." required>${escapeHtml(draft)}</textarea>
+        <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" />
         <div class="message-composer-footer">
           ${appState.errorMessage ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>` : '<span></span>'}
-          <button type="submit" class="button button-accent">Send</button>
+          <div class="composer-actions">
+            <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files">+</button>
+            <button type="submit" class="button button-accent" ${(!draft.trim() && !attachments.length) ? 'disabled' : ''}>Send</button>
+          </div>
         </div>
       </form>
     </div>
@@ -932,6 +955,7 @@ function openChatSettingsModal() {
   appState.isChatSettingsOpen = true
   appState.chatSettingsError = ''
   appState.chatSettingsDraftTitle = thread.title || ''
+  appState.chatSettingsImageFile = null
   appState.chatSettingsSearchQuery = ''
   appState.chatSettingsSearchResults = []
   renderChatSettingsModal()
@@ -942,6 +966,7 @@ function closeChatSettingsModal() {
   appState.chatSettingsError = ''
   appState.isSavingChatSettings = false
   appState.chatSettingsDraftTitle = ''
+  appState.chatSettingsImageFile = null
   appState.chatSettingsSearchQuery = ''
   appState.chatSettingsSearchResults = []
   renderChatSettingsModal()
@@ -952,13 +977,13 @@ async function handleChatSettingsSearch(value) {
   const queryText = String(value || '').trim().toLowerCase()
   if (queryText.length < 2) {
     appState.chatSettingsSearchResults = []
-    renderChatSettingsModal()
+    renderChatSettingsModal({ keepSearchFocus: true })
     return
   }
 
   try {
     appState.isSearchingChatSettingsUsers = true
-    renderChatSettingsModal()
+    renderChatSettingsModal({ keepSearchFocus: true })
     const existing = new Set((getSelectedThread()?.participantIds || []).filter(Boolean))
     const results = await searchProfilesByUsername(queryText)
     appState.chatSettingsSearchResults = results.filter((profile) => !existing.has(profile.uid) && profile.uid !== appState.user?.uid)
@@ -978,12 +1003,22 @@ async function handleSaveChatSettings() {
   try {
     appState.isSavingChatSettings = true
     renderChatSettingsModal()
+    const trimmedTitle = String(appState.chatSettingsDraftTitle || '').trim().slice(0, 80)
+    let imageURL = thread.imageURL || ''
+    let imagePath = thread.imagePath || ''
+    if (appState.chatSettingsImageFile && storage) {
+      const ext = String(appState.chatSettingsImageFile.name || 'webp').split('.').pop() || 'webp'
+      imagePath = STORAGE_PATHS.threadAvatar(thread.id, `avatar.${ext}`)
+      await uploadBytes(ref(storage, imagePath), appState.chatSettingsImageFile, { contentType: appState.chatSettingsImageFile.type || 'image/webp' })
+      imageURL = await getDownloadURL(ref(storage, imagePath))
+    }
+
     await updateThreadDetails({
       threadId: thread.id,
       actorUid: appState.user?.uid,
-      title: appState.chatSettingsDraftTitle,
-      imageURL: thread.imageURL || '',
-      imagePath: thread.imagePath || ''
+      title: trimmedTitle,
+      imageURL,
+      imagePath
     })
     appState.chatSettingsError = ''
     appState.isSavingChatSettings = false
@@ -998,6 +1033,11 @@ async function handleSaveChatSettings() {
 async function handleAddParticipant(uid) {
   const thread = getSelectedThread()
   if (!thread || !uid) return
+  if (thread.type === 'group' && thread.createdBy !== appState.user?.uid) {
+    appState.chatSettingsError = 'Only the chat owner can add people.'
+    renderChatSettingsModal({ keepSearchFocus: true })
+    return
+  }
   try {
     await addParticipantsToThread({ threadId: thread.id, actorUid: appState.user?.uid, participantIds: [uid] })
     appState.chatSettingsError = ''
@@ -1013,6 +1053,11 @@ async function handleAddParticipant(uid) {
 async function handleRemoveParticipant(uid) {
   const thread = getSelectedThread()
   if (!thread || !uid) return
+  if (thread.type === 'group' && uid !== appState.user?.uid && thread.createdBy !== appState.user?.uid) {
+    appState.chatSettingsError = 'Only the chat owner can remove members.'
+    renderChatSettingsModal()
+    return
+  }
   if ((thread.participantIds || []).length <= 1) {
     appState.chatSettingsError = 'Cannot remove the only remaining participant.'
     renderChatSettingsModal()
@@ -1031,7 +1076,7 @@ async function handleRemoveParticipant(uid) {
   }
 }
 
-function renderChatSettingsModal() {
+function renderChatSettingsModal(options = {}) {
   if (!appState.isChatSettingsOpen) {
     if (!appState.isCreateChatOpen) modalRoot.innerHTML = ''
     return
@@ -1041,7 +1086,11 @@ function renderChatSettingsModal() {
   if (!thread) return
   const participants = getThreadParticipants(thread.id).map((entry) => getProfileMeta(entry.uid, entry))
   const canEditGroup = thread.type === 'group' && thread.createdBy === appState.user?.uid
-  const hasPendingChanges = canEditGroup && String(appState.chatSettingsDraftTitle || '').trim() !== String(thread.title || '').trim()
+  const hasPendingChanges = canEditGroup
+    && (
+      String(appState.chatSettingsDraftTitle || '').trim() !== String(thread.title || '').trim()
+      || Boolean(appState.chatSettingsImageFile)
+    )
 
   const memberMarkup = participants.map((member) => `
     <article class="chat-details-member-row">
@@ -1049,10 +1098,10 @@ function renderChatSettingsModal() {
         ${member.avatarURL ? `<img src="${escapeHtml(member.avatarURL)}" alt="" />` : `<span>${escapeHtml(getInitials(member))}</span>`}
       </div>
       <div class="chat-details-member-meta">
-        <strong>${escapeHtml(member.displayName || 'Member')} ${member.uid === appState.user?.uid ? '<span>(You)</span>' : ''}</strong>
+        <strong>${escapeHtml(member.displayName || 'Member')} ${member.uid === appState.user?.uid ? '<span>(You)</span>' : ''} ${member.uid === thread.createdBy ? '<span>(Owner)</span>' : ''}</strong>
         <small>@${escapeHtml(member.username || 'member')}</small>
       </div>
-      ${thread.type === 'group' && participants.length > 1 ? `<button type="button" class="button button-muted chat-details-remove" data-remove-member="${member.uid}">${member.uid === appState.user?.uid ? 'Leave' : 'Remove'}</button>` : ''}
+      ${thread.type === 'group' && participants.length > 1 && (canEditGroup || member.uid === appState.user?.uid) ? `<button type="button" class="button button-muted chat-details-remove" data-remove-member="${member.uid}">${member.uid === appState.user?.uid ? 'Leave' : 'Remove'}</button>` : ''}
     </article>
   `).join('')
 
@@ -1094,8 +1143,9 @@ function renderChatSettingsModal() {
             <div class="chat-details-identity-fields">
               <label>Chat name</label>
               <input type="text" data-chat-settings-title value="${escapeHtml(appState.chatSettingsDraftTitle || '')}" ${canEditGroup ? '' : 'disabled'} />
+              <input type="file" data-chat-settings-image accept="image/*" ${canEditGroup ? '' : 'disabled'} />
               <small>${canEditGroup ? 'Group owner can rename this chat.' : 'Direct messages cannot be renamed here.'}</small>
-              <small>Image upload placeholder: wired for a future Storage pass.</small>
+              <small>${canEditGroup ? 'Group owner can change this chat image.' : 'Only owner can change image.'}</small>
             </div>
           </div>
         </section>
@@ -1107,8 +1157,8 @@ function renderChatSettingsModal() {
 
         <section class="chat-details-section">
           <h3>Add people</h3>
-          <input class="create-chat-search" type="search" placeholder="Search username…" value="${escapeHtml(appState.chatSettingsSearchQuery)}" data-chat-settings-search />
-          <div class="create-chat-results">${addMarkup}</div>
+          <input class="create-chat-search" type="search" placeholder="Search username…" value="${escapeHtml(appState.chatSettingsSearchQuery)}" data-chat-settings-search ${canEditGroup ? '' : 'disabled'} />
+          ${canEditGroup ? `<div class="create-chat-results">${addMarkup}</div>` : '<p class="modal-hint">Only the chat owner can add people.</p>'}
         </section>
 
         ${appState.chatSettingsError ? `<p class="modal-error">${escapeHtml(appState.chatSettingsError)}</p>` : ''}
@@ -1125,7 +1175,14 @@ function renderChatSettingsModal() {
     appState.chatSettingsDraftTitle = event.target.value
     renderChatSettingsModal()
   })
+  modalRoot.querySelector('[data-chat-settings-image]')?.addEventListener('change', (event) => {
+    appState.chatSettingsImageFile = event.target.files?.[0] || null
+  })
   modalRoot.querySelector('[data-chat-settings-search]')?.addEventListener('input', (event) => {
+    chatSettingsSearchSelection = {
+      start: event.target.selectionStart,
+      end: event.target.selectionEnd
+    }
     handleChatSettingsSearch(event.target.value)
   })
   modalRoot.querySelectorAll('[data-add-participant]').forEach((button) => {
@@ -1134,6 +1191,14 @@ function renderChatSettingsModal() {
   modalRoot.querySelectorAll('[data-remove-member]').forEach((button) => {
     button.addEventListener('click', () => handleRemoveParticipant(button.getAttribute('data-remove-member')))
   })
+
+  if (options.keepSearchFocus) {
+    const searchInput = modalRoot.querySelector('[data-chat-settings-search]')
+    searchInput?.focus()
+    if (searchInput && Number.isInteger(chatSettingsSearchSelection.start) && Number.isInteger(chatSettingsSearchSelection.end)) {
+      searchInput.setSelectionRange(chatSettingsSearchSelection.start, chatSettingsSearchSelection.end)
+    }
+  }
 }
 
 function renderSignedOutState() {
@@ -1191,6 +1256,7 @@ function bindSharedEvents() {
 
   const messageForm = inboxRoot.querySelector('[data-message-form]')
   const textarea = messageForm?.querySelector('textarea[name="message"]')
+  const attachmentInput = messageForm?.querySelector('[data-attachment-input]')
   const thread = getSelectedThread()
 
   if (textarea && thread) {
@@ -1221,6 +1287,26 @@ function bindSharedEvents() {
     })
   }
 
+  messageForm?.querySelector('[data-action="attach-file"]')?.addEventListener('click', () => {
+    attachmentInput?.click()
+  })
+
+  attachmentInput?.addEventListener('change', () => {
+    if (!thread) return
+    appState.attachmentDraftByThreadId[thread.id] = Array.from(attachmentInput.files || []).slice(0, 6)
+    renderSignedInState()
+  })
+
+  messageForm?.querySelectorAll('[data-remove-attachment]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!thread) return
+      const index = Number(button.getAttribute('data-remove-attachment'))
+      const current = appState.attachmentDraftByThreadId[thread.id] || []
+      appState.attachmentDraftByThreadId[thread.id] = current.filter((_, idx) => idx !== index)
+      renderSignedInState()
+    })
+  })
+
   if (messageForm) {
     messageForm.addEventListener('submit', async (event) => {
       event.preventDefault()
@@ -1245,15 +1331,17 @@ async function handleMessageSubmit(form) {
 
   const field = form.querySelector('textarea[name="message"]')
   const body = String(field?.value || '').trim()
-  if (!body) return
+  const attachments = appState.attachmentDraftByThreadId[thread.id] || []
+  if (!body && !attachments.length) return
 
   form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
 
   try {
-    await sendMessage(thread.id, { senderId: appState.user.uid, body, type: 'text' })
+    await sendMessage(thread.id, { senderId: appState.user.uid, body, type: 'text', attachments })
     appState.errorMessage = ''
     field.value = ''
     appState.composerDraftByThreadId[thread.id] = ''
+    appState.attachmentDraftByThreadId[thread.id] = []
     clearTypingForThread(thread.id)
     await markThreadRead({ threadId: thread.id, uid: appState.user.uid }).catch((error) => {
       warnRealtimePermission(`participants-read-${thread.id}`, error)

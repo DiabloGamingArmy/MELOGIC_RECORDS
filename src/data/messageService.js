@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  writeBatch,
   deleteDoc,
   doc,
   getDoc,
@@ -14,7 +15,9 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
+import { storage } from '../firebase/storage'
 
 function toIsoDate(value) {
   if (!value) return null
@@ -30,10 +33,44 @@ function normalizeMessage(messageId, raw = {}) {
     senderId: raw.senderId || '',
     body: raw.body || '',
     type: raw.type || 'text',
+    attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
     createdAt: toIsoDate(raw.createdAt),
     updatedAt: toIsoDate(raw.updatedAt),
     deleted: Boolean(raw.deleted)
   }
+}
+
+function summarizeMessage(body, attachments = []) {
+  if (String(body || '').trim()) return String(body || '').trim()
+  if (!attachments.length) return 'Sent a message'
+  if (attachments.length > 1) return 'Sent attachments'
+  const [first] = attachments
+  if (String(first?.mimeType || '').startsWith('image/')) return 'Sent an image'
+  if (String(first?.mimeType || '').startsWith('video/')) return 'Sent a video'
+  if (String(first?.mimeType || '').startsWith('audio/')) return 'Sent audio'
+  return 'Sent a file'
+}
+
+async function uploadMessageAttachments(threadId, messageId, attachments = []) {
+  if (!storage || !attachments.length) return []
+  const uploads = await Promise.all(attachments.map(async (file, index) => {
+    if (!(file instanceof File)) return null
+    const safeName = `${Date.now()}-${index}-${String(file.name || 'attachment').replace(/[^a-zA-Z0-9._-]/g, '-')}`
+    const storagePath = `threads/${threadId}/messages/${messageId}/attachments/${safeName}`
+    const storageRef = ref(storage, storagePath)
+    await uploadBytes(storageRef, file, { contentType: file.type || 'application/octet-stream' })
+    const url = await getDownloadURL(storageRef)
+    return {
+      name: file.name || safeName,
+      type: String(file.type || '').split('/')[0] || 'file',
+      mimeType: file.type || 'application/octet-stream',
+      size: Number(file.size || 0),
+      storagePath,
+      url
+    }
+  }))
+
+  return uploads.filter(Boolean)
 }
 
 function normalizeParticipant(participantId, raw = {}) {
@@ -97,49 +134,51 @@ export function subscribeToMessages(threadId, callback, onError) {
 }
 
 export async function sendMessage(threadId, payload = {}) {
-  if (!db || !threadId || !payload.senderId || !String(payload.body || '').trim()) {
-    throw new Error('sendMessage requires threadId, senderId, and non-empty body.')
+  const body = String(payload.body || '').trim()
+  const attachmentsInput = Array.isArray(payload.attachments) ? payload.attachments : []
+  if (!db || !threadId || !payload.senderId || (!body && !attachmentsInput.length)) {
+    throw new Error('sendMessage requires threadId, senderId, and message content.')
   }
 
-  const body = String(payload.body).trim()
   const threadRef = doc(db, 'threads', threadId)
   const participantRef = doc(db, 'threads', threadId, 'participants', payload.senderId)
+  const messageRef = doc(collection(db, 'threads', threadId, 'messages'))
 
-  await runTransaction(db, async (transaction) => {
-    const [threadSnap, participantSnap] = await Promise.all([transaction.get(threadRef), transaction.get(participantRef)])
-    if (!threadSnap.exists()) throw new Error('Thread not found.')
-    if (!participantSnap.exists()) throw new Error('Sender is not a participant in this thread.')
+  const [threadSnap, participantSnap] = await Promise.all([getDoc(threadRef), getDoc(participantRef)])
+  if (!threadSnap.exists()) throw new Error('Thread not found.')
+  if (!participantSnap.exists()) throw new Error('Sender is not a participant in this thread.')
 
-    const messageRef = doc(collection(db, 'threads', threadId, 'messages'))
-    transaction.set(messageRef, {
+  const attachments = await uploadMessageAttachments(threadId, messageRef.id, attachmentsInput)
+  const summary = summarizeMessage(body, attachments)
+  const batch = writeBatch(db)
+  batch.set(messageRef, {
       senderId: payload.senderId,
       body,
       type: payload.type || 'text',
+      attachments,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       deleted: false
     })
-
-    transaction.update(threadRef, {
+  batch.update(threadRef, {
       updatedAt: serverTimestamp(),
       lastMessageAt: serverTimestamp(),
-      lastMessageText: body,
+      lastMessageText: summary,
       lastMessageSenderId: payload.senderId,
       lastMessageType: payload.type || 'text'
     })
-
-    transaction.set(participantRef, {
+  batch.set(participantRef, {
       uid: payload.senderId,
       lastDeliveredAt: serverTimestamp(),
       lastReadAt: serverTimestamp()
     }, { merge: true })
-  })
+  await batch.commit()
 
   await setDoc(
     doc(db, 'users', payload.senderId, 'inboxThreads', threadId),
     {
       threadId,
-      lastMessageText: body,
+      lastMessageText: summary,
       lastMessageAt: serverTimestamp(),
       lastMessageSenderId: payload.senderId,
       unreadCount: 0,

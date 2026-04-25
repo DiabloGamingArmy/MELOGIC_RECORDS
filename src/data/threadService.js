@@ -260,6 +260,9 @@ export async function addParticipantsToThread({ threadId, actorUid, participantI
     if (!Array.isArray(thread.participantIds) || !thread.participantIds.includes(actorUid)) {
       throw new Error('Only participants can add members.')
     }
+    if (thread.createdBy && thread.createdBy !== actorUid) {
+      throw new Error('Only owner can add members.')
+    }
   })
 
   const uniqueNewParticipants = Array.from(new Set(participantIds.filter(Boolean)))
