@@ -80,19 +80,19 @@ export async function listMessages(threadId) {
     .sort((a, b) => (a.createdAt || '') > (b.createdAt || '') ? 1 : -1)
 }
 
-export function subscribeToMessages(threadId, callback) {
+export function subscribeToMessages(threadId, callback, onError) {
   if (!db || !threadId || typeof callback !== 'function') return () => {}
 
   try {
     return onSnapshot(getMessagesQuery(threadId), (snapshot) => {
       const messages = snapshot.docs.map((docSnap) => normalizeMessage(docSnap.id, docSnap.data()))
       callback(messages)
-    })
+    }, onError)
   } catch {
     return onSnapshot(query(collection(db, 'threads', threadId, 'messages'), limit(300)), (snapshot) => {
       const messages = snapshot.docs.map((docSnap) => normalizeMessage(docSnap.id, docSnap.data()))
       callback(messages)
-    })
+    }, onError)
   }
 }
 
@@ -186,18 +186,18 @@ export async function markThreadDelivered({ threadId, uid }) {
   return true
 }
 
-export function subscribeToThreadParticipants(threadId, callback) {
+export function subscribeToThreadParticipants(threadId, callback, onError) {
   if (!db || !threadId || typeof callback !== 'function') return () => {}
   return onSnapshot(collection(db, 'threads', threadId, 'participants'), (snapshot) => {
     callback(snapshot.docs.map((docSnap) => normalizeParticipant(docSnap.id, docSnap.data())))
-  })
+  }, onError)
 }
 
-export function subscribeToTypingState(threadId, callback) {
+export function subscribeToTypingState(threadId, callback, onError) {
   if (!db || !threadId || typeof callback !== 'function') return () => {}
   return onSnapshot(collection(db, 'threads', threadId, 'typing'), (snapshot) => {
     callback(snapshot.docs.map((docSnap) => normalizeTypingState(docSnap.id, docSnap.data())))
-  })
+  }, onError)
 }
 
 export async function setTypingState({ threadId, uid, displayName = '', username = '', isTyping }) {
