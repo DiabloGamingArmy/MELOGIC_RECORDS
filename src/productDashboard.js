@@ -154,15 +154,6 @@ function renderProduct(product, recommendations = []) {
   `).join('')
 
   const tags = (product.tags || []).slice(0, 12)
-  const factsRows = [
-    ['Title', product.title],
-    ['Type', typeLabel],
-    ['Genre', (product.genres || []).join(', ') || 'Unspecified'],
-    ['Creator', product.artistName],
-    ['Release date', formatReleaseDate(product.releasedAt || product.createdAt)],
-    ['Formats', (product.formatKeys || []).join(', ') || 'Not listed']
-  ]
-
   app.innerHTML = `
     ${navShell({ currentPage: 'products' })}
     <main>
@@ -195,25 +186,6 @@ function renderProduct(product, recommendations = []) {
                 </div>
               </section>
             ` : ''}
-          </section>
-
-          <section class="dashboard-overview panel-surface">
-            ${product.coverURL ? `<img class="dashboard-cover-banner" src="${escapeHtml(product.coverURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />` : ''}
-            <p class="dashboard-short-description">${escapeHtml(product.shortDescription || product.description || 'No description has been shared yet.')}</p>
-            <dl class="dashboard-overview-grid">
-              <div><dt>Creator</dt><dd>${escapeHtml(product.artistName)}</dd></div>
-              <div><dt>Contributors</dt><dd>${escapeHtml((product.contributorNames || []).join(', ') || 'No contributors listed')}</dd></div>
-              <div><dt>Release date</dt><dd>${escapeHtml(formatReleaseDate(product.releasedAt || product.createdAt))}</dd></div>
-              <div><dt>Categories</dt><dd>${escapeHtml((product.categories || []).join(', ') || 'Unspecified')}</dd></div>
-              <div><dt>Genres</dt><dd>${escapeHtml((product.genres || []).join(', ') || 'Unspecified')}</dd></div>
-              <div><dt>DAW compatibility</dt><dd>${escapeHtml((product.dawCompatibility || []).join(', ') || 'Creator has not listed DAWs')}</dd></div>
-              <div><dt>Formats</dt><dd>${escapeHtml((product.formatKeys || []).join(', ') || 'Creator has not listed formats')}</dd></div>
-            </dl>
-            <div class="dashboard-tag-row">
-              ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
-            </div>
-            <p class="dashboard-engagement">👍 ${likeCount} · 👎 ${dislikeCount}</p>
-            <a class="button button-muted" href="${creatorHref}">View Creator</a>
           </section>
 
           <section class="dashboard-main-sections panel-surface">
@@ -254,6 +226,26 @@ function renderProduct(product, recommendations = []) {
           </section>
 
           <aside class="dashboard-lower-sidebar">
+            <article class="panel-surface dashboard-overview">
+              ${(product.coverURL || product.thumbnailURL) ? `<img class="dashboard-cover-banner" src="${escapeHtml(product.coverURL || product.thumbnailURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />` : ''}
+              <h2>${escapeHtml(product.title)}</h2>
+              <p class="dashboard-short-description">${escapeHtml(product.shortDescription || product.description || 'No description has been shared yet.')}</p>
+              <dl class="dashboard-overview-grid">
+                <div><dt>Type</dt><dd>${escapeHtml(typeLabel)}</dd></div>
+                <div><dt>Release date</dt><dd>${escapeHtml(formatReleaseDate(product.releasedAt || product.createdAt))}</dd></div>
+                <div><dt>Creator</dt><dd>${escapeHtml(product.artistName)}</dd></div>
+                <div><dt>Categories</dt><dd>${escapeHtml((product.categories || []).join(', ') || 'Unspecified')}</dd></div>
+                <div><dt>Genres</dt><dd>${escapeHtml((product.genres || []).join(', ') || 'Unspecified')}</dd></div>
+                <div><dt>DAW compatibility</dt><dd>${escapeHtml((product.dawCompatibility || []).join(', ') || 'Creator has not listed DAWs')}</dd></div>
+                <div><dt>Formats</dt><dd>${escapeHtml((product.formatKeys || []).join(', ') || 'Creator has not listed formats')}</dd></div>
+              </dl>
+              <div class="dashboard-tag-row">
+                ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
+              </div>
+              <p class="dashboard-engagement">👍 ${likeCount} · 👎 ${dislikeCount}</p>
+              <a class="button button-muted" href="${creatorHref}">View Creator</a>
+            </article>
+
             <article class="panel-surface dashboard-side-card">
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
@@ -262,13 +254,6 @@ function renderProduct(product, recommendations = []) {
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
               <p class="dashboard-mini-note">Created by ${escapeHtml(product.artistName)}</p>
-            </article>
-
-            <article class="panel-surface dashboard-side-card">
-              <h3>Product facts</h3>
-              <dl class="dashboard-facts-list">
-                ${factsRows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}
-              </dl>
             </article>
 
             <article class="panel-surface dashboard-side-card">
