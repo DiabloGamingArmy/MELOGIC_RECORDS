@@ -4,16 +4,20 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import {
+  addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
+  loadProfilesByUids,
   markThreadDelivered,
   markThreadRead,
+  removeParticipantFromThread,
   sendMessage,
   setTypingState,
   subscribeToInboxThreads,
   subscribeToMessages,
   subscribeToThreadParticipants,
-  subscribeToTypingState
+  subscribeToTypingState,
+  updateThreadDetails
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
 
@@ -77,7 +81,16 @@ const appState = {
   isCreatingChat: false,
   createChatError: '',
   chatSearchRequestId: 0,
-  composerDraftByThreadId: {}
+  composerDraftByThreadId: {},
+  profileByUid: {},
+  warnedRealtimePermissions: {},
+  isChatSettingsOpen: false,
+  chatSettingsError: '',
+  isSavingChatSettings: false,
+  chatSettingsDraftTitle: '',
+  chatSettingsSearchQuery: '',
+  chatSettingsSearchResults: [],
+  isSearchingChatSettingsUsers: false
 }
 
 let searchDebounceTimer = null
@@ -87,11 +100,6 @@ let activeTypingThreadId = ''
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
   <main>
-    <section class="section inbox-header-shell">
-      <div class="section-inner">
-        <h1>Inbox</h1>
-      </div>
-    </section>
     <section class="section inbox-main-shell">
       <div class="section-inner" data-inbox-root>
         <article class="inbox-auth-card">
@@ -126,6 +134,30 @@ function getInitials(user = {}) {
     .join('')
     .slice(0, 2)
     .toUpperCase()
+}
+
+function getProfileMeta(uid, fallback = {}) {
+  const profile = appState.profileByUid[uid] || {}
+  const displayName = String(profile.displayName || fallback.displayName || '').trim()
+  const username = String(profile.username || fallback.username || '').trim()
+  const avatarURL = String(profile.avatarURL || profile.photoURL || fallback.avatarURL || fallback.photoURL || '').trim()
+  const preferred = displayName || username || fallback.title || (uid ? `User ${String(uid).slice(0, 2).toUpperCase()}` : 'Member')
+  return { uid, displayName: preferred, username, avatarURL, photoURL: avatarURL }
+}
+
+async function hydrateProfilesForThread(thread) {
+  if (!thread) return
+  const ids = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  if (!ids.length) return
+  const loaded = await loadProfilesByUids(ids)
+  appState.profileByUid = { ...appState.profileByUid, ...loaded }
+  if (appState.selectedThreadId === thread.id) renderSignedInState()
+}
+
+function warnRealtimePermission(key, error) {
+  if (appState.warnedRealtimePermissions[key]) return
+  appState.warnedRealtimePermissions[key] = true
+  console.warn('Inbox realtime permission warning:', error?.code || error?.message || error)
 }
 
 function formatTime(value) {
@@ -193,7 +225,9 @@ function clearRealtimeListeners() {
 
 function clearTypingForThread(threadId) {
   if (!threadId || !appState.user?.uid) return
-  setTypingState({ threadId, uid: appState.user.uid, isTyping: false })
+  setTypingState({ threadId, uid: appState.user.uid, isTyping: false }).catch((error) => {
+    warnRealtimePermission(`typing-write-${threadId}`, error)
+  })
 }
 
 function resetCreateChatState() {
@@ -299,7 +333,10 @@ function getRecentThreadsSidebarMarkup() {
 function getConversationSubtitle(thread) {
   if (!thread) return 'No thread selected'
   const typingUsers = getTypingUsers(thread.id)
-  if (typingUsers.length === 1) return `${typingUsers[0].displayName || typingUsers[0].username || 'Someone'} is typing…`
+  if (typingUsers.length === 1) {
+    const typingUser = getProfileMeta(typingUsers[0].uid, typingUsers[0])
+    return `${typingUser.displayName || typingUser.username || 'Someone'} is typing…`
+  }
   if (typingUsers.length > 1) return 'Several people are typing…'
 
   if (thread.type === 'group') {
@@ -350,18 +387,18 @@ function groupMessages(messages = []) {
 function getParticipantMeta(thread, uid) {
   const participants = getThreadParticipants(thread.id)
   const direct = participants.find((entry) => entry.uid === uid)
-  if (direct) return direct
+  if (direct) return getProfileMeta(uid, direct)
 
   if (thread.type === 'dm' && uid !== appState.user?.uid) {
-    return {
+    return getProfileMeta(uid, {
       uid,
       displayName: thread.title,
       avatarURL: thread.imageURL,
       username: ''
-    }
+    })
   }
 
-  return { uid, displayName: uid === appState.user?.uid ? 'You' : 'Member', username: '' }
+  return getProfileMeta(uid, { uid, displayName: uid === appState.user?.uid ? 'You' : 'Member', title: thread.title })
 }
 
 function getOutgoingStatusLabel(thread, message) {
@@ -568,15 +605,21 @@ function getConversationHeaderMarkup(thread) {
     `
   }
 
+  const otherParticipant = (thread.participantIds || []).find((uid) => uid !== appState.user?.uid)
+  const headerMeta = thread.type === 'dm' && otherParticipant
+    ? getProfileMeta(otherParticipant, { title: thread.title, avatarURL: thread.imageURL })
+    : { displayName: thread.title, avatarURL: thread.imageURL }
+
   return `
     <header class="conversation-header">
-      <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
-        ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${getInitials(thread)}</span>`}
+      <div class="thread-avatar ${headerMeta.avatarURL ? 'has-image' : ''}">
+        ${headerMeta.avatarURL ? `<img src="${escapeHtml(headerMeta.avatarURL)}" alt="" />` : `<span>${getInitials({ title: headerMeta.displayName })}</span>`}
       </div>
       <div class="conversation-header-meta">
-        <h3>${escapeHtml(thread.title)}</h3>
+        <h3>${escapeHtml(headerMeta.displayName || thread.title)}</h3>
         <p>${escapeHtml(getConversationSubtitle(thread))}</p>
       </div>
+      <button type="button" class="chat-settings-trigger" data-action="open-chat-settings" aria-label="Open chat settings">⋯</button>
     </header>
   `
 }
@@ -875,12 +918,222 @@ function updateCreateChatModalContent({ keepSearchFocus = false } = {}) {
 
 function renderCreateChatModal(options = {}) {
   if (!appState.isCreateChatOpen) {
-    modalRoot.innerHTML = ''
+    if (!appState.isChatSettingsOpen) modalRoot.innerHTML = ''
     return
   }
 
   ensureCreateChatModalShell()
   updateCreateChatModalContent(options)
+}
+
+function openChatSettingsModal() {
+  const thread = getSelectedThread()
+  if (!thread) return
+  appState.isChatSettingsOpen = true
+  appState.chatSettingsError = ''
+  appState.chatSettingsDraftTitle = thread.title || ''
+  appState.chatSettingsSearchQuery = ''
+  appState.chatSettingsSearchResults = []
+  renderChatSettingsModal()
+}
+
+function closeChatSettingsModal() {
+  appState.isChatSettingsOpen = false
+  appState.chatSettingsError = ''
+  appState.isSavingChatSettings = false
+  appState.chatSettingsDraftTitle = ''
+  appState.chatSettingsSearchQuery = ''
+  appState.chatSettingsSearchResults = []
+  renderChatSettingsModal()
+}
+
+async function handleChatSettingsSearch(value) {
+  appState.chatSettingsSearchQuery = value
+  const queryText = String(value || '').trim().toLowerCase()
+  if (queryText.length < 2) {
+    appState.chatSettingsSearchResults = []
+    renderChatSettingsModal()
+    return
+  }
+
+  try {
+    appState.isSearchingChatSettingsUsers = true
+    renderChatSettingsModal()
+    const existing = new Set((getSelectedThread()?.participantIds || []).filter(Boolean))
+    const results = await searchProfilesByUsername(queryText)
+    appState.chatSettingsSearchResults = results.filter((profile) => !existing.has(profile.uid) && profile.uid !== appState.user?.uid)
+    appState.chatSettingsError = ''
+  } catch {
+    appState.chatSettingsError = 'Unable to search profiles for this chat.'
+    appState.chatSettingsSearchResults = []
+  } finally {
+    appState.isSearchingChatSettingsUsers = false
+    renderChatSettingsModal()
+  }
+}
+
+async function handleSaveChatSettings() {
+  const thread = getSelectedThread()
+  if (!thread || thread.type !== 'group') return
+  try {
+    appState.isSavingChatSettings = true
+    renderChatSettingsModal()
+    await updateThreadDetails({
+      threadId: thread.id,
+      actorUid: appState.user?.uid,
+      title: appState.chatSettingsDraftTitle,
+      imageURL: thread.imageURL || '',
+      imagePath: thread.imagePath || ''
+    })
+    appState.chatSettingsError = ''
+    appState.isSavingChatSettings = false
+    closeChatSettingsModal()
+  } catch (error) {
+    appState.isSavingChatSettings = false
+    appState.chatSettingsError = error?.message || 'Unable to save chat settings.'
+    renderChatSettingsModal()
+  }
+}
+
+async function handleAddParticipant(uid) {
+  const thread = getSelectedThread()
+  if (!thread || !uid) return
+  try {
+    await addParticipantsToThread({ threadId: thread.id, actorUid: appState.user?.uid, participantIds: [uid] })
+    appState.chatSettingsError = ''
+    appState.chatSettingsSearchQuery = ''
+    appState.chatSettingsSearchResults = []
+    renderChatSettingsModal()
+  } catch (error) {
+    appState.chatSettingsError = error?.message || 'Unable to add this member.'
+    renderChatSettingsModal()
+  }
+}
+
+async function handleRemoveParticipant(uid) {
+  const thread = getSelectedThread()
+  if (!thread || !uid) return
+  if ((thread.participantIds || []).length <= 1) {
+    appState.chatSettingsError = 'Cannot remove the only remaining participant.'
+    renderChatSettingsModal()
+    return
+  }
+  const isSelf = uid === appState.user?.uid
+  if (!window.confirm(isSelf ? 'Leave this chat?' : 'Remove this member from the chat?')) return
+
+  try {
+    await removeParticipantFromThread({ threadId: thread.id, actorUid: appState.user?.uid, participantId: uid })
+    appState.chatSettingsError = ''
+    renderChatSettingsModal()
+  } catch (error) {
+    appState.chatSettingsError = error?.message || 'Unable to remove this member.'
+    renderChatSettingsModal()
+  }
+}
+
+function renderChatSettingsModal() {
+  if (!appState.isChatSettingsOpen) {
+    if (!appState.isCreateChatOpen) modalRoot.innerHTML = ''
+    return
+  }
+
+  const thread = getSelectedThread()
+  if (!thread) return
+  const participants = getThreadParticipants(thread.id).map((entry) => getProfileMeta(entry.uid, entry))
+  const canEditGroup = thread.type === 'group' && thread.createdBy === appState.user?.uid
+  const hasPendingChanges = canEditGroup && String(appState.chatSettingsDraftTitle || '').trim() !== String(thread.title || '').trim()
+
+  const memberMarkup = participants.map((member) => `
+    <article class="chat-details-member-row">
+      <div class="chat-chip-avatar ${member.avatarURL ? 'has-image' : ''}">
+        ${member.avatarURL ? `<img src="${escapeHtml(member.avatarURL)}" alt="" />` : `<span>${escapeHtml(getInitials(member))}</span>`}
+      </div>
+      <div class="chat-details-member-meta">
+        <strong>${escapeHtml(member.displayName || 'Member')} ${member.uid === appState.user?.uid ? '<span>(You)</span>' : ''}</strong>
+        <small>@${escapeHtml(member.username || 'member')}</small>
+      </div>
+      ${thread.type === 'group' && participants.length > 1 ? `<button type="button" class="button button-muted chat-details-remove" data-remove-member="${member.uid}">${member.uid === appState.user?.uid ? 'Leave' : 'Remove'}</button>` : ''}
+    </article>
+  `).join('')
+
+  const addMarkup = appState.isSearchingChatSettingsUsers
+    ? '<p class="modal-hint">Searching…</p>'
+    : appState.chatSettingsSearchQuery.trim().length < 2
+      ? '<p class="modal-hint">Type at least 2 characters to search by username.</p>'
+      : appState.chatSettingsSearchResults.length
+        ? appState.chatSettingsSearchResults.map((profile) => `
+          <button type="button" class="chat-search-row" data-add-participant="${profile.uid}">
+            <div class="chat-chip-avatar ${profile.avatarURL || profile.photoURL ? 'has-image' : ''}">
+              ${profile.avatarURL || profile.photoURL ? `<img src="${escapeHtml(profile.avatarURL || profile.photoURL)}" alt="" />` : `<span>${escapeHtml(getInitials(profile))}</span>`}
+            </div>
+            <div class="chat-search-meta">
+              <strong>${escapeHtml(profile.displayName || profile.username || 'User')}</strong>
+              <small>@${escapeHtml(profile.username || 'unknown')}</small>
+            </div>
+          </button>
+        `).join('')
+        : '<p class="modal-hint">No matching profiles found.</p>'
+
+  modalRoot.innerHTML = `
+    <div class="chat-details-backdrop">
+      <section class="chat-details-modal" role="dialog" aria-modal="true" aria-labelledby="chat-details-title">
+        <header class="chat-details-header">
+          <h2 id="chat-details-title">Chat details</h2>
+          <div class="chat-details-header-actions">
+            ${hasPendingChanges ? `<button type="button" class="button button-accent" data-chat-details-save ${appState.isSavingChatSettings ? 'disabled' : ''}>${appState.isSavingChatSettings ? 'Saving…' : 'Save'}</button>` : ''}
+            <button type="button" class="create-chat-close" data-chat-details-close aria-label="Close chat settings">×</button>
+          </div>
+        </header>
+
+        <section class="chat-details-section">
+          <h3>Chat identity</h3>
+          <div class="chat-details-identity-row">
+            <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
+              ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${escapeHtml(getInitials({ title: thread.title }))}</span>`}
+            </div>
+            <div class="chat-details-identity-fields">
+              <label>Chat name</label>
+              <input type="text" data-chat-settings-title value="${escapeHtml(appState.chatSettingsDraftTitle || '')}" ${canEditGroup ? '' : 'disabled'} />
+              <small>${canEditGroup ? 'Group owner can rename this chat.' : 'Direct messages cannot be renamed here.'}</small>
+              <small>Image upload placeholder: wired for a future Storage pass.</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="chat-details-section">
+          <h3>Members</h3>
+          <div class="chat-details-member-list">${memberMarkup || '<p class="modal-hint">No members found.</p>'}</div>
+        </section>
+
+        <section class="chat-details-section">
+          <h3>Add people</h3>
+          <input class="create-chat-search" type="search" placeholder="Search username…" value="${escapeHtml(appState.chatSettingsSearchQuery)}" data-chat-settings-search />
+          <div class="create-chat-results">${addMarkup}</div>
+        </section>
+
+        ${appState.chatSettingsError ? `<p class="modal-error">${escapeHtml(appState.chatSettingsError)}</p>` : ''}
+      </section>
+    </div>
+  `
+
+  modalRoot.querySelector('[data-chat-details-close]')?.addEventListener('click', closeChatSettingsModal)
+  modalRoot.querySelector('.chat-details-backdrop')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeChatSettingsModal()
+  })
+  modalRoot.querySelector('[data-chat-details-save]')?.addEventListener('click', handleSaveChatSettings)
+  modalRoot.querySelector('[data-chat-settings-title]')?.addEventListener('input', (event) => {
+    appState.chatSettingsDraftTitle = event.target.value
+    renderChatSettingsModal()
+  })
+  modalRoot.querySelector('[data-chat-settings-search]')?.addEventListener('input', (event) => {
+    handleChatSettingsSearch(event.target.value)
+  })
+  modalRoot.querySelectorAll('[data-add-participant]').forEach((button) => {
+    button.addEventListener('click', () => handleAddParticipant(button.getAttribute('data-add-participant')))
+  })
+  modalRoot.querySelectorAll('[data-remove-member]').forEach((button) => {
+    button.addEventListener('click', () => handleRemoveParticipant(button.getAttribute('data-remove-member')))
+  })
 }
 
 function renderSignedOutState() {
@@ -915,9 +1168,12 @@ function bindSharedEvents() {
       appState.selectedThreadId = threadId
       appState.errorMessage = ''
       startMessageSubscription(threadId)
+      hydrateProfilesForThread(getSelectedThread())
       renderSignedInState()
 
-      await markThreadRead({ threadId, uid: appState.user?.uid })
+      await markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
+        warnRealtimePermission(`participants-read-${threadId}`, error)
+      })
     })
   })
 
@@ -926,6 +1182,11 @@ function bindSharedEvents() {
     openCreateChatButton.addEventListener('click', () => {
       openCreateChatModal()
     })
+  }
+
+  const openChatSettingsButton = inboxRoot.querySelector('[data-action="open-chat-settings"]')
+  if (openChatSettingsButton) {
+    openChatSettingsButton.addEventListener('click', () => openChatSettingsModal())
   }
 
   const messageForm = inboxRoot.querySelector('[data-message-form]')
@@ -943,6 +1204,8 @@ function bindSharedEvents() {
         displayName: appState.user?.displayName || appState.user?.email?.split('@')[0] || 'Member',
         username: appState.user?.username || '',
         isTyping: Boolean(textarea.value.trim())
+      }).catch((error) => {
+        warnRealtimePermission(`typing-write-${thread.id}`, error)
       })
 
       typingStopTimer = setTimeout(() => {
@@ -970,6 +1233,7 @@ function renderSignedInState() {
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
   renderCreateChatModal()
+  renderChatSettingsModal()
 
   const list = inboxRoot.querySelector('[data-message-list]')
   if (list) list.scrollTop = list.scrollHeight
@@ -991,7 +1255,9 @@ async function handleMessageSubmit(form) {
     field.value = ''
     appState.composerDraftByThreadId[thread.id] = ''
     clearTypingForThread(thread.id)
-    await markThreadRead({ threadId: thread.id, uid: appState.user.uid })
+    await markThreadRead({ threadId: thread.id, uid: appState.user.uid }).catch((error) => {
+      warnRealtimePermission(`participants-read-${thread.id}`, error)
+    })
   } catch (error) {
     appState.errorMessage = error?.message || 'Unable to send message.'
   }
@@ -1005,12 +1271,25 @@ function startThreadDetailSubscriptions(threadId) {
 
   appState.participantsUnsubscribe = subscribeToThreadParticipants(threadId, (participants) => {
     appState.participantsByThreadId[threadId] = participants
+    participants.forEach((participant) => {
+      if (!participant?.uid) return
+      appState.profileByUid[participant.uid] = appState.profileByUid[participant.uid] || {
+        displayName: participant.displayName || '',
+        username: participant.username || '',
+        avatarURL: participant.avatarURL || participant.photoURL || ''
+      }
+    })
+    hydrateProfilesForThread(getSelectedThread())
     if (appState.selectedThreadId === threadId) renderSignedInState()
+  }, (error) => {
+    warnRealtimePermission(`participants-${threadId}`, error)
   })
 
   appState.typingUnsubscribe = subscribeToTypingState(threadId, (typingRows) => {
     appState.typingUsersByThreadId[threadId] = typingRows
     if (appState.selectedThreadId === threadId) renderSignedInState()
+  }, (error) => {
+    warnRealtimePermission(`typing-${threadId}`, error)
   })
 }
 
@@ -1024,11 +1303,17 @@ function startMessageSubscription(threadId) {
     appState.messagesByThreadId[threadId] = messages
     appState.loadingMessageThreadId = ''
 
-    await markThreadDelivered({ threadId, uid: appState.user.uid })
+    await markThreadDelivered({ threadId, uid: appState.user.uid }).catch((error) => {
+      warnRealtimePermission(`participants-delivered-${threadId}`, error)
+    })
     if (appState.selectedThreadId === threadId) {
       renderSignedInState()
-      await markThreadRead({ threadId, uid: appState.user.uid })
+      await markThreadRead({ threadId, uid: appState.user.uid }).catch((error) => {
+        warnRealtimePermission(`participants-read-${threadId}`, error)
+      })
     }
+  }, (error) => {
+    warnRealtimePermission(`messages-${threadId}`, error)
   })
 }
 
@@ -1057,12 +1342,17 @@ function startThreadSubscription() {
     if (!appState.messagesByThreadId[appState.selectedThreadId]) {
       startMessageSubscription(appState.selectedThreadId)
     }
+    hydrateProfilesForThread(threads.find((thread) => thread.id === appState.selectedThreadId))
 
     renderSignedInState()
   })
 }
 
 function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && appState.isChatSettingsOpen && !appState.isSavingChatSettings) {
+    closeChatSettingsModal()
+    return
+  }
   if (event.key === 'Escape' && appState.isCreateChatOpen && !appState.isCreatingChat) {
     closeCreateChatModal()
   }
@@ -1091,8 +1381,10 @@ subscribeToAuthState(async (user) => {
     appState.messagesByThreadId = {}
     appState.participantsByThreadId = {}
     appState.typingUsersByThreadId = {}
+    appState.profileByUid = {}
     clearRealtimeListeners()
     closeCreateChatModal()
+    closeChatSettingsModal()
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     renderSignedOutState()
     return
