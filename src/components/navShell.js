@@ -55,10 +55,10 @@ export function navShell(options = {}) {
               <a href="/auth.html" data-nav-menu-auth role="menuitem">Sign In / Sign Up</a>
             </div>
           </div>
-          <a class="button button-cart" href="/cart.html" aria-label="Open cart">
+          <a class="button button-cart" data-cart-trigger href="/cart.html" aria-label="Open cart">
             <span class="cart-icon" aria-hidden="true">🛒</span>
             <span>Cart</span>
-            <span class="cart-badge" aria-label="0 items in cart">0</span>
+            <span class="cart-badge" data-cart-badge aria-label="0 items in cart">0</span>
           </a>
         </div>
       </div>

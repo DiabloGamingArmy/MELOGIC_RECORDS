@@ -1,0 +1,152 @@
+.cart-page-shell {
+  padding-top: clamp(1.3rem, 3vw, 1.9rem);
+  min-height: calc(100vh - var(--nav-offset));
+}
+
+.cart-page-inner {
+  width: min(1180px, 93vw);
+}
+
+.cart-page-header {
+  margin-bottom: 1rem;
+}
+
+.cart-page-header h1 {
+  margin: 0.2rem 0 0.55rem;
+  font-size: clamp(1.6rem, 2.2vw, 2.05rem);
+}
+
+.cart-page-header p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.cart-page-layout {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px);
+  align-items: start;
+}
+
+.cart-page-items,
+.cart-page-summary {
+  border: 1px solid rgba(137, 157, 201, 0.24);
+  border-radius: 1rem;
+  background: rgba(10, 15, 25, 0.72);
+  padding: 0.9rem;
+}
+
+.cart-page-items {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.cart-page-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid rgba(129, 150, 191, 0.2);
+  border-radius: 0.82rem;
+  padding: 0.55rem;
+}
+
+.cart-page-thumb {
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 0.65rem;
+  background: rgba(30, 46, 76, 0.76);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.cart-page-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cart-page-meta {
+  min-width: 0;
+}
+
+.cart-page-meta h3,
+.cart-page-meta p {
+  margin: 0;
+}
+
+.cart-page-meta h3 {
+  font-size: 0.95rem;
+}
+
+.cart-page-meta p {
+  margin-top: 0.24rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.cart-page-actions {
+  margin-left: auto;
+  display: grid;
+  justify-items: end;
+  gap: 0.3rem;
+}
+
+.cart-page-actions strong {
+  color: #deffe9;
+  font-size: 0.86rem;
+}
+
+.cart-page-actions button {
+  border: 1px solid rgba(131, 154, 200, 0.3);
+  background: rgba(20, 31, 52, 0.8);
+  color: #d7e4ff;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.73rem;
+  padding: 0.26rem 0.54rem;
+  cursor: pointer;
+}
+
+.cart-page-summary {
+  display: grid;
+  gap: 0.72rem;
+}
+
+.cart-page-summary h3,
+.cart-page-summary p {
+  margin: 0;
+}
+
+.cart-summary-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.86rem;
+  color: #d0ddfa;
+}
+
+.cart-empty-state {
+  border: 1px dashed rgba(133, 154, 194, 0.38);
+  border-radius: 0.85rem;
+  padding: 1rem;
+  display: grid;
+  gap: 0.55rem;
+  justify-items: start;
+}
+
+.cart-empty-state h2,
+.cart-empty-state p {
+  margin: 0;
+}
+
+.cart-empty-state p {
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .cart-page-layout {
+    grid-template-columns: 1fr;
+  }
+}
