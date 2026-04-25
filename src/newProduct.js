@@ -4,6 +4,8 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState } from './firebase/auth'
 import { buildProductPayload, isPlaceholderProductId, saveProductDraft } from './data/productService'
+import { doc, getDoc } from 'firebase/firestore'
+import { db } from './firebase/firestore'
 
 const PRODUCT_SECTIONS = [
   { key: 'basics', label: 'Basics' },
@@ -58,10 +60,50 @@ let editorState = {
     message: '',
     state: 'info'
   },
+  creatorProfile: null,
   draft: null
 }
 
-function createEmptyProductDraft(user = null) {
+function getCreatorIdentity(user = null, profile = null, draft = {}) {
+  const profileDisplayName = String(profile?.displayName || '').trim()
+  const profileUsername = String(profile?.username || profile?.handle || '').trim()
+  const authDisplayName = String(user?.displayName || '').trim()
+  const draftDisplayName = String(draft?.artistName || '').trim()
+  const draftUsername = String(draft?.artistUsername || '').trim()
+
+  const artistId = user?.uid || String(draft?.artistId || '')
+  const artistName = profileDisplayName || authDisplayName || draftDisplayName || 'Creator'
+  const artistUsername = profileUsername || draftUsername
+  const artistProfilePath = artistId ? String(draft?.artistProfilePath || `profiles/${artistId}`) : String(draft?.artistProfilePath || '')
+
+  return {
+    artistId,
+    artistName,
+    artistUsername,
+    artistProfilePath
+  }
+}
+
+function applyCreatorIdentity(draft = {}, user = null, profile = null) {
+  return {
+    ...(draft || {}),
+    ...getCreatorIdentity(user, profile, draft)
+  }
+}
+
+async function fetchPublicCreatorProfile(uid = '') {
+  if (!db || !uid) return null
+  try {
+    const snapshot = await getDoc(doc(db, 'profiles', uid))
+    if (!snapshot.exists()) return null
+    return snapshot.data() || null
+  } catch {
+    return null
+  }
+}
+
+function createEmptyProductDraft(user = null, profile = null) {
+  const creator = getCreatorIdentity(user, profile)
   return {
     id: '',
     title: '',
@@ -69,10 +111,10 @@ function createEmptyProductDraft(user = null) {
     shortDescription: '',
     description: '',
     productType: 'Sample Pack',
-    artistId: user?.uid || '',
-    artistName: user?.displayName || '',
-    artistUsername: '',
-    artistProfilePath: '',
+    artistId: creator.artistId,
+    artistName: creator.artistName,
+    artistUsername: creator.artistUsername,
+    artistProfilePath: creator.artistProfilePath,
     status: 'draft',
     visibility: 'private',
     price: '0',
@@ -144,7 +186,7 @@ function saveDraftState() {
 }
 
 function loadDraftState(user) {
-  const empty = createEmptyProductDraft(user)
+  const empty = createEmptyProductDraft(user, editorState.creatorProfile)
   if (!user) return empty
 
   try {
@@ -152,11 +194,10 @@ function loadDraftState(user) {
     if (!raw) return empty
     const parsed = JSON.parse(raw)
     editorState.slugLocked = Boolean(parsed?.slugLocked)
-    const hydratedDraft = {
+    const hydratedDraft = applyCreatorIdentity({
       ...empty,
-      ...(parsed?.draft || {}),
-      artistId: parsed?.draft?.artistId || user.uid || ''
-    }
+      ...(parsed?.draft || {})
+    }, user, editorState.creatorProfile)
     if (isPlaceholderProductId(hydratedDraft.id)) {
       hydratedDraft.id = ''
     }
@@ -199,7 +240,7 @@ function hydrateSectionFields(sectionName) {
 }
 
 function serializeDraftForFirestore(draft) {
-  const safeDraft = { ...(draft || {}) }
+  const safeDraft = applyCreatorIdentity({ ...(draft || {}) }, editorState.user, editorState.creatorProfile)
   const numericPrice = Number(safeDraft.price || 0)
 
   return {
@@ -296,13 +337,13 @@ function renderEditor() {
                   <option ${draft.productType === 'VST' ? 'selected' : ''}>VST</option><option ${draft.productType === 'Sample Pack' ? 'selected' : ''}>Sample Pack</option><option ${draft.productType === 'Preset Bank' ? 'selected' : ''}>Preset Bank</option><option ${draft.productType === 'Wavetables' ? 'selected' : ''}>Wavetables</option><option ${draft.productType === 'Drum Kit' ? 'selected' : ''}>Drum Kit</option><option ${draft.productType === 'Vocal Pack' ? 'selected' : ''}>Vocal Pack</option>
                 </select>
               </label>
-              <label><span>Artist / Primary Creator</span><input name="artistName" value="${escapeHtml(draft.artistName)}" /></label>
+              <label><span>Artist / Primary Creator</span><input name="artistName" value="${escapeHtml(draft.artistName)}" readonly aria-readonly="true" class="locked-input" /><small class="field-lock-note">Creator is tied to your account.</small></label>
             </div>
             <label><span>Short Description</span><textarea name="shortDescription" rows="2">${escapeHtml(draft.shortDescription)}</textarea></label>
             <label><span>Full Description</span><textarea name="description" rows="5">${escapeHtml(draft.description)}</textarea></label>
             <div class="field-grid two-col">
-              <label><span>Artist Username</span><input name="artistUsername" placeholder="artist-handle" value="${escapeHtml(draft.artistUsername)}" /></label>
-              <label><span>Artist Profile Path</span><input name="artistProfilePath" placeholder="profiles/uid" value="${escapeHtml(draft.artistProfilePath)}" /></label>
+              <label><span>Artist Username</span><input name="artistUsername" placeholder="artist-handle" value="${escapeHtml(draft.artistUsername)}" readonly aria-readonly="true" class="locked-input" /><small class="field-lock-note">Username comes from your public profile.</small></label>
+              <label><span>Artist Profile Path</span><input name="artistProfilePath" placeholder="profiles/uid" value="${escapeHtml(draft.artistProfilePath)}" readonly aria-readonly="true" class="locked-input" /></label>
             </div>
             <div class="field-grid two-col">
               <label><span>Status</span><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="published" ${draft.status === 'published' ? 'selected' : ''}>Published</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></label>
@@ -447,6 +488,7 @@ function renderEditor() {
     if (!target?.name) return
 
     if (!(target.name in editorState.draft)) return
+    if (['artistName', 'artistUsername', 'artistProfilePath', 'artistId'].includes(target.name)) return
 
     const value = target.type === 'checkbox' ? target.checked : target.value
     updateDraftField(target.name, value)
@@ -580,7 +622,8 @@ async function initPage() {
   }
 
   editorState.user = user
-  editorState.draft = loadDraftState(user)
+  editorState.creatorProfile = await fetchPublicCreatorProfile(user.uid)
+  editorState.draft = applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile)
   syncPreviewFromDraft()
   renderEditor()
 }
