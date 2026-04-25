@@ -80,7 +80,14 @@
 
 .dashboard-media-area { grid-area: media; }
 .dashboard-overview { display: grid; gap: 0.56rem; align-content: start; }
-.dashboard-main-sections { grid-area: content; display: grid; gap: 0.72rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dashboard-main-sections {
+  grid-area: content;
+  display: grid;
+  gap: 0.72rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0;
+  padding-top: 0.2rem;
+}
 .dashboard-lower-sidebar { grid-area: sidebar; display: grid; gap: 0.7rem; align-content: start; }
 
 .dashboard-main-media {
@@ -289,6 +296,19 @@
   gap: 0.56rem;
 }
 
+.dashboard-recommend-carousel {
+  display: flex;
+  gap: 0.56rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 0.2rem;
+}
+
+.dashboard-recommend-carousel .dashboard-recommend-card {
+  min-width: 240px;
+  flex: 0 0 240px;
+}
+
 .dashboard-recommend-card {
   display: grid;
   gap: 0.5rem;
@@ -361,6 +381,17 @@
 
 .dashboard-section-about {
   grid-column: 1 / -1;
+}
+
+.dashboard-section-reviews {
+  grid-column: 1 / -1;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-section-reviews p:last-child {
+  flex: 1;
 }
 
 .dashboard-section-card p {
