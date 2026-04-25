@@ -13,8 +13,8 @@
   gap: 0.9rem;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(290px, 340px);
   grid-template-areas:
-    'header header rail'
-    'media overview rail'
+    'header header sidebar'
+    'media overview sidebar'
     'content content sidebar';
   align-items: start;
 }
@@ -92,7 +92,6 @@
 
 .dashboard-media-area { grid-area: media; }
 .dashboard-overview { grid-area: overview; display: grid; gap: 0.56rem; align-content: start; }
-.dashboard-rail { grid-area: rail; display: grid; gap: 0.5rem; position: sticky; top: calc(var(--nav-offset) + 0.8rem); max-height: calc(100vh - var(--nav-offset) - 1.2rem); overflow: auto; }
 .dashboard-main-sections { grid-area: content; display: grid; gap: 0.72rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dashboard-lower-sidebar { grid-area: sidebar; display: grid; gap: 0.7rem; align-content: start; }
 
@@ -139,6 +138,7 @@
   cursor: pointer;
   height: 100%;
   min-height: 58px;
+  min-width: 40px;
 }
 
 .dashboard-thumb-row {
@@ -306,6 +306,14 @@
 .dashboard-section-card {
   display: grid;
   gap: 0.42rem;
+  border: 1px solid rgba(121, 141, 178, 0.22);
+  border-radius: 0.8rem;
+  background: rgba(8, 13, 24, 0.78);
+  padding: 0.72rem;
+}
+
+.dashboard-section-about {
+  grid-column: 1 / -1;
 }
 
 .dashboard-section-card p {
@@ -358,7 +366,6 @@
 .dashboard-skeleton-header { grid-column: 1 / -1; min-height: 96px; }
 .dashboard-skeleton-media { min-height: 450px; }
 .dashboard-skeleton-overview { min-height: 450px; }
-.dashboard-skeleton-rail { min-height: 450px; }
 .dashboard-skeleton-content { grid-column: 1 / span 2; min-height: 300px; }
 .dashboard-skeleton-sidebar { min-height: 300px; }
 
@@ -373,14 +380,7 @@
     grid-template-areas:
       'header header'
       'media overview'
-      'rail rail'
       'content sidebar';
-  }
-
-  .dashboard-rail {
-    position: static;
-    max-height: none;
-    overflow: visible;
   }
 }
 
@@ -391,7 +391,6 @@
       'header'
       'media'
       'overview'
-      'rail'
       'sidebar'
       'content';
   }
