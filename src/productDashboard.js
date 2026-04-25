@@ -217,8 +217,15 @@ function renderProduct(product, recommendations = []) {
               <h2>Stats</h2>
               <p>👍 ${likeCount} · 👎 ${dislikeCount} · Saves ${product.saveCount ?? product.counts?.saves ?? 0} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
             </article>
-            <article class="dashboard-section-card">
+            <article class="dashboard-section-card dashboard-section-reviews">
               <h2>Reviews</h2>
+              ${recommendations.length
+                ? `
+                  <div class="dashboard-recommend-carousel" aria-label="Recommended products">
+                    ${recommendations.map((item) => recommendationCardMarkup(item)).join('')}
+                  </div>
+                `
+                : ''}
               <p>Reviews are coming soon.</p>
             </article>
           </section>
@@ -284,14 +291,6 @@ function renderProduct(product, recommendations = []) {
               <p>Comments: ${product.commentCount ?? product.counts?.comments ?? 0}</p>
             </article>
 
-            ${recommendations.length
-              ? `
-                <article class="panel-surface dashboard-side-card">
-                  <h3>Recommended products</h3>
-                  <div class="dashboard-recommend-list">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>
-                </article>
-              `
-              : ''}
           </aside>
         </div>
       </section>
