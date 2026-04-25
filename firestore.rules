@@ -18,10 +18,42 @@ service cloud.firestore {
       return threadDoc(threadId).exists();
     }
 
+    function isThreadOwner(threadId) {
+      return isThreadParticipant(threadId) && threadDoc(threadId).data.createdBy == request.auth.uid;
+    }
+
     function isThreadParticipant(threadId) {
       return signedIn()
         && threadExists(threadId)
         && request.auth.uid in threadDoc(threadId).data.participantIds;
+    }
+
+    function participantSelfUpdateIsSafe(uid) {
+      return request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'lastReadAt',
+          'lastDeliveredAt',
+          'typingUpdatedAt',
+          'muted',
+          'archived',
+          'updatedAt',
+          'displayName',
+          'username',
+          'avatarURL',
+          'photoURL'
+        ]);
+    }
+
+    function participantSafeThreadUpdate(threadId) {
+      return isThreadParticipant(threadId)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'updatedAt',
+          'lastMessageAt',
+          'lastMessageText',
+          'lastMessageSenderId',
+          'lastMessageType'
+        ]);
     }
 
     function isUsernameDocIdValid(usernameLower) {
@@ -66,14 +98,16 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.createdBy == request.auth.uid
         && request.auth.uid in request.resource.data.participantIds;
-      allow update: if isThreadParticipant(threadId);
+      allow update: if isThreadOwner(threadId) || participantSafeThreadUpdate(threadId);
       allow delete: if false;
 
       match /participants/{uid} {
         allow read: if isThreadParticipant(threadId);
-        allow create, update: if isThreadParticipant(threadId)
-          && request.auth.uid == uid;
-        allow delete: if false;
+        allow create: if isThreadOwner(threadId)
+          || (signedIn() && request.auth.uid == uid && isThreadParticipant(threadId));
+        allow update: if isThreadOwner(threadId)
+          || (signedIn() && isThreadParticipant(threadId) && participantSelfUpdateIsSafe(uid));
+        allow delete: if isThreadOwner(threadId);
       }
 
       match /messages/{messageId} {
@@ -86,7 +120,8 @@ service cloud.firestore {
 
       match /typing/{uid} {
         allow read: if isThreadParticipant(threadId);
-        allow create, update, delete: if isThreadParticipant(threadId)
+        allow create, update, delete: if signedIn()
+          && isThreadParticipant(threadId)
           && request.auth.uid == uid;
       }
     }
