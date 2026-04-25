@@ -213,6 +213,28 @@ function renderProducts() {
     `
     return
   }
+}
+
+function bindProductActions(visibleProducts = []) {
+  app.querySelectorAll('[data-add-to-cart]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const id = button.getAttribute('data-product-id')
+      const product = state.products.find((entry) => entry.id === id) || visibleProducts.find((entry) => entry.id === id)
+      if (!product) return
+      addToCart(product)
+      button.textContent = 'Added'
+      setTimeout(() => {
+        button.textContent = 'Add to cart'
+      }, 900)
+      document.querySelector('[data-cart-trigger]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    })
+  })
+}
+
+function setFilter(key, value) {
+  state.filters[key] = value
+  loadNextPage({ reset: true })
+}
 
   const filtered = applyClientFilters(state.products)
   if (!filtered.length) {
