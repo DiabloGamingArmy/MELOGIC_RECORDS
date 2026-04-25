@@ -11,11 +11,11 @@
 .product-dashboard-layout {
   display: grid;
   gap: 0.9rem;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(290px, 340px);
+  grid-template-columns: minmax(0, 1.85fr) minmax(320px, 420px);
   grid-template-areas:
-    'header header sidebar'
-    'media overview sidebar'
-    'content content sidebar';
+    'header header'
+    'media sidebar'
+    'content sidebar';
   align-items: start;
 }
 
@@ -91,7 +91,7 @@
 }
 
 .dashboard-media-area { grid-area: media; }
-.dashboard-overview { grid-area: overview; display: grid; gap: 0.56rem; align-content: start; }
+.dashboard-overview { display: grid; gap: 0.56rem; align-content: start; }
 .dashboard-main-sections { grid-area: content; display: grid; gap: 0.72rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dashboard-lower-sidebar { grid-area: sidebar; display: grid; gap: 0.7rem; align-content: start; }
 
@@ -136,9 +136,9 @@
   color: #d5e6ff;
   font-weight: 700;
   cursor: pointer;
-  height: 100%;
-  min-height: 58px;
+  height: 44px;
   min-width: 40px;
+  align-self: center;
 }
 
 .dashboard-thumb-row {
@@ -337,25 +337,6 @@
   font-size: 0.78rem;
 }
 
-.dashboard-facts-list {
-  margin: 0;
-  display: grid;
-  gap: 0.45rem;
-}
-
-.dashboard-facts-list dt {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #9fb6e8;
-}
-
-.dashboard-facts-list dd {
-  margin: 0.15rem 0 0;
-  color: #d4e1f9;
-  font-size: 0.82rem;
-}
-
 .dashboard-skeleton {
   border-radius: 0.9rem;
   background: linear-gradient(90deg, rgba(42, 58, 91, 0.35), rgba(74, 98, 144, 0.35), rgba(42, 58, 91, 0.35));
@@ -376,10 +357,10 @@
 
 @media (max-width: 1240px) {
   .product-dashboard-layout {
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
     grid-template-areas:
       'header header'
-      'media overview'
+      'media sidebar'
       'content sidebar';
   }
 }
@@ -390,7 +371,6 @@
     grid-template-areas:
       'header'
       'media'
-      'overview'
       'sidebar'
       'content';
   }
