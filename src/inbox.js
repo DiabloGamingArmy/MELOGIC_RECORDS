@@ -100,8 +100,8 @@ let activeTypingThreadId = ''
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
   <main>
-    <section class="section inbox-main-shell">
-      <div class="section-inner" data-inbox-root>
+    <section class="inbox-main-shell">
+      <div class="inbox-app-shell" data-inbox-root>
         <article class="inbox-auth-card">
           <h2>Loading inbox…</h2>
         </article>
