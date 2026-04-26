@@ -239,11 +239,32 @@ function sortProductsClientSide(products = [], sort = 'featured') {
   }
 }
 
+function getRangeFilterPlan(filters = {}, sort = 'featured') {
+  const hasPriceRange = Number.isFinite(filters.minPriceCents) || Number.isFinite(filters.maxPriceCents)
+  const hasContributorRange = Number.isFinite(filters.minContributorCount) && filters.minContributorCount > 0
+
+  const priceSortDirection = sort === 'priceHigh' ? 'desc' : 'asc'
+  const preferPriceRange = hasPriceRange
+  const useContributorRangeInQuery = !preferPriceRange && hasContributorRange
+
+  return {
+    hasPriceRange,
+    hasContributorRange,
+    preferPriceRange,
+    useContributorRangeInQuery,
+    priceSortDirection,
+    applyClientSort: (hasPriceRange && !['priceLow', 'priceHigh'].includes(sort))
+      || (useContributorRangeInQuery && sort !== 'newest'),
+    applyContributorClientFilter: preferPriceRange && hasContributorRange
+  }
+}
+
 function buildProductsPageQuery({ filters = {}, sort = 'featured', pageSize = 10, cursor = null }) {
   const constraints = [
     where('status', '==', 'published'),
     where('visibility', '==', 'public')
   ]
+  const rangePlan = getRangeFilterPlan(filters, sort)
 
   const firstToken = String(filters.searchToken || '').trim().toLowerCase()
   const categoryKey = String(filters.categoryKey || '').trim().toLowerCase()
@@ -268,28 +289,47 @@ function buildProductsPageQuery({ filters = {}, sort = 'featured', pageSize = 10
 
   if (filters.priceType === 'free') constraints.push(where('isFree', '==', true))
   if (filters.priceType === 'paid') constraints.push(where('isFree', '==', false))
-  if (Number.isFinite(filters.minPriceCents)) constraints.push(where('priceCents', '>=', filters.minPriceCents))
-  if (Number.isFinite(filters.maxPriceCents)) constraints.push(where('priceCents', '<=', filters.maxPriceCents))
-  if (Number.isFinite(filters.minContributorCount) && filters.minContributorCount > 0) {
+
+  if (rangePlan.preferPriceRange) {
+    if (Number.isFinite(filters.minPriceCents)) constraints.push(where('priceCents', '>=', filters.minPriceCents))
+    if (Number.isFinite(filters.maxPriceCents)) constraints.push(where('priceCents', '<=', filters.maxPriceCents))
+  } else if (rangePlan.useContributorRangeInQuery) {
     constraints.push(where('contributorCount', '>=', filters.minContributorCount))
   }
 
-  constraints.push(...sortQueryFor(sort))
+  if (rangePlan.preferPriceRange) {
+    constraints.push(orderBy('priceCents', rangePlan.priceSortDirection), orderBy('createdAt', 'desc'))
+  } else if (rangePlan.useContributorRangeInQuery) {
+    constraints.push(orderBy('contributorCount', 'desc'), orderBy('createdAt', 'desc'))
+  } else {
+    constraints.push(...sortQueryFor(sort))
+  }
   if (cursor) constraints.push(startAfter(cursor))
   constraints.push(limit(pageSize))
-  return query(collection(db, FIRESTORE_COLLECTIONS.products), ...constraints)
+  return {
+    firestoreQuery: query(collection(db, FIRESTORE_COLLECTIONS.products), ...constraints),
+    rangePlan
+  }
 }
 
 export async function listPublicProductsPage({ filters = {}, sort = 'featured', pageSize = 10, cursor = null } = {}) {
   if (!db) return { products: [], nextCursor: null, hasMore: false }
 
   try {
-    const snapshot = await getDocs(buildProductsPageQuery({ filters, sort, pageSize, cursor }))
-    const products = await Promise.all(snapshot.docs.map(async (docSnap) => {
+    const { firestoreQuery, rangePlan } = buildProductsPageQuery({ filters, sort, pageSize, cursor })
+    const snapshot = await getDocs(firestoreQuery)
+    let products = await Promise.all(snapshot.docs.map(async (docSnap) => {
       const raw = docSnap.data()
       const media = await resolveProductMedia({ id: docSnap.id, ...raw })
       return normalizeProduct(docSnap.id, raw, media)
     }))
+
+    if (rangePlan.applyContributorClientFilter) {
+      products = products.filter((item) => Number(item.contributorCount || 0) >= Number(filters.minContributorCount || 0))
+    }
+    if (rangePlan.applyClientSort) {
+      products = sortProductsClientSide(products, sort)
+    }
 
     return {
       products,
@@ -301,10 +341,11 @@ export async function listPublicProductsPage({ filters = {}, sort = 'featured', 
     const isMissingIndex = errorCode === 'failed-precondition' || /index/i.test(String(error?.message || ''))
 
     if (!isDevelopmentRuntime) {
+      warnOnce('fetch', '[productService] Production product query failed.', error?.message || error)
       if (isMissingIndex) {
-        throw new Error('Products are temporarily unavailable while indexing finishes. Please try again shortly.')
+        throw new Error('Products could not be loaded right now. Try refreshing in a moment.')
       }
-      throw new Error('Unable to load products right now. Please try again.')
+      throw new Error('Products could not be loaded right now. Try refreshing in a moment.')
     }
 
     warnOnce('fetch', '[productService] Paginated product query failed; running dev-only lightweight fallback query.', error?.message || error)

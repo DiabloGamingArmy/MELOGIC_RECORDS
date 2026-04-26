@@ -31,9 +31,19 @@
 ## Deployment commands (manual only)
 ```bash
 firebase deploy --only firestore:rules
+firebase deploy --only firestore:indexes
 firebase deploy --only storage
 firebase deploy --only hosting
 ```
+
+## Current next required deploys
+- `firebase deploy --only firestore:rules`
+- `firebase deploy --only firestore:indexes`
+- `firebase deploy --only storage`
+- `firebase deploy --only hosting`
+- App Check must be fully configured in Firebase Console before enabling enforcement.
+- Do **not** enable App Check enforcement until the frontend App Check env var/site key is configured and monitoring confirms healthy traffic.
+- Product downloads still require signed URL + entitlement enforcement architecture before paid products are launched.
 
 ## Future server-side architecture work
 - Move product publishing transitions to a callable Cloud Function.
