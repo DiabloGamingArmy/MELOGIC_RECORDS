@@ -1,4 +1,5 @@
 let recaptchaLoadPromise = null
+const AUTH_SCRIPT_SELECTOR = 'script[data-recaptcha-enterprise-auth="true"]'
 
 export function getRecaptchaSiteKey() {
   return String(import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY || '').trim()
@@ -7,6 +8,51 @@ export function getRecaptchaSiteKey() {
 export function isRecaptchaAuthEnabled() {
   const siteKey = getRecaptchaSiteKey()
   return Boolean(siteKey) && import.meta.env.VITE_RECAPTCHA_ENTERPRISE_AUTH_ENABLED !== 'false'
+}
+
+function waitForEnterpriseApi(timeoutMs = 3000) {
+  return new Promise((resolve, reject) => {
+    const startedAt = Date.now()
+    const check = () => {
+      if (window.grecaptcha?.enterprise) {
+        resolve(window.grecaptcha.enterprise)
+        return
+      }
+
+      if (Date.now() - startedAt >= timeoutMs) {
+        reject(new Error('Security verification could not load. Please refresh and try again.'))
+        return
+      }
+
+      window.setTimeout(check, 50)
+    }
+
+    check()
+  })
+}
+
+function getAuthScript(siteKey) {
+  const script = document.querySelector(AUTH_SCRIPT_SELECTOR)
+  if (!script) return null
+  if (script.dataset.siteKey !== siteKey) return null
+  return script
+}
+
+function loadScript(src, siteKey) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = src
+    script.async = true
+    script.defer = true
+    script.dataset.recaptchaEnterpriseAuth = 'true'
+    script.dataset.siteKey = siteKey
+    script.onload = () => resolve()
+    script.onerror = () => {
+      script.remove()
+      reject(new Error('Failed to load reCAPTCHA Enterprise script.'))
+    }
+    document.head.appendChild(script)
+  })
 }
 
 export function loadRecaptchaEnterprise() {
@@ -19,26 +65,20 @@ export function loadRecaptchaEnterprise() {
   }
 
   recaptchaLoadPromise = new Promise((resolve, reject) => {
-    if (window.grecaptcha?.enterprise) {
-      resolve(window.grecaptcha.enterprise)
-      return
-    }
-
-    const existingScript = document.querySelector('[data-recaptcha-enterprise]')
+    const existingScript = getAuthScript(siteKey)
     if (existingScript) {
-      existingScript.addEventListener('load', () => resolve(window.grecaptcha?.enterprise))
-      existingScript.addEventListener('error', () => reject(new Error('Failed to load reCAPTCHA Enterprise script.')))
+      waitForEnterpriseApi().then(resolve).catch(reject)
       return
     }
 
-    const script = document.createElement('script')
-    script.src = `https://www.google.com/recaptcha/enterprise.js?render=${encodeURIComponent(siteKey)}`
-    script.async = true
-    script.defer = true
-    script.dataset.recaptchaEnterprise = 'true'
-    script.onload = () => resolve(window.grecaptcha?.enterprise)
-    script.onerror = () => reject(new Error('Failed to load reCAPTCHA Enterprise script.'))
-    document.head.appendChild(script)
+    const googleSrc = `https://www.google.com/recaptcha/enterprise.js?render=${encodeURIComponent(siteKey)}`
+    const recaptchaNetSrc = `https://www.recaptcha.net/recaptcha/enterprise.js?render=${encodeURIComponent(siteKey)}`
+
+    loadScript(googleSrc, siteKey)
+      .catch(() => loadScript(recaptchaNetSrc, siteKey))
+      .then(() => waitForEnterpriseApi())
+      .then(resolve)
+      .catch(reject)
   })
 
   return recaptchaLoadPromise
