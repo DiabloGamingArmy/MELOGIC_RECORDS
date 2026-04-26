@@ -18,6 +18,7 @@ import {
   updateCurrentUserProfile
 } from './firebase/auth'
 import { executeRecaptchaAction, getRecaptchaSiteKey, isRecaptchaAuthEnabled } from './security/recaptchaEnterprise'
+import { ROUTES, cleanRedirectTarget } from './utils/routes'
 
 const app = document.querySelector('#app')
 
@@ -223,18 +224,9 @@ async function redirectToProfile() {
 }
 
 function getSafeRedirectTarget() {
-  const defaultTarget = '/profile.html'
+  const defaultTarget = ROUTES.profile
   const redirectValue = new URLSearchParams(window.location.search).get('redirect')
-  if (!redirectValue || typeof redirectValue !== 'string') return defaultTarget
-  const trimmed = redirectValue.trim()
-  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return defaultTarget
-  try {
-    const parsed = new URL(trimmed, window.location.origin)
-    if (parsed.origin !== window.location.origin) return defaultTarget
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`
-  } catch {
-    return defaultTarget
-  }
+  return cleanRedirectTarget(redirectValue || '', defaultTarget)
 }
 
 function setAuthTab(activeTab) {
@@ -473,7 +465,7 @@ async function handleSignUpSubmit(event) {
 
     if (provisioning?.onboardingRequired) {
       setFeedback('Account created. Please finish profile setup.', 'info')
-      window.location.assign('/edit-profile.html')
+      window.location.assign(ROUTES.editProfile)
       return
     }
 
@@ -507,7 +499,7 @@ async function handleGoogleSignIn() {
 
     if (provisioning.onboardingRequired) {
       setFeedback('Signed in. Please choose a username to finish setup.', 'info')
-      window.location.assign('/edit-profile.html')
+      window.location.assign(ROUTES.editProfile)
       return
     }
 

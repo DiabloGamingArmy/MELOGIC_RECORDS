@@ -5,6 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPublicProfile, getUidForUsername } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
+import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath } from './utils/routes'
 
 const app = document.querySelector('#app')
 
@@ -44,22 +45,17 @@ function getStats(profile = {}) {
   ]
 }
 
-function getSignInRedirect(uid) {
-  const target = `/profile-public.html?uid=${encodeURIComponent(uid)}`
-  return `/auth.html?redirect=${encodeURIComponent(target)}`
-}
-
 function renderNotFound() {
   profileRoot.innerHTML = `
     <article class="public-profile-card public-profile-empty">
       <h1>Profile not found</h1>
       <p>We could not find that profile. Please check the link and try again.</p>
-      <a class="button button-accent" href="/products.html">Browse Products</a>
+      <a class="button button-accent" href="${ROUTES.products}">Browse Products</a>
     </article>
   `
 }
 
-function renderPublicProfile(profile, currentUser) {
+function renderPublicProfile(profile, currentUser, previewMode = false) {
   const uid = profile.uid || ''
   const displayName = profile.displayName || 'Melogic Creator'
   const username = profile.username || profile.usernameLower || 'unknown'
@@ -69,17 +65,31 @@ function renderPublicProfile(profile, currentUser) {
   const roleLabel = profile.roleLabel || 'Creator'
   const stats = getStats(profile)
 
-  const signedInElsewhere = currentUser && currentUser.uid !== uid
-  const actionsMarkup = signedInElsewhere
+  const isSignedIn = Boolean(currentUser?.uid)
+  const isSelfPreview = Boolean(previewMode && currentUser?.uid === uid)
+  const signedInElsewhere = isSignedIn && currentUser.uid !== uid
+  const actionsMarkup = isSelfPreview
     ? `
-      <a class="button button-accent" href="/inbox.html?start=${encodeURIComponent(uid)}">Message</a>
-      <button class="button button-muted" type="button" disabled aria-disabled="true" title="Follow is coming soon">Follow</button>
+      <a class="button button-muted" href="${ROUTES.profile}">Back to Private Profile</a>
+      <a class="button button-accent" href="${ROUTES.editProfile}">Edit Profile</a>
     `
-    : `
-      <a class="button button-accent" href="${getSignInRedirect(uid)}">Sign in to interact</a>
-    `
+    : signedInElsewhere
+      ? `
+        <a class="button button-accent" href="${ROUTES.inbox}?start=${encodeURIComponent(uid)}">Message</a>
+        <button class="button button-muted" type="button" disabled aria-disabled="true" title="Follow is coming soon">Follow</button>
+      `
+      : `
+        <a class="button button-accent" href="${authRoute({ redirect: getCurrentPath() })}">Sign in to interact</a>
+      `
 
   profileRoot.innerHTML = `
+    ${previewMode ? `
+      <section class="public-profile-card" style="margin-bottom:1rem; border:1px solid rgba(255,255,255,.14)">
+        <p>You are previewing your public profile.</p>
+        <a class="button button-muted" href="${ROUTES.profile}">Back to Private Profile</a>
+      </section>
+    ` : ''}
+
     <article class="public-profile-banner" style="${bannerURL ? `background-image:url('${escapeHtml(bannerURL)}')` : ''}"></article>
 
     <section class="public-profile-card public-profile-header">
@@ -113,36 +123,47 @@ function renderPublicProfile(profile, currentUser) {
   `
 }
 
-async function resolveUidFromQuery(params) {
+async function resolveUid(params) {
   const uid = String(params.get('uid') || '').trim()
   if (uid) return uid
-  const username = String(params.get('username') || '').trim()
-  if (!username) return ''
-  return (await getUidForUsername(username)) || ''
+
+  const queryUsername = String(params.get('username') || '').trim()
+  if (queryUsername) return (await getUidForUsername(queryUsername)) || ''
+
+  const pathname = String(window.location.pathname || '')
+  if (pathname.startsWith('/u/')) {
+    const encodedUsername = pathname.slice(3).split('/')[0]
+    const decodedUsername = decodeURIComponent(encodedUsername || '').trim()
+    if (decodedUsername) return (await getUidForUsername(decodedUsername)) || ''
+  }
+
+  return ''
 }
 
 async function initPublicProfile() {
   const currentUser = await waitForInitialAuthState()
   const params = new URLSearchParams(window.location.search)
-  const uid = await resolveUidFromQuery(params)
+  const uid = await resolveUid(params)
+  const previewMode = params.get('preview') === 'public'
 
-  if (!uid) {
-    renderNotFound()
-    return
-  }
+  if (!uid) return renderNotFound()
 
-  if (currentUser?.uid === uid) {
-    window.location.assign('/profile.html')
+  if (currentUser?.uid === uid && !previewMode) {
+    window.location.assign(ROUTES.profile)
     return
   }
 
   const profile = await getPublicProfile(uid)
-  if (!profile) {
-    renderNotFound()
-    return
-  }
+  if (!profile) return renderNotFound()
 
-  renderPublicProfile(profile, currentUser)
+  renderPublicProfile(profile, currentUser, currentUser?.uid === uid && previewMode)
+}
+
+if (window.location.pathname === '/profile-public.html') {
+  const upgradedPath = cleanRedirectTarget(`${window.location.pathname}${window.location.search}${window.location.hash}`, ROUTES.profilePublic)
+  if (upgradedPath.startsWith(ROUTES.profilePublic)) {
+    window.history.replaceState({}, '', upgradedPath)
+  }
 }
 
 initPublicProfile().catch(() => {

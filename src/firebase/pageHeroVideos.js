@@ -54,7 +54,7 @@ const ENABLED_PAGE_HERO_VIDEOS = new Set([
   'faq',
   'support',
   'cart',
-  'product-detail'
+  // 'product-detail' intentionally disabled until assets are uploaded
 ])
 
 export function getPageHeroVideoPaths(pageKey) {
