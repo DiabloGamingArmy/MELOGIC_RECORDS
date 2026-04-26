@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check": "node scripts/check-config.mjs && npm run build",
     "build": "vite build",
     "preview": "vite preview"
   },

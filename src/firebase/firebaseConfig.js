@@ -1,4 +1,5 @@
 import { initializeApp, getApps } from 'firebase/app'
+import { initAppCheck } from './appCheck.js'
 
 const PROJECT_ID = 'melogic-records'
 const APP_NAME = 'melogic-records-web'
@@ -26,4 +27,5 @@ const firebaseConfig = {
 
 const existingApp = getApps().find((instance) => instance.name === APP_NAME)
 export const app = existingApp || initializeApp(firebaseConfig, APP_NAME)
+initAppCheck(app)
 export { firebaseConfig }

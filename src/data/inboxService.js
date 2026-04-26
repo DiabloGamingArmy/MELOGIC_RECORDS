@@ -109,11 +109,11 @@ export async function listInboxThreads(uid) {
   return Promise.all(threads.map((thread) => decorateThread(thread, uid)))
 }
 
-export function subscribeToInboxThreads(uid, callback) {
+export function subscribeToInboxThreads(uid, callback, onError) {
   return subscribeToThreadsForUser(uid, async (threads) => {
     const decorated = await Promise.all(threads.map((thread) => decorateThread(thread, uid)))
     callback(decorated)
-  })
+  }, onError)
 }
 
 export {
