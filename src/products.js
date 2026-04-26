@@ -297,7 +297,8 @@ function bindProductActions(visibleProducts = []) {
     const openDashboard = () => {
       const productId = card.getAttribute('data-product-id')
       if (!productId) return
-      window.location.href = productRoute(productId)
+      const product = state.products.find((entry) => entry.id === productId)
+      window.location.href = productRoute(product || productId)
     }
 
     card.addEventListener('click', (event) => {
