@@ -5,6 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listRecommendedProducts } from './data/productService'
 import { waitForInitialAuthState } from './firebase/auth'
+import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
 
@@ -90,7 +91,7 @@ function renderState(title, body) {
         <div class="section-inner product-dashboard-empty">
           <h1>${escapeHtml(title)}</h1>
           <p>${escapeHtml(body)}</p>
-          <a class="button button-muted" href="/products.html">Back to Products</a>
+          <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
         </div>
       </section>
     </main>
@@ -117,7 +118,7 @@ function recommendationCardMarkup(product) {
   const art = product.thumbnailURL || product.coverURL
   const badge = product.genres?.[0] || product.productType || 'Product'
   return `
-    <a class="dashboard-recommend-card" href="/product-dashboard.html?id=${encodeURIComponent(product.id)}" aria-label="Open ${escapeHtml(product.title)}">
+    <a class="dashboard-recommend-card" href="${productRoute(product)}" aria-label="Open ${escapeHtml(product.title)}">
       <div class="dashboard-recommend-thumb">
         ${art
           ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`
@@ -148,7 +149,7 @@ function renderProduct(product, recommendations = []) {
 
   const listingThumbnailURL = product.thumbnailURL || product.coverURL || ''
   const typeLabel = product.productType || 'Product'
-  const creatorHref = product.artistUsername ? `/profile.html?u=${encodeURIComponent(product.artistUsername)}` : '/profile.html'
+  const creatorHref = product.artistUid ? publicProfileRoute({ uid: product.artistUid }) : ROUTES.profile
   const likeCount = product.likeCount ?? product.counts?.likes ?? 0
   const dislikeCount = product.counts?.dislikes ?? 0
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
@@ -178,7 +179,7 @@ function renderProduct(product, recommendations = []) {
                 <p>Status: ${escapeHtml(product.status || 'draft')} · Visibility: ${escapeHtml(product.visibility || 'private')}</p>
                 <p>Created: ${escapeHtml(formatReleaseDate(product.createdAt))} · Updated: ${escapeHtml(formatReleaseDate(product.updatedAt || product.createdAt))}</p>
                 <p>Moderation: ${escapeHtml(product.moderationStatus || 'pending')}</p>
-                <a class="button button-muted" href="/new-product.html?id=${encodeURIComponent(product.id)}">Edit listing</a>
+                <a class="button button-muted" href="${ROUTES.newProduct}?id=${encodeURIComponent(product.id)}">Edit listing</a>
               </article>
             ` : ''}
             <div class="dashboard-main-media" data-dashboard-main-media></div>
@@ -245,7 +246,7 @@ function renderProduct(product, recommendations = []) {
 
           <aside class="dashboard-lower-sidebar">
             <article class="panel-surface dashboard-overview">
-              <p class="dashboard-breadcrumbs"><a href="/products.html">Products</a> <span>&gt;</span> <span>${escapeHtml((product.categories || [])[0] || 'Catalog')}</span> <span>&gt;</span> <span>${escapeHtml(typeLabel)}</span></p>
+              <p class="dashboard-breadcrumbs"><a href="${ROUTES.products}">Products</a> <span>&gt;</span> <span>${escapeHtml((product.categories || [])[0] || 'Catalog')}</span> <span>&gt;</span> <span>${escapeHtml(typeLabel)}</span></p>
               ${listingThumbnailURL ? `<img class="dashboard-cover-banner" src="${escapeHtml(listingThumbnailURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />` : ''}
               <h2>${escapeHtml(product.title)}</h2>
               <p class="dashboard-short-description">${escapeHtml(product.shortDescription || product.description || 'No description has been shared yet.')}</p>
@@ -380,4 +381,3 @@ async function init() {
 }
 
 init()
-  const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)

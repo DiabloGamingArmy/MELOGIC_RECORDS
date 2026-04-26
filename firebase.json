@@ -55,6 +55,146 @@
           }
         ]
       }
+    ],
+    "redirects": [
+      {
+        "source": "/index.html",
+        "destination": "/home",
+        "type": 301
+      },
+      {
+        "source": "/products.html",
+        "destination": "/products",
+        "type": 301
+      },
+      {
+        "source": "/cart.html",
+        "destination": "/cart",
+        "type": 301
+      },
+      {
+        "source": "/auth.html",
+        "destination": "/auth",
+        "type": 301
+      },
+      {
+        "source": "/profile.html",
+        "destination": "/profile",
+        "type": 301
+      },
+      {
+        "source": "/edit-profile.html",
+        "destination": "/profile/edit",
+        "type": 301
+      },
+      {
+        "source": "/inbox.html",
+        "destination": "/inbox",
+        "type": 301
+      },
+      {
+        "source": "/community.html",
+        "destination": "/community",
+        "type": 301
+      },
+      {
+        "source": "/live.html",
+        "destination": "/live",
+        "type": 301
+      },
+      {
+        "source": "/forms.html",
+        "destination": "/forms",
+        "type": 301
+      },
+      {
+        "source": "/faq.html",
+        "destination": "/faq",
+        "type": 301
+      },
+      {
+        "source": "/support.html",
+        "destination": "/support",
+        "type": 301
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/home",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/products",
+        "destination": "/products.html"
+      },
+      {
+        "source": "/products/new",
+        "destination": "/new-product.html"
+      },
+      {
+        "source": "/products/dashboard",
+        "destination": "/product-dashboard.html"
+      },
+      {
+        "source": "/products/**",
+        "destination": "/product.html"
+      },
+      {
+        "source": "/product",
+        "destination": "/product.html"
+      },
+      {
+        "source": "/cart",
+        "destination": "/cart.html"
+      },
+      {
+        "source": "/auth",
+        "destination": "/auth.html"
+      },
+      {
+        "source": "/profile",
+        "destination": "/profile.html"
+      },
+      {
+        "source": "/profile/edit",
+        "destination": "/edit-profile.html"
+      },
+      {
+        "source": "/profile/public",
+        "destination": "/profile-public.html"
+      },
+      {
+        "source": "/u/**",
+        "destination": "/profile-public.html"
+      },
+      {
+        "source": "/inbox",
+        "destination": "/inbox.html"
+      },
+      {
+        "source": "/community",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/live",
+        "destination": "/live.html"
+      },
+      {
+        "source": "/forms",
+        "destination": "/forms.html"
+      },
+      {
+        "source": "/faq",
+        "destination": "/faq.html"
+      },
+      {
+        "source": "/support",
+        "destination": "/support.html"
+      }
     ]
   },
   "storage": {
