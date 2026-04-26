@@ -4,6 +4,7 @@ import { httpsCallable } from 'firebase/functions'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { functions } from './firebase/functions'
 import {
@@ -22,6 +23,7 @@ import { executeRecaptchaAction, getRecaptchaSiteKey, isRecaptchaAuthEnabled } f
 const app = document.querySelector('#app')
 
 app.innerHTML = `
+  ${renderPagePreloaderMarkup()}
   ${navShell({ currentPage: 'auth' })}
 
   <main>
@@ -125,16 +127,18 @@ app.innerHTML = `
   </main>
 `
 
-initShellChrome()
+const logoReadyPromise = initShellChrome()
 
 const heroPaths = getPageHeroVideoPaths('auth')
+let heroReadyPromise = Promise.resolve(false)
 if (heroPaths) {
-  attachHeroVideo(document.querySelector('#auth-hero-video'), {
+  heroReadyPromise = attachHeroVideo(document.querySelector('#auth-hero-video'), {
     webmPath: heroPaths.webm,
     mp4Path: heroPaths.mp4,
     warningKey: 'auth'
   })
 }
+createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
 
 const tabButtons = document.querySelectorAll('.auth-tab')
 const panels = document.querySelectorAll('.auth-form')
@@ -203,7 +207,22 @@ function waitForAuthenticatedUser(timeoutMs = 3000) {
 async function redirectToProfile() {
   await waitForInitialAuthState()
   await waitForAuthenticatedUser()
-  window.location.assign('/profile.html')
+  window.location.assign(getSafeRedirectTarget())
+}
+
+function getSafeRedirectTarget() {
+  const defaultTarget = '/profile.html'
+  const redirectValue = new URLSearchParams(window.location.search).get('redirect')
+  if (!redirectValue || typeof redirectValue !== 'string') return defaultTarget
+  const trimmed = redirectValue.trim()
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return defaultTarget
+  try {
+    const parsed = new URL(trimmed, window.location.origin)
+    if (parsed.origin !== window.location.origin) return defaultTarget
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    return defaultTarget
+  }
 }
 
 function setAuthTab(activeTab) {
