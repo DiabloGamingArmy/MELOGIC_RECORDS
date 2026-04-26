@@ -2,9 +2,11 @@ import './styles/base.css'
 import './styles/cart.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
+import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getCartItems, removeFromCart, subscribeToCart } from './data/cartService'
 
 const app = document.querySelector('#app')
+let activeUser = null
 
 function escapeHtml(value) {
   return String(value || '')
@@ -72,7 +74,7 @@ function renderCart(items = []) {
       <span>Subtotal</span>
       <strong>${formatCurrencyFromCents(subtotal)}</strong>
     </div>
-    <button class="button button-accent" type="button" disabled aria-disabled="true">Checkout (Coming soon)</button>
+    <button class="button button-accent" type="button" data-checkout-trigger>${activeUser ? 'Checkout' : 'Sign in to Checkout'}</button>
     <a class="button button-muted" href="/products.html">Continue Shopping</a>
   `
 
@@ -80,6 +82,15 @@ function renderCart(items = []) {
     button.addEventListener('click', () => {
       removeFromCart(button.getAttribute('data-remove-cart-item'))
     })
+  })
+
+  const checkoutButton = summary.querySelector('[data-checkout-trigger]')
+  checkoutButton?.addEventListener('click', () => {
+    if (!activeUser) {
+      window.location.assign('/auth.html?redirect=/cart.html')
+      return
+    }
+    window.alert('Checkout is coming soon.')
   })
 }
 
@@ -104,7 +115,16 @@ app.innerHTML = `
 `
 
 initShellChrome()
-renderCart(getCartItems())
+waitForInitialAuthState().then((user) => {
+  activeUser = user || null
+  renderCart(getCartItems())
+})
+
+subscribeToAuthState((user) => {
+  activeUser = user || null
+  renderCart(getCartItems())
+})
+
 subscribeToCart((items) => {
   renderCart(items)
 })
