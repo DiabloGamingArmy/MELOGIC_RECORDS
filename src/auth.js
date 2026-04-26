@@ -261,6 +261,18 @@ function friendlyAuthError(errorCode) {
   return map[errorCode] || 'We could not complete that auth request. Please try again.'
 }
 
+function friendlySubmitError(error) {
+  const message = String(error?.message || '')
+  if (
+    message.includes('Security verification') ||
+    message.includes('reCAPTCHA') ||
+    message.includes('verification could not load')
+  ) {
+    return message
+  }
+  return friendlyAuthError(error?.code)
+}
+
 function friendlyProvisioningError(error) {
   if (error?.code === 'profile/username-taken') return 'That username is already taken. Please choose another one.'
   if (error?.code === 'profile/invalid-username') return error?.message || 'Username is invalid.'
@@ -298,12 +310,28 @@ async function verifyAuthHuman(action) {
     throw new Error('Security verification is not configured.')
   }
 
-  const token = await executeRecaptchaAction(action).catch(() => {
+  if (import.meta.env.DEV) {
+    console.debug(`[auth] executeRecaptchaAction start: ${action}`)
+  }
+
+  const token = await executeRecaptchaAction(action).catch((error) => {
+    console.warn('[auth] executeRecaptchaAction failed.', {
+      code: error?.code,
+      message: error?.message
+    })
     throw new Error('Security verification could not load. Please refresh and try again.')
   })
 
+  if (import.meta.env.DEV) {
+    console.debug(`[auth] verifyRecaptchaEnterprise start: ${action}`)
+  }
+
   const verifyCallable = httpsCallable(functions, 'verifyRecaptchaEnterprise')
-  const verification = await verifyCallable({ token, action }).catch(() => {
+  const verification = await verifyCallable({ token, action }).catch((error) => {
+    console.warn('[auth] verifyRecaptchaEnterprise failed.', {
+      code: error?.code,
+      message: error?.message
+    })
     throw new Error('Security verification failed. Please try again.')
   })
   if (!verification?.data?.ok) {
@@ -330,7 +358,7 @@ async function handleSignInSubmit(event) {
     setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
-    setFeedback(friendlyAuthError(error?.code), 'error')
+    setFeedback(friendlySubmitError(error), 'error')
   } finally {
     setLoadingState(false)
   }
@@ -380,7 +408,7 @@ async function handleSignUpSubmit(event) {
       warnProfileWriteFailure(error, 'provision')
       setFeedback(friendlyProvisioningError(error), 'error')
     } else {
-      setFeedback(friendlyAuthError(error?.code), 'error')
+      setFeedback(friendlySubmitError(error), 'error')
     }
   } finally {
     setLoadingState(false)
@@ -416,7 +444,7 @@ async function handleGoogleSignIn() {
       warnProfileWriteFailure(error, 'google-provision')
       setFeedback(friendlyProvisioningError(error), 'error')
     } else {
-      setFeedback(friendlyAuthError(error?.code), 'error')
+      setFeedback(friendlySubmitError(error), 'error')
     }
   } finally {
     setLoadingState(false)
