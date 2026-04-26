@@ -12,6 +12,7 @@
   border-radius: 20px;
   padding: 20px;
   background: rgba(11, 14, 25, 0.8);
+  backdrop-filter: blur(10px);
 }
 
 .public-profile-header {
@@ -41,6 +42,13 @@
   font-weight: 700;
 }
 
+.public-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
 .public-handle,
 .public-role,
 .public-bio { margin: 4px 0; }
@@ -65,10 +73,52 @@
   flex-wrap: wrap;
 }
 
+.public-tabs button {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.86);
+  padding: 0.5rem 0.95rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
 .public-tabs button.is-active {
-  border-bottom: 2px solid var(--accent, #62d2d6);
+  border-color: rgba(98, 210, 214, 0.72);
+  background: linear-gradient(135deg, rgba(98, 210, 214, 0.28), rgba(112, 94, 255, 0.32));
+  color: #f6fdff;
+  box-shadow: 0 8px 24px rgba(76, 145, 240, 0.18);
+}
+
+.public-tabs button[disabled] {
+  opacity: 0.52;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+
+.public-tab-panel {
+  margin-top: 0.9rem;
 }
 
 .public-profile-empty {
   text-align: center;
+}
+
+@media (max-width: 640px) {
+  .public-profile-identity {
+    flex-direction: column;
+  }
+
+  .public-avatar,
+  .public-avatar-fallback {
+    width: 72px;
+    height: 72px;
+  }
+
+  .public-tabs button {
+    flex: 1 1 calc(50% - 10px);
+    text-align: center;
+  }
 }

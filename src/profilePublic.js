@@ -65,15 +65,22 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   const roleLabel = profile.roleLabel || 'Creator'
   const stats = getStats(profile)
 
-  const signedInElsewhere = currentUser && currentUser.uid !== uid
-  const actionsMarkup = signedInElsewhere
+  const isSignedIn = Boolean(currentUser?.uid)
+  const isSelfPreview = Boolean(previewMode && currentUser?.uid === uid)
+  const signedInElsewhere = isSignedIn && currentUser.uid !== uid
+  const actionsMarkup = isSelfPreview
     ? `
-      <a class="button button-accent" href="${ROUTES.inbox}?start=${encodeURIComponent(uid)}">Message</a>
-      <button class="button button-muted" type="button" disabled aria-disabled="true" title="Follow is coming soon">Follow</button>
+      <a class="button button-muted" href="${ROUTES.profile}">Back to Private Profile</a>
+      <a class="button button-accent" href="${ROUTES.editProfile}">Edit Profile</a>
     `
-    : `
-      <a class="button button-accent" href="${authRoute({ redirect: getCurrentPath() })}">Sign in to interact</a>
-    `
+    : signedInElsewhere
+      ? `
+        <a class="button button-accent" href="${ROUTES.inbox}?start=${encodeURIComponent(uid)}">Message</a>
+        <button class="button button-muted" type="button" disabled aria-disabled="true" title="Follow is coming soon">Follow</button>
+      `
+      : `
+        <a class="button button-accent" href="${authRoute({ redirect: getCurrentPath() })}">Sign in to interact</a>
+      `
 
   profileRoot.innerHTML = `
     ${previewMode ? `

@@ -118,7 +118,7 @@ function recommendationCardMarkup(product) {
   const art = product.thumbnailURL || product.coverURL
   const badge = product.genres?.[0] || product.productType || 'Product'
   return `
-    <a class="dashboard-recommend-card" href="${productRoute(product.id)}" aria-label="Open ${escapeHtml(product.title)}">
+    <a class="dashboard-recommend-card" href="${productRoute(product)}" aria-label="Open ${escapeHtml(product.title)}">
       <div class="dashboard-recommend-thumb">
         ${art
           ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`

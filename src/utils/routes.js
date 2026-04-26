@@ -78,8 +78,25 @@ export function usernameProfileRoute(username = '') {
   return `/u/${encodeURIComponent(String(username || '').trim())}`
 }
 
-export function productRoute(productId = '') {
-  return `/products/${encodeURIComponent(String(productId || '').trim())}`
+function slugifyRouteSegment(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+}
+
+export function productRoute(productOrId = '') {
+  if (productOrId && typeof productOrId === 'object') {
+    const id = String(productOrId.id || '').trim()
+    if (!id) return '/products/'
+    const slug = slugifyRouteSegment(productOrId.slug || productOrId.title || '')
+    if (!slug) return `/products/${encodeURIComponent(id)}`
+    return `/products/${encodeURIComponent(`${slug}--${id}`)}`
+  }
+
+  return `/products/${encodeURIComponent(String(productOrId || '').trim())}`
 }
 
 export function getCurrentPath() {

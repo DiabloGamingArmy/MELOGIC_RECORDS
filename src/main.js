@@ -345,7 +345,8 @@ async function initHomeReleaseProducts() {
       const card = event.target.closest('[data-release-card]')
       const productId = card?.getAttribute('data-product-id')
       if (productId) {
-        window.location.href = productRoute(productId)
+        const product = products.find((item) => item.id === productId)
+        window.location.href = productRoute(product || productId)
       }
     })
   } catch (error) {
