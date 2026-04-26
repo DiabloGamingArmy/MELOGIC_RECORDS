@@ -4,6 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, signOutUser, waitForInitialAuthState } from './firebase/auth'
 import { getUserProfile } from './firebase/firestore'
+import { ROUTES, publicProfileRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
 
@@ -57,7 +58,7 @@ function renderSignedOutState() {
     <article class="profile-card profile-empty">
       <h2>Sign in required</h2>
       <p>You need an account to view profile details, purchases, and creator activity.</p>
-      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+      <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
     </article>
   `
 }
@@ -97,7 +98,8 @@ function renderSignedInState(user, storedProfile = null) {
         </div>
 
         <div class="profile-actions">
-          <a class="button button-muted" href="/edit-profile.html">Edit Profile</a>
+          <a class="button button-muted" href="${ROUTES.editProfile}">Edit Profile</a>
+          <a class="button button-muted" href="${publicProfileRoute({ uid: user.uid, preview: true })}">View Public Profile</a>
           <button type="button" class="button button-accent" data-signout-profile>Sign Out</button>
         </div>
       </article>
@@ -178,7 +180,7 @@ function renderSignedInState(user, storedProfile = null) {
     signOutButton.textContent = 'Signing Out...'
     try {
       await signOutUser()
-      window.location.assign('/index.html')
+      window.location.assign(ROUTES.home)
     } catch {
       signOutButton.disabled = false
       signOutButton.textContent = 'Sign Out'
