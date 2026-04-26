@@ -2,6 +2,7 @@ import './styles/base.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { addToCart } from './data/cartService'
 import { listHomepageReleaseProducts } from './data/productService'
@@ -45,12 +46,7 @@ function buildReleaseCard(product) {
 }
 
 app.innerHTML = `
-  <div class="page-preloader" id="page-preloader" role="status" aria-live="polite" aria-label="Loading page">
-    <div class="preloader-core">
-      <span class="preloader-ring" aria-hidden="true"></span>
-      <p>Loading</p>
-    </div>
-  </div>
+  ${renderPagePreloaderMarkup()}
 
   ${navShell({ currentPage: 'home' })}
 
@@ -71,7 +67,7 @@ app.innerHTML = `
 
       <div class="section-inner hero-inner">
         <div class="hero-copy">
-          <h1>From Sample Pack to Soundtrack...</h1>
+          <h1>From Marketplace to Masterpiece...</h1>
           <p>
             Melogic Records builds tools, sample libraries, and artist infrastructure for producers
             pushing electronic music, melodic bass, and metalcore into the same future.
@@ -357,27 +353,6 @@ async function initHomeReleaseProducts() {
   }
 }
 
-function initPagePreloader(logoReadyPromise, heroReadyPromise) {
-  const preloader = document.querySelector('#page-preloader')
-  if (!preloader) return
-
-  const fallbackMs = 3800
-  const fadeDurationMs = 500
-  let hidden = false
-
-  const hidePreloader = () => {
-    if (hidden) return
-    hidden = true
-    preloader.classList.add('is-hidden')
-    window.setTimeout(() => {
-      preloader.remove()
-    }, fadeDurationMs + 40)
-  }
-
-  Promise.allSettled([logoReadyPromise, heroReadyPromise]).then(hidePreloader)
-  window.setTimeout(hidePreloader, fallbackMs)
-}
-
 function initLowerBackground() {
   const canvas = document.querySelector('#lower-network-canvas')
   const hero = document.querySelector('.hero')
@@ -475,7 +450,7 @@ function initLowerBackground() {
 
 const logoReadyPromise = initShellChrome()
 const heroReadyPromise = initHeroBackgroundVideo()
-initPagePreloader(logoReadyPromise, heroReadyPromise)
+createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
 initCarousel()
 initHomeReleaseProducts()
 initLowerBackground()
