@@ -4,12 +4,14 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listRecommendedProducts } from './data/productService'
+import { waitForInitialAuthState } from './firebase/auth'
 
 const app = document.querySelector('#app')
 
 const state = {
   mediaItems: [],
-  selectedMediaIndex: 0
+  selectedMediaIndex: 0,
+  currentUser: null
 }
 
 function escapeHtml(value) {
@@ -152,6 +154,7 @@ function renderProduct(product, recommendations = []) {
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
   const artistHandle = product.artistUsername ? `@${product.artistUsername}` : '@creator'
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
+  const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
 
   const thumbMarkup = mediaItems.map((item, index) => `
     <button type="button" class="dashboard-thumb" data-media-index="${index}" aria-label="Show media ${index + 1}" aria-pressed="${index === 0 ? 'true' : 'false'}">
@@ -168,6 +171,16 @@ function renderProduct(product, recommendations = []) {
       <section class="section product-dashboard-shell">
         <div class="section-inner product-dashboard-layout">
           <section class="dashboard-media-area panel-surface" aria-label="Product media gallery">
+            ${isOwner ? `
+              <article class="dashboard-owner-header-card">
+                <p class="eyebrow">Your listing</p>
+                <h3>Manage this product</h3>
+                <p>Status: ${escapeHtml(product.status || 'draft')} · Visibility: ${escapeHtml(product.visibility || 'private')}</p>
+                <p>Created: ${escapeHtml(formatReleaseDate(product.createdAt))} · Updated: ${escapeHtml(formatReleaseDate(product.updatedAt || product.createdAt))}</p>
+                <p>Moderation: ${escapeHtml(product.moderationStatus || 'pending')}</p>
+                <a class="button button-muted" href="/new-product.html?id=${encodeURIComponent(product.id)}">Edit listing</a>
+              </article>
+            ` : ''}
             <div class="dashboard-main-media" data-dashboard-main-media></div>
             ${thumbMarkup ? `
               <div class="dashboard-thumb-toolbar">
@@ -340,6 +353,7 @@ function renderProduct(product, recommendations = []) {
 async function init() {
   renderSkeleton()
   initShellChrome()
+  state.currentUser = await waitForInitialAuthState()
 
   const id = getProductIdFromQuery()
   if (!id) {
@@ -366,3 +380,4 @@ async function init() {
 }
 
 init()
+  const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)

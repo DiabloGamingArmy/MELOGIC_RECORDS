@@ -82,6 +82,14 @@ Notes:
 - Add signed URL broker for paid/private downloads.
 - Add moderation + malware/file scanning pipeline for uploads.
 
+## Moderation setup (manual cloud configuration)
+- Enable Firebase / Google Cloud Functions in the project.
+- Enable Vertex AI API (or configure Firebase AI Logic / Genkit if used).
+- Grant the Functions runtime service account permission to call the selected AI service.
+- Store moderation model config in Functions environment/secrets (never in frontend env).
+- Start in monitoring mode before enabling `AUTO_APPROVE_PRODUCTS=true`.
+- AI moderation output should stay server-side and return only safe status/reason fields to clients.
+
 ## Security notes
 - Firebase client config values are not secrets by themselves.
 - Firestore/Storage Rules + App Check + server-side validation are the security boundary.
