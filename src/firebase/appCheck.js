@@ -32,6 +32,11 @@ function getAppCheckEnablement(siteKey) {
 export function initAppCheck(app) {
   if (!app || appCheckInstance) return appCheckInstance
 
+  if (isAuthPagePath()) {
+    console.warn('[firebase/appCheck] App Check skipped on auth page to avoid reCAPTCHA Enterprise collision.')
+    return null
+  }
+
   const appCheckSiteKey = String(import.meta.env.VITE_APPCHECK_RECAPTCHA_ENTERPRISE_SITE_KEY || '').trim()
   const authSiteKey = String(import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY || '').trim()
   let siteKey = appCheckSiteKey
@@ -43,11 +48,6 @@ export function initAppCheck(app) {
 
   if (import.meta.env.PROD && !appCheckSiteKey) {
     console.warn('[firebase/appCheck] Missing VITE_APPCHECK_RECAPTCHA_ENTERPRISE_SITE_KEY in production; App Check may use a fallback key or fail to initialize.')
-  }
-
-  if (isAuthPagePath()) {
-    console.warn('[firebase/appCheck] App Check skipped on auth page to avoid reCAPTCHA Enterprise collision.')
-    return null
   }
 
   const { enabled, reason } = getAppCheckEnablement(siteKey)
