@@ -252,6 +252,13 @@ function friendlyAuthError(errorCode) {
     'auth/user-not-found': 'No account exists with that email yet.',
     'auth/wrong-password': 'Incorrect password. Please try again.',
     'auth/invalid-credential': 'Email or password is incorrect.',
+    'auth/invalid-login-credentials': 'Email or password is incorrect.',
+    'auth/api-key-not-valid': "Firebase Auth is rejecting this app's API key. Check Google Cloud API key restrictions.",
+    'auth/app-not-authorized': "This app is not authorized to use Firebase Auth for this project.",
+    'auth/operation-not-allowed': 'Email/password sign-in is not enabled for this Firebase project.',
+    'auth/too-many-requests': 'Too many attempts were made. Please wait a moment and try again.',
+    'auth/network-request-failed': 'Network request failed. Check your connection and try again.',
+    'auth/user-disabled': 'This account has been disabled. Contact support if you believe this is a mistake.',
     'auth/email-already-in-use': 'That email is already in use.',
     'auth/weak-password': 'Password should be at least 6 characters.',
     'auth/popup-closed-by-user': 'Google sign-in was cancelled before completion.',
@@ -259,6 +266,23 @@ function friendlyAuthError(errorCode) {
   }
 
   return map[errorCode] || 'We could not complete that auth request. Please try again.'
+}
+
+function logFirebaseAuthError(context, error) {
+  const customData = error?.customData && typeof error.customData === 'object'
+    ? {
+        appName: error.customData.appName,
+        _tokenResponse: error.customData._tokenResponse ? '[redacted]' : undefined,
+        operationType: error.customData.operationType,
+        email: error.customData.email
+      }
+    : undefined
+
+  console.warn(`[auth] ${context} failed.`, {
+    code: error?.code,
+    message: error?.message,
+    customData
+  })
 }
 
 function friendlySubmitError(error) {
@@ -358,6 +382,7 @@ async function handleSignInSubmit(event) {
     setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
+    logFirebaseAuthError('signInWithEmail', error)
     setFeedback(friendlySubmitError(error), 'error')
   } finally {
     setLoadingState(false)
