@@ -1,4 +1,5 @@
 import { navShell } from './navShell'
+import { renderPagePreloaderMarkup } from './pagePreloader'
 
 export function mountStandardPage({
   currentPage,
@@ -13,6 +14,7 @@ export function mountStandardPage({
   if (!app) return
 
   app.innerHTML = `
+    ${renderPagePreloaderMarkup()}
     ${navShell({ currentPage })}
 
     <main>

@@ -3,6 +3,7 @@ import './styles/products.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { addToCart } from './data/cartService'
 import { listPublicProductsPage } from './data/productService'
@@ -74,7 +75,9 @@ function normalizeSearchTokens(value) {
 }
 
 function productCardMarkup(product) {
-  const artistHref = product.artistUsername ? `/profile.html?u=${encodeURIComponent(product.artistUsername)}` : '/profile.html'
+  const artistHref = product.artistUid
+    ? `/profile-public.html?uid=${encodeURIComponent(product.artistUid)}`
+    : (product.artistUsername ? `/profile-public.html?username=${encodeURIComponent(product.artistUsername)}` : '/profile-public.html')
   const tags = product.genres?.length
     ? product.genres.map((genre) => `#${escapeHtml(String(genre).replace(/\s+/g, ''))}`).join(' · ')
     : (product.tags || []).slice(0, 3).map((tag) => `#${escapeHtml(tag)}`).join(' · ')
@@ -405,6 +408,7 @@ function setupInfiniteScroll() {
 }
 
 app.innerHTML = `
+  ${renderPagePreloaderMarkup()}
   ${navShell({ currentPage: 'products' })}
 
   <main>
@@ -503,8 +507,9 @@ function initProductsHeroVideo() {
   })
 }
 
-initShellChrome()
-initProductsHeroVideo()
+const logoReadyPromise = initShellChrome()
+const heroReadyPromise = initProductsHeroVideo()
+createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
 bindCatalogControls()
 setupInfiniteScroll()
 loadNextPage({ reset: true })

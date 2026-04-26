@@ -1,0 +1,74 @@
+.public-profile-banner {
+  min-height: 180px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(98, 210, 214, 0.35), rgba(111, 92, 255, 0.35));
+  background-size: cover;
+  background-position: center;
+}
+
+.public-profile-card {
+  margin-top: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  padding: 20px;
+  background: rgba(11, 14, 25, 0.8);
+}
+
+.public-profile-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.public-profile-identity {
+  display: flex;
+  gap: 14px;
+}
+
+.public-avatar {
+  width: 86px;
+  height: 86px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.public-avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: rgba(98, 210, 214, 0.2);
+  font-weight: 700;
+}
+
+.public-handle,
+.public-role,
+.public-bio { margin: 4px 0; }
+
+.public-stats {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.public-stats article {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 12px;
+  text-align: center;
+}
+
+.public-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.public-tabs button.is-active {
+  border-bottom: 2px solid var(--accent, #62d2d6);
+}
+
+.public-profile-empty {
+  text-align: center;
+}
