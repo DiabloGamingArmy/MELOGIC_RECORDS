@@ -1,0 +1,1740 @@
+{
+  "status": "success",
+  "result": {
+    "channels": [
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/live",
+        "url": "https://melogic-records.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/live/releases/1777157754381000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/adaa600ceaa5c33c",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-25T22:55:51.578409Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-25T22:55:54.267802Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "47",
+            "versionBytes": "201276"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-25T22:55:54.381Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-22T20:36:32.880406450Z",
+        "updateTime": "2026-04-25T22:55:54.381Z",
+        "retainedReleaseCount": 2147483647
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr55-codex-fix-syntax-err",
+        "url": "https://melogic-records--pr55-codex-fix-syntax-err-sgy6kzj7.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr55-codex-fix-syntax-err/releases/1777152205459000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/33c12ef7fbc5e724",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-25T21:23:22.618555Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-25T21:23:25.261898Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "47",
+            "versionBytes": "201519"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-25T21:23:25.459Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-25T21:23:22.186726511Z",
+        "updateTime": "2026-04-25T21:23:25.459Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-02T21:23:22.186726511Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr54-codex-fix-syntax-err",
+        "url": "https://melogic-records--pr54-codex-fix-syntax-err-k7mtqoe7.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr54-codex-fix-syntax-err/releases/1777150115412000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/dfe8c501c7fecb03",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-25T20:48:32.703483Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-25T20:48:35.394096Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "47",
+            "versionBytes": "198447"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-25T20:48:35.412Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-25T20:48:32.377293955Z",
+        "updateTime": "2026-04-25T20:48:35.412Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-02T20:48:32.377293955Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr51-codex-polish-inbox-l",
+        "url": "https://melogic-records--pr51-codex-polish-inbox-l-bcecdzjz.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr51-codex-polish-inbox-l/releases/1777148130190000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/17a3b7d9dcf57a28",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-25T20:15:27.356584Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-25T20:15:30.159319Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "43",
+            "versionBytes": "193015"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-25T20:15:30.190Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-25T20:15:26.984048470Z",
+        "updateTime": "2026-04-25T20:15:30.190Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-02T20:15:26.984048470Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr50-codex-polish-inbox-l",
+        "url": "https://melogic-records--pr50-codex-polish-inbox-l-noatxnzb.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr50-codex-polish-inbox-l/releases/1777146344342000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/fd7930b6e6fe5a2c",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-25T19:45:41.841979Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-25T19:45:44.355730Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "185429"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-25T19:45:44.342Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-25T19:45:41.561880847Z",
+        "updateTime": "2026-04-25T19:45:44.342Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-02T19:45:41.561880847Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr49-codex-investigate-gi",
+        "url": "https://melogic-records--pr49-codex-investigate-gi-nxx9zg11.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr49-codex-investigate-gi/releases/1777056821351000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/ddb403cb60ca45f9",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T18:53:38.364069Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T18:53:41.323310Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "182458"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T18:53:41.351Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T18:53:37.989003882Z",
+        "updateTime": "2026-04-24T18:53:41.351Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T18:53:37.989003882Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr48-codex-investigate-gi",
+        "url": "https://melogic-records--pr48-codex-investigate-gi-xrbtmlj1.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr48-codex-investigate-gi/releases/1777055780018000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/3fbeba20b6757466",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T18:36:17.405728Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T18:36:20.067031Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "180124"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T18:36:20.018Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T18:36:16.913777549Z",
+        "updateTime": "2026-04-24T18:36:20.018Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T18:36:16.913777549Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr46-codex-clean-up-inbox",
+        "url": "https://melogic-records--pr46-codex-clean-up-inbox-ax77p0rj.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr46-codex-clean-up-inbox/releases/1777051487839000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/45256b4cb548bad0",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T17:24:46.591120Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T17:24:48.024724Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "177280"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T17:24:47.839Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T17:24:46.153088329Z",
+        "updateTime": "2026-04-24T17:24:47.839Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T17:24:46.153088329Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr45-codex-clean-up-inbox",
+        "url": "https://melogic-records--pr45-codex-clean-up-inbox-fel5qh68.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr45-codex-clean-up-inbox/releases/1777049364636000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/b1c8b2fbd3df9bc9",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T16:49:22.613690Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T16:49:24.859661Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "177280"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T16:49:24.636Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T16:49:22.340123500Z",
+        "updateTime": "2026-04-24T16:49:24.636Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T16:49:22.340123500Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr44-codex-clean-up-inbox",
+        "url": "https://melogic-records--pr44-codex-clean-up-inbox-kgbzdakm.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr44-codex-clean-up-inbox/releases/1777048287101000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/3dd800e9a9aa04cd",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T16:31:25.255915Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T16:31:27.310520Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "171836"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T16:31:27.101Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T16:31:24.959836013Z",
+        "updateTime": "2026-04-24T16:31:27.101Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T16:31:24.959836013Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr43-codex-clean-up-inbox",
+        "url": "https://melogic-records--pr43-codex-clean-up-inbox-a0n3q3qu.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr43-codex-clean-up-inbox/releases/1777047494095000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/419b81b9294a07b7",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T16:18:11.343182Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T16:18:14.228033Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "171049"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T16:18:14.095Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T16:18:10.898325588Z",
+        "updateTime": "2026-04-24T16:18:14.095Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T16:18:10.898325588Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr42-codex-fix-username-s",
+        "url": "https://melogic-records--pr42-codex-fix-username-s-7r4qeo8y.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr42-codex-fix-username-s/releases/1777046483227000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/fb54bb08cdd4102f",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T16:01:21.093989Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T16:01:23.437793Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "42",
+            "versionBytes": "167988"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T16:01:23.227Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T16:01:20.793376169Z",
+        "updateTime": "2026-04-24T16:01:23.227Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T16:01:20.793376169Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr41-codex-fix-username-s",
+        "url": "https://melogic-records--pr41-codex-fix-username-s-3rf34z71.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr41-codex-fix-username-s/releases/1777046176284000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/25f66dd9016e3818",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T15:56:14.315416Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T15:56:16.483271Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "165078"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T15:56:16.284Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T15:56:14.017334913Z",
+        "updateTime": "2026-04-24T15:56:16.284Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T15:56:14.017334913Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr40-codex-fix-username-s",
+        "url": "https://melogic-records--pr40-codex-fix-username-s-ptbc3v8q.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr40-codex-fix-username-s/releases/1777045081196000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/8930d389f239c08e",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T15:37:58.832610Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T15:38:01.403048Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "165053"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T15:38:01.196Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T15:37:58.531273750Z",
+        "updateTime": "2026-04-24T15:38:01.196Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T15:37:58.531273750Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr39-codex-fix-username-s",
+        "url": "https://melogic-records--pr39-codex-fix-username-s-ps91g8ww.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr39-codex-fix-username-s/releases/1777043856888000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/7f960871b5832229",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T15:17:34.243224Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T15:17:37.049433Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "164036"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T15:17:36.888Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T15:17:33.841578776Z",
+        "updateTime": "2026-04-24T15:17:36.888Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T15:17:33.841578776Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr38-codex-fix-username-s",
+        "url": "https://melogic-records--pr38-codex-fix-username-s-q2rjocdk.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr38-codex-fix-username-s/releases/1777042970720000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/79b9e780f76f4891",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T15:02:48.259817Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T15:02:50.832594Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "162755"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T15:02:50.720Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T15:02:47.794448813Z",
+        "updateTime": "2026-04-24T15:02:50.720Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T15:02:47.794448813Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr37-codex-add-client-sid",
+        "url": "https://melogic-records--pr37-codex-add-client-sid-bsyzhs94.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr37-codex-add-client-sid/releases/1776990454573000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/02cb0770dc0a6140",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T00:27:31.734240Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T00:27:34.736810Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "162694"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T00:27:34.573Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T00:27:31.389238781Z",
+        "updateTime": "2026-04-24T00:27:34.573Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T00:27:31.389238781Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr36-codex-fix-new-produc",
+        "url": "https://melogic-records--pr36-codex-fix-new-produc-tag2q9z2.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr36-codex-fix-new-produc/releases/1776989891178000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/0ee7b377f4ca0cf9",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-24T00:18:08.960704Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-24T00:18:11.364243Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "162067"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-24T00:18:11.178Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-24T00:18:08.637304654Z",
+        "updateTime": "2026-04-24T00:18:11.178Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-05-01T00:18:08.637304654Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr35-codex-fix-new-produc",
+        "url": "https://melogic-records--pr35-codex-fix-new-produc-sfhocilp.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr35-codex-fix-new-produc/releases/1776971265141000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/43a97f91b9237b16",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T19:07:42.992951Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T19:07:45.391906Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "161912"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T19:07:45.141Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T19:07:42.648169639Z",
+        "updateTime": "2026-04-23T19:07:45.141Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T19:07:42.648169639Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr34-codex-fix-new-produc",
+        "url": "https://melogic-records--pr34-codex-fix-new-produc-yo13qmn0.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr34-codex-fix-new-produc/releases/1776969709288000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/314eddcfc1868344",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T18:41:48.283293Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T18:41:49.523694Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "161436"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T18:41:49.288Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T18:41:47.952105182Z",
+        "updateTime": "2026-04-23T18:41:49.288Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T18:41:47.952105182Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr33-codex-fix-new-produc",
+        "url": "https://melogic-records--pr33-codex-fix-new-produc-j8dl92h2.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr33-codex-fix-new-produc/releases/1776968869117000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/1a9b53c3a0e9da3a",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T18:27:46.770006Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T18:27:49.325538Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "160874"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T18:27:49.117Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T18:27:46.465370126Z",
+        "updateTime": "2026-04-23T18:27:49.117Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T18:27:46.465370126Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr32-codex-fix-new-produc",
+        "url": "https://melogic-records--pr32-codex-fix-new-produc-t3t2z7j2.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr32-codex-fix-new-produc/releases/1776965962878000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/ef9f4572205dd60b",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T17:39:20.569532Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T17:39:23.055973Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "160749"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T17:39:22.878Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T17:39:20.270395499Z",
+        "updateTime": "2026-04-23T17:39:22.878Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T17:39:20.270395499Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr31-codex-fix-new-produc",
+        "url": "https://melogic-records--pr31-codex-fix-new-produc-2or2s7j5.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr31-codex-fix-new-produc/releases/1776965247251000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/dedd2913571c423e",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T17:27:25.365488Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T17:27:27.482578Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "160666"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T17:27:27.251Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T17:27:24.970083680Z",
+        "updateTime": "2026-04-23T17:27:27.251Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T17:27:24.970083680Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr30-codex-fix-new-produc",
+        "url": "https://melogic-records--pr30-codex-fix-new-produc-4vmsigrz.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr30-codex-fix-new-produc/releases/1776964893504000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/62d0019fe3b01537",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T17:21:30.724647Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T17:21:33.637360Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "160331"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T17:21:33.504Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T17:21:29.885439469Z",
+        "updateTime": "2026-04-23T17:21:33.504Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T17:21:29.885439469Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr29-codex-fix-new-produc",
+        "url": "https://melogic-records--pr29-codex-fix-new-produc-ys8fe2ss.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr29-codex-fix-new-produc/releases/1776963288101000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/1df2820e616c8f41",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T16:54:45.663752Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T16:54:48.336632Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "160142"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T16:54:48.101Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T16:54:45.318552Z",
+        "updateTime": "2026-04-23T16:54:48.101Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T16:54:45.318552Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr28-codex-implement-caro",
+        "url": "https://melogic-records--pr28-codex-implement-caro-5f80h482.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr28-codex-implement-caro/releases/1776961995473000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/aa0d374fa325dd03",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T16:33:12.461586Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T16:33:15.621117Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "39",
+            "versionBytes": "158388"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T16:33:15.473Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T16:33:11.979632142Z",
+        "updateTime": "2026-04-23T16:33:15.473Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T16:33:11.979632142Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr27-codex-implement-caro",
+        "url": "https://melogic-records--pr27-codex-implement-caro-o43mt34a.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr27-codex-implement-caro/releases/1776960550316000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/7d693ac20911c420",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T16:09:07.246872Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T16:09:10.377716Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "35",
+            "versionBytes": "151626"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T16:09:10.316Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T16:09:06.669919303Z",
+        "updateTime": "2026-04-23T16:09:10.316Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T16:09:06.669919303Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr26-codex-implement-caro",
+        "url": "https://melogic-records--pr26-codex-implement-caro-jelyoo13.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr26-codex-implement-caro/releases/1776959282514000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/ce148d4d08cec709",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T15:48:01.095273Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T15:48:02.691780Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "35",
+            "versionBytes": "149406"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T15:48:02.514Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T15:48:00.707032657Z",
+        "updateTime": "2026-04-23T15:48:02.514Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T15:48:00.707032657Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr25-codex-implement-caro",
+        "url": "https://melogic-records--pr25-codex-implement-caro-e7sp24hw.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr25-codex-implement-caro/releases/1776957129529000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/357e2eb1d1354a27",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T15:12:07.272946Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T15:12:09.783992Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "35",
+            "versionBytes": "145816"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T15:12:09.529Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T15:12:06.888780858Z",
+        "updateTime": "2026-04-23T15:12:09.529Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T15:12:06.888780858Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr24-codex-implement-caro",
+        "url": "https://melogic-records--pr24-codex-implement-caro-9757qsp7.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr24-codex-implement-caro/releases/1776946086073000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/251a36a507339bf6",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T12:08:02.964432Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T12:08:06.149477Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "35",
+            "versionBytes": "140962"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T12:08:06.073Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T12:08:02.549264808Z",
+        "updateTime": "2026-04-23T12:08:06.073Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T12:08:02.549264808Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr23-codex-implement-caro",
+        "url": "https://melogic-records--pr23-codex-implement-caro-yks5f26y.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr23-codex-implement-caro/releases/1776919794886000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/3fdfc93156da132a",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T04:49:53.051480Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T04:49:54.978069Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "32",
+            "versionBytes": "136219"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T04:49:54.886Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T04:49:52.607520785Z",
+        "updateTime": "2026-04-23T04:49:54.886Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T04:49:52.607520785Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr22-codex-implement-caro",
+        "url": "https://melogic-records--pr22-codex-implement-caro-5jw6wsbs.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr22-codex-implement-caro/releases/1776915927102000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/cd03e8c5bd81e1ee",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T03:45:25.826294Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T03:45:27.246679Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "32",
+            "versionBytes": "134521"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T03:45:27.102Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T03:45:25.542363785Z",
+        "updateTime": "2026-04-23T03:45:27.102Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T03:45:25.542363785Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr21-codex-implement-caro",
+        "url": "https://melogic-records--pr21-codex-implement-caro-bxbp19b0.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr21-codex-implement-caro/releases/1776914536686000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/3c6419da912d607e",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T03:22:14.566336Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T03:22:16.878425Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "32",
+            "versionBytes": "134410"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T03:22:16.686Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T03:22:14.276892500Z",
+        "updateTime": "2026-04-23T03:22:16.686Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T03:22:14.276892500Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr20-codex-implement-caro",
+        "url": "https://melogic-records--pr20-codex-implement-caro-5z0iilb7.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr20-codex-implement-caro/releases/1776913570835000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/6e608dc9abc2f73b",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T03:06:07.343243Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T03:06:11.001731Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "32",
+            "versionBytes": "134097"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T03:06:10.835Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T03:06:06.956361190Z",
+        "updateTime": "2026-04-23T03:06:10.835Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T03:06:06.956361190Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr19-codex-implement-caro",
+        "url": "https://melogic-records--pr19-codex-implement-caro-iooxqe27.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr19-codex-implement-caro/releases/1776912871508000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/b3c8ed3db149dd4f",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T02:54:30.144780Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T02:54:31.679443Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "32",
+            "versionBytes": "133975"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T02:54:31.508Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T02:54:29.750322094Z",
+        "updateTime": "2026-04-23T02:54:31.508Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T02:54:29.750322094Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr18-codex-implement-caro",
+        "url": "https://melogic-records--pr18-codex-implement-caro-j05dx2ps.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr18-codex-implement-caro/releases/1776911629685000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/39c489adb4a17e51",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T02:33:47.424406Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T02:33:49.929089Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "32",
+            "versionBytes": "133947"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T02:33:49.685Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T02:33:47.099987177Z",
+        "updateTime": "2026-04-23T02:33:49.685Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T02:33:47.099987177Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr17-codex-implement-caro",
+        "url": "https://melogic-records--pr17-codex-implement-caro-nav7uo9m.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr17-codex-implement-caro/releases/1776910788883000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/751ecdd0f3942b57",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T02:19:46.437297Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T02:19:49.047523Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "27",
+            "versionBytes": "34684"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T02:19:48.883Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T02:19:45.885116492Z",
+        "updateTime": "2026-04-23T02:19:48.883Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T02:19:45.885116492Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr16-codex-implement-caro",
+        "url": "https://melogic-records--pr16-codex-implement-caro-9al2737y.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr16-codex-implement-caro/releases/1776909316598000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/8ac6241677ad172c",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T01:55:13.834999Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T01:55:16.681505Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "26",
+            "versionBytes": "32384"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T01:55:16.598Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T01:55:13.490391080Z",
+        "updateTime": "2026-04-23T01:55:16.598Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T01:55:13.490391080Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr15-codex-implement-caro",
+        "url": "https://melogic-records--pr15-codex-implement-caro-9skzx3j3.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr15-codex-implement-caro/releases/1776908767840000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/1eed4eb58b2160e3",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T01:46:05.571008Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T01:46:08.110894Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "26",
+            "versionBytes": "32350"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T01:46:07.840Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T01:46:05.198971456Z",
+        "updateTime": "2026-04-23T01:46:07.840Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T01:46:05.198971456Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr14-codex-implement-caro",
+        "url": "https://melogic-records--pr14-codex-implement-caro-ny3a9r1a.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr14-codex-implement-caro/releases/1776908466347000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/b938ef2900b7e85d",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T01:41:03.953696Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T01:41:06.562981Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "26",
+            "versionBytes": "32109"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T01:41:06.347Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T01:41:03.623412254Z",
+        "updateTime": "2026-04-23T01:41:06.347Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T01:41:03.623412254Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr13-codex-implement-caro",
+        "url": "https://melogic-records--pr13-codex-implement-caro-59hxyen2.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr13-codex-implement-caro/releases/1776907546164000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/f2ff3f8a1cdbfd83",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T01:25:44.605406Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T01:25:46.320984Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "9",
+            "versionBytes": "26352"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T01:25:46.164Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T01:25:44.224419857Z",
+        "updateTime": "2026-04-23T01:25:46.164Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T01:25:44.224419857Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr12-codex-implement-caro",
+        "url": "https://melogic-records--pr12-codex-implement-caro-ybae6z7r.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr12-codex-implement-caro/releases/1776906674635000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/9ff455ef037a4016",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T01:11:11.787627Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T01:11:14.706326Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "5",
+            "versionBytes": "22930"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T01:11:14.635Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T01:11:11.397933105Z",
+        "updateTime": "2026-04-23T01:11:14.635Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T01:11:11.397933105Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr10-codex-update-homepag",
+        "url": "https://melogic-records--pr10-codex-update-homepag-xkp0fqpt.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr10-codex-update-homepag/releases/1776904806793000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/de4623c796449ca3",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T00:40:05.004442Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T00:40:07.042177Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "5",
+            "versionBytes": "22300"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T00:40:06.793Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T00:40:04.667457023Z",
+        "updateTime": "2026-04-23T00:40:06.793Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T00:40:04.667457023Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr9-codex-update-homepag",
+        "url": "https://melogic-records--pr9-codex-update-homepag-mjugtttc.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr9-codex-update-homepag/releases/1776904561105000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/ed3923d085d36f7f",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T00:35:59.124814Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T00:36:01.276179Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "5",
+            "versionBytes": "21874"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T00:36:01.105Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T00:35:58.702746967Z",
+        "updateTime": "2026-04-23T00:36:01.105Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T00:35:58.702746967Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr8-codex-update-homepag",
+        "url": "https://melogic-records--pr8-codex-update-homepag-sx2q0a81.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr8-codex-update-homepag/releases/1776903944762000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/def5536e636afcee",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T00:25:43.552144Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T00:25:44.897830Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "5",
+            "versionBytes": "21618"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T00:25:44.762Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T00:25:43.176015873Z",
+        "updateTime": "2026-04-23T00:25:44.762Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T00:25:43.176015873Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr7-codex-update-homepag",
+        "url": "https://melogic-records--pr7-codex-update-homepag-c4doqx3w.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr7-codex-update-homepag/releases/1776903309066000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/5ee753e707cfdfe3",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-23T00:15:07.042748Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-23T00:15:09.210058Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "6",
+            "versionBytes": "291606"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-23T00:15:09.066Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-23T00:15:06.711466331Z",
+        "updateTime": "2026-04-23T00:15:09.066Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-30T00:15:06.711466331Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr5-codex-build-initial-",
+        "url": "https://melogic-records--pr5-codex-build-initial-nvj9qydm.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr5-codex-build-initial-/releases/1776901806346000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/54e3cd68b83f30ec",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-22T23:50:04.282157Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-22T23:50:06.593214Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "6",
+            "versionBytes": "288689"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-22T23:50:06.346Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-22T23:50:04.006766385Z",
+        "updateTime": "2026-04-22T23:50:06.346Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-29T23:50:04.006766385Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr4-codex-build-initial-",
+        "url": "https://melogic-records--pr4-codex-build-initial-y64c0p9d.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr4-codex-build-initial-/releases/1776899812724000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/e1002b64b97238f5",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-22T23:16:51.642073Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-22T23:16:52.841353Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "6",
+            "versionBytes": "345226"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-22T23:16:52.724Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-22T23:16:51.364486350Z",
+        "updateTime": "2026-04-22T23:16:52.724Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-29T23:16:51.364486350Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr3-codex-build-initial-",
+        "url": "https://melogic-records--pr3-codex-build-initial-wmelivyi.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr3-codex-build-initial-/releases/1776896894561000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/5de517e321eec138",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-22T22:28:12.822642Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-22T22:28:14.784531Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "6",
+            "versionBytes": "17609"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-22T22:28:14.561Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-22T22:28:12.553556513Z",
+        "updateTime": "2026-04-22T22:28:14.561Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-29T22:28:12.553556513Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr2-codex-build-initial-",
+        "url": "https://melogic-records--pr2-codex-build-initial-fkmrrbjm.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr2-codex-build-initial-/releases/1776896055709000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/0d27df8db0f7ea88",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-22T22:14:13.669458Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-22T22:14:15.928931Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "5",
+            "versionBytes": "4354"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-22T22:14:15.709Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-22T22:14:13.321175530Z",
+        "updateTime": "2026-04-22T22:14:15.709Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-29T22:14:13.321175530Z"
+      },
+      {
+        "name": "projects/melogic-records/sites/melogic-records/channels/pr1-codex-build-initial-",
+        "url": "https://melogic-records--pr1-codex-build-initial-wq5m19kt.web.app",
+        "release": {
+          "name": "projects/melogic-records/sites/melogic-records/channels/pr1-codex-build-initial-/releases/1776895283108000",
+          "version": {
+            "name": "projects/melogic-records/sites/melogic-records/versions/412d0e980ae17d8e",
+            "status": "FINALIZED",
+            "config": {},
+            "labels": {
+              "deployment-tool": "cli-firebase--action-hosting-deploy"
+            },
+            "createTime": "2026-04-22T22:01:21.656930Z",
+            "createUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "finalizeTime": "2026-04-22T22:01:23.171539Z",
+            "finalizeUser": {
+              "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+            },
+            "fileCount": "5",
+            "versionBytes": "4366"
+          },
+          "type": "DEPLOY",
+          "releaseTime": "2026-04-22T22:01:23.108Z",
+          "releaseUser": {
+            "email": "github-action-1218397964@melogic-records.iam.gserviceaccount.com"
+          }
+        },
+        "createTime": "2026-04-22T22:01:21.279643856Z",
+        "updateTime": "2026-04-22T22:01:23.108Z",
+        "retainedReleaseCount": 10,
+        "expireTime": "2026-04-29T22:01:21.279643856Z"
+      }
+    ]
+  }
+}
