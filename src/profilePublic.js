@@ -12,11 +12,9 @@ const app = document.querySelector('#app')
 app.innerHTML = `
   ${renderPagePreloaderMarkup()}
   ${navShell({ currentPage: 'profile-public' })}
-  <main>
-    <section class="section">
-      <div class="section-inner" data-public-profile-root>
-        <article class="public-profile-card"><p>Loading profile...</p></article>
-      </div>
+  <main class="public-profile-page" data-public-profile-root>
+    <section class="public-profile-loading">
+      <article class="public-profile-card"><p>Loading profile...</p></article>
     </section>
   </main>
 `
