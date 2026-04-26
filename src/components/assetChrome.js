@@ -21,8 +21,15 @@ export async function initNavBrandLogo() {
   const brandLogo = document.querySelector('[data-brand-logo]')
   if (!brandLogo) return false
 
-  const storageLogoUrl = await getStorageAssetUrl('assets/brand/melogic-logo-mark-glow.png', { warnOnFail: false })
-  const logoCandidates = [storageLogoUrl, '/assets/brand/melogic-logo-mark-glow.png'].filter(Boolean)
+  const storageLogoPrimaryPath = 'assets/brand/melogic-logo-mark-glow.png'
+  const storageLogoFallbackPath = 'assets/brand/melogic-logo-mark-white-transparent.png'
+  const storageLogoPrimaryUrl = await getStorageAssetUrl(storageLogoPrimaryPath, { warnOnFail: false })
+  const storageLogoFallbackUrl = await getStorageAssetUrl(storageLogoFallbackPath, { warnOnFail: false })
+  const logoCandidates = [
+    storageLogoPrimaryUrl,
+    storageLogoFallbackUrl,
+    '/assets/brand/melogic-logo-mark-glow.png'
+  ].filter(Boolean)
 
   const tryLoad = (url) => new Promise((resolve) => {
     let settled = false
