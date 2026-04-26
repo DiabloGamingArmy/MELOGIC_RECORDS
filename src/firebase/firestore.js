@@ -463,6 +463,24 @@ export async function getUserProfile(uid, authUser = null) {
   return result?.effectiveProfile || null
 }
 
+export async function getPublicProfile(uid) {
+  if (!db || !uid) return null
+  const profileRef = doc(db, 'profiles', uid)
+  const profileSnap = await getDoc(profileRef)
+  if (!profileSnap.exists()) return null
+  return { uid, ...profileSnap.data() }
+}
+
+export async function getUidForUsername(username) {
+  if (!db) return null
+  const usernameLower = normalizeUsername(username)
+  if (!usernameLower) return null
+  const claimRef = doc(db, 'usernameClaims', usernameLower)
+  const claimSnap = await getDoc(claimRef)
+  if (!claimSnap.exists()) return null
+  return claimSnap.data()?.uid || null
+}
+
 export async function saveProfileChanges(user, payload = {}) {
   if (!db || !user?.uid) throw new Error('Missing authenticated user for save.')
 

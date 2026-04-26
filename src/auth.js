@@ -4,6 +4,7 @@ import { httpsCallable } from 'firebase/functions'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
+import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { functions } from './firebase/functions'
 import {
@@ -16,12 +17,12 @@ import {
   waitForInitialAuthState,
   updateCurrentUserProfile
 } from './firebase/auth'
-import { ensureUserProvisioned, provisionNewUserAccount } from './firebase/firestore'
 import { executeRecaptchaAction, getRecaptchaSiteKey, isRecaptchaAuthEnabled } from './security/recaptchaEnterprise'
 
 const app = document.querySelector('#app')
 
 app.innerHTML = `
+  ${renderPagePreloaderMarkup()}
   ${navShell({ currentPage: 'auth' })}
 
   <main>
@@ -71,9 +72,14 @@ app.innerHTML = `
                 <button type="button" class="password-toggle" data-password-toggle data-target="signin-password" aria-label="Show password" aria-pressed="false">Show</button>
               </div>
             </label>
+            <div class="auth-recaptcha-status" data-recaptcha-status data-state="idle">
+              <span class="auth-recaptcha-check" aria-hidden="true">✓</span>
+              <span class="auth-recaptcha-copy">
+                <strong>Protected by reCAPTCHA Enterprise</strong>
+                <small data-recaptcha-status-text>Verification runs when you submit.</small>
+              </span>
+            </div>
             <button type="submit" class="button button-accent auth-submit" data-signin-btn>Sign In</button>
-            <p class="auth-security-note">Protected by reCAPTCHA Enterprise.</p>
-            <p class="auth-security-hint">Security verification will run when you submit.</p>
             <a class="auth-link" href="#" aria-label="Forgot password">Forgot password?</a>
           </form>
 
@@ -97,9 +103,14 @@ app.innerHTML = `
                 <button type="button" class="password-toggle" data-password-toggle data-target="signup-password" aria-label="Show password" aria-pressed="false">Show</button>
               </div>
             </label>
+            <div class="auth-recaptcha-status" data-recaptcha-status data-state="idle">
+              <span class="auth-recaptcha-check" aria-hidden="true">✓</span>
+              <span class="auth-recaptcha-copy">
+                <strong>Protected by reCAPTCHA Enterprise</strong>
+                <small data-recaptcha-status-text>Verification runs when you submit.</small>
+              </span>
+            </div>
             <button type="submit" class="button button-accent auth-submit" data-signup-btn>Create Account</button>
-            <p class="auth-security-note">Protected by reCAPTCHA Enterprise.</p>
-            <p class="auth-security-hint">Security verification will run when you submit.</p>
           </form>
 
           <div class="auth-divider"><span>or continue with</span></div>
@@ -125,16 +136,18 @@ app.innerHTML = `
   </main>
 `
 
-initShellChrome()
+const logoReadyPromise = initShellChrome()
 
 const heroPaths = getPageHeroVideoPaths('auth')
+let heroReadyPromise = Promise.resolve(false)
 if (heroPaths) {
-  attachHeroVideo(document.querySelector('#auth-hero-video'), {
+  heroReadyPromise = attachHeroVideo(document.querySelector('#auth-hero-video'), {
     webmPath: heroPaths.webm,
     mp4Path: heroPaths.mp4,
     warningKey: 'auth'
   })
 }
+createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
 
 const tabButtons = document.querySelectorAll('.auth-tab')
 const panels = document.querySelectorAll('.auth-form')
@@ -144,9 +157,18 @@ const googleButton = document.querySelector('[data-google-btn]')
 const signinButton = document.querySelector('[data-signin-btn]')
 const signupButton = document.querySelector('[data-signup-btn]')
 const feedback = document.querySelector('[data-auth-feedback]')
+const authCardTitle = document.querySelector('#auth-card-title')
 const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
 let isSubmitting = false
-let hasWarnedProfileWrite = false
+
+function setRecaptchaStatus(form, state = 'idle', message = 'Verification runs when you submit.') {
+  if (!form) return
+  const statusRoot = form.querySelector('[data-recaptcha-status]')
+  const statusText = form.querySelector('[data-recaptcha-status-text]')
+  if (!statusRoot || !statusText) return
+  statusRoot.dataset.state = state
+  statusText.textContent = message
+}
 
 function initPasswordToggles() {
   const toggles = document.querySelectorAll('[data-password-toggle]')
@@ -167,12 +189,6 @@ function initPasswordToggles() {
       toggle.setAttribute('aria-label', `${showPassword ? 'Hide' : 'Show'} password`)
     })
   })
-}
-
-function warnProfileWriteFailure(error, context) {
-  if (hasWarnedProfileWrite) return
-  hasWarnedProfileWrite = true
-  console.warn(`[auth] Firestore profile ${context} failed.`, error?.code || error?.message || error)
 }
 
 function waitForAuthenticatedUser(timeoutMs = 3000) {
@@ -203,7 +219,22 @@ function waitForAuthenticatedUser(timeoutMs = 3000) {
 async function redirectToProfile() {
   await waitForInitialAuthState()
   await waitForAuthenticatedUser()
-  window.location.assign('/profile.html')
+  window.location.assign(getSafeRedirectTarget())
+}
+
+function getSafeRedirectTarget() {
+  const defaultTarget = '/profile.html'
+  const redirectValue = new URLSearchParams(window.location.search).get('redirect')
+  if (!redirectValue || typeof redirectValue !== 'string') return defaultTarget
+  const trimmed = redirectValue.trim()
+  if (!trimmed.startsWith('/') || trimmed.startsWith('//')) return defaultTarget
+  try {
+    const parsed = new URL(trimmed, window.location.origin)
+    if (parsed.origin !== window.location.origin) return defaultTarget
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`
+  } catch {
+    return defaultTarget
+  }
 }
 
 function setAuthTab(activeTab) {
@@ -216,6 +247,13 @@ function setAuthTab(activeTab) {
   panels.forEach((panel) => {
     panel.classList.toggle('is-hidden', panel.dataset.panel !== activeTab)
   })
+
+  if (authCardTitle) {
+    authCardTitle.textContent = activeTab === 'signup' ? 'Creativity Begins Here' : 'Welcome back to Melogic.'
+  }
+
+  const activeForm = activeTab === 'signup' ? signupForm : signinForm
+  setRecaptchaStatus(activeForm, 'idle', 'Verification runs when you submit.')
 
   setFeedback('')
 }
@@ -298,9 +336,11 @@ function friendlySubmitError(error) {
 }
 
 function friendlyProvisioningError(error) {
-  if (error?.code === 'profile/username-taken') return 'That username is already taken. Please choose another one.'
-  if (error?.code === 'profile/invalid-username') return error?.message || 'Username is invalid.'
-  if (error?.code === 'profile/invalid-display-name') return error?.message || 'Display name is required.'
+  const code = String(error?.code || '')
+  if (code === 'functions/already-exists') return 'That username is already taken. Please choose another one.'
+  if (code === 'functions/invalid-argument') return error?.message || 'Profile setup input is invalid.'
+  if (code === 'functions/unauthenticated') return 'Account was created, but profile setup could not authenticate. Please sign in again.'
+  if (code === 'functions/failed-precondition') return 'Profile setup could not complete. Please try again.'
   return 'Account created, but profile setup is incomplete. Please retry or finish setup in Edit Profile.'
 }
 
@@ -375,13 +415,16 @@ async function handleSignInSubmit(event) {
   setLoadingState(true, { signin: 'Signing In...' })
 
   try {
+    setRecaptchaStatus(signinForm, 'checking', 'Checking security verification...')
     await verifyAuthHuman('LOGIN')
+    setRecaptchaStatus(signinForm, 'verified', 'Verified for this request.')
     setFeedback('Signing in...', 'info')
     await authPersistenceReady
     await signInWithEmail(email, password)
     setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
+    setRecaptchaStatus(signinForm, 'error', 'Verification failed. Please try again.')
     logFirebaseAuthError('signInWithEmail', error)
     setFeedback(friendlySubmitError(error), 'error')
   } finally {
@@ -409,7 +452,9 @@ async function handleSignUpSubmit(event) {
 
   try {
     setFeedback('Checking security verification...', 'info')
+    setRecaptchaStatus(signupForm, 'checking', 'Checking security verification...')
     await verifyAuthHuman('SIGNUP')
+    setRecaptchaStatus(signupForm, 'verified', 'Verified for this request.')
     setFeedback('Creating your account...', 'info')
     await authPersistenceReady
     const credential = await createAccountWithEmail(email, password)
@@ -418,7 +463,7 @@ async function handleSignUpSubmit(event) {
       await updateCurrentUserProfile({ displayName })
     }
 
-    await provisionNewUserAccount(credential.user, {
+    const provisioning = await provisionUserAccount({
       displayName: signupValidation.displayName,
       username: signupValidation.username,
       email,
@@ -426,15 +471,17 @@ async function handleSignUpSubmit(event) {
       requireUsername: true
     })
 
+    if (provisioning?.onboardingRequired) {
+      setFeedback('Account created. Please finish profile setup.', 'info')
+      window.location.assign('/edit-profile.html')
+      return
+    }
+
     setFeedback('Account created. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
-    if (String(error?.code || '').startsWith('profile/')) {
-      warnProfileWriteFailure(error, 'provision')
-      setFeedback(friendlyProvisioningError(error), 'error')
-    } else {
-      setFeedback(friendlySubmitError(error), 'error')
-    }
+    setRecaptchaStatus(signupForm, 'error', 'Verification failed. Please try again.')
+    setFeedback(friendlyProvisioningError(error), 'error')
   } finally {
     setLoadingState(false)
   }
@@ -447,11 +494,13 @@ async function handleGoogleSignIn() {
   setLoadingState(true, { google: 'Connecting...' })
 
   try {
+    setRecaptchaStatus(signinForm, 'checking', 'Checking security verification...')
     await verifyAuthHuman('GOOGLE_LOGIN')
+    setRecaptchaStatus(signinForm, 'verified', 'Verified for this request.')
     await authPersistenceReady
     const credential = await signInWithGoogle()
 
-    const provisioning = await ensureUserProvisioned(credential.user, {
+    const provisioning = await provisionUserAccount({
       displayName: credential.user.displayName || '',
       email: credential.user.email || ''
     })
@@ -465,14 +514,24 @@ async function handleGoogleSignIn() {
     setFeedback('Signed in with Google. Redirecting...', 'success')
     await redirectToProfile()
   } catch (error) {
-    if (String(error?.code || '').startsWith('profile/')) {
-      warnProfileWriteFailure(error, 'google-provision')
-      setFeedback(friendlyProvisioningError(error), 'error')
-    } else {
-      setFeedback(friendlySubmitError(error), 'error')
-    }
+    setRecaptchaStatus(signinForm, 'error', 'Verification failed. Please try again.')
+    setFeedback(friendlyProvisioningError(error), 'error')
   } finally {
     setLoadingState(false)
+  }
+}
+
+async function provisionUserAccount(payload) {
+  const provisionCallable = httpsCallable(functions, 'provisionUserAccount')
+  try {
+    const result = await provisionCallable(payload)
+    return result?.data || { ok: false, onboardingRequired: true }
+  } catch (error) {
+    console.warn('[auth] provisionUserAccount failed', {
+      code: error?.code,
+      message: error?.message
+    })
+    throw error
   }
 }
 
@@ -486,6 +545,8 @@ signinForm?.addEventListener('submit', handleSignInSubmit)
 signupForm?.addEventListener('submit', handleSignUpSubmit)
 googleButton?.addEventListener('click', handleGoogleSignIn)
 initPasswordToggles()
+setRecaptchaStatus(signinForm, 'idle', 'Verification runs when you submit.')
+setRecaptchaStatus(signupForm, 'idle', 'Verification runs when you submit.')
 
 let hasHandledInitialUser = false
 waitForInitialAuthState().then((user) => {

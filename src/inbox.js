@@ -1535,9 +1535,7 @@ document.addEventListener('keydown', handleGlobalKeydown)
 
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
-    appState.user = null
-    clearRealtimeListeners()
-    renderSignedOutState()
+    window.location.assign('/auth.html?redirect=/inbox.html')
     return
   }
 
@@ -1549,18 +1547,7 @@ waitForInitialAuthState().then(async (user) => {
 
 subscribeToAuthState(async (user) => {
   if (!user) {
-    appState.user = null
-    appState.threads = []
-    appState.selectedThreadId = ''
-    appState.messagesByThreadId = {}
-    appState.participantsByThreadId = {}
-    appState.typingUsersByThreadId = {}
-    appState.profileByUid = {}
-    clearRealtimeListeners()
-    closeCreateChatModal()
-    closeChatSettingsModal()
-    if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
-    renderSignedOutState()
+    window.location.assign('/auth.html?redirect=/inbox.html')
     return
   }
 

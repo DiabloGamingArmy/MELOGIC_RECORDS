@@ -178,7 +178,7 @@ function renderSignedInState(user, storedProfile = null) {
     signOutButton.textContent = 'Signing Out...'
     try {
       await signOutUser()
-      renderSignedOutState()
+      window.location.assign('/index.html')
     } catch {
       signOutButton.disabled = false
       signOutButton.textContent = 'Sign Out'
