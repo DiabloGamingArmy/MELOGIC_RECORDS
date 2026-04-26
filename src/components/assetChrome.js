@@ -190,7 +190,9 @@ function initNavAuthState() {
   const editProfileLink = document.querySelector('[data-nav-menu-edit]')
   const signOutButton = document.querySelector('[data-nav-menu-signout]')
   const authEntryLink = document.querySelector('[data-nav-menu-auth]')
+  const inboxLink = document.querySelector('[data-nav-inbox]')
   if (!profileMenu || !profileTrigger || !profileDropdown || !profileAvatar || !authEntryLink || !signOutButton) return
+  let currentUser = null
 
   const setMenuOpen = (open) => {
     profileTrigger.setAttribute('aria-expanded', String(open))
@@ -273,6 +275,7 @@ function initNavAuthState() {
     try {
       await signOutUser()
       setMenuOpen(false)
+      window.location.assign('/index.html')
     } catch {
       signOutButton.textContent = 'Log Out'
     } finally {
@@ -284,6 +287,7 @@ function initNavAuthState() {
   setMenuOpen(false)
 
   waitForInitialAuthState().then((user) => {
+    currentUser = user || null
     if (user) {
       setSignedInView(user)
     } else {
@@ -292,10 +296,19 @@ function initNavAuthState() {
   })
 
   subscribeToAuthState((user) => {
+    currentUser = user || null
     if (user) {
       setSignedInView(user)
       return
     }
     setSignedOutView()
+  })
+
+  inboxLink?.addEventListener('click', async (event) => {
+    if (currentUser) return
+    const resolvedUser = await waitForInitialAuthState()
+    if (resolvedUser) return
+    event.preventDefault()
+    window.location.assign('/auth.html?redirect=/inbox.html')
   })
 }
