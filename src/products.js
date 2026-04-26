@@ -7,6 +7,7 @@ import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './compo
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { addToCart } from './data/cartService'
 import { listPublicProductsPage } from './data/productService'
+import { ROUTES, productRoute, publicProfileRoute, usernameProfileRoute } from './utils/routes'
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -76,8 +77,8 @@ function normalizeSearchTokens(value) {
 
 function productCardMarkup(product) {
   const artistHref = product.artistUid
-    ? `/profile-public.html?uid=${encodeURIComponent(product.artistUid)}`
-    : (product.artistUsername ? `/profile-public.html?username=${encodeURIComponent(product.artistUsername)}` : '/profile-public.html')
+    ? publicProfileRoute({ uid: product.artistUid })
+    : (product.artistUsername ? usernameProfileRoute(product.artistUsername) : ROUTES.profilePublic)
   const tags = product.genres?.length
     ? product.genres.map((genre) => `#${escapeHtml(String(genre).replace(/\s+/g, ''))}`).join(' · ')
     : (product.tags || []).slice(0, 3).map((tag) => `#${escapeHtml(tag)}`).join(' · ')
@@ -296,7 +297,7 @@ function bindProductActions(visibleProducts = []) {
     const openDashboard = () => {
       const productId = card.getAttribute('data-product-id')
       if (!productId) return
-      window.location.href = `/product-dashboard.html?id=${encodeURIComponent(productId)}`
+      window.location.href = productRoute(productId)
     }
 
     card.addEventListener('click', (event) => {
@@ -433,7 +434,7 @@ app.innerHTML = `
             Browse sample packs, presets, wavetables, tools, and creator-made releases across the Melogic catalog.
           </p>
         </div>
-        <a class="new-product-btn" href="/new-product.html" aria-label="Create a new product">+ Product</a>
+        <a class="new-product-btn" href="${ROUTES.newProduct}" aria-label="Create a new product">+ Product</a>
       </div>
     </section>
 
