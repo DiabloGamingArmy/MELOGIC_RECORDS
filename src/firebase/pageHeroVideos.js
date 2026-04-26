@@ -42,8 +42,11 @@ const PAGE_HERO_VIDEO_PATHS = {
 }
 
 // Enable video paths only for pages with confirmed uploaded assets.
-// Keep "home" disabled until hero-loop files are uploaded to Storage.
+// Home hero video is enabled and requires these Firebase Storage objects:
+// - assets/site/home/backgrounds/hero-loop.webm
+// - assets/site/home/backgrounds/hero-loop.mp4
 const ENABLED_PAGE_HERO_VIDEOS = new Set([
+  'home',
   'products',
   'community',
   'live',
