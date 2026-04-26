@@ -4,7 +4,10 @@ const { defineSecret } = require('firebase-functions/params')
 const RECAPTCHA_ENTERPRISE_API_KEY = defineSecret('RECAPTCHA_ENTERPRISE_API_KEY')
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT || 'melogic-records'
-const SITE_KEY = process.env.RECAPTCHA_ENTERPRISE_SITE_KEY || '6LdVxcosAAAAADHONHnIqfGEUIEumkR1A6DOgaPD'
+const SITE_KEY =
+  process.env.AUTH_RECAPTCHA_ENTERPRISE_SITE_KEY ||
+  process.env.RECAPTCHA_ENTERPRISE_SITE_KEY ||
+  '6LfCgsssAAAAADPv2fFgoS9Eyi9G4jkyicLSuUOv'
 const THRESHOLDS = {
   LOGIN: 0.3,
   SIGNUP: 0.5,
@@ -42,6 +45,9 @@ exports.verifyRecaptchaEnterprise = onCall({ secrets: [RECAPTCHA_ENTERPRISE_API_
   }).catch(() => null)
 
   if (!response || !response.ok) {
+    console.warn('[verifyRecaptchaEnterprise] Assessment request failed.', {
+      status: response?.status ?? null
+    })
     throw new HttpsError('failed-precondition', 'Security verification failed. Please try again.')
   }
 
@@ -52,6 +58,13 @@ exports.verifyRecaptchaEnterprise = onCall({ secrets: [RECAPTCHA_ENTERPRISE_API_
   const scoreThreshold = THRESHOLDS[action] ?? 0.5
 
   if (!validToken || responseAction !== action || score < scoreThreshold) {
+    console.warn('[verifyRecaptchaEnterprise] Verification rejected.', {
+      action,
+      responseAction,
+      score,
+      threshold: scoreThreshold,
+      validToken
+    })
     throw new HttpsError('failed-precondition', 'Security verification failed. Please try again.')
   }
 
