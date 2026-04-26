@@ -174,19 +174,6 @@ export async function sendMessage(threadId, payload = {}) {
     }, { merge: true })
   await batch.commit()
 
-  await setDoc(
-    doc(db, 'users', payload.senderId, 'inboxThreads', threadId),
-    {
-      threadId,
-      lastMessageText: summary,
-      lastMessageAt: serverTimestamp(),
-      lastMessageSenderId: payload.senderId,
-      unreadCount: 0,
-      updatedAt: serverTimestamp()
-    },
-    { merge: true }
-  )
-
   return true
 }
 
@@ -196,22 +183,11 @@ export async function markThreadRead({ threadId, uid }) {
   const threadSnap = await getDoc(doc(db, 'threads', threadId))
   if (!threadSnap.exists()) return false
 
-  await Promise.all([
-    setDoc(doc(db, 'threads', threadId, 'participants', uid), {
-      uid,
-      lastDeliveredAt: serverTimestamp(),
-      lastReadAt: serverTimestamp()
-    }, { merge: true }),
-    setDoc(
-      doc(db, 'users', uid, 'inboxThreads', threadId),
-      {
-        unreadCount: 0,
-        lastReadAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      },
-      { merge: true }
-    )
-  ])
+  await setDoc(doc(db, 'threads', threadId, 'participants', uid), {
+    uid,
+    lastDeliveredAt: serverTimestamp(),
+    lastReadAt: serverTimestamp()
+  }, { merge: true })
 
   return true
 }

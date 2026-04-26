@@ -16,6 +16,35 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/threads/$(threadId)).data.createdBy == request.auth.uid;
     }
 
+    function isProductOwner(productId) {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/products/$(productId)).data.artistId == request.auth.uid;
+    }
+
+    function isImageUpload(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    function isAudioUpload(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && request.resource.contentType.matches('audio/.*');
+    }
+
+    function isVideoUpload(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && request.resource.contentType.matches('video/.*');
+    }
+
+    function isPdfUpload(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && request.resource.contentType.matches('application/pdf');
+    }
+
     // Public brand/site assets (logos, hero videos, etc.) used across unauthenticated pages.
     match /assets/{allPaths=**} {
       allow read: if true;
@@ -28,11 +57,43 @@ service firebase.storage {
       allow write: if signedIn() && request.auth.uid == uid;
     }
 
-    // Product media is public to support storefront display.
-    // TODO: tighten write controls with Firestore-backed ownership checks for productId.
-    match /products/{productId}/{allPaths=**} {
+    match /products/{productId}/thumbnails/{fileName} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if isProductOwner(productId) && isImageUpload(5 * 1024 * 1024);
+    }
+
+    match /products/{productId}/cover/{fileName} {
+      allow read: if true;
+      allow write: if isProductOwner(productId) && isImageUpload(10 * 1024 * 1024);
+    }
+
+    match /products/{productId}/gallery/{fileName} {
+      allow read: if true;
+      allow write: if isProductOwner(productId) && isImageUpload(15 * 1024 * 1024);
+    }
+
+    match /products/{productId}/audio-previews/{fileName} {
+      allow read: if true;
+      allow write: if isProductOwner(productId) && isAudioUpload(50 * 1024 * 1024);
+    }
+
+    match /products/{productId}/video-previews/{fileName} {
+      allow read: if true;
+      allow write: if isProductOwner(productId) && isVideoUpload(250 * 1024 * 1024);
+    }
+
+    match /products/{productId}/downloads/{fileName} {
+      allow read: if false;
+      allow write: if isProductOwner(productId) && request.resource != null && request.resource.size <= 1024 * 1024 * 1024;
+    }
+
+    match /products/{productId}/licenses/{fileName} {
+      allow read: if false;
+      allow write: if isProductOwner(productId) && isPdfUpload(20 * 1024 * 1024);
+    }
+
+    match /products/{productId}/{allPaths=**} {
+      allow read, write: if false;
     }
 
     match /threads/{threadId}/messages/{messageId}/attachments/{fileName} {
