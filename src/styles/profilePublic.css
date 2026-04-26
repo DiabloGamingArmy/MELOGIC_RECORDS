@@ -319,3 +319,20 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 640px) {
+  .public-profile-identity {
+    flex-direction: column;
+  }
+
+  .public-avatar,
+  .public-avatar-fallback {
+    width: 72px;
+    height: 72px;
+  }
+
+  .public-tabs button {
+    flex: 1 1 calc(50% - 10px);
+    text-align: center;
+  }
+}

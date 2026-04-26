@@ -1,0 +1,129 @@
+.product-detail-shell {
+  padding-top: 1.5rem;
+  padding-bottom: 3rem;
+}
+
+.product-detail-layout {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 1rem;
+}
+
+.product-detail-card {
+  margin-top: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  padding: 1rem;
+  background: rgba(9, 13, 24, 0.86);
+}
+
+.product-detail-main h1 {
+  margin-bottom: 0.6rem;
+}
+
+.product-owner-notice {
+  margin: 0.25rem 0 0.8rem;
+  color: #9fd7ff;
+  font-size: 0.95rem;
+}
+
+.product-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.product-chip {
+  border: 1px solid rgba(98, 210, 214, 0.35);
+  border-radius: 999px;
+  padding: 0.25rem 0.7rem;
+  font-size: 0.82rem;
+  background: rgba(98, 210, 214, 0.12);
+}
+
+.product-creator-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.product-creator-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.product-creator-fallback {
+  display: grid;
+  place-items: center;
+  background: rgba(98, 210, 214, 0.22);
+}
+
+.product-creator-row strong {
+  display: block;
+}
+
+.product-creator-row p {
+  margin: 0.15rem 0 0;
+  opacity: 0.78;
+}
+
+.product-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.product-cover-art {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  object-fit: cover;
+}
+
+.product-cover-fallback {
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  min-height: 220px;
+  display: grid;
+  place-items: center;
+  opacity: 0.75;
+}
+
+.product-price {
+  margin: 0.85rem 0 0.35rem;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.product-short {
+  margin: 0;
+  opacity: 0.88;
+}
+
+.product-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.7rem;
+}
+
+.product-meta-grid article {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.product-detail-empty {
+  text-align: center;
+}
+
+@media (max-width: 860px) {
+  .product-detail-layout {
+    grid-template-columns: 1fr;
+  }
+}
