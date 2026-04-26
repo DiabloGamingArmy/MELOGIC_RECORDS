@@ -72,9 +72,14 @@ app.innerHTML = `
                 <button type="button" class="password-toggle" data-password-toggle data-target="signin-password" aria-label="Show password" aria-pressed="false">Show</button>
               </div>
             </label>
+            <div class="auth-recaptcha-status" data-recaptcha-status data-state="idle">
+              <span class="auth-recaptcha-check" aria-hidden="true">✓</span>
+              <span class="auth-recaptcha-copy">
+                <strong>Protected by reCAPTCHA Enterprise</strong>
+                <small data-recaptcha-status-text>Verification runs when you submit.</small>
+              </span>
+            </div>
             <button type="submit" class="button button-accent auth-submit" data-signin-btn>Sign In</button>
-            <p class="auth-security-note">Protected by reCAPTCHA Enterprise.</p>
-            <p class="auth-security-hint">Security verification will run when you submit.</p>
             <a class="auth-link" href="#" aria-label="Forgot password">Forgot password?</a>
           </form>
 
@@ -98,9 +103,14 @@ app.innerHTML = `
                 <button type="button" class="password-toggle" data-password-toggle data-target="signup-password" aria-label="Show password" aria-pressed="false">Show</button>
               </div>
             </label>
+            <div class="auth-recaptcha-status" data-recaptcha-status data-state="idle">
+              <span class="auth-recaptcha-check" aria-hidden="true">✓</span>
+              <span class="auth-recaptcha-copy">
+                <strong>Protected by reCAPTCHA Enterprise</strong>
+                <small data-recaptcha-status-text>Verification runs when you submit.</small>
+              </span>
+            </div>
             <button type="submit" class="button button-accent auth-submit" data-signup-btn>Create Account</button>
-            <p class="auth-security-note">Protected by reCAPTCHA Enterprise.</p>
-            <p class="auth-security-hint">Security verification will run when you submit.</p>
           </form>
 
           <div class="auth-divider"><span>or continue with</span></div>
@@ -147,8 +157,18 @@ const googleButton = document.querySelector('[data-google-btn]')
 const signinButton = document.querySelector('[data-signin-btn]')
 const signupButton = document.querySelector('[data-signup-btn]')
 const feedback = document.querySelector('[data-auth-feedback]')
+const authCardTitle = document.querySelector('#auth-card-title')
 const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
 let isSubmitting = false
+
+function setRecaptchaStatus(form, state = 'idle', message = 'Verification runs when you submit.') {
+  if (!form) return
+  const statusRoot = form.querySelector('[data-recaptcha-status]')
+  const statusText = form.querySelector('[data-recaptcha-status-text]')
+  if (!statusRoot || !statusText) return
+  statusRoot.dataset.state = state
+  statusText.textContent = message
+}
 
 function initPasswordToggles() {
   const toggles = document.querySelectorAll('[data-password-toggle]')
@@ -227,6 +247,13 @@ function setAuthTab(activeTab) {
   panels.forEach((panel) => {
     panel.classList.toggle('is-hidden', panel.dataset.panel !== activeTab)
   })
+
+  if (authCardTitle) {
+    authCardTitle.textContent = activeTab === 'signup' ? 'Creativity Begins Here' : 'Welcome back to Melogic.'
+  }
+
+  const activeForm = activeTab === 'signup' ? signupForm : signinForm
+  setRecaptchaStatus(activeForm, 'idle', 'Verification runs when you submit.')
 
   setFeedback('')
 }
@@ -388,13 +415,16 @@ async function handleSignInSubmit(event) {
   setLoadingState(true, { signin: 'Signing In...' })
 
   try {
+    setRecaptchaStatus(signinForm, 'checking', 'Checking security verification...')
     await verifyAuthHuman('LOGIN')
+    setRecaptchaStatus(signinForm, 'verified', 'Verified for this request.')
     setFeedback('Signing in...', 'info')
     await authPersistenceReady
     await signInWithEmail(email, password)
     setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
+    setRecaptchaStatus(signinForm, 'error', 'Verification failed. Please try again.')
     logFirebaseAuthError('signInWithEmail', error)
     setFeedback(friendlySubmitError(error), 'error')
   } finally {
@@ -422,7 +452,9 @@ async function handleSignUpSubmit(event) {
 
   try {
     setFeedback('Checking security verification...', 'info')
+    setRecaptchaStatus(signupForm, 'checking', 'Checking security verification...')
     await verifyAuthHuman('SIGNUP')
+    setRecaptchaStatus(signupForm, 'verified', 'Verified for this request.')
     setFeedback('Creating your account...', 'info')
     await authPersistenceReady
     const credential = await createAccountWithEmail(email, password)
@@ -448,6 +480,7 @@ async function handleSignUpSubmit(event) {
     setFeedback('Account created. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
+    setRecaptchaStatus(signupForm, 'error', 'Verification failed. Please try again.')
     setFeedback(friendlyProvisioningError(error), 'error')
   } finally {
     setLoadingState(false)
@@ -461,7 +494,9 @@ async function handleGoogleSignIn() {
   setLoadingState(true, { google: 'Connecting...' })
 
   try {
+    setRecaptchaStatus(signinForm, 'checking', 'Checking security verification...')
     await verifyAuthHuman('GOOGLE_LOGIN')
+    setRecaptchaStatus(signinForm, 'verified', 'Verified for this request.')
     await authPersistenceReady
     const credential = await signInWithGoogle()
 
@@ -479,6 +514,7 @@ async function handleGoogleSignIn() {
     setFeedback('Signed in with Google. Redirecting...', 'success')
     await redirectToProfile()
   } catch (error) {
+    setRecaptchaStatus(signinForm, 'error', 'Verification failed. Please try again.')
     setFeedback(friendlyProvisioningError(error), 'error')
   } finally {
     setLoadingState(false)
@@ -509,6 +545,8 @@ signinForm?.addEventListener('submit', handleSignInSubmit)
 signupForm?.addEventListener('submit', handleSignUpSubmit)
 googleButton?.addEventListener('click', handleGoogleSignIn)
 initPasswordToggles()
+setRecaptchaStatus(signinForm, 'idle', 'Verification runs when you submit.')
+setRecaptchaStatus(signupForm, 'idle', 'Verification runs when you submit.')
 
 let hasHandledInitialUser = false
 waitForInitialAuthState().then((user) => {
