@@ -54,30 +54,6 @@ function normalizeThread(threadId, raw = {}) {
   }
 }
 
-async function writeInboxSummary(threadId, threadData, participantIds = [], extra = {}) {
-  if (!db) return
-  const writes = participantIds.map((uid) => setDoc(
-    doc(db, 'users', uid, 'inboxThreads', threadId),
-    {
-      threadId,
-      type: threadData.type,
-      title: threadData.title || '',
-      imageURL: threadData.imageURL || '',
-      otherParticipantId: threadData.type === 'dm' ? participantIds.find((id) => id !== uid) || '' : '',
-      lastMessageText: threadData.lastMessageText || '',
-      lastMessageAt: threadData.lastMessageAt || null,
-      lastMessageSenderId: threadData.lastMessageSenderId || '',
-      unreadCount: Number(extra.unreadCount || 0),
-      archived: false,
-      muted: false,
-      updatedAt: serverTimestamp()
-    },
-    { merge: true }
-  ))
-
-  await Promise.all(writes)
-}
-
 function getThreadQuery(uid) {
   return query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), orderBy('lastMessageAt', 'desc'), limit(100))
 }
@@ -100,7 +76,7 @@ export async function listThreadsForUser(uid) {
   })
 }
 
-export function subscribeToThreadsForUser(uid, callback) {
+export function subscribeToThreadsForUser(uid, callback, onError) {
   if (!db || !uid || typeof callback !== 'function') return () => {}
 
   let unsubscribe = () => {}
@@ -109,14 +85,15 @@ export function subscribeToThreadsForUser(uid, callback) {
     unsubscribe = onSnapshot(getThreadQuery(uid), (snapshot) => {
       const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
       callback(threads)
-    })
+    }, onError)
   } catch {
     unsubscribe = onSnapshot(
       query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), limit(100)),
       (snapshot) => {
         const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
         callback(threads)
-      }
+      },
+      onError
     )
   }
 
@@ -183,7 +160,6 @@ async function createDmClientSide({ creatorId, participantId }) {
   })
 
   await upsertParticipants(threadDoc.id, participantIds, creatorId)
-  await writeInboxSummary(threadDoc.id, { type: 'dm' }, participantIds)
   return getThread(threadDoc.id)
 }
 
@@ -194,8 +170,10 @@ export async function createOrGetDm({ creatorId, targetUid }) {
     const callable = httpsCallable(functions, 'createOrGetDm')
     const result = await callable({ targetUid })
     if (result?.data?.threadId) return getThread(result.data.threadId)
-  } catch {
-    // fallback for local/dev until function is deployed
+  } catch (error) {
+    if (String(error?.code || '').includes('not-found')) {
+      console.warn('[threadService] createOrGetDm callable unavailable; using safe client fallback.')
+    }
   }
 
   return createDmClientSide({ creatorId, participantId: targetUid })
@@ -225,7 +203,6 @@ async function createGroupClientSide({ creatorId, participantIds = [], title = '
   })
 
   await upsertParticipants(threadDoc.id, members, creatorId)
-  await writeInboxSummary(threadDoc.id, { type: 'group', title: String(title || '').trim(), imageURL }, members)
   return getThread(threadDoc.id)
 }
 
@@ -234,8 +211,10 @@ export async function createGroupThread({ creatorId, participantIds = [], title 
     const callable = httpsCallable(functions, 'createGroupThread')
     const result = await callable({ participantIds, title, imagePath, imageURL })
     if (result?.data?.threadId) return getThread(result.data.threadId)
-  } catch {
-    // fallback for local/dev until function is deployed
+  } catch (error) {
+    if (String(error?.code || '').includes('not-found')) {
+      console.warn('[threadService] createGroupThread callable unavailable; using safe client fallback.')
+    }
   }
 
   return createGroupClientSide({ creatorId, participantIds, title, imagePath, imageURL })
@@ -277,7 +256,6 @@ export async function addParticipantsToThread({ threadId, actorUid, participantI
   const allIds = thread?.participantIds || []
   await upsertParticipants(threadId, uniqueNewParticipants, actorUid)
   await updateDoc(threadRef, { participantCount: allIds.length })
-  await writeInboxSummary(threadId, thread || {}, allIds)
   return true
 }
 
@@ -310,7 +288,6 @@ export async function removeParticipantFromThread({ threadId, actorUid, particip
 
   const batch = writeBatch(db)
   batch.set(doc(db, 'threads', threadId, 'participants', participantId), { archived: true }, { merge: true })
-  batch.delete(doc(db, 'users', participantId, 'inboxThreads', threadId))
   await batch.commit()
 
   const thread = await getThread(threadId)
