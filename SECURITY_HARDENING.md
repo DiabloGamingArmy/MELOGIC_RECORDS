@@ -121,3 +121,20 @@ Notes:
 - Firebase client config values are not secrets by themselves.
 - Firestore/Storage Rules + App Check + server-side validation are the security boundary.
 - Do **not** treat localStorage cart data as purchase or entitlement source of truth.
+
+## Storage rules note for brand logos
+If brand logos should be publicly readable while all writes remain blocked, ensure Storage rules include a brand-asset scope such as:
+
+```rules
+match /assets/brand/{fileName} {
+  allow read: if fileName in [
+    'melogic-logo-mark-glow.png',
+    'melogic-logo-mark-white-transparent.png'
+  ];
+  allow write: if false;
+}
+```
+
+The nav logo loader currently expects these Storage object paths:
+- `assets/brand/melogic-logo-mark-glow.png` (primary)
+- `assets/brand/melogic-logo-mark-white-transparent.png` (fallback)
