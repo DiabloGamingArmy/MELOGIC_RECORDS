@@ -21,18 +21,21 @@ export async function initNavBrandLogo() {
   const brandLogo = document.querySelector('[data-brand-logo]')
   if (!brandLogo) return false
 
-  const logoUrl = await getStorageAssetUrl('assets/brand/melogic-logo-mark-glow.png', { warnOnFail: false })
-  if (!logoUrl) {
-    brandLogo.remove()
-    return false
-  }
+  const storageLogoPrimaryPath = 'assets/brand/melogic-logo-mark-glow.png'
+  const storageLogoFallbackPath = 'assets/brand/melogic-logo-mark-white-transparent.png'
+  const storageLogoPrimaryUrl = await getStorageAssetUrl(storageLogoPrimaryPath, { warnOnFail: false })
+  const storageLogoFallbackUrl = await getStorageAssetUrl(storageLogoFallbackPath, { warnOnFail: false })
+  const logoCandidates = [
+    storageLogoPrimaryUrl,
+    storageLogoFallbackUrl,
+    '/assets/brand/melogic-logo-mark-glow.png'
+  ].filter(Boolean)
 
-  return new Promise((resolve) => {
+  const tryLoad = (url) => new Promise((resolve) => {
     let settled = false
     const finish = (ok) => {
       if (settled) return
       settled = true
-      if (!ok) brandLogo.remove()
       resolve(ok)
     }
 
@@ -44,10 +47,18 @@ export async function initNavBrandLogo() {
       },
       { once: true }
     )
-
     brandLogo.addEventListener('error', () => finish(false), { once: true })
-    brandLogo.src = logoUrl
+    brandLogo.src = url
   })
+
+  for (const logoUrl of logoCandidates) {
+    // eslint-disable-next-line no-await-in-loop
+    const loaded = await tryLoad(logoUrl)
+    if (loaded) return true
+  }
+
+  brandLogo.remove()
+  return false
 }
 
 export function initShellChrome() {
