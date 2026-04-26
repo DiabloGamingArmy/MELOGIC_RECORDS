@@ -51,7 +51,6 @@ const ENABLED_PAGE_HERO_VIDEOS = new Set([
   'faq',
   'support',
   'cart',
-  'auth',
   'product-detail'
 ])
 
