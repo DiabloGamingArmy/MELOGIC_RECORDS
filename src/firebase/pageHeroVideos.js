@@ -41,6 +41,21 @@ const PAGE_HERO_VIDEO_PATHS = {
   }
 }
 
+// Enable video paths only for pages with confirmed uploaded assets.
+// Keep "home" disabled until hero-loop files are uploaded to Storage.
+const ENABLED_PAGE_HERO_VIDEOS = new Set([
+  'products',
+  'community',
+  'live',
+  'forms',
+  'faq',
+  'support',
+  'cart',
+  'auth',
+  'product-detail'
+])
+
 export function getPageHeroVideoPaths(pageKey) {
+  if (!ENABLED_PAGE_HERO_VIDEOS.has(pageKey)) return null
   return PAGE_HERO_VIDEO_PATHS[pageKey] || null
 }

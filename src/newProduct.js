@@ -3,7 +3,7 @@ import './styles/newProduct.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState } from './firebase/auth'
-import { buildProductPayload, isPlaceholderProductId, saveProductDraft } from './data/productService'
+import { buildProductPayload, getProductById, isPlaceholderProductId, requestProductReview, saveProductDraft } from './data/productService'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 
@@ -61,7 +61,9 @@ let editorState = {
     state: 'info'
   },
   creatorProfile: null,
-  draft: null
+  draft: null,
+  requestedProductId: new URLSearchParams(window.location.search).get('id') || '',
+  editPermissionError: ''
 }
 
 function getCreatorIdentity(user = null, profile = null, draft = {}) {
@@ -247,7 +249,6 @@ function serializeDraftForFirestore(draft) {
     ...safeDraft,
     priceCents: Math.max(0, Math.round((Number.isFinite(numericPrice) ? numericPrice : 0) * 100)),
     isFree: Boolean(safeDraft.isFree),
-    featured: Boolean(safeDraft.featured),
     saleEnabled: Boolean(safeDraft.saleEnabled),
     storefrontVisible: Boolean(safeDraft.storefrontVisible)
   }
@@ -279,6 +280,16 @@ function renderSignedOut() {
       <h2>Sign in required</h2>
       <p>You need an authenticated account to create or publish marketplace products.</p>
       <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+    </article>
+  `
+}
+
+function renderEditPermissionDenied() {
+  editorRoot.innerHTML = `
+    <article class="product-editor-card signed-out">
+      <h2>Listing access denied</h2>
+      <p>You do not have permission to edit this listing.</p>
+      <a class="button button-accent" href="/products.html">Back to Products</a>
     </article>
   `
 }
@@ -346,7 +357,7 @@ function renderEditor() {
               <label><span>Artist Profile Path</span><input name="artistProfilePath" placeholder="profiles/uid" value="${escapeHtml(draft.artistProfilePath)}" readonly aria-readonly="true" class="locked-input" /></label>
             </div>
             <div class="field-grid two-col">
-              <label><span>Status</span><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="published" ${draft.status === 'published' ? 'selected' : ''}>Published</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></label>
+              <label><span>Status</span><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="review_pending" ${draft.status === 'review_pending' ? 'selected' : ''}>Review pending</option><option value="needs_changes" ${draft.status === 'needs_changes' ? 'selected' : ''}>Needs changes</option><option value="rejected" ${draft.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></label>
               <label><span>Visibility</span><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
             </div>
           </article>
@@ -528,14 +539,16 @@ function renderEditor() {
       }
     }
 
-    setStatus(desiredStatus === 'published' ? 'Publishing product...' : 'Saving draft...', 'info')
+    setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
 
     try {
       const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
       const draftForSave = serializeDraftForFirestore({
         ...editorState.draft,
-        status: desiredStatus
+        profile: editorState.creatorProfile || {},
+        currentStatus: editorState.draft.status || 'draft',
+        status: desiredStatus === 'published' ? 'review_pending' : desiredStatus
       })
       const payload = buildProductPayload(draftForSave, editorState.user)
       console.info('[new-product] Save flow debug.', {
@@ -546,7 +559,7 @@ function renderEditor() {
       })
       const result = await saveProductDraft(editorState.user, payload, {
         productId: wasNewDraft ? '' : editorState.draft.id,
-        status: desiredStatus,
+        status: desiredStatus === 'published' ? 'review_pending' : desiredStatus,
         isNew: wasNewDraft,
         mediaFiles: editorState.mediaFiles,
         onStatus: (message) => {
@@ -556,6 +569,7 @@ function renderEditor() {
       })
 
       updateDraftField('id', result.productId)
+      updateDraftField('status', result.payload?.status || editorState.draft.status)
       updateDraftField('slug', payload.slug)
       updateDraftField('coverPath', result.mediaUploads.coverPath || payload.coverPath || '')
       updateDraftField('thumbnailPath', result.mediaUploads.thumbnailPath || payload.thumbnailPath || '')
@@ -564,12 +578,20 @@ function renderEditor() {
       syncPreviewFromDraft()
       editorState.mediaFiles.cover = null
       editorState.mediaFiles.thumbnail = null
-      setStatus(
-        desiredStatus === 'published'
-          ? `Product ${result.productId} published successfully.`
-          : 'Draft saved.',
-        'success'
-      )
+      if (desiredStatus === 'published') {
+        const reviewResult = await requestProductReview(result.productId)
+        updateDraftField('status', reviewResult?.status || 'review_pending')
+        setStatus(
+          reviewResult?.status === 'published'
+            ? 'Product published after review.'
+            : reviewResult?.status === 'needs_changes'
+              ? 'Changes require review.'
+              : 'Submitted for review.',
+          'success'
+        )
+      } else {
+        setStatus('Draft saved.', 'success')
+      }
       renderEditor()
     } catch (error) {
       const stage = error?.stage || 'unknown'
@@ -595,10 +617,10 @@ function renderEditor() {
             ? 'Thumbnail upload failed.'
             : stage === 'final-firestore-merge'
               ? 'Final product metadata save failed.'
-              : stage === 'publish-transition'
-                ? 'Publish update failed.'
-                : desiredStatus === 'published'
-                  ? 'Could not publish product.'
+                : stage === 'publish-transition'
+                  ? 'Review submission failed.'
+                  : desiredStatus === 'published'
+                  ? 'Could not submit for review.'
                   : 'Could not save draft.'
       setStatus(friendlyMessage, 'error')
       renderEditor()
@@ -623,7 +645,20 @@ async function initPage() {
 
   editorState.user = user
   editorState.creatorProfile = await fetchPublicCreatorProfile(user.uid)
-  editorState.draft = applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile)
+  if (editorState.requestedProductId) {
+    const existingProduct = await getProductById(editorState.requestedProductId)
+    if (!existingProduct || existingProduct.artistId !== user.uid) {
+      renderEditPermissionDenied()
+      return
+    }
+    editorState.draft = applyCreatorIdentity({
+      ...createEmptyProductDraft(user, editorState.creatorProfile),
+      ...existingProduct,
+      id: existingProduct.id
+    }, user, editorState.creatorProfile)
+  } else {
+    editorState.draft = applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile)
+  }
   syncPreviewFromDraft()
   renderEditor()
 }
