@@ -1,9 +1,11 @@
 import './styles/base.css'
 import './styles/auth.css'
+import { httpsCallable } from 'firebase/functions'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
+import { functions } from './firebase/functions'
 import {
   createAccountWithEmail,
   signInWithEmail,
@@ -15,6 +17,7 @@ import {
   updateCurrentUserProfile
 } from './firebase/auth'
 import { ensureUserProvisioned, provisionNewUserAccount } from './firebase/firestore'
+import { executeRecaptchaAction, getRecaptchaSiteKey, isRecaptchaAuthEnabled } from './security/recaptchaEnterprise'
 
 const app = document.querySelector('#app')
 
@@ -69,6 +72,8 @@ app.innerHTML = `
               </div>
             </label>
             <button type="submit" class="button button-accent auth-submit" data-signin-btn>Sign In</button>
+            <p class="auth-security-note">Protected by reCAPTCHA Enterprise.</p>
+            <p class="auth-security-hint">Security verification will run when you submit.</p>
             <a class="auth-link" href="#" aria-label="Forgot password">Forgot password?</a>
           </form>
 
@@ -93,6 +98,8 @@ app.innerHTML = `
               </div>
             </label>
             <button type="submit" class="button button-accent auth-submit" data-signup-btn>Create Account</button>
+            <p class="auth-security-note">Protected by reCAPTCHA Enterprise.</p>
+            <p class="auth-security-hint">Security verification will run when you submit.</p>
           </form>
 
           <div class="auth-divider"><span>or continue with</span></div>
@@ -278,6 +285,33 @@ function validateSignupFields(displayName, username) {
   return { valid: true, displayName: normalizedDisplayName, username: normalizedUsername }
 }
 
+async function verifyAuthHuman(action) {
+  const authRecaptchaEnabled = isRecaptchaAuthEnabled()
+  if (!authRecaptchaEnabled) {
+    if (import.meta.env.PROD) {
+      throw new Error('Security verification is not configured.')
+    }
+    return true
+  }
+
+  if (!getRecaptchaSiteKey()) {
+    throw new Error('Security verification is not configured.')
+  }
+
+  const token = await executeRecaptchaAction(action).catch(() => {
+    throw new Error('Security verification could not load. Please refresh and try again.')
+  })
+
+  const verifyCallable = httpsCallable(functions, 'verifyRecaptchaEnterprise')
+  const verification = await verifyCallable({ token, action }).catch(() => {
+    throw new Error('Security verification failed. Please try again.')
+  })
+  if (!verification?.data?.ok) {
+    throw new Error('Security verification failed. Please try again.')
+  }
+  return true
+}
+
 async function handleSignInSubmit(event) {
   event.preventDefault()
   if (isSubmitting) return
@@ -285,10 +319,12 @@ async function handleSignInSubmit(event) {
   const email = signinForm.querySelector('[name="signin-email"]').value.trim()
   const password = signinForm.querySelector('[name="signin-password"]').value
 
-  setFeedback('Signing in...', 'info')
+  setFeedback('Checking security verification...', 'info')
   setLoadingState(true, { signin: 'Signing In...' })
 
   try {
+    await verifyAuthHuman('LOGIN')
+    setFeedback('Signing in...', 'info')
     await authPersistenceReady
     await signInWithEmail(email, password)
     setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
@@ -319,6 +355,9 @@ async function handleSignUpSubmit(event) {
   setLoadingState(true, { signup: 'Creating Account...' })
 
   try {
+    setFeedback('Checking security verification...', 'info')
+    await verifyAuthHuman('SIGNUP')
+    setFeedback('Creating your account...', 'info')
     await authPersistenceReady
     const credential = await createAccountWithEmail(email, password)
 
@@ -355,6 +394,7 @@ async function handleGoogleSignIn() {
   setLoadingState(true, { google: 'Connecting...' })
 
   try {
+    await verifyAuthHuman('GOOGLE_LOGIN')
     await authPersistenceReady
     const credential = await signInWithGoogle()
 

@@ -3,7 +3,8 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
-import { getPublicProducts } from './data/productService'
+import { addToCart } from './data/cartService'
+import { listHomepageReleaseProducts } from './data/productService'
 
 const app = document.querySelector('#app')
 
@@ -27,7 +28,7 @@ function buildReleaseCard(product) {
     .join(' · ')
 
   return `
-    <article class="release-card" role="listitem">
+    <article class="release-card" role="listitem" data-release-card data-product-id="${escapeHtml(product.id)}">
       <div class="release-topline">
         <p class="product-type">${escapeHtml(type)}</p>
         <p class="release-price">${escapeHtml(price)}</p>
@@ -36,8 +37,8 @@ function buildReleaseCard(product) {
       <p class="release-creator">by ${escapeHtml(creator)}</p>
       <p class="tags">${tags || '#new'}</p>
       <div class="release-actions">
-        <button type="button" class="preview-btn" aria-label="Preview ${escapeHtml(title)}" ${product?.previewAudioURLs?.length ? '' : 'disabled'}>▶ Preview</button>
-        <button type="button" class="add-btn" aria-label="Add ${escapeHtml(title)} to cart">Add to cart</button>
+        <button type="button" class="preview-btn" data-preview-product="${escapeHtml(product.id)}" aria-label="Preview ${escapeHtml(title)}" ${product?.previewAudioURLs?.length ? '' : 'disabled'}>▶ Preview</button>
+        <button type="button" class="add-btn" data-add-product="${escapeHtml(product.id)}" aria-label="Add ${escapeHtml(title)} to cart">Add to cart</button>
       </div>
     </article>
   `
@@ -326,8 +327,30 @@ function renderHomeReleaseCards(products = []) {
 
 async function initHomeReleaseProducts() {
   try {
-    const products = await getPublicProducts()
+    const products = await listHomepageReleaseProducts()
     renderHomeReleaseCards(products)
+    const track = document.querySelector('[data-home-release-track]')
+    track?.addEventListener('click', (event) => {
+      const addButton = event.target.closest('[data-add-product]')
+      if (addButton) {
+        event.stopPropagation()
+        const product = products.find((item) => item.id === addButton.getAttribute('data-add-product'))
+        if (product) addToCart(product)
+        return
+      }
+
+      const previewButton = event.target.closest('[data-preview-product]')
+      if (previewButton) {
+        event.stopPropagation()
+        return
+      }
+
+      const card = event.target.closest('[data-release-card]')
+      const productId = card?.getAttribute('data-product-id')
+      if (productId) {
+        window.location.href = `/product-dashboard.html?id=${encodeURIComponent(productId)}`
+      }
+    })
   } catch (error) {
     console.warn('[home] Failed to load release carousel products.', error?.code || error?.message || error)
     renderHomeReleaseCards([])
