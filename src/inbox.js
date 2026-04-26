@@ -23,6 +23,7 @@ import {
   updateThreadDetails
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
+import { markSystemNotificationRead, subscribeToSystemNotifications } from './data/systemNotificationService'
 
 const app = document.querySelector('#app')
 
@@ -87,6 +88,10 @@ const appState = {
   composerDraftByThreadId: {},
   profileByUid: {},
   warnedRealtimePermissions: {},
+  warnedSystemPermissions: false,
+  systemNotifications: [],
+  systemFilter: 'all',
+  systemUnsubscribe: () => {},
   isChatSettingsOpen: false,
   chatSettingsError: '',
   isSavingChatSettings: false,
@@ -167,6 +172,12 @@ function warnRealtimePermission(key, error) {
   console.warn('Inbox realtime permission warning:', error?.code || error?.message || error)
 }
 
+function warnSystemPermission(error) {
+  if (appState.warnedSystemPermissions) return
+  appState.warnedSystemPermissions = true
+  console.warn('System notification permission warning:', error?.code || error?.message || error)
+}
+
 function formatTime(value) {
   if (!value) return ''
   const date = new Date(value)
@@ -224,10 +235,12 @@ function clearRealtimeListeners() {
   appState.messageUnsubscribe()
   appState.participantsUnsubscribe()
   appState.typingUnsubscribe()
+  appState.systemUnsubscribe()
   appState.threadUnsubscribe = () => {}
   appState.messageUnsubscribe = () => {}
   appState.participantsUnsubscribe = () => {}
   appState.typingUnsubscribe = () => {}
+  appState.systemUnsubscribe = () => {}
 }
 
 function clearTypingForThread(threadId) {
@@ -596,6 +609,45 @@ function getMessagesThreadListMarkup() {
 }
 
 function getFilterContentMarkup(filterName) {
+  if (filterName === 'System') {
+    const filterOptions = [
+      { key: 'all', label: 'All' },
+      { key: 'product_release', label: 'Product releases' },
+      { key: 'account', label: 'Account' },
+      { key: 'security', label: 'Security' },
+      { key: 'other', label: 'Other' }
+    ]
+    const rows = appState.systemNotifications.filter((item) => appState.systemFilter === 'all' || item.type === appState.systemFilter)
+    return `
+      <section class="activity-panel">
+        <header class="panel-header activity-header">
+          <h3>System</h3>
+          <p>Account and product notifications</p>
+        </header>
+        <div class="system-filter-row">
+          ${filterOptions.map((option) => `<button type="button" class="inbox-filter ${appState.systemFilter === option.key ? 'is-active' : ''}" data-system-filter="${option.key}">${option.label}</button>`).join('')}
+        </div>
+        ${rows.length ? `
+          <div class="system-notification-list">
+            ${rows.map((item) => `
+              <article class="system-notification-card" data-system-id="${item.id}">
+                <p class="system-notification-title">${escapeHtml(item.title)}</p>
+                <p>${escapeHtml(item.body)}</p>
+                <small>${escapeHtml(formatThreadTimestamp(item.createdAt))} · ${escapeHtml(item.severity)}</small>
+                ${item.actionHref ? `<a class="button button-muted" href="${escapeHtml(item.actionHref)}">Open</a>` : ''}
+              </article>
+            `).join('')}
+          </div>
+        ` : `
+          <section class="inbox-empty-panel activity-empty-panel">
+            <h3>No notifications yet.</h3>
+            <p>Important platform notices and updates will appear here.</p>
+          </section>
+        `}
+      </section>
+    `
+  }
+
   const copy = activityCopy[filterName] || {
     title: filterName,
     emptyTitle: `No ${String(filterName).toLowerCase()} yet.`,
@@ -1242,6 +1294,20 @@ function bindSharedEvents() {
     })
   })
 
+  inboxRoot.querySelectorAll('[data-system-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      appState.systemFilter = button.getAttribute('data-system-filter') || 'all'
+      renderSignedInState()
+    })
+  })
+
+  inboxRoot.querySelectorAll('[data-system-id]').forEach((card) => {
+    card.addEventListener('click', async () => {
+      if (!appState.user?.uid) return
+      await markSystemNotificationRead(appState.user.uid, card.getAttribute('data-system-id')).catch(() => {})
+    })
+  })
+
   const openCreateChatButton = inboxRoot.querySelector('[data-action="open-create-chat"]')
   if (openCreateChatButton) {
     openCreateChatButton.addEventListener('click', () => {
@@ -1433,7 +1499,26 @@ function startThreadSubscription() {
     hydrateProfilesForThread(threads.find((thread) => thread.id === appState.selectedThreadId))
 
     renderSignedInState()
+  }, () => {
+    appState.isLoadingThreads = false
+    appState.errorMessage = 'Inbox could not be loaded. Please refresh.'
+    renderSignedInState()
   })
+}
+
+function startSystemNotificationSubscription() {
+  if (!appState.user?.uid) return
+  appState.systemUnsubscribe()
+  appState.systemUnsubscribe = subscribeToSystemNotifications(
+    appState.user.uid,
+    (items) => {
+      appState.systemNotifications = items
+      if (appState.activeFilter === 'System') renderSignedInState()
+    },
+    (error) => {
+      warnSystemPermission(error)
+    }
+  )
 }
 
 function handleGlobalKeydown(event) {
@@ -1459,6 +1544,7 @@ waitForInitialAuthState().then(async (user) => {
   appState.user = user
   renderSignedInState()
   startThreadSubscription()
+  startSystemNotificationSubscription()
 })
 
 subscribeToAuthState(async (user) => {
@@ -1482,4 +1568,5 @@ subscribeToAuthState(async (user) => {
   appState.activeFilter = appState.activeFilter || 'Messages'
   renderSignedInState()
   startThreadSubscription()
+  startSystemNotificationSubscription()
 })

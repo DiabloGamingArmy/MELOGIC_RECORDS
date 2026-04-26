@@ -455,3 +455,11 @@
     grid-template-columns: 1fr;
   }
 }
+
+.dashboard-owner-header-card {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.9rem;
+  background: rgba(13, 17, 30, 0.75);
+}
