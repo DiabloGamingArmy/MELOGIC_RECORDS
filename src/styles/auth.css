@@ -199,3 +199,15 @@
     grid-template-columns: 1fr;
   }
 }
+
+.auth-security-note {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: #9fd4c1;
+}
+
+.auth-security-hint {
+  margin: 0.1rem 0 0.35rem;
+  font-size: 0.74rem;
+  color: #93a9d6;
+}

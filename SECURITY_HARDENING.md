@@ -90,6 +90,24 @@ Notes:
 - Start in monitoring mode before enabling `AUTO_APPROVE_PRODUCTS=true`.
 - AI moderation output should stay server-side and return only safe status/reason fields to clients.
 
+## reCAPTCHA Enterprise auth protection setup
+1. Enable **reCAPTCHA Enterprise API** in Google Cloud for `melogic-records`.
+2. Ensure your reCAPTCHA Enterprise key is configured for score-based web actions and includes:
+   - `melogic-records.web.app`
+   - any custom domain you later attach.
+3. Configure Functions secret before deploy:
+   ```bash
+   firebase functions:secrets:set RECAPTCHA_ENTERPRISE_API_KEY --project melogic-records
+   ```
+4. Configure Functions runtime env for site key:
+   - `RECAPTCHA_ENTERPRISE_SITE_KEY=6LdVxcosAAAAADHONHnIqfGEUIEumkR1A6DOgaPD`
+5. Local/frontend `.env` values:
+   - `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY=6LdVxcosAAAAADHONHnIqfGEUIEumkR1A6DOgaPD`
+   - `VITE_RECAPTCHA_ENTERPRISE_AUTH_ENABLED=true`
+6. Never put the API key in Vite env vars or frontend code.
+7. Frontend `grecaptcha.enterprise.execute()` tokens must always be verified server-side.
+8. Tokens expire quickly (~2 minutes), so execute immediately before submit and use distinct actions (`LOGIN`, `SIGNUP`, `GOOGLE_LOGIN`).
+
 ## Security notes
 - Firebase client config values are not secrets by themselves.
 - Firestore/Storage Rules + App Check + server-side validation are the security boundary.
