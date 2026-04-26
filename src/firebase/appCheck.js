@@ -12,7 +12,11 @@ function shouldEnableAppCheck(siteKey) {
 export function initAppCheck(app) {
   if (!app || appCheckInstance) return appCheckInstance
 
-  const siteKey = String(import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY || '').trim()
+  const siteKey = String(
+    import.meta.env.VITE_APPCHECK_RECAPTCHA_ENTERPRISE_SITE_KEY ||
+    import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY ||
+    ''
+  ).trim()
   if (!shouldEnableAppCheck(siteKey)) {
     if (import.meta.env.DEV && !hasWarnedDisabled) {
       hasWarnedDisabled = true

@@ -92,21 +92,30 @@ Notes:
 
 ## reCAPTCHA Enterprise auth protection setup
 1. Enable **reCAPTCHA Enterprise API** in Google Cloud for `melogic-records`.
-2. Ensure your reCAPTCHA Enterprise key is configured for score-based web actions and includes:
+2. Public site keys (safe for frontend env/config):
+   - Primary/App Check: `6LdVxcosAAAAADHONHnIqfGEUIEumkR1A6DOgaPD`
+   - Auth Forms: `6LfCgsssAAAAADPv2fFgoS9Eyi9G4jkyicLSuUOv`
+3. Auth Forms key must be configured as **Website**, **score-based**, **invisible/action-based**, and include allowed domains:
    - `melogic-records.web.app`
-   - any custom domain you later attach.
-3. Configure Functions secret before deploy:
+   - `melogic-records.firebaseapp.com`
+   - `localhost`
+4. Configure Functions secret before deploy:
    ```bash
    firebase functions:secrets:set RECAPTCHA_ENTERPRISE_API_KEY --project melogic-records
    ```
-4. Configure Functions runtime env for site key:
-   - `RECAPTCHA_ENTERPRISE_SITE_KEY=6LdVxcosAAAAADHONHnIqfGEUIEumkR1A6DOgaPD`
-5. Local/frontend `.env` values:
-   - `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY=6LdVxcosAAAAADHONHnIqfGEUIEumkR1A6DOgaPD`
+5. Configure Functions runtime env for auth verification site key (must match auth form key):
+   - `AUTH_RECAPTCHA_ENTERPRISE_SITE_KEY=6LfCgsssAAAAADPv2fFgoS9Eyi9G4jkyicLSuUOv`
+   - Optional backward-compatible fallback: `RECAPTCHA_ENTERPRISE_SITE_KEY=6LfCgsssAAAAADPv2fFgoS9Eyi9G4jkyicLSuUOv`
+6. Local/frontend `.env.production` values:
+   - `VITE_APPCHECK_RECAPTCHA_ENTERPRISE_SITE_KEY=6LdVxcosAAAAADHONHnIqfGEUIEumkR1A6DOgaPD`
+   - `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY=6LfCgsssAAAAADPv2fFgoS9Eyi9G4jkyicLSuUOv`
+   - `VITE_ENABLE_APP_CHECK=true`
    - `VITE_RECAPTCHA_ENTERPRISE_AUTH_ENABLED=true`
-6. Never put the API key in Vite env vars or frontend code.
-7. Frontend `grecaptcha.enterprise.execute()` tokens must always be verified server-side.
-8. Tokens expire quickly (~2 minutes), so execute immediately before submit and use distinct actions (`LOGIN`, `SIGNUP`, `GOOGLE_LOGIN`).
+7. App Check should use the Primary/App Check site key.
+8. Never put the Google Cloud API key in Vite env vars or frontend code; Vite env vars are exposed to the browser.
+9. Frontend `grecaptcha.enterprise.execute()` tokens must always be verified server-side.
+10. Tokens expire quickly (~2 minutes), so execute immediately before submit and use distinct actions (`LOGIN`, `SIGNUP`, `GOOGLE_LOGIN`).
+11. The Auth Forms site key and backend expected site key must match.
 
 ## Security notes
 - Firebase client config values are not secrets by themselves.
