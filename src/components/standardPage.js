@@ -1,5 +1,6 @@
 import { navShell } from './navShell'
 import { renderPagePreloaderMarkup } from './pagePreloader'
+import { ROUTES } from '../utils/routes'
 
 export function mountStandardPage({
   currentPage,
@@ -7,8 +8,8 @@ export function mountStandardPage({
   eyebrow = 'Melogic',
   title,
   description,
-  primaryCta = { label: 'Browse Products', href: '/products.html' },
-  secondaryCta = { label: 'Back Home', href: '/index.html' }
+  primaryCta = { label: 'Browse Products', href: ROUTES.products },
+  secondaryCta = { label: 'Back Home', href: ROUTES.home }
 }) {
   const app = document.querySelector('#app')
   if (!app) return

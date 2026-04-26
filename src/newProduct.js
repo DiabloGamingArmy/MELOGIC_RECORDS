@@ -6,6 +6,7 @@ import { waitForInitialAuthState } from './firebase/auth'
 import { buildProductPayload, getProductById, isPlaceholderProductId, requestProductReview, saveProductDraft } from './data/productService'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
+import { ROUTES } from './utils/routes'
 
 const PRODUCT_SECTIONS = [
   { key: 'basics', label: 'Basics' },
@@ -279,7 +280,7 @@ function renderSignedOut() {
     <article class="product-editor-card signed-out">
       <h2>Sign in required</h2>
       <p>You need an authenticated account to create or publish marketplace products.</p>
-      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+      <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
     </article>
   `
 }
@@ -289,7 +290,7 @@ function renderEditPermissionDenied() {
     <article class="product-editor-card signed-out">
       <h2>Listing access denied</h2>
       <p>You do not have permission to edit this listing.</p>
-      <a class="button button-accent" href="/products.html">Back to Products</a>
+      <a class="button button-accent" href="${ROUTES.products}">Back to Products</a>
     </article>
   `
 }
@@ -325,7 +326,7 @@ function renderEditor() {
   editorRoot.innerHTML = `
     <div class="product-layout">
       <aside class="product-sidebar">
-        <a class="back-link" href="/products.html">← Back to Products</a>
+        <a class="back-link" href="${ROUTES.products}">← Back to Products</a>
         <nav aria-label="Product editor sections">
           ${PRODUCT_SECTIONS.map((item) => `<button type="button" class="section-btn ${item.key === section ? 'is-active' : ''}" data-section="${item.key}">${item.label}</button>`).join('')}
         </nav>

@@ -6,6 +6,7 @@ import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './compo
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { addToCart } from './data/cartService'
 import { listHomepageReleaseProducts } from './data/productService'
+import { ROUTES, productRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
 
@@ -73,8 +74,8 @@ app.innerHTML = `
             pushing electronic music, melodic bass, and metalcore into the same future.
           </p>
           <div class="hero-actions">
-            <a class="button button-accent" href="/products.html">Explore the Catalog</a>
-            <a class="button button-muted" href="/support.html">Connect with us</a>
+            <a class="button button-accent" href="${ROUTES.products}">Explore the Catalog</a>
+            <a class="button button-muted" href="${ROUTES.support}">Connect with us</a>
           </div>
         </div>
       </div>
@@ -344,7 +345,7 @@ async function initHomeReleaseProducts() {
       const card = event.target.closest('[data-release-card]')
       const productId = card?.getAttribute('data-product-id')
       if (productId) {
-        window.location.href = `/product-dashboard.html?id=${encodeURIComponent(productId)}`
+        window.location.href = productRoute(productId)
       }
     })
   } catch (error) {

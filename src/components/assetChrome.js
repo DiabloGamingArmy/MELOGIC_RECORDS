@@ -1,6 +1,7 @@
 import { getStorageAssetUrl } from '../firebase/storageAssets'
 import { signOutUser, subscribeToAuthState, waitForInitialAuthState } from '../firebase/auth'
 import { getCartItems, removeFromCart, subscribeToCart } from '../data/cartService'
+import { ROUTES, authRoute } from '../utils/routes'
 
 function escapeHtml(value) {
   return String(value || '')
@@ -136,7 +137,7 @@ function initCartDrawer() {
         <section class="cart-drawer-list" data-cart-drawer-list></section>
         <footer class="cart-drawer-footer">
           <button type="button" class="button button-muted" data-cart-drawer-close>Close</button>
-          <a href="/cart.html" class="button button-accent">View Cart</a>
+          <a href="${ROUTES.cart}" class="button button-accent">View Cart</a>
         </footer>
       </aside>
     </div>
@@ -275,7 +276,7 @@ function initNavAuthState() {
     try {
       await signOutUser()
       setMenuOpen(false)
-      window.location.assign('/index.html')
+      window.location.assign(ROUTES.home)
     } catch {
       signOutButton.textContent = 'Log Out'
     } finally {
@@ -309,6 +310,6 @@ function initNavAuthState() {
     const resolvedUser = await waitForInitialAuthState()
     if (resolvedUser) return
     event.preventDefault()
-    window.location.assign('/auth.html?redirect=/inbox.html')
+    window.location.assign(authRoute({ redirect: ROUTES.inbox }))
   })
 }
