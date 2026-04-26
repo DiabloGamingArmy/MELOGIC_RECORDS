@@ -1022,3 +1022,28 @@ body.is-inbox-page {
     max-width: 94%;
   }
 }
+
+.system-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.system-notification-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.system-notification-card {
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: rgba(12, 16, 28, 0.72);
+  cursor: pointer;
+}
+
+.system-notification-title {
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}

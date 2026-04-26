@@ -12,8 +12,10 @@ import {
   where,
   writeBatch
 } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
+import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STORAGE_PATHS } from '../config/storagePaths'
@@ -377,6 +379,11 @@ export async function listPublicProductsPage({ filters = {}, sort = 'featured', 
   }
 }
 
+export async function listHomepageReleaseProducts() {
+  const { products } = await listPublicProductsPage({ sort: 'featured', pageSize: 12 })
+  return products
+}
+
 export async function getPublicProducts() {
   if (!db) return []
 
@@ -704,23 +711,25 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   }
 
   const desiredStatus = options.status || basePayload.status || 'draft'
+  const editingPublishedListing = input.currentStatus === 'published' || basePayload.status === 'published'
+  const normalizedStatus = editingPublishedListing ? 'review_pending' : (desiredStatus === 'published' ? 'review_pending' : desiredStatus)
   const payload = {
     ...basePayload,
     id: productId,
     ...creator,
     artistId: user.uid,
-    status: desiredStatus === 'published' ? 'draft' : desiredStatus,
+    status: normalizedStatus,
     visibility: basePayload.visibility || 'private',
     coverPath: mediaUploads.coverPath || basePayload.coverPath,
     thumbnailPath: mediaUploads.thumbnailPath || basePayload.thumbnailPath,
     updatedAt: serverTimestamp(),
     createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
   }
-  const isPublishing = desiredStatus === 'published'
-  if (!isPublishing && !String(input.title || '').trim()) {
+  const isSubmittingForReview = desiredStatus === 'published'
+  if (!isSubmittingForReview && !String(input.title || '').trim()) {
     delete payload.title
   }
-  if (!isPublishing && !String(input.productType || '').trim()) {
+  if (!isSubmittingForReview && !String(input.productType || '').trim()) {
     delete payload.productType
   }
 
@@ -733,29 +742,26 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     throw createStageError('final-firestore-merge', 'Final product metadata save failed.', error)
   }
 
-  if (isPublishing) {
-    try {
-      await setDoc(
-        doc(db, FIRESTORE_COLLECTIONS.products, productId),
-        {
-          status: 'published',
-          updatedAt: serverTimestamp()
-        },
-        { merge: true }
-      )
-      if (typeof options.onStatus === 'function') {
-        options.onStatus('Publish transition completed.')
-      }
-    } catch (error) {
-      throw createStageError('publish-transition', 'Publish update failed.', error)
-    }
-  }
-
   return {
     productId,
     payload,
     mediaUploads,
     draftCreated: created
+  }
+}
+
+export async function requestProductReview(productId = '') {
+  if (!functions || !productId) throw new Error('Missing product id for review request.')
+  try {
+    const callable = httpsCallable(functions, 'requestProductReview')
+    const result = await callable({ productId })
+    return result?.data || { status: 'review_pending', aiEnabled: false }
+  } catch (error) {
+    const code = String(error?.code || '')
+    if (code.includes('not-found') || code.includes('unavailable') || code.includes('internal')) {
+      throw new Error('Review service is currently unavailable. Please try again shortly.')
+    }
+    throw new Error(error?.message || 'Could not submit product for review.')
   }
 }
 
