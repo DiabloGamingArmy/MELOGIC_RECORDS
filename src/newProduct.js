@@ -247,7 +247,6 @@ function serializeDraftForFirestore(draft) {
     ...safeDraft,
     priceCents: Math.max(0, Math.round((Number.isFinite(numericPrice) ? numericPrice : 0) * 100)),
     isFree: Boolean(safeDraft.isFree),
-    featured: Boolean(safeDraft.featured),
     saleEnabled: Boolean(safeDraft.saleEnabled),
     storefrontVisible: Boolean(safeDraft.storefrontVisible)
   }
@@ -535,6 +534,7 @@ function renderEditor() {
       const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
       const draftForSave = serializeDraftForFirestore({
         ...editorState.draft,
+        profile: editorState.creatorProfile || {},
         status: desiredStatus
       })
       const payload = buildProductPayload(draftForSave, editorState.user)

@@ -20,6 +20,7 @@ import { STORAGE_PATHS } from '../config/storagePaths'
 
 let hasWarnedProductFetch = false
 let hasWarnedProductMedia = false
+const isDevelopmentRuntime = import.meta.env.DEV
 
 function warnOnce(type, ...details) {
   if (type === 'fetch') {
@@ -296,7 +297,17 @@ export async function listPublicProductsPage({ filters = {}, sort = 'featured', 
       hasMore: snapshot.docs.length === pageSize
     }
   } catch (error) {
-    warnOnce('fetch', '[productService] Paginated product query failed; running lightweight fallback query.', error?.message || error)
+    const errorCode = String(error?.code || '')
+    const isMissingIndex = errorCode === 'failed-precondition' || /index/i.test(String(error?.message || ''))
+
+    if (!isDevelopmentRuntime) {
+      if (isMissingIndex) {
+        throw new Error('Products are temporarily unavailable while indexing finishes. Please try again shortly.')
+      }
+      throw new Error('Unable to load products right now. Please try again.')
+    }
+
+    warnOnce('fetch', '[productService] Paginated product query failed; running dev-only lightweight fallback query.', error?.message || error)
 
     const fallbackConstraints = [
       where('status', '==', 'published'),
@@ -424,12 +435,13 @@ function parseCsv(value) {
 }
 
 export function getCreatorIdentity(user = null, input = {}) {
-  const artistId = user?.uid || String(input.artistId || '')
-  const artistName = String(user?.displayName || input.artistDisplayName || input.artistName || 'Creator')
-  const artistUsername = String(input.artistUsername || '')
-  const artistProfilePath = String(input.artistProfilePath || (artistId ? `profiles/${artistId}` : ''))
-  const artistAvatarURL = String(input.artistAvatarURL || input.artistPhotoURL || user?.photoURL || '')
-  const artistPhotoURL = String(input.artistPhotoURL || input.artistAvatarURL || user?.photoURL || '')
+  const profile = input.profile && typeof input.profile === 'object' ? input.profile : {}
+  const artistId = user?.uid || ''
+  const artistName = String(profile.displayName || user?.displayName || 'Creator').trim() || 'Creator'
+  const artistUsername = String(profile.username || profile.handle || '').trim()
+  const artistProfilePath = artistId ? `profiles/${artistId}` : ''
+  const artistAvatarURL = String(profile.avatarURL || profile.photoURL || user?.photoURL || '').trim()
+  const artistPhotoURL = String(profile.photoURL || profile.avatarURL || user?.photoURL || '').trim()
 
   return {
     artistId,
@@ -444,7 +456,6 @@ export function getCreatorIdentity(user = null, input = {}) {
 
 export function buildProductPayload(input = {}, user = null) {
   const nowIso = new Date().toISOString()
-  const counts = input.counts || {}
   const slug = input.slug || slugify(input.title) || `product-${Date.now()}`
   const contributorNames = Array.isArray(input.contributorNames) ? input.contributorNames : parseCsv(input.contributorNames)
   const creator = getCreatorIdentity(user, input)
@@ -500,20 +511,6 @@ export function buildProductPayload(input = {}, user = null) {
     dawCompatibility: (Array.isArray(input.dawCompatibility) ? input.dawCompatibility : parseCsv(input.dawCompatibility)).map(normalizeKey).filter(Boolean),
     formatKeys: (Array.isArray(input.formatKeys) ? input.formatKeys : parseCsv(input.formatKeys)).map(normalizeKey).filter(Boolean),
     contributorCount: Number(input.contributorCount || (Array.isArray(input.contributorIds) ? input.contributorIds.length : parseCsv(input.contributorIds).length)),
-    likeCount: Number(input.likeCount ?? counts.likes ?? 0),
-    saveCount: Number(input.saveCount ?? counts.saves ?? 0),
-    downloadCount: Number(input.downloadCount ?? counts.downloads ?? 0),
-    commentCount: Number(input.commentCount ?? counts.comments ?? 0),
-    counts: {
-      likes: Number(counts.likes || 0),
-      dislikes: Number(counts.dislikes || 0),
-      saves: Number(counts.saves || 0),
-      shares: Number(counts.shares || 0),
-      comments: Number(counts.comments || 0),
-      downloads: Number(counts.downloads || 0),
-      follows: Number(counts.follows || 0)
-    },
-    featured: Boolean(input.featured),
     releasedAt: input.releasedAt || null,
     createdAt: input.createdAt || nowIso,
     updatedAt: nowIso
