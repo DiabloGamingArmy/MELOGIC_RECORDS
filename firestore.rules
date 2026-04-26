@@ -10,22 +10,26 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    function threadDoc(threadId) {
-      return get(/databases/$(database)/documents/threads/$(threadId));
+    function threadPath(threadId) {
+      return /databases/$(database)/documents/threads/$(threadId);
     }
 
     function threadExists(threadId) {
-      return threadDoc(threadId).exists();
+      return exists(threadPath(threadId));
+    }
+
+    function threadData(threadId) {
+      return get(threadPath(threadId)).data;
     }
 
     function isThreadOwner(threadId) {
-      return isThreadParticipant(threadId) && threadDoc(threadId).data.createdBy == request.auth.uid;
+      return isThreadParticipant(threadId) && threadData(threadId).createdBy == request.auth.uid;
     }
 
     function isThreadParticipant(threadId) {
       return signedIn()
         && threadExists(threadId)
-        && request.auth.uid in threadDoc(threadId).data.participantIds;
+        && request.auth.uid in threadData(threadId).participantIds;
     }
 
     function participantSelfUpdateIsSafe(uid) {
@@ -47,6 +51,7 @@ service cloud.firestore {
 
     function participantSafeThreadUpdate(threadId) {
       return isThreadParticipant(threadId)
+        && threadExists(threadId)
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'updatedAt',
           'lastMessageAt',
