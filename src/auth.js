@@ -17,7 +17,6 @@ import {
   waitForInitialAuthState,
   updateCurrentUserProfile
 } from './firebase/auth'
-import { ensureUserProvisioned, provisionNewUserAccount } from './firebase/firestore'
 import { executeRecaptchaAction, getRecaptchaSiteKey, isRecaptchaAuthEnabled } from './security/recaptchaEnterprise'
 
 const app = document.querySelector('#app')
@@ -150,7 +149,6 @@ const signupButton = document.querySelector('[data-signup-btn]')
 const feedback = document.querySelector('[data-auth-feedback]')
 const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
 let isSubmitting = false
-let hasWarnedProfileWrite = false
 
 function initPasswordToggles() {
   const toggles = document.querySelectorAll('[data-password-toggle]')
@@ -171,12 +169,6 @@ function initPasswordToggles() {
       toggle.setAttribute('aria-label', `${showPassword ? 'Hide' : 'Show'} password`)
     })
   })
-}
-
-function warnProfileWriteFailure(error, context) {
-  if (hasWarnedProfileWrite) return
-  hasWarnedProfileWrite = true
-  console.warn(`[auth] Firestore profile ${context} failed.`, error?.code || error?.message || error)
 }
 
 function waitForAuthenticatedUser(timeoutMs = 3000) {
@@ -317,9 +309,11 @@ function friendlySubmitError(error) {
 }
 
 function friendlyProvisioningError(error) {
-  if (error?.code === 'profile/username-taken') return 'That username is already taken. Please choose another one.'
-  if (error?.code === 'profile/invalid-username') return error?.message || 'Username is invalid.'
-  if (error?.code === 'profile/invalid-display-name') return error?.message || 'Display name is required.'
+  const code = String(error?.code || '')
+  if (code === 'functions/already-exists') return 'That username is already taken. Please choose another one.'
+  if (code === 'functions/invalid-argument') return error?.message || 'Profile setup input is invalid.'
+  if (code === 'functions/unauthenticated') return 'Account was created, but profile setup could not authenticate. Please sign in again.'
+  if (code === 'functions/failed-precondition') return 'Profile setup could not complete. Please try again.'
   return 'Account created, but profile setup is incomplete. Please retry or finish setup in Edit Profile.'
 }
 
@@ -437,7 +431,7 @@ async function handleSignUpSubmit(event) {
       await updateCurrentUserProfile({ displayName })
     }
 
-    await provisionNewUserAccount(credential.user, {
+    const provisioning = await provisionUserAccount({
       displayName: signupValidation.displayName,
       username: signupValidation.username,
       email,
@@ -445,15 +439,16 @@ async function handleSignUpSubmit(event) {
       requireUsername: true
     })
 
+    if (provisioning?.onboardingRequired) {
+      setFeedback('Account created. Please finish profile setup.', 'info')
+      window.location.assign('/edit-profile.html')
+      return
+    }
+
     setFeedback('Account created. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
-    if (String(error?.code || '').startsWith('profile/')) {
-      warnProfileWriteFailure(error, 'provision')
-      setFeedback(friendlyProvisioningError(error), 'error')
-    } else {
-      setFeedback(friendlySubmitError(error), 'error')
-    }
+    setFeedback(friendlyProvisioningError(error), 'error')
   } finally {
     setLoadingState(false)
   }
@@ -470,7 +465,7 @@ async function handleGoogleSignIn() {
     await authPersistenceReady
     const credential = await signInWithGoogle()
 
-    const provisioning = await ensureUserProvisioned(credential.user, {
+    const provisioning = await provisionUserAccount({
       displayName: credential.user.displayName || '',
       email: credential.user.email || ''
     })
@@ -484,14 +479,23 @@ async function handleGoogleSignIn() {
     setFeedback('Signed in with Google. Redirecting...', 'success')
     await redirectToProfile()
   } catch (error) {
-    if (String(error?.code || '').startsWith('profile/')) {
-      warnProfileWriteFailure(error, 'google-provision')
-      setFeedback(friendlyProvisioningError(error), 'error')
-    } else {
-      setFeedback(friendlySubmitError(error), 'error')
-    }
+    setFeedback(friendlyProvisioningError(error), 'error')
   } finally {
     setLoadingState(false)
+  }
+}
+
+async function provisionUserAccount(payload) {
+  const provisionCallable = httpsCallable(functions, 'provisionUserAccount')
+  try {
+    const result = await provisionCallable(payload)
+    return result?.data || { ok: false, onboardingRequired: true }
+  } catch (error) {
+    console.warn('[auth] provisionUserAccount failed', {
+      code: error?.code,
+      message: error?.message
+    })
+    throw error
   }
 }
 
