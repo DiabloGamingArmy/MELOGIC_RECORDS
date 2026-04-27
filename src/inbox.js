@@ -1601,6 +1601,141 @@ function setupFloatingEventDelegates() {
   })
 }
 
+async function handleFloatingMenuAction(button) {
+  const action = button.getAttribute('data-menu-action')
+  const menu = appState.messageContextMenu
+  if (!menu) return
+
+  if (action === 'cancel') {
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'edit') {
+    appState.editingMessageByThreadId[menu.threadId] = menu.messageId
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    appState.editDraftByMessageId[menu.messageId] = message?.body || ''
+    clearFloatingOverlays()
+    renderSignedInState()
+    return
+  }
+  if (action === 'reply') {
+    const thread = appState.threads.find((entry) => entry.id === menu.threadId)
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    if (thread && message) {
+      appState.replyDraftByThreadId[menu.threadId] = buildReplyPreview(thread, message)
+    }
+    clearFloatingOverlays()
+    renderSignedInState()
+    return
+  }
+  if (action === 'react') {
+    appState.reactionPickerAnchor = true
+    appState.deleteSubmenuAnchor = null
+    renderFloatingUi()
+    return
+  }
+  if (action === 'delete') {
+    appState.deleteSubmenuAnchor = true
+    appState.reactionPickerAnchor = null
+    renderFloatingUi()
+    return
+  }
+  if (action === 'profile') {
+    const href = button.getAttribute('data-href')
+    clearFloatingOverlays()
+    renderFloatingUi()
+    window.location.assign(href || ROUTES.profilePublic)
+    return
+  }
+  if (action === 'copy') {
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    if (message?.body) {
+      try {
+        await navigator.clipboard.writeText(message.body)
+      } catch {
+        // noop
+      }
+    }
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'view-reactions') {
+    const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
+    const reactorUids = Array.from(new Set(reactions.map((entry) => entry.uid).filter(Boolean)))
+    if (reactorUids.length) {
+      const loaded = await loadProfilesByUids(reactorUids)
+      appState.profileByUid = { ...appState.profileByUid, ...loaded }
+    }
+    appState.reactionDetailModal = { threadId: menu.threadId, messageId: menu.messageId }
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'delete-me') {
+    await hideMessageForMe({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
+  }
+  if (action === 'delete-everyone' && (menu.senderId === appState.user?.uid || menu.threadCreatedBy === appState.user?.uid)) {
+    await deleteMessageForEveryone({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
+  }
+  if (action === 'emoji') {
+    const emoji = button.getAttribute('data-emoji') || ''
+    const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
+    const mine = reactions.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
+    const rollback = applyOptimisticReaction({
+      threadId: menu.threadId,
+      messageId: menu.messageId,
+      emoji,
+      uid: appState.user?.uid,
+      add: !mine
+    })
+    renderSignedInState()
+    try {
+      if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
+      else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
+    } catch {
+      rollback()
+      appState.errorMessage = 'Unable to update reaction.'
+      renderSignedInState()
+    }
+  }
+  clearFloatingOverlays()
+  renderFloatingUi()
+}
+
+function setupFloatingEventDelegates() {
+  floatingRoot.addEventListener('click', async (event) => {
+    const modalClose = event.target.closest('[data-reaction-modal-close]')
+    if (modalClose) {
+      if (event.target !== modalClose && !event.target.hasAttribute('data-reaction-modal-close')) return
+      appState.reactionDetailModal = null
+      renderFloatingUi()
+      return
+    }
+
+    const menuActionButton = event.target.closest('[data-menu-action]')
+    if (menuActionButton) {
+      event.preventDefault()
+      event.stopPropagation()
+      await handleFloatingMenuAction(menuActionButton)
+      return
+    }
+
+    const closeBackdrop = event.target.closest('[data-message-context-close]')
+    if (closeBackdrop && event.target.hasAttribute('data-message-context-close')) {
+      clearFloatingOverlays()
+      renderFloatingUi()
+    }
+  })
+
+  floatingRoot.addEventListener('contextmenu', (event) => {
+    if (event.target.closest('[data-message-context-menu]')) return
+    clearFloatingOverlays()
+    renderFloatingUi()
+  })
+}
+
 function getReactionDetailModalMarkup() {
   const modal = appState.reactionDetailModal
   if (!modal) return ''
