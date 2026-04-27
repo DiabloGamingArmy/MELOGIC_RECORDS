@@ -22,16 +22,29 @@ service cloud.firestore {
       return get(threadPath(threadId)).data;
     }
 
+    // Use this ONLY for thread subcollections.
     function isThreadParticipant(threadId) {
       return signedIn()
         && threadExists(threadId)
+        && threadData(threadId).participantIds is list
         && request.auth.uid in threadData(threadId).participantIds;
     }
 
+    function isThreadOwner(threadId) {
+      return isThreadParticipant(threadId)
+        && threadData(threadId).createdBy == request.auth.uid;
+    }
+
+    // Use this for /threads/{threadId} parent document get/list/update rules.
     function isThreadParticipantResource() {
       return signedIn()
         && resource.data.participantIds is list
         && request.auth.uid in resource.data.participantIds;
+    }
+
+    function isThreadOwnerResource() {
+      return isThreadParticipantResource()
+        && resource.data.createdBy == request.auth.uid;
     }
 
     function isThreadParticipantCreate() {
@@ -40,45 +53,11 @@ service cloud.firestore {
         && request.auth.uid in request.resource.data.participantIds;
     }
 
-    function isThreadParticipantAfter() {
-      return signedIn()
-        && request.resource.data.participantIds is list
-        && request.auth.uid in request.resource.data.participantIds;
-    }
-
-    function isThreadOwnerResource() {
-      return isThreadParticipantResource()
-        && resource.data.createdBy == request.auth.uid;
-    }
-
-    function participantSafeThreadUpdateResource() {
-      return isThreadParticipantResource()
-        && request.resource.data.participantIds == resource.data.participantIds
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-          'updatedAt',
-          'lastMessageAt',
-          'lastMessageText',
-          'lastMessageSenderId',
-          'lastMessageType'
-        ]);
-    }
-
-    function isThreadParticipantByParent(threadId) {
-      return signedIn()
-        && threadExists(threadId)
-        && request.auth.uid in threadData(threadId).participantIds;
-    }
-
-    function isThreadOwnerByParent(threadId) {
-      return isThreadParticipantByParent(threadId)
-        && threadData(threadId).createdBy == request.auth.uid;
-    }
-
     function participantSelfUpdateIsSafe(uid) {
-      return request.auth.uid == uid
+      return signedIn()
+        && request.auth.uid == uid
         && request.resource.data.uid == uid
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'lastReadAt',
           'lastDeliveredAt',
           'typingUpdatedAt',
@@ -89,6 +68,19 @@ service cloud.firestore {
           'username',
           'avatarURL',
           'photoURL'
+        ]);
+    }
+
+    function participantSafeThreadUpdateResource() {
+      return isThreadParticipantResource()
+        && request.resource.data.participantIds == resource.data.participantIds
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'updatedAt',
+          'lastMessageAt',
+          'lastMessageText',
+          'lastMessageSenderId',
+          'lastMessageType'
         ]);
     }
 
@@ -105,19 +97,26 @@ service cloud.firestore {
         && request.resource.data.username == usernameLower;
     }
 
-    function productCreateAllowedKeys() {
+    function productAllowedKeys() {
       return request.resource.data.keys().hasOnly([
         'id',
         'slug',
         'status',
         'visibility',
+
         'title',
         'shortDescription',
         'description',
         'productType',
+
         'categories',
         'genres',
         'tags',
+        'categoryKeys',
+        'genreKeys',
+        'tagKeys',
+        'searchKeywords',
+
         'artistId',
         'artistName',
         'artistDisplayName',
@@ -125,9 +124,13 @@ service cloud.firestore {
         'artistProfilePath',
         'artistAvatarURL',
         'artistPhotoURL',
+        'artistNameLower',
+        'artistUsernameLower',
+
         'contributorIds',
         'contributorNames',
         'contributorCount',
+
         'coverPath',
         'thumbnailPath',
         'coverURL',
@@ -137,129 +140,223 @@ service cloud.firestore {
         'previewVideoPaths',
         'downloadPath',
         'licensePath',
+
         'priceCents',
         'currency',
         'isFree',
-        'titleLower',
-        'artistNameLower',
-        'artistUsernameLower',
-        'searchKeywords',
-        'categoryKeys',
-        'genreKeys',
-        'tagKeys',
+        'saleEnabled',
+        'storefrontVisible',
+
         'dawCompatibility',
         'formatKeys',
+        'formatNotes',
+        'compatibilityNotes',
+        'includedFiles',
+
         'releasedAt',
         'createdAt',
         'updatedAt',
+        'publishedAt',
+
+        'moderationStatus',
+        'moderationSummary',
+        'moderationReasons',
+        'reviewedAt',
+        'reviewedBy',
+
+        'likeCount',
+        'dislikeCount',
+        'saveCount',
+        'downloadCount',
+        'commentCount',
+        'shareCount',
+        'followCount',
+        'counts',
+
+        'featured',
+        'promoted',
+        'salesCount',
+        'revenue',
+        'entitlementCount'
+      ]);
+    }
+
+    function productFieldShapesAreValid() {
+      return request.resource.data.id is string
+        && request.resource.data.id.size() > 0
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 160
+        && request.resource.data.artistId is string
+        && request.resource.data.artistId == request.auth.uid
+        && request.resource.data.status in [
+          'draft',
+          'review_pending',
+          'needs_changes',
+          'rejected',
+          'archived'
+        ]
+        && request.resource.data.visibility in [
+          'public',
+          'private',
+          'unlisted'
+        ]
+        && (!('slug' in request.resource.data) || request.resource.data.slug is string)
+        && (!('shortDescription' in request.resource.data) || (
+          request.resource.data.shortDescription is string
+          && request.resource.data.shortDescription.size() <= 500
+        ))
+        && (!('description' in request.resource.data) || (
+          request.resource.data.description is string
+          && request.resource.data.description.size() <= 20000
+        ))
+        && (!('productType' in request.resource.data) || request.resource.data.productType is string)
+        && (!('priceCents' in request.resource.data) || (
+          request.resource.data.priceCents is number
+          && request.resource.data.priceCents >= 0
+          && request.resource.data.priceCents <= 10000000
+        ))
+        && (!('currency' in request.resource.data) || request.resource.data.currency in ['USD', 'EUR', 'GBP'])
+        && (!('isFree' in request.resource.data) || request.resource.data.isFree is bool)
+        && (!('saleEnabled' in request.resource.data) || request.resource.data.saleEnabled is bool)
+        && (!('storefrontVisible' in request.resource.data) || request.resource.data.storefrontVisible is bool)
+        && (!('tags' in request.resource.data) || (
+          request.resource.data.tags is list
+          && request.resource.data.tags.size() <= 50
+        ))
+        && (!('categories' in request.resource.data) || (
+          request.resource.data.categories is list
+          && request.resource.data.categories.size() <= 20
+        ))
+        && (!('genres' in request.resource.data) || (
+          request.resource.data.genres is list
+          && request.resource.data.genres.size() <= 20
+        ))
+        && (!('searchKeywords' in request.resource.data) || (
+          request.resource.data.searchKeywords is list
+          && request.resource.data.searchKeywords.size() <= 120
+        ))
+        && (!('categoryKeys' in request.resource.data) || request.resource.data.categoryKeys is list)
+        && (!('genreKeys' in request.resource.data) || request.resource.data.genreKeys is list)
+        && (!('tagKeys' in request.resource.data) || request.resource.data.tagKeys is list)
+        && (!('dawCompatibility' in request.resource.data) || request.resource.data.dawCompatibility is list)
+        && (!('formatKeys' in request.resource.data) || request.resource.data.formatKeys is list)
+        && (!('contributorIds' in request.resource.data) || (
+          request.resource.data.contributorIds is list
+          && request.resource.data.contributorIds.size() <= 25
+        ))
+        && (!('contributorNames' in request.resource.data) || (
+          request.resource.data.contributorNames is list
+          && request.resource.data.contributorNames.size() <= 25
+        ))
+        && (!('contributorCount' in request.resource.data) || (
+          request.resource.data.contributorCount is number
+          && request.resource.data.contributorCount >= 0
+          && request.resource.data.contributorCount <= 25
+        ))
+        && (!('coverPath' in request.resource.data) || request.resource.data.coverPath is string)
+        && (!('thumbnailPath' in request.resource.data) || request.resource.data.thumbnailPath is string)
+        && (!('coverURL' in request.resource.data) || request.resource.data.coverURL is string)
+        && (!('thumbnailURL' in request.resource.data) || request.resource.data.thumbnailURL is string)
+        && (!('galleryPaths' in request.resource.data) || (
+          request.resource.data.galleryPaths is list
+          && request.resource.data.galleryPaths.size() <= 24
+        ))
+        && (!('previewAudioPaths' in request.resource.data) || (
+          request.resource.data.previewAudioPaths is list
+          && request.resource.data.previewAudioPaths.size() <= 12
+        ))
+        && (!('previewVideoPaths' in request.resource.data) || (
+          request.resource.data.previewVideoPaths is list
+          && request.resource.data.previewVideoPaths.size() <= 8
+        ))
+        && (!('downloadPath' in request.resource.data) || request.resource.data.downloadPath is string)
+        && (!('licensePath' in request.resource.data) || request.resource.data.licensePath is string)
+        && (!('formatNotes' in request.resource.data) || (
+          request.resource.data.formatNotes is string
+          && request.resource.data.formatNotes.size() <= 5000
+        ))
+        && (!('compatibilityNotes' in request.resource.data) || (
+          request.resource.data.compatibilityNotes is string
+          && request.resource.data.compatibilityNotes.size() <= 5000
+        ))
+        && (!('includedFiles' in request.resource.data) || (
+          request.resource.data.includedFiles is string
+          && request.resource.data.includedFiles.size() <= 10000
+        ));
+    }
+
+    function productProtectedFieldsAffected() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
+        'likeCount',
+        'dislikeCount',
+        'saveCount',
+        'downloadCount',
+        'commentCount',
+        'shareCount',
+        'followCount',
+        'counts',
+
+        'featured',
+        'promoted',
+
         'moderationStatus',
         'moderationSummary',
         'moderationReasons',
         'reviewedAt',
         'reviewedBy',
         'publishedAt',
-        'saleEnabled',
-        'storefrontVisible',
-        'formatNotes',
-        'compatibilityNotes',
-        'includedFiles'
+
+        'salesCount',
+        'revenue',
+        'entitlementCount'
       ]);
     }
 
-    function productFieldShapesAreValid() {
-      return request.resource.data.title is string
-        && request.resource.data.title.size() > 0
-        && request.resource.data.title.size() <= 160
-        && (!('shortDescription' in request.resource.data) || (request.resource.data.shortDescription is string && request.resource.data.shortDescription.size() <= 500))
-        && (!('description' in request.resource.data) || (request.resource.data.description is string && request.resource.data.description.size() <= 20000))
-        && (!('priceCents' in request.resource.data) || (request.resource.data.priceCents is number && request.resource.data.priceCents >= 0))
-        && (!('status' in request.resource.data) || request.resource.data.status in ['draft', 'review_pending', 'published', 'rejected', 'needs_changes', 'archived'])
-        && (!('visibility' in request.resource.data) || request.resource.data.visibility in ['public', 'private', 'unlisted'])
-        && (!('tags' in request.resource.data) || (request.resource.data.tags is list && request.resource.data.tags.size() <= 50))
-        && (!('categories' in request.resource.data) || (request.resource.data.categories is list && request.resource.data.categories.size() <= 20))
-        && (!('genres' in request.resource.data) || (request.resource.data.genres is list && request.resource.data.genres.size() <= 20));
-    }
-
-    function protectedProductFieldsUnchanged() {
-      return request.resource.data.likeCount == resource.data.likeCount
-        && request.resource.data.dislikeCount == resource.data.dislikeCount
-        && request.resource.data.saveCount == resource.data.saveCount
-        && request.resource.data.downloadCount == resource.data.downloadCount
-        && request.resource.data.commentCount == resource.data.commentCount
-        && request.resource.data.counts == resource.data.counts
-        && request.resource.data.featured == resource.data.featured
-        && request.resource.data.promoted == resource.data.promoted
-        && request.resource.data.moderationStatus == resource.data.moderationStatus
-        && request.resource.data.reviewedAt == resource.data.reviewedAt
-        && request.resource.data.reviewedBy == resource.data.reviewedBy
-        && request.resource.data.salesCount == resource.data.salesCount
-        && request.resource.data.revenue == resource.data.revenue
-        && request.resource.data.entitlementCount == resource.data.entitlementCount;
-    }
-
-    
-
-    function featuredItemsShapeValid() {
-      return !('featuredItems' in request.resource.data)
-        || (
-          request.resource.data.featuredItems is map
-          && (!('enabled' in request.resource.data.featuredItems) || request.resource.data.featuredItems.enabled is bool)
-          && (!('productIds' in request.resource.data.featuredItems) || (
-            request.resource.data.featuredItems.productIds is list
-            && request.resource.data.featuredItems.productIds.size() <= 3
-          ))
-        );
-    }
-
-    function publicProfileUpdateAllowed(uid) {
-      return isOwner(uid)
-        && request.resource.data.uid == uid
-        && request.resource.data.roleLabel == resource.data.roleLabel
-        && request.resource.data.stats == resource.data.stats
-        && featuredItemsShapeValid()
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
-          'displayName',
-          'username',
-          'usernameLower',
-          'bio',
-          'avatarPath',
-          'avatarURL',
-          'bannerPath',
-          'bannerURL',
-          'location',
-          'website',
-          'socials',
-          'featuredItems',
-          'updatedAt'
-        ]);
-    }
-
     function creatorIdentityIsStable() {
-      return request.resource.data.artistId == resource.data.artistId
-        && request.resource.data.artistId == request.auth.uid
+      return resource.data.artistId == request.auth.uid
+        && request.resource.data.artistId == resource.data.artistId
         && request.resource.data.artistProfilePath == resource.data.artistProfilePath;
+    }
+
+    function productCreateIsAllowed(productId) {
+      return signedIn()
+        && request.resource.data.id == productId
+        && request.resource.data.artistId == request.auth.uid
+        && productAllowedKeys()
+        && productFieldShapesAreValid()
+        && request.resource.data.status != 'published';
+    }
+
+    function productUpdateIsAllowed() {
+      return signedIn()
+        && resource.data.artistId == request.auth.uid
+        && creatorIdentityIsStable()
+        && productAllowedKeys()
+        && productFieldShapesAreValid()
+        && !productProtectedFieldsAffected()
+        && request.resource.data.status != 'published';
     }
 
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
       match /inboxThreads/{threadId} {
-        allow read, list, get: if isOwner(uid);
-        allow create, update, delete: if false;
+        allow read, write: if isOwner(uid);
       }
 
       match /systemNotifications/{notificationId} {
         allow read: if isOwner(uid);
         allow create, delete: if false;
         allow update: if isOwner(uid)
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['readAt']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
       }
     }
 
     match /profiles/{uid} {
       allow read: if true;
-      allow create: if isOwner(uid) && request.resource.data.uid == uid;
-      allow update: if publicProfileUpdateAllowed(uid);
+      allow create, update: if isOwner(uid)
+        && request.resource.data.uid == uid;
       allow delete: if isOwner(uid);
     }
 
@@ -272,88 +369,125 @@ service cloud.firestore {
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == resource.data.uid
         && isUsernameDocIdValid(usernameLower);
-      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn()
+        && resource.data.uid == request.auth.uid;
     }
 
     match /products/{productId} {
       allow read: if (resource.data.status == 'published' && resource.data.visibility == 'public')
         || (signedIn() && resource.data.artistId == request.auth.uid);
-      allow create: if signedIn()
-        && request.resource.data.artistId == request.auth.uid
-        && productCreateAllowedKeys()
-        && productFieldShapesAreValid()
-        && request.resource.data.status != 'published';
-      // TODO(security): move production publish transitions to a callable Cloud Function.
-      allow update: if signedIn()
+
+      allow create: if productCreateIsAllowed(productId);
+
+      allow update: if productUpdateIsAllowed();
+
+      allow delete: if signedIn()
         && resource.data.artistId == request.auth.uid
-        && creatorIdentityIsStable()
-        && productCreateAllowedKeys()
-        && productFieldShapesAreValid()
-        && protectedProductFieldsUnchanged()
-        && request.resource.data.status != 'published';
-      allow delete: if signedIn() && resource.data.artistId == request.auth.uid;
+        && resource.data.status != 'published';
+
+      match /reviews/{reviewId} {
+        allow read: if signedIn()
+          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+        allow write: if false;
+      }
+
+      match /comments/{commentId} {
+        allow read: if get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+          && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public';
+        allow create: if signedIn()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.body is string
+          && request.resource.data.body.size() > 0
+          && request.resource.data.body.size() <= 5000;
+        allow update, delete: if signedIn()
+          && resource.data.uid == request.auth.uid;
+      }
     }
 
     match /threads/{threadId} {
+      // This is the critical fix for account-based conversation recall.
+      // Queries like:
+      // collection('threads').where('participantIds', 'array-contains', uid)
+      // must be authorized from resource.data, not get(threadPath(threadId)).
       allow get, list: if isThreadParticipantResource();
+
       allow create: if signedIn()
         && request.resource.data.createdBy == request.auth.uid
         && isThreadParticipantCreate()
-        && request.resource.data.participantCount == request.resource.data.participantIds.size()
-        && request.resource.data.status in ['active', 'archived']
-        && request.resource.data.type in ['dm', 'group'];
-      allow update: if isThreadOwnerResource() || participantSafeThreadUpdateResource();
+        && request.resource.data.type in ['dm', 'group']
+        && (!('status' in request.resource.data) || request.resource.data.status in ['active', 'archived'])
+        && (!('participantCount' in request.resource.data)
+          || request.resource.data.participantCount == request.resource.data.participantIds.size());
+
+      allow update: if isThreadOwnerResource()
+        || participantSafeThreadUpdateResource();
+
       allow delete: if false;
 
       match /participants/{uid} {
-        allow read: if isThreadParticipantByParent(threadId);
+        allow read: if isThreadParticipant(threadId);
+
         allow create: if signedIn()
-          && isThreadParticipantByParent(threadId)
+          && isThreadParticipant(threadId)
           && request.resource.data.uid == uid
           && (
             request.auth.uid == uid
-            || isThreadOwnerByParent(threadId)
+            || isThreadOwner(threadId)
           );
-        allow update: if isThreadOwnerByParent(threadId)
+
+        allow update: if isThreadOwner(threadId)
           || (
             signedIn()
-            && request.auth.uid == uid
-            && isThreadParticipantByParent(threadId)
+            && isThreadParticipant(threadId)
             && participantSelfUpdateIsSafe(uid)
           );
-        allow delete: if isThreadOwnerByParent(threadId);
+
+        allow delete: if isThreadOwner(threadId);
       }
 
       match /messages/{messageId} {
-        allow read: if isThreadParticipantByParent(threadId);
-        allow create: if isThreadParticipantByParent(threadId)
+        allow read: if isThreadParticipant(threadId);
+
+        allow create: if isThreadParticipant(threadId)
           && request.resource.data.senderId == request.auth.uid
           && validMessageCreate();
-        allow update, delete: if isThreadParticipantByParent(threadId)
+
+        allow update, delete: if isThreadParticipant(threadId)
           && resource.data.senderId == request.auth.uid;
       }
 
       match /typing/{uid} {
-        allow read: if isThreadParticipantByParent(threadId);
+        allow read: if isThreadParticipant(threadId);
+
         allow create, update, delete: if signedIn()
-          && request.auth.uid == uid
-          && isThreadParticipantByParent(threadId);
+          && isThreadParticipant(threadId)
+          && request.auth.uid == uid;
       }
 
       match /calls/{callId} {
-        allow read: if isThreadParticipantByParent(threadId);
-        allow create: if isThreadParticipantByParent(threadId)
+        allow read: if isThreadParticipant(threadId);
+
+        allow create: if isThreadParticipant(threadId)
           && request.resource.data.createdBy == request.auth.uid
           && request.resource.data.callerId == request.auth.uid
           && request.resource.data.participantIds is list
           && request.auth.uid in request.resource.data.participantIds
-          && request.resource.data.status in ['ringing', 'accepted', 'active', 'declined', 'missed', 'ended', 'failed']
+          && request.resource.data.status in [
+            'ringing',
+            'accepted',
+            'active',
+            'declined',
+            'missed',
+            'ended',
+            'failed'
+          ]
           && request.resource.data.type in ['audio', 'video'];
-        allow update: if isThreadParticipantByParent(threadId)
+
+        allow update: if isThreadParticipant(threadId)
           && request.resource.data.participantIds == resource.data.participantIds
           && request.resource.data.createdBy == resource.data.createdBy
           && request.resource.data.callerId == resource.data.callerId
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'status',
             'answeredAt',
             'startedAt',
@@ -362,45 +496,59 @@ service cloud.firestore {
             'endReason',
             'updatedAt'
           ]);
+
         allow delete: if false;
 
         match /participants/{uid} {
-          allow read: if isThreadParticipantByParent(threadId);
-          allow create, update: if isThreadParticipantByParent(threadId)
+          allow read: if isThreadParticipant(threadId);
+
+          allow create, update: if isThreadParticipant(threadId)
             && request.auth.uid == uid
             && request.resource.data.uid == uid;
-          allow delete: if isThreadParticipantByParent(threadId)
+
+          allow delete: if isThreadParticipant(threadId)
             && request.auth.uid == uid;
         }
 
         match /offers/{uid} {
-          allow read: if isThreadParticipantByParent(threadId);
-          allow create, update: if isThreadParticipantByParent(threadId)
+          allow read: if isThreadParticipant(threadId);
+
+          allow create, update: if isThreadParticipant(threadId)
             && request.auth.uid == uid
-            && request.resource.data.type in ['offer']
+            && request.resource.data.type == 'offer'
             && request.resource.data.sdp is string;
+
           allow delete: if false;
         }
 
         match /answers/{uid} {
-          allow read: if isThreadParticipantByParent(threadId);
-          allow create, update: if isThreadParticipantByParent(threadId)
+          allow read: if isThreadParticipant(threadId);
+
+          allow create, update: if isThreadParticipant(threadId)
             && request.auth.uid == uid
-            && request.resource.data.type in ['answer']
+            && request.resource.data.type == 'answer'
             && request.resource.data.sdp is string;
+
           allow delete: if false;
         }
 
         match /candidates/{uid}/items/{candidateId} {
-          allow read: if isThreadParticipantByParent(threadId);
-          allow create: if isThreadParticipantByParent(threadId)
+          allow read: if isThreadParticipant(threadId);
+
+          allow create: if isThreadParticipant(threadId)
             && request.auth.uid == uid
             && request.resource.data.candidate is string;
+
           allow update: if false;
-          allow delete: if isThreadParticipantByParent(threadId)
+
+          allow delete: if isThreadParticipant(threadId)
             && request.auth.uid == uid;
         }
       }
+    }
+
+    match /productModeration/{moderationId} {
+      allow read, write: if false;
     }
 
     match /{document=**} {
