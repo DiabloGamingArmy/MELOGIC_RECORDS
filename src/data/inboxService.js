@@ -13,11 +13,18 @@ import {
   subscribeToThreadsForUser
 } from './threadService'
 import {
+  addMessageReaction,
+  deleteMessageForEveryone,
+  editMessage,
+  hideMessageForMe,
   listMessages,
   markThreadDelivered,
   markThreadRead,
+  removeMessageReaction,
   sendMessage,
   setTypingState,
+  subscribeToHiddenThreadMessages,
+  subscribeToMessageReactions,
   subscribeToMessages,
   subscribeToThreadParticipants,
   subscribeToTypingState
@@ -96,13 +103,21 @@ async function decorateThread(thread, currentUid) {
     ? thread.title || 'Untitled group'
     : String(otherProfile?.displayName || otherProfile?.username || buildFallbackTitle(thread, currentUid)).trim()
 
+  const attachmentCount = Number(thread.lastMessageAttachmentCount || 0)
+  const fallbackSubtitle = (() => {
+    if (thread.lastMessageText) return thread.lastMessageText
+    if (attachmentCount > 0) return attachmentCount === 1 ? '1 attachment' : `${attachmentCount} attachments`
+    if (thread.lastMessageType && thread.lastMessageType !== 'text') return '1 attachment'
+    return 'No messages yet.'
+  })()
+
   return {
     ...thread,
     otherParticipantId,
     otherProfile,
     title,
     imageURL: otherProfile?.avatarURL || otherProfile?.photoURL || thread.imageURL || '',
-    subtitle: thread.lastMessageText || 'No messages yet.',
+    subtitle: fallbackSubtitle,
     formattedTime: formatThreadTime(thread.lastMessageAt || thread.updatedAt || thread.createdAt),
     unreadCount: Number(thread.unreadCount || 0),
     isGroup
@@ -135,6 +150,13 @@ export {
   removeParticipantFromThread,
   updateThreadDetails,
   sendMessage,
+  editMessage,
+  addMessageReaction,
+  removeMessageReaction,
+  subscribeToMessageReactions,
+  hideMessageForMe,
+  subscribeToHiddenThreadMessages,
+  deleteMessageForEveryone,
   markThreadRead,
   markThreadDelivered,
   subscribeToThreadParticipants,
