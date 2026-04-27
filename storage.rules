@@ -97,7 +97,10 @@ service firebase.storage {
     }
 
     match /threads/{threadId}/messages/{messageId}/attachments/{fileName} {
-      allow read, write: if isThreadParticipant(threadId);
+      allow read: if isThreadParticipant(threadId);
+      allow write: if isThreadParticipant(threadId)
+        && request.resource != null
+        && request.resource.size <= 256 * 1024 * 1024;
     }
 
     match /threads/{threadId}/avatar/{fileName} {
