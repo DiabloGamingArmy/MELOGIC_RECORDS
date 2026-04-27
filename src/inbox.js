@@ -624,7 +624,7 @@ function groupMessages(messages = []) {
       const last = prevGroup.messages[prevGroup.messages.length - 1]
       const a = new Date(last.createdAt || 0).getTime()
       const b = new Date(message.createdAt || 0).getTime()
-      return b - a < 5 * 60 * 1000
+      return b - a < 30 * 60 * 1000
     })()
 
     if (sameSender && closeInTime) {
@@ -709,7 +709,7 @@ function getMessageGroupsMarkup(thread) {
       const statusLine = isLatestOutgoingGroup ? `<p class="message-status-line">${escapeHtml(getOutgoingStatusLabel(thread, lastMessage))}</p>` : `<p class="message-status-line is-muted">${escapeHtml(formatTime(lastMessage.createdAt))}</p>`
       const avatarMarkup = !isSelf
         ? `<div class="cluster-avatar ${sender.avatarURL || sender.photoURL ? 'has-image' : ''}">${sender.avatarURL || sender.photoURL ? `<img src="${escapeHtml(sender.avatarURL || sender.photoURL)}" alt="" />` : `<span>${getInitials(sender)}</span>`}</div>`
-        : '<div class="cluster-avatar-spacer" aria-hidden="true"></div>'
+        : ''
 
       const bubbles = entry.messages
         .map((message, messageIndex) => {
@@ -1905,7 +1905,25 @@ function bindSharedEvents() {
       const emoji = button.getAttribute('data-emoji') || ''
       if (!thread?.id || !messageId || !emoji) return
       const reactionRows = appState.reactionsByThreadId[thread.id]?.[messageId] || []
-      const reactorUids = Array.from(new Set(reactionRows.map((entry) => entry.uid).filter(Boolean)))
+      const mine = reactionRows.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
+      const rollback = applyOptimisticReaction({
+        threadId: thread.id,
+        messageId,
+        emoji,
+        uid: appState.user?.uid,
+        add: !mine
+      })
+      renderSignedInState()
+      try {
+        if (mine) await removeMessageReaction({ threadId: thread.id, messageId, reactionId: mine.id })
+        else await addMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
+      } catch {
+        rollback()
+        appState.errorMessage = 'Unable to update reaction.'
+        renderSignedInState()
+      }
+      const nextRows = appState.reactionsByThreadId[thread.id]?.[messageId] || []
+      const reactorUids = Array.from(new Set(nextRows.map((entry) => entry.uid).filter(Boolean)))
       if (reactorUids.length) {
         const loaded = await loadProfilesByUids(reactorUids)
         appState.profileByUid = { ...appState.profileByUid, ...loaded }
