@@ -67,6 +67,7 @@ function buildInboxSummaryPayload({ threadId, thread, recipientUid }) {
     lastMessageAt: thread.lastMessageAt || null,
     lastMessageSenderId: thread.lastMessageSenderId || '',
     lastMessageType: thread.lastMessageType || 'text',
+    lastMessageAttachmentCount: Number(thread.lastMessageAttachmentCount || 0),
     createdBy: thread.createdBy || '',
     createdAt: thread.createdAt || FieldValue.serverTimestamp(),
     status: thread.status || 'active',

@@ -80,7 +80,8 @@ service cloud.firestore {
           'lastMessageAt',
           'lastMessageText',
           'lastMessageSenderId',
-          'lastMessageType'
+          'lastMessageType',
+          'lastMessageAttachmentCount'
         ]);
     }
 
@@ -90,6 +91,42 @@ service cloud.firestore {
       let hasBody = body is string && body.size() > 0;
       let hasAttachments = attachments is list && attachments.size() > 0;
       return hasBody || hasAttachments;
+    }
+
+    function validMessageEdit() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'body',
+          'edited',
+          'editedAt',
+          'updatedAt'
+        ])
+        && resource.data.senderId == request.auth.uid
+        && !resource.data.deleted
+        && (!(resource.data.attachments is list) || resource.data.attachments.size() == 0)
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 1200
+        && request.resource.data.edited == true;
+    }
+
+    function validMessageDeleteForEveryone(threadId) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'body',
+          'attachments',
+          'deleted',
+          'deletedAt',
+          'deletedBy',
+          'updatedAt'
+        ])
+        && (
+          resource.data.senderId == request.auth.uid
+          || threadData(threadId).createdBy == request.auth.uid
+        )
+        && request.resource.data.deleted == true
+        && request.resource.data.deletedBy == request.auth.uid
+        && request.resource.data.body == ''
+        && request.resource.data.attachments is list
+        && request.resource.data.attachments.size() == 0;
     }
 
     function isUsernameDocIdValid(usernameLower) {
@@ -351,6 +388,10 @@ service cloud.firestore {
         allow update: if isOwner(uid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
       }
+
+      match /hiddenThreadMessages/{threadId}/messages/{messageId} {
+        allow read, create, update, delete: if isOwner(uid);
+      }
     }
 
     match /profiles/{uid} {
@@ -452,8 +493,26 @@ service cloud.firestore {
           && request.resource.data.senderId == request.auth.uid
           && validMessageCreate();
 
-        allow update, delete: if isThreadParticipant(threadId)
-          && resource.data.senderId == request.auth.uid;
+        allow update: if isThreadParticipant(threadId)
+          && (
+            validMessageEdit()
+            || validMessageDeleteForEveryone(threadId)
+          );
+
+        allow delete: if false;
+
+        match /reactions/{reactionId} {
+          allow read: if isThreadParticipant(threadId);
+
+          allow create, update: if isThreadParticipant(threadId)
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.emoji is string
+            && request.resource.data.emoji.size() > 0
+            && request.resource.data.emoji.size() <= 16;
+
+          allow delete: if isThreadParticipant(threadId)
+            && resource.data.uid == request.auth.uid;
+        }
       }
 
       match /typing/{uid} {
