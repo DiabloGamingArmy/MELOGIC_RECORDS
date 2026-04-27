@@ -152,6 +152,8 @@ let activeTypingThreadId = ''
 const typingHeartbeatByThreadId = {}
 const TYPING_HEARTBEAT_MS = 2800
 const TYPING_IDLE_CLEAR_MS = 4500
+const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
+const MAX_ATTACHMENT_LABEL = '256 MB'
 const DEBUG_TYPING = false
 const imagePreloadCache = new Map()
 let chatSettingsSearchSelection = { start: null, end: null }
@@ -581,14 +583,15 @@ function getDmOtherParticipant(thread) {
   return thread.otherParticipantId || participantIds.find((uid) => uid && uid !== appState.user?.uid) || ''
 }
 
-function getCurrentDmBlockState(thread) {
+function getDmBlockState(thread) {
+  const state = thread?.dmBlockState || null
+  const currentUid = appState.user?.uid
   const otherUid = getDmOtherParticipant(thread)
   return {
     otherUid,
-    currentUserBlockedOther: Boolean(otherUid && isUserBlocked(otherUid)),
-    // TODO: we cannot reliably read the other user's private block doc client-side.
-    // If backend/rules enforce recipient-side blocks in the future, set this based on explicit error codes.
-    otherBlockedCurrentUser: Boolean(thread?.dmBlockedByOther)
+    currentUserBlockedOther: Boolean(state && state.blockedBy === currentUid),
+    otherBlockedCurrentUser: Boolean(state && state.blockedUid === currentUid),
+    isDmBlocked: Boolean(state && thread?.type === 'dm')
   }
 }
 
@@ -790,9 +793,19 @@ function revokeAttachmentPreviews(threadId) {
 
 function setAttachmentDraft(threadId, files = []) {
   if (!threadId) return
+  const inputFiles = Array.isArray(files) ? files : []
+  const accepted = inputFiles.filter((file) => Number(file?.size || 0) <= MAX_ATTACHMENT_BYTES)
+  const rejectedCount = inputFiles.length - accepted.length
+  if (rejectedCount > 0) {
+    appState.errorMessage = rejectedCount === 1
+      ? `Attachment is too large. Maximum size is ${MAX_ATTACHMENT_LABEL}.`
+      : `${rejectedCount} attachments were too large. Maximum size is ${MAX_ATTACHMENT_LABEL}.`
+  } else if (appState.errorMessage.includes('Attachment is too large') || appState.errorMessage.includes('attachments were too large')) {
+    appState.errorMessage = ''
+  }
   revokeAttachmentPreviews(threadId)
-  appState.attachmentDraftByThreadId[threadId] = files
-  appState.attachmentPreviewByThreadId[threadId] = files.map((file) => {
+  appState.attachmentDraftByThreadId[threadId] = accepted
+  appState.attachmentPreviewByThreadId[threadId] = accepted.map((file) => {
     const type = describeAttachmentType(file)
     return type === 'image' ? URL.createObjectURL(file) : ''
   })
@@ -1204,14 +1217,14 @@ function getConversationBodyMarkup() {
   const attachments = appState.attachmentDraftByThreadId[thread.id] || []
   const previewUrls = appState.attachmentPreviewByThreadId[thread.id] || []
   const typingUsers = getTypingUsers(thread.id)
-  const blockState = getCurrentDmBlockState(thread)
+  const blockState = getDmBlockState(thread)
   const isDmComposerBlocked = thread.type === 'dm' && (blockState.currentUserBlockedOther || blockState.otherBlockedCurrentUser)
   const blockAlertMarkup = thread.type === 'dm' && isDmComposerBlocked
     ? `
       <div class="blocked-chat-alert" role="status">
         <strong>${blockState.currentUserBlockedOther ? 'You blocked this user.' : 'This user can no longer receive messages from you.'}</strong>
         <span>You can still view previous messages.</span>
-        ${blockState.currentUserBlockedOther ? '<button type="button" data-inline-unblock-contact>Unblock</button>' : ''}
+        ${blockState.currentUserBlockedOther ? `<button type="button" data-unblock-contact-inline="${thread.id}">Unblock</button>` : ''}
       </div>
     `
     : ''
@@ -1426,6 +1439,32 @@ function closeThreadActionUi() {
   appState.isSavingThreadAction = false
 }
 
+async function blockDmContact(thread) {
+  const targetUid = getDmOtherParticipant(thread)
+  if (!thread?.id || !targetUid || !appState.user?.uid) return
+  const profile = getProfileMeta(targetUid, { uid: targetUid, title: thread?.title || '' })
+  await blockUser({
+    uid: appState.user.uid,
+    targetUid,
+    sourceThreadId: thread.id,
+    targetProfile: profile
+  })
+  appState.blockedUsersByUid[targetUid] = {
+    targetUid,
+    sourceThreadId: thread.id,
+    targetDisplayName: profile.displayName || '',
+    targetUsername: profile.username || '',
+    targetAvatarURL: profile.avatarURL || ''
+  }
+}
+
+async function unblockDmContact(thread) {
+  const targetUid = getDmOtherParticipant(thread)
+  if (!thread?.id || !targetUid || !appState.user?.uid) return
+  await unblockUser({ uid: appState.user.uid, targetUid, sourceThreadId: thread.id })
+  delete appState.blockedUsersByUid[targetUid]
+}
+
 async function handleThreadConfirmAction() {
   const modal = appState.threadConfirmModal
   if (!modal?.threadId || !appState.user?.uid || appState.isSavingThreadAction) return
@@ -1460,27 +1499,8 @@ async function handleThreadConfirmAction() {
     }
     if (modal.type === 'block-contact' || modal.type === 'unblock-contact') {
       const thread = appState.threads.find((entry) => entry.id === modal.threadId)
-      const targetUid = getDmOtherParticipant(thread)
-      if (!targetUid) throw new Error('Unable to resolve this contact.')
-      const profile = getProfileMeta(targetUid, { uid: targetUid, title: thread?.title || '' })
-      if (modal.type === 'block-contact') {
-        await blockUser({
-          uid: appState.user.uid,
-          targetUid,
-          sourceThreadId: modal.threadId,
-          targetProfile: profile
-        })
-        appState.blockedUsersByUid[targetUid] = {
-          targetUid,
-          sourceThreadId: modal.threadId,
-          targetDisplayName: profile.displayName || '',
-          targetUsername: profile.username || '',
-          targetAvatarURL: profile.avatarURL || ''
-        }
-      } else {
-        await unblockUser({ uid: appState.user.uid, targetUid })
-        delete appState.blockedUsersByUid[targetUid]
-      }
+      if (modal.type === 'block-contact') await blockDmContact(thread)
+      else await unblockDmContact(thread)
     }
     closeThreadActionUi()
     renderSignedInState()
@@ -2328,7 +2348,7 @@ function renderChatSettingsModal(options = {}) {
   if (!thread) return
   const participants = getThreadParticipants(thread.id).map((entry) => getProfileMeta(entry.uid, entry))
   const canEditGroup = thread.type === 'group' && thread.createdBy === appState.user?.uid
-  const dmBlockState = getCurrentDmBlockState(thread)
+  const dmBlockState = getDmBlockState(thread)
   const dmBlockActionLabel = dmBlockState.currentUserBlockedOther ? 'Unblock contact' : 'Block contact'
   const hasPendingChanges = canEditGroup
     && (
@@ -2597,10 +2617,12 @@ function bindSharedEvents() {
     renderSignedInState()
   })
 
-  messageForm?.querySelector('[data-inline-unblock-contact]')?.addEventListener('click', () => {
-    const thread = getSelectedThread()
-    if (!thread?.id) return
-    appState.threadConfirmModal = { type: 'unblock-contact', threadId: thread.id }
+  inboxRoot.querySelector('[data-unblock-contact-inline]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const threadId = event.currentTarget.getAttribute('data-unblock-contact-inline') || ''
+    if (!threadId) return
+    appState.threadConfirmModal = { type: 'unblock-contact', threadId }
     appState.threadActionMenu = null
     renderFloatingUi()
   })
@@ -2739,9 +2761,11 @@ function renderSignedInState() {
 async function handleMessageSubmit(form) {
   const thread = getSelectedThread()
   if (!thread || !appState.user?.uid) return
-  const blockState = getCurrentDmBlockState(thread)
-  if (thread.type === 'dm' && blockState.currentUserBlockedOther) {
-    appState.errorMessage = 'You blocked this user. Unblock to send messages.'
+  const blockState = getDmBlockState(thread)
+  if (thread.type === 'dm' && blockState.isDmBlocked) {
+    appState.errorMessage = blockState.currentUserBlockedOther
+      ? 'You blocked this user. Unblock to send messages.'
+      : 'This user can no longer receive messages from you.'
     renderSignedInState()
     return
   }
@@ -2749,6 +2773,12 @@ async function handleMessageSubmit(form) {
   const field = form.querySelector('textarea[name="message"]')
   const body = String(field?.value || '').trim()
   const attachments = appState.attachmentDraftByThreadId[thread.id] || []
+  const oversized = attachments.find((file) => Number(file?.size || 0) > MAX_ATTACHMENT_BYTES)
+  if (oversized) {
+    appState.errorMessage = `Attachment is too large. Maximum size is ${MAX_ATTACHMENT_LABEL}.`
+    renderSignedInState()
+    return
+  }
   if (!body && !attachments.length) return
 
   form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
