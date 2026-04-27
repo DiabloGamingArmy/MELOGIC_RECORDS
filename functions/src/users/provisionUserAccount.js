@@ -101,6 +101,10 @@ exports.provisionUserAccount = onCall(async (request) => {
         bannerPath: '',
         bannerURL: '',
         roleLabel: 'User',
+        featuredItems: {
+          enabled: false,
+          productIds: []
+        },
         stats: { products: 0, savedItems: 0, comments: 0, likes: 0, downloads: 0 },
         updatedAt,
         ...(profileSnap.exists ? {} : { createdAt: updatedAt })

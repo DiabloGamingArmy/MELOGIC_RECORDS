@@ -168,11 +168,24 @@ service cloud.firestore {
 
     
 
+    function featuredItemsShapeValid() {
+      return !('featuredItems' in request.resource.data)
+        || (
+          request.resource.data.featuredItems is map
+          && (!('enabled' in request.resource.data.featuredItems) || request.resource.data.featuredItems.enabled is bool)
+          && (!('productIds' in request.resource.data.featuredItems) || (
+            request.resource.data.featuredItems.productIds is list
+            && request.resource.data.featuredItems.productIds.size() <= 3
+          ))
+        );
+    }
+
     function publicProfileUpdateAllowed(uid) {
       return isOwner(uid)
         && request.resource.data.uid == uid
         && request.resource.data.roleLabel == resource.data.roleLabel
         && request.resource.data.stats == resource.data.stats
+        && featuredItemsShapeValid()
         && request.resource.data.diff(resource.data).changedKeys().hasOnly([
           'displayName',
           'username',
@@ -185,6 +198,7 @@ service cloud.firestore {
           'location',
           'website',
           'socials',
+          'featuredItems',
           'updatedAt'
         ]);
     }

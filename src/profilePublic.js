@@ -43,7 +43,7 @@ const EMPTY_COPY = {
 
 const uiState = {
   activeCategory: 'products',
-  visibleCount: 6,
+  visibleCount: 8,
   profile: null,
   currentUser: null,
   previewMode: false,
@@ -73,6 +73,16 @@ function getStats(profile = {}) {
     comments: stats.comments ?? profile.commentsCount ?? 4,
     likes: stats.likes ?? profile.likesCount ?? 18,
     downloads: stats.downloads ?? profile.downloadsCount ?? 3
+  }
+}
+
+function normalizeFeaturedItems(raw = {}) {
+  const productIds = Array.isArray(raw?.productIds)
+    ? raw.productIds.map((id) => String(id || '').trim()).filter(Boolean)
+    : []
+  return {
+    enabled: Boolean(raw?.enabled),
+    productIds
   }
 }
 
@@ -145,7 +155,7 @@ function renderCategorySection(profile) {
   if (!products.length) {
     return `
       <section class="public-content-section">
-        <article class="public-content-empty"><p>Product module coming soon</p></article>
+        <article class="public-content-empty"><p>No public products yet.</p></article>
       </section>
     `
   }
@@ -161,6 +171,34 @@ function renderCategorySection(profile) {
   `
 }
 
+function renderFeaturedSection(profile, displayName) {
+  const featured = normalizeFeaturedItems(profile.featuredItems)
+  if (!featured.enabled || !featured.productIds.length) {
+    return { hasFeaturedItems: false, markup: '' }
+  }
+
+  const availableProducts = uiState.productsByUid.get(profile.uid || '') || []
+  const byId = new Map(availableProducts.map((product) => [String(product.id), product]))
+  const featuredProducts = featured.productIds
+    .map((id) => byId.get(id))
+    .filter(Boolean)
+    .slice(0, 3)
+
+  if (!featuredProducts.length) return { hasFeaturedItems: false, markup: '' }
+
+  return {
+    hasFeaturedItems: true,
+    markup: `
+      <article class="public-glass-panel public-featured-panel">
+        <p class="public-panel-label">FEATURED ITEMS:</p>
+        <div class="public-featured-scroll" role="list" aria-label="Featured items">
+          ${featuredProducts.map((product) => `<div class="public-featured-item" role="listitem">${productCardMarkup(product, displayName)}</div>`).join('')}
+        </div>
+      </article>
+    `
+  }
+}
+
 function bindParallax() {
   if (uiState.parallaxBound) return
   uiState.parallaxBound = true
@@ -173,7 +211,7 @@ function bindParallax() {
   let ticking = false
   const update = () => {
     const y = window.scrollY || 0
-    const offset = Math.max(-70, Math.min(0, -y * 0.18))
+    const offset = Math.min(52, y * 0.14)
     document.documentElement.style.setProperty('--public-parallax-y', `${offset}px`)
     ticking = false
   }
@@ -222,7 +260,8 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   const bannerURL = profile.bannerURL || ''
   const roleLabel = profile.roleLabel || 'User'
   const stats = getStats(profile)
-  const isLongName = displayName.length > 15
+  const isLongName = displayName.length > 16
+  const featuredSection = renderFeaturedSection(profile, displayName)
 
   const isSignedIn = Boolean(currentUser?.uid)
   const isSelfPreview = Boolean(previewMode && currentUser?.uid === uid)
@@ -260,11 +299,8 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
     </section>
 
     <section class="public-main-wrap">
-      <div class="public-panels-grid">
-        <article class="public-glass-panel">
-          <p class="public-panel-label">FEATURED ITEM:</p>
-          <div class="public-panel-body"></div>
-        </article>
+      <div class="public-panels-grid ${featuredSection.hasFeaturedItems ? '' : 'is-single'}">
+        ${featuredSection.markup}
         <article class="public-glass-panel">
           <p class="public-panel-label">ABOUT ${escapeHtml(displayName).toUpperCase()}:</p>
           <div class="public-panel-body">
@@ -272,6 +308,8 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
           </div>
         </article>
       </div>
+
+      <div class="public-content-divider" aria-hidden="true"><span>Content</span></div>
 
       <section class="public-stat-grid" aria-label="Public profile categories">
         ${CATEGORY_CONFIG.map((item) => `
@@ -291,7 +329,7 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
       const nextCategory = button.getAttribute('data-category')
       if (!nextCategory || nextCategory === uiState.activeCategory) return
       uiState.activeCategory = nextCategory
-      uiState.visibleCount = 6
+      uiState.visibleCount = 8
       if (nextCategory === 'products') {
         await loadPublicProductsForArtist(profile.uid || '')
       }
@@ -300,7 +338,7 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   })
 
   profileRoot.querySelector('[data-load-more]')?.addEventListener('click', () => {
-    uiState.visibleCount += 6
+    uiState.visibleCount += 8
     renderPublicProfile(uiState.profile, uiState.currentUser, uiState.previewMode)
   })
 
@@ -361,7 +399,7 @@ async function initPublicProfile() {
   uiState.currentUser = currentUser
   uiState.previewMode = Boolean(currentUser?.uid === uid && previewMode)
   uiState.activeCategory = 'products'
-  uiState.visibleCount = 6
+  uiState.visibleCount = 8
 
   renderPublicProfile(profile, currentUser, uiState.previewMode)
 }

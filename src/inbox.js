@@ -11,6 +11,7 @@ import {
   addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
+  listInboxThreads,
   loadProfilesByUids,
   markThreadDelivered,
   markThreadRead,
@@ -101,13 +102,17 @@ const appState = {
   chatSettingsSearchQuery: '',
   chatSettingsSearchResults: [],
   isSearchingChatSettingsUsers: false,
-  attachmentDraftByThreadId: {}
+  attachmentDraftByThreadId: {},
+  threadsRealtimeReady: false,
+  threadsFallbackTried: false
 }
 
 let searchDebounceTimer = null
 let typingStopTimer = null
 let activeTypingThreadId = ''
 let chatSettingsSearchSelection = { start: null, end: null }
+let hasInitializedAuthObserver = false
+let activeThreadSubscriptionUid = ''
 
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
@@ -242,6 +247,7 @@ function clearRealtimeListeners() {
   appState.participantsUnsubscribe = () => {}
   appState.typingUnsubscribe = () => {}
   appState.systemUnsubscribe = () => {}
+  activeThreadSubscriptionUid = ''
 }
 
 function clearTypingForThread(threadId) {
@@ -308,6 +314,15 @@ function getRecentThreadsSidebarMarkup() {
           <div class="sidebar-thread-pill is-skeleton"></div>
           <div class="sidebar-thread-pill is-skeleton"></div>
         </div>
+      </section>
+    `
+  }
+
+  if (isMessages && !appState.threadsRealtimeReady && !appState.threadsFallbackTried) {
+    return `
+      <section class="sidebar-recent-block">
+        <p class="sidebar-label">Recent threads</p>
+        <p class="sidebar-note">Loading conversations…</p>
       </section>
     `
   }
@@ -823,11 +838,11 @@ async function runProfileSearch(queryText, requestId) {
     appState.isSearchingUsers = false
     appState.createChatError = ''
     renderCreateChatModal({ keepSearchFocus: true })
-  } catch {
+  } catch (error) {
     if (requestId !== appState.chatSearchRequestId) return
     appState.isSearchingUsers = false
     appState.chatSearchResults = []
-    appState.createChatError = 'Unable to search users.'
+    appState.createChatError = error?.message || 'Unable to search users.'
     renderCreateChatModal({ keepSearchFocus: true })
   }
 }
@@ -1041,8 +1056,8 @@ async function handleChatSettingsSearch(value) {
     const results = await searchProfilesByUsername(queryText)
     appState.chatSettingsSearchResults = results.filter((profile) => !existing.has(profile.uid) && profile.uid !== appState.user?.uid)
     appState.chatSettingsError = ''
-  } catch {
-    appState.chatSettingsError = 'Unable to search profiles for this chat.'
+  } catch (error) {
+    appState.chatSettingsError = error?.message || 'Unable to search profiles for this chat.'
     appState.chatSettingsSearchResults = []
   } finally {
     appState.isSearchingChatSettingsUsers = false
@@ -1474,16 +1489,37 @@ function startMessageSubscription(threadId) {
 
 function startThreadSubscription() {
   if (!appState.user?.uid) return
+  if (activeThreadSubscriptionUid === appState.user.uid) return
 
+  activeThreadSubscriptionUid = appState.user.uid
   appState.isLoadingThreads = true
+  appState.threadsRealtimeReady = false
+  appState.threadsFallbackTried = false
   renderSignedInState()
 
   appState.threadUnsubscribe()
   appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, (threads) => {
     appState.threads = threads
     appState.isLoadingThreads = false
+    appState.threadsRealtimeReady = true
 
     if (!threads.length) {
+      if (!appState.threadsFallbackTried) {
+        appState.threadsFallbackTried = true
+        listInboxThreads(appState.user.uid)
+          .then((fallbackThreads) => {
+            if (!fallbackThreads.length) return
+            appState.threads = fallbackThreads
+            appState.selectedThreadId = fallbackThreads[0].id
+            if (!appState.messagesByThreadId[appState.selectedThreadId]) {
+              startMessageSubscription(appState.selectedThreadId)
+            }
+            renderSignedInState()
+          })
+          .catch((fallbackError) => {
+            warnRealtimePermission(`threads-empty-fallback-${appState.user.uid}`, fallbackError)
+          })
+      }
       appState.selectedThreadId = ''
       appState.messageUnsubscribe()
       renderSignedInState()
@@ -1500,9 +1536,24 @@ function startThreadSubscription() {
     hydrateProfilesForThread(threads.find((thread) => thread.id === appState.selectedThreadId))
 
     renderSignedInState()
-  }, () => {
+  }, async (error) => {
+    warnRealtimePermission(`threads-${appState.user.uid}`, error)
     appState.isLoadingThreads = false
-    appState.errorMessage = 'Inbox could not be loaded. Please refresh.'
+    appState.threadsFallbackTried = true
+    try {
+      const fallbackThreads = await listInboxThreads(appState.user.uid)
+      appState.threads = fallbackThreads
+      if (fallbackThreads.length && !appState.selectedThreadId) {
+        appState.selectedThreadId = fallbackThreads[0].id
+      }
+      if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
+        startMessageSubscription(appState.selectedThreadId)
+      }
+      appState.errorMessage = fallbackThreads.length ? '' : 'No conversations yet.'
+    } catch (fallbackError) {
+      warnRealtimePermission(`threads-fallback-${appState.user.uid}`, fallbackError)
+      appState.errorMessage = 'Inbox could not be loaded. Please refresh.'
+    }
     renderSignedInState()
   })
 }
@@ -1536,6 +1587,7 @@ document.addEventListener('keydown', handleGlobalKeydown)
 
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
+    clearRealtimeListeners()
     window.location.assign(authRoute({ redirect: ROUTES.inbox }))
     return
   }
@@ -1544,14 +1596,34 @@ waitForInitialAuthState().then(async (user) => {
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()
+  hasInitializedAuthObserver = true
+
+  const startUid = String(new URLSearchParams(window.location.search).get('start') || '').trim()
+  if (startUid && startUid !== user.uid) {
+    try {
+      const thread = await createOrGetDm({ creatorId: user.uid, targetUid: startUid })
+      if (thread?.id) {
+        appState.selectedThreadId = thread.id
+        startMessageSubscription(thread.id)
+        renderSignedInState()
+      }
+    } catch (error) {
+      warnRealtimePermission(`start-dm-${startUid}`, error)
+    }
+  }
 })
 
 subscribeToAuthState(async (user) => {
+  if (!hasInitializedAuthObserver) return
   if (!user) {
+    clearRealtimeListeners()
     window.location.assign(authRoute({ redirect: ROUTES.inbox }))
     return
   }
 
+  if (appState.user?.uid && appState.user.uid !== user.uid) {
+    clearRealtimeListeners()
+  }
   appState.user = user
   appState.activeFilter = appState.activeFilter || 'Messages'
   renderSignedInState()
