@@ -204,7 +204,8 @@ export async function hydrateThreadFromSourceIfNeeded(thread) {
       participantCount: Number(thread.participantCount || cached.participantCount || 0),
       otherParticipantIds: Array.isArray(thread.otherParticipantIds) && thread.otherParticipantIds.length
         ? thread.otherParticipantIds
-        : (cached.participantIds || [])
+        : (cached.participantIds || []),
+      dmBlockState: thread.dmBlockState || cached.dmBlockState || null
     }
   }
 
@@ -225,8 +226,22 @@ export async function hydrateThreadFromSourceIfNeeded(thread) {
     updatedAt: thread.updatedAt || sourceThread.updatedAt || null,
     otherParticipantIds: Array.isArray(thread.otherParticipantIds) && thread.otherParticipantIds.length
       ? thread.otherParticipantIds
-      : (sourceThread.participantIds || [])
+      : (sourceThread.participantIds || []),
+    dmBlockState: thread.dmBlockState || sourceThread.dmBlockState || null
   }
+}
+
+export function subscribeToThread(threadId, callback, onError) {
+  if (!db || !threadId || typeof callback !== 'function') return () => {}
+  return onSnapshot(doc(db, 'threads', threadId), (docSnap) => {
+    if (!docSnap.exists()) {
+      callback(null)
+      return
+    }
+    const normalized = normalizeThread(docSnap.id, docSnap.data())
+    sourceThreadCache.set(threadId, normalized)
+    callback(normalized)
+  }, onError)
 }
 
 export async function createOrGetDm({ creatorId, targetUid }) {
@@ -452,6 +467,7 @@ export async function blockUser({ uid, targetUid, sourceThreadId = '', targetPro
       },
       updatedAt: serverTimestamp()
     })
+    sourceThreadCache.delete(sourceThreadId)
   }
   return true
 }
@@ -472,6 +488,7 @@ export async function unblockUser({ uid, targetUid, sourceThreadId = '' }) {
         updatedAt: serverTimestamp()
       })
     })
+    sourceThreadCache.delete(sourceThreadId)
   }
   return true
 }

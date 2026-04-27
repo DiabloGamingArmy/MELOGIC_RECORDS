@@ -35,6 +35,7 @@ import {
   subscribeToInboxThreads,
   subscribeToMessages,
   subscribeToThreadParticipants,
+  subscribeToThread,
   subscribeToTypingState,
   setThreadPinnedForUser,
   updateThreadDetails
@@ -95,6 +96,7 @@ const appState = {
   messageUnsubscribe: () => {},
   participantsUnsubscribe: () => {},
   typingUnsubscribe: () => {},
+  sourceThreadUnsubscribe: () => {},
   blockedUsersUnsubscribe: () => {},
   errorMessage: '',
   isCreateChatOpen: false,
@@ -209,6 +211,18 @@ function setupInboxDelegates() {
     if (sendButton) sendButton.disabled = !composer.value.trim() && !attachments.length
     debugTyping('composer input', threadId, composer.value.length)
     updateTypingHeartbeat(threadId, composer.value)
+  })
+
+  inboxRoot.addEventListener('click', (event) => {
+    const unblockInline = event.target.closest('[data-unblock-contact-inline]')
+    if (!unblockInline) return
+    event.preventDefault()
+    event.stopPropagation()
+    const threadId = unblockInline.getAttribute('data-unblock-contact-inline') || ''
+    if (!threadId) return
+    appState.threadConfirmModal = { type: 'unblock-contact', threadId }
+    appState.threadActionMenu = null
+    renderFloatingUi()
   })
 }
 
@@ -585,13 +599,17 @@ function getDmOtherParticipant(thread) {
 
 function getDmBlockState(thread) {
   const state = thread?.dmBlockState || null
-  const currentUid = appState.user?.uid
+  const currentUid = appState.user?.uid || ''
   const otherUid = getDmOtherParticipant(thread)
+  const isDm = thread?.type === 'dm'
+  const isBlocked = Boolean(isDm && state?.blockedBy && state?.blockedUid)
   return {
     otherUid,
-    currentUserBlockedOther: Boolean(state && state.blockedBy === currentUid),
-    otherBlockedCurrentUser: Boolean(state && state.blockedUid === currentUid),
-    isDmBlocked: Boolean(state && thread?.type === 'dm')
+    isDm,
+    isBlocked,
+    currentUserBlockedOther: Boolean(isBlocked && state.blockedBy === currentUid && state.blockedUid === otherUid),
+    otherBlockedCurrentUser: Boolean(isBlocked && state.blockedBy === otherUid && state.blockedUid === currentUid),
+    isDmBlocked: isBlocked
   }
 }
 
@@ -676,6 +694,7 @@ function clearRealtimeListeners() {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
   appState.threadUnsubscribe()
   appState.messageUnsubscribe()
+  appState.sourceThreadUnsubscribe()
   appState.participantsUnsubscribe()
   appState.typingUnsubscribe()
   appState.blockedUsersUnsubscribe()
@@ -684,6 +703,7 @@ function clearRealtimeListeners() {
   appState.hiddenMessagesUnsubscribe()
   appState.threadUnsubscribe = () => {}
   appState.messageUnsubscribe = () => {}
+  appState.sourceThreadUnsubscribe = () => {}
   appState.participantsUnsubscribe = () => {}
   appState.typingUnsubscribe = () => {}
   appState.blockedUsersUnsubscribe = () => {}
@@ -733,6 +753,12 @@ function getCurrentUserTypingIdentity() {
 
 function updateTypingHeartbeat(threadId, value) {
   if (!threadId || !appState.user?.uid) return
+  const thread = appState.threads.find((entry) => entry.id === threadId)
+  const blockState = getDmBlockState(thread)
+  if (thread?.type === 'dm' && blockState.isDmBlocked) {
+    clearTypingForThread(threadId)
+    return
+  }
   const trimmed = String(value || '').trim()
   if (!trimmed) {
     clearTypingForThread(threadId)
@@ -1439,30 +1465,58 @@ function closeThreadActionUi() {
   appState.isSavingThreadAction = false
 }
 
+function setLocalDmBlockState(threadId, dmBlockState) {
+  if (!threadId) return
+  appState.threads = appState.threads.map((thread) => (
+    thread.id === threadId ? { ...thread, dmBlockState } : thread
+  ))
+}
+
 async function blockDmContact(thread) {
   const targetUid = getDmOtherParticipant(thread)
   if (!thread?.id || !targetUid || !appState.user?.uid) return
+  const optimisticState = {
+    blockedBy: appState.user.uid,
+    blockedUid: targetUid,
+    updatedAt: new Date().toISOString()
+  }
+  const previousState = thread.dmBlockState || null
+  setLocalDmBlockState(thread.id, optimisticState)
   const profile = getProfileMeta(targetUid, { uid: targetUid, title: thread?.title || '' })
-  await blockUser({
-    uid: appState.user.uid,
-    targetUid,
-    sourceThreadId: thread.id,
-    targetProfile: profile
-  })
-  appState.blockedUsersByUid[targetUid] = {
-    targetUid,
-    sourceThreadId: thread.id,
-    targetDisplayName: profile.displayName || '',
-    targetUsername: profile.username || '',
-    targetAvatarURL: profile.avatarURL || ''
+  try {
+    await blockUser({
+      uid: appState.user.uid,
+      targetUid,
+      sourceThreadId: thread.id,
+      targetProfile: profile
+    })
+    appState.blockedUsersByUid[targetUid] = {
+      targetUid,
+      sourceThreadId: thread.id,
+      targetDisplayName: profile.displayName || '',
+      targetUsername: profile.username || '',
+      targetAvatarURL: profile.avatarURL || ''
+    }
+  } catch (error) {
+    setLocalDmBlockState(thread.id, previousState)
+    throw error
   }
 }
 
 async function unblockDmContact(thread) {
   const targetUid = getDmOtherParticipant(thread)
   if (!thread?.id || !targetUid || !appState.user?.uid) return
-  await unblockUser({ uid: appState.user.uid, targetUid, sourceThreadId: thread.id })
-  delete appState.blockedUsersByUid[targetUid]
+  const previousState = thread.dmBlockState || null
+  if (previousState?.blockedBy === appState.user.uid && previousState?.blockedUid === targetUid) {
+    setLocalDmBlockState(thread.id, null)
+  }
+  try {
+    await unblockUser({ uid: appState.user.uid, targetUid, sourceThreadId: thread.id })
+    delete appState.blockedUsersByUid[targetUid]
+  } catch (error) {
+    setLocalDmBlockState(thread.id, previousState)
+    throw error
+  }
 }
 
 async function handleThreadConfirmAction() {
@@ -2617,16 +2671,6 @@ function bindSharedEvents() {
     renderSignedInState()
   })
 
-  inboxRoot.querySelector('[data-unblock-contact-inline]')?.addEventListener('click', (event) => {
-    event.preventDefault()
-    event.stopPropagation()
-    const threadId = event.currentTarget.getAttribute('data-unblock-contact-inline') || ''
-    if (!threadId) return
-    appState.threadConfirmModal = { type: 'unblock-contact', threadId }
-    appState.threadActionMenu = null
-    renderFloatingUi()
-  })
-
   messageForm?.querySelectorAll('[data-reveal-blocked-message]').forEach((button) => {
     button.addEventListener('click', () => {
       const messageId = button.getAttribute('data-reveal-blocked-message') || ''
@@ -2861,6 +2905,31 @@ function startThreadDetailSubscriptions(threadId) {
   })
 }
 
+function startSelectedSourceThreadSubscription(threadId) {
+  appState.sourceThreadUnsubscribe()
+  appState.sourceThreadUnsubscribe = subscribeToThread(threadId, (sourceThread) => {
+    if (!sourceThread?.id) return
+    appState.threads = appState.threads.map((thread) => {
+      if (thread.id !== sourceThread.id) return thread
+      return {
+        ...thread,
+        ...sourceThread,
+        title: thread.title || sourceThread.title,
+        imageURL: thread.imageURL || sourceThread.imageURL,
+        otherProfile: thread.otherProfile || sourceThread.otherProfile,
+        otherParticipantId: thread.otherParticipantId || sourceThread.otherParticipantId,
+        dmBlockState: sourceThread.dmBlockState || null
+      }
+    })
+    if (appState.selectedThreadId === sourceThread.id) {
+      if (getDmBlockState(sourceThread).isDmBlocked) clearTypingForThread(sourceThread.id)
+      renderSignedInState()
+    }
+  }, (error) => {
+    warnRealtimePermission(`thread-source-${threadId}`, error)
+  })
+}
+
 function startMessageSubscription(threadId) {
   if (!threadId || !appState.user?.uid) return
   const selectedMirror = appState.threads.find((thread) => thread.id === threadId)
@@ -2875,6 +2944,7 @@ function startMessageSubscription(threadId) {
   appState.hiddenMessagesUnsubscribe()
   appState.loadingMessageThreadId = threadId
   startThreadDetailSubscriptions(threadId)
+  startSelectedSourceThreadSubscription(threadId)
 
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
     appState.messagesByThreadId[threadId] = messages

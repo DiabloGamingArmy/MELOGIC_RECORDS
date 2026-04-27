@@ -807,13 +807,18 @@ body.is-inbox-page {
 }
 
 .message-composer.is-blocked {
-  opacity: 0.65;
+  opacity: 0.72;
   pointer-events: none;
   filter: saturate(0.8);
 }
 
+.message-composer.is-blocked textarea,
+.message-composer.is-blocked button {
+  cursor: not-allowed;
+}
+
 .blocked-chat-alert {
-  margin: 0.45rem 1rem 0;
+  margin: 0;
   border: 1px solid rgba(131, 159, 214, 0.35);
   background: rgba(8, 13, 23, 0.9);
   border-radius: 0.7rem;

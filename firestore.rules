@@ -119,6 +119,11 @@ service cloud.firestore {
       return hasBody || hasAttachments;
     }
 
+    function dmAllowsMessageCreate(threadId) {
+      let thread = threadData(threadId);
+      return !(thread.type == 'dm' && thread.dmBlockState is map);
+    }
+
     function validMessageEdit() {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'body',
@@ -521,7 +526,8 @@ service cloud.firestore {
 
         allow create: if isThreadParticipant(threadId)
           && request.resource.data.senderId == request.auth.uid
-          && validMessageCreate();
+          && validMessageCreate()
+          && dmAllowsMessageCreate(threadId);
 
         allow update: if isThreadParticipant(threadId)
           && (
