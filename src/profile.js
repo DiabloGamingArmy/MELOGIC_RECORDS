@@ -3,7 +3,7 @@ import './styles/profile.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, signOutUser, waitForInitialAuthState } from './firebase/auth'
-import { getUserProfile } from './firebase/firestore'
+import { getEffectiveProfile } from './firebase/firestore'
 import { ROUTES, publicProfileRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
@@ -82,10 +82,10 @@ function renderSignedInState(user, storedProfile = null) {
   const bio = profile.bio || 'No bio yet. Add context about your sound, tools, or creator direction.'
   const photoURL = profile.photoURL || user.photoURL || ''
   const role = normalizeRole(
-    profile.roleLabel
-    || profile.publicProfile?.roleLabel
+    profile.publicProfile?.roleLabel
     || profile.privateProfile?.roleLabel
     || profile.privateProfile?.role
+    || profile.roleLabel
     || profile.role
   )
   const metrics = getMetrics(profile)
@@ -224,7 +224,12 @@ async function loadAndRenderProfile(user) {
 
   let storedProfile = null
   try {
-    storedProfile = await getUserProfile(user.uid)
+    const profileResult = await getEffectiveProfile(user.uid, user)
+    storedProfile = {
+      ...(profileResult?.effectiveProfile || {}),
+      publicProfile: profileResult?.publicProfile || null,
+      privateProfile: profileResult?.privateProfile || null
+    }
   } catch (error) {
     if (!hasWarnedProfileFallback) {
       hasWarnedProfileFallback = true

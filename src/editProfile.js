@@ -1,15 +1,17 @@
 import './styles/base.css'
 import './styles/editProfile.css'
+import { collection, getDocs, limit, query, where } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from './firebase/auth'
-import { getEffectiveProfile, saveProfileChanges } from './firebase/firestore'
+import { db, getEffectiveProfile, saveProfileChanges } from './firebase/firestore'
 import { storage } from './firebase/storage'
 import { ROUTES } from './utils/routes'
 
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
+  { key: 'featured-items', label: 'Featured Items' },
   { key: 'account', label: 'Account' },
   { key: 'appearance', label: 'Appearance' },
   { key: 'creator-settings', label: 'Creator Settings' },
@@ -67,6 +69,19 @@ initShellChrome()
 const editRoot = document.querySelector('[data-edit-root]')
 let hasWarnedEditProfile = false
 let pageState = null
+
+async function loadSelectableFeaturedProducts(uid) {
+  if (!db || !uid) return []
+  const productsQuery = query(
+    collection(db, 'products'),
+    where('artistId', '==', uid),
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public'),
+    limit(30)
+  )
+  const snapshot = await getDocs(productsQuery)
+  return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+}
 
 function fallbackInitials(nameOrEmail) {
   if (!nameOrEmail) return 'MR'
@@ -171,6 +186,11 @@ function getMergedState(user, profileResult) {
       privacy: {}
     },
     creatorSettings: userData.creatorSettings || {},
+    featuredItems: {
+      enabled: Boolean(profileData.featuredItems?.enabled),
+      productIds: Array.isArray(profileData.featuredItems?.productIds) ? profileData.featuredItems.productIds.map((id) => String(id || '')).filter(Boolean) : []
+    },
+    selectableFeaturedProducts: [],
     pendingMedia: {
       avatarFile: null,
       bannerFile: null,
@@ -604,7 +624,7 @@ function renderSettingsPage() {
           <input class="hidden-file-input" type="file" accept="image/*" name="avatarFile" data-avatar-input />
           <input class="hidden-file-input" type="file" accept="image/*" name="bannerFile" data-banner-input />
 
-          <form data-profile-form>
+          <form data-profile-form id="profile-form">
             <div class="field-grid">
               <label>
                 <span>Display Name <em class="required-indicator">Required</em></span>
@@ -619,7 +639,7 @@ function renderSettingsPage() {
             </div>
             <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
-              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" readonly disabled aria-readonly="true" /><small>Role label is bound to your account type.</small></label>
+              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" readonly disabled aria-readonly="true" /><small class="helper-text">Role label is bound to your account type.</small></label>
               <label><span>Location</span><input name="location" value="${state.location}" /></label>
             </div>
             <label><span>Website</span><input name="website" value="${state.website}" placeholder="https://" /></label>
@@ -653,12 +673,42 @@ function renderSettingsPage() {
           </div>
         </div>
 
+        <div class="settings-panel ${activeSection === 'featured-items' ? 'is-active' : ''}" data-panel="featured-items">
+          <h2>Featured Items</h2>
+          <p class="section-copy">Select up to 3 published public products to feature on your public profile.</p>
+          <div class="toggle-card">
+              <label class="toggle-row">
+                <span>Enable Featured Items</span>
+                <input type="checkbox" name="featuredItemsEnabled" form="profile-form" ${state.featuredItems.enabled ? 'checked' : ''} />
+              </label>
+          </div>
+          ${state.selectableFeaturedProducts.length
+            ? `
+              <div class="featured-products-grid">
+                ${state.selectableFeaturedProducts.map((product) => {
+                  const checked = state.featuredItems.productIds.includes(product.id)
+                  return `
+                    <label class="featured-product-option ${checked ? 'is-selected' : ''}">
+                      <input type="checkbox" name="featuredProductIds" value="${product.id}" form="profile-form" ${checked ? 'checked' : ''} />
+                      <div>
+                        <strong>${product.title || 'Untitled product'}</strong>
+                        <p>${product.priceLabel || (product.isFree ? 'Free' : 'Price unavailable')}</p>
+                      </div>
+                    </label>
+                  `
+                }).join('')}
+              </div>
+              <p class="muted">Up to 3 products can be featured at once.</p>
+            `
+            : '<article class="empty-featured-items-note">Publish products to feature them on your public profile.</article>'}
+        </div>
+
         <div class="settings-panel ${activeSection === 'appearance' ? 'is-active' : ''}" data-panel="appearance">
           <h2>Appearance</h2>
           <div class="toggle-list">
             <label><span>Theme</span><select name="theme"><option ${appearance.theme === 'dark' ? 'selected' : ''}>dark</option><option ${appearance.theme === 'system' ? 'selected' : ''}>system</option></select></label>
-            <label><input type="checkbox" name="compactMode" ${appearance.compactMode ? 'checked' : ''} /> Compact mode</label>
-            <label><input type="checkbox" name="reducedMotion" ${appearance.reducedMotion ? 'checked' : ''} /> Reduced motion</label>
+            <label class="toggle-row"><span>Compact mode</span><input type="checkbox" name="compactMode" ${appearance.compactMode ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Reduced motion</span><input type="checkbox" name="reducedMotion" ${appearance.reducedMotion ? 'checked' : ''} /></label>
           </div>
         </div>
 
@@ -726,6 +776,7 @@ function renderSettingsPage() {
   const displayNameErrorEl = editRoot.querySelector('[data-display-name-error]')
   const usernameInput = editRoot.querySelector('[data-username-input]')
   const usernameErrorEl = editRoot.querySelector('[data-username-error]')
+  const featuredCheckboxes = editRoot.querySelectorAll('input[name="featuredProductIds"]')
 
   if (!state.feedback.message && feedback) {
     feedback.textContent = ''
@@ -818,6 +869,16 @@ function renderSettingsPage() {
     updateUsernameValidationUI(validation.valid ? '' : validation.message)
   })
 
+  featuredCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const selected = Array.from(featuredCheckboxes).filter((input) => input.checked)
+      if (selected.length <= 3) return
+      checkbox.checked = false
+      setGlobalEditStatus('You can feature up to 3 products.', 'error')
+      renderSettingsPage()
+    })
+  })
+
   signOutButton?.addEventListener('click', async () => {
     signOutButton.disabled = true
     signOutButton.textContent = 'Signing out...'
@@ -848,6 +909,8 @@ function renderSettingsPage() {
       }
       return
     }
+
+    const selectedFeaturedProductIds = formData.getAll('featuredProductIds').map((id) => String(id || '').trim()).filter(Boolean).slice(0, 3)
 
     const nextPayload = {
       displayName: displayNameValidation.value,
@@ -886,6 +949,10 @@ function renderSettingsPage() {
         publicCreatorProfile: formData.get('publicCreatorProfile') === 'on',
         storefrontVisible: formData.get('storefrontVisible') === 'on',
         submissionPreferences: String(formData.get('submissionPreferences') || '').trim()
+      },
+      featuredItems: {
+        enabled: formData.get('featuredItemsEnabled') === 'on',
+        productIds: selectedFeaturedProductIds
       }
     }
 
@@ -985,6 +1052,7 @@ async function initEditProfile() {
 
   const profileResult = await getEffectiveProfile(user.uid, user)
   pageState = getMergedState(user, profileResult)
+  pageState.selectableFeaturedProducts = await loadSelectableFeaturedProducts(user.uid)
   renderSettingsPage()
 }
 

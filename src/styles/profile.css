@@ -21,6 +21,10 @@
   padding: 1rem;
 }
 
+.profile-header-card {
+  padding: 0.86rem 0.92rem;
+}
+
 .profile-empty {
   text-align: center;
 }

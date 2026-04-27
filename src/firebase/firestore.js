@@ -122,6 +122,12 @@ function sanitizeFirestorePayload(value) {
 
 function buildPublicProfile(uid, authUser, profileInput = {}) {
   const username = normalizeUsername(profileInput.username)
+  const featuredItems = {
+    enabled: Boolean(profileInput.featuredItems?.enabled),
+    productIds: Array.isArray(profileInput.featuredItems?.productIds)
+      ? profileInput.featuredItems.productIds.map((id) => String(id || '').trim()).filter(Boolean).slice(0, 3)
+      : []
+  }
   return {
     uid,
     displayName: profileInput.displayName || authUser?.displayName || '',
@@ -135,6 +141,7 @@ function buildPublicProfile(uid, authUser, profileInput = {}) {
     location: profileInput.location || '',
     website: profileInput.website || '',
     roleLabel: profileInput.roleLabel || deriveRoleLabelFromValue(profileInput.role || profileInput.accountType),
+    featuredItems,
     socials: profileInput.socials || {},
     stats: profileInput.stats || {
       products: 0,
@@ -203,6 +210,10 @@ function buildProvisionedProfileDoc(uid, authUser, profileInput = {}) {
     location: '',
     website: '',
     roleLabel: 'User',
+    featuredItems: {
+      enabled: false,
+      productIds: []
+    },
     socials: defaultSocials(),
     stats: {
       products: 0,
@@ -563,7 +574,13 @@ export async function saveProfileChanges(user, payload = {}) {
         displayName: displayNameValidation.value,
         username: nextUsernameLower,
         roleLabel: existingProfile.roleLabel || deriveRoleLabelFromValue(existingUser.role || existingUser.accountType),
-        accountType: existingUser.accountType || 'user'
+        accountType: existingUser.accountType || 'user',
+        featuredItems: {
+          enabled: Boolean(payload.featuredItems?.enabled),
+          productIds: Array.isArray(payload.featuredItems?.productIds)
+            ? payload.featuredItems.productIds.map((id) => String(id || '').trim()).filter(Boolean).slice(0, 3)
+            : (existingProfile.featuredItems?.productIds || []).map((id) => String(id || '').trim()).filter(Boolean).slice(0, 3)
+        }
       }
 
       const publicPayload = sanitizeFirestorePayload(buildPublicProfile(uid, user, normalizedPayload))
