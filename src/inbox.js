@@ -4,6 +4,7 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
+import { ROUTES, authRoute } from './utils/routes'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
 import {
@@ -1258,7 +1259,7 @@ function renderSignedOutState() {
     <article class="inbox-auth-card">
       <h2>Sign in required</h2>
       <p>Inbox is available for signed-in members so your conversations stay private and synced.</p>
-      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+      <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
     </article>
   `
   modalRoot.innerHTML = ''
@@ -1535,7 +1536,7 @@ document.addEventListener('keydown', handleGlobalKeydown)
 
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
-    window.location.assign('/auth.html?redirect=/inbox.html')
+    window.location.assign(authRoute({ redirect: ROUTES.inbox }))
     return
   }
 
@@ -1547,7 +1548,7 @@ waitForInitialAuthState().then(async (user) => {
 
 subscribeToAuthState(async (user) => {
   if (!user) {
-    window.location.assign('/auth.html?redirect=/inbox.html')
+    window.location.assign(authRoute({ redirect: ROUTES.inbox }))
     return
   }
 

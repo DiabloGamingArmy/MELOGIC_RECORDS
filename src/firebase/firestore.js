@@ -85,6 +85,15 @@ function isPlainObject(value) {
   return proto === Object.prototype || proto === null
 }
 
+
+function deriveRoleLabelFromValue(value) {
+  const normalized = String(value || 'user').trim().toLowerCase()
+  if (normalized === 'founder') return 'Founder'
+  if (normalized === 'creator') return 'Creator'
+  if (normalized === 'artist') return 'Artist'
+  return 'User'
+}
+
 function sanitizeFirestorePayload(value) {
   if (value === undefined) return undefined
   if (typeof File !== 'undefined' && value instanceof File) return undefined
@@ -125,7 +134,7 @@ function buildPublicProfile(uid, authUser, profileInput = {}) {
     bannerURL: profileInput.bannerURL || '',
     location: profileInput.location || '',
     website: profileInput.website || '',
-    roleLabel: profileInput.roleLabel || profileInput.role || 'User',
+    roleLabel: profileInput.roleLabel || deriveRoleLabelFromValue(profileInput.role || profileInput.accountType),
     socials: profileInput.socials || {},
     stats: profileInput.stats || {
       products: 0,
@@ -142,6 +151,8 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
     uid,
     email: authUser?.email || profileInput.email || '',
     role: profileInput.role || 'user',
+    roleLabel: profileInput.roleLabel || deriveRoleLabelFromValue(profileInput.role || profileInput.accountType),
+    accountType: profileInput.accountType || 'user',
     settings: profileInput.settings || {},
     creatorSettings: profileInput.creatorSettings || {},
     // Backward-compat profile fields while migrating to profiles/{uid}
@@ -161,6 +172,9 @@ function buildProvisionedUserDoc(uid, authUser, profileInput = {}) {
     uid,
     email: authUser?.email || profileInput.email || '',
     role: 'user',
+    accountType: 'user',
+    roleLabel: 'User',
+    stats: { products: 0, savedItems: 0, comments: 0, likes: 0, downloads: 0 },
     displayName: String(profileInput.displayName || authUser?.displayName || '').trim(),
     username,
     bio: '',
@@ -188,7 +202,7 @@ function buildProvisionedProfileDoc(uid, authUser, profileInput = {}) {
     bannerURL: '',
     location: '',
     website: '',
-    roleLabel: 'user',
+    roleLabel: 'User',
     socials: defaultSocials(),
     stats: {
       products: 0,
@@ -547,7 +561,9 @@ export async function saveProfileChanges(user, payload = {}) {
       const normalizedPayload = {
         ...payload,
         displayName: displayNameValidation.value,
-        username: nextUsernameLower
+        username: nextUsernameLower,
+        roleLabel: existingProfile.roleLabel || deriveRoleLabelFromValue(existingUser.role || existingUser.accountType),
+        accountType: existingUser.accountType || 'user'
       }
 
       const publicPayload = sanitizeFirestorePayload(buildPublicProfile(uid, user, normalizedPayload))

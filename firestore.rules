@@ -166,6 +166,29 @@ service cloud.firestore {
         && request.resource.data.entitlementCount == resource.data.entitlementCount;
     }
 
+    
+
+    function publicProfileUpdateAllowed(uid) {
+      return isOwner(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.roleLabel == resource.data.roleLabel
+        && request.resource.data.stats == resource.data.stats
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'displayName',
+          'username',
+          'usernameLower',
+          'bio',
+          'avatarPath',
+          'avatarURL',
+          'bannerPath',
+          'bannerURL',
+          'location',
+          'website',
+          'socials',
+          'updatedAt'
+        ]);
+    }
+
     function creatorIdentityIsStable() {
       return request.resource.data.artistId == resource.data.artistId
         && request.resource.data.artistId == request.auth.uid
@@ -189,7 +212,8 @@ service cloud.firestore {
 
     match /profiles/{uid} {
       allow read: if true;
-      allow create, update: if isOwner(uid) && request.resource.data.uid == uid;
+      allow create: if isOwner(uid) && request.resource.data.uid == uid;
+      allow update: if publicProfileUpdateAllowed(uid);
       allow delete: if isOwner(uid);
     }
 
