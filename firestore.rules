@@ -244,7 +244,8 @@ service cloud.firestore {
       allow read, write: if isOwner(uid);
 
       match /inboxThreads/{threadId} {
-        allow read, write: if isOwner(uid);
+        allow read, list, get: if isOwner(uid);
+        allow create, update, delete: if false;
       }
 
       match /systemNotifications/{notificationId} {

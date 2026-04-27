@@ -37,9 +37,36 @@ exports.createOrGetDm = onCall(async (request) => {
     const existingSnap = await transaction.get(existingQuery)
     if (!existingSnap.empty) {
       const existingDoc = existingSnap.docs[0]
+      const existingThread = existingDoc.data() || {}
+      const existingParticipantIds = Array.from(new Set(
+        (Array.isArray(existingThread.participantIds) ? existingThread.participantIds : participantIds).filter(Boolean)
+      ))
+
+      existingParticipantIds.forEach((uid) => {
+        const participantRef = db.collection('threads').doc(existingDoc.id).collection('participants').doc(uid)
+        transaction.set(
+          participantRef,
+          buildParticipantPayload({
+            uid,
+            role: uid === existingThread.createdBy ? 'owner' : 'member'
+          }),
+          { merge: true }
+        )
+        const summaryRef = db.collection('users').doc(uid).collection('inboxThreads').doc(existingDoc.id)
+        transaction.set(
+          summaryRef,
+          buildInboxSummaryPayload({
+            threadId: existingDoc.id,
+            thread: existingThread,
+            recipientUid: uid
+          }),
+          { merge: true }
+        )
+      })
+
       return {
         threadId: existingDoc.id,
-        thread: { id: existingDoc.id, ...existingDoc.data() }
+        existing: true
       }
     }
 
@@ -76,12 +103,7 @@ exports.createOrGetDm = onCall(async (request) => {
 
     return {
       threadId: threadRef.id,
-      thread: {
-        id: threadRef.id,
-        ...threadPayload,
-        participantIds,
-        participantCount: participantIds.length
-      }
+      existing: false
     }
   })
 
