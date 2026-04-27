@@ -97,6 +97,7 @@ const appState = {
   createChatError: '',
   chatSearchRequestId: 0,
   composerDraftByThreadId: {},
+  replyDraftByThreadId: {},
   profileByUid: {},
   warnedRealtimePermissions: {},
   warnedSystemPermissions: false,
@@ -379,6 +380,29 @@ function summarizeThreadPreview(thread) {
   if (thread.lastMessageType === 'file') return '1 file'
   if (thread.lastMessageType && thread.lastMessageType !== 'text') return '1 attachment'
   return 'No messages yet.'
+}
+
+function summarizeMessageAttachmentLabel(message = {}) {
+  const attachment = Array.isArray(message.attachments) ? message.attachments[0] : null
+  if (!attachment) return ''
+  const mime = String(attachment.mimeType || '')
+  if (mime.startsWith('image/')) return 'Image'
+  if (mime.startsWith('video/')) return 'Video'
+  if (mime.startsWith('audio/')) return 'Audio'
+  if (mime) return 'File'
+  return 'Attachment'
+}
+
+function truncateReplyText(value, max = 40) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+function getReplyPreviewLabel(reply = {}) {
+  const text = truncateReplyText(reply.bodyPreview || '')
+  if (text) return text
+  return truncateReplyText(reply.attachmentSummary || '') || 'Attachment'
 }
 
 function groupReactionsByEmoji(reactions = []) {
@@ -784,6 +808,32 @@ function getParticipantMeta(thread, uid) {
   return getProfileMeta(uid, { uid, displayName: uid === appState.user?.uid ? 'You' : '', title: thread.title })
 }
 
+function buildReplyPreview(thread, message) {
+  const sender = getParticipantMeta(thread, message.senderId)
+  if (message.deleted) {
+    return {
+      messageId: message.id,
+      senderId: message.senderId,
+      senderName: sender.displayName || sender.username || getInitials({ uid: message.senderId }),
+      bodyPreview: 'Message removed',
+      attachmentSummary: '',
+      type: String(message.type || 'text'),
+      createdAt: message.createdAt || null
+    }
+  }
+  const bodyPreview = truncateReplyText(message.body || '')
+  const attachmentSummary = bodyPreview ? '' : summarizeMessageAttachmentLabel(message)
+  return {
+    messageId: message.id,
+    senderId: message.senderId,
+    senderName: sender.displayName || sender.username || getInitials({ uid: message.senderId }),
+    bodyPreview,
+    attachmentSummary,
+    type: String(message.type || 'text'),
+    createdAt: message.createdAt || null
+  }
+}
+
 function getOutgoingStatusLabel(thread, message) {
   const participants = getThreadParticipants(thread.id).filter((entry) => entry.uid && entry.uid !== appState.user?.uid)
   const createdAt = new Date(message.createdAt || 0).getTime()
@@ -861,6 +911,15 @@ function getMessageGroupsMarkup(thread) {
             })
             .join('')
           const editedMarker = message.edited ? '<span class="message-edited-marker">edited</span>' : ''
+          const replyTo = message.replyTo && typeof message.replyTo === 'object' ? message.replyTo : null
+          const replyMarkup = replyTo
+            ? `
+              <button type="button" class="message-reply-preview" data-jump-reply-message-id="${escapeHtml(replyTo.messageId)}">
+                <strong>${escapeHtml(replyTo.senderName || 'Reply')}</strong>
+                <span>${escapeHtml(getReplyPreviewLabel(replyTo))}</span>
+              </button>
+            `
+            : ''
           const bodyMarkup = message.deleted
             ? '<p>Message removed.</p>'
             : isEditing
@@ -875,7 +934,8 @@ function getMessageGroupsMarkup(thread) {
               `
               : `<p>${escapeHtml(message.body)}</p>`
           return `
-            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+              ${replyMarkup}
               ${bodyMarkup}
               ${attachmentsMarkup}
               ${reactionPills ? `<div class="message-reaction-row">${reactionPills}</div>` : ''}
@@ -923,6 +983,7 @@ function getConversationBodyMarkup() {
   }
 
   const draft = appState.composerDraftByThreadId[thread.id] || ''
+  const replyDraft = appState.replyDraftByThreadId[thread.id] || null
   const attachments = appState.attachmentDraftByThreadId[thread.id] || []
   const previewUrls = appState.attachmentPreviewByThreadId[thread.id] || []
   const typingUsers = getTypingUsers(thread.id)
@@ -933,6 +994,15 @@ function getConversationBodyMarkup() {
       ${typingUsers.length ? `<p class="typing-indicator typing-indicator-inline">${escapeHtml(getConversationSubtitle(thread))}</p>` : ''}
       <form class="message-composer" data-message-form>
         <label class="sr-only" for="message-input">Message</label>
+        ${replyDraft ? `
+          <div class="composer-reply-preview">
+            <div class="composer-reply-meta">
+              <strong>${escapeHtml(replyDraft.senderName || 'Replying')}</strong>
+              <span>${escapeHtml(getReplyPreviewLabel(replyDraft))}</span>
+            </div>
+            <button type="button" data-clear-reply-draft aria-label="Clear reply">×</button>
+          </div>
+        ` : ''}
         ${attachments.length ? `<div class="composer-attachment-preview-strip">${attachments.map((file, index) => {
           const type = describeAttachmentType(file)
           const title = escapeHtml(file.name || 'Attachment')
@@ -1122,9 +1192,12 @@ function getContextMenuMarkup() {
   const isThreadOwner = Boolean(menu.threadCreatedBy) && menu.threadCreatedBy === appState.user?.uid
   const canEdit = isOwnMessage && !menu.deleted && menu.type === 'text' && !menu.hasAttachments
   const canReact = !menu.deleted
+  const canReply = !menu.deleted
   const canShowDelete = !menu.deleted && (isOwnMessage || isThreadOwner)
   const canDeleteEveryone = isOwnMessage || isThreadOwner
   const canCopy = !menu.deleted
+  const reactionRows = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
+  const canViewReactions = reactionRows.length > 0
   const profileHref = publicProfileRoute({
     uid: menu.senderId,
     preview: menu.senderId === appState.user?.uid
@@ -1135,8 +1208,10 @@ function getContextMenuMarkup() {
   return `
     <div class="message-context-backdrop" data-message-context-close>
       <div class="message-context-menu" data-message-context-menu style="left:${pos.x}px;top:${pos.y}px;">
+        ${canReply ? '<button type="button" data-menu-action="reply">Reply</button>' : ''}
         ${canEdit ? '<button type="button" data-menu-action="edit">Edit Message</button>' : ''}
         ${canReact ? '<button type="button" data-menu-action="react">React</button>' : ''}
+        ${canViewReactions ? '<button type="button" data-menu-action="view-reactions">View Reactions</button>' : ''}
         ${canCopy ? '<button type="button" data-menu-action="copy">Copy text</button>' : ''}
         ${canShowDelete ? '<button type="button" data-menu-action="delete">Delete Message</button>' : ''}
         ${menu.senderId && !isOwnMessage ? `<button type="button" data-menu-action="profile" data-href="${escapeHtml(profileHref)}">Open Profile</button>` : ''}
@@ -1179,6 +1254,16 @@ async function handleFloatingMenuAction(button) {
     renderSignedInState()
     return
   }
+  if (action === 'reply') {
+    const thread = appState.threads.find((entry) => entry.id === menu.threadId)
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    if (thread && message) {
+      appState.replyDraftByThreadId[menu.threadId] = buildReplyPreview(thread, message)
+    }
+    clearFloatingOverlays()
+    renderSignedInState()
+    return
+  }
   if (action === 'react') {
     appState.reactionPickerAnchor = true
     appState.deleteSubmenuAnchor = null
@@ -1207,6 +1292,18 @@ async function handleFloatingMenuAction(button) {
         // noop
       }
     }
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'view-reactions') {
+    const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
+    const reactorUids = Array.from(new Set(reactions.map((entry) => entry.uid).filter(Boolean)))
+    if (reactorUids.length) {
+      const loaded = await loadProfilesByUids(reactorUids)
+      appState.profileByUid = { ...appState.profileByUid, ...loaded }
+    }
+    appState.reactionDetailModal = { threadId: menu.threadId, messageId: menu.messageId }
     clearFloatingOverlays()
     renderFloatingUi()
     return
@@ -1904,6 +2001,9 @@ function bindSharedEvents() {
       const threadId = button.getAttribute('data-select-thread-id') || ''
       if (!threadId) return
       if (activeTypingThreadId && activeTypingThreadId !== threadId) clearTypingForThread(activeTypingThreadId)
+      if (appState.selectedThreadId && appState.selectedThreadId !== threadId) {
+        delete appState.replyDraftByThreadId[appState.selectedThreadId]
+      }
 
       appState.selectedThreadId = threadId
       saveLastSelectedThread(appState.user?.uid, threadId)
@@ -1998,6 +2098,12 @@ function bindSharedEvents() {
     })
   })
 
+  messageForm?.querySelector('[data-clear-reply-draft]')?.addEventListener('click', () => {
+    if (!thread?.id) return
+    delete appState.replyDraftByThreadId[thread.id]
+    renderSignedInState()
+  })
+
   inboxRoot.querySelectorAll('[data-message-id]').forEach((messageEl) => {
     messageEl.addEventListener('contextmenu', (event) => {
       event.preventDefault()
@@ -2053,6 +2159,19 @@ function bindSharedEvents() {
     })
   })
 
+  inboxRoot.querySelectorAll('[data-jump-reply-message-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const targetId = button.getAttribute('data-jump-reply-message-id')
+      if (!targetId) return
+      const safeId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(targetId) : targetId.replace(/"/g, '\\"')
+      const target = inboxRoot.querySelector(`[data-message-id="${safeId}"]`)
+      if (!target) return
+      target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      target.classList.add('is-reply-target-highlight')
+      window.setTimeout(() => target.classList.remove('is-reply-target-highlight'), 1100)
+    })
+  })
+
   inboxRoot.querySelectorAll('[data-reaction-pill]').forEach((button) => {
     button.addEventListener('click', async () => {
       const messageId = button.getAttribute('data-reaction-pill')
@@ -2069,21 +2188,13 @@ function bindSharedEvents() {
       })
       renderSignedInState()
       try {
-        if (mine) await removeMessageReaction({ threadId: thread.id, messageId, reactionId: mine.id })
+        if (mine) await removeMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
         else await addMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
       } catch {
         rollback()
         appState.errorMessage = 'Unable to update reaction.'
         renderSignedInState()
       }
-      const nextRows = appState.reactionsByThreadId[thread.id]?.[messageId] || []
-      const reactorUids = Array.from(new Set(nextRows.map((entry) => entry.uid).filter(Boolean)))
-      if (reactorUids.length) {
-        const loaded = await loadProfilesByUids(reactorUids)
-        appState.profileByUid = { ...appState.profileByUid, ...loaded }
-      }
-      appState.reactionDetailModal = { threadId: thread.id, messageId }
-      renderFloatingUi()
     })
   })
 
@@ -2125,10 +2236,17 @@ async function handleMessageSubmit(form) {
   form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
 
   try {
-    await sendMessage(thread.id, { senderId: appState.user.uid, body, type: 'text', attachments })
+    await sendMessage(thread.id, {
+      senderId: appState.user.uid,
+      body,
+      type: 'text',
+      attachments,
+      replyTo: appState.replyDraftByThreadId[thread.id] || null
+    })
     appState.errorMessage = ''
     field.value = ''
     appState.composerDraftByThreadId[thread.id] = ''
+    delete appState.replyDraftByThreadId[thread.id]
     setAttachmentDraft(thread.id, [])
     clearTypingForThread(thread.id)
     if (canMarkThreadRead(thread.id)) {
@@ -2230,6 +2348,10 @@ function startMessageSubscription(threadId) {
     uid: appState.user.uid,
     callback: (hiddenIds) => {
       appState.hiddenMessageIdsByThreadId[threadId] = hiddenIds
+      const replyDraft = appState.replyDraftByThreadId[threadId]
+      if (replyDraft?.messageId && hiddenIds.includes(replyDraft.messageId)) {
+        delete appState.replyDraftByThreadId[threadId]
+      }
       if (appState.selectedThreadId === threadId) renderSignedInState()
     },
     onError: (error) => warnRealtimePermission(`hidden-${threadId}`, error)
