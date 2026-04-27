@@ -293,6 +293,66 @@ select {
   gap: 0.5rem;
 }
 
+.toggle-row {
+  justify-content: space-between;
+  border: 1px solid rgba(137, 159, 208, 0.24);
+  border-radius: 0.72rem;
+  background: rgba(10, 15, 24, 0.72);
+  padding: 0.62rem 0.72rem;
+}
+
+.toggle-row span {
+  font-size: 0.78rem;
+}
+
+.toggle-card {
+  margin-bottom: 0.75rem;
+}
+
+.featured-products-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.featured-product-option {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid rgba(137, 159, 208, 0.24);
+  border-radius: 0.72rem;
+  background: rgba(10, 15, 24, 0.72);
+  padding: 0.62rem 0.72rem;
+}
+
+.featured-product-option.is-selected {
+  border-color: rgba(114, 216, 175, 0.55);
+}
+
+.featured-product-option strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.featured-product-option p {
+  margin: 0.2rem 0 0;
+  color: #9fb0d8;
+  font-size: 0.78rem;
+}
+
+.empty-featured-items-note {
+  border: 1px solid rgba(137, 159, 208, 0.24);
+  border-radius: 0.72rem;
+  background: rgba(10, 15, 24, 0.72);
+  padding: 0.8rem;
+  color: #9fb0d8;
+}
+
+.helper-text {
+  color: #91a6d6;
+  font-size: 0.76rem;
+}
+
 .button-danger {
   border-color: rgba(230, 118, 137, 0.6);
   color: #ffd7df;
@@ -399,7 +459,8 @@ select {
 
   .media-section,
   .field-grid,
-  .choice-grid {
+  .choice-grid,
+  .featured-products-grid {
     grid-template-columns: 1fr;
   }
 
