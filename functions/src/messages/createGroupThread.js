@@ -20,6 +20,8 @@ exports.createGroupThread = onCall(async (request) => {
   if (!title) {
     throw new HttpsError('invalid-argument', 'title is required.')
   }
+  const imagePath = assertString(request.data?.imagePath)
+  const imageURL = assertString(request.data?.imageURL)
 
   const participantIds = sanitizeParticipantIds(request.data?.participantIds, callerUid)
   if (participantIds.length < 2) {
@@ -32,7 +34,9 @@ exports.createGroupThread = onCall(async (request) => {
       type: 'group',
       createdBy: callerUid,
       title,
-      participantIds
+      participantIds,
+      imagePath,
+      imageURL
     })
 
     transaction.set(threadRef, threadPayload)
@@ -60,12 +64,7 @@ exports.createGroupThread = onCall(async (request) => {
 
     return {
       threadId: threadRef.id,
-      thread: {
-        id: threadRef.id,
-        ...threadPayload,
-        participantIds,
-        participantCount: participantIds.length
-      }
+      existing: false
     }
   })
 

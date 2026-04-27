@@ -1,5 +1,4 @@
 import {
-  addDoc,
   arrayRemove,
   arrayUnion,
   collection,
@@ -14,13 +13,13 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
-  where,
   writeBatch
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 let hasWarnedThreadFallback = false
+const sourceThreadCache = new Map()
 
 function toIsoDate(value) {
   if (!value) return null
@@ -28,10 +27,6 @@ function toIsoDate(value) {
   if (value instanceof Date) return value.toISOString()
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
-}
-
-function makeDmKey(a, b) {
-  return [a, b].filter(Boolean).sort().join('_')
 }
 
 function normalizeThread(threadId, raw = {}) {
@@ -46,17 +41,28 @@ function normalizeThread(threadId, raw = {}) {
     imageURL: raw.imageURL || '',
     participantIds: Array.isArray(raw.participantIds) ? raw.participantIds : [],
     participantCount: Number(raw.participantCount || 0),
+    otherParticipantIds: Array.isArray(raw.otherParticipantIds) ? raw.otherParticipantIds : [],
     lastMessageText: raw.lastMessageText || '',
     lastMessageAt: toIsoDate(raw.lastMessageAt),
     lastMessageSenderId: raw.lastMessageSenderId || '',
     lastMessageType: raw.lastMessageType || 'text',
     status: raw.status || 'active',
-    dmKey: raw.dmKey || ''
+    dmKey: raw.dmKey || '',
+    unreadCount: Number(raw.unreadCount || 0)
   }
 }
 
-function getThreadQuery(uid) {
-  return query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), orderBy('updatedAt', 'desc'), limit(100))
+function needsSourceHydration(thread = {}) {
+  const hasParticipants = Array.isArray(thread.participantIds) && thread.participantIds.length > 0
+  return !hasParticipants
+    || !thread.participantCount
+    || !thread.type
+    || !thread.createdBy
+    || !thread.updatedAt
+}
+
+function getInboxMirrorQuery(uid) {
+  return query(collection(db, 'users', uid, 'inboxThreads'), orderBy('updatedAt', 'desc'), limit(100))
 }
 
 function sortThreadsNewestFirst(threads = []) {
@@ -80,13 +86,14 @@ export async function listThreadsForUser(uid) {
 
   let snapshot
   try {
-    snapshot = await getDocs(getThreadQuery(uid))
+    snapshot = await getDocs(getInboxMirrorQuery(uid))
   } catch {
-    snapshot = await getDocs(query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), limit(100)))
+    snapshot = await getDocs(query(collection(db, 'users', uid, 'inboxThreads'), limit(100)))
   }
 
   const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
-  return sortThreadsNewestFirst(threads)
+  const hydratedThreads = await Promise.all(threads.map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
+  return sortThreadsNewestFirst(hydratedThreads)
 }
 
 export function subscribeToThreadsForUser(uid, callback, onError) {
@@ -109,7 +116,7 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
       console.warn('[threadService] Primary inbox listener failed; falling back to unordered listener.')
     }
     fallbackUnsubscribe = onSnapshot(
-      query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), limit(100)),
+      query(collection(db, 'users', uid, 'inboxThreads'), limit(100)),
       (snapshot) => {
         const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
         callback(sortThreadsNewestFirst(threads))
@@ -120,7 +127,7 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
     )
   }
 
-  primaryUnsubscribe = onSnapshot(getThreadQuery(uid), (snapshot) => {
+  primaryUnsubscribe = onSnapshot(getInboxMirrorQuery(uid), (snapshot) => {
     const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
     callback(sortThreadsNewestFirst(threads))
   }, (error) => {
@@ -139,9 +146,80 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
 
 export async function getThread(threadId) {
   if (!db || !threadId) return null
-  const threadDoc = await getDoc(doc(db, 'threads', threadId))
-  if (!threadDoc.exists()) return null
-  return normalizeThread(threadDoc.id, threadDoc.data())
+  try {
+    const threadDoc = await getDoc(doc(db, 'threads', threadId))
+    if (!threadDoc.exists()) return null
+    return normalizeThread(threadDoc.id, threadDoc.data())
+  } catch (error) {
+    if (String(error?.code || '').includes('permission-denied')) return null
+    throw error
+  }
+}
+
+export async function hydrateThreadFromSourceIfNeeded(thread) {
+  if (!thread?.id || !needsSourceHydration(thread)) return thread
+
+  const threadId = thread.id
+  if (sourceThreadCache.has(threadId)) {
+    const cached = sourceThreadCache.get(threadId)
+    return {
+      ...cached,
+      ...thread,
+      participantIds: Array.isArray(thread.participantIds) && thread.participantIds.length
+        ? thread.participantIds
+        : (cached.participantIds || []),
+      participantCount: Number(thread.participantCount || cached.participantCount || 0),
+      otherParticipantIds: Array.isArray(thread.otherParticipantIds) && thread.otherParticipantIds.length
+        ? thread.otherParticipantIds
+        : (cached.participantIds || [])
+    }
+  }
+
+  console.info(`[inbox] mirror thread missing participantIds; hydrating from source ${threadId}`)
+  const sourceThread = await getThread(threadId)
+  if (!sourceThread) return thread
+  sourceThreadCache.set(threadId, sourceThread)
+
+  return {
+    ...sourceThread,
+    ...thread,
+    participantIds: Array.isArray(thread.participantIds) && thread.participantIds.length
+      ? thread.participantIds
+      : (sourceThread.participantIds || []),
+    participantCount: Number(thread.participantCount || sourceThread.participantCount || 0),
+    type: thread.type || sourceThread.type || 'dm',
+    createdBy: thread.createdBy || sourceThread.createdBy || '',
+    updatedAt: thread.updatedAt || sourceThread.updatedAt || null,
+    otherParticipantIds: Array.isArray(thread.otherParticipantIds) && thread.otherParticipantIds.length
+      ? thread.otherParticipantIds
+      : (sourceThread.participantIds || [])
+  }
+}
+
+export async function createOrGetDm({ creatorId, targetUid }) {
+  if (!creatorId || !targetUid) throw new Error('createOrGetDm requires creatorId and targetUid.')
+
+  try {
+    const callable = httpsCallable(functions, 'createOrGetDm')
+    const result = await callable({ targetUid })
+    if (result?.data?.threadId) {
+      console.info('[threadService] createOrGetDm callable succeeded', {
+        threadId: result.data.threadId,
+        existing: Boolean(result.data.existing)
+      })
+      return getThread(result.data.threadId)
+    }
+  } catch (error) {
+    console.warn('[threadService] createOrGetDm callable failed', {
+      code: error?.code || 'unknown',
+      message: error?.message || 'Callable failed'
+    })
+    if (String(error?.code || '').includes('not-found')) {
+      throw new Error('Messaging service is not fully deployed. Please try again later.')
+    }
+    throw error
+  }
+  throw new Error('Messaging service is not fully deployed. Please try again later.')
 }
 
 async function upsertParticipants(threadId, participantIds = [], ownerId = '') {
@@ -165,96 +243,28 @@ async function upsertParticipants(threadId, participantIds = [], ownerId = '') {
   await Promise.all(writes)
 }
 
-async function createDmClientSide({ creatorId, participantId }) {
-  if (!db || !creatorId || !participantId || creatorId === participantId) {
-    throw new Error('createDmThread requires unique creatorId and participantId.')
-  }
-
-  const participantIds = [creatorId, participantId]
-  const dmKey = makeDmKey(creatorId, participantId)
-
-  const existingByKey = await getDocs(query(collection(db, 'threads'), where('dmKey', '==', dmKey), limit(1)))
-  if (!existingByKey.empty) {
-    return normalizeThread(existingByKey.docs[0].id, existingByKey.docs[0].data())
-  }
-
-  const threadDoc = await addDoc(collection(db, 'threads'), {
-    type: 'dm',
-    dmKey,
-    createdBy: creatorId,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    title: '',
-    imagePath: '',
-    imageURL: '',
-    participantIds,
-    participantCount: 2,
-    lastMessageText: '',
-    lastMessageAt: null,
-    lastMessageSenderId: '',
-    lastMessageType: 'text',
-    status: 'active'
-  })
-
-  await upsertParticipants(threadDoc.id, participantIds, creatorId)
-  return getThread(threadDoc.id)
-}
-
-export async function createOrGetDm({ creatorId, targetUid }) {
-  if (!creatorId || !targetUid) throw new Error('createOrGetDm requires creatorId and targetUid.')
-
-  try {
-    const callable = httpsCallable(functions, 'createOrGetDm')
-    const result = await callable({ targetUid })
-    if (result?.data?.threadId) return getThread(result.data.threadId)
-  } catch (error) {
-    if (String(error?.code || '').includes('not-found')) {
-      console.warn('[threadService] createOrGetDm callable unavailable; using safe client fallback.')
-    }
-  }
-
-  return createDmClientSide({ creatorId, participantId: targetUid })
-}
-
-async function createGroupClientSide({ creatorId, participantIds = [], title = '', imagePath = '', imageURL = '' }) {
-  if (!db || !creatorId) {
-    throw new Error('createGroupThread requires creatorId.')
-  }
-
-  const members = Array.from(new Set([creatorId, ...participantIds].filter(Boolean)))
-  const threadDoc = await addDoc(collection(db, 'threads'), {
-    type: 'group',
-    createdBy: creatorId,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    title: String(title || '').trim(),
-    imagePath: imagePath || '',
-    imageURL: imageURL || '',
-    participantIds: members,
-    participantCount: members.length,
-    lastMessageText: '',
-    lastMessageAt: null,
-    lastMessageSenderId: '',
-    lastMessageType: 'text',
-    status: 'active'
-  })
-
-  await upsertParticipants(threadDoc.id, members, creatorId)
-  return getThread(threadDoc.id)
-}
-
 export async function createGroupThread({ creatorId, participantIds = [], title = '', imagePath = '', imageURL = '' }) {
+  if (!creatorId) throw new Error('createGroupThread requires creatorId.')
   try {
     const callable = httpsCallable(functions, 'createGroupThread')
     const result = await callable({ participantIds, title, imagePath, imageURL })
     if (result?.data?.threadId) return getThread(result.data.threadId)
   } catch (error) {
     if (String(error?.code || '').includes('not-found')) {
-      console.warn('[threadService] createGroupThread callable unavailable; using safe client fallback.')
+      throw new Error('Messaging service is not fully deployed. Please try again later.')
     }
+    throw error
   }
 
-  return createGroupClientSide({ creatorId, participantIds, title, imagePath, imageURL })
+  throw new Error('Messaging service is not fully deployed. Please try again later.')
+}
+
+export async function repairMyInboxThreads() {
+  const callable = httpsCallable(functions, 'repairMyInboxThreads')
+  const result = await callable({})
+  return {
+    repairedCount: Number(result?.data?.repairedCount || 0)
+  }
 }
 
 export async function addParticipantsToThread({ threadId, actorUid, participantIds = [] }) {
@@ -269,17 +279,14 @@ export async function addParticipantsToThread({ threadId, actorUid, participantI
   }
 
   const threadRef = doc(db, 'threads', threadId)
-  await runTransaction(db, async (transaction) => {
-    const threadSnap = await transaction.get(threadRef)
-    if (!threadSnap.exists()) throw new Error('Thread not found.')
-    const thread = threadSnap.data()
-    if (!Array.isArray(thread.participantIds) || !thread.participantIds.includes(actorUid)) {
-      throw new Error('Only participants can add members.')
-    }
-    if (thread.createdBy && thread.createdBy !== actorUid) {
-      throw new Error('Only owner can add members.')
-    }
-  })
+  const thread = await getThread(threadId)
+  if (!thread) throw new Error('Thread not found.')
+  if (!Array.isArray(thread.participantIds) || !thread.participantIds.includes(actorUid)) {
+    throw new Error('Only participants can add members.')
+  }
+  if (thread.createdBy && thread.createdBy !== actorUid) {
+    throw new Error('Only owner can add members.')
+  }
 
   const uniqueNewParticipants = Array.from(new Set(participantIds.filter(Boolean)))
   if (!uniqueNewParticipants.length) return false
@@ -289,8 +296,8 @@ export async function addParticipantsToThread({ threadId, actorUid, participantI
     updatedAt: serverTimestamp()
   })
 
-  const thread = await getThread(threadId)
-  const allIds = thread?.participantIds || []
+  const updatedThread = await getThread(threadId)
+  const allIds = updatedThread?.participantIds || []
   await upsertParticipants(threadId, uniqueNewParticipants, actorUid)
   await updateDoc(threadRef, { participantCount: allIds.length })
   return true
