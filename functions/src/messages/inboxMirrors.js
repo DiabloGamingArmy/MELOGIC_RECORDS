@@ -52,7 +52,9 @@ const repairMyInboxThreads = onCall(async (request) => {
 
   let repairedCount = 0
   for (const threadDoc of snapshot.docs) {
-    await syncInboxMirrorsForThread(threadDoc.id, threadDoc.data(), { participantIds: [uid] })
+    const threadData = threadDoc.data() || {}
+    const allParticipants = Array.isArray(threadData.participantIds) ? threadData.participantIds : [uid]
+    await syncInboxMirrorsForThread(threadDoc.id, threadData, { participantIds: allParticipants })
     repairedCount += 1
   }
 

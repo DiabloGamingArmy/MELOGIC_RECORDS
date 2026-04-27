@@ -5,6 +5,7 @@ import {
   createGroupThread,
   createOrGetDm,
   getThread,
+  hydrateThreadFromSourceIfNeeded,
   listThreadsForUser,
   repairMyInboxThreads,
   removeParticipantFromThread,
@@ -87,7 +88,8 @@ function buildFallbackTitle(thread, currentUid) {
 async function decorateThread(thread, currentUid) {
   const participantIds = Array.isArray(thread.participantIds) ? thread.participantIds : []
   const isGroup = thread.type === 'group'
-  const otherParticipantId = participantIds.find((id) => id && id !== currentUid)
+  const otherByMirror = Array.isArray(thread.otherParticipantIds) ? thread.otherParticipantIds.find((id) => id && id !== currentUid) : ''
+  const otherParticipantId = otherByMirror || participantIds.find((id) => id && id !== currentUid) || ''
   const otherProfile = !isGroup && otherParticipantId ? await getProfile(otherParticipantId) : null
 
   const title = isGroup
@@ -96,8 +98,10 @@ async function decorateThread(thread, currentUid) {
 
   return {
     ...thread,
+    otherParticipantId,
+    otherProfile,
     title,
-    imageURL: thread.imageURL || otherProfile?.avatarURL || otherProfile?.photoURL || '',
+    imageURL: otherProfile?.avatarURL || otherProfile?.photoURL || thread.imageURL || '',
     subtitle: thread.lastMessageText || 'No messages yet.',
     formattedTime: formatThreadTime(thread.lastMessageAt || thread.updatedAt || thread.createdAt),
     unreadCount: Number(thread.unreadCount || 0),
@@ -107,18 +111,21 @@ async function decorateThread(thread, currentUid) {
 
 export async function listInboxThreads(uid) {
   const threads = await listThreadsForUser(uid)
-  return Promise.all(threads.map((thread) => decorateThread(thread, uid)))
+  const hydratedThreads = await Promise.all(threads.map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
+  return Promise.all(hydratedThreads.map((thread) => decorateThread(thread, uid)))
 }
 
 export function subscribeToInboxThreads(uid, callback, onError) {
   return subscribeToThreadsForUser(uid, async (threads) => {
-    const decorated = await Promise.all(threads.map((thread) => decorateThread(thread, uid)))
+    const hydratedThreads = await Promise.all(threads.map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
+    const decorated = await Promise.all(hydratedThreads.map((thread) => decorateThread(thread, uid)))
     callback(decorated)
   }, onError)
 }
 
 export {
   getThread,
+  hydrateThreadFromSourceIfNeeded,
   listMessages,
   subscribeToMessages,
   createOrGetDm,
