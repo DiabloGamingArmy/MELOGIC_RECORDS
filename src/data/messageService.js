@@ -19,12 +19,21 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { storage } from '../firebase/storage'
 
+const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
+const MAX_ATTACHMENT_LABEL = '256 MB'
+
 function toIsoDate(value) {
   if (!value) return null
   if (typeof value?.toDate === 'function') return value.toDate().toISOString()
   if (value instanceof Date) return value.toISOString()
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+function validateAttachmentSize(file) {
+  if (file instanceof File && Number(file.size || 0) > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`Attachment is too large. Maximum size is ${MAX_ATTACHMENT_LABEL}.`)
+  }
 }
 
 function normalizeMessage(messageId, raw = {}) {
@@ -111,6 +120,7 @@ async function uploadMessageAttachments(threadId, messageId, attachments = []) {
   if (!storage || !attachments.length) return []
   const uploads = await Promise.all(attachments.map(async (file, index) => {
     if (!(file instanceof File)) return null
+    validateAttachmentSize(file)
     const safeName = `${Date.now()}-${index}-${String(file.name || 'attachment').replace(/[^a-zA-Z0-9._-]/g, '-')}`
     const storagePath = `threads/${threadId}/messages/${messageId}/attachments/${safeName}`
     const storageRef = ref(storage, storagePath)
@@ -195,6 +205,7 @@ export async function sendMessage(threadId, payload = {}) {
   if (!db || !threadId || !payload.senderId || (!body && !attachmentsInput.length)) {
     throw new Error('sendMessage requires threadId, senderId, and message content.')
   }
+  attachmentsInput.forEach((file) => validateAttachmentSize(file))
 
   const threadRef = doc(db, 'threads', threadId)
   const participantRef = doc(db, 'threads', threadId, 'participants', payload.senderId)
