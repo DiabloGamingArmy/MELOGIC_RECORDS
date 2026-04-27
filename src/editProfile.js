@@ -1,14 +1,17 @@
 import './styles/base.css'
 import './styles/editProfile.css'
+import { collection, getDocs, limit, query, where } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from './firebase/auth'
-import { getEffectiveProfile, saveProfileChanges } from './firebase/firestore'
+import { db, getEffectiveProfile, saveProfileChanges } from './firebase/firestore'
 import { storage } from './firebase/storage'
+import { ROUTES } from './utils/routes'
 
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
+  { key: 'featured-items', label: 'Featured Items' },
   { key: 'account', label: 'Account' },
   { key: 'appearance', label: 'Appearance' },
   { key: 'creator-settings', label: 'Creator Settings' },
@@ -67,6 +70,19 @@ const editRoot = document.querySelector('[data-edit-root]')
 let hasWarnedEditProfile = false
 let pageState = null
 
+async function loadSelectableFeaturedProducts(uid) {
+  if (!db || !uid) return []
+  const productsQuery = query(
+    collection(db, 'products'),
+    where('artistId', '==', uid),
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public'),
+    limit(30)
+  )
+  const snapshot = await getDocs(productsQuery)
+  return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+}
+
 function fallbackInitials(nameOrEmail) {
   if (!nameOrEmail) return 'MR'
   const parts = nameOrEmail.trim().split(/\s+/)
@@ -84,7 +100,7 @@ function renderSignedOutState() {
     <article class="edit-card signed-out">
       <h2>Sign in required</h2>
       <p>You must be signed in to edit profile and account settings.</p>
-      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+      <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
     </article>
   `
 }
@@ -99,6 +115,27 @@ function setGlobalEditStatus(message = '', state = 'info') {
 
 function normalizeUsername(raw) {
   return String(raw || '').trim().toLowerCase()
+}
+
+function normalizeRoleLabel(value) {
+  const role = String(value || 'user').trim().toLowerCase()
+  if (role === 'founder') return 'Founder'
+  if (role === 'creator') return 'Creator'
+  if (role === 'artist') return 'Artist'
+  return 'User'
+}
+
+function formatLocalDate(value) {
+  if (!value) return 'Unavailable'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Unavailable'
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(parsed)
 }
 
 function validateDisplayName(raw) {
@@ -170,6 +207,11 @@ function getMergedState(user, profileResult) {
       privacy: {}
     },
     creatorSettings: userData.creatorSettings || {},
+    featuredItems: {
+      enabled: Boolean(profileData.featuredItems?.enabled),
+      productIds: Array.isArray(profileData.featuredItems?.productIds) ? profileData.featuredItems.productIds.map((id) => String(id || '')).filter(Boolean) : []
+    },
+    selectableFeaturedProducts: [],
     pendingMedia: {
       avatarFile: null,
       bannerFile: null,
@@ -553,11 +595,13 @@ function renderSettingsPage() {
   const creatorSettings = state.creatorSettings || {}
   const avatarPreview = state.pendingMedia.avatarPreview || state.photoURL
   const bannerPreview = state.pendingMedia.bannerPreview || state.bannerURL
+  const roleDisplay = normalizeRoleLabel(state.userData.roleLabel || state.userData.role)
+  const createdDisplay = formatLocalDate(state.user.metadata?.creationTime)
 
   editRoot.innerHTML = `
     <div class="edit-layout">
       <aside class="settings-sidebar">
-        <a class="back-link" href="/profile.html">← Back to Profile</a>
+        <a class="back-link" href="${ROUTES.profile}">← Back to Profile</a>
         <nav aria-label="Profile settings sections">
           ${SETTINGS_SECTIONS.map((section) => `
             <button type="button" class="settings-nav-btn ${section.key === activeSection ? 'is-active' : ''}" data-section-btn="${section.key}">${section.label}</button>
@@ -603,7 +647,7 @@ function renderSettingsPage() {
           <input class="hidden-file-input" type="file" accept="image/*" name="avatarFile" data-avatar-input />
           <input class="hidden-file-input" type="file" accept="image/*" name="bannerFile" data-banner-input />
 
-          <form data-profile-form>
+          <form data-profile-form id="profile-form">
             <div class="field-grid">
               <label>
                 <span>Display Name <em class="required-indicator">Required</em></span>
@@ -618,7 +662,7 @@ function renderSettingsPage() {
             </div>
             <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
-              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" /></label>
+              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" readonly disabled aria-readonly="true" /><small class="helper-text">Role label is bound to your account type.</small></label>
               <label><span>Location</span><input name="location" value="${state.location}" /></label>
             </div>
             <label><span>Website</span><input name="website" value="${state.website}" placeholder="https://" /></label>
@@ -640,11 +684,11 @@ function renderSettingsPage() {
 
         <div class="settings-panel ${activeSection === 'account' ? 'is-active' : ''}" data-panel="account">
           <h2>Account</h2>
-          <dl class="settings-list">
+          <dl class="settings-list settings-card-list">
             <div><dt>Email</dt><dd>${state.user.email || 'Unavailable'}</dd></div>
-            <div><dt>Account ID</dt><dd>${state.user.uid}</dd></div>
-            <div><dt>Created</dt><dd>${state.user.metadata?.creationTime || 'Unavailable'}</dd></div>
-            <div><dt>Role</dt><dd>${state.userData.role || 'user'}</dd></div>
+            <div><dt>Account ID</dt><dd class="account-id-value" title="${state.user.uid}">${state.user.uid}</dd></div>
+            <div><dt>Created</dt><dd>${createdDisplay}</dd></div>
+            <div><dt>Role</dt><dd>${roleDisplay}</dd></div>
           </dl>
           <p class="muted">Email updates are view-only for now.</p>
           <div class="actions-row account-actions">
@@ -652,53 +696,85 @@ function renderSettingsPage() {
           </div>
         </div>
 
+        <div class="settings-panel ${activeSection === 'featured-items' ? 'is-active' : ''}" data-panel="featured-items">
+          <h2>Featured Items</h2>
+          <p class="section-copy">Select up to 3 published public products to feature on your public profile.</p>
+          <div class="toggle-card">
+              <label class="toggle-row">
+                <span>Enable Featured Items</span>
+                <input type="checkbox" name="featuredItemsEnabled" form="profile-form" ${state.featuredItems.enabled ? 'checked' : ''} />
+              </label>
+          </div>
+          ${state.selectableFeaturedProducts.length
+            ? `
+              <div class="featured-products-grid">
+                ${state.selectableFeaturedProducts.map((product) => {
+                  const checked = state.featuredItems.productIds.includes(product.id)
+                  return `
+                    <label class="featured-product-option ${checked ? 'is-selected' : ''}">
+                      <input type="checkbox" name="featuredProductIds" value="${product.id}" form="profile-form" ${checked ? 'checked' : ''} />
+                      <div>
+                        <strong>${product.title || 'Untitled product'}</strong>
+                        <p>${product.priceLabel || (product.isFree ? 'Free' : 'Price unavailable')}</p>
+                      </div>
+                    </label>
+                  `
+                }).join('')}
+              </div>
+              <p class="muted">Up to 3 products can be featured at once.</p>
+            `
+            : '<article class="empty-featured-items-note">Publish products to feature them on your public profile.</article>'}
+        </div>
+
         <div class="settings-panel ${activeSection === 'appearance' ? 'is-active' : ''}" data-panel="appearance">
           <h2>Appearance</h2>
           <div class="toggle-list">
             <label><span>Theme</span><select name="theme"><option ${appearance.theme === 'dark' ? 'selected' : ''}>dark</option><option ${appearance.theme === 'system' ? 'selected' : ''}>system</option></select></label>
-            <label><input type="checkbox" name="compactMode" ${appearance.compactMode ? 'checked' : ''} /> Compact mode</label>
-            <label><input type="checkbox" name="reducedMotion" ${appearance.reducedMotion ? 'checked' : ''} /> Reduced motion</label>
+            <label class="toggle-row"><span>Compact mode</span><input type="checkbox" name="compactMode" ${appearance.compactMode ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Reduced motion</span><input type="checkbox" name="reducedMotion" ${appearance.reducedMotion ? 'checked' : ''} /></label>
           </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'creator-settings' ? 'is-active' : ''}" data-panel="creator-settings">
           <h2>Creator Settings</h2>
           <div class="toggle-list">
-            <label><input type="checkbox" name="creatorMode" ${creatorSettings.creatorMode ? 'checked' : ''} /> Creator mode</label>
-            <label><input type="checkbox" name="publicCreatorProfile" ${creatorSettings.publicCreatorProfile ?? true ? 'checked' : ''} /> Public creator profile</label>
-            <label><input type="checkbox" name="storefrontVisible" ${creatorSettings.storefrontVisible ?? false ? 'checked' : ''} /> Storefront visibility</label>
-            <label><span>Submission preferences</span><input name="submissionPreferences" value="${creatorSettings.submissionPreferences || ''}" /></label>
+            <label class="toggle-row"><span>Creator mode <small>Enables creator workspace features.</small></span><input type="checkbox" name="creatorMode" ${creatorSettings.creatorMode ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Public creator profile <small>Allow creator profile visibility to visitors.</small></span><input type="checkbox" name="publicCreatorProfile" ${creatorSettings.publicCreatorProfile ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Storefront visibility <small>Controls whether your storefront appears publicly.</small></span><input type="checkbox" name="storefrontVisible" ${creatorSettings.storefrontVisible ?? false ? 'checked' : ''} /></label>
+            <label><span>Submission preferences</span><input name="submissionPreferences" value="${creatorSettings.submissionPreferences || ''}" /><small class="helper-text">Optional note about your release/submission expectations.</small></label>
           </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'security' ? 'is-active' : ''}" data-panel="security">
           <h2>Security</h2>
-          <ul>
+          <ul class="settings-bullet-list">
             <li>Password status is managed by your auth provider.</li>
             <li>Signed in providers: ${providerIds.join(', ') || 'email/password'}</li>
             <li>Sign out all devices is coming soon.</li>
           </ul>
-          <button type="button" class="button button-muted" disabled>Change Password (Soon)</button>
+          <button type="button" class="button button-muted is-coming-soon" disabled aria-disabled="true">Change Password (Soon)</button>
         </div>
 
         <div class="settings-panel ${activeSection === 'notifications' ? 'is-active' : ''}" data-panel="notifications">
           <h2>Notifications</h2>
           <div class="toggle-list">
-            <label><input type="checkbox" name="productUpdates" ${notifications.productUpdates ?? true ? 'checked' : ''} /> Product updates</label>
-            <label><input type="checkbox" name="replies" ${notifications.replies ?? true ? 'checked' : ''} /> Replies</label>
-            <label><input type="checkbox" name="creatorNews" ${notifications.creatorNews ?? true ? 'checked' : ''} /> Creator news</label>
-            <label><input type="checkbox" name="releaseAlerts" ${notifications.releaseAlerts ?? true ? 'checked' : ''} /> Release alerts</label>
-            <label><input type="checkbox" name="marketing" ${notifications.marketing ?? false ? 'checked' : ''} /> Marketing</label>
+            <label class="toggle-row"><span>Product updates</span><input type="checkbox" name="productUpdates" ${notifications.productUpdates ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Replies</span><input type="checkbox" name="replies" ${notifications.replies ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Creator news</span><input type="checkbox" name="creatorNews" ${notifications.creatorNews ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Release alerts</span><input type="checkbox" name="releaseAlerts" ${notifications.releaseAlerts ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Marketing</span><input type="checkbox" name="marketing" ${notifications.marketing ?? false ? 'checked' : ''} /></label>
           </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'connections' ? 'is-active' : ''}" data-panel="connections">
           <h2>Connections</h2>
-          <ul>
-            <li>Google: ${providerIds.includes('google.com') ? 'Connected' : 'Not connected'}</li>
-            <li>Email/Password: ${providerIds.includes('password') ? 'Connected' : 'Not connected'}</li>
-            <li>Spotify / YouTube / Discord links are managed in Public Profile for now.</li>
-          </ul>
+          <div class="connection-list">
+            <article class="connection-row"><strong>Google</strong><span>${providerIds.includes('google.com') ? 'Connected' : 'Connect'}</span></article>
+            <article class="connection-row"><strong>Email/Password</strong><span>${providerIds.includes('password') ? 'Connected' : 'Connect'}</span></article>
+            <article class="connection-row"><strong>Spotify</strong><span>Coming Soon</span></article>
+            <article class="connection-row"><strong>YouTube</strong><span>Coming Soon</span></article>
+            <article class="connection-row"><strong>Discord</strong><span>Coming Soon</span></article>
+          </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'danger-zone' ? 'is-active' : ''}" data-panel="danger-zone">
@@ -725,6 +801,7 @@ function renderSettingsPage() {
   const displayNameErrorEl = editRoot.querySelector('[data-display-name-error]')
   const usernameInput = editRoot.querySelector('[data-username-input]')
   const usernameErrorEl = editRoot.querySelector('[data-username-error]')
+  const featuredCheckboxes = editRoot.querySelectorAll('input[name="featuredProductIds"]')
 
   if (!state.feedback.message && feedback) {
     feedback.textContent = ''
@@ -817,6 +894,16 @@ function renderSettingsPage() {
     updateUsernameValidationUI(validation.valid ? '' : validation.message)
   })
 
+  featuredCheckboxes.forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+      const selected = Array.from(featuredCheckboxes).filter((input) => input.checked)
+      if (selected.length <= 3) return
+      checkbox.checked = false
+      setGlobalEditStatus('You can feature up to 3 products.', 'error')
+      renderSettingsPage()
+    })
+  })
+
   signOutButton?.addEventListener('click', async () => {
     signOutButton.disabled = true
     signOutButton.textContent = 'Signing out...'
@@ -848,12 +935,18 @@ function renderSettingsPage() {
       return
     }
 
+    const allowedFeaturedIds = new Set((state.selectableFeaturedProducts || []).map((product) => String(product.id)))
+    const selectedFeaturedProductIds = formData
+      .getAll('featuredProductIds')
+      .map((id) => String(id || '').trim())
+      .filter((id) => allowedFeaturedIds.has(id))
+      .slice(0, 3)
+
     const nextPayload = {
       displayName: displayNameValidation.value,
       username: usernameValidation.normalized,
       bio: String(formData.get('bio') || '').trim(),
       role: state.userData.role || 'user',
-      roleLabel: String(formData.get('roleLabel') || '').trim() || 'User',
       location: String(formData.get('location') || '').trim(),
       website: String(formData.get('website') || '').trim(),
       socials: {
@@ -886,6 +979,10 @@ function renderSettingsPage() {
         publicCreatorProfile: formData.get('publicCreatorProfile') === 'on',
         storefrontVisible: formData.get('storefrontVisible') === 'on',
         submissionPreferences: String(formData.get('submissionPreferences') || '').trim()
+      },
+      featuredItems: {
+        enabled: formData.get('featuredItemsEnabled') === 'on',
+        productIds: selectedFeaturedProductIds
       }
     }
 
@@ -985,6 +1082,7 @@ async function initEditProfile() {
 
   const profileResult = await getEffectiveProfile(user.uid, user)
   pageState = getMergedState(user, profileResult)
+  pageState.selectableFeaturedProducts = await loadSelectableFeaturedProducts(user.uid)
   renderSettingsPage()
 }
 
