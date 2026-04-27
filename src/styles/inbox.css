@@ -389,11 +389,13 @@ body.is-inbox-page {
 .message-list {
   width: 100%;
   box-sizing: border-box;
+  min-height: 0;
   overflow-y: auto;
   padding: 1rem clamp(0.85rem, 2vw, 1.25rem) 0.5rem;
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 0.5rem;
-  align-content: start;
 }
 
 .message-attachment-list {
@@ -445,27 +447,37 @@ body.is-inbox-page {
 }
 
 .message-cluster {
-  display: grid;
+  display: flex;
   gap: 0.5rem;
-  width: min(100%, 720px);
-  max-width: 72%;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .message-cluster.is-other {
-  grid-template-columns: 2rem minmax(0, 1fr);
-  justify-self: start;
-  justify-items: start;
+  justify-content: flex-start;
+  align-items: flex-end;
 }
 
 .message-cluster.is-self {
-  grid-template-columns: minmax(0, 1fr);
-  justify-self: end;
-  justify-items: end;
+  justify-content: flex-end;
+  align-items: flex-end;
 }
 
 .message-cluster-body {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   width: 100%;
+  max-width: min(72%, 560px);
+}
+
+.message-cluster.is-self .message-cluster-body {
+  align-items: flex-end;
+}
+
+.message-cluster.is-other .message-cluster-body {
+  align-items: flex-start;
 }
 
 .cluster-avatar,
@@ -499,8 +511,18 @@ body.is-inbox-page {
 }
 
 .message-bubble-stack {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 0.22rem;
+  width: 100%;
+}
+
+.message-cluster.is-self .message-bubble-stack {
+  align-items: flex-end;
+}
+
+.message-cluster.is-other .message-bubble-stack {
+  align-items: flex-start;
 }
 
 .message-cluster.is-self .message-bubble-stack {
@@ -514,7 +536,7 @@ body.is-inbox-page {
 .message-bubble {
   width: max-content;
   min-width: 0;
-  max-width: min(68vw, 520px);
+  max-width: 100%;
   box-sizing: border-box;
   border: 1px solid rgba(136, 157, 203, 0.24);
   background: rgba(16, 24, 38, 0.94);
@@ -582,6 +604,10 @@ body.is-inbox-page {
 .message-cluster.is-self .message-status-line {
   text-align: right;
   margin-left: auto;
+}
+
+.message-cluster.is-other .message-status-line {
+  text-align: left;
 }
 
 .message-status-line.is-muted {
@@ -717,6 +743,10 @@ body.is-inbox-page {
 
 .message-cluster.is-self .message-reaction-row {
   justify-content: flex-end;
+}
+
+.message-cluster.is-other .message-reaction-row {
+  justify-content: flex-start;
 }
 
 .reaction-pill {
@@ -1275,12 +1305,8 @@ body.is-inbox-page {
     min-width: 100%;
   }
 
-  .message-cluster {
-    max-width: 94%;
-  }
-
-  .message-bubble {
-    max-width: min(100%, 82vw);
+  .message-cluster-body {
+    max-width: 86%;
   }
 
   .message-attachment-list img,
