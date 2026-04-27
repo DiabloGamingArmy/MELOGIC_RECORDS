@@ -412,6 +412,10 @@ body.is-inbox-page {
   gap: 0.45rem;
 }
 
+.thread-confirm-modal button {
+  cursor: pointer;
+}
+
 .thread-confirm-danger {
   background: linear-gradient(135deg, rgba(171, 48, 52, 0.95), rgba(200, 73, 79, 0.95));
   border: 1px solid rgba(241, 128, 133, 0.52);
@@ -1054,6 +1058,12 @@ body.is-inbox-page {
 
 .inbox-floating-root .message-context-backdrop,
 .inbox-floating-root .reaction-detail-backdrop {
+  pointer-events: auto;
+}
+
+.inbox-floating-root .thread-confirm-backdrop,
+.inbox-floating-root .thread-confirm-modal,
+.inbox-floating-root .thread-confirm-modal button {
   pointer-events: auto;
 }
 
