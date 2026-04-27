@@ -54,7 +54,20 @@ function normalizeThread(threadId, raw = {}) {
     pinned: Boolean(raw.pinned),
     pinnedAt: toIsoDate(raw.pinnedAt),
     deleted: Boolean(raw.deleted),
-    deletedAt: toIsoDate(raw.deletedAt)
+    deletedAt: toIsoDate(raw.deletedAt),
+    dmBlockState: normalizeDmBlockState(raw.dmBlockState)
+  }
+}
+
+function normalizeDmBlockState(raw = null) {
+  if (!raw || typeof raw !== 'object') return null
+  const blockedBy = String(raw.blockedBy || '').trim()
+  const blockedUid = String(raw.blockedUid || '').trim()
+  if (!blockedBy || !blockedUid) return null
+  return {
+    blockedBy,
+    blockedUid,
+    updatedAt: toIsoDate(raw.updatedAt)
   }
 }
 
@@ -430,12 +443,36 @@ export async function blockUser({ uid, targetUid, sourceThreadId = '', targetPro
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   }, { merge: true })
+  if (sourceThreadId) {
+    await updateDoc(doc(db, 'threads', sourceThreadId), {
+      dmBlockState: {
+        blockedBy: uid,
+        blockedUid: targetUid,
+        updatedAt: serverTimestamp()
+      },
+      updatedAt: serverTimestamp()
+    })
+  }
   return true
 }
 
-export async function unblockUser({ uid, targetUid }) {
+export async function unblockUser({ uid, targetUid, sourceThreadId = '' }) {
   if (!db || !uid || !targetUid) return false
   await deleteDoc(doc(db, 'users', uid, 'blockedUsers', targetUid))
+  if (sourceThreadId) {
+    const threadRef = doc(db, 'threads', sourceThreadId)
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(threadRef)
+      if (!snap.exists()) return
+      const current = normalizeDmBlockState(snap.data()?.dmBlockState)
+      if (!current) return
+      if (current.blockedBy !== uid || current.blockedUid !== targetUid) return
+      transaction.update(threadRef, {
+        dmBlockState: null,
+        updatedAt: serverTimestamp()
+      })
+    })
+  }
   return true
 }
 
