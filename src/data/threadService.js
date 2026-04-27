@@ -49,7 +49,11 @@ function normalizeThread(threadId, raw = {}) {
     lastMessageAttachmentCount: Number(raw.lastMessageAttachmentCount || 0),
     status: raw.status || 'active',
     dmKey: raw.dmKey || '',
-    unreadCount: Number(raw.unreadCount || 0)
+    unreadCount: Number(raw.unreadCount || 0),
+    pinned: Boolean(raw.pinned),
+    pinnedAt: toIsoDate(raw.pinnedAt),
+    deleted: Boolean(raw.deleted),
+    deletedAt: toIsoDate(raw.deletedAt)
   }
 }
 
@@ -68,6 +72,14 @@ function getInboxMirrorQuery(uid) {
 
 function sortThreadsNewestFirst(threads = []) {
   return [...threads].sort((a, b) => {
+    const aPinned = Boolean(a.pinned)
+    const bPinned = Boolean(b.pinned)
+    if (aPinned !== bPinned) return aPinned ? -1 : 1
+    if (aPinned && bPinned) {
+      const aPinDate = a.pinnedAt || a.updatedAt || a.createdAt || ''
+      const bPinDate = b.pinnedAt || b.updatedAt || b.createdAt || ''
+      if (aPinDate !== bPinDate) return aPinDate < bPinDate ? 1 : -1
+    }
     const aDate = a.lastMessageAt || a.updatedAt || a.createdAt || ''
     const bDate = b.lastMessageAt || b.updatedAt || b.createdAt || ''
     return aDate < bDate ? 1 : -1
@@ -92,7 +104,9 @@ export async function listThreadsForUser(uid) {
     snapshot = await getDocs(query(collection(db, 'users', uid, 'inboxThreads'), limit(100)))
   }
 
-  const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+  const threads = snapshot.docs
+    .map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+    .filter((thread) => !thread.deleted)
   const hydratedThreads = await Promise.all(threads.map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
   return sortThreadsNewestFirst(hydratedThreads)
 }
@@ -119,7 +133,9 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
     fallbackUnsubscribe = onSnapshot(
       query(collection(db, 'users', uid, 'inboxThreads'), limit(100)),
       (snapshot) => {
-        const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+        const threads = snapshot.docs
+          .map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+          .filter((thread) => !thread.deleted)
         callback(sortThreadsNewestFirst(threads))
       },
       (error) => {
@@ -129,7 +145,9 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
   }
 
   primaryUnsubscribe = onSnapshot(getInboxMirrorQuery(uid), (snapshot) => {
-    const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+    const threads = snapshot.docs
+      .map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+      .filter((thread) => !thread.deleted)
     callback(sortThreadsNewestFirst(threads))
   }, (error) => {
     if (shouldFallbackListener(error)) {
@@ -354,5 +372,25 @@ export async function updateThreadDetails({ threadId, actorUid, title = '', imag
     updatedAt: serverTimestamp()
   })
 
+  return true
+}
+
+export async function setThreadPinnedForUser({ uid, threadId, pinned }) {
+  if (!db || !uid || !threadId) return false
+  await setDoc(doc(db, 'users', uid, 'inboxThreads', threadId), {
+    pinned: Boolean(pinned),
+    pinnedAt: pinned ? serverTimestamp() : null,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return true
+}
+
+export async function deleteThreadForUser({ uid, threadId }) {
+  if (!db || !uid || !threadId) return false
+  await setDoc(doc(db, 'users', uid, 'inboxThreads', threadId), {
+    deleted: true,
+    deletedAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true })
   return true
 }

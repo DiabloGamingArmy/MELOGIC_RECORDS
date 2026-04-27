@@ -40,7 +40,23 @@ function normalizeMessage(messageId, raw = {}) {
     deletedAt: toIsoDate(raw.deletedAt),
     deletedBy: raw.deletedBy || '',
     edited: Boolean(raw.edited),
-    editedAt: toIsoDate(raw.editedAt)
+    editedAt: toIsoDate(raw.editedAt),
+    replyTo: raw.replyTo && typeof raw.replyTo === 'object' ? normalizeReplyTo(raw.replyTo) : null
+  }
+}
+
+function normalizeReplyTo(raw = {}) {
+  const messageId = String(raw.messageId || '').trim()
+  const senderId = String(raw.senderId || '').trim()
+  if (!messageId || !senderId) return null
+  return {
+    messageId,
+    senderId,
+    senderName: String(raw.senderName || '').trim(),
+    bodyPreview: String(raw.bodyPreview || '').trim().slice(0, 240),
+    attachmentSummary: String(raw.attachmentSummary || '').trim().slice(0, 80),
+    type: String(raw.type || 'text').trim() || 'text',
+    createdAt: toIsoDate(raw.createdAt)
   }
 }
 
@@ -195,17 +211,22 @@ export async function sendMessage(threadId, payload = {}) {
     if (attachments.length === 1 && !body) return getAttachmentKind(attachments[0])
     return 'attachment'
   })()
+  const replyTo = payload.replyTo && typeof payload.replyTo === 'object'
+    ? normalizeReplyTo(payload.replyTo)
+    : null
   const batch = writeBatch(db)
-  batch.set(messageRef, {
-      senderId: payload.senderId,
-      body,
-      type: normalizedType,
-      attachments,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      deleted: false,
-      edited: false
-    })
+  const messagePayload = {
+    senderId: payload.senderId,
+    body,
+    type: normalizedType,
+    attachments,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    deleted: false,
+    edited: false
+  }
+  if (replyTo) messagePayload.replyTo = replyTo
+  batch.set(messageRef, messagePayload)
   batch.update(threadRef, {
       updatedAt: serverTimestamp(),
       lastMessageAt: serverTimestamp(),
