@@ -134,7 +134,11 @@ const appState = {
 
 let searchDebounceTimer = null
 let typingStopTimer = null
+let typingExpiryRefreshTimer = null
 let activeTypingThreadId = ''
+const typingHeartbeatByThreadId = {}
+const TYPING_HEARTBEAT_MS = 2800
+const TYPING_IDLE_CLEAR_MS = 4500
 let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let activeThreadSubscriptionUid = ''
@@ -164,6 +168,7 @@ document.body.append(modalRoot)
 const floatingRoot = document.createElement('div')
 floatingRoot.className = 'inbox-floating-root'
 document.body.append(floatingRoot)
+setupFloatingEventDelegates()
 
 function escapeHtml(value) {
   return String(value || '')
@@ -175,7 +180,7 @@ function escapeHtml(value) {
 }
 
 function getInitials(user = {}) {
-  const source = user.displayName || user.username || user.title || '?'
+  const source = user.displayName || user.username || user.title || (user.uid ? `User ${String(user.uid).slice(0, 2)}` : 'User')
   return source
     .split(' ')
     .map((part) => part[0] || '')
@@ -186,10 +191,11 @@ function getInitials(user = {}) {
 
 function getProfileMeta(uid, fallback = {}) {
   const profile = appState.profileByUid[uid] || {}
-  const displayName = String(profile.displayName || fallback.displayName || '').trim()
+  const displayName = String(profile.displayName || fallback.displayName || fallback.title || '').trim()
   const username = String(profile.username || fallback.username || '').trim()
   const avatarURL = String(profile.avatarURL || profile.photoURL || fallback.avatarURL || fallback.photoURL || '').trim()
-  const preferred = displayName || username || fallback.title || (uid ? `User ${String(uid).slice(0, 2).toUpperCase()}` : 'Member')
+  const uidFallback = uid ? `User ${String(uid).slice(0, 2).toUpperCase()}` : 'User'
+  const preferred = displayName || username || uidFallback
   return { uid, displayName: preferred, username, avatarURL, photoURL: avatarURL }
 }
 
@@ -201,10 +207,39 @@ async function hydrateProfilesForThread(thread) {
     thread.otherParticipantId || ''
   ].filter(Boolean)))
   if (!ids.length) return
-  const loaded = await loadProfilesByUids(ids)
-  console.info(`[inbox] loaded profiles for thread ${thread.id} ${ids.length}`)
+  const missingIds = ids.filter((uid) => !appState.profileByUid[uid])
+  if (!missingIds.length) return
+  const loaded = await loadProfilesByUids(missingIds)
+  const loadedKeys = Object.keys(loaded).filter((uid) => !appState.profileByUid[uid] && loaded[uid])
+  if (!loadedKeys.length) return
+  console.info(`[inbox] loaded profiles for thread ${thread.id} ${loadedKeys.length}`)
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   if (appState.selectedThreadId === thread.id) renderSignedInState()
+}
+
+async function hydrateProfilesForMessages(threadId, messages = []) {
+  if (!threadId || !messages.length) return
+  const senderIds = Array.from(new Set(messages.map((message) => message?.senderId).filter(Boolean)))
+  const missing = senderIds.filter((uid) => !appState.profileByUid[uid])
+  if (!missing.length) return
+  const loaded = await loadProfilesByUids(missing)
+  if (!Object.keys(loaded).length) return
+  appState.profileByUid = { ...appState.profileByUid, ...loaded }
+}
+
+async function hydrateProfilesForThreads(threads = []) {
+  const ids = Array.from(new Set(
+    threads.flatMap((thread) => [
+      ...(Array.isArray(thread?.participantIds) ? thread.participantIds : []),
+      ...(Array.isArray(thread?.otherParticipantIds) ? thread.otherParticipantIds : []),
+      thread?.otherParticipantId || ''
+    ]).filter(Boolean)
+  ))
+  const missing = ids.filter((uid) => !appState.profileByUid[uid])
+  if (!missing.length) return
+  const loaded = await loadProfilesByUids(missing)
+  if (!Object.keys(loaded).length) return
+  appState.profileByUid = { ...appState.profileByUid, ...loaded }
 }
 
 function upsertThreadInState(nextThread) {
@@ -398,7 +433,27 @@ function getTypingUsers(threadId) {
   })
 }
 
+function scheduleTypingExpiryRefresh(threadId) {
+  if (typingExpiryRefreshTimer) clearTimeout(typingExpiryRefreshTimer)
+  const rows = appState.typingUsersByThreadId[threadId] || []
+  const expiryTimes = rows
+    .filter((entry) => entry?.uid && entry.uid !== appState.user?.uid && entry.updatedAt)
+    .map((entry) => new Date(entry.updatedAt).getTime() + 7000)
+    .filter((stamp) => Number.isFinite(stamp))
+  if (!expiryTimes.length) return
+  const now = Date.now()
+  const nextExpiry = Math.min(...expiryTimes.filter((stamp) => stamp > now))
+  if (!nextExpiry || !Number.isFinite(nextExpiry)) return
+  const delay = Math.max(200, nextExpiry - now + 50)
+  typingExpiryRefreshTimer = setTimeout(() => {
+    if (appState.activeFilter === 'Messages' && appState.selectedThreadId === threadId) {
+      renderSignedInState()
+    }
+  }, delay)
+}
+
 function clearRealtimeListeners() {
+  if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
   appState.threadUnsubscribe()
   appState.messageUnsubscribe()
   appState.participantsUnsubscribe()
@@ -418,14 +473,64 @@ function clearRealtimeListeners() {
   appState.inboxRepairAttempted = false
   appState.isRepairingInbox = false
   activeThreadSubscriptionUid = ''
+  activeTypingThreadId = ''
+  if (typingStopTimer) clearTimeout(typingStopTimer)
+  if (typingExpiryRefreshTimer) clearTimeout(typingExpiryRefreshTimer)
   floatingRoot.innerHTML = ''
 }
 
 function clearTypingForThread(threadId) {
   if (!threadId || !appState.user?.uid) return
+  if (typingStopTimer && activeTypingThreadId === threadId) clearTimeout(typingStopTimer)
+  delete typingHeartbeatByThreadId[threadId]
+  if (activeTypingThreadId === threadId) activeTypingThreadId = ''
   setTypingState({ threadId, uid: appState.user.uid, isTyping: false }).catch((error) => {
     warnRealtimePermission(`typing-write-${threadId}`, error)
   })
+}
+
+function clearFloatingOverlays() {
+  appState.messageContextMenu = null
+  appState.deleteSubmenuAnchor = null
+  appState.reactionPickerAnchor = null
+}
+
+function getCurrentUserTypingIdentity() {
+  const uid = appState.user?.uid
+  const profile = uid ? (appState.profileByUid[uid] || {}) : {}
+  return {
+    displayName: appState.user?.displayName || profile.displayName || appState.user?.email?.split('@')[0] || 'Member',
+    username: profile.username || appState.user?.username || ''
+  }
+}
+
+function updateTypingHeartbeat(threadId, value) {
+  if (!threadId || !appState.user?.uid) return
+  const trimmed = String(value || '').trim()
+  if (!trimmed) {
+    clearTypingForThread(threadId)
+    return
+  }
+  const now = Date.now()
+  const lastBeat = Number(typingHeartbeatByThreadId[threadId] || 0)
+  if (!lastBeat || (now - lastBeat) >= TYPING_HEARTBEAT_MS) {
+    const identity = getCurrentUserTypingIdentity()
+    typingHeartbeatByThreadId[threadId] = now
+    setTypingState({
+      threadId,
+      uid: appState.user?.uid,
+      displayName: identity.displayName,
+      username: identity.username,
+      isTyping: true
+    }).catch((error) => {
+      warnRealtimePermission(`typing-write-${threadId}`, error)
+    })
+  }
+  if (typingStopTimer) clearTimeout(typingStopTimer)
+  activeTypingThreadId = threadId
+  typingStopTimer = setTimeout(() => {
+    clearTypingForThread(threadId)
+  }, TYPING_IDLE_CLEAR_MS)
 }
 
 function revokeAttachmentPreviews(threadId) {
@@ -560,7 +665,7 @@ function getRecentThreadsSidebarMarkup() {
     .map((thread) => {
       const isActive = appState.selectedThreadId === thread.id
       return `
-      <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-thread-id="${thread.id}">
+      <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-select-thread-id="${thread.id}">
         <strong>${escapeHtml(thread.title)}</strong>
         ${thread.type === 'group' ? '<small>Group</small>' : '<small>Direct</small>'}
       </button>
@@ -661,7 +766,7 @@ function getParticipantMeta(thread, uid) {
     })
   }
 
-  return getProfileMeta(uid, { uid, displayName: uid === appState.user?.uid ? 'You' : 'Member', title: thread.title })
+  return getProfileMeta(uid, { uid, displayName: uid === appState.user?.uid ? 'You' : '', title: thread.title })
 }
 
 function getOutgoingStatusLabel(thread, message) {
@@ -755,7 +860,7 @@ function getMessageGroupsMarkup(thread) {
               `
               : `<p>${escapeHtml(message.body)}</p>`
           return `
-            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''}" data-message-id="${message.id}" data-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
               ${bodyMarkup}
               ${attachmentsMarkup}
               ${reactionPills ? `<div class="message-reaction-row">${reactionPills}</div>` : ''}
@@ -769,7 +874,7 @@ function getMessageGroupsMarkup(thread) {
         <div class="message-cluster ${isSelf ? 'is-self' : 'is-other'}" data-index="${index}">
           ${avatarMarkup}
           <div class="message-cluster-body">
-            ${!isSelf ? `<p class="cluster-sender">${escapeHtml(sender.displayName || sender.username || 'Member')}</p>` : ''}
+            ${!isSelf ? `<p class="cluster-sender">${escapeHtml(sender.displayName || sender.username || getInitials({ uid: sender.uid }))}</p>` : ''}
             <div class="message-bubble-stack">${bubbles}</div>
             ${statusLine}
           </div>
@@ -810,7 +915,7 @@ function getConversationBodyMarkup() {
   return `
     <div class="conversation-stack">
       ${getMessageGroupsMarkup(thread)}
-      ${typingUsers.length ? `<p class="typing-indicator">${escapeHtml(getConversationSubtitle(thread))}</p>` : ''}
+      ${typingUsers.length ? `<p class="typing-indicator typing-indicator-inline">${escapeHtml(getConversationSubtitle(thread))}</p>` : ''}
       <form class="message-composer" data-message-form>
         <label class="sr-only" for="message-input">Message</label>
         ${attachments.length ? `<div class="composer-attachment-preview-strip">${attachments.map((file, index) => {
@@ -873,9 +978,9 @@ function getMessagesThreadListMarkup() {
       const subtitle = summarizeThreadPreview(thread)
 
       return `
-        <button class="thread-row ${isActive ? 'is-active' : ''}" type="button" data-thread-id="${thread.id}">
+        <button class="thread-row ${isActive ? 'is-active' : ''}" type="button" data-select-thread-id="${thread.id}">
           <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
-            ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${initials || '?'}</span>`}
+            ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${initials || getInitials({ uid: thread.id })}</span>`}
           </div>
           <div class="thread-meta">
             <div class="thread-title-row">
@@ -1004,6 +1109,7 @@ function getContextMenuMarkup() {
   const canReact = !menu.deleted
   const canShowDelete = !menu.deleted && (isOwnMessage || isThreadOwner)
   const canDeleteEveryone = isOwnMessage || isThreadOwner
+  const canCopy = !menu.deleted
   const profileHref = publicProfileRoute({
     uid: menu.senderId,
     preview: menu.senderId === appState.user?.uid
@@ -1016,8 +1122,10 @@ function getContextMenuMarkup() {
       <div class="message-context-menu" data-message-context-menu style="left:${pos.x}px;top:${pos.y}px;">
         ${canEdit ? '<button type="button" data-menu-action="edit">Edit Message</button>' : ''}
         ${canReact ? '<button type="button" data-menu-action="react">React</button>' : ''}
+        ${canCopy ? '<button type="button" data-menu-action="copy">Copy text</button>' : ''}
         ${canShowDelete ? '<button type="button" data-menu-action="delete">Delete Message</button>' : ''}
         ${menu.senderId && !isOwnMessage ? `<button type="button" data-menu-action="profile" data-href="${escapeHtml(profileHref)}">Open Profile</button>` : ''}
+        <button type="button" data-menu-action="cancel">Cancel</button>
       </div>
       ${appState.deleteSubmenuAnchor ? `
         <div class="message-context-menu is-submenu" style="left:${deleteSubPos.x}px;top:${deleteSubPos.y}px;">
@@ -1038,13 +1146,126 @@ function renderFloatingUi() {
   floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}`
 }
 
+async function handleFloatingMenuAction(button) {
+  const action = button.getAttribute('data-menu-action')
+  const menu = appState.messageContextMenu
+  if (!menu) return
+
+  if (action === 'cancel') {
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'edit') {
+    appState.editingMessageByThreadId[menu.threadId] = menu.messageId
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    appState.editDraftByMessageId[menu.messageId] = message?.body || ''
+    clearFloatingOverlays()
+    renderSignedInState()
+    return
+  }
+  if (action === 'react') {
+    appState.reactionPickerAnchor = true
+    appState.deleteSubmenuAnchor = null
+    renderFloatingUi()
+    return
+  }
+  if (action === 'delete') {
+    appState.deleteSubmenuAnchor = true
+    appState.reactionPickerAnchor = null
+    renderFloatingUi()
+    return
+  }
+  if (action === 'profile') {
+    const href = button.getAttribute('data-href')
+    clearFloatingOverlays()
+    renderFloatingUi()
+    window.location.assign(href || ROUTES.profilePublic)
+    return
+  }
+  if (action === 'copy') {
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    if (message?.body) {
+      try {
+        await navigator.clipboard.writeText(message.body)
+      } catch {
+        // noop
+      }
+    }
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'delete-me') {
+    await hideMessageForMe({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
+  }
+  if (action === 'delete-everyone' && (menu.senderId === appState.user?.uid || menu.threadCreatedBy === appState.user?.uid)) {
+    await deleteMessageForEveryone({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
+  }
+  if (action === 'emoji') {
+    const emoji = button.getAttribute('data-emoji') || ''
+    const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
+    const mine = reactions.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
+    const rollback = applyOptimisticReaction({
+      threadId: menu.threadId,
+      messageId: menu.messageId,
+      emoji,
+      uid: appState.user?.uid,
+      add: !mine
+    })
+    renderSignedInState()
+    try {
+      if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
+      else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
+    } catch {
+      rollback()
+      appState.errorMessage = 'Unable to update reaction.'
+      renderSignedInState()
+    }
+  }
+  clearFloatingOverlays()
+  renderFloatingUi()
+}
+
+function setupFloatingEventDelegates() {
+  floatingRoot.addEventListener('click', async (event) => {
+    const modalClose = event.target.closest('[data-reaction-modal-close]')
+    if (modalClose) {
+      if (event.target !== modalClose && !event.target.hasAttribute('data-reaction-modal-close')) return
+      appState.reactionDetailModal = null
+      renderFloatingUi()
+      return
+    }
+
+    const menuActionButton = event.target.closest('[data-menu-action]')
+    if (menuActionButton) {
+      event.preventDefault()
+      event.stopPropagation()
+      await handleFloatingMenuAction(menuActionButton)
+      return
+    }
+
+    const closeBackdrop = event.target.closest('[data-message-context-close]')
+    if (closeBackdrop && event.target.hasAttribute('data-message-context-close')) {
+      clearFloatingOverlays()
+      renderFloatingUi()
+    }
+  })
+
+  floatingRoot.addEventListener('contextmenu', (event) => {
+    if (event.target.closest('[data-message-context-menu]')) return
+    clearFloatingOverlays()
+    renderFloatingUi()
+  })
+}
+
 function getReactionDetailModalMarkup() {
   const modal = appState.reactionDetailModal
   if (!modal) return ''
   const reactions = appState.reactionsByThreadId[modal.threadId]?.[modal.messageId] || []
   if (!reactions.length) return ''
   const rows = reactions.map((reaction) => {
-    const profile = getProfileMeta(reaction.uid, { uid: reaction.uid, displayName: 'Member' })
+    const profile = getProfileMeta(reaction.uid, { uid: reaction.uid })
     const avatar = profile.avatarURL
       ? `<img src="${escapeHtml(profile.avatarURL)}" alt="" />`
       : `<span>${escapeHtml(getInitials(profile))}</span>`
@@ -1052,8 +1273,8 @@ function getReactionDetailModalMarkup() {
       <div class="reaction-detail-row">
         <div class="thread-avatar ${profile.avatarURL ? 'has-image' : ''}">${avatar}</div>
         <div class="reaction-detail-meta">
-          <strong>${escapeHtml(profile.displayName || profile.username || 'Member')}</strong>
-          <small>@${escapeHtml(profile.username || 'member')}</small>
+          <strong>${escapeHtml(profile.displayName || profile.username || `User ${String(reaction.uid || '').slice(0, 2).toUpperCase()}`)}</strong>
+          <small>@${escapeHtml(profile.username || String(reaction.uid || 'user').slice(0, 16))}</small>
         </div>
         <span>${escapeHtml(reaction.emoji)}</span>
       </div>
@@ -1650,18 +1871,22 @@ function renderSignedOutState() {
 function bindSharedEvents() {
   inboxRoot.querySelectorAll('[data-inbox-filter]').forEach((button) => {
     button.addEventListener('click', () => {
-      appState.activeFilter = button.dataset.inboxFilter || 'Messages'
+      const nextFilter = button.dataset.inboxFilter || 'Messages'
+      if (nextFilter !== 'Messages' && activeTypingThreadId) {
+        clearTypingForThread(activeTypingThreadId)
+      }
+      appState.activeFilter = nextFilter
       renderSignedInState()
     })
   })
 
-  inboxRoot.querySelectorAll('[data-thread-id]').forEach((button) => {
+  inboxRoot.querySelectorAll('[data-select-thread-id]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (appState.activeFilter !== 'Messages') {
         appState.activeFilter = 'Messages'
       }
 
-      const { threadId } = button.dataset
+      const threadId = button.getAttribute('data-select-thread-id') || ''
       if (!threadId) return
       if (activeTypingThreadId && activeTypingThreadId !== threadId) clearTypingForThread(activeTypingThreadId)
 
@@ -1724,22 +1949,7 @@ function bindSharedEvents() {
       if (sendButton) {
         sendButton.disabled = !textarea.value.trim() && !attachments.length
       }
-      console.info('[inbox] composer input updated without full render')
-      if (typingStopTimer) clearTimeout(typingStopTimer)
-      activeTypingThreadId = thread.id
-      setTypingState({
-        threadId: thread.id,
-        uid: appState.user?.uid,
-        displayName: appState.user?.displayName || appState.user?.email?.split('@')[0] || 'Member',
-        username: appState.user?.username || '',
-        isTyping: Boolean(textarea.value.trim())
-      }).catch((error) => {
-        warnRealtimePermission(`typing-write-${thread.id}`, error)
-      })
-
-      typingStopTimer = setTimeout(() => {
-        clearTypingForThread(thread.id)
-      }, 1500)
+      updateTypingHeartbeat(thread.id, textarea.value)
     })
 
     textarea.addEventListener('keydown', async (event) => {
@@ -1747,6 +1957,9 @@ function bindSharedEvents() {
         event.preventDefault()
         await handleMessageSubmit(messageForm)
       }
+    })
+    textarea.addEventListener('blur', () => {
+      clearTypingForThread(thread.id)
     })
   }
 
@@ -1773,7 +1986,7 @@ function bindSharedEvents() {
   inboxRoot.querySelectorAll('[data-message-id]').forEach((messageEl) => {
     messageEl.addEventListener('contextmenu', (event) => {
       event.preventDefault()
-      const threadId = messageEl.getAttribute('data-thread-id')
+      const threadId = messageEl.getAttribute('data-message-thread-id')
       const messageId = messageEl.getAttribute('data-message-id')
       const senderId = messageEl.getAttribute('data-sender-id')
       if (!threadId || !messageId) return
@@ -1791,80 +2004,6 @@ function bindSharedEvents() {
         hasAttachments: Array.isArray(message.attachments) && message.attachments.length > 0,
         threadCreatedBy: selectedThread?.createdBy || ''
       }
-      appState.deleteSubmenuAnchor = null
-      appState.reactionPickerAnchor = null
-      renderFloatingUi()
-    })
-  })
-
-  floatingRoot.querySelector('[data-message-context-close]')?.addEventListener('click', (event) => {
-    if (event.target?.hasAttribute('data-message-context-close')) {
-      appState.messageContextMenu = null
-      appState.deleteSubmenuAnchor = null
-      appState.reactionPickerAnchor = null
-      renderFloatingUi()
-    }
-  })
-
-  floatingRoot.querySelectorAll('[data-menu-action]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const action = button.getAttribute('data-menu-action')
-      const menu = appState.messageContextMenu
-      if (!menu) return
-      if (action === 'edit') {
-        appState.editingMessageByThreadId[menu.threadId] = menu.messageId
-        const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
-        appState.editDraftByMessageId[menu.messageId] = message?.body || ''
-        appState.messageContextMenu = null
-        renderSignedInState()
-        return
-      }
-      if (action === 'react') {
-        appState.reactionPickerAnchor = true
-        appState.deleteSubmenuAnchor = null
-        renderFloatingUi()
-        return
-      }
-      if (action === 'delete') {
-        appState.deleteSubmenuAnchor = true
-        appState.reactionPickerAnchor = null
-        renderFloatingUi()
-        return
-      }
-      if (action === 'profile') {
-        const href = button.getAttribute('data-href')
-        appState.messageContextMenu = null
-        window.location.assign(href || ROUTES.profilePublic)
-        return
-      }
-      if (action === 'delete-me') {
-        await hideMessageForMe({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
-      }
-      if (action === 'delete-everyone' && (menu.senderId === appState.user?.uid || menu.threadCreatedBy === appState.user?.uid)) {
-        await deleteMessageForEveryone({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
-      }
-      if (action === 'emoji') {
-        const emoji = button.getAttribute('data-emoji') || ''
-        const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
-        const mine = reactions.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
-        const rollback = applyOptimisticReaction({
-          threadId: menu.threadId,
-          messageId: menu.messageId,
-          emoji,
-          uid: appState.user?.uid,
-          add: !mine
-        })
-        renderSignedInState()
-        try {
-          if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
-          else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
-        } catch {
-          rollback()
-          appState.errorMessage = 'Unable to update reaction.'
-          renderSignedInState()
-        }
-      }
-      appState.messageContextMenu = null
       appState.deleteSubmenuAnchor = null
       appState.reactionPickerAnchor = null
       renderFloatingUi()
@@ -1933,13 +2072,6 @@ function bindSharedEvents() {
     })
   })
 
-  floatingRoot.querySelectorAll('[data-reaction-modal-close]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      if (event.target !== event.currentTarget && !event.target.hasAttribute('data-reaction-modal-close')) return
-      appState.reactionDetailModal = null
-      renderFloatingUi()
-    })
-  })
 
   if (messageForm) {
     messageForm.addEventListener('submit', async (event) => {
@@ -1951,18 +2083,20 @@ function bindSharedEvents() {
   const list = inboxRoot.querySelector('[data-message-list]')
   if (list && appState.messageContextMenu) {
     list.addEventListener('scroll', () => {
-      appState.messageContextMenu = null
-      appState.deleteSubmenuAnchor = null
-      appState.reactionPickerAnchor = null
+      clearFloatingOverlays()
       renderFloatingUi()
     }, { once: true })
   }
 }
 
-function renderSignedInState() {
+function renderSignedInState(options = {}) {
+  const { forceScrollBottom = false } = options
   const previousList = inboxRoot.querySelector('[data-message-list]')
+  const previousScrollTop = previousList ? previousList.scrollTop : 0
+  const previousScrollHeight = previousList ? previousList.scrollHeight : 0
   const distanceFromBottom = previousList ? (previousList.scrollHeight - previousList.scrollTop - previousList.clientHeight) : 0
   const shouldStickBottom = distanceFromBottom <= 120
+  const relativeBottomOffset = previousScrollHeight - previousScrollTop
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
   renderCreateChatModal()
@@ -1970,7 +2104,13 @@ function renderSignedInState() {
   renderFloatingUi()
 
   const list = inboxRoot.querySelector('[data-message-list]')
-  if (list && shouldStickBottom) list.scrollTop = list.scrollHeight
+  if (!list) return
+  if (shouldStickBottom || forceScrollBottom) {
+    list.scrollTop = list.scrollHeight
+    return
+  }
+  const nextTop = Math.max(0, list.scrollHeight - relativeBottomOffset)
+  list.scrollTop = Number.isFinite(nextTop) ? nextTop : previousScrollTop
 }
 
 async function handleMessageSubmit(form) {
@@ -2000,12 +2140,13 @@ async function handleMessageSubmit(form) {
     appState.errorMessage = error?.message || 'Unable to send message.'
   }
 
-  renderSignedInState()
+  renderSignedInState({ forceScrollBottom: true })
 }
 
 function startThreadDetailSubscriptions(threadId) {
   appState.participantsUnsubscribe()
   appState.typingUnsubscribe()
+  if (typingExpiryRefreshTimer) clearTimeout(typingExpiryRefreshTimer)
 
   appState.participantsUnsubscribe = subscribeToThreadParticipants(threadId, (participants) => {
     appState.participantsByThreadId[threadId] = participants
@@ -2026,6 +2167,7 @@ function startThreadDetailSubscriptions(threadId) {
   appState.typingUnsubscribe = subscribeToTypingState(threadId, (typingRows) => {
     const previousRows = appState.typingUsersByThreadId[threadId] || []
     appState.typingUsersByThreadId[threadId] = typingRows
+    scheduleTypingExpiryRefresh(threadId)
     const previousOther = previousRows
       .filter((entry) => entry?.uid && entry.uid !== appState.user?.uid && entry.isTyping)
       .map((entry) => entry.uid)
@@ -2060,6 +2202,7 @@ function startMessageSubscription(threadId) {
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
     appState.messagesByThreadId[threadId] = messages
     appState.loadingMessageThreadId = ''
+    await hydrateProfilesForMessages(threadId, messages)
     appState.reactionUnsubscribe()
     appState.reactionUnsubscribe = subscribeToMessageReactions(threadId, messages.map((message) => message.id), (reactionsByMessageId) => {
       appState.reactionsByThreadId[threadId] = reactionsByMessageId
@@ -2109,6 +2252,7 @@ function startThreadSubscription() {
   appState.threadUnsubscribe()
   appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, (threads) => {
     appState.threads = threads
+    hydrateProfilesForThreads(threads).catch(() => {})
     appState.isLoadingThreads = false
     appState.threadsRealtimeReady = true
     appState.hasLoadedThreadsOnce = true
@@ -2278,9 +2422,7 @@ function handleGlobalKeydown(event) {
     return
   }
   if (event.key === 'Escape' && appState.messageContextMenu) {
-    appState.messageContextMenu = null
-    appState.deleteSubmenuAnchor = null
-    appState.reactionPickerAnchor = null
+    clearFloatingOverlays()
     renderFloatingUi()
     return
   }
@@ -2316,10 +2458,18 @@ window.addEventListener('focus', () => {
 })
 window.addEventListener('blur', () => {
   appState.hasWindowFocus = false
+  if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
+})
+window.addEventListener('beforeunload', () => {
+  if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
+})
+window.addEventListener('pagehide', () => {
+  if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
 })
 
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
+    if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
     window.location.assign(authRoute({ redirect: ROUTES.inbox }))
     return
@@ -2360,12 +2510,14 @@ waitForInitialAuthState().then(async (user) => {
 subscribeToAuthState(async (user) => {
   if (!hasInitializedAuthObserver) return
   if (!user) {
+    if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
     window.location.assign(authRoute({ redirect: ROUTES.inbox }))
     return
   }
 
   if (appState.user?.uid && appState.user.uid !== user.uid) {
+    if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
   }
   appState.user = user
