@@ -2,6 +2,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -393,4 +394,62 @@ export async function deleteThreadForUser({ uid, threadId }) {
     updatedAt: serverTimestamp()
   }, { merge: true })
   return true
+}
+
+export async function restoreThreadForUser({ uid, threadId }) {
+  if (!db || !uid || !threadId) return false
+  await setDoc(doc(db, 'users', uid, 'inboxThreads', threadId), {
+    deleted: false,
+    deletedAt: null,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return true
+}
+
+function normalizeBlockedUser(blockedId, raw = {}) {
+  return {
+    id: blockedId,
+    targetUid: raw.targetUid || blockedId,
+    createdAt: toIsoDate(raw.createdAt),
+    updatedAt: toIsoDate(raw.updatedAt),
+    sourceThreadId: String(raw.sourceThreadId || '').trim(),
+    targetDisplayName: String(raw.targetDisplayName || '').trim(),
+    targetUsername: String(raw.targetUsername || '').trim(),
+    targetAvatarURL: String(raw.targetAvatarURL || '').trim()
+  }
+}
+
+export async function blockUser({ uid, targetUid, sourceThreadId = '', targetProfile = {} }) {
+  if (!db || !uid || !targetUid) return false
+  await setDoc(doc(db, 'users', uid, 'blockedUsers', targetUid), {
+    targetUid,
+    sourceThreadId: String(sourceThreadId || '').trim(),
+    targetDisplayName: String(targetProfile?.displayName || '').trim(),
+    targetUsername: String(targetProfile?.username || '').trim(),
+    targetAvatarURL: String(targetProfile?.avatarURL || targetProfile?.photoURL || '').trim(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return true
+}
+
+export async function unblockUser({ uid, targetUid }) {
+  if (!db || !uid || !targetUid) return false
+  await deleteDoc(doc(db, 'users', uid, 'blockedUsers', targetUid))
+  return true
+}
+
+export async function getBlockedUsers(uid) {
+  if (!db || !uid) return []
+  const snapshot = await getDocs(query(collection(db, 'users', uid, 'blockedUsers'), orderBy('updatedAt', 'desc'), limit(300)))
+  return snapshot.docs.map((docSnap) => normalizeBlockedUser(docSnap.id, docSnap.data()))
+}
+
+export function subscribeToBlockedUsers(uid, callback, onError) {
+  if (!db || !uid || typeof callback !== 'function') return () => {}
+  return onSnapshot(
+    query(collection(db, 'users', uid, 'blockedUsers'), orderBy('updatedAt', 'desc'), limit(300)),
+    (snapshot) => callback(snapshot.docs.map((docSnap) => normalizeBlockedUser(docSnap.id, docSnap.data()))),
+    onError
+  )
 }
