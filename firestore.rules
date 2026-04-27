@@ -382,6 +382,10 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
+      match /blockedUsers/{targetUid} {
+        allow read, create, update, delete: if isOwner(uid);
+      }
+
       match /systemNotifications/{notificationId} {
         allow read: if isOwner(uid);
         allow create, delete: if false;

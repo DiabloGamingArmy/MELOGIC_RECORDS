@@ -11,6 +11,10 @@ import {
   addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
+  blockUser,
+  subscribeToBlockedUsers,
+  restoreThreadForUser,
+  unblockUser,
   deleteThreadForUser,
   hydrateThreadFromSourceIfNeeded,
   listInboxThreads,
@@ -83,12 +87,15 @@ const appState = {
   messagesByThreadId: {},
   participantsByThreadId: {},
   typingUsersByThreadId: {},
+  blockedUsersByUid: {},
+  revealBlockedMessageIdsByThreadId: {},
   loadingMessageThreadId: '',
   activeFilter: 'Messages',
   threadUnsubscribe: () => {},
   messageUnsubscribe: () => {},
   participantsUnsubscribe: () => {},
   typingUnsubscribe: () => {},
+  blockedUsersUnsubscribe: () => {},
   errorMessage: '',
   isCreateChatOpen: false,
   chatSearchQuery: '',
@@ -302,6 +309,7 @@ async function hydrateProfilesForMessages(threadId, messages = []) {
   if (!Object.keys(loaded).length) return
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   preloadProfileImagesByUid(Object.keys(loaded))
+  if (appState.selectedThreadId === threadId) renderSignedInState()
 }
 
 async function hydrateProfilesForThreads(threads = []) {
@@ -562,11 +570,53 @@ function getThreadParticipants(threadId) {
   return appState.participantsByThreadId[threadId] || []
 }
 
+function isUserBlocked(uid) {
+  if (!uid) return false
+  return Boolean(appState.blockedUsersByUid[uid])
+}
+
+function getDmOtherParticipant(thread) {
+  if (!thread || thread.type !== 'dm') return ''
+  const participantIds = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  return thread.otherParticipantId || participantIds.find((uid) => uid && uid !== appState.user?.uid) || ''
+}
+
+function getCurrentDmBlockState(thread) {
+  const otherUid = getDmOtherParticipant(thread)
+  return {
+    otherUid,
+    currentUserBlockedOther: Boolean(otherUid && isUserBlocked(otherUid)),
+    // TODO: we cannot reliably read the other user's private block doc client-side.
+    // If backend/rules enforce recipient-side blocks in the future, set this based on explicit error codes.
+    otherBlockedCurrentUser: Boolean(thread?.dmBlockedByOther)
+  }
+}
+
+function isBlockedMessageForViewer(thread, message) {
+  if (!thread || thread.type !== 'group' || !message?.senderId) return false
+  if (message.senderId === appState.user?.uid) return false
+  return isUserBlocked(message.senderId)
+}
+
+function isBlockedMessageRevealed(threadId, messageId) {
+  const revealed = appState.revealBlockedMessageIdsByThreadId[threadId] || {}
+  return Boolean(revealed[messageId])
+}
+
+function revealBlockedMessage(threadId, messageId) {
+  if (!threadId || !messageId) return
+  appState.revealBlockedMessageIdsByThreadId[threadId] = {
+    ...(appState.revealBlockedMessageIdsByThreadId[threadId] || {}),
+    [messageId]: true
+  }
+}
+
 function getTypingUsers(threadId) {
   const all = appState.typingUsersByThreadId[threadId] || []
   const now = Date.now()
   return all.filter((entry) => {
     if (!entry?.uid || entry.uid === appState.user?.uid) return false
+    if (isUserBlocked(entry.uid)) return false
     const stamp = entry.updatedAt
       ? new Date(entry.updatedAt).getTime()
       : entry.receivedAt
@@ -625,6 +675,7 @@ function clearRealtimeListeners() {
   appState.messageUnsubscribe()
   appState.participantsUnsubscribe()
   appState.typingUnsubscribe()
+  appState.blockedUsersUnsubscribe()
   appState.systemUnsubscribe()
   appState.reactionUnsubscribe()
   appState.hiddenMessagesUnsubscribe()
@@ -632,6 +683,7 @@ function clearRealtimeListeners() {
   appState.messageUnsubscribe = () => {}
   appState.participantsUnsubscribe = () => {}
   appState.typingUnsubscribe = () => {}
+  appState.blockedUsersUnsubscribe = () => {}
   appState.systemUnsubscribe = () => {}
   appState.reactionUnsubscribe = () => {}
   appState.hiddenMessagesUnsubscribe = () => {}
@@ -936,6 +988,13 @@ function groupMessages(messages = []) {
 }
 
 function getParticipantMeta(thread, uid) {
+  const profile = uid ? (appState.profileByUid[uid] || null) : null
+  if (profile) return getProfileMeta(uid, profile)
+
+  const participants = getThreadParticipants(thread.id)
+  const participantDoc = participants.find((entry) => entry.uid === uid)
+  if (participantDoc) return getProfileMeta(uid, participantDoc)
+
   if (thread.type === 'dm' && uid === thread.otherParticipantId && thread.otherProfile) {
     return getProfileMeta(uid, {
       uid,
@@ -945,20 +1004,16 @@ function getParticipantMeta(thread, uid) {
     })
   }
 
-  const participants = getThreadParticipants(thread.id)
-  const direct = participants.find((entry) => entry.uid === uid)
-  if (direct) return getProfileMeta(uid, direct)
-
-  if (thread.type === 'dm' && uid !== appState.user?.uid) {
+  if (uid && uid === appState.user?.uid) {
     return getProfileMeta(uid, {
       uid,
-      displayName: thread.title,
-      avatarURL: thread.imageURL,
-      username: ''
+      displayName: appState.user?.displayName || 'You',
+      username: appState.user?.username || '',
+      photoURL: appState.user?.photoURL || ''
     })
   }
 
-  return getProfileMeta(uid, { uid, displayName: uid === appState.user?.uid ? 'You' : '', title: thread.title })
+  return getProfileMeta(uid, { uid, title: thread.title || (uid ? `User ${String(uid).slice(0, 2).toUpperCase()}` : 'User') })
 }
 
 function buildReplyPreview(thread, message) {
@@ -1086,6 +1141,15 @@ function getMessageGroupsMarkup(thread) {
                 </div>
               `
               : `<p>${escapeHtml(message.body)}</p>`
+          const hideBlockedMessage = isBlockedMessageForViewer(thread, message) && !isBlockedMessageRevealed(thread.id, message.id)
+          if (hideBlockedMessage) {
+            return `
+              <article class="message-bubble is-single is-first is-last blocked-message-placeholder" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+                <p>Message from blocked user hidden</p>
+                <button type="button" data-reveal-blocked-message="${message.id}" data-reveal-blocked-thread-id="${thread.id}">Show</button>
+              </article>
+            `
+          }
           return `
             <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
               ${replyMarkup}
@@ -1140,12 +1204,24 @@ function getConversationBodyMarkup() {
   const attachments = appState.attachmentDraftByThreadId[thread.id] || []
   const previewUrls = appState.attachmentPreviewByThreadId[thread.id] || []
   const typingUsers = getTypingUsers(thread.id)
+  const blockState = getCurrentDmBlockState(thread)
+  const isDmComposerBlocked = thread.type === 'dm' && (blockState.currentUserBlockedOther || blockState.otherBlockedCurrentUser)
+  const blockAlertMarkup = thread.type === 'dm' && isDmComposerBlocked
+    ? `
+      <div class="blocked-chat-alert" role="status">
+        <strong>${blockState.currentUserBlockedOther ? 'You blocked this user.' : 'This user can no longer receive messages from you.'}</strong>
+        <span>You can still view previous messages.</span>
+        ${blockState.currentUserBlockedOther ? '<button type="button" data-inline-unblock-contact>Unblock</button>' : ''}
+      </div>
+    `
+    : ''
 
   return `
     <div class="conversation-stack">
       ${getMessageGroupsMarkup(thread)}
       <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length ? '' : 'hidden'}>${typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : ''}</p>
-      <form class="message-composer" data-message-form>
+      ${blockAlertMarkup}
+      <form class="message-composer ${isDmComposerBlocked ? 'is-blocked' : ''}" data-message-form>
         <label class="sr-only" for="message-input">Message</label>
         ${replyDraft ? `
           <div class="composer-reply-preview">
@@ -1166,13 +1242,13 @@ function getConversationBodyMarkup() {
           const ext = escapeHtml((String(file.name || '').split('.').pop() || type).toUpperCase().slice(0, 6))
           return `<article class="composer-attachment-preview is-file" title="${title}"><div class="composer-file-icon">${ext}</div><small>${title}</small><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`
         }).join('')}</div>` : ''}
-        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="Write a message..." required>${escapeHtml(draft)}</textarea>
-        <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" />
+        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="Write a message..." required ${isDmComposerBlocked ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isDmComposerBlocked ? 'disabled' : ''} />
         <div class="message-composer-footer">
           ${appState.errorMessage ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>` : '<span></span>'}
           <div class="composer-actions">
-            <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files">+</button>
-            <button type="submit" class="button button-accent" ${(!draft.trim() && !attachments.length) ? 'disabled' : ''}>Send</button>
+            <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files" ${isDmComposerBlocked ? 'disabled' : ''}>+</button>
+            <button type="submit" class="button button-accent" ${(isDmComposerBlocked || (!draft.trim() && !attachments.length)) ? 'disabled' : ''}>Send</button>
           </div>
         </div>
       </form>
@@ -1265,6 +1341,13 @@ function getThreadActionMenuMarkup() {
   const thread = appState.threads.find((entry) => entry.id === menu.threadId)
   if (!thread) return ''
   const position = clampMenuPosition(menu.x, menu.y, 180, 120)
+  const dmOtherUid = getDmOtherParticipant(thread)
+  const isDm = thread.type === 'dm' && Boolean(dmOtherUid)
+  const blockAction = isDm
+    ? `<button type="button" data-thread-action="${isUserBlocked(dmOtherUid) ? 'unblock-contact' : 'block-contact'}" data-thread-action-id="${thread.id}">
+        ${isUserBlocked(dmOtherUid) ? 'Unblock contact' : 'Block contact'}
+      </button>`
+    : ''
   return `
     <div class="message-context-backdrop" data-thread-menu-close>
       <div class="thread-actions-menu" style="left:${position.x}px;top:${position.y}px;">
@@ -1274,6 +1357,7 @@ function getThreadActionMenuMarkup() {
         <button type="button" data-thread-action="delete" data-thread-action-id="${thread.id}">
           Delete chat
         </button>
+        ${blockAction}
       </div>
     </div>
   `
@@ -1300,6 +1384,18 @@ function getThreadConfirmModalMarkup() {
       body: 'This removes the chat from your inbox. It will not delete the conversation for other people.',
       confirm: 'Delete chat',
       danger: true
+    },
+    'block-contact': {
+      title: 'Block contact?',
+      body: 'You will not receive direct messages from this user. You can still view previous messages.',
+      confirm: 'Block contact',
+      danger: true
+    },
+    'unblock-contact': {
+      title: 'Unblock contact?',
+      body: 'This user will be able to message you again.',
+      confirm: 'Unblock contact',
+      danger: false
     }
   }
   const copy = map[modal.type] || map.delete
@@ -1360,6 +1456,30 @@ async function handleThreadConfirmAction() {
           saveLastSelectedThread(appState.user.uid, appState.selectedThreadId)
           startMessageSubscription(appState.selectedThreadId)
         }
+      }
+    }
+    if (modal.type === 'block-contact' || modal.type === 'unblock-contact') {
+      const thread = appState.threads.find((entry) => entry.id === modal.threadId)
+      const targetUid = getDmOtherParticipant(thread)
+      if (!targetUid) throw new Error('Unable to resolve this contact.')
+      const profile = getProfileMeta(targetUid, { uid: targetUid, title: thread?.title || '' })
+      if (modal.type === 'block-contact') {
+        await blockUser({
+          uid: appState.user.uid,
+          targetUid,
+          sourceThreadId: modal.threadId,
+          targetProfile: profile
+        })
+        appState.blockedUsersByUid[targetUid] = {
+          targetUid,
+          sourceThreadId: modal.threadId,
+          targetDisplayName: profile.displayName || '',
+          targetUsername: profile.username || '',
+          targetAvatarURL: profile.avatarURL || ''
+        }
+      } else {
+        await unblockUser({ uid: appState.user.uid, targetUid })
+        delete appState.blockedUsersByUid[targetUid]
       }
     }
     closeThreadActionUi()
@@ -1668,7 +1788,7 @@ function setupFloatingEventDelegates() {
     if (threadMenuAction) {
       const threadId = threadMenuAction.getAttribute('data-thread-action-id') || ''
       const action = threadMenuAction.getAttribute('data-thread-action') || ''
-      if (action === 'pin' || action === 'unpin' || action === 'delete') {
+      if (action === 'pin' || action === 'unpin' || action === 'delete' || action === 'block-contact' || action === 'unblock-contact') {
         openThreadConfirmModal(action, threadId)
       }
       return
@@ -1848,14 +1968,20 @@ async function handleCreateChatSubmit() {
     const threadId = thread?.id || thread?.threadId
     if (!threadId) throw new Error('Unable to create chat.')
     console.info('[inbox] create/open thread succeeded', threadId)
+    if (createdType === 'dm') {
+      await restoreThreadForUser({ uid: appState.user.uid, threadId })
+    }
 
     if (!appState.threads.some((item) => item.id === threadId)) {
       const optimistic = optimisticThreadFromSelection(threadId, selectedUsers, createdType, buildGroupTitle(selectedUsers))
       appState.threads = sortInboxThreadsLocal([optimistic, ...appState.threads])
     }
 
+    const hydratedThread = await hydrateThreadFromSourceIfNeeded(thread)
+    if (hydratedThread) upsertThreadInState(hydratedThread)
     appState.activeFilter = 'Messages'
     appState.selectedThreadId = threadId
+    saveLastSelectedThread(appState.user.uid, threadId)
     appState.errorMessage = ''
     startMessageSubscription(threadId)
     try {
@@ -1868,6 +1994,7 @@ async function handleCreateChatSubmit() {
     }
     closeCreateChatModal()
     renderSignedInState()
+    scrollMessageListToBottom()
   } catch (error) {
     appState.isCreatingChat = false
     appState.createChatError = error?.message || 'Unable to create chat.'
@@ -2201,6 +2328,8 @@ function renderChatSettingsModal(options = {}) {
   if (!thread) return
   const participants = getThreadParticipants(thread.id).map((entry) => getProfileMeta(entry.uid, entry))
   const canEditGroup = thread.type === 'group' && thread.createdBy === appState.user?.uid
+  const dmBlockState = getCurrentDmBlockState(thread)
+  const dmBlockActionLabel = dmBlockState.currentUserBlockedOther ? 'Unblock contact' : 'Block contact'
   const hasPendingChanges = canEditGroup
     && (
       String(appState.chatSettingsDraftTitle || '').trim() !== String(thread.title || '').trim()
@@ -2276,6 +2405,13 @@ function renderChatSettingsModal(options = {}) {
           ${canEditGroup ? `<div class="create-chat-results">${addMarkup}</div>` : '<p class="modal-hint">Only the chat owner can add people.</p>'}
         </section>
 
+        ${thread.type === 'dm' ? `
+          <section class="chat-details-section">
+            <h3>Contact controls</h3>
+            <button type="button" class="button button-muted" data-chat-settings-block-toggle>${escapeHtml(dmBlockActionLabel)}</button>
+          </section>
+        ` : ''}
+
         ${appState.chatSettingsError ? `<p class="modal-error">${escapeHtml(appState.chatSettingsError)}</p>` : ''}
       </section>
     </div>
@@ -2305,6 +2441,14 @@ function renderChatSettingsModal(options = {}) {
   })
   modalRoot.querySelectorAll('[data-remove-member]').forEach((button) => {
     button.addEventListener('click', () => handleRemoveParticipant(button.getAttribute('data-remove-member')))
+  })
+  modalRoot.querySelector('[data-chat-settings-block-toggle]')?.addEventListener('click', () => {
+    appState.threadConfirmModal = {
+      type: dmBlockState.currentUserBlockedOther ? 'unblock-contact' : 'block-contact',
+      threadId: thread.id
+    }
+    appState.threadActionMenu = null
+    renderFloatingUi()
   })
 
   if (options.keepSearchFocus) {
@@ -2453,6 +2597,24 @@ function bindSharedEvents() {
     renderSignedInState()
   })
 
+  messageForm?.querySelector('[data-inline-unblock-contact]')?.addEventListener('click', () => {
+    const thread = getSelectedThread()
+    if (!thread?.id) return
+    appState.threadConfirmModal = { type: 'unblock-contact', threadId: thread.id }
+    appState.threadActionMenu = null
+    renderFloatingUi()
+  })
+
+  messageForm?.querySelectorAll('[data-reveal-blocked-message]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const messageId = button.getAttribute('data-reveal-blocked-message') || ''
+      const threadId = button.getAttribute('data-reveal-blocked-thread-id') || ''
+      if (!threadId || !messageId) return
+      revealBlockedMessage(threadId, messageId)
+      renderSignedInState()
+    })
+  })
+
   inboxRoot.querySelectorAll('[data-message-id]').forEach((messageEl) => {
     messageEl.addEventListener('contextmenu', (event) => {
       event.preventDefault()
@@ -2577,6 +2739,12 @@ function renderSignedInState() {
 async function handleMessageSubmit(form) {
   const thread = getSelectedThread()
   if (!thread || !appState.user?.uid) return
+  const blockState = getCurrentDmBlockState(thread)
+  if (thread.type === 'dm' && blockState.currentUserBlockedOther) {
+    appState.errorMessage = 'You blocked this user. Unblock to send messages.'
+    renderSignedInState()
+    return
+  }
 
   const field = form.querySelector('textarea[name="message"]')
   const body = String(field?.value || '').trim()
@@ -2605,7 +2773,11 @@ async function handleMessageSubmit(form) {
       })
     }
   } catch (error) {
-    appState.errorMessage = error?.message || 'Unable to send message.'
+    if (thread.type === 'dm' && String(error?.message || '').toLowerCase().includes('block')) {
+      appState.errorMessage = 'This user can no longer receive messages from you.'
+    } else {
+      appState.errorMessage = error?.message || 'Unable to send message.'
+    }
   }
 
   renderSignedInState()
@@ -2900,6 +3072,24 @@ function startSystemNotificationSubscription() {
   )
 }
 
+function startBlockedUsersSubscription() {
+  if (!appState.user?.uid) return
+  appState.blockedUsersUnsubscribe()
+  appState.blockedUsersUnsubscribe = subscribeToBlockedUsers(
+    appState.user.uid,
+    (rows) => {
+      appState.blockedUsersByUid = rows.reduce((acc, row) => {
+        if (row?.targetUid) acc[row.targetUid] = row
+        return acc
+      }, {})
+      if (appState.activeFilter === 'Messages') renderSignedInState()
+    },
+    (error) => {
+      warnRealtimePermission(`blocked-users-${appState.user.uid}`, error)
+    }
+  )
+}
+
 function handleGlobalKeydown(event) {
   if (event.key === 'Escape' && appState.reactionDetailModal) {
     appState.reactionDetailModal = null
@@ -2969,6 +3159,7 @@ waitForInitialAuthState().then(async (user) => {
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()
+  startBlockedUsersSubscription()
   hasInitializedAuthObserver = true
 
   const startUid = String(new URLSearchParams(window.location.search).get('start') || '').trim()
@@ -2978,6 +3169,7 @@ waitForInitialAuthState().then(async (user) => {
       const thread = await createOrGetDm({ creatorId: user.uid, targetUid: startUid })
       if (thread?.id) {
         console.info('[inbox] create/open thread succeeded', thread.id)
+        await restoreThreadForUser({ uid: user.uid, threadId: thread.id })
         appState.selectedThreadId = thread.id
         saveLastSelectedThread(user.uid, thread.id)
         try {
@@ -3015,4 +3207,5 @@ subscribeToAuthState(async (user) => {
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()
+  startBlockedUsersSubscription()
 })
