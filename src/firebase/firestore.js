@@ -573,8 +573,17 @@ export async function saveProfileChanges(user, payload = {}) {
         ...payload,
         displayName: displayNameValidation.value,
         username: nextUsernameLower,
+        role: existingUser.role || 'user',
         roleLabel: existingProfile.roleLabel || deriveRoleLabelFromValue(existingUser.role || existingUser.accountType),
         accountType: existingUser.accountType || 'user',
+        stats: existingProfile.stats || existingUser.stats || {
+          products: 0,
+          savedItems: 0,
+          comments: 0,
+          likes: 0,
+          downloads: 0
+        },
+        counts: existingProfile.counts || existingUser.counts || {},
         featuredItems: {
           enabled: Boolean(payload.featuredItems?.enabled),
           productIds: Array.isArray(payload.featuredItems?.productIds)
