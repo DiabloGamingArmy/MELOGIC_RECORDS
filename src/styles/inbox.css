@@ -525,14 +525,6 @@ body.is-inbox-page {
   align-items: flex-start;
 }
 
-.message-cluster.is-self .message-bubble-stack {
-  align-items: flex-end;
-}
-
-.message-cluster.is-other .message-bubble-stack {
-  align-items: flex-start;
-}
-
 .message-bubble {
   width: max-content;
   min-width: 0;
@@ -594,6 +586,63 @@ body.is-inbox-page {
   font-style: italic;
 }
 
+.message-bubble.has-reply {
+  position: relative;
+}
+
+.message-reply-preview {
+  width: 100%;
+  border: 0;
+  border-radius: 0.72rem;
+  padding: 0.36rem 0.5rem;
+  margin: 0 0 0.4rem;
+  background: rgba(123, 145, 184, 0.18);
+  color: #d8e6ff;
+  display: grid;
+  gap: 0.12rem;
+  text-align: left;
+  position: relative;
+}
+
+.message-reply-preview::before {
+  content: '';
+  position: absolute;
+  left: -0.45rem;
+  top: 0.35rem;
+  width: 0.34rem;
+  height: calc(100% - 0.7rem);
+  border-left: 2px solid rgba(144, 173, 224, 0.55);
+  border-top: 2px solid rgba(144, 173, 224, 0.55);
+  border-top-left-radius: 0.5rem;
+}
+
+.message-cluster.is-self .message-reply-preview::before {
+  left: auto;
+  right: -0.45rem;
+  border-left: 0;
+  border-right: 2px solid rgba(144, 173, 224, 0.55);
+  border-top: 2px solid rgba(144, 173, 224, 0.55);
+  border-top-left-radius: 0;
+  border-top-right-radius: 0.5rem;
+}
+
+.message-reply-preview strong {
+  font-size: 0.68rem;
+  opacity: 0.95;
+}
+
+.message-reply-preview span {
+  font-size: 0.72rem;
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-bubble.is-reply-target-highlight {
+  outline: 2px solid rgba(135, 181, 255, 0.55);
+}
+
 .message-status-line {
   margin: 0.2rem 0 0;
   font-size: 0.68rem;
@@ -631,6 +680,45 @@ body.is-inbox-page {
   padding: 0.72rem 1rem 0.9rem;
   display: grid;
   gap: 0.52rem;
+}
+
+.composer-reply-preview {
+  border-left: 3px solid rgba(134, 171, 233, 0.7);
+  border-radius: 0.6rem;
+  background: rgba(94, 112, 149, 0.2);
+  padding: 0.38rem 0.5rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.composer-reply-meta {
+  min-width: 0;
+  display: grid;
+  gap: 0.12rem;
+}
+
+.composer-reply-meta strong {
+  font-size: 0.72rem;
+}
+
+.composer-reply-meta span {
+  font-size: 0.72rem;
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-reply-preview button {
+  border: 0;
+  background: rgba(21, 32, 53, 0.8);
+  color: #d8e6ff;
+  border-radius: 999px;
+  width: 1.2rem;
+  height: 1.2rem;
+  cursor: pointer;
 }
 
 .composer-attachment-preview-strip {
