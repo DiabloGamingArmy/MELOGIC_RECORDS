@@ -15,6 +15,7 @@ import {
   repairMyInboxThreads,
   removeParticipantFromThread,
   subscribeToBlockedUsers,
+  subscribeToThread,
   unblockUser,
   updateThreadDetails,
   subscribeToThreadsForUser
@@ -179,6 +180,7 @@ export {
   markThreadRead,
   markThreadDelivered,
   subscribeToThreadParticipants,
+  subscribeToThread,
   subscribeToTypingState,
   setTypingState
 }
