@@ -109,7 +109,7 @@ service cloud.firestore {
         && request.resource.data.edited == true;
     }
 
-    function validMessageDeleteForEveryone() {
+    function validMessageDeleteForEveryone(threadId) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'body',
           'attachments',
@@ -118,7 +118,10 @@ service cloud.firestore {
           'deletedBy',
           'updatedAt'
         ])
-        && resource.data.senderId == request.auth.uid
+        && (
+          resource.data.senderId == request.auth.uid
+          || threadData(threadId).createdBy == request.auth.uid
+        )
         && request.resource.data.deleted == true
         && request.resource.data.deletedBy == request.auth.uid
         && request.resource.data.body == ''
@@ -493,7 +496,7 @@ service cloud.firestore {
         allow update: if isThreadParticipant(threadId)
           && (
             validMessageEdit()
-            || validMessageDeleteForEveryone()
+            || validMessageDeleteForEveryone(threadId)
           );
 
         allow delete: if false;

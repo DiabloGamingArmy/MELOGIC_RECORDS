@@ -106,7 +106,12 @@ async function decorateThread(thread, currentUid) {
   const attachmentCount = Number(thread.lastMessageAttachmentCount || 0)
   const fallbackSubtitle = (() => {
     if (thread.lastMessageText) return thread.lastMessageText
+    if (thread.lastMessageType === 'deleted') return 'Message removed'
     if (attachmentCount > 0) return attachmentCount === 1 ? '1 attachment' : `${attachmentCount} attachments`
+    if (thread.lastMessageType === 'image') return '1 image'
+    if (thread.lastMessageType === 'video') return '1 video'
+    if (thread.lastMessageType === 'audio') return '1 audio'
+    if (thread.lastMessageType === 'file') return '1 file'
     if (thread.lastMessageType && thread.lastMessageType !== 'text') return '1 attachment'
     return 'No messages yet.'
   })()

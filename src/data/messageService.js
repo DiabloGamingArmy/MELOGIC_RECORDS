@@ -63,7 +63,7 @@ export function summarizeMessage(body, attachments = []) {
     if (kind === 'image') return '1 image'
     if (kind === 'video') return '1 video'
     if (kind === 'audio') return '1 audio'
-    return '1 attachment'
+    return '1 file'
   }
   const allImages = items.every((item) => getAttachmentKind(item) === 'image')
   if (allImages) return `${items.length} images`
@@ -190,7 +190,11 @@ export async function sendMessage(threadId, payload = {}) {
 
   const attachments = await uploadMessageAttachments(threadId, messageRef.id, attachmentsInput)
   const summary = summarizeMessage(body, attachments)
-  const normalizedType = attachments.length ? 'attachment' : (payload.type || 'text')
+  const normalizedType = (() => {
+    if (!attachments.length) return payload.type || 'text'
+    if (attachments.length === 1 && !body) return getAttachmentKind(attachments[0])
+    return 'attachment'
+  })()
   const batch = writeBatch(db)
   batch.set(messageRef, {
       senderId: payload.senderId,
@@ -338,7 +342,9 @@ export async function deleteMessageForEveryone({ threadId, messageId, uid }) {
     if (!messageSnap.exists()) throw new Error('Message not found.')
     if (!threadSnap.exists()) throw new Error('Thread not found.')
     const message = messageSnap.data() || {}
-    if (message.senderId !== uid) throw new Error('Only sender can delete for everyone.')
+    const thread = threadSnap.data() || {}
+    const isThreadOwner = thread.createdBy === uid
+    if (message.senderId !== uid && !isThreadOwner) throw new Error('Only sender or thread owner can delete for everyone.')
     if (message.deleted) return
 
     transaction.update(messageRef, {
@@ -353,7 +359,7 @@ export async function deleteMessageForEveryone({ threadId, messageId, uid }) {
 
     if (timestampToMillis(threadSnap.data()?.lastMessageAt) === timestampToMillis(message.createdAt)) {
       transaction.update(threadRef, {
-        lastMessageText: 'Message removed.',
+        lastMessageText: 'Message removed',
         lastMessageType: 'deleted',
         lastMessageSenderId: uid,
         lastMessageAttachmentCount: 0,

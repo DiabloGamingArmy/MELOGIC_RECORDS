@@ -120,8 +120,10 @@ const appState = {
   editDraftByMessageId: {},
   reactionsByThreadId: {},
   hiddenMessageIdsByThreadId: {},
+  reactionDetailModal: null,
   reactionUnsubscribe: () => {},
   hiddenMessagesUnsubscribe: () => {},
+  hasWindowFocus: document.hasFocus(),
   threadsRealtimeReady: false,
   threadsFallbackTried: false,
   threadsFallbackPending: false,
@@ -137,6 +139,7 @@ let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let activeThreadSubscriptionUid = ''
 let processedStartUid = ''
+const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1'
 
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
@@ -158,6 +161,9 @@ const inboxRoot = document.querySelector('[data-inbox-root]')
 const modalRoot = document.createElement('div')
 modalRoot.className = 'create-chat-modal-root'
 document.body.append(modalRoot)
+const floatingRoot = document.createElement('div')
+floatingRoot.className = 'inbox-floating-root'
+document.body.append(floatingRoot)
 
 function escapeHtml(value) {
   return String(value || '')
@@ -231,6 +237,46 @@ function warnSystemPermission(error) {
   console.warn('System notification permission warning:', error?.code || error?.message || error)
 }
 
+function saveLastSelectedThread(uid, threadId) {
+  if (!uid || !threadId) return
+  try {
+    localStorage.setItem(LAST_THREAD_STORAGE_KEY, JSON.stringify({
+      uid,
+      threadId,
+      updatedAt: new Date().toISOString()
+    }))
+  } catch {
+    // noop
+  }
+}
+
+function loadLastSelectedThread(uid) {
+  if (!uid) return ''
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LAST_THREAD_STORAGE_KEY) || '{}')
+    if (parsed?.uid === uid && parsed?.threadId) return String(parsed.threadId)
+  } catch {
+    // noop
+  }
+  return ''
+}
+
+function getStartUidParam() {
+  return String(new URLSearchParams(window.location.search).get('start') || '').trim()
+}
+
+function canMarkThreadRead(threadId) {
+  return Boolean(
+    appState.user?.uid
+    && threadId
+    && appState.activeFilter === 'Messages'
+    && appState.selectedThreadId === threadId
+    && document.visibilityState === 'visible'
+    && appState.hasWindowFocus
+    && document.hasFocus()
+  )
+}
+
 function formatTime(value) {
   if (!value) return ''
   const date = new Date(value)
@@ -265,6 +311,19 @@ function formatDaySeparator(value) {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function formatGapSeparator(value, previousValue) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Earlier'
+  const previous = previousValue ? new Date(previousValue) : null
+  const sameDay = previous && !Number.isNaN(previous.getTime()) && previous.toDateString() === date.toDateString()
+  if (sameDay) return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) {
+    return `Today ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+  }
+  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
 function describeAttachmentType(fileOrAttachment = {}) {
   const mime = String(fileOrAttachment?.mimeType || fileOrAttachment?.type || '')
   if (mime.startsWith('image/')) return 'image'
@@ -276,8 +335,13 @@ function describeAttachmentType(fileOrAttachment = {}) {
 function summarizeThreadPreview(thread) {
   if (!thread) return 'No messages yet.'
   if (thread.lastMessageText) return thread.lastMessageText
+  if (thread.lastMessageType === 'deleted') return 'Message removed'
   const count = Number(thread.lastMessageAttachmentCount || 0)
   if (count > 0) return count === 1 ? '1 attachment' : `${count} attachments`
+  if (thread.lastMessageType === 'image') return '1 image'
+  if (thread.lastMessageType === 'video') return '1 video'
+  if (thread.lastMessageType === 'audio') return '1 audio'
+  if (thread.lastMessageType === 'file') return '1 file'
   if (thread.lastMessageType && thread.lastMessageType !== 'text') return '1 attachment'
   return 'No messages yet.'
 }
@@ -293,6 +357,27 @@ function groupReactionsByEmoji(reactions = []) {
     grouped.set(key, current)
   })
   return [...grouped.values()]
+}
+
+function applyOptimisticReaction({ threadId, messageId, emoji, uid, add }) {
+  if (!threadId || !messageId || !emoji || !uid) return () => {}
+  const currentThread = appState.reactionsByThreadId[threadId] || {}
+  const currentList = [...(currentThread[messageId] || [])]
+  const reactionId = `${uid}_${encodeURIComponent(emoji)}`
+  const existsIndex = currentList.findIndex((entry) => entry.id === reactionId || (entry.uid === uid && entry.emoji === emoji))
+  if (add && existsIndex === -1) {
+    currentList.push({ id: reactionId, uid, emoji, emojiKey: encodeURIComponent(emoji), optimistic: true })
+  }
+  if (!add && existsIndex !== -1) {
+    currentList.splice(existsIndex, 1)
+  }
+  appState.reactionsByThreadId[threadId] = {
+    ...currentThread,
+    [messageId]: currentList
+  }
+  return () => {
+    appState.reactionsByThreadId[threadId] = currentThread
+  }
 }
 
 function getSelectedThread() {
@@ -333,6 +418,7 @@ function clearRealtimeListeners() {
   appState.inboxRepairAttempted = false
   appState.isRepairingInbox = false
   activeThreadSubscriptionUid = ''
+  floatingRoot.innerHTML = ''
 }
 
 function clearTypingForThread(threadId) {
@@ -512,15 +598,23 @@ function getConversationSubtitle(thread) {
 
 function groupMessages(messages = []) {
   const groups = []
-  let lastDateKey = ''
+  let previousDateKey = ''
+  let previousStamp = 0
 
   messages.forEach((message) => {
     const createdAt = message.createdAt || ''
     const dateKey = createdAt ? new Date(createdAt).toDateString() : 'unknown'
-    if (dateKey !== lastDateKey) {
-      groups.push({ kind: 'separator', id: `sep-${createdAt || Math.random()}`, label: createdAt ? formatDaySeparator(createdAt) : 'Earlier' })
-      lastDateKey = dateKey
+    const createdStamp = createdAt ? new Date(createdAt).getTime() : 0
+    const isNewDay = dateKey !== previousDateKey
+    const isLargeGap = previousStamp && createdStamp && (createdStamp - previousStamp) >= 2 * 60 * 60 * 1000
+    if (isNewDay || isLargeGap) {
+      const label = createdAt
+        ? (isNewDay ? formatDaySeparator(createdAt) : formatGapSeparator(createdAt, previousStamp))
+        : 'Earlier'
+      groups.push({ kind: 'separator', id: `sep-${createdAt || Math.random()}`, label })
+      previousDateKey = dateKey
     }
+    if (createdStamp) previousStamp = createdStamp
 
     const prev = groups[groups.length - 1]
     const prevGroup = prev?.kind === 'messages' ? prev : null
@@ -619,8 +713,10 @@ function getMessageGroupsMarkup(thread) {
 
       const bubbles = entry.messages
         .map((message, messageIndex) => {
+          const isSingle = entry.messages.length === 1
           const isFirst = messageIndex === 0
           const isLast = messageIndex === entry.messages.length - 1
+          const isMiddle = !isFirst && !isLast
           const canEdit = message.senderId === appState.user?.uid
             && !message.deleted
             && String(message.type || 'text') === 'text'
@@ -641,7 +737,7 @@ function getMessageGroupsMarkup(thread) {
           const reactionPills = groupReactionsByEmoji(reactionList)
             .map((reaction) => {
               const mine = reaction.uids.has(appState.user?.uid) ? 'is-mine' : ''
-              return `<button type="button" class="reaction-pill ${mine}" data-reaction-toggle="${message.id}" data-emoji="${escapeHtml(reaction.emoji)}">${escapeHtml(reaction.emoji)} <span>${reaction.count}</span></button>`
+              return `<button type="button" class="reaction-pill ${mine}" data-reaction-pill="${message.id}" data-emoji="${escapeHtml(reaction.emoji)}">${escapeHtml(reaction.emoji)} <span>${reaction.count}</span></button>`
             })
             .join('')
           const editedMarker = message.edited ? '<span class="message-edited-marker">edited</span>' : ''
@@ -659,7 +755,7 @@ function getMessageGroupsMarkup(thread) {
               `
               : `<p>${escapeHtml(message.body)}</p>`
           return `
-            <article class="message-bubble ${isFirst ? 'is-first' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''}" data-message-id="${message.id}" data-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''}" data-message-id="${message.id}" data-thread-id="${thread.id}" data-sender-id="${message.senderId}">
               ${bodyMarkup}
               ${attachmentsMarkup}
               ${reactionPills ? `<div class="message-reaction-row">${reactionPills}</div>` : ''}
@@ -902,9 +998,12 @@ function clampMenuPosition(x, y, width = 180, height = 220) {
 function getContextMenuMarkup() {
   const menu = appState.messageContextMenu
   if (!menu) return ''
-  const canEdit = menu.senderId === appState.user?.uid && !menu.deleted && menu.type === 'text' && !menu.hasAttachments
+  const isOwnMessage = menu.senderId === appState.user?.uid
+  const isThreadOwner = Boolean(menu.threadCreatedBy) && menu.threadCreatedBy === appState.user?.uid
+  const canEdit = isOwnMessage && !menu.deleted && menu.type === 'text' && !menu.hasAttachments
   const canReact = !menu.deleted
-  const canDeleteEveryone = menu.senderId === appState.user?.uid
+  const canShowDelete = !menu.deleted && (isOwnMessage || isThreadOwner)
+  const canDeleteEveryone = isOwnMessage || isThreadOwner
   const profileHref = publicProfileRoute({
     uid: menu.senderId,
     preview: menu.senderId === appState.user?.uid
@@ -917,8 +1016,8 @@ function getContextMenuMarkup() {
       <div class="message-context-menu" data-message-context-menu style="left:${pos.x}px;top:${pos.y}px;">
         ${canEdit ? '<button type="button" data-menu-action="edit">Edit Message</button>' : ''}
         ${canReact ? '<button type="button" data-menu-action="react">React</button>' : ''}
-        <button type="button" data-menu-action="delete">Delete Message</button>
-        ${menu.senderId ? `<button type="button" data-menu-action="profile" data-href="${escapeHtml(profileHref)}">Open Profile</button>` : ''}
+        ${canShowDelete ? '<button type="button" data-menu-action="delete">Delete Message</button>' : ''}
+        ${menu.senderId && !isOwnMessage ? `<button type="button" data-menu-action="profile" data-href="${escapeHtml(profileHref)}">Open Profile</button>` : ''}
       </div>
       ${appState.deleteSubmenuAnchor ? `
         <div class="message-context-menu is-submenu" style="left:${deleteSubPos.x}px;top:${deleteSubPos.y}px;">
@@ -931,6 +1030,44 @@ function getContextMenuMarkup() {
           ${['👍', '❤️', '😂', '🔥', '👀', '🎵'].map((emoji) => `<button type="button" data-menu-action="emoji" data-emoji="${emoji}">${emoji}</button>`).join('')}
         </div>
       ` : ''}
+    </div>
+  `
+}
+
+function renderFloatingUi() {
+  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}`
+}
+
+function getReactionDetailModalMarkup() {
+  const modal = appState.reactionDetailModal
+  if (!modal) return ''
+  const reactions = appState.reactionsByThreadId[modal.threadId]?.[modal.messageId] || []
+  if (!reactions.length) return ''
+  const rows = reactions.map((reaction) => {
+    const profile = getProfileMeta(reaction.uid, { uid: reaction.uid, displayName: 'Member' })
+    const avatar = profile.avatarURL
+      ? `<img src="${escapeHtml(profile.avatarURL)}" alt="" />`
+      : `<span>${escapeHtml(getInitials(profile))}</span>`
+    return `
+      <div class="reaction-detail-row">
+        <div class="thread-avatar ${profile.avatarURL ? 'has-image' : ''}">${avatar}</div>
+        <div class="reaction-detail-meta">
+          <strong>${escapeHtml(profile.displayName || profile.username || 'Member')}</strong>
+          <small>@${escapeHtml(profile.username || 'member')}</small>
+        </div>
+        <span>${escapeHtml(reaction.emoji)}</span>
+      </div>
+    `
+  }).join('')
+  return `
+    <div class="reaction-detail-backdrop" data-reaction-modal-close>
+      <section class="reaction-detail-modal" role="dialog" aria-modal="true" aria-label="Reactions">
+        <header>
+          <h3>Reactions</h3>
+          <button type="button" class="create-chat-close" data-reaction-modal-close>×</button>
+        </header>
+        <div class="reaction-detail-list">${rows}</div>
+      </section>
     </div>
   `
 }
@@ -1507,6 +1644,7 @@ function renderSignedOutState() {
     </article>
   `
   modalRoot.innerHTML = ''
+  floatingRoot.innerHTML = ''
 }
 
 function bindSharedEvents() {
@@ -1528,6 +1666,7 @@ function bindSharedEvents() {
       if (activeTypingThreadId && activeTypingThreadId !== threadId) clearTypingForThread(activeTypingThreadId)
 
       appState.selectedThreadId = threadId
+      saveLastSelectedThread(appState.user?.uid, threadId)
       appState.errorMessage = ''
       const selectedMirror = appState.threads.find((thread) => thread.id === threadId)
       const hydratedThread = await hydrateThreadFromSourceIfNeeded(selectedMirror)
@@ -1538,9 +1677,11 @@ function bindSharedEvents() {
       hydrateProfilesForThread(getSelectedThread())
       renderSignedInState()
 
-      await markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
-        warnRealtimePermission(`participants-read-${threadId}`, error)
-      })
+      if (canMarkThreadRead(threadId)) {
+        await markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
+          warnRealtimePermission(`participants-read-${threadId}`, error)
+        })
+      }
     })
   })
 
@@ -1637,6 +1778,7 @@ function bindSharedEvents() {
       const senderId = messageEl.getAttribute('data-sender-id')
       if (!threadId || !messageId) return
       const message = (appState.messagesByThreadId[threadId] || []).find((entry) => entry.id === messageId)
+      const selectedThread = appState.threads.find((entry) => entry.id === threadId)
       if (!message) return
       appState.messageContextMenu = {
         x: event.clientX,
@@ -1646,24 +1788,25 @@ function bindSharedEvents() {
         senderId,
         type: String(message.type || 'text'),
         deleted: Boolean(message.deleted),
-        hasAttachments: Array.isArray(message.attachments) && message.attachments.length > 0
+        hasAttachments: Array.isArray(message.attachments) && message.attachments.length > 0,
+        threadCreatedBy: selectedThread?.createdBy || ''
       }
       appState.deleteSubmenuAnchor = null
       appState.reactionPickerAnchor = null
-      renderSignedInState()
+      renderFloatingUi()
     })
   })
 
-  inboxRoot.querySelector('[data-message-context-close]')?.addEventListener('click', (event) => {
+  floatingRoot.querySelector('[data-message-context-close]')?.addEventListener('click', (event) => {
     if (event.target?.hasAttribute('data-message-context-close')) {
       appState.messageContextMenu = null
       appState.deleteSubmenuAnchor = null
       appState.reactionPickerAnchor = null
-      renderSignedInState()
+      renderFloatingUi()
     }
   })
 
-  inboxRoot.querySelectorAll('[data-menu-action]').forEach((button) => {
+  floatingRoot.querySelectorAll('[data-menu-action]').forEach((button) => {
     button.addEventListener('click', async () => {
       const action = button.getAttribute('data-menu-action')
       const menu = appState.messageContextMenu
@@ -1679,13 +1822,13 @@ function bindSharedEvents() {
       if (action === 'react') {
         appState.reactionPickerAnchor = true
         appState.deleteSubmenuAnchor = null
-        renderSignedInState()
+        renderFloatingUi()
         return
       }
       if (action === 'delete') {
         appState.deleteSubmenuAnchor = true
         appState.reactionPickerAnchor = null
-        renderSignedInState()
+        renderFloatingUi()
         return
       }
       if (action === 'profile') {
@@ -1697,20 +1840,34 @@ function bindSharedEvents() {
       if (action === 'delete-me') {
         await hideMessageForMe({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
       }
-      if (action === 'delete-everyone' && menu.senderId === appState.user?.uid) {
+      if (action === 'delete-everyone' && (menu.senderId === appState.user?.uid || menu.threadCreatedBy === appState.user?.uid)) {
         await deleteMessageForEveryone({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
       }
       if (action === 'emoji') {
         const emoji = button.getAttribute('data-emoji') || ''
         const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
         const mine = reactions.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
-        if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
-        else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
+        const rollback = applyOptimisticReaction({
+          threadId: menu.threadId,
+          messageId: menu.messageId,
+          emoji,
+          uid: appState.user?.uid,
+          add: !mine
+        })
+        renderSignedInState()
+        try {
+          if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
+          else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
+        } catch {
+          rollback()
+          appState.errorMessage = 'Unable to update reaction.'
+          renderSignedInState()
+        }
       }
       appState.messageContextMenu = null
       appState.deleteSubmenuAnchor = null
       appState.reactionPickerAnchor = null
-      renderSignedInState()
+      renderFloatingUi()
     })
   })
 
@@ -1742,15 +1899,27 @@ function bindSharedEvents() {
     })
   })
 
-  inboxRoot.querySelectorAll('[data-reaction-toggle]').forEach((button) => {
+  inboxRoot.querySelectorAll('[data-reaction-pill]').forEach((button) => {
     button.addEventListener('click', async () => {
-      const messageId = button.getAttribute('data-reaction-toggle')
+      const messageId = button.getAttribute('data-reaction-pill')
       const emoji = button.getAttribute('data-emoji') || ''
       if (!thread?.id || !messageId || !emoji) return
-      const reactions = appState.reactionsByThreadId[thread.id]?.[messageId] || []
-      const mine = reactions.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
-      if (mine) await removeMessageReaction({ threadId: thread.id, messageId, reactionId: mine.id })
-      else await addMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
+      const reactionRows = appState.reactionsByThreadId[thread.id]?.[messageId] || []
+      const reactorUids = Array.from(new Set(reactionRows.map((entry) => entry.uid).filter(Boolean)))
+      if (reactorUids.length) {
+        const loaded = await loadProfilesByUids(reactorUids)
+        appState.profileByUid = { ...appState.profileByUid, ...loaded }
+      }
+      appState.reactionDetailModal = { threadId: thread.id, messageId }
+      renderFloatingUi()
+    })
+  })
+
+  floatingRoot.querySelectorAll('[data-reaction-modal-close]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      if (event.target !== event.currentTarget && !event.target.hasAttribute('data-reaction-modal-close')) return
+      appState.reactionDetailModal = null
+      renderFloatingUi()
     })
   })
 
@@ -1767,7 +1936,7 @@ function bindSharedEvents() {
       appState.messageContextMenu = null
       appState.deleteSubmenuAnchor = null
       appState.reactionPickerAnchor = null
-      renderSignedInState()
+      renderFloatingUi()
     }, { once: true })
   }
 }
@@ -1776,10 +1945,11 @@ function renderSignedInState() {
   const previousList = inboxRoot.querySelector('[data-message-list]')
   const distanceFromBottom = previousList ? (previousList.scrollHeight - previousList.scrollTop - previousList.clientHeight) : 0
   const shouldStickBottom = distanceFromBottom <= 120
-  inboxRoot.innerHTML = `${appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)}${getContextMenuMarkup()}`
+  inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
   renderCreateChatModal()
   renderChatSettingsModal()
+  renderFloatingUi()
 
   const list = inboxRoot.querySelector('[data-message-list]')
   if (list && shouldStickBottom) list.scrollTop = list.scrollHeight
@@ -1803,9 +1973,11 @@ async function handleMessageSubmit(form) {
     appState.composerDraftByThreadId[thread.id] = ''
     setAttachmentDraft(thread.id, [])
     clearTypingForThread(thread.id)
-    await markThreadRead({ threadId: thread.id, uid: appState.user.uid }).catch((error) => {
-      warnRealtimePermission(`participants-read-${thread.id}`, error)
-    })
+    if (canMarkThreadRead(thread.id)) {
+      await markThreadRead({ threadId: thread.id, uid: appState.user.uid }).catch((error) => {
+        warnRealtimePermission(`participants-read-${thread.id}`, error)
+      })
+    }
   } catch (error) {
     appState.errorMessage = error?.message || 'Unable to send message.'
   }
@@ -1881,9 +2053,11 @@ function startMessageSubscription(threadId) {
     })
     if (appState.selectedThreadId === threadId) {
       renderSignedInState()
-      await markThreadRead({ threadId, uid: appState.user.uid }).catch((error) => {
-        warnRealtimePermission(`participants-read-${threadId}`, error)
-      })
+      if (canMarkThreadRead(threadId)) {
+        await markThreadRead({ threadId, uid: appState.user.uid }).catch((error) => {
+          warnRealtimePermission(`participants-read-${threadId}`, error)
+        })
+      }
     }
   }, (error) => {
     warnRealtimePermission(`messages-${threadId}`, error)
@@ -1940,6 +2114,7 @@ function startThreadSubscription() {
           appState.hasLoadedThreadsOnce = true
           if (repairedThreads.length && !appState.selectedThreadId) {
             appState.selectedThreadId = repairedThreads[0].id
+            saveLastSelectedThread(appState.user?.uid, appState.selectedThreadId)
           }
           if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
             startMessageSubscription(appState.selectedThreadId)
@@ -1970,6 +2145,7 @@ function startThreadSubscription() {
             appState.hasLoadedThreadsOnce = true
             if (repairedThreads.length && !appState.selectedThreadId) {
               appState.selectedThreadId = repairedThreads[0].id
+              saveLastSelectedThread(appState.user?.uid, appState.selectedThreadId)
             }
             if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
               startMessageSubscription(appState.selectedThreadId)
@@ -1998,7 +2174,9 @@ function startThreadSubscription() {
             console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
             if (!fallbackThreads.length) return
             appState.threads = fallbackThreads
-            appState.selectedThreadId = fallbackThreads[0].id
+            const restored = !getStartUidParam() ? loadLastSelectedThread(appState.user?.uid) : ''
+            appState.selectedThreadId = fallbackThreads.some((thread) => thread.id === restored) ? restored : fallbackThreads[0].id
+            saveLastSelectedThread(appState.user?.uid, appState.selectedThreadId)
             if (!appState.messagesByThreadId[appState.selectedThreadId]) {
               startMessageSubscription(appState.selectedThreadId)
             }
@@ -2019,7 +2197,9 @@ function startThreadSubscription() {
     }
 
     if (!threads.some((thread) => thread.id === appState.selectedThreadId)) {
-      appState.selectedThreadId = threads[0].id
+      const restored = !getStartUidParam() ? loadLastSelectedThread(appState.user?.uid) : ''
+      appState.selectedThreadId = threads.some((thread) => thread.id === restored) ? restored : threads[0].id
+      saveLastSelectedThread(appState.user?.uid, appState.selectedThreadId)
     }
 
     if (!appState.messagesByThreadId[appState.selectedThreadId]) {
@@ -2041,7 +2221,9 @@ function startThreadSubscription() {
       console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
       appState.threads = fallbackThreads
       if (fallbackThreads.length && !appState.selectedThreadId) {
-        appState.selectedThreadId = fallbackThreads[0].id
+        const restored = !getStartUidParam() ? loadLastSelectedThread(appState.user?.uid) : ''
+        appState.selectedThreadId = fallbackThreads.some((thread) => thread.id === restored) ? restored : fallbackThreads[0].id
+        saveLastSelectedThread(appState.user?.uid, appState.selectedThreadId)
       }
       if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
         startMessageSubscription(appState.selectedThreadId)
@@ -2072,11 +2254,16 @@ function startSystemNotificationSubscription() {
 }
 
 function handleGlobalKeydown(event) {
+  if (event.key === 'Escape' && appState.reactionDetailModal) {
+    appState.reactionDetailModal = null
+    renderFloatingUi()
+    return
+  }
   if (event.key === 'Escape' && appState.messageContextMenu) {
     appState.messageContextMenu = null
     appState.deleteSubmenuAnchor = null
     appState.reactionPickerAnchor = null
-    renderSignedInState()
+    renderFloatingUi()
     return
   }
   if (event.key === 'Escape' && appState.isChatSettingsOpen && !appState.isSavingChatSettings) {
@@ -2089,6 +2276,29 @@ function handleGlobalKeydown(event) {
 }
 
 document.addEventListener('keydown', handleGlobalKeydown)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    appState.hasWindowFocus = document.hasFocus()
+    const threadId = appState.selectedThreadId
+    if (canMarkThreadRead(threadId)) {
+      markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
+        warnRealtimePermission(`participants-read-${threadId}`, error)
+      })
+    }
+  }
+})
+window.addEventListener('focus', () => {
+  appState.hasWindowFocus = true
+  const threadId = appState.selectedThreadId
+  if (canMarkThreadRead(threadId)) {
+    markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
+      warnRealtimePermission(`participants-read-${threadId}`, error)
+    })
+  }
+})
+window.addEventListener('blur', () => {
+  appState.hasWindowFocus = false
+})
 
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
@@ -2111,6 +2321,7 @@ waitForInitialAuthState().then(async (user) => {
       if (thread?.id) {
         console.info('[inbox] create/open thread succeeded', thread.id)
         appState.selectedThreadId = thread.id
+        saveLastSelectedThread(user.uid, thread.id)
         try {
           const durableThreads = await listInboxThreads(user.uid)
           console.info('[inbox] one-time fallback loaded', durableThreads.length, 'threads')
