@@ -4,6 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getCartItems, removeFromCart, subscribeToCart } from './data/cartService'
+import { ROUTES, authRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
 let activeUser = null
@@ -36,13 +37,13 @@ function renderCart(items = []) {
       <article class="cart-empty-state">
         <h2>Your cart is empty.</h2>
         <p>Find sample packs, presets, and tools in Products.</p>
-        <a class="button button-accent" href="/products.html">Browse Products</a>
+        <a class="button button-accent" href="${ROUTES.products}">Browse Products</a>
       </article>
     `
     summary.innerHTML = `
       <h3>Order summary</h3>
       <p>No items yet.</p>
-      <a class="button button-muted" href="/products.html">Continue Shopping</a>
+      <a class="button button-muted" href="${ROUTES.products}">Continue Shopping</a>
     `
     return
   }
@@ -75,7 +76,7 @@ function renderCart(items = []) {
       <strong>${formatCurrencyFromCents(subtotal)}</strong>
     </div>
     <button class="button button-accent" type="button" data-checkout-trigger>${activeUser ? 'Checkout' : 'Sign in to Checkout'}</button>
-    <a class="button button-muted" href="/products.html">Continue Shopping</a>
+    <a class="button button-muted" href="${ROUTES.products}">Continue Shopping</a>
   `
 
   list.querySelectorAll('[data-remove-cart-item]').forEach((button) => {
@@ -87,7 +88,7 @@ function renderCart(items = []) {
   const checkoutButton = summary.querySelector('[data-checkout-trigger]')
   checkoutButton?.addEventListener('click', () => {
     if (!activeUser) {
-      window.location.assign('/auth.html?redirect=/cart.html')
+      window.location.assign(authRoute({ redirect: ROUTES.cart }))
       return
     }
     window.alert('Checkout is coming soon.')

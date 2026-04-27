@@ -166,6 +166,43 @@ service cloud.firestore {
         && request.resource.data.entitlementCount == resource.data.entitlementCount;
     }
 
+    
+
+    function featuredItemsShapeValid() {
+      return !('featuredItems' in request.resource.data)
+        || (
+          request.resource.data.featuredItems is map
+          && (!('enabled' in request.resource.data.featuredItems) || request.resource.data.featuredItems.enabled is bool)
+          && (!('productIds' in request.resource.data.featuredItems) || (
+            request.resource.data.featuredItems.productIds is list
+            && request.resource.data.featuredItems.productIds.size() <= 3
+          ))
+        );
+    }
+
+    function publicProfileUpdateAllowed(uid) {
+      return isOwner(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.roleLabel == resource.data.roleLabel
+        && request.resource.data.stats == resource.data.stats
+        && featuredItemsShapeValid()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          'displayName',
+          'username',
+          'usernameLower',
+          'bio',
+          'avatarPath',
+          'avatarURL',
+          'bannerPath',
+          'bannerURL',
+          'location',
+          'website',
+          'socials',
+          'featuredItems',
+          'updatedAt'
+        ]);
+    }
+
     function creatorIdentityIsStable() {
       return request.resource.data.artistId == resource.data.artistId
         && request.resource.data.artistId == request.auth.uid
@@ -189,7 +226,8 @@ service cloud.firestore {
 
     match /profiles/{uid} {
       allow read: if true;
-      allow create, update: if isOwner(uid) && request.resource.data.uid == uid;
+      allow create: if isOwner(uid) && request.resource.data.uid == uid;
+      allow update: if publicProfileUpdateAllowed(uid);
       allow delete: if isOwner(uid);
     }
 
