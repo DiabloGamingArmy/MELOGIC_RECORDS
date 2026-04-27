@@ -2,6 +2,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -53,7 +54,20 @@ function normalizeThread(threadId, raw = {}) {
     pinned: Boolean(raw.pinned),
     pinnedAt: toIsoDate(raw.pinnedAt),
     deleted: Boolean(raw.deleted),
-    deletedAt: toIsoDate(raw.deletedAt)
+    deletedAt: toIsoDate(raw.deletedAt),
+    dmBlockState: normalizeDmBlockState(raw.dmBlockState)
+  }
+}
+
+function normalizeDmBlockState(raw = null) {
+  if (!raw || typeof raw !== 'object') return null
+  const blockedBy = String(raw.blockedBy || '').trim()
+  const blockedUid = String(raw.blockedUid || '').trim()
+  if (!blockedBy || !blockedUid) return null
+  return {
+    blockedBy,
+    blockedUid,
+    updatedAt: toIsoDate(raw.updatedAt)
   }
 }
 
@@ -393,4 +407,86 @@ export async function deleteThreadForUser({ uid, threadId }) {
     updatedAt: serverTimestamp()
   }, { merge: true })
   return true
+}
+
+export async function restoreThreadForUser({ uid, threadId }) {
+  if (!db || !uid || !threadId) return false
+  await setDoc(doc(db, 'users', uid, 'inboxThreads', threadId), {
+    deleted: false,
+    deletedAt: null,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return true
+}
+
+function normalizeBlockedUser(blockedId, raw = {}) {
+  return {
+    id: blockedId,
+    targetUid: raw.targetUid || blockedId,
+    createdAt: toIsoDate(raw.createdAt),
+    updatedAt: toIsoDate(raw.updatedAt),
+    sourceThreadId: String(raw.sourceThreadId || '').trim(),
+    targetDisplayName: String(raw.targetDisplayName || '').trim(),
+    targetUsername: String(raw.targetUsername || '').trim(),
+    targetAvatarURL: String(raw.targetAvatarURL || '').trim()
+  }
+}
+
+export async function blockUser({ uid, targetUid, sourceThreadId = '', targetProfile = {} }) {
+  if (!db || !uid || !targetUid) return false
+  await setDoc(doc(db, 'users', uid, 'blockedUsers', targetUid), {
+    targetUid,
+    sourceThreadId: String(sourceThreadId || '').trim(),
+    targetDisplayName: String(targetProfile?.displayName || '').trim(),
+    targetUsername: String(targetProfile?.username || '').trim(),
+    targetAvatarURL: String(targetProfile?.avatarURL || targetProfile?.photoURL || '').trim(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  if (sourceThreadId) {
+    await updateDoc(doc(db, 'threads', sourceThreadId), {
+      dmBlockState: {
+        blockedBy: uid,
+        blockedUid: targetUid,
+        updatedAt: serverTimestamp()
+      },
+      updatedAt: serverTimestamp()
+    })
+  }
+  return true
+}
+
+export async function unblockUser({ uid, targetUid, sourceThreadId = '' }) {
+  if (!db || !uid || !targetUid) return false
+  await deleteDoc(doc(db, 'users', uid, 'blockedUsers', targetUid))
+  if (sourceThreadId) {
+    const threadRef = doc(db, 'threads', sourceThreadId)
+    await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(threadRef)
+      if (!snap.exists()) return
+      const current = normalizeDmBlockState(snap.data()?.dmBlockState)
+      if (!current) return
+      if (current.blockedBy !== uid || current.blockedUid !== targetUid) return
+      transaction.update(threadRef, {
+        dmBlockState: null,
+        updatedAt: serverTimestamp()
+      })
+    })
+  }
+  return true
+}
+
+export async function getBlockedUsers(uid) {
+  if (!db || !uid) return []
+  const snapshot = await getDocs(query(collection(db, 'users', uid, 'blockedUsers'), orderBy('updatedAt', 'desc'), limit(300)))
+  return snapshot.docs.map((docSnap) => normalizeBlockedUser(docSnap.id, docSnap.data()))
+}
+
+export function subscribeToBlockedUsers(uid, callback, onError) {
+  if (!db || !uid || typeof callback !== 'function') return () => {}
+  return onSnapshot(
+    query(collection(db, 'users', uid, 'blockedUsers'), orderBy('updatedAt', 'desc'), limit(300)),
+    (snapshot) => callback(snapshot.docs.map((docSnap) => normalizeBlockedUser(docSnap.id, docSnap.data()))),
+    onError
+  )
 }
