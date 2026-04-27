@@ -115,6 +115,14 @@
   color: #dde8ff;
 }
 
+.profile-account-id {
+  font-size: 0.82rem;
+  color: #9fb0d8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .profile-stats {
   margin-top: 0.9rem;
   display: grid;

@@ -54,6 +54,17 @@ function normalizeRole(value) {
   return 'User'
 }
 
+function formatFriendlyDate(value) {
+  if (!value) return 'Recently'
+  const parsed = value?.toDate ? value.toDate() : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Recently'
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  }).format(parsed)
+}
+
 function renderSignedOutState() {
   profileRoot.innerHTML = `
     <article class="profile-card profile-empty">
@@ -89,7 +100,7 @@ function renderSignedInState(user, storedProfile = null) {
     || profile.role
   )
   const metrics = getMetrics(profile)
-  const createdAt = profile.createdAt?.toDate ? profile.createdAt.toDate().toLocaleDateString() : 'Recently'
+  const createdAt = formatFriendlyDate(profile.createdAt || user.metadata?.creationTime)
 
   profileRoot.innerHTML = `
     <div class="profile-grid">
@@ -116,7 +127,7 @@ function renderSignedInState(user, storedProfile = null) {
         <h3>Identity + status</h3>
         <dl class="profile-meta compact">
           <div><dt>Email</dt><dd>${email}</dd></div>
-          <div><dt>Account ID</dt><dd>${user.uid}</dd></div>
+          <div><dt>Account ID</dt><dd class="profile-account-id" title="${user.uid}">${user.uid}</dd></div>
           <div><dt>Role</dt><dd>${role}</dd></div>
           <div><dt>Joined</dt><dd>${createdAt}</dd></div>
         </dl>
