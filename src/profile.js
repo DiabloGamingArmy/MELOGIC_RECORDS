@@ -3,7 +3,8 @@ import './styles/profile.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, signOutUser, waitForInitialAuthState } from './firebase/auth'
-import { getUserProfile } from './firebase/firestore'
+import { getEffectiveProfile } from './firebase/firestore'
+import { ROUTES, publicProfileRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
 
@@ -46,10 +47,22 @@ function fallbackInitials(nameOrEmail) {
 }
 
 function normalizeRole(value) {
-  const role = String(value || 'user').toLowerCase()
+  const role = String(value || 'user').trim().toLowerCase()
+  if (role === 'founder') return 'Founder'
   if (role === 'artist') return 'Artist'
   if (role === 'creator') return 'Creator'
   return 'User'
+}
+
+function formatFriendlyDate(value) {
+  if (!value) return 'Recently'
+  const parsed = value?.toDate ? value.toDate() : new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Recently'
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  }).format(parsed)
 }
 
 function renderSignedOutState() {
@@ -57,7 +70,7 @@ function renderSignedOutState() {
     <article class="profile-card profile-empty">
       <h2>Sign in required</h2>
       <p>You need an account to view profile details, purchases, and creator activity.</p>
-      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+      <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
     </article>
   `
 }
@@ -79,9 +92,15 @@ function renderSignedInState(user, storedProfile = null) {
   const email = profile.email || user.email || 'No email available'
   const bio = profile.bio || 'No bio yet. Add context about your sound, tools, or creator direction.'
   const photoURL = profile.photoURL || user.photoURL || ''
-  const role = normalizeRole(profile.role)
+  const role = normalizeRole(
+    profile.publicProfile?.roleLabel
+    || profile.privateProfile?.roleLabel
+    || profile.privateProfile?.role
+    || profile.roleLabel
+    || profile.role
+  )
   const metrics = getMetrics(profile)
-  const createdAt = profile.createdAt?.toDate ? profile.createdAt.toDate().toLocaleDateString() : 'Recently'
+  const createdAt = formatFriendlyDate(profile.createdAt || user.metadata?.creationTime)
 
   profileRoot.innerHTML = `
     <div class="profile-grid">
@@ -97,7 +116,8 @@ function renderSignedInState(user, storedProfile = null) {
         </div>
 
         <div class="profile-actions">
-          <a class="button button-muted" href="/edit-profile.html">Edit Profile</a>
+          <a class="button button-muted" href="${ROUTES.editProfile}">Edit Profile</a>
+          <a class="button button-muted" href="${publicProfileRoute({ uid: user.uid, preview: true })}">View Public Profile</a>
           <button type="button" class="button button-accent" data-signout-profile>Sign Out</button>
         </div>
       </article>
@@ -107,7 +127,7 @@ function renderSignedInState(user, storedProfile = null) {
         <h3>Identity + status</h3>
         <dl class="profile-meta compact">
           <div><dt>Email</dt><dd>${email}</dd></div>
-          <div><dt>Account ID</dt><dd>${user.uid}</dd></div>
+          <div><dt>Account ID</dt><dd class="profile-account-id" title="${user.uid}">${user.uid}</dd></div>
           <div><dt>Role</dt><dd>${role}</dd></div>
           <div><dt>Joined</dt><dd>${createdAt}</dd></div>
         </dl>
@@ -178,7 +198,7 @@ function renderSignedInState(user, storedProfile = null) {
     signOutButton.textContent = 'Signing Out...'
     try {
       await signOutUser()
-      window.location.assign('/index.html')
+      window.location.assign(ROUTES.home)
     } catch {
       signOutButton.disabled = false
       signOutButton.textContent = 'Sign Out'
@@ -215,7 +235,12 @@ async function loadAndRenderProfile(user) {
 
   let storedProfile = null
   try {
-    storedProfile = await getUserProfile(user.uid)
+    const profileResult = await getEffectiveProfile(user.uid, user)
+    storedProfile = {
+      ...(profileResult?.effectiveProfile || {}),
+      publicProfile: profileResult?.publicProfile || null,
+      privateProfile: profileResult?.privateProfile || null
+    }
   } catch (error) {
     if (!hasWarnedProfileFallback) {
       hasWarnedProfileFallback = true
