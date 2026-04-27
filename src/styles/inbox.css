@@ -191,19 +191,56 @@ body.is-inbox-page {
   background: rgba(9, 14, 23, 0.74);
   color: #d5dff7;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  padding: 0.5rem 0.55rem;
+}
+
+.thread-row.is-active,
+.thread-row:hover {
+  border-color: rgba(127, 168, 248, 0.7);
+  background: rgba(24, 36, 58, 0.76);
+}
+
+.thread-row-main {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: grid;
   grid-template-columns: 2.6rem minmax(0, 1fr);
   gap: 0.72rem;
-  padding: 0.66rem;
+  padding: 0.16rem 0.1rem;
   text-align: left;
   font: inherit;
   cursor: pointer;
 }
 
-.thread-row.is-active,
-.thread-row:hover,
-.thread-row:focus-visible {
-  border-color: rgba(127, 168, 248, 0.7);
-  background: rgba(24, 36, 58, 0.76);
+.thread-row-main:focus-visible {
+  outline: none;
+}
+
+.thread-row-menu-trigger {
+  width: 1.9rem;
+  height: 1.9rem;
+  align-self: center;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(124, 149, 197, 0.32);
+  background: rgba(16, 24, 38, 0.78);
+  color: #b8c9eb;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.thread-row-menu-trigger svg {
+  width: 0.94rem;
+  height: 0.94rem;
+}
+
+.thread-row-menu-trigger:hover,
+.thread-row-menu-trigger:focus-visible {
+  border-color: rgba(137, 175, 240, 0.7);
+  color: #dbe8ff;
   outline: none;
 }
 
@@ -259,6 +296,20 @@ body.is-inbox-page {
   font-size: 0.83rem;
 }
 
+.thread-pin-indicator {
+  margin-top: 0.12rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  color: #95abd4;
+  font-size: 0.68rem;
+}
+
+.thread-pin-indicator svg {
+  width: 0.74rem;
+  height: 0.74rem;
+}
+
 .thread-badge,
 .thread-unread {
   font-size: 0.66rem;
@@ -296,6 +347,75 @@ body.is-inbox-page {
 
 .thread-line-short {
   width: 62%;
+}
+
+.thread-actions-menu {
+  position: fixed;
+  min-width: 164px;
+  border: 1px solid rgba(128, 153, 204, 0.45);
+  border-radius: 0.72rem;
+  background: linear-gradient(180deg, rgba(14, 21, 34, 0.98), rgba(10, 15, 27, 0.98));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.42);
+  padding: 0.32rem;
+  display: grid;
+  gap: 0.2rem;
+  z-index: 1501;
+}
+
+.thread-actions-menu button {
+  border: 0;
+  border-radius: 0.48rem;
+  padding: 0.4rem 0.5rem;
+  text-align: left;
+  background: transparent;
+  color: #deebff;
+}
+
+.thread-actions-menu button:hover,
+.thread-actions-menu button:focus-visible {
+  background: rgba(38, 59, 96, 0.68);
+  outline: none;
+}
+
+.thread-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1502;
+  background: rgba(3, 7, 13, 0.58);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.thread-confirm-modal {
+  width: min(420px, 100%);
+  border-radius: 0.86rem;
+  border: 1px solid rgba(124, 150, 199, 0.36);
+  background: rgba(10, 17, 30, 0.96);
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.thread-confirm-modal h3,
+.thread-confirm-modal p {
+  margin: 0;
+}
+
+.thread-confirm-modal p {
+  color: #a9bedf;
+}
+
+.thread-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.thread-confirm-danger {
+  background: linear-gradient(135deg, rgba(171, 48, 52, 0.95), rgba(200, 73, 79, 0.95));
+  border: 1px solid rgba(241, 128, 133, 0.52);
+  color: #fff1f1;
 }
 
 .panel-header-row {
