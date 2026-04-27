@@ -117,6 +117,27 @@ function normalizeUsername(raw) {
   return String(raw || '').trim().toLowerCase()
 }
 
+function normalizeRoleLabel(value) {
+  const role = String(value || 'user').trim().toLowerCase()
+  if (role === 'founder') return 'Founder'
+  if (role === 'creator') return 'Creator'
+  if (role === 'artist') return 'Artist'
+  return 'User'
+}
+
+function formatLocalDate(value) {
+  if (!value) return 'Unavailable'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Unavailable'
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  }).format(parsed)
+}
+
 function validateDisplayName(raw) {
   const value = String(raw || '').trim()
   if (!value) {
@@ -574,6 +595,8 @@ function renderSettingsPage() {
   const creatorSettings = state.creatorSettings || {}
   const avatarPreview = state.pendingMedia.avatarPreview || state.photoURL
   const bannerPreview = state.pendingMedia.bannerPreview || state.bannerURL
+  const roleDisplay = normalizeRoleLabel(state.userData.roleLabel || state.userData.role)
+  const createdDisplay = formatLocalDate(state.user.metadata?.creationTime)
 
   editRoot.innerHTML = `
     <div class="edit-layout">
@@ -661,11 +684,11 @@ function renderSettingsPage() {
 
         <div class="settings-panel ${activeSection === 'account' ? 'is-active' : ''}" data-panel="account">
           <h2>Account</h2>
-          <dl class="settings-list">
+          <dl class="settings-list settings-card-list">
             <div><dt>Email</dt><dd>${state.user.email || 'Unavailable'}</dd></div>
-            <div><dt>Account ID</dt><dd>${state.user.uid}</dd></div>
-            <div><dt>Created</dt><dd>${state.user.metadata?.creationTime || 'Unavailable'}</dd></div>
-            <div><dt>Role</dt><dd>${state.userData.role || 'user'}</dd></div>
+            <div><dt>Account ID</dt><dd class="account-id-value" title="${state.user.uid}">${state.user.uid}</dd></div>
+            <div><dt>Created</dt><dd>${createdDisplay}</dd></div>
+            <div><dt>Role</dt><dd>${roleDisplay}</dd></div>
           </dl>
           <p class="muted">Email updates are view-only for now.</p>
           <div class="actions-row account-actions">
@@ -715,41 +738,43 @@ function renderSettingsPage() {
         <div class="settings-panel ${activeSection === 'creator-settings' ? 'is-active' : ''}" data-panel="creator-settings">
           <h2>Creator Settings</h2>
           <div class="toggle-list">
-            <label><input type="checkbox" name="creatorMode" ${creatorSettings.creatorMode ? 'checked' : ''} /> Creator mode</label>
-            <label><input type="checkbox" name="publicCreatorProfile" ${creatorSettings.publicCreatorProfile ?? true ? 'checked' : ''} /> Public creator profile</label>
-            <label><input type="checkbox" name="storefrontVisible" ${creatorSettings.storefrontVisible ?? false ? 'checked' : ''} /> Storefront visibility</label>
-            <label><span>Submission preferences</span><input name="submissionPreferences" value="${creatorSettings.submissionPreferences || ''}" /></label>
+            <label class="toggle-row"><span>Creator mode <small>Enables creator workspace features.</small></span><input type="checkbox" name="creatorMode" ${creatorSettings.creatorMode ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Public creator profile <small>Allow creator profile visibility to visitors.</small></span><input type="checkbox" name="publicCreatorProfile" ${creatorSettings.publicCreatorProfile ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Storefront visibility <small>Controls whether your storefront appears publicly.</small></span><input type="checkbox" name="storefrontVisible" ${creatorSettings.storefrontVisible ?? false ? 'checked' : ''} /></label>
+            <label><span>Submission preferences</span><input name="submissionPreferences" value="${creatorSettings.submissionPreferences || ''}" /><small class="helper-text">Optional note about your release/submission expectations.</small></label>
           </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'security' ? 'is-active' : ''}" data-panel="security">
           <h2>Security</h2>
-          <ul>
+          <ul class="settings-bullet-list">
             <li>Password status is managed by your auth provider.</li>
             <li>Signed in providers: ${providerIds.join(', ') || 'email/password'}</li>
             <li>Sign out all devices is coming soon.</li>
           </ul>
-          <button type="button" class="button button-muted" disabled>Change Password (Soon)</button>
+          <button type="button" class="button button-muted is-coming-soon" disabled aria-disabled="true">Change Password (Soon)</button>
         </div>
 
         <div class="settings-panel ${activeSection === 'notifications' ? 'is-active' : ''}" data-panel="notifications">
           <h2>Notifications</h2>
           <div class="toggle-list">
-            <label><input type="checkbox" name="productUpdates" ${notifications.productUpdates ?? true ? 'checked' : ''} /> Product updates</label>
-            <label><input type="checkbox" name="replies" ${notifications.replies ?? true ? 'checked' : ''} /> Replies</label>
-            <label><input type="checkbox" name="creatorNews" ${notifications.creatorNews ?? true ? 'checked' : ''} /> Creator news</label>
-            <label><input type="checkbox" name="releaseAlerts" ${notifications.releaseAlerts ?? true ? 'checked' : ''} /> Release alerts</label>
-            <label><input type="checkbox" name="marketing" ${notifications.marketing ?? false ? 'checked' : ''} /> Marketing</label>
+            <label class="toggle-row"><span>Product updates</span><input type="checkbox" name="productUpdates" ${notifications.productUpdates ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Replies</span><input type="checkbox" name="replies" ${notifications.replies ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Creator news</span><input type="checkbox" name="creatorNews" ${notifications.creatorNews ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Release alerts</span><input type="checkbox" name="releaseAlerts" ${notifications.releaseAlerts ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Marketing</span><input type="checkbox" name="marketing" ${notifications.marketing ?? false ? 'checked' : ''} /></label>
           </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'connections' ? 'is-active' : ''}" data-panel="connections">
           <h2>Connections</h2>
-          <ul>
-            <li>Google: ${providerIds.includes('google.com') ? 'Connected' : 'Not connected'}</li>
-            <li>Email/Password: ${providerIds.includes('password') ? 'Connected' : 'Not connected'}</li>
-            <li>Spotify / YouTube / Discord links are managed in Public Profile for now.</li>
-          </ul>
+          <div class="connection-list">
+            <article class="connection-row"><strong>Google</strong><span>${providerIds.includes('google.com') ? 'Connected' : 'Connect'}</span></article>
+            <article class="connection-row"><strong>Email/Password</strong><span>${providerIds.includes('password') ? 'Connected' : 'Connect'}</span></article>
+            <article class="connection-row"><strong>Spotify</strong><span>Coming Soon</span></article>
+            <article class="connection-row"><strong>YouTube</strong><span>Coming Soon</span></article>
+            <article class="connection-row"><strong>Discord</strong><span>Coming Soon</span></article>
+          </div>
         </div>
 
         <div class="settings-panel ${activeSection === 'danger-zone' ? 'is-active' : ''}" data-panel="danger-zone">
@@ -910,7 +935,12 @@ function renderSettingsPage() {
       return
     }
 
-    const selectedFeaturedProductIds = formData.getAll('featuredProductIds').map((id) => String(id || '').trim()).filter(Boolean).slice(0, 3)
+    const allowedFeaturedIds = new Set((state.selectableFeaturedProducts || []).map((product) => String(product.id)))
+    const selectedFeaturedProductIds = formData
+      .getAll('featuredProductIds')
+      .map((id) => String(id || '').trim())
+      .filter((id) => allowedFeaturedIds.has(id))
+      .slice(0, 3)
 
     const nextPayload = {
       displayName: displayNameValidation.value,
