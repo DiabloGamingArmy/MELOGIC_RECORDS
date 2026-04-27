@@ -11,6 +11,7 @@ import {
   addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
+  hydrateThreadFromSourceIfNeeded,
   listInboxThreads,
   loadProfilesByUids,
   markThreadDelivered,
@@ -171,11 +172,34 @@ function getProfileMeta(uid, fallback = {}) {
 
 async function hydrateProfilesForThread(thread) {
   if (!thread) return
-  const ids = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  const ids = Array.from(new Set([
+    ...(Array.isArray(thread.participantIds) ? thread.participantIds : []),
+    ...(Array.isArray(thread.otherParticipantIds) ? thread.otherParticipantIds : []),
+    thread.otherParticipantId || ''
+  ].filter(Boolean)))
   if (!ids.length) return
   const loaded = await loadProfilesByUids(ids)
+  console.info(`[inbox] loaded profiles for thread ${thread.id} ${ids.length}`)
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   if (appState.selectedThreadId === thread.id) renderSignedInState()
+}
+
+function upsertThreadInState(nextThread) {
+  if (!nextThread?.id) return
+  const index = appState.threads.findIndex((thread) => thread.id === nextThread.id)
+  if (index === -1) {
+    appState.threads = [nextThread, ...appState.threads]
+    return
+  }
+  appState.threads = appState.threads.map((thread) => (thread.id === nextThread.id ? { ...thread, ...nextThread } : thread))
+}
+
+function threadHasParticipantIds(thread) {
+  return Array.isArray(thread?.participantIds) && thread.participantIds.length > 0
+}
+
+function hasThinMirrorThreads(threads = []) {
+  return threads.some((thread) => !threadHasParticipantIds(thread))
 }
 
 function warnRealtimePermission(key, error) {
@@ -449,6 +473,15 @@ function groupMessages(messages = []) {
 }
 
 function getParticipantMeta(thread, uid) {
+  if (thread.type === 'dm' && uid === thread.otherParticipantId && thread.otherProfile) {
+    return getProfileMeta(uid, {
+      uid,
+      displayName: thread.otherProfile.displayName || thread.otherProfile.username || thread.title,
+      username: thread.otherProfile.username || '',
+      avatarURL: thread.otherProfile.avatarURL || thread.otherProfile.photoURL || thread.imageURL
+    })
+  }
+
   const participants = getThreadParticipants(thread.id)
   const direct = participants.find((entry) => entry.uid === uid)
   if (direct) return getProfileMeta(uid, direct)
@@ -724,7 +757,7 @@ function getConversationHeaderMarkup(thread) {
     `
   }
 
-  const otherParticipant = (thread.participantIds || []).find((uid) => uid !== appState.user?.uid)
+  const otherParticipant = thread.otherParticipantId || (thread.participantIds || []).find((uid) => uid !== appState.user?.uid)
   const headerMeta = thread.type === 'dm' && otherParticipant
     ? getProfileMeta(otherParticipant, { title: thread.title, avatarURL: thread.imageURL })
     : { displayName: thread.title, avatarURL: thread.imageURL }
@@ -1337,6 +1370,11 @@ function bindSharedEvents() {
 
       appState.selectedThreadId = threadId
       appState.errorMessage = ''
+      const selectedMirror = appState.threads.find((thread) => thread.id === threadId)
+      const hydratedThread = await hydrateThreadFromSourceIfNeeded(selectedMirror)
+      if (hydratedThread) {
+        upsertThreadInState(hydratedThread)
+      }
       startMessageSubscription(threadId)
       hydrateProfilesForThread(getSelectedThread())
       renderSignedInState()
@@ -1381,6 +1419,12 @@ function bindSharedEvents() {
   if (textarea && thread) {
     textarea.addEventListener('input', () => {
       appState.composerDraftByThreadId[thread.id] = textarea.value
+      const sendButton = messageForm?.querySelector('button[type="submit"]')
+      const attachments = appState.attachmentDraftByThreadId[thread.id] || []
+      if (sendButton) {
+        sendButton.disabled = !textarea.value.trim() && !attachments.length
+      }
+      console.info('[inbox] composer input updated without full render')
       if (typingStopTimer) clearTimeout(typingStopTimer)
       activeTypingThreadId = thread.id
       setTypingState({
@@ -1493,8 +1537,19 @@ function startThreadDetailSubscriptions(threadId) {
   })
 
   appState.typingUnsubscribe = subscribeToTypingState(threadId, (typingRows) => {
+    const previousRows = appState.typingUsersByThreadId[threadId] || []
     appState.typingUsersByThreadId[threadId] = typingRows
-    if (appState.selectedThreadId === threadId) renderSignedInState()
+    const previousOther = previousRows
+      .filter((entry) => entry?.uid && entry.uid !== appState.user?.uid && entry.isTyping)
+      .map((entry) => entry.uid)
+      .sort()
+      .join('|')
+    const nextOther = typingRows
+      .filter((entry) => entry?.uid && entry.uid !== appState.user?.uid && entry.isTyping)
+      .map((entry) => entry.uid)
+      .sort()
+      .join('|')
+    if (appState.selectedThreadId === threadId && previousOther !== nextOther) renderSignedInState()
   }, (error) => {
     warnRealtimePermission(`typing-${threadId}`, error)
   })
@@ -1502,6 +1557,13 @@ function startThreadDetailSubscriptions(threadId) {
 
 function startMessageSubscription(threadId) {
   if (!threadId || !appState.user?.uid) return
+  const selectedMirror = appState.threads.find((thread) => thread.id === threadId)
+  hydrateThreadFromSourceIfNeeded(selectedMirror).then((hydratedThread) => {
+    if (!hydratedThread) return
+    upsertThreadInState(hydratedThread)
+    hydrateProfilesForThread(hydratedThread)
+  }).catch(() => {})
+
   appState.messageUnsubscribe()
   appState.loadingMessageThreadId = threadId
   startThreadDetailSubscriptions(threadId)
@@ -1545,6 +1607,39 @@ function startThreadSubscription() {
     appState.threadsRealtimeReady = true
     appState.hasLoadedThreadsOnce = true
 
+    if (hasThinMirrorThreads(threads) && !appState.inboxRepairAttempted) {
+      const firstThinThread = threads.find((thread) => !threadHasParticipantIds(thread))
+      if (firstThinThread?.id) {
+        console.info(`[inbox] mirror thread missing participantIds; hydrating from source ${firstThinThread.id}`)
+      }
+      appState.inboxRepairAttempted = true
+      appState.isRepairingInbox = true
+      console.info('[inbox] repairMyInboxThreads started')
+      renderSignedInState()
+      repairMyInboxThreads()
+        .then(async ({ repairedCount }) => {
+          console.info('[inbox] repairMyInboxThreads completed', { repairedCount })
+          console.info('[inbox] repaired inbox mirrors', repairedCount)
+          appState.isRepairingInbox = false
+          const repairedThreads = await listInboxThreads(appState.user.uid)
+          appState.threads = repairedThreads
+          appState.hasLoadedThreadsOnce = true
+          if (repairedThreads.length && !appState.selectedThreadId) {
+            appState.selectedThreadId = repairedThreads[0].id
+          }
+          if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
+            startMessageSubscription(appState.selectedThreadId)
+          }
+          renderSignedInState()
+        })
+        .catch((repairError) => {
+          appState.isRepairingInbox = false
+          warnRealtimePermission(`threads-repair-${appState.user.uid}`, repairError)
+          renderSignedInState()
+        })
+      return
+    }
+
     if (!threads.length) {
       if (!appState.inboxRepairAttempted) {
         appState.inboxRepairAttempted = true
@@ -1554,6 +1649,7 @@ function startThreadSubscription() {
         repairMyInboxThreads()
           .then(async ({ repairedCount }) => {
             console.info('[inbox] repairMyInboxThreads completed', { repairedCount })
+            console.info('[inbox] repaired inbox mirrors', repairedCount)
             appState.isRepairingInbox = false
             const repairedThreads = await listInboxThreads(appState.user.uid)
             appState.threads = repairedThreads

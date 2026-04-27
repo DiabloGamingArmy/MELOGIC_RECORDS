@@ -19,6 +19,7 @@ import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 let hasWarnedThreadFallback = false
+const sourceThreadCache = new Map()
 
 function toIsoDate(value) {
   if (!value) return null
@@ -49,6 +50,15 @@ function normalizeThread(threadId, raw = {}) {
     dmKey: raw.dmKey || '',
     unreadCount: Number(raw.unreadCount || 0)
   }
+}
+
+function needsSourceHydration(thread = {}) {
+  const hasParticipants = Array.isArray(thread.participantIds) && thread.participantIds.length > 0
+  return !hasParticipants
+    || !thread.participantCount
+    || !thread.type
+    || !thread.createdBy
+    || !thread.updatedAt
 }
 
 function getInboxMirrorQuery(uid) {
@@ -82,7 +92,8 @@ export async function listThreadsForUser(uid) {
   }
 
   const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
-  return sortThreadsNewestFirst(threads)
+  const hydratedThreads = await Promise.all(threads.map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
+  return sortThreadsNewestFirst(hydratedThreads)
 }
 
 export function subscribeToThreadsForUser(uid, callback, onError) {
@@ -142,6 +153,46 @@ export async function getThread(threadId) {
   } catch (error) {
     if (String(error?.code || '').includes('permission-denied')) return null
     throw error
+  }
+}
+
+export async function hydrateThreadFromSourceIfNeeded(thread) {
+  if (!thread?.id || !needsSourceHydration(thread)) return thread
+
+  const threadId = thread.id
+  if (sourceThreadCache.has(threadId)) {
+    const cached = sourceThreadCache.get(threadId)
+    return {
+      ...cached,
+      ...thread,
+      participantIds: Array.isArray(thread.participantIds) && thread.participantIds.length
+        ? thread.participantIds
+        : (cached.participantIds || []),
+      participantCount: Number(thread.participantCount || cached.participantCount || 0),
+      otherParticipantIds: Array.isArray(thread.otherParticipantIds) && thread.otherParticipantIds.length
+        ? thread.otherParticipantIds
+        : (cached.participantIds || [])
+    }
+  }
+
+  console.info(`[inbox] mirror thread missing participantIds; hydrating from source ${threadId}`)
+  const sourceThread = await getThread(threadId)
+  if (!sourceThread) return thread
+  sourceThreadCache.set(threadId, sourceThread)
+
+  return {
+    ...sourceThread,
+    ...thread,
+    participantIds: Array.isArray(thread.participantIds) && thread.participantIds.length
+      ? thread.participantIds
+      : (sourceThread.participantIds || []),
+    participantCount: Number(thread.participantCount || sourceThread.participantCount || 0),
+    type: thread.type || sourceThread.type || 'dm',
+    createdBy: thread.createdBy || sourceThread.createdBy || '',
+    updatedAt: thread.updatedAt || sourceThread.updatedAt || null,
+    otherParticipantIds: Array.isArray(thread.otherParticipantIds) && thread.otherParticipantIds.length
+      ? thread.otherParticipantIds
+      : (sourceThread.participantIds || [])
   }
 }
 
