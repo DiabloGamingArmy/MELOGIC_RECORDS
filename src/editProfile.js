@@ -619,7 +619,7 @@ function renderSettingsPage() {
             </div>
             <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
-              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" /></label>
+              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" readonly disabled aria-readonly="true" /><small>Role label is bound to your account type.</small></label>
               <label><span>Location</span><input name="location" value="${state.location}" /></label>
             </div>
             <label><span>Website</span><input name="website" value="${state.website}" placeholder="https://" /></label>
@@ -854,7 +854,6 @@ function renderSettingsPage() {
       username: usernameValidation.normalized,
       bio: String(formData.get('bio') || '').trim(),
       role: state.userData.role || 'user',
-      roleLabel: String(formData.get('roleLabel') || '').trim() || 'User',
       location: String(formData.get('location') || '').trim(),
       website: String(formData.get('website') || '').trim(),
       socials: {

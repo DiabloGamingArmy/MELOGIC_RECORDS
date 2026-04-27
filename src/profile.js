@@ -47,7 +47,8 @@ function fallbackInitials(nameOrEmail) {
 }
 
 function normalizeRole(value) {
-  const role = String(value || 'user').toLowerCase()
+  const role = String(value || 'user').trim().toLowerCase()
+  if (role === 'founder') return 'Founder'
   if (role === 'artist') return 'Artist'
   if (role === 'creator') return 'Creator'
   return 'User'
@@ -80,7 +81,13 @@ function renderSignedInState(user, storedProfile = null) {
   const email = profile.email || user.email || 'No email available'
   const bio = profile.bio || 'No bio yet. Add context about your sound, tools, or creator direction.'
   const photoURL = profile.photoURL || user.photoURL || ''
-  const role = normalizeRole(profile.role)
+  const role = normalizeRole(
+    profile.roleLabel
+    || profile.publicProfile?.roleLabel
+    || profile.privateProfile?.roleLabel
+    || profile.privateProfile?.role
+    || profile.role
+  )
   const metrics = getMetrics(profile)
   const createdAt = profile.createdAt?.toDate ? profile.createdAt.toDate().toLocaleDateString() : 'Recently'
 
