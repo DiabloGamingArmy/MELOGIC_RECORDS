@@ -525,8 +525,16 @@ body.is-inbox-page {
   align-items: flex-start;
 }
 
+.message-cluster.is-self .message-bubble-stack {
+  align-items: flex-end;
+}
+
+.message-cluster.is-other .message-bubble-stack {
+  align-items: flex-start;
+}
+
 .message-bubble {
-  width: fit-content;
+  width: max-content;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
