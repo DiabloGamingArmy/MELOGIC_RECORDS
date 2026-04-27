@@ -11,6 +11,7 @@ import {
   addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
+  deleteThreadForUser,
   hydrateThreadFromSourceIfNeeded,
   listInboxThreads,
   loadProfilesByUids,
@@ -31,6 +32,7 @@ import {
   subscribeToMessages,
   subscribeToThreadParticipants,
   subscribeToTypingState,
+  setThreadPinnedForUser,
   updateThreadDetails
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -115,6 +117,9 @@ const appState = {
   attachmentDraftByThreadId: {},
   attachmentPreviewByThreadId: {},
   messageContextMenu: null,
+  threadActionMenu: null,
+  threadConfirmModal: null,
+  isSavingThreadAction: false,
   deleteSubmenuAnchor: null,
   reactionPickerAnchor: null,
   editingMessageByThreadId: {},
@@ -247,10 +252,28 @@ function upsertThreadInState(nextThread) {
   if (!nextThread?.id) return
   const index = appState.threads.findIndex((thread) => thread.id === nextThread.id)
   if (index === -1) {
-    appState.threads = [nextThread, ...appState.threads]
+    appState.threads = sortInboxThreadsLocal([nextThread, ...appState.threads])
     return
   }
-  appState.threads = appState.threads.map((thread) => (thread.id === nextThread.id ? { ...thread, ...nextThread } : thread))
+  appState.threads = sortInboxThreadsLocal(
+    appState.threads.map((thread) => (thread.id === nextThread.id ? { ...thread, ...nextThread } : thread))
+  )
+}
+
+function sortInboxThreadsLocal(threads = []) {
+  return [...threads].sort((a, b) => {
+    const aPinned = Boolean(a.pinned)
+    const bPinned = Boolean(b.pinned)
+    if (aPinned !== bPinned) return aPinned ? -1 : 1
+    if (aPinned && bPinned) {
+      const aPinDate = a.pinnedAt || a.updatedAt || a.createdAt || ''
+      const bPinDate = b.pinnedAt || b.updatedAt || b.createdAt || ''
+      if (aPinDate !== bPinDate) return aPinDate < bPinDate ? 1 : -1
+    }
+    const aDate = a.lastMessageAt || a.updatedAt || a.createdAt || ''
+    const bDate = b.lastMessageAt || b.updatedAt || b.createdAt || ''
+    return aDate < bDate ? 1 : -1
+  })
 }
 
 function threadHasParticipantIds(thread) {
@@ -370,16 +393,36 @@ function describeAttachmentType(fileOrAttachment = {}) {
 
 function summarizeThreadPreview(thread) {
   if (!thread) return 'No messages yet.'
-  if (thread.lastMessageText) return thread.lastMessageText
-  if (thread.lastMessageType === 'deleted') return 'Message removed'
-  const count = Number(thread.lastMessageAttachmentCount || 0)
-  if (count > 0) return count === 1 ? '1 attachment' : `${count} attachments`
-  if (thread.lastMessageType === 'image') return '1 image'
-  if (thread.lastMessageType === 'video') return '1 video'
-  if (thread.lastMessageType === 'audio') return '1 audio'
-  if (thread.lastMessageType === 'file') return '1 file'
-  if (thread.lastMessageType && thread.lastMessageType !== 'text') return '1 attachment'
+  const lastMessageType = String(thread.lastMessageType || 'text')
+  const attachmentCount = Number(thread.lastMessageAttachmentCount || 0)
+  const threadText = truncateThreadPreview(thread.lastMessageText || '')
+  if (lastMessageType === 'deleted') return 'Message removed'
+  if (threadText) return threadText
+  if (attachmentCount > 0) return attachmentCount === 1 ? '1 attachment' : `${attachmentCount} attachments`
+  if (lastMessageType && lastMessageType !== 'text') {
+    if (lastMessageType === 'deleted') return 'Message removed'
+    return '1 attachment'
+  }
+
+  const cached = appState.messagesByThreadId[thread.id] || []
+  const latest = cached[cached.length - 1]
+  if (latest) {
+    if (latest.deleted) return 'Message removed'
+    const latestText = truncateThreadPreview(latest.body || '')
+    if (latestText) return latestText
+    const cachedAttachmentCount = Array.isArray(latest.attachments) ? latest.attachments.length : 0
+    if (cachedAttachmentCount > 0) return cachedAttachmentCount === 1 ? '1 attachment' : `${cachedAttachmentCount} attachments`
+    if (latest.createdAt || latest.updatedAt) return 'Sent a message'
+  }
+
+  if (thread.lastMessageAt || thread.updatedAt) return 'Sent a message'
   return 'No messages yet.'
+}
+
+function truncateThreadPreview(value, max = 20) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
 }
 
 function summarizeMessageAttachmentLabel(message = {}) {
@@ -498,6 +541,7 @@ function clearRealtimeListeners() {
   appState.isRepairingInbox = false
   activeThreadSubscriptionUid = ''
   activeTypingThreadId = ''
+  closeThreadActionUi()
   if (typingStopTimer) clearTimeout(typingStopTimer)
   if (typingExpiryRefreshTimer) clearTimeout(typingExpiryRefreshTimer)
   floatingRoot.innerHTML = ''
@@ -1061,28 +1105,181 @@ function getMessagesThreadListMarkup() {
       const isActive = thread.id === appState.selectedThreadId
       const unread = Number(thread.unreadCount || 0)
       const subtitle = summarizeThreadPreview(thread)
+      const pinIndicator = thread.pinned
+        ? `
+          <div class="thread-pin-indicator" title="Pinned chat" aria-label="Pinned chat">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 3h8l-1.5 5 3.5 3H6l3.5-3L8 3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+              <path d="M12 11v10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            <span>Pinned</span>
+          </div>
+        `
+        : ''
 
       return `
-        <button class="thread-row ${isActive ? 'is-active' : ''}" type="button" data-select-thread-id="${thread.id}">
-          <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
-            ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${initials || getInitials({ uid: thread.id })}</span>`}
-          </div>
-          <div class="thread-meta">
-            <div class="thread-title-row">
-              <strong>${escapeHtml(thread.title)}</strong>
-              <span>${escapeHtml(formatThreadTimestamp(thread.lastMessageAt || thread.updatedAt || thread.createdAt))}</span>
+        <article class="thread-row ${isActive ? 'is-active' : ''}" data-thread-row-id="${thread.id}">
+          <button class="thread-row-main" type="button" data-select-thread-id="${thread.id}">
+            <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
+              ${thread.imageURL ? `<img src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${initials || getInitials({ uid: thread.id })}</span>`}
             </div>
-            <div class="thread-preview-row">
-              <p>${escapeHtml(subtitle)}</p>
-              ${unread > 0 ? `<small class="thread-unread">${unread > 9 ? '9+' : unread}</small>` : thread.type === 'group' ? '<small class="thread-badge">Group</small>' : ''}
+            <div class="thread-meta">
+              <div class="thread-title-row">
+                <strong>${escapeHtml(thread.title)}</strong>
+                <span>${escapeHtml(formatThreadTimestamp(thread.lastMessageAt || thread.updatedAt || thread.createdAt))}</span>
+              </div>
+              <div class="thread-preview-row">
+                <p>${escapeHtml(subtitle)}</p>
+                ${unread > 0 ? `<small class="thread-unread">${unread > 9 ? '9+' : unread}</small>` : thread.type === 'group' ? '<small class="thread-badge">Group</small>' : ''}
+              </div>
+              ${pinIndicator}
             </div>
-          </div>
-        </button>
+          </button>
+          <button type="button" class="thread-row-menu-trigger" data-thread-menu-id="${thread.id}" aria-label="Open chat actions">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="5" r="1.8" fill="currentColor"/>
+              <circle cx="12" cy="12" r="1.8" fill="currentColor"/>
+              <circle cx="12" cy="19" r="1.8" fill="currentColor"/>
+            </svg>
+          </button>
+        </article>
       `
     })
     .join('')
 
   return `<div class="inbox-thread-list">${rows}</div>`
+}
+
+function getThreadActionMenuMarkup() {
+  const menu = appState.threadActionMenu
+  if (!menu) return ''
+  const thread = appState.threads.find((entry) => entry.id === menu.threadId)
+  if (!thread) return ''
+  const position = clampMenuPosition(menu.x, menu.y, 180, 120)
+  return `
+    <div class="message-context-backdrop" data-thread-menu-close>
+      <div class="thread-actions-menu" style="left:${position.x}px;top:${position.y}px;">
+        <button type="button" data-thread-action="${thread.pinned ? 'unpin' : 'pin'}" data-thread-action-id="${thread.id}">
+          ${thread.pinned ? 'Unpin chat' : 'Pin chat'}
+        </button>
+        <button type="button" data-thread-action="delete" data-thread-action-id="${thread.id}">
+          Delete chat
+        </button>
+      </div>
+    </div>
+  `
+}
+
+function getThreadConfirmModalMarkup() {
+  const modal = appState.threadConfirmModal
+  if (!modal) return ''
+  const map = {
+    pin: {
+      title: 'Pin chat?',
+      body: 'This chat will stay at the top of your conversations.',
+      confirm: 'Pin chat',
+      danger: false
+    },
+    unpin: {
+      title: 'Unpin chat?',
+      body: 'This chat will return to normal conversation order.',
+      confirm: 'Unpin chat',
+      danger: false
+    },
+    delete: {
+      title: 'Delete chat?',
+      body: 'This removes the chat from your inbox. It will not delete the conversation for other people.',
+      confirm: 'Delete chat',
+      danger: true
+    }
+  }
+  const copy = map[modal.type] || map.delete
+  return `
+    <div class="thread-confirm-backdrop" data-thread-confirm-close>
+      <section class="thread-confirm-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(copy.title)}">
+        <h3>${escapeHtml(copy.title)}</h3>
+        <p>${escapeHtml(copy.body)}</p>
+        <div class="thread-confirm-actions">
+          <button type="button" class="button button-muted" data-thread-confirm-close ${appState.isSavingThreadAction ? 'disabled' : ''}>Cancel</button>
+          <button type="button" class="button ${copy.danger ? 'thread-confirm-danger' : 'button-accent'}" data-thread-confirm-submit ${appState.isSavingThreadAction ? 'disabled' : ''}>
+            ${appState.isSavingThreadAction ? 'Saving…' : escapeHtml(copy.confirm)}
+          </button>
+        </div>
+      </section>
+    </div>
+  `
+}
+
+function selectNextThreadAfterDelete(deletedThreadId) {
+  const available = appState.threads.filter((thread) => thread.id !== deletedThreadId && !thread.deleted)
+  appState.selectedThreadId = available[0]?.id || ''
+}
+
+function closeThreadActionUi() {
+  appState.threadActionMenu = null
+  appState.threadConfirmModal = null
+  appState.isSavingThreadAction = false
+}
+
+async function handleThreadConfirmAction() {
+  const modal = appState.threadConfirmModal
+  if (!modal?.threadId || !appState.user?.uid || appState.isSavingThreadAction) return
+  appState.isSavingThreadAction = true
+  renderFloatingUi()
+  try {
+    if (modal.type === 'pin') {
+      await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: true })
+      appState.threads = appState.threads.map((thread) => (thread.id === modal.threadId
+        ? { ...thread, pinned: true, pinnedAt: new Date().toISOString() }
+        : thread))
+      appState.threads = sortInboxThreadsLocal(appState.threads)
+    }
+    if (modal.type === 'unpin') {
+      await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: false })
+      appState.threads = appState.threads.map((thread) => (thread.id === modal.threadId
+        ? { ...thread, pinned: false, pinnedAt: null }
+        : thread))
+      appState.threads = sortInboxThreadsLocal(appState.threads)
+    }
+    if (modal.type === 'delete') {
+      await deleteThreadForUser({ uid: appState.user.uid, threadId: modal.threadId })
+      appState.threads = appState.threads.filter((thread) => thread.id !== modal.threadId)
+      delete appState.messagesByThreadId[modal.threadId]
+      if (appState.selectedThreadId === modal.threadId) {
+        selectNextThreadAfterDelete(modal.threadId)
+        if (appState.selectedThreadId) {
+          saveLastSelectedThread(appState.user.uid, appState.selectedThreadId)
+          startMessageSubscription(appState.selectedThreadId)
+        }
+      }
+    }
+    closeThreadActionUi()
+    renderSignedInState()
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Unable to update chat action.'
+    appState.isSavingThreadAction = false
+    renderFloatingUi()
+  }
+}
+
+function openThreadActionMenu(threadId, event) {
+  if (!threadId) return
+  clearFloatingOverlays()
+  appState.reactionDetailModal = null
+  appState.threadActionMenu = {
+    threadId,
+    x: event.clientX,
+    y: event.clientY
+  }
+  appState.threadConfirmModal = null
+  renderFloatingUi()
+}
+
+function openThreadConfirmModal(type, threadId) {
+  if (!threadId) return
+  appState.threadConfirmModal = { type, threadId }
+  appState.threadActionMenu = null
+  renderFloatingUi()
 }
 
 function getFilterContentMarkup(filterName) {
@@ -1233,7 +1430,175 @@ function getContextMenuMarkup() {
 }
 
 function renderFloatingUi() {
-  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}`
+  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}`
+}
+
+async function handleFloatingMenuAction(button) {
+  const action = button.getAttribute('data-menu-action')
+  const menu = appState.messageContextMenu
+  if (!menu) return
+
+  if (action === 'cancel') {
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'edit') {
+    appState.editingMessageByThreadId[menu.threadId] = menu.messageId
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    appState.editDraftByMessageId[menu.messageId] = message?.body || ''
+    clearFloatingOverlays()
+    renderSignedInState()
+    return
+  }
+  if (action === 'reply') {
+    const thread = appState.threads.find((entry) => entry.id === menu.threadId)
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    if (thread && message) {
+      appState.replyDraftByThreadId[menu.threadId] = buildReplyPreview(thread, message)
+    }
+    clearFloatingOverlays()
+    renderSignedInState()
+    return
+  }
+  if (action === 'react') {
+    appState.reactionPickerAnchor = true
+    appState.deleteSubmenuAnchor = null
+    renderFloatingUi()
+    return
+  }
+  if (action === 'delete') {
+    appState.deleteSubmenuAnchor = true
+    appState.reactionPickerAnchor = null
+    renderFloatingUi()
+    return
+  }
+  if (action === 'profile') {
+    const href = button.getAttribute('data-href')
+    clearFloatingOverlays()
+    renderFloatingUi()
+    window.location.assign(href || ROUTES.profilePublic)
+    return
+  }
+  if (action === 'copy') {
+    const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
+    if (message?.body) {
+      try {
+        await navigator.clipboard.writeText(message.body)
+      } catch {
+        // noop
+      }
+    }
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'view-reactions') {
+    const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
+    const reactorUids = Array.from(new Set(reactions.map((entry) => entry.uid).filter(Boolean)))
+    if (reactorUids.length) {
+      const loaded = await loadProfilesByUids(reactorUids)
+      appState.profileByUid = { ...appState.profileByUid, ...loaded }
+    }
+    appState.reactionDetailModal = { threadId: menu.threadId, messageId: menu.messageId }
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (action === 'delete-me') {
+    await hideMessageForMe({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
+  }
+  if (action === 'delete-everyone' && (menu.senderId === appState.user?.uid || menu.threadCreatedBy === appState.user?.uid)) {
+    await deleteMessageForEveryone({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid })
+  }
+  if (action === 'emoji') {
+    const emoji = button.getAttribute('data-emoji') || ''
+    const reactions = appState.reactionsByThreadId[menu.threadId]?.[menu.messageId] || []
+    const mine = reactions.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
+    const rollback = applyOptimisticReaction({
+      threadId: menu.threadId,
+      messageId: menu.messageId,
+      emoji,
+      uid: appState.user?.uid,
+      add: !mine
+    })
+    renderSignedInState()
+    try {
+      if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
+      else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
+    } catch {
+      rollback()
+      appState.errorMessage = 'Unable to update reaction.'
+      renderSignedInState()
+    }
+  }
+  clearFloatingOverlays()
+  renderFloatingUi()
+}
+
+function setupFloatingEventDelegates() {
+  floatingRoot.addEventListener('click', async (event) => {
+    const threadConfirmSubmit = event.target.closest('[data-thread-confirm-submit]')
+    if (threadConfirmSubmit) {
+      event.preventDefault()
+      event.stopPropagation()
+      await handleThreadConfirmAction()
+      return
+    }
+
+    const threadConfirmClose = event.target.closest('[data-thread-confirm-close]')
+    if (threadConfirmClose) {
+      closeThreadActionUi()
+      renderFloatingUi()
+      return
+    }
+
+    const threadMenuAction = event.target.closest('[data-thread-action]')
+    if (threadMenuAction) {
+      const threadId = threadMenuAction.getAttribute('data-thread-action-id') || ''
+      const action = threadMenuAction.getAttribute('data-thread-action') || ''
+      if (action === 'pin' || action === 'unpin' || action === 'delete') {
+        openThreadConfirmModal(action, threadId)
+      }
+      return
+    }
+
+    const threadMenuClose = event.target.closest('[data-thread-menu-close]')
+    if (threadMenuClose && event.target.hasAttribute('data-thread-menu-close')) {
+      appState.threadActionMenu = null
+      renderFloatingUi()
+      return
+    }
+
+    const modalClose = event.target.closest('[data-reaction-modal-close]')
+    if (modalClose) {
+      if (event.target !== modalClose && !event.target.hasAttribute('data-reaction-modal-close')) return
+      appState.reactionDetailModal = null
+      renderFloatingUi()
+      return
+    }
+
+    const menuActionButton = event.target.closest('[data-menu-action]')
+    if (menuActionButton) {
+      event.preventDefault()
+      event.stopPropagation()
+      await handleFloatingMenuAction(menuActionButton)
+      return
+    }
+
+    const closeBackdrop = event.target.closest('[data-message-context-close]')
+    if (closeBackdrop && event.target.hasAttribute('data-message-context-close')) {
+      clearFloatingOverlays()
+      renderFloatingUi()
+    }
+  })
+
+  floatingRoot.addEventListener('contextmenu', (event) => {
+    if (event.target.closest('[data-message-context-menu]')) return
+    clearFloatingOverlays()
+    appState.threadActionMenu = null
+    renderFloatingUi()
+  })
 }
 
 async function handleFloatingMenuAction(button) {
@@ -1503,7 +1868,7 @@ async function handleCreateChatSubmit() {
 
     if (!appState.threads.some((item) => item.id === threadId)) {
       const optimistic = optimisticThreadFromSelection(threadId, selectedUsers, createdType, buildGroupTitle(selectedUsers))
-      appState.threads = [optimistic, ...appState.threads]
+      appState.threads = sortInboxThreadsLocal([optimistic, ...appState.threads])
     }
 
     appState.activeFilter = 'Messages'
@@ -1513,7 +1878,7 @@ async function handleCreateChatSubmit() {
     try {
       const durableThreads = await listInboxThreads(appState.user.uid)
       console.info('[inbox] one-time fallback loaded', durableThreads.length, 'threads')
-      appState.threads = durableThreads.length ? durableThreads : appState.threads
+      appState.threads = durableThreads.length ? sortInboxThreadsLocal(durableThreads) : appState.threads
       appState.hasLoadedThreadsOnce = true
     } catch (refreshError) {
       warnRealtimePermission(`threads-refresh-after-create-${appState.user.uid}`, refreshError)
@@ -2004,6 +2369,8 @@ function bindSharedEvents() {
       if (appState.selectedThreadId && appState.selectedThreadId !== threadId) {
         delete appState.replyDraftByThreadId[appState.selectedThreadId]
       }
+      appState.threadActionMenu = null
+      appState.threadConfirmModal = null
 
       appState.selectedThreadId = threadId
       saveLastSelectedThread(appState.user?.uid, threadId)
@@ -2022,6 +2389,15 @@ function bindSharedEvents() {
           warnRealtimePermission(`participants-read-${threadId}`, error)
         })
       }
+    })
+  })
+
+  inboxRoot.querySelectorAll('[data-thread-menu-id]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const threadId = button.getAttribute('data-thread-menu-id') || ''
+      openThreadActionMenu(threadId, event)
     })
   })
 
@@ -2207,9 +2583,10 @@ function bindSharedEvents() {
   }
 
   const list = inboxRoot.querySelector('[data-message-list]')
-  if (list && appState.messageContextMenu) {
+  if (list && (appState.messageContextMenu || appState.threadActionMenu)) {
     list.addEventListener('scroll', () => {
       clearFloatingOverlays()
+      appState.threadActionMenu = null
       renderFloatingUi()
     }, { once: true })
   }
@@ -2374,7 +2751,7 @@ function startThreadSubscription() {
 
   appState.threadUnsubscribe()
   appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, (threads) => {
-    appState.threads = threads
+    appState.threads = sortInboxThreadsLocal(threads)
     hydrateProfilesForThreads(threads).catch(() => {})
     appState.isLoadingThreads = false
     appState.threadsRealtimeReady = true
@@ -2395,7 +2772,7 @@ function startThreadSubscription() {
           console.info('[inbox] repaired inbox mirrors', repairedCount)
           appState.isRepairingInbox = false
           const repairedThreads = await listInboxThreads(appState.user.uid)
-          appState.threads = repairedThreads
+          appState.threads = sortInboxThreadsLocal(repairedThreads)
           appState.hasLoadedThreadsOnce = true
           if (repairedThreads.length && !appState.selectedThreadId) {
             appState.selectedThreadId = repairedThreads[0].id
@@ -2426,7 +2803,7 @@ function startThreadSubscription() {
             console.info('[inbox] repaired inbox mirrors', repairedCount)
             appState.isRepairingInbox = false
             const repairedThreads = await listInboxThreads(appState.user.uid)
-            appState.threads = repairedThreads
+            appState.threads = sortInboxThreadsLocal(repairedThreads)
             appState.hasLoadedThreadsOnce = true
             if (repairedThreads.length && !appState.selectedThreadId) {
               appState.selectedThreadId = repairedThreads[0].id
@@ -2458,7 +2835,7 @@ function startThreadSubscription() {
             appState.hasLoadedThreadsOnce = true
             console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
             if (!fallbackThreads.length) return
-            appState.threads = fallbackThreads
+            appState.threads = sortInboxThreadsLocal(fallbackThreads)
             const restored = !getStartUidParam() ? loadLastSelectedThread(appState.user?.uid) : ''
             appState.selectedThreadId = fallbackThreads.some((thread) => thread.id === restored) ? restored : fallbackThreads[0].id
             saveLastSelectedThread(appState.user?.uid, appState.selectedThreadId)
@@ -2504,7 +2881,7 @@ function startThreadSubscription() {
       appState.threadsFallbackPending = false
       appState.hasLoadedThreadsOnce = true
       console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
-      appState.threads = fallbackThreads
+      appState.threads = sortInboxThreadsLocal(fallbackThreads)
       if (fallbackThreads.length && !appState.selectedThreadId) {
         const restored = !getStartUidParam() ? loadLastSelectedThread(appState.user?.uid) : ''
         appState.selectedThreadId = fallbackThreads.some((thread) => thread.id === restored) ? restored : fallbackThreads[0].id
@@ -2546,6 +2923,11 @@ function handleGlobalKeydown(event) {
   }
   if (event.key === 'Escape' && appState.messageContextMenu) {
     clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (event.key === 'Escape' && (appState.threadActionMenu || appState.threadConfirmModal)) {
+    closeThreadActionUi()
     renderFloatingUi()
     return
   }
@@ -2616,7 +2998,7 @@ waitForInitialAuthState().then(async (user) => {
         try {
           const durableThreads = await listInboxThreads(user.uid)
           console.info('[inbox] one-time fallback loaded', durableThreads.length, 'threads')
-          appState.threads = durableThreads.length ? durableThreads : appState.threads
+          appState.threads = durableThreads.length ? sortInboxThreadsLocal(durableThreads) : appState.threads
           appState.hasLoadedThreadsOnce = true
         } catch (refreshError) {
           warnRealtimePermission(`start-dm-refresh-${startUid}`, refreshError)
