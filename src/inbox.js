@@ -105,7 +105,8 @@ const appState = {
   attachmentDraftByThreadId: {},
   threadsRealtimeReady: false,
   threadsFallbackTried: false,
-  threadsFallbackPending: false
+  threadsFallbackPending: false,
+  hasLoadedThreadsOnce: false
 }
 
 let searchDebounceTimer = null
@@ -114,6 +115,7 @@ let activeTypingThreadId = ''
 let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let activeThreadSubscriptionUid = ''
+let processedStartUid = ''
 
 app.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
@@ -249,6 +251,7 @@ function clearRealtimeListeners() {
   appState.typingUnsubscribe = () => {}
   appState.systemUnsubscribe = () => {}
   appState.threadsFallbackPending = false
+  appState.hasLoadedThreadsOnce = false
   activeThreadSubscriptionUid = ''
 }
 
@@ -338,11 +341,20 @@ function getRecentThreadsSidebarMarkup() {
     `
   }
 
-  if (!appState.threads.length) {
+  if (!appState.threads.length && appState.hasLoadedThreadsOnce) {
     return `
       <section class="sidebar-recent-block">
         <p class="sidebar-label">Recent threads</p>
         <p class="sidebar-note">No conversations yet.</p>
+      </section>
+    `
+  }
+
+  if (!appState.threads.length) {
+    return `
+      <section class="sidebar-recent-block">
+        <p class="sidebar-label">Recent threads</p>
+        <p class="sidebar-note">Loading conversations…</p>
       </section>
     `
   }
@@ -811,6 +823,7 @@ async function handleCreateChatSubmit() {
 
     const threadId = thread?.id || thread?.threadId
     if (!threadId) throw new Error('Unable to create chat.')
+    console.info('[inbox] create/open thread succeeded', threadId)
 
     if (!appState.threads.some((item) => item.id === threadId)) {
       const optimistic = optimisticThreadFromSelection(threadId, selectedUsers, createdType, buildGroupTitle(selectedUsers))
@@ -821,6 +834,14 @@ async function handleCreateChatSubmit() {
     appState.selectedThreadId = threadId
     appState.errorMessage = ''
     startMessageSubscription(threadId)
+    try {
+      const durableThreads = await listInboxThreads(appState.user.uid)
+      console.info('[inbox] one-time fallback loaded', durableThreads.length, 'threads')
+      appState.threads = durableThreads.length ? durableThreads : appState.threads
+      appState.hasLoadedThreadsOnce = true
+    } catch (refreshError) {
+      warnRealtimePermission(`threads-refresh-after-create-${appState.user.uid}`, refreshError)
+    }
     closeCreateChatModal()
     renderSignedInState()
   } catch (error) {
@@ -1493,6 +1514,7 @@ function startThreadSubscription() {
   if (!appState.user?.uid) return
   if (activeThreadSubscriptionUid === appState.user.uid) return
 
+  console.info('[inbox] thread subscription started')
   activeThreadSubscriptionUid = appState.user.uid
   appState.isLoadingThreads = true
   appState.threadsRealtimeReady = false
@@ -1505,9 +1527,11 @@ function startThreadSubscription() {
     appState.threads = threads
     appState.isLoadingThreads = false
     appState.threadsRealtimeReady = true
+    appState.hasLoadedThreadsOnce = true
 
     if (!threads.length) {
       if (!appState.threadsFallbackTried) {
+        console.info('[inbox] thread subscription fallback used')
         appState.threadsFallbackTried = true
         appState.threadsFallbackPending = true
         appState.isLoadingThreads = true
@@ -1516,6 +1540,8 @@ function startThreadSubscription() {
           .then((fallbackThreads) => {
             appState.threadsFallbackPending = false
             appState.isLoadingThreads = false
+            appState.hasLoadedThreadsOnce = true
+            console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
             if (!fallbackThreads.length) return
             appState.threads = fallbackThreads
             appState.selectedThreadId = fallbackThreads[0].id
@@ -1554,8 +1580,11 @@ function startThreadSubscription() {
     appState.threadsFallbackTried = true
     appState.threadsFallbackPending = true
     try {
+      console.info('[inbox] thread subscription fallback used')
       const fallbackThreads = await listInboxThreads(appState.user.uid)
       appState.threadsFallbackPending = false
+      appState.hasLoadedThreadsOnce = true
+      console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
       appState.threads = fallbackThreads
       if (fallbackThreads.length && !appState.selectedThreadId) {
         appState.selectedThreadId = fallbackThreads[0].id
@@ -1614,11 +1643,21 @@ waitForInitialAuthState().then(async (user) => {
   hasInitializedAuthObserver = true
 
   const startUid = String(new URLSearchParams(window.location.search).get('start') || '').trim()
-  if (startUid && startUid !== user.uid) {
+  if (startUid && startUid !== user.uid && processedStartUid !== `${user.uid}:${startUid}`) {
+    processedStartUid = `${user.uid}:${startUid}`
     try {
       const thread = await createOrGetDm({ creatorId: user.uid, targetUid: startUid })
       if (thread?.id) {
+        console.info('[inbox] create/open thread succeeded', thread.id)
         appState.selectedThreadId = thread.id
+        try {
+          const durableThreads = await listInboxThreads(user.uid)
+          console.info('[inbox] one-time fallback loaded', durableThreads.length, 'threads')
+          appState.threads = durableThreads.length ? durableThreads : appState.threads
+          appState.hasLoadedThreadsOnce = true
+        } catch (refreshError) {
+          warnRealtimePermission(`start-dm-refresh-${startUid}`, refreshError)
+        }
         startMessageSubscription(thread.id)
         renderSignedInState()
       }
