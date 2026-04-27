@@ -533,6 +533,21 @@ function updateTypingHeartbeat(threadId, value) {
   }, TYPING_IDLE_CLEAR_MS)
 }
 
+function scrollMessageListToBottom({ behavior = 'auto' } = {}) {
+  const list = inboxRoot.querySelector('[data-message-list]')
+  if (!list) return
+  requestAnimationFrame(() => {
+    if (behavior === 'smooth' && typeof list.scrollTo === 'function') {
+      list.scrollTo({ top: list.scrollHeight, behavior })
+    } else {
+      list.scrollTop = list.scrollHeight
+    }
+    requestAnimationFrame(() => {
+      list.scrollTop = list.scrollHeight
+    })
+  })
+}
+
 function revokeAttachmentPreviews(threadId) {
   const urls = appState.attachmentPreviewByThreadId[threadId] || []
   urls.forEach((url) => {
@@ -2089,28 +2104,13 @@ function bindSharedEvents() {
   }
 }
 
-function renderSignedInState(options = {}) {
-  const { forceScrollBottom = false } = options
-  const previousList = inboxRoot.querySelector('[data-message-list]')
-  const previousScrollTop = previousList ? previousList.scrollTop : 0
-  const previousScrollHeight = previousList ? previousList.scrollHeight : 0
-  const distanceFromBottom = previousList ? (previousList.scrollHeight - previousList.scrollTop - previousList.clientHeight) : 0
-  const shouldStickBottom = distanceFromBottom <= 120
-  const relativeBottomOffset = previousScrollHeight - previousScrollTop
+function renderSignedInState() {
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
   renderCreateChatModal()
   renderChatSettingsModal()
   renderFloatingUi()
-
-  const list = inboxRoot.querySelector('[data-message-list]')
-  if (!list) return
-  if (shouldStickBottom || forceScrollBottom) {
-    list.scrollTop = list.scrollHeight
-    return
-  }
-  const nextTop = Math.max(0, list.scrollHeight - relativeBottomOffset)
-  list.scrollTop = Number.isFinite(nextTop) ? nextTop : previousScrollTop
+  scrollMessageListToBottom()
 }
 
 async function handleMessageSubmit(form) {
@@ -2140,7 +2140,8 @@ async function handleMessageSubmit(form) {
     appState.errorMessage = error?.message || 'Unable to send message.'
   }
 
-  renderSignedInState({ forceScrollBottom: true })
+  renderSignedInState()
+  scrollMessageListToBottom()
 }
 
 function startThreadDetailSubscriptions(threadId) {
