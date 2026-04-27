@@ -20,6 +20,7 @@ import {
 import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
+let hasWarnedThreadFallback = false
 
 function toIsoDate(value) {
   if (!value) return null
@@ -55,7 +56,23 @@ function normalizeThread(threadId, raw = {}) {
 }
 
 function getThreadQuery(uid) {
-  return query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), orderBy('lastMessageAt', 'desc'), limit(100))
+  return query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), orderBy('updatedAt', 'desc'), limit(100))
+}
+
+function sortThreadsNewestFirst(threads = []) {
+  return [...threads].sort((a, b) => {
+    const aDate = a.lastMessageAt || a.updatedAt || a.createdAt || ''
+    const bDate = b.lastMessageAt || b.updatedAt || b.createdAt || ''
+    return aDate < bDate ? 1 : -1
+  })
+}
+
+function shouldFallbackListener(error) {
+  const code = String(error?.code || '').toLowerCase()
+  return code.includes('failed-precondition')
+    || code.includes('permission-denied')
+    || code.includes('unavailable')
+    || code.includes('internal')
 }
 
 export async function listThreadsForUser(uid) {
@@ -69,35 +86,55 @@ export async function listThreadsForUser(uid) {
   }
 
   const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
-  return threads.sort((a, b) => {
-    const aDate = a.lastMessageAt || a.updatedAt || a.createdAt || ''
-    const bDate = b.lastMessageAt || b.updatedAt || b.createdAt || ''
-    return aDate < bDate ? 1 : -1
-  })
+  return sortThreadsNewestFirst(threads)
 }
 
 export function subscribeToThreadsForUser(uid, callback, onError) {
   if (!db || !uid || typeof callback !== 'function') return () => {}
 
-  let unsubscribe = () => {}
+  let primaryUnsubscribe = () => {}
+  let fallbackUnsubscribe = () => {}
+  let usingFallback = false
 
-  try {
-    unsubscribe = onSnapshot(getThreadQuery(uid), (snapshot) => {
-      const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
-      callback(threads)
-    }, onError)
-  } catch {
-    unsubscribe = onSnapshot(
+  const startFallbackListener = () => {
+    if (usingFallback) return
+    usingFallback = true
+    try {
+      primaryUnsubscribe()
+    } catch {
+      // noop
+    }
+    if (!hasWarnedThreadFallback) {
+      hasWarnedThreadFallback = true
+      console.warn('[threadService] Primary inbox listener failed; falling back to unordered listener.')
+    }
+    fallbackUnsubscribe = onSnapshot(
       query(collection(db, 'threads'), where('participantIds', 'array-contains', uid), limit(100)),
       (snapshot) => {
         const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
-        callback(threads)
+        callback(sortThreadsNewestFirst(threads))
       },
-      onError
+      (error) => {
+        if (typeof onError === 'function') onError(error)
+      }
     )
   }
 
-  return unsubscribe
+  primaryUnsubscribe = onSnapshot(getThreadQuery(uid), (snapshot) => {
+    const threads = snapshot.docs.map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+    callback(sortThreadsNewestFirst(threads))
+  }, (error) => {
+    if (shouldFallbackListener(error)) {
+      startFallbackListener()
+      return
+    }
+    if (typeof onError === 'function') onError(error)
+  })
+
+  return () => {
+    primaryUnsubscribe()
+    fallbackUnsubscribe()
+  }
 }
 
 export async function getThread(threadId) {

@@ -78,6 +78,9 @@ exports.provisionUserAccount = onCall(async (request) => {
         uid,
         email,
         role: 'user',
+        accountType: 'user',
+        roleLabel: 'User',
+        stats: { products: 0, savedItems: 0, comments: 0, likes: 0, downloads: 0 },
         displayName,
         username: usernameLower,
         bio: '',
@@ -97,7 +100,11 @@ exports.provisionUserAccount = onCall(async (request) => {
         avatarURL: photoURL,
         bannerPath: '',
         bannerURL: '',
-        roleLabel: 'user',
+        roleLabel: 'User',
+        featuredItems: {
+          enabled: false,
+          productIds: []
+        },
         stats: { products: 0, savedItems: 0, comments: 0, likes: 0, downloads: 0 },
         updatedAt,
         ...(profileSnap.exists ? {} : { createdAt: updatedAt })
@@ -118,6 +125,9 @@ exports.provisionUserAccount = onCall(async (request) => {
       uid,
       email,
       role: 'user',
+      accountType: 'user',
+      roleLabel: 'User',
+      stats: { products: 0, savedItems: 0, comments: 0, likes: 0, downloads: 0 },
       displayName,
       photoURL,
       onboardingRequired: true,
