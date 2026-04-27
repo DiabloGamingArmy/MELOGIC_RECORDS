@@ -15,6 +15,7 @@ import {
   loadProfilesByUids,
   markThreadDelivered,
   markThreadRead,
+  repairMyInboxThreads,
   removeParticipantFromThread,
   sendMessage,
   setTypingState,
@@ -106,7 +107,9 @@ const appState = {
   threadsRealtimeReady: false,
   threadsFallbackTried: false,
   threadsFallbackPending: false,
-  hasLoadedThreadsOnce: false
+  hasLoadedThreadsOnce: false,
+  inboxRepairAttempted: false,
+  isRepairingInbox: false
 }
 
 let searchDebounceTimer = null
@@ -252,6 +255,8 @@ function clearRealtimeListeners() {
   appState.systemUnsubscribe = () => {}
   appState.threadsFallbackPending = false
   appState.hasLoadedThreadsOnce = false
+  appState.inboxRepairAttempted = false
+  appState.isRepairingInbox = false
   activeThreadSubscriptionUid = ''
 }
 
@@ -319,6 +324,15 @@ function getRecentThreadsSidebarMarkup() {
           <div class="sidebar-thread-pill is-skeleton"></div>
           <div class="sidebar-thread-pill is-skeleton"></div>
         </div>
+      </section>
+    `
+  }
+
+  if (isMessages && appState.isRepairingInbox) {
+    return `
+      <section class="sidebar-recent-block">
+        <p class="sidebar-label">Recent threads</p>
+        <p class="sidebar-note">Restoring conversations…</p>
       </section>
     `
   }
@@ -1514,12 +1528,14 @@ function startThreadSubscription() {
   if (!appState.user?.uid) return
   if (activeThreadSubscriptionUid === appState.user.uid) return
 
-  console.info('[inbox] thread subscription started')
+  console.info('[inbox] inbox mirror subscription started')
   activeThreadSubscriptionUid = appState.user.uid
   appState.isLoadingThreads = true
   appState.threadsRealtimeReady = false
   appState.threadsFallbackTried = false
   appState.threadsFallbackPending = false
+  appState.inboxRepairAttempted = false
+  appState.isRepairingInbox = false
   renderSignedInState()
 
   appState.threadUnsubscribe()
@@ -1530,8 +1546,36 @@ function startThreadSubscription() {
     appState.hasLoadedThreadsOnce = true
 
     if (!threads.length) {
+      if (!appState.inboxRepairAttempted) {
+        appState.inboxRepairAttempted = true
+        appState.isRepairingInbox = true
+        console.info('[inbox] repairMyInboxThreads started')
+        renderSignedInState()
+        repairMyInboxThreads()
+          .then(async ({ repairedCount }) => {
+            console.info('[inbox] repairMyInboxThreads completed', { repairedCount })
+            appState.isRepairingInbox = false
+            const repairedThreads = await listInboxThreads(appState.user.uid)
+            appState.threads = repairedThreads
+            appState.hasLoadedThreadsOnce = true
+            if (repairedThreads.length && !appState.selectedThreadId) {
+              appState.selectedThreadId = repairedThreads[0].id
+            }
+            if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
+              startMessageSubscription(appState.selectedThreadId)
+            }
+            renderSignedInState()
+          })
+          .catch((repairError) => {
+            appState.isRepairingInbox = false
+            warnRealtimePermission(`threads-repair-${appState.user.uid}`, repairError)
+            renderSignedInState()
+          })
+        return
+      }
+
       if (!appState.threadsFallbackTried) {
-        console.info('[inbox] thread subscription fallback used')
+        console.info('[inbox] inbox mirror fallback used')
         appState.threadsFallbackTried = true
         appState.threadsFallbackPending = true
         appState.isLoadingThreads = true
@@ -1580,7 +1624,7 @@ function startThreadSubscription() {
     appState.threadsFallbackTried = true
     appState.threadsFallbackPending = true
     try {
-      console.info('[inbox] thread subscription fallback used')
+      console.info('[inbox] inbox mirror fallback used')
       const fallbackThreads = await listInboxThreads(appState.user.uid)
       appState.threadsFallbackPending = false
       appState.hasLoadedThreadsOnce = true
