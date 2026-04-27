@@ -21,6 +21,10 @@
   padding: 1rem;
 }
 
+.profile-header-card {
+  padding: 0.86rem 0.92rem;
+}
+
 .profile-empty {
   text-align: center;
 }
@@ -109,6 +113,14 @@
 .profile-meta.compact dd {
   margin: 0;
   color: #dde8ff;
+}
+
+.profile-account-id {
+  font-size: 0.82rem;
+  color: #9fb0d8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .profile-stats {
