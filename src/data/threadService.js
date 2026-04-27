@@ -46,6 +46,7 @@ function normalizeThread(threadId, raw = {}) {
     lastMessageAt: toIsoDate(raw.lastMessageAt),
     lastMessageSenderId: raw.lastMessageSenderId || '',
     lastMessageType: raw.lastMessageType || 'text',
+    lastMessageAttachmentCount: Number(raw.lastMessageAttachmentCount || 0),
     status: raw.status || 'active',
     dmKey: raw.dmKey || '',
     unreadCount: Number(raw.unreadCount || 0)
