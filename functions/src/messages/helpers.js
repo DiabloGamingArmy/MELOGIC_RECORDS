@@ -53,19 +53,25 @@ function buildParticipantPayload({ uid, role = 'member' }) {
 
 function buildInboxSummaryPayload({ threadId, thread, recipientUid }) {
   const participantIds = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  const otherParticipantIds = participantIds.filter((uid) => uid && uid !== recipientUid)
   return {
     threadId,
     type: thread.type,
     title: thread.title || '',
     imageURL: thread.imageURL || '',
-    otherParticipantId: thread.type === 'dm' ? participantIds.find((uid) => uid !== recipientUid) || '' : '',
+    imagePath: thread.imagePath || '',
+    participantIds,
+    participantCount: Number(thread.participantCount || participantIds.length || 0),
+    otherParticipantIds,
     lastMessageText: thread.lastMessageText || '',
     lastMessageAt: thread.lastMessageAt || null,
     lastMessageSenderId: thread.lastMessageSenderId || '',
+    lastMessageType: thread.lastMessageType || 'text',
+    createdBy: thread.createdBy || '',
+    createdAt: thread.createdAt || FieldValue.serverTimestamp(),
+    status: thread.status || 'active',
     unreadCount: 0,
-    archived: false,
-    muted: false,
-    updatedAt: FieldValue.serverTimestamp()
+    updatedAt: thread.updatedAt || FieldValue.serverTimestamp()
   }
 }
 
