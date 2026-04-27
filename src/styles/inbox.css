@@ -526,7 +526,7 @@ body.is-inbox-page {
 }
 
 .message-bubble {
-  width: fit-content;
+  width: max-content;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
