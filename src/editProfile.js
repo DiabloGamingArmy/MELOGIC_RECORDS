@@ -6,6 +6,7 @@ import { initShellChrome } from './components/assetChrome'
 import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile, saveProfileChanges } from './firebase/firestore'
 import { storage } from './firebase/storage'
+import { ROUTES } from './utils/routes'
 
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
@@ -84,7 +85,7 @@ function renderSignedOutState() {
     <article class="edit-card signed-out">
       <h2>Sign in required</h2>
       <p>You must be signed in to edit profile and account settings.</p>
-      <a class="button button-accent" href="/auth.html">Go to Sign In / Sign Up</a>
+      <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
     </article>
   `
 }
@@ -557,7 +558,7 @@ function renderSettingsPage() {
   editRoot.innerHTML = `
     <div class="edit-layout">
       <aside class="settings-sidebar">
-        <a class="back-link" href="/profile.html">← Back to Profile</a>
+        <a class="back-link" href="${ROUTES.profile}">← Back to Profile</a>
         <nav aria-label="Profile settings sections">
           ${SETTINGS_SECTIONS.map((section) => `
             <button type="button" class="settings-nav-btn ${section.key === activeSection ? 'is-active' : ''}" data-section-btn="${section.key}">${section.label}</button>
@@ -618,7 +619,7 @@ function renderSettingsPage() {
             </div>
             <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
-              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" /></label>
+              <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" readonly disabled aria-readonly="true" /><small>Role label is bound to your account type.</small></label>
               <label><span>Location</span><input name="location" value="${state.location}" /></label>
             </div>
             <label><span>Website</span><input name="website" value="${state.website}" placeholder="https://" /></label>
@@ -853,7 +854,6 @@ function renderSettingsPage() {
       username: usernameValidation.normalized,
       bio: String(formData.get('bio') || '').trim(),
       role: state.userData.role || 'user',
-      roleLabel: String(formData.get('roleLabel') || '').trim() || 'User',
       location: String(formData.get('location') || '').trim(),
       website: String(formData.get('website') || '').trim(),
       socials: {
