@@ -6,6 +6,7 @@ import {
   createOrGetDm,
   getThread,
   listThreadsForUser,
+  repairMyInboxThreads,
   removeParticipantFromThread,
   updateThreadDetails,
   subscribeToThreadsForUser
@@ -122,6 +123,7 @@ export {
   subscribeToMessages,
   createOrGetDm,
   createGroupThread,
+  repairMyInboxThreads,
   addParticipantsToThread,
   removeParticipantFromThread,
   updateThreadDetails,
