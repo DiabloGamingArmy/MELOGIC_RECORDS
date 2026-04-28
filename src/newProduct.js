@@ -9,35 +9,29 @@ import { db } from './firebase/firestore'
 import { ROUTES } from './utils/routes'
 
 const PRODUCT_SECTIONS = [
-  { key: 'basics', label: 'Basics' },
-  { key: 'media', label: 'Media' },
-  { key: 'pricing', label: 'Pricing' },
-  { key: 'details', label: 'Details' },
+  { key: 'product-info', label: 'Product Info' },
+  { key: 'media-upload', label: 'Media & Upload' },
   { key: 'contributors', label: 'Contributors' },
-  { key: 'distribution', label: 'Distribution' },
+  { key: 'pricing', label: 'Pricing' },
   { key: 'preview', label: 'Preview' },
+  { key: 'agreements', label: 'Agreements' },
   { key: 'publish', label: 'Publish' }
 ]
+
+const PRODUCT_TYPE_OPTIONS = [
+  'Single Sample', 'Sample Pack', 'Drum Kit', 'Vocal Pack', 'Preset Bank', 'Wavetable Pack',
+  'MIDI Pack', 'Project File', 'Plugin / VST', 'Course / Tutorial', 'Release', 'Other'
+]
+
+const USAGE_LICENSE_OPTIONS = ['Standard License', 'Royalty Free', 'Custom License', 'Exclusive License']
 
 const app = document.querySelector('#app')
 app.innerHTML = `
   ${navShell({ currentPage: 'products' })}
   <main>
-    <section class="standard-hero utility-hero section">
-      <div class="section-inner hero-inner hero-content-layer">
-        <div class="hero-copy">
-          <p class="eyebrow">Marketplace Creator Tools</p>
-          <h1>New Product</h1>
-          <p>Configure product metadata, media, pricing, and publish state for the Melogic marketplace.</p>
-        </div>
-      </div>
-    </section>
-
     <section class="section product-editor-shell">
       <div class="section-inner" data-product-editor-root>
-        <article class="product-editor-card">
-          <p>Loading creator workspace...</p>
-        </article>
+        <article class="product-editor-card"><p>Loading creator workspace...</p></article>
       </div>
     </section>
   </main>
@@ -51,20 +45,17 @@ let editorState = {
   slugLocked: false,
   mediaFiles: {
     cover: null,
-    thumbnail: null
+    thumbnail: null,
+    gallery: [],
+    previewAudio: [],
+    previewVideo: [],
+    deliverables: [],
+    folderDeliverables: []
   },
-  mediaPreview: {
-    cover: '',
-    thumbnail: ''
-  },
-  status: {
-    message: '',
-    state: 'info'
-  },
+  status: { message: '', state: 'info' },
   creatorProfile: null,
   draft: null,
-  requestedProductId: new URLSearchParams(window.location.search).get('id') || '',
-  editPermissionError: ''
+  requestedProductId: new URLSearchParams(window.location.search).get('id') || ''
 }
 
 function getCreatorIdentity(user = null, profile = null, draft = {}) {
@@ -73,33 +64,24 @@ function getCreatorIdentity(user = null, profile = null, draft = {}) {
   const authDisplayName = String(user?.displayName || '').trim()
   const draftDisplayName = String(draft?.artistName || '').trim()
   const draftUsername = String(draft?.artistUsername || '').trim()
-
   const artistId = user?.uid || String(draft?.artistId || '')
-  const artistName = profileDisplayName || authDisplayName || draftDisplayName || 'Creator'
-  const artistUsername = profileUsername || draftUsername
-  const artistProfilePath = artistId ? String(draft?.artistProfilePath || `profiles/${artistId}`) : String(draft?.artistProfilePath || '')
-
   return {
     artistId,
-    artistName,
-    artistUsername,
-    artistProfilePath
+    artistName: profileDisplayName || authDisplayName || draftDisplayName || 'Creator',
+    artistUsername: profileUsername || draftUsername,
+    artistProfilePath: artistId ? String(draft?.artistProfilePath || `profiles/${artistId}`) : String(draft?.artistProfilePath || '')
   }
 }
 
 function applyCreatorIdentity(draft = {}, user = null, profile = null) {
-  return {
-    ...(draft || {}),
-    ...getCreatorIdentity(user, profile, draft)
-  }
+  return { ...(draft || {}), ...getCreatorIdentity(user, profile, draft) }
 }
 
 async function fetchPublicCreatorProfile(uid = '') {
   if (!db || !uid) return null
   try {
     const snapshot = await getDoc(doc(db, 'profiles', uid))
-    if (!snapshot.exists()) return null
-    return snapshot.data() || null
+    return snapshot.exists() ? (snapshot.data() || null) : null
   } catch {
     return null
   }
@@ -113,7 +95,7 @@ function createEmptyProductDraft(user = null, profile = null) {
     slug: '',
     shortDescription: '',
     description: '',
-    productType: 'Sample Pack',
+    productType: 'Single Sample',
     artistId: creator.artistId,
     artistName: creator.artistName,
     artistUsername: creator.artistUsername,
@@ -125,6 +107,8 @@ function createEmptyProductDraft(user = null, profile = null) {
     isFree: true,
     featured: false,
     saleEnabled: false,
+    usageLicense: 'Standard License',
+    version: '',
     licensePath: '',
     categories: '',
     genres: '',
@@ -143,115 +127,50 @@ function createEmptyProductDraft(user = null, profile = null) {
     coverPath: '',
     thumbnailPath: '',
     coverURL: '',
-    thumbnailURL: ''
+    thumbnailURL: '',
+    updatedAt: ''
   }
 }
 
 function readSectionHash() {
   const hash = window.location.hash.replace('#', '')
-  return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'basics'
+  return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'product-info'
 }
 
 function slugify(value) {
-  return String(value || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
+  return String(value || '').toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-')
 }
 
 function escapeHtml(value) {
-  return String(value || '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
+  return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
 }
 
 function getDraftStorageKey(user) {
-  return `melogic:new-product-draft:${user?.uid || 'anonymous'}:v1`
+  return `melogic:new-product-draft:${user?.uid || 'anonymous'}:v2`
 }
 
 function saveDraftState() {
   if (!editorState.user || !editorState.draft) return
   try {
-    const payload = {
-      draft: editorState.draft,
-      slugLocked: editorState.slugLocked,
-      updatedAt: Date.now()
-    }
-    sessionStorage.setItem(getDraftStorageKey(editorState.user), JSON.stringify(payload))
+    sessionStorage.setItem(getDraftStorageKey(editorState.user), JSON.stringify({ draft: editorState.draft, slugLocked: editorState.slugLocked, updatedAt: Date.now() }))
   } catch {
-    // ignore storage issues
+    // ignore
   }
 }
 
 function loadDraftState(user) {
   const empty = createEmptyProductDraft(user, editorState.creatorProfile)
   if (!user) return empty
-
   try {
     const raw = sessionStorage.getItem(getDraftStorageKey(user))
     if (!raw) return empty
     const parsed = JSON.parse(raw)
     editorState.slugLocked = Boolean(parsed?.slugLocked)
-    const hydratedDraft = applyCreatorIdentity({
-      ...empty,
-      ...(parsed?.draft || {})
-    }, user, editorState.creatorProfile)
-    if (isPlaceholderProductId(hydratedDraft.id)) {
-      hydratedDraft.id = ''
-    }
-    return hydratedDraft
+    const hydrated = applyCreatorIdentity({ ...empty, ...(parsed?.draft || {}) }, user, editorState.creatorProfile)
+    if (isPlaceholderProductId(hydrated.id)) hydrated.id = ''
+    return hydrated
   } catch {
     return empty
-  }
-}
-
-function updateDraftField(path, value) {
-  if (!editorState.draft) return
-  editorState.draft[path] = value
-  saveDraftState()
-}
-
-function syncPreviewFromDraft() {
-  if (!editorState.draft) return
-  editorState.mediaPreview.cover = /^https?:\/\//i.test(editorState.draft.coverURL || '') ? editorState.draft.coverURL : ''
-  editorState.mediaPreview.thumbnail = /^https?:\/\//i.test(editorState.draft.thumbnailURL || '') ? editorState.draft.thumbnailURL : ''
-}
-
-function hydrateSectionFields(sectionName) {
-  if (!editorState.draft) return
-  const panel = editorRoot.querySelector(`.editor-panel.${sectionName === readSectionHash() ? 'is-active' : ''}`)
-  const target = panel || editorRoot
-  const fields = target.querySelectorAll('[name]')
-
-  fields.forEach((field) => {
-    const key = field.name
-    if (!(key in editorState.draft)) return
-
-    if (field.type === 'checkbox') {
-      field.checked = Boolean(editorState.draft[key])
-      return
-    }
-
-    const nextValue = editorState.draft[key]
-    field.value = nextValue == null ? '' : String(nextValue)
-  })
-}
-
-function serializeDraftForFirestore(draft) {
-  const safeDraft = applyCreatorIdentity({ ...(draft || {}) }, editorState.user, editorState.creatorProfile)
-  const numericPrice = Number(safeDraft.price || 0)
-
-  return {
-    ...safeDraft,
-    priceCents: Math.max(0, Math.round((Number.isFinite(numericPrice) ? numericPrice : 0) * 100)),
-    isFree: Boolean(safeDraft.isFree),
-    saleEnabled: Boolean(safeDraft.saleEnabled),
-    storefrontVisible: Boolean(safeDraft.storefrontVisible)
   }
 }
 
@@ -259,305 +178,174 @@ function setStatus(message, state = 'info') {
   editorState.status = { message, state }
 }
 
-function getPublishValidationMessage(draft = {}) {
-  const missingTitle = !String(draft.title || '').trim()
-  const missingProductType = !String(draft.productType || '').trim()
-
-  if (missingTitle && missingProductType) {
-    return 'Title and product type are required before publishing.'
-  }
-  if (missingTitle) {
-    return 'Title is required before publishing.'
-  }
-  if (missingProductType) {
-    return 'Product type is required before publishing.'
-  }
-  return ''
+function updateDraftField(key, value) {
+  if (!editorState.draft) return
+  editorState.draft[key] = value
+  saveDraftState()
 }
 
-function renderSignedOut() {
-  editorRoot.innerHTML = `
-    <article class="product-editor-card signed-out">
-      <h2>Sign in required</h2>
-      <p>You need an authenticated account to create or publish marketplace products.</p>
-      <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
-    </article>
-  `
+function tagValuesFor(field) {
+  return String(editorState.draft?.[field] || '').split(',').map((item) => item.trim()).filter(Boolean)
 }
 
-function renderEditPermissionDenied() {
-  editorRoot.innerHTML = `
-    <article class="product-editor-card signed-out">
-      <h2>Listing access denied</h2>
-      <p>You do not have permission to edit this listing.</p>
-      <a class="button button-accent" href="${ROUTES.products}">Back to Products</a>
-    </article>
-  `
+function setTagValues(field, values = []) {
+  updateDraftField(field, values.filter(Boolean).join(', '))
 }
 
-function previewCardMarkup(formData) {
+function tagEditorMarkup(field, label, placeholder) {
+  const values = tagValuesFor(field)
   return `
-    <article class="preview-card">
-      <div class="preview-cover-wrap">
-        ${editorState.mediaPreview.thumbnail || editorState.mediaPreview.cover
-          ? `<img src="${editorState.mediaPreview.thumbnail || editorState.mediaPreview.cover}" alt="Product preview"/>`
-          : '<div class="preview-cover-fallback">No media</div>'}
-      </div>
-      <div class="preview-content">
-        <p class="preview-type">${escapeHtml(formData.productType || 'Sample Pack')}</p>
-        <h3>${escapeHtml(formData.title || 'Untitled product')}</h3>
-        <p class="preview-artist">by ${escapeHtml(formData.artistName || editorState.user?.displayName || 'Artist')}</p>
-        <p class="preview-short">${escapeHtml(formData.shortDescription || 'Short description preview appears here.')}</p>
-        <p class="preview-tags">${escapeHtml(formData.tags || '#tag1, #tag2')}</p>
-        <div class="preview-meta">
-          <span>${formData.isFree ? 'Free' : `${escapeHtml(formData.currency || 'USD')} ${(Number(formData.price || 0)).toFixed(2)}`}</span>
-          <span>👍 0</span><span>💾 0</span><span>💬 0</span>
+    <div class="product-info-field">
+      <label>${label}</label>
+      <div class="tag-editor" data-tag-editor="${field}">
+        <div class="tag-pill-row">
+          ${values.map((tag) => `<span class="tag-pill">${escapeHtml(tag)}<button type="button" data-remove-tag="${escapeHtml(tag)}" data-tag-field="${field}">×</button></span>`).join('')}
         </div>
+        <input type="text" data-tag-input="${field}" placeholder="${escapeHtml(placeholder)}" />
       </div>
-    </article>
+    </div>
   `
+}
+
+function formattedEditDate(value) {
+  if (!value) return new Date().toISOString().slice(0, 10)
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10)
+}
+
+function renderProductInfoPanel() {
+  const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  return `
+    <section class="product-info-grid">
+      <div class="product-info-field"><label>Product Title</label><input name="title" value="${escapeHtml(draft.title)}" /></div>
+      <div class="product-info-field"><label>Slug</label><input name="slug" value="${escapeHtml(draft.slug)}" /></div>
+      <div class="product-info-field"><label>Product Type</label><select name="productType">${PRODUCT_TYPE_OPTIONS.map((option) => `<option ${draft.productType === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
+
+      <div class="product-info-field"><label>Artist / Primary Creator</label><input name="artistName" value="${escapeHtml(draft.artistName)}" readonly class="locked-input" /></div>
+      <div class="product-info-field"><label>Version</label><input name="version" value="${escapeHtml(draft.version || '')}" placeholder="v1.0" /></div>
+      ${tagEditorMarkup('compatibilityNotes', 'Compatibility', 'Ableton, FL Studio, Serum')}
+
+      ${tagEditorMarkup('tags', 'Tags', 'Press Enter to add tags')}
+      ${tagEditorMarkup('categories', 'Categories', 'Press Enter to add categories')}
+      ${tagEditorMarkup('genres', 'Genres', 'Press Enter to add genres')}
+
+      <div class="product-info-field"><label>Short Description</label><input name="shortDescription" value="${escapeHtml(draft.shortDescription)}" /></div>
+      <div class="product-info-field"><label>Release Date</label><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></div>
+      <div class="product-info-field"><label>Usage License</label><select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
+
+      <div class="product-info-field is-wide"><label>Long Description</label><textarea name="description" rows="10">${escapeHtml(draft.description)}</textarea></div>
+      <div class="product-info-side-stack">
+        <div class="product-info-field"><label>Visibility</label><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></div>
+        <div class="product-info-field"><label>Status</label><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="review_pending" ${draft.status === 'review_pending' ? 'selected' : ''}>Review pending</option><option value="needs_changes" ${draft.status === 'needs_changes' ? 'selected' : ''}>Needs changes</option><option value="rejected" ${draft.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></div>
+        <div class="product-info-field"><label>Edit Date</label><input type="date" value="${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}" readonly /></div>
+      </div>
+    </section>
+  `
+}
+
+function renderPlaceholderPanel(section) {
+  return `<section class="placeholder-panel"><h3>${escapeHtml(PRODUCT_SECTIONS.find((item) => item.key === section)?.label || 'Section')}</h3><p>This section will be redesigned in the next pass. Product Info is fully redesigned now.</p></section>`
 }
 
 function renderEditor() {
   const section = readSectionHash()
   const statusClass = editorState.status.message ? `is-visible is-${editorState.status.state}` : ''
-  const draft = editorState.draft || createEmptyProductDraft(editorState.user)
 
   editorRoot.innerHTML = `
-    <div class="product-layout">
-      <aside class="product-sidebar">
-        <a class="back-link" href="${ROUTES.products}">← Back to Products</a>
-        <nav aria-label="Product editor sections">
-          ${PRODUCT_SECTIONS.map((item) => `<button type="button" class="section-btn ${item.key === section ? 'is-active' : ''}" data-section="${item.key}">${item.label}</button>`).join('')}
-        </nav>
-      </aside>
+    <div class="marketplace-editor-page">
+      <header class="marketplace-editor-header">
+        <p class="marketplace-editor-header-kicker">NEW MARKETPLACE ITEM</p>
+        <p class="marketplace-editor-header-copy">Configure product metadata, media, pricing, and publish state for the Melogic marketplace.</p>
+      </header>
 
-      <section class="product-editor-card product-content">
-        <div class="product-status ${statusClass}" data-editor-status>${editorState.status.message || ''}</div>
+      <section class="marketplace-editor-tabs-wrap">
+        <p class="marketplace-editor-pages-label"><span></span>PAGES<span></span></p>
+        <div class="marketplace-editor-tabs">
+          ${PRODUCT_SECTIONS.map((item) => `<button type="button" class="marketplace-editor-tab ${item.key === section ? 'is-active' : ''}" data-section="${item.key}">${item.label}</button>`).join('')}
+        </div>
+      </section>
 
+      <section class="marketplace-editor-workspace">
+        <div class="product-status ${statusClass}">${editorState.status.message || ''}</div>
         <form data-product-form>
-          <article class="editor-panel ${section === 'basics' ? 'is-active' : ''}">
-            <h2>Basics</h2>
-            <p class="panel-copy">Core listing identity and publication status.</p>
-            <div class="field-grid two-col">
-              <label><span>Product Title</span><input name="title" required value="${escapeHtml(draft.title)}" /></label>
-              <label><span>Slug</span><input name="slug" placeholder="auto-generated-from-title" value="${escapeHtml(draft.slug)}" /></label>
-            </div>
-            <div class="field-grid two-col">
-              <label><span>Product Type</span>
-                <select name="productType">
-                  <option ${draft.productType === 'VST' ? 'selected' : ''}>VST</option><option ${draft.productType === 'Sample Pack' ? 'selected' : ''}>Sample Pack</option><option ${draft.productType === 'Preset Bank' ? 'selected' : ''}>Preset Bank</option><option ${draft.productType === 'Wavetables' ? 'selected' : ''}>Wavetables</option><option ${draft.productType === 'Drum Kit' ? 'selected' : ''}>Drum Kit</option><option ${draft.productType === 'Vocal Pack' ? 'selected' : ''}>Vocal Pack</option>
-                </select>
-              </label>
-              <label><span>Artist / Primary Creator</span><input name="artistName" value="${escapeHtml(draft.artistName)}" readonly aria-readonly="true" class="locked-input" /><small class="field-lock-note">Creator is tied to your account.</small></label>
-            </div>
-            <label><span>Short Description</span><textarea name="shortDescription" rows="2">${escapeHtml(draft.shortDescription)}</textarea></label>
-            <label><span>Full Description</span><textarea name="description" rows="5">${escapeHtml(draft.description)}</textarea></label>
-            <div class="field-grid two-col">
-              <label><span>Artist Username</span><input name="artistUsername" placeholder="artist-handle" value="${escapeHtml(draft.artistUsername)}" readonly aria-readonly="true" class="locked-input" /><small class="field-lock-note">Username comes from your public profile.</small></label>
-              <label><span>Artist Profile Path</span><input name="artistProfilePath" placeholder="profiles/uid" value="${escapeHtml(draft.artistProfilePath)}" readonly aria-readonly="true" class="locked-input" /></label>
-            </div>
-            <div class="field-grid two-col">
-              <label><span>Status</span><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="review_pending" ${draft.status === 'review_pending' ? 'selected' : ''}>Review pending</option><option value="needs_changes" ${draft.status === 'needs_changes' ? 'selected' : ''}>Needs changes</option><option value="rejected" ${draft.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></label>
-              <label><span>Visibility</span><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
-            </div>
-          </article>
-
-          <article class="editor-panel ${section === 'media' ? 'is-active' : ''}">
-            <h2>Media</h2>
-            <p class="panel-copy">Upload listing visuals and preview assets. Cover/thumbnail upload is functional in this first pass.</p>
-            <div class="media-grid">
-              <div class="upload-card">
-                <h3>Cover Image</h3>
-                <button type="button" class="button button-accent" data-pick-file="cover">Upload Cover</button>
-                <input class="hidden-file" type="file" accept="image/*" data-cover-input />
-                <p class="muted">Storage target: products/{id}/cover/cover.webp</p>
-              </div>
-              <div class="upload-card">
-                <h3>Thumbnail</h3>
-                <button type="button" class="button button-accent" data-pick-file="thumbnail">Upload Thumbnail</button>
-                <input class="hidden-file" type="file" accept="image/*" data-thumbnail-input />
-                <p class="muted">Storage target: products/{id}/thumbnails/thumb.webp</p>
-              </div>
-            </div>
-            <div class="media-grid placeholders">
-              <div class="upload-card dashed"><h3>Gallery uploads</h3><p class="muted">Ready for products/{id}/gallery/{fileName}</p></div>
-              <div class="upload-card dashed"><h3>Audio previews</h3><p class="muted">Ready for products/{id}/audio-previews/{fileName}</p></div>
-              <div class="upload-card dashed"><h3>Video preview</h3><p class="muted">Ready for products/{id}/video-previews/{fileName}</p></div>
-            </div>
-            <div class="preview-strip">
-              ${editorState.mediaPreview.cover ? `<img src="${editorState.mediaPreview.cover}" alt="Cover preview" />` : '<div class="preview-box">Cover preview</div>'}
-              ${editorState.mediaPreview.thumbnail ? `<img src="${editorState.mediaPreview.thumbnail}" alt="Thumbnail preview" />` : '<div class="preview-box">Thumbnail preview</div>'}
-            </div>
-          </article>
-
-          <article class="editor-panel ${section === 'pricing' ? 'is-active' : ''}">
-            <h2>Pricing</h2>
-            <p class="panel-copy">Set sale settings and currency metadata.</p>
-            <div class="field-grid two-col">
-              <label><span>Price</span><input type="number" step="0.01" min="0" name="price" value="${escapeHtml(draft.price)}" /></label>
-              <label><span>Currency</span><select name="currency"><option ${draft.currency === 'USD' ? 'selected' : ''}>USD</option><option ${draft.currency === 'EUR' ? 'selected' : ''}>EUR</option><option ${draft.currency === 'GBP' ? 'selected' : ''}>GBP</option></select></label>
-            </div>
-            <div class="toggle-grid">
-              <label><input type="checkbox" name="isFree" ${draft.isFree ? 'checked' : ''} /> Free product</label>
-              <label><input type="checkbox" name="featured" ${draft.featured ? 'checked' : ''} /> Featured listing</label>
-              <label><input type="checkbox" name="saleEnabled" ${draft.saleEnabled ? 'checked' : ''} /> Sale enabled (placeholder)</label>
-            </div>
-            <label><span>License path / notes</span><input name="licensePath" placeholder="products/{id}/licenses/license.pdf" value="${escapeHtml(draft.licensePath)}" /></label>
-          </article>
-
-          <article class="editor-panel ${section === 'details' ? 'is-active' : ''}">
-            <h2>Details</h2>
-            <p class="panel-copy">Catalog metadata used for filtering and display.</p>
-            <label><span>Categories (comma separated)</span><input name="categories" placeholder="Samples, Bass, Cinematic" value="${escapeHtml(draft.categories)}" /></label>
-            <label><span>Genres (comma separated)</span><input name="genres" placeholder="Dubstep, Melodic Bass" value="${escapeHtml(draft.genres)}" /></label>
-            <label><span>Tags (comma separated)</span><input name="tags" placeholder="Heavy, Hybrid, Dark" value="${escapeHtml(draft.tags)}" /></label>
-            <label><span>Version / format notes</span><textarea name="formatNotes" rows="2">${escapeHtml(draft.formatNotes)}</textarea></label>
-            <label><span>Compatibility notes</span><textarea name="compatibilityNotes" rows="2">${escapeHtml(draft.compatibilityNotes)}</textarea></label>
-            <label><span>Included files</span><textarea name="includedFiles" rows="2">${escapeHtml(draft.includedFiles)}</textarea></label>
-          </article>
-
-          <article class="editor-panel ${section === 'contributors' ? 'is-active' : ''}">
-            <h2>Contributors</h2>
-            <p class="panel-copy">Add collaborator display names and optional profile IDs.</p>
-            <label><span>Contributor names (comma separated)</span><input name="contributorNames" placeholder="Artist A, Artist B" value="${escapeHtml(draft.contributorNames)}" /></label>
-            <label><span>Contributor profile IDs (comma separated)</span><input name="contributorIds" placeholder="uid1, uid2" value="${escapeHtml(draft.contributorIds)}" /></label>
-          </article>
-
-          <article class="editor-panel ${section === 'distribution' ? 'is-active' : ''}">
-            <h2>Distribution</h2>
-            <p class="panel-copy">Control release and storefront visibility settings.</p>
-            <label><span>Download path</span><input name="downloadPath" placeholder="products/{id}/downloads/file.zip" value="${escapeHtml(draft.downloadPath)}" /></label>
-            <label><span>Audio preview paths (comma separated)</span><input name="previewAudioPaths" placeholder="products/{id}/audio-previews/demo.mp3" value="${escapeHtml(draft.previewAudioPaths)}" /></label>
-            <label><span>Video preview paths (comma separated)</span><input name="previewVideoPaths" placeholder="products/{id}/video-previews/demo.mp4" value="${escapeHtml(draft.previewVideoPaths)}" /></label>
-            <label><span>Release date</span><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></label>
-            <div class="toggle-grid">
-              <label><input type="checkbox" name="storefrontVisible" ${draft.storefrontVisible ? 'checked' : ''} /> Storefront visibility enabled</label>
-            </div>
-          </article>
-
-          <article class="editor-panel ${section === 'preview' ? 'is-active' : ''}" data-preview-panel>
-            <h2>Preview</h2>
-            <p class="panel-copy">Live listing card preview based on current form values.</p>
-            <div data-preview-card>
-              ${previewCardMarkup(draft)}
-            </div>
-          </article>
-
-          <article class="editor-panel ${section === 'publish' ? 'is-active' : ''}">
-            <h2>Publish</h2>
-            <p class="panel-copy">Save draft metadata or promote listing state for publishing.</p>
-            <div class="actions-row">
-              <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
-              <button type="button" class="button button-muted" data-preview-listing>Preview Listing</button>
-              <button type="button" class="button button-accent" data-publish-product>Publish Product</button>
-            </div>
-          </article>
+          ${section === 'product-info' ? renderProductInfoPanel() : renderPlaceholderPanel(section)}
+          <div class="editor-actions">
+            <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
+            <button type="button" class="button button-accent" data-publish-product>Publish Product</button>
+          </div>
         </form>
       </section>
     </div>
   `
 
-  hydrateSectionFields(section)
-
-  const navButtons = editorRoot.querySelectorAll('[data-section]')
-  const form = editorRoot.querySelector('[data-product-form]')
-  const coverInput = editorRoot.querySelector('[data-cover-input]')
-  const thumbnailInput = editorRoot.querySelector('[data-thumbnail-input]')
-
-  navButtons.forEach((button) => {
+  editorRoot.querySelectorAll('[data-section]').forEach((button) => {
     button.addEventListener('click', () => {
-      window.location.hash = button.dataset.section
+      window.location.hash = button.getAttribute('data-section')
       renderEditor()
     })
   })
 
-  editorRoot.querySelector('[data-pick-file="cover"]')?.addEventListener('click', () => coverInput?.click())
-  editorRoot.querySelector('[data-pick-file="thumbnail"]')?.addEventListener('click', () => thumbnailInput?.click())
+  const form = editorRoot.querySelector('[data-product-form]')
 
-  coverInput?.addEventListener('change', () => {
-    const file = coverInput.files?.[0]
-    if (!file) return
-    editorState.mediaFiles.cover = file
-    editorState.mediaPreview.cover = URL.createObjectURL(file)
-    setStatus('Cover image selected. Save draft to upload.', 'info')
-    saveDraftState()
-    renderEditor()
-  })
-
-  thumbnailInput?.addEventListener('change', () => {
-    const file = thumbnailInput.files?.[0]
-    if (!file) return
-    editorState.mediaFiles.thumbnail = file
-    editorState.mediaPreview.thumbnail = URL.createObjectURL(file)
-    setStatus('Thumbnail selected. Save draft to upload.', 'info')
-    saveDraftState()
-    renderEditor()
-  })
-
-  function syncFieldFromEvent(event) {
+  form?.addEventListener('input', (event) => {
     const target = event.target
     if (!target?.name) return
-
     if (!(target.name in editorState.draft)) return
     if (['artistName', 'artistUsername', 'artistProfilePath', 'artistId'].includes(target.name)) return
-
     const value = target.type === 'checkbox' ? target.checked : target.value
     updateDraftField(target.name, value)
-
     if (target.name === 'slug') {
       editorState.slugLocked = Boolean(String(value || '').trim())
       saveDraftState()
       return
     }
-
     if (target.name === 'title' && !editorState.slugLocked) {
       const nextSlug = slugify(value)
       updateDraftField('slug', nextSlug)
-      const slugInput = form?.querySelector('input[name="slug"]')
+      const slugInput = form.querySelector('input[name="slug"]')
       if (slugInput) slugInput.value = nextSlug
     }
+  })
 
-    if (readSectionHash() === 'preview') {
-      const previewEl = editorRoot.querySelector('[data-preview-card]')
-      if (previewEl) previewEl.innerHTML = previewCardMarkup(editorState.draft)
+  form?.addEventListener('keydown', (event) => {
+    const input = event.target
+    if (!(input instanceof HTMLInputElement)) return
+    const field = input.getAttribute('data-tag-input')
+    if (!field) return
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      const value = input.value.trim()
+      if (!value) return
+      const values = [...tagValuesFor(field), value]
+      setTagValues(field, Array.from(new Set(values)))
+      input.value = ''
+      renderEditor()
+      return
     }
-  }
+    if (event.key === 'Backspace' && !input.value.trim()) {
+      const values = tagValuesFor(field)
+      values.pop()
+      setTagValues(field, values)
+      renderEditor()
+    }
+  })
 
-  form?.addEventListener('input', syncFieldFromEvent)
-  form?.addEventListener('change', syncFieldFromEvent)
+  editorRoot.querySelectorAll('[data-remove-tag]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const field = button.getAttribute('data-tag-field') || ''
+      const value = button.getAttribute('data-remove-tag') || ''
+      setTagValues(field, tagValuesFor(field).filter((tag) => tag !== value))
+      renderEditor()
+    })
+  })
 
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
-
-    if (desiredStatus === 'published') {
-      const publishValidationMessage = getPublishValidationMessage(editorState.draft)
-      if (publishValidationMessage) {
-        console.warn('[new-product] Publish validation failed', publishValidationMessage)
-        setStatus(publishValidationMessage, 'error')
-        renderEditor()
-        return
-      }
-    }
-
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
-
     try {
       const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
-      const draftForSave = serializeDraftForFirestore({
-        ...editorState.draft,
-        profile: editorState.creatorProfile || {},
-        currentStatus: editorState.draft.status || 'draft',
-        status: desiredStatus === 'published' ? 'review_pending' : desiredStatus
-      })
-      const payload = buildProductPayload(draftForSave, editorState.user)
-      console.info('[new-product] Save flow debug.', {
-        productId: wasNewDraft ? '(new draft id pending)' : editorState.draft.id,
-        pendingCover: editorState.mediaFiles.cover instanceof File,
-        pendingThumbnail: editorState.mediaFiles.thumbnail instanceof File,
-        desiredStatus
-      })
+      const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, currentStatus: editorState.draft.status || 'draft', status: desiredStatus === 'published' ? 'review_pending' : desiredStatus }, editorState.user)
       const result = await saveProductDraft(editorState.user, payload, {
         productId: wasNewDraft ? '' : editorState.draft.id,
         status: desiredStatus === 'published' ? 'review_pending' : desiredStatus,
@@ -568,99 +356,47 @@ function renderEditor() {
           renderEditor()
         }
       })
-
       updateDraftField('id', result.productId)
       updateDraftField('status', result.payload?.status || editorState.draft.status)
       updateDraftField('slug', payload.slug)
-      updateDraftField('coverPath', result.mediaUploads.coverPath || payload.coverPath || '')
-      updateDraftField('thumbnailPath', result.mediaUploads.thumbnailPath || payload.thumbnailPath || '')
-      updateDraftField('coverURL', result.mediaUploads.coverURL || payload.coverURL || editorState.draft.coverURL || '')
-      updateDraftField('thumbnailURL', result.mediaUploads.thumbnailURL || payload.thumbnailURL || editorState.draft.thumbnailURL || '')
-      syncPreviewFromDraft()
-      editorState.mediaFiles.cover = null
-      editorState.mediaFiles.thumbnail = null
       if (desiredStatus === 'published') {
         const reviewResult = await requestProductReview(result.productId)
         updateDraftField('status', reviewResult?.status || 'review_pending')
-        setStatus(
-          reviewResult?.status === 'published'
-            ? 'Product published after review.'
-            : reviewResult?.status === 'needs_changes'
-              ? 'Changes require review.'
-              : 'Submitted for review.',
-          'success'
-        )
-      } else {
-        setStatus('Draft saved.', 'success')
       }
+      setStatus(desiredStatus === 'published' ? 'Submitted for review.' : 'Draft saved.', 'success')
       renderEditor()
     } catch (error) {
-      const stage = error?.stage || 'unknown'
-      if (stage === 'draft-initialization' || stage === 'draft-verification') {
-        console.warn('[new-product] Draft initialization failed', error?.code || error?.message || error)
-      } else if (stage === 'cover-upload') {
-        console.warn('[new-product] Cover upload failed', error?.code || error?.message || error)
-      } else if (stage === 'thumbnail-upload') {
-        console.warn('[new-product] Thumbnail upload failed', error?.code || error?.message || error)
-      } else if (stage === 'final-firestore-merge') {
-        console.warn('[new-product] Final Firestore merge failed', error?.code || error?.message || error)
-      } else if (stage === 'publish-transition') {
-        console.warn('[new-product] Publish state update failed', error?.code || error?.message || error)
-      } else {
-        console.warn('[new-product] Draft save flow failed', error?.code || error?.message || error)
-      }
-
-      const friendlyMessage = stage === 'draft-initialization' || stage === 'draft-verification'
-        ? 'Could not initialize draft.'
-        : stage === 'cover-upload'
-          ? 'Cover upload failed.'
-          : stage === 'thumbnail-upload'
-            ? 'Thumbnail upload failed.'
-            : stage === 'final-firestore-merge'
-              ? 'Final product metadata save failed.'
-                : stage === 'publish-transition'
-                  ? 'Review submission failed.'
-                  : desiredStatus === 'published'
-                  ? 'Could not submit for review.'
-                  : 'Could not save draft.'
-      setStatus(friendlyMessage, 'error')
+      console.warn('[new-product] save failed', error?.code || error?.message || error)
+      setStatus(desiredStatus === 'published' ? 'Could not submit for review.' : 'Could not save draft.', 'error')
       renderEditor()
     }
   }
 
   editorRoot.querySelector('[data-save-draft]')?.addEventListener('click', () => persistProduct('draft'))
   editorRoot.querySelector('[data-publish-product]')?.addEventListener('click', () => persistProduct('published'))
-  editorRoot.querySelector('[data-preview-listing]')?.addEventListener('click', () => {
-    window.location.hash = 'preview'
-    setStatus('Preview panel updated from current draft state.', 'info')
-    renderEditor()
-  })
 }
 
 async function initPage() {
   const user = await waitForInitialAuthState()
   if (!user) {
-    renderSignedOut()
+    editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Sign in required</h2><a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a></article>`
     return
   }
 
   editorState.user = user
   editorState.creatorProfile = await fetchPublicCreatorProfile(user.uid)
+
   if (editorState.requestedProductId) {
     const existingProduct = await getProductById(editorState.requestedProductId)
     if (!existingProduct || existingProduct.artistId !== user.uid) {
-      renderEditPermissionDenied()
+      editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Listing access denied</h2><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`
       return
     }
-    editorState.draft = applyCreatorIdentity({
-      ...createEmptyProductDraft(user, editorState.creatorProfile),
-      ...existingProduct,
-      id: existingProduct.id
-    }, user, editorState.creatorProfile)
+    editorState.draft = applyCreatorIdentity({ ...createEmptyProductDraft(user, editorState.creatorProfile), ...existingProduct, id: existingProduct.id }, user, editorState.creatorProfile)
   } else {
     editorState.draft = applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile)
   }
-  syncPreviewFromDraft()
+
   renderEditor()
 }
 
