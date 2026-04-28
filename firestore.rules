@@ -175,7 +175,12 @@ service cloud.firestore {
         'title',
         'shortDescription',
         'description',
+        'version',
+        'usageLicense',
         'productType',
+        'productKind',
+        'previewMode',
+        'distributionMode',
 
         'categories',
         'genres',
@@ -208,6 +213,13 @@ service cloud.firestore {
         'previewVideoPaths',
         'downloadPath',
         'licensePath',
+        'assetSummary',
+        'primaryPreviewPath',
+        'primaryPreviewType',
+        'primaryPreviewDuration',
+        'primaryDownloadPath',
+        'primaryDownloadBytes',
+        'previewAssignment',
 
         'priceCents',
         'currency',
@@ -278,6 +290,8 @@ service cloud.firestore {
           request.resource.data.description is string
           && request.resource.data.description.size() <= 20000
         ))
+        && (!('version' in request.resource.data) || request.resource.data.version is string)
+        && (!('usageLicense' in request.resource.data) || request.resource.data.usageLicense is string)
         && (!('productType' in request.resource.data) || request.resource.data.productType is string)
         && (!('priceCents' in request.resource.data) || (
           request.resource.data.priceCents is number
@@ -408,6 +422,9 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read, write: if isOwner(uid);
+      match /entitlements/{productId} {
+        allow read, write: if isOwner(uid);
+      }
 
       match /inboxThreads/{threadId} {
         allow read, write: if isOwner(uid);
@@ -477,6 +494,14 @@ service cloud.firestore {
           && request.resource.data.body.size() <= 5000;
         allow update, delete: if signedIn()
           && resource.data.uid == request.auth.uid;
+      }
+
+      match /files/{fileId} {
+        allow read: if (get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+            && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public')
+          || (signedIn() && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid);
+        allow create, update, delete: if signedIn()
+          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
       }
     }
 

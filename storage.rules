@@ -87,6 +87,11 @@ service firebase.storage {
       allow write: if isProductOwner(productId) && request.resource != null && request.resource.size <= 1024 * 1024 * 1024;
     }
 
+    match /products/{productId}/files/{fileId}/{fileName} {
+      allow read: if false;
+      allow write: if isProductOwner(productId) && request.resource != null && request.resource.size <= 512 * 1024 * 1024;
+    }
+
     match /products/{productId}/licenses/{fileName} {
       allow read: if false;
       allow write: if isProductOwner(productId) && isPdfUpload(20 * 1024 * 1024);
