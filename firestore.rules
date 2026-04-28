@@ -227,6 +227,7 @@ service cloud.firestore {
         'previewAssignment',
 
         'priceCents',
+        'payoutTargetCents',
         'currency',
         'isFree',
         'saleEnabled',
@@ -302,6 +303,11 @@ service cloud.firestore {
           request.resource.data.priceCents is number
           && request.resource.data.priceCents >= 0
           && request.resource.data.priceCents <= 10000000
+        ))
+        && (!('payoutTargetCents' in request.resource.data) || (
+          request.resource.data.payoutTargetCents is number
+          && request.resource.data.payoutTargetCents >= 0
+          && request.resource.data.payoutTargetCents <= 10000000
         ))
         && (!('currency' in request.resource.data) || request.resource.data.currency in ['USD', 'EUR', 'GBP'])
         && (!('isFree' in request.resource.data) || request.resource.data.isFree is bool)
