@@ -1,5 +1,5 @@
 import { doc, getDoc } from 'firebase/firestore'
-import { getDownloadURL, ref } from 'firebase/storage'
+import { getDownloadURL, listAll, ref } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { storage } from '../firebase/storage'
 
@@ -12,6 +12,7 @@ const FALLBACK_SELLER_AGREEMENT_CONFIG = Object.freeze({
   format: 'markdown',
   requiresSignature: true
 })
+const AGREEMENT_FOLDER_PATH = 'legal/agreements/marketplace-product-seller-agreement'
 
 function isDevEnvironment() {
   return typeof import.meta !== 'undefined' && Boolean(import.meta?.env?.DEV)
@@ -57,4 +58,46 @@ export async function getAgreementMarkdown(storagePath = '') {
   const response = await fetch(downloadUrl)
   if (!response.ok) throw new Error('agreement-download-failed')
   return response.text()
+}
+
+function parseVersionFromPath(path = '') {
+  const match = String(path || '').match(/\/(v(\d+))\.md$/i)
+  if (!match) return null
+  return {
+    version: match[1].toLowerCase(),
+    versionNumber: Number(match[2]),
+    storagePath: path
+  }
+}
+
+export async function getLatestMarketplaceSellerAgreement() {
+  const config = await getMarketplaceSellerAgreementConfig()
+  const fallbackPath = config.storagePath || `${AGREEMENT_FOLDER_PATH}/v1.md`
+  const fallbackVersion = String(config.activeVersion || 'v1').toLowerCase()
+
+  if (!storage) return { ...config, storagePath: fallbackPath, activeVersion: fallbackVersion }
+
+  try {
+    const folderRef = ref(storage, AGREEMENT_FOLDER_PATH)
+    const listing = await listAll(folderRef)
+    const candidates = listing.items
+      .map((item) => parseVersionFromPath(item.fullPath))
+      .filter(Boolean)
+      .sort((a, b) => b.versionNumber - a.versionNumber)
+    if (candidates.length) {
+      return {
+        ...config,
+        storagePath: candidates[0].storagePath,
+        activeVersion: candidates[0].version
+      }
+    }
+  } catch (error) {
+    devWarn('[legalAgreementService] Could not list agreement versions from Storage; falling back to config/default.', error?.code || error?.message || error)
+  }
+
+  return {
+    ...config,
+    storagePath: fallbackPath,
+    activeVersion: fallbackVersion
+  }
 }

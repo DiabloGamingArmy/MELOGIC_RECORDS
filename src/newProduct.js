@@ -18,7 +18,7 @@ import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
-import { getAgreementMarkdown, getMarketplaceSellerAgreementConfig } from './data/legalAgreementService'
+import { getAgreementMarkdown, getLatestMarketplaceSellerAgreement } from './data/legalAgreementService'
 
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
@@ -77,12 +77,14 @@ let editorState = {
   marketplacePricingSettings: null,
   agreement: {
     config: null,
+    latestVersion: '',
     markdown: '',
     loading: false,
     error: '',
     signedName: '',
     accepting: false
   },
+  publishConfirmOpen: false,
   status: { message: '', state: 'info' },
   creatorProfile: null,
   draft: null,
@@ -509,7 +511,7 @@ function sellerAgreementState() {
   const config = editorState.agreement.config || {}
   const current = editorState.draft?.sellerAgreement || null
   const acceptedVersion = String(editorState.draft?.sellerAgreementVersion || current?.version || '')
-  const activeVersion = String(config.activeVersion || '')
+  const activeVersion = String(editorState.agreement.latestVersion || config.activeVersion || '')
   const accepted = Boolean(editorState.draft?.sellerAgreementAccepted) && acceptedVersion === activeVersion
   const versionChanged = Boolean(editorState.draft?.sellerAgreementAccepted) && acceptedVersion && activeVersion && acceptedVersion !== activeVersion
   return { accepted, versionChanged, current }
@@ -532,7 +534,7 @@ function renderAgreementsPanel() {
                 ? '<p class="agreement-error">Could not load the seller agreement. Please try again later.</p>'
                 : renderAgreementMarkdown(editorState.agreement.markdown)}
           </div>
-          ${agreementState.versionChanged ? '<p class="pricing-warning">A newer agreement version is available and must be accepted before publishing.</p>' : ''}
+          ${agreementState.versionChanged ? '<p class="pricing-warning">A newer seller agreement version is available and must be accepted before publishing.</p>' : ''}
           ${agreementState.accepted ? `<p class="agreement-accepted-status">Agreement accepted by ${escapeHtml(agreementState.current?.signedName || '')}${agreementState.current?.acceptedAt ? ` on ${escapeHtml(formatAgreementAcceptedDate(agreementState.current.acceptedAt))}` : ''}.</p>` : ''}
           <div class="agreement-signature-row">
             <div class="agreement-signature-field">
@@ -550,6 +552,151 @@ function renderAgreementsPanel() {
           ${config.title ? `<p>Current: ${escapeHtml(config.title)} ${escapeHtml(String(config.activeVersion || ''))}</p>` : ''}
         </aside>
       </div>
+    </section>
+  `
+}
+
+function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
+  const title = String(draft.title || '').trim()
+  const slug = String(draft.slug || '').trim()
+  const shortDescription = String(draft.shortDescription || '').trim()
+  const description = String(draft.description || '').trim()
+  const coverReady = Boolean(draft.coverPath || draft.coverURL || state.mediaPreview?.cover || state.mediaFiles?.cover)
+  const thumbnailReady = Boolean(draft.thumbnailPath || draft.thumbnailURL || state.mediaFiles?.thumbnail || state.mediaPreview?.cover)
+  const deliverablesCount = (state.mediaFiles?.deliverables?.length || 0) + (state.mediaFiles?.folderDeliverables?.length || 0)
+  const hasDownload = Boolean(draft.downloadPath || deliverablesCount > 0)
+  const hasPreviewMedia = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || state.mediaFiles?.previewAudio?.length || state.mediaFiles?.previewVideo?.length)
+  const previewDecision = hasPreviewMedia || Boolean(draft.previewMode === 'none')
+  const priceCents = normalizePriceToCents(draft.price)
+  const pendingContributors = Number((draft.pendingContributorIds || []).length || 0)
+  const acceptedContributors = Number(draft.contributorCount || 0)
+  const latestVersion = String(latestAgreement?.activeVersion || state.agreement?.latestVersion || '').toLowerCase()
+  const acceptedVersion = String(draft.sellerAgreementVersion || '').toLowerCase()
+  const agreementAccepted = Boolean(draft.sellerAgreementAccepted)
+  const agreementVersionMatch = agreementAccepted && acceptedVersion && latestVersion && acceptedVersion === latestVersion
+  return [
+    { id: 'title', label: 'Product title exists', status: title ? 'ready' : 'blocked', message: title ? 'Title added.' : 'Add a product title.', targetSection: 'product-info' },
+    { id: 'type', label: 'Product type selected', status: draft.productType ? 'ready' : 'blocked', message: draft.productType ? 'Product type selected.' : 'Select a product type.', targetSection: 'product-info' },
+    { id: 'slug', label: 'Slug exists', status: slug ? 'ready' : 'blocked', message: slug ? 'Slug ready.' : 'Add a slug.', targetSection: 'product-info' },
+    { id: 'short', label: 'Short description exists', status: shortDescription ? 'ready' : 'blocked', message: shortDescription ? 'Short description ready.' : 'Add a short description.', targetSection: 'product-info' },
+    { id: 'long', label: 'Long description exists', status: description ? 'ready' : 'blocked', message: description ? 'Long description ready.' : 'Add a long description.', targetSection: 'product-info' },
+    { id: 'cover', label: 'Cover image exists', status: coverReady ? 'ready' : 'blocked', message: coverReady ? 'Cover ready.' : 'Upload a cover image.', targetSection: 'media-upload' },
+    { id: 'thumbnail', label: 'Thumbnail exists', status: thumbnailReady ? 'ready' : 'blocked', message: thumbnailReady ? 'Thumbnail ready.' : 'Add a thumbnail image.', targetSection: 'media-upload' },
+    { id: 'deliverables', label: 'Deliverable/download exists', status: hasDownload ? 'ready' : 'blocked', message: hasDownload ? 'Download source detected.' : 'Add at least one deliverable.', targetSection: 'media-upload' },
+    { id: 'preview', label: 'Preview media decision made', status: previewDecision ? (hasPreviewMedia ? 'ready' : 'warning') : 'blocked', message: hasPreviewMedia ? 'Preview media assigned.' : (previewDecision ? 'No preview selected intentionally.' : 'Assign preview media or choose no preview.'), targetSection: 'media-upload' },
+    { id: 'price', label: 'Price/currency valid', status: draft.currency && (draft.isFree || priceCents > 0) ? 'ready' : 'blocked', message: draft.currency && (draft.isFree || priceCents > 0) ? 'Pricing configured.' : 'Set pricing and currency.', targetSection: 'pricing' },
+    { id: 'contributors', label: 'Contributors resolved', status: pendingContributors > 0 ? 'warning' : 'ready', message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
+    { id: 'agreement', label: 'Seller agreement accepted', status: agreementAccepted ? 'ready' : 'blocked', message: agreementAccepted ? `Accepted ${draft.sellerAgreementVersion || ''}.` : 'Accept seller agreement.', targetSection: 'agreements' },
+    { id: 'agreement-version', label: 'Agreement version matches latest', status: agreementVersionMatch ? 'ready' : 'blocked', message: agreementVersionMatch ? `Latest version ${latestVersion} accepted.` : `Latest seller agreement ${latestVersion || 'version'} must be accepted before publishing.`, targetSection: 'agreements' },
+    { id: 'visibility', label: 'Visibility selected', status: draft.visibility ? 'ready' : 'blocked', message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
+    { id: 'quota', label: 'No quota errors', status: 'ready', message: 'No quota errors detected.', targetSection: 'media-upload' },
+    { id: 'save-errors', label: 'No upload/save errors', status: state.status?.state === 'error' ? 'warning' : 'ready', message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' }
+  ]
+}
+
+function calculateLaunchReadiness(checks = []) {
+  const readyCount = checks.filter((item) => item.status === 'ready').length
+  const warningCount = checks.filter((item) => item.status === 'warning').length
+  const blockedCount = checks.filter((item) => item.status === 'blocked').length
+  const totalCount = checks.length || 1
+  return {
+    readyCount,
+    warningCount,
+    blockedCount,
+    totalCount,
+    percent: Math.round((readyCount / totalCount) * 100)
+  }
+}
+
+function renderPublishPanel() {
+  const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const checks = buildPublishChecklist(draft, editorState, editorState.agreement.config || {})
+  const readiness = calculateLaunchReadiness(checks)
+  const blockedCount = readiness.blockedCount
+  const agreementLatest = editorState.agreement.latestVersion || editorState.agreement.config?.activeVersion || 'v1'
+  const agreementAccepted = draft.sellerAgreementVersion || '—'
+  const fileEntries = gatherFileEntries()
+  const deliverables = fileEntries.filter((item) => item.isDeliverable)
+  const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
+  const previewAssigned = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
+  const canSubmit = blockedCount === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
+
+  return `
+    <section class="publish-workspace">
+      <div class="publish-grid">
+        <article class="publish-summary-card">
+          <h3>Product Summary</h3>
+          <div class="publish-cover-preview">${editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL ? `<img src="${escapeHtml(editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL)}" alt="Product cover preview" />` : '<span>No cover</span>'}</div>
+          <div class="publish-summary-meta">
+            <p><strong>${escapeHtml(draft.title || 'Untitled product')}</strong></p>
+            <p>${escapeHtml(draft.productType || '—')} · by ${escapeHtml(draft.artistName || 'Creator')}</p>
+            <p>${draft.isFree ? 'Free' : `${escapeHtml(draft.currency || 'USD')} ${escapeHtml(centsToPriceInput(normalizePriceToCents(draft.price)))}`}</p>
+            <p>Status: ${escapeHtml(draft.status || 'draft')} · Visibility: ${escapeHtml(draft.visibility || 'private')}</p>
+            <p>${escapeHtml(draft.shortDescription || 'No short description yet.')}</p>
+            <p>Preview: ${previewAssigned ? 'Assigned' : 'Not assigned'}</p>
+            <p>Deliverables: ${deliverables.length} · ${formatBytes(deliverableBytes)}</p>
+            <p>Contributors: ${Number(draft.contributorCount || 0)}</p>
+            <p>Agreement: ${draft.sellerAgreementAccepted ? `Accepted (${escapeHtml(draft.sellerAgreementVersion || '')})` : 'Not accepted'}</p>
+          </div>
+        </article>
+
+        <article class="publish-checklist-panel">
+          <h3>Publish Checklist</h3>
+          ${checks.map((check) => `
+            <div class="publish-checklist-row is-${check.status}">
+              <div>
+                <p><strong>${check.status === 'ready' ? 'Ready' : check.status === 'warning' ? 'Warning' : 'Blocked'}</strong> · ${escapeHtml(check.label)}</p>
+                <p>${escapeHtml(check.message || '')}</p>
+              </div>
+              <button type="button" data-publish-fix="${escapeHtml(check.targetSection || 'product-info')}">Fix</button>
+            </div>
+          `).join('')}
+        </article>
+
+        <aside class="publish-submit-panel">
+          <h3>Submit for Review</h3>
+          <p>Current status: <strong>${escapeHtml(draft.status || 'draft')}</strong></p>
+          <p>Last updated: ${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}</p>
+          <p>Latest agreement: <strong>${escapeHtml(agreementLatest)}</strong></p>
+          <p>Accepted agreement: <strong>${escapeHtml(agreementAccepted)}</strong></p>
+          ${agreementAccepted !== agreementLatest ? '<p class="pricing-warning">A newer seller agreement version is available and must be accepted before publishing.</p>' : ''}
+          <div class="launch-readiness">
+            <p>${readiness.readyCount}/${readiness.totalCount} checks complete · ${readiness.percent}%</p>
+            <div class="launch-readiness-bar"><span style="width:${readiness.percent}%"></span></div>
+            <p>Warnings: ${readiness.warningCount} · Blocked: ${readiness.blockedCount}</p>
+          </div>
+          <div class="publish-next-steps">
+            <h4>What happens next?</h4>
+            <ol>
+              <li>Your product enters review.</li>
+              <li>Marketplace staff checks metadata, files, agreement, and preview behavior.</li>
+              <li>If approved, visibility settings go live.</li>
+              <li>If changes are needed, you’ll see a dashboard notice.</li>
+            </ol>
+          </div>
+          <div class="publish-action-row">
+            <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
+            <button type="button" class="button button-muted" data-open-marketplace-preview>Marketplace Preview</button>
+            <button type="button" class="button button-muted" data-publish-fix="media-upload">Back to Media & Upload</button>
+            <button type="button" class="button button-accent" data-open-submit-confirm ${canSubmit ? '' : 'disabled'}>${draft.status === 'needs_changes' ? 'Resubmit Changes' : 'Submit for Review'}</button>
+          </div>
+          ${canSubmit ? '' : '<p class="pricing-warning">Resolve blocked items before submitting.</p>'}
+          ${(draft.status === 'review_pending') ? '<p class="agreement-accepted-status">Product is awaiting review.</p>' : ''}
+          ${(draft.status === 'published') ? '<p class="agreement-accepted-status">Product is already published.</p>' : ''}
+        </aside>
+      </div>
+      ${editorState.publishConfirmOpen ? `
+        <div class="publish-confirm-backdrop">
+          <div class="publish-confirm-modal">
+            <h4>Submit product for review?</h4>
+            <p>Your product will be reviewed before becoming visible in the marketplace. You can continue editing drafts, but published changes may require approval.</p>
+            <div class="publish-action-row">
+              <button type="button" class="button button-muted" data-close-submit-confirm>Cancel</button>
+              <button type="button" class="button button-accent" data-confirm-submit-review>Submit for Review</button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
     </section>
   `
 }
@@ -766,11 +913,14 @@ function renderEditor() {
                   ? renderPricingPanel()
                   : section === 'agreements'
                     ? renderAgreementsPanel()
+                    : section === 'publish'
+                      ? renderPublishPanel()
                 : renderPlaceholderPanel(section)}
+          ${section === 'publish' ? '' : `
           <div class="editor-actions">
             <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
             <button type="button" class="button button-accent" data-publish-product>Publish Product</button>
-          </div>
+          </div>`}
         </form>
       </section>
     </div>
@@ -781,6 +931,24 @@ function renderEditor() {
       window.location.hash = button.getAttribute('data-section')
       renderEditor()
     })
+  })
+
+  editorRoot.querySelectorAll('[data-publish-fix]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const target = button.getAttribute('data-publish-fix') || 'product-info'
+      window.location.hash = target
+      editorState.publishConfirmOpen = false
+      renderEditor()
+    })
+  })
+
+  editorRoot.querySelector('[data-open-submit-confirm]')?.addEventListener('click', () => {
+    editorState.publishConfirmOpen = true
+    renderEditor()
+  })
+  editorRoot.querySelector('[data-close-submit-confirm]')?.addEventListener('click', () => {
+    editorState.publishConfirmOpen = false
+    renderEditor()
   })
 
   const form = editorRoot.querySelector('[data-product-form]')
@@ -1110,11 +1278,11 @@ function renderEditor() {
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
     if (desiredStatus === 'published') {
-      const requiredVersion = String(editorState.agreement.config?.activeVersion || '')
+      const requiredVersion = String(editorState.agreement.latestVersion || editorState.agreement.config?.activeVersion || '')
       const acceptedVersion = String(editorState.draft.sellerAgreementVersion || '')
       const accepted = Boolean(editorState.draft.sellerAgreementAccepted) && acceptedVersion && acceptedVersion === requiredVersion
       if (!accepted) {
-        setStatus('You must accept the Marketplace Product Seller Agreement before publishing.', 'error')
+        setStatus('Agreement must be accepted before publishing.', 'error')
         renderEditor()
         return
       }
@@ -1161,6 +1329,10 @@ function renderEditor() {
 
   editorRoot.querySelector('[data-save-draft]')?.addEventListener('click', () => persistProduct('draft'))
   editorRoot.querySelector('[data-publish-product]')?.addEventListener('click', () => persistProduct('published'))
+  editorRoot.querySelector('[data-confirm-submit-review]')?.addEventListener('click', () => {
+    editorState.publishConfirmOpen = false
+    persistProduct('published')
+  })
 }
 
 async function initPage() {
@@ -1193,14 +1365,16 @@ async function initPage() {
 
   editorState.agreement.signedName = String(editorState.draft.sellerAgreement?.signedName || '')
   try {
-    const agreementConfig = await getMarketplaceSellerAgreementConfig()
+    const agreementConfig = await getLatestMarketplaceSellerAgreement()
     editorState.agreement.config = agreementConfig
+    editorState.agreement.latestVersion = agreementConfig.activeVersion
     editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
     if (editorState.draft.sellerAgreementVersion && editorState.draft.sellerAgreementVersion !== agreementConfig.activeVersion) {
       updateDraftField('sellerAgreementAccepted', false)
     }
   } catch (error) {
     console.warn('[new-product] agreement load failed', error?.code || error?.message || error)
+    editorState.agreement.latestVersion = ''
     editorState.agreement.error = 'Could not load seller agreement.'
   } finally {
     editorState.agreement.loading = false
