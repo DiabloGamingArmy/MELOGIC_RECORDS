@@ -51,6 +51,11 @@ service firebase.storage {
       allow write: if false;
     }
 
+    match /legal/agreements/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
     // User-owned profile media uploads (avatar/banner).
     match /users/{uid}/{allPaths=**} {
       allow read: if true;
