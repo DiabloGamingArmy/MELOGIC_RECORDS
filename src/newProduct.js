@@ -360,31 +360,39 @@ function renderPricingPanel() {
           </div>
           <div class="pricing-fee-row">
             <span>${escapeHtml(settings.platformFeeLabel)}: ${(Number(settings.platformFeeBps || 0) / 100).toFixed(2)}%</span>
-            <strong>${formatter.format(platformFeeCents / 100)}</strong>
+            <strong data-pricing-platform-fee>${formatter.format(platformFeeCents / 100)}</strong>
           </div>
           <div class="pricing-fee-row">
             <span>${escapeHtml(settings.processorFeeLabel)}: ${(Number(settings.processorPercentBps || 0) / 100).toFixed(2)}% + ${formatter.format(Number(settings.processorFixedFeeCents || 0) / 100)}</span>
-            <strong>${formatter.format(processorFeeCents / 100)}</strong>
+            <strong data-pricing-processor-fee>${formatter.format(processorFeeCents / 100)}</strong>
+          </div>
+          <div class="pricing-breakdown" data-pricing-breakdown>
+            <p>Gross per sale: <strong>${formatter.format(priceCents / 100)}</strong></p>
+            <p>${escapeHtml(settings.platformFeeLabel)}: <strong>-${formatter.format(platformFeeCents / 100)}</strong></p>
+            <p>Processing fee: <strong>-${formatter.format(processorFeeCents / 100)}</strong></p>
+            <p>Estimated net per sale: <strong>${formatter.format(sellerNetPerSaleCents / 100)}</strong></p>
           </div>
           <div class="pricing-price-field">
             <div class="pricing-field-header">
-              <label>Final Listing Price (${escapeHtml(currency)})</label>
+              <label>Final Buyer Listing Price (${escapeHtml(currency)})</label>
               <button type="button" class="pricing-currency-action" disabled>Change Currency</button>
             </div>
-            <input type="text" readonly value="${escapeHtml(centsToPriceInput(priceCents))}" />
+            <input type="text" readonly value="${escapeHtml(centsToPriceInput(priceCents))}" data-pricing-final-price />
           </div>
-          ${warning ? '<p class="pricing-warning">Fees exceed listing price. Seller net is clamped to $0.00 for calculator display.</p>' : ''}
+          <p class="pricing-warning ${warning ? '' : 'is-hidden'}" data-pricing-warning>Fees exceed the product price.</p>
         </article>
 
         <article class="pricing-calculator-column">
           <div class="pricing-calculator">
-            <h3>Profit Calculator:</h3>
+            <h3>Estimated Seller Payout:</h3>
+            <div data-pricing-milestones>
             ${salesMilestones.map((milestone) => `
               <div class="pricing-calculator-row">
-                <p>${Number(milestone).toLocaleString('en-US')} Sales:</p>
+                <p>${Number(milestone).toLocaleString('en-US')} sales estimated payout:</p>
                 <strong>${formatter.format((sellerNetPerSaleCents * Number(milestone || 0)) / 100)}</strong>
               </div>
             `).join('')}
+            </div>
           </div>
         </article>
 
@@ -397,6 +405,112 @@ function renderPricingPanel() {
       </div>
     </section>
   `
+}
+
+function pricingMetricsFromState() {
+  const draft = editorState.draft || {}
+  const settings = getPricingSettings()
+  const currency = String(draft.currency || settings.defaultCurrency || 'USD').toUpperCase()
+  const formatter = moneyFormatter(currency)
+  const priceCents = normalizePriceToCents(draft.price)
+  const platformFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.platformFeeBps || 0)) / 10000)
+  const processorFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.processorPercentBps || 0)) / 10000) + Number(settings.processorFixedFeeCents || 0)
+  const sellerNetPerSaleCentsRaw = priceCents - platformFeeCents - processorFeeCents
+  const sellerNetPerSaleCents = Math.max(0, sellerNetPerSaleCentsRaw)
+  const salesMilestones = Array.isArray(settings.salesMilestones) && settings.salesMilestones.length ? settings.salesMilestones : [100, 1000, 100000]
+  return { settings, currency, formatter, priceCents, platformFeeCents, processorFeeCents, sellerNetPerSaleCents, sellerNetPerSaleCentsRaw, salesMilestones }
+}
+
+function refreshPricingDom() {
+  const root = editorRoot.querySelector('.pricing-workspace')
+  if (!root) return
+  const metrics = pricingMetricsFromState()
+  root.querySelector('[data-pricing-platform-fee]')?.replaceChildren(document.createTextNode(metrics.formatter.format(metrics.platformFeeCents / 100)))
+  root.querySelector('[data-pricing-processor-fee]')?.replaceChildren(document.createTextNode(metrics.formatter.format(metrics.processorFeeCents / 100)))
+  const finalInput = root.querySelector('[data-pricing-final-price]')
+  if (finalInput) finalInput.value = centsToPriceInput(metrics.priceCents)
+  const breakdown = root.querySelector('[data-pricing-breakdown]')
+  if (breakdown) {
+    breakdown.innerHTML = `
+      <p>Gross per sale: <strong>${metrics.formatter.format(metrics.priceCents / 100)}</strong></p>
+      <p>${escapeHtml(metrics.settings.platformFeeLabel)}: <strong>-${metrics.formatter.format(metrics.platformFeeCents / 100)}</strong></p>
+      <p>Processing fee: <strong>-${metrics.formatter.format(metrics.processorFeeCents / 100)}</strong></p>
+      <p>Estimated net per sale: <strong>${metrics.formatter.format(metrics.sellerNetPerSaleCents / 100)}</strong></p>
+    `
+  }
+  const milestoneWrap = root.querySelector('[data-pricing-milestones]')
+  if (milestoneWrap) {
+    milestoneWrap.innerHTML = metrics.salesMilestones.map((milestone) => `
+      <div class="pricing-calculator-row">
+        <p>${Number(milestone).toLocaleString('en-US')} sales estimated payout:</p>
+        <strong>${metrics.formatter.format((metrics.sellerNetPerSaleCents * Number(milestone || 0)) / 100)}</strong>
+      </div>
+    `).join('')
+  }
+  root.querySelector('[data-pricing-warning]')?.classList.toggle('is-hidden', !(metrics.priceCents > 0 && metrics.sellerNetPerSaleCentsRaw < 0))
+}
+
+function refreshAgreementAcceptButton() {
+  const button = editorRoot.querySelector('[data-accept-agreement]')
+  if (!button) return
+  const agreementState = sellerAgreementState()
+  const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
+  const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
+  button.disabled = !canAccept
+}
+
+function bindContributorAddButtons(scope = editorRoot) {
+  scope.querySelectorAll('[data-add-contributor]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const uid = button.getAttribute('data-add-contributor') || ''
+      const profile = editorState.contributorUI.results.find((row) => row.uid === uid)
+      if (!profile || !editorState.user) return
+      if (uid === editorState.user.uid) {
+        setStatus('You cannot add yourself as a contributor.', 'error')
+        renderEditor()
+        return
+      }
+      if (editorState.contributorUI.rows.some((row) => row.uid === uid && row.status !== 'removed')) {
+        setStatus('Contributor already added.', 'error')
+        renderEditor()
+        return
+      }
+      const row = {
+        uid,
+        displayName: profile.displayName || profile.username || 'Contributor',
+        username: profile.username || '',
+        avatarURL: profile.avatarURL || profile.photoURL || '',
+        role: editorState.contributorUI.role || '',
+        status: 'pending',
+        decision: 'pending',
+        requestedAt: new Date().toISOString(),
+        decisionAt: '',
+        legacy: false
+      }
+      editorState.contributorUI.rows = [row, ...editorState.contributorUI.rows]
+      editorState.contributorUI.results = []
+      editorState.contributorUI.search = ''
+      recalcContributorSummaryFromRows()
+      if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) {
+        await addProductContributorRequest({ productId: editorState.draft.id, ownerUid: editorState.user.uid, targetProfile: profile, role: row.role })
+      }
+      setStatus('Contributor request added (pending).', 'success')
+      renderEditor()
+    })
+  })
+}
+
+function refreshContributorResultsDom() {
+  const container = editorRoot.querySelector('[data-contributor-results]')
+  if (!container) return
+  container.classList.toggle('is-hidden', !editorState.contributorUI.results.length)
+  container.innerHTML = editorState.contributorUI.results.map((profile) => `
+    <button type="button" data-add-contributor="${escapeHtml(profile.uid)}">
+      <img class="contributor-avatar" src="${escapeHtml(profile.avatarURL || profile.photoURL || '')}" alt="" />
+      <span>${escapeHtml(profile.displayName || 'User')} @${escapeHtml(profile.username || '')}</span>
+    </button>
+  `).join('')
+  bindContributorAddButtons(container)
 }
 
 function formatAgreementAcceptedDate(value = '') {
@@ -815,16 +929,14 @@ function renderContributorsPanel() {
           <input class=\"contributor-search\" type=\"search\" value=\"${escapeHtml(editorState.contributorUI.search)}\" placeholder=\"Search users by username or display name…\" data-contributor-search />
           <input type=\"text\" value=\"${escapeHtml(editorState.contributorUI.role)}\" placeholder=\"Contribution role (Producer, Vocalist...)\" data-contributor-role />
         </div>
-        ${editorState.contributorUI.results.length ? `
-          <div class=\"contributor-results\">
-            ${editorState.contributorUI.results.map((profile) => `
-              <button type=\"button\" data-add-contributor=\"${escapeHtml(profile.uid)}\">
-                <img class=\"contributor-avatar\" src=\"${escapeHtml(profile.avatarURL || profile.photoURL || '')}\" alt=\"\" />
-                <span>${escapeHtml(profile.displayName || 'User')} @${escapeHtml(profile.username || '')}</span>
-              </button>
-            `).join('')}
-          </div>
-        ` : ''}
+        <div class=\"contributor-results ${editorState.contributorUI.results.length ? '' : 'is-hidden'}\" data-contributor-results>
+          ${editorState.contributorUI.results.map((profile) => `
+            <button type=\"button\" data-add-contributor=\"${escapeHtml(profile.uid)}\">
+              <img class=\"contributor-avatar\" src=\"${escapeHtml(profile.avatarURL || profile.photoURL || '')}\" alt=\"\" />
+              <span>${escapeHtml(profile.displayName || 'User')} @${escapeHtml(profile.username || '')}</span>
+            </button>
+          `).join('')}
+        </div>
         <div class=\"contributor-filter-row\">
           ${['all', 'pending', 'accepted', 'denied'].map((filter) => `<button type=\"button\" class=\"${editorState.contributorUI.filter === filter ? 'is-active' : ''}\" data-contributor-filter=\"${filter}\">${filter[0].toUpperCase()}${filter.slice(1)}</button>`).join('')}
         </div>
@@ -895,7 +1007,7 @@ function renderEditor() {
           ${section === 'publish' ? '' : `
           <div class="editor-actions">
             <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
-            <button type="button" class="button button-accent" data-publish-product>Publish Product</button>
+            <button type="button" class="button button-accent" data-next-section>Next</button>
           </div>`}
         </form>
       </section>
@@ -924,6 +1036,13 @@ function renderEditor() {
   })
   editorRoot.querySelector('[data-close-submit-confirm]')?.addEventListener('click', () => {
     editorState.publishConfirmOpen = false
+    renderEditor()
+  })
+  editorRoot.querySelector('[data-next-section]')?.addEventListener('click', () => {
+    const idx = PRODUCT_SECTIONS.findIndex((item) => item.key === section)
+    const next = PRODUCT_SECTIONS[idx + 1]
+    if (!next) return
+    window.location.hash = next.key
     renderEditor()
   })
 
@@ -986,7 +1105,7 @@ function renderEditor() {
     const priceCents = normalizePriceToCents(pricingPriceInput.value)
     updateDraftField('price', centsToPriceInput(priceCents))
     updateDraftField('isFree', priceCents === 0)
-    renderEditor()
+    refreshPricingDom()
   })
 
   editorRoot.querySelector('[data-pricing-currency]')?.addEventListener('change', (event) => {
@@ -1001,12 +1120,13 @@ function renderEditor() {
     updateDraftField('isFree', checked)
     if (checked) updateDraftField('price', '0.00')
     if (!checked && normalizePriceToCents(editorState.draft?.price || '') === 0) updateDraftField('price', '1.00')
-    renderEditor()
+    if (pricingPriceInput) pricingPriceInput.value = editorState.draft.price
+    refreshPricingDom()
   })
 
   editorRoot.querySelector('[data-agreement-signed-name]')?.addEventListener('input', (event) => {
     editorState.agreement.signedName = event.target.value
-    renderEditor()
+    refreshAgreementAcceptButton()
   })
 
   editorRoot.querySelector('[data-accept-agreement]')?.addEventListener('click', async () => {
@@ -1162,61 +1282,28 @@ function renderEditor() {
 
   const contributorSearchInput = editorRoot.querySelector('[data-contributor-search]')
   const contributorRoleInput = editorRoot.querySelector('[data-contributor-role]')
+  let contributorSearchTimer = null
   contributorSearchInput?.addEventListener('input', async () => {
     editorState.contributorUI.search = contributorSearchInput.value
     if (editorState.contributorUI.search.trim().length < 2) {
       editorState.contributorUI.results = []
-      renderEditor()
+      refreshContributorResultsDom()
       return
     }
-    try {
-      editorState.contributorUI.results = await searchProfilesByUsername(editorState.contributorUI.search.trim())
-    } catch {
-      editorState.contributorUI.results = []
-    }
-    renderEditor()
+    window.clearTimeout(contributorSearchTimer)
+    contributorSearchTimer = window.setTimeout(async () => {
+      try {
+        editorState.contributorUI.results = await searchProfilesByUsername(editorState.contributorUI.search.trim())
+      } catch {
+        editorState.contributorUI.results = []
+      }
+      refreshContributorResultsDom()
+    }, 180)
   })
   contributorRoleInput?.addEventListener('input', () => {
     editorState.contributorUI.role = contributorRoleInput.value
   })
-  editorRoot.querySelectorAll('[data-add-contributor]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const uid = button.getAttribute('data-add-contributor') || ''
-      const profile = editorState.contributorUI.results.find((row) => row.uid === uid)
-      if (!profile || !editorState.user) return
-      if (uid === editorState.user.uid) {
-        setStatus('You cannot add yourself as a contributor.', 'error')
-        renderEditor()
-        return
-      }
-      if (editorState.contributorUI.rows.some((row) => row.uid === uid && row.status !== 'removed')) {
-        setStatus('Contributor already added.', 'error')
-        renderEditor()
-        return
-      }
-      const row = {
-        uid,
-        displayName: profile.displayName || profile.username || 'Contributor',
-        username: profile.username || '',
-        avatarURL: profile.avatarURL || profile.photoURL || '',
-        role: editorState.contributorUI.role || '',
-        status: 'pending',
-        decision: 'pending',
-        requestedAt: new Date().toISOString(),
-        decisionAt: '',
-        legacy: false
-      }
-      editorState.contributorUI.rows = [row, ...editorState.contributorUI.rows]
-      editorState.contributorUI.results = []
-      editorState.contributorUI.search = ''
-      recalcContributorSummaryFromRows()
-      if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) {
-        await addProductContributorRequest({ productId: editorState.draft.id, ownerUid: editorState.user.uid, targetProfile: profile, role: row.role })
-      }
-      setStatus('Contributor request added (pending).', 'success')
-      renderEditor()
-    })
-  })
+  bindContributorAddButtons(editorRoot)
   editorRoot.querySelectorAll('[data-contributor-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       editorState.contributorUI.filter = button.getAttribute('data-contributor-filter') || 'all'
@@ -1304,7 +1391,6 @@ function renderEditor() {
   }
 
   editorRoot.querySelector('[data-save-draft]')?.addEventListener('click', () => persistProduct('draft'))
-  editorRoot.querySelector('[data-publish-product]')?.addEventListener('click', () => persistProduct('published'))
   editorRoot.querySelector('[data-confirm-submit-review]')?.addEventListener('click', () => {
     editorState.publishConfirmOpen = false
     persistProduct('published')
