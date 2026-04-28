@@ -81,8 +81,34 @@ service cloud.firestore {
           'lastMessageText',
           'lastMessageSenderId',
           'lastMessageType',
-          'lastMessageAttachmentCount'
-        ]);
+          'lastMessageAttachmentCount',
+          'dmBlockState'
+        ])
+        && dmBlockStateUpdateIsSafe();
+    }
+
+    function dmBlockStateUpdateIsSafe() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys().hasAny(['dmBlockState']);
+      let participantIds = resource.data.participantIds;
+      let otherParticipant = participantIds[0] == request.auth.uid ? participantIds[1] : participantIds[0];
+      return !changed || (
+        resource.data.type == 'dm'
+        && participantIds is list
+        && participantIds.size() == 2
+        && request.auth.uid in participantIds
+        && (
+          (
+            request.resource.data.dmBlockState is map
+            && request.resource.data.dmBlockState.blockedBy == request.auth.uid
+            && request.resource.data.dmBlockState.blockedUid == otherParticipant
+          )
+          || (
+            request.resource.data.dmBlockState == null
+            && resource.data.dmBlockState is map
+            && resource.data.dmBlockState.blockedBy == request.auth.uid
+          )
+        )
+      );
     }
 
     function validMessageCreate() {
@@ -91,6 +117,11 @@ service cloud.firestore {
       let hasBody = body is string && body.size() > 0;
       let hasAttachments = attachments is list && attachments.size() > 0;
       return hasBody || hasAttachments;
+    }
+
+    function dmAllowsMessageCreate(threadId) {
+      let thread = threadData(threadId);
+      return !(thread.type == 'dm' && thread.dmBlockState is map);
     }
 
     function validMessageEdit() {
@@ -382,6 +413,10 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
+      match /blockedUsers/{targetUid} {
+        allow read, create, update, delete: if isOwner(uid);
+      }
+
       match /systemNotifications/{notificationId} {
         allow read: if isOwner(uid);
         allow create, delete: if false;
@@ -491,7 +526,8 @@ service cloud.firestore {
 
         allow create: if isThreadParticipant(threadId)
           && request.resource.data.senderId == request.auth.uid
-          && validMessageCreate();
+          && validMessageCreate()
+          && dmAllowsMessageCreate(threadId);
 
         allow update: if isThreadParticipant(threadId)
           && (

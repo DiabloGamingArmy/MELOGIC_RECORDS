@@ -2,6 +2,31 @@ body.is-inbox-page {
   overflow: hidden;
 }
 
+body.is-inbox-page * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 132, 197, 0.75) rgba(7, 10, 18, 0.85);
+}
+
+body.is-inbox-page *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+body.is-inbox-page *::-webkit-scrollbar-track {
+  background: rgba(7, 10, 18, 0.85);
+  border-radius: 999px;
+}
+
+body.is-inbox-page *::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(88, 116, 184, 0.95), rgba(74, 93, 158, 0.95));
+  border-radius: 999px;
+  border: 2px solid rgba(7, 10, 18, 0.85);
+}
+
+body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(121, 154, 230, 0.95), rgba(91, 116, 190, 0.95));
+}
+
 .inbox-main-shell {
   background: var(--bg);
   width: 100%;
@@ -412,6 +437,10 @@ body.is-inbox-page {
   gap: 0.45rem;
 }
 
+.thread-confirm-modal button {
+  cursor: pointer;
+}
+
 .thread-confirm-danger {
   background: linear-gradient(135deg, rgba(171, 48, 52, 0.95), rgba(200, 73, 79, 0.95));
   border: 1px solid rgba(241, 128, 133, 0.52);
@@ -802,6 +831,62 @@ body.is-inbox-page {
   gap: 0.52rem;
 }
 
+.message-composer.is-blocked {
+  opacity: 0.72;
+  pointer-events: none;
+  filter: saturate(0.8);
+}
+
+.message-composer.is-blocked textarea,
+.message-composer.is-blocked button {
+  cursor: not-allowed;
+}
+
+.blocked-chat-alert {
+  margin: 0;
+  border: 1px solid rgba(131, 159, 214, 0.35);
+  background: rgba(8, 13, 23, 0.9);
+  border-radius: 0.7rem;
+  padding: 0.45rem 0.62rem;
+  color: #cfe0ff;
+  font-size: 0.78rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.blocked-chat-alert strong {
+  color: #e7efff;
+}
+
+.blocked-chat-alert button {
+  border: 1px solid rgba(120, 156, 227, 0.5);
+  border-radius: 0.5rem;
+  background: rgba(29, 47, 82, 0.85);
+  color: #e3edff;
+  padding: 0.22rem 0.46rem;
+  cursor: pointer;
+}
+
+.blocked-message-placeholder {
+  border-style: dashed;
+  border-color: rgba(139, 160, 204, 0.45);
+}
+
+.blocked-message-placeholder p {
+  color: #adc2e7;
+}
+
+.blocked-message-placeholder button {
+  border: 1px solid rgba(126, 156, 214, 0.45);
+  border-radius: 0.5rem;
+  padding: 0.2rem 0.42rem;
+  background: rgba(32, 47, 76, 0.82);
+  color: #e0ecff;
+  cursor: pointer;
+}
+
 .composer-reply-preview {
   border-left: 3px solid rgba(134, 171, 233, 0.7);
   border-radius: 0.6rem;
@@ -1054,6 +1139,12 @@ body.is-inbox-page {
 
 .inbox-floating-root .message-context-backdrop,
 .inbox-floating-root .reaction-detail-backdrop {
+  pointer-events: auto;
+}
+
+.inbox-floating-root .thread-confirm-backdrop,
+.inbox-floating-root .thread-confirm-modal,
+.inbox-floating-root .thread-confirm-modal button {
   pointer-events: auto;
 }
 
