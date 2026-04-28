@@ -217,6 +217,7 @@ service cloud.firestore {
         'primaryPreviewDuration',
         'primaryDownloadPath',
         'primaryDownloadBytes',
+        'previewAssignment',
 
         'priceCents',
         'currency',

@@ -284,3 +284,7 @@ select {
     grid-template-columns: 1fr;
   }
 }
+
+.file-preview-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.file-preview-table th, .file-preview-table td { border-bottom: 1px solid rgba(255,255,255,.12); padding: .4rem; text-align: left; }
+.preview-badge { display: inline-block; padding: .15rem .4rem; border-radius: 999px; background: rgba(136,255,196,.14); color: #88ffc4; font-size: .72rem; }

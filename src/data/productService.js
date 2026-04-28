@@ -70,6 +70,19 @@ const PRODUCT_KIND_CONFIG = {
   other: { previewMode: 'none', distributionMode: 'external-or-manual' }
 }
 
+export const PRODUCT_QUOTAS = {
+  maxTotalDeliverableBytes: 1024 * 1024 * 1024,
+  maxSingleDeliverableBytes: 512 * 1024 * 1024,
+  maxPackageBytes: 1024 * 1024 * 1024,
+  maxPreviewAudioBytes: 50 * 1024 * 1024,
+  maxPreviewVideoBytes: 250 * 1024 * 1024,
+  maxGalleryImageBytes: 15 * 1024 * 1024,
+  maxFileCount: 500,
+  maxFolderDepth: 8,
+  maxPathLength: 260,
+  maxFileNameLength: 160
+}
+
 export function normalizeProductKind(value = '') {
   const key = normalizeKey(value)
   if (PRODUCT_KIND_CONFIG[key]) return key
@@ -86,6 +99,35 @@ function resolveKindSettings(productType, productKind, previewMode, distribution
     productKind: resolvedKind,
     previewMode: previewMode || defaults.previewMode || 'none',
     distributionMode: distributionMode || defaults.distributionMode || 'external-or-manual'
+  }
+}
+
+function previewDefaultsForType(productType = '') {
+  const normalized = normalizeProductKind(productType)
+  if (normalized === 'single-sample') return { cardPreviewMode: 'audio', hoverEnabled: true }
+  if (normalized === 'plugin-vst') return { cardPreviewMode: 'video-audio', hoverEnabled: true }
+  if (normalized === 'course-tutorial') return { cardPreviewMode: 'video', hoverEnabled: true }
+  if (normalized === 'sample-pack' || normalized === 'drum-kit' || normalized === 'vocal-pack') {
+    return { cardPreviewMode: 'video-audio', hoverEnabled: true }
+  }
+  return { cardPreviewMode: 'audio', hoverEnabled: true }
+}
+
+function normalizePreviewAssignment(input = {}, productType = '') {
+  const defaults = previewDefaultsForType(productType)
+  return {
+    hoverEnabled: input.hoverEnabled !== false && defaults.hoverEnabled,
+    hoverDelayMs: Math.max(0, Number(input.hoverDelayMs || 500)),
+    hoverVideoPath: String(input.hoverVideoPath || ''),
+    hoverVideoURL: String(input.hoverVideoURL || ''),
+    hoverAudioPath: String(input.hoverAudioPath || ''),
+    hoverAudioURL: String(input.hoverAudioURL || ''),
+    cardPreviewMode: ['none', 'audio', 'video', 'video-audio'].includes(input.cardPreviewMode) ? input.cardPreviewMode : defaults.cardPreviewMode,
+    detailHeroPreviewPath: String(input.detailHeroPreviewPath || ''),
+    detailHeroPreviewType: ['audio', 'video', 'image', ''].includes(input.detailHeroPreviewType) ? input.detailHeroPreviewType : '',
+    demoReelPath: String(input.demoReelPath || ''),
+    demoReelType: ['audio', 'video', ''].includes(input.demoReelType) ? input.demoReelType : '',
+    updatedAt: input.updatedAt || new Date().toISOString()
   }
 }
 
@@ -127,6 +169,9 @@ export async function resolveProductMedia(product) {
   const primaryPreviewURL = product.primaryPreviewPath ? await safeStorageUrl(product.primaryPreviewPath) : ''
   const galleryURLs = await Promise.all(galleryPaths.map((path) => safeStorageUrl(path)))
   const previewVideoURLs = await Promise.all(previewVideoPaths.map((path) => safeStorageUrl(path)))
+  const assignment = normalizePreviewAssignment(product.previewAssignment || {}, product.productType)
+  const hoverAudioURL = assignment.hoverAudioURL || await safeStorageUrl(assignment.hoverAudioPath)
+  const hoverVideoURL = assignment.hoverVideoURL || await safeStorageUrl(assignment.hoverVideoPath)
 
   return {
     thumbnailPath,
@@ -136,7 +181,12 @@ export async function resolveProductMedia(product) {
     previewAudioURLs: previewAudioURLs.filter(Boolean),
     primaryPreviewURL: primaryPreviewURL || previewAudioURLs.find(Boolean) || '',
     galleryURLs: galleryURLs.filter(Boolean),
-    previewVideoURLs: previewVideoURLs.filter(Boolean)
+    previewVideoURLs: previewVideoURLs.filter(Boolean),
+    previewAssignment: {
+      ...assignment,
+      hoverAudioURL,
+      hoverVideoURL
+    }
   }
 }
 
@@ -158,6 +208,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const formatKeys = Array.isArray(rawProduct.formatKeys) ? rawProduct.formatKeys : []
   const searchKeywords = Array.isArray(rawProduct.searchKeywords) ? rawProduct.searchKeywords : []
   const kindSettings = resolveKindSettings(rawProduct.productType, rawProduct.productKind, rawProduct.previewMode, rawProduct.distributionMode)
+  const previewAssignment = normalizePreviewAssignment(rawProduct.previewAssignment || {}, rawProduct.productType)
   const assetSummary = rawProduct.assetSummary && typeof rawProduct.assetSummary === 'object'
     ? rawProduct.assetSummary
     : {}
@@ -210,6 +261,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     primaryPreviewDuration: Number(rawProduct.primaryPreviewDuration || 0),
     primaryDownloadPath: rawProduct.primaryDownloadPath || rawProduct.downloadPath || '',
     primaryDownloadBytes: Number(rawProduct.primaryDownloadBytes || 0),
+    previewAssignment: media.previewAssignment || previewAssignment,
     priceCents: Number.isFinite(rawProduct.priceCents) ? rawProduct.priceCents : 0,
     currency: rawProduct.currency || 'USD',
     isFree: Boolean(rawProduct.isFree),
@@ -576,6 +628,7 @@ export function buildProductPayload(input = {}, user = null) {
     previewableCount: Number(input.assetSummary?.previewableCount ?? deliverableRows.filter((row) => row.canPreview).length ?? 0),
     downloadableCount: Number(input.assetSummary?.downloadableCount ?? deliverableRows.filter((row) => row.isDownloadable !== false).length ?? 0)
   }
+  const previewAssignment = normalizePreviewAssignment(input.previewAssignment || {}, input.productType)
 
   return {
     id: input.id || slug,
@@ -616,6 +669,7 @@ export function buildProductPayload(input = {}, user = null) {
     primaryPreviewDuration: Number(input.primaryPreviewDuration || 0),
     primaryDownloadPath: input.primaryDownloadPath || input.downloadPath || '',
     primaryDownloadBytes: Number(input.primaryDownloadBytes || 0),
+    previewAssignment,
     priceCents: Number.isFinite(input.priceCents) ? input.priceCents : 0,
     currency: input.currency || 'USD',
     isFree: Boolean(input.isFree),
@@ -767,11 +821,17 @@ export function normalizeProductFile(fileId, raw = {}) {
     storagePath: raw.storagePath || '',
     previewPath: raw.previewPath || '',
     previewMimeType: raw.previewMimeType || '',
+    publicPreviewPath: raw.publicPreviewPath || raw.previewPath || '',
+    publicPreviewURL: raw.publicPreviewURL || '',
     durationSeconds: Number(raw.durationSeconds || 0),
     bpm: Number(raw.bpm || 0) || null,
     musicalKey: raw.musicalKey || '',
+    platform: raw.platform || '',
+    daw: raw.daw || '',
+    version: raw.version || '',
     canPreview: Boolean(raw.canPreview),
     isDownloadable: raw.isDownloadable !== false,
+    isDeliverable: raw.isDeliverable !== false,
     isPublicPreview: Boolean(raw.isPublicPreview),
     sortIndex: Number(raw.sortIndex || 0),
     createdAt: toIsoDate(raw.createdAt),
@@ -798,10 +858,18 @@ export async function uploadProductFiles(productId, files = [], options = {}) {
   if (!storage || !productId) return []
   const uploaded = []
   const shouldUseSubfolder = Boolean(options.useSubfolder)
+  let totalBytes = 0
 
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index]
     if (!(file instanceof File)) continue
+    if (file.size > PRODUCT_QUOTAS.maxSingleDeliverableBytes) {
+      throw createStageError('deliverable-upload', 'This file exceeds the 512 MB single-file limit.')
+    }
+    totalBytes += Number(file.size || 0)
+    if (totalBytes > PRODUCT_QUOTAS.maxTotalDeliverableBytes) {
+      throw createStageError('deliverable-upload', 'This product exceeds the 1 GB deliverable limit.')
+    }
     const fileId = options.fileIdFactory ? options.fileIdFactory(file, index) : doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
     const baseName = sanitizeStorageFileName(file.name)
     const storagePath = shouldUseSubfolder
@@ -818,7 +886,13 @@ export async function uploadProductFiles(productId, files = [], options = {}) {
       mimeType: file.type || 'application/octet-stream',
       sizeBytes: Number(file.size || 0),
       storagePath,
+      publicPreviewPath: '',
+      publicPreviewURL: '',
+      platform: '',
+      daw: '',
+      version: '',
       canPreview: String(file.type || '').startsWith('audio/'),
+      isDeliverable: true,
       isDownloadable: true,
       isPublicPreview: false,
       sortIndex: index
@@ -915,6 +989,9 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     if (Array.isArray(options.previewAudioFiles) && options.previewAudioFiles.length) {
       if (typeof options.onStatus === 'function') options.onStatus('Preview upload started.')
       previewAudioUploads = await Promise.all(options.previewAudioFiles.map(async (file, index) => {
+        if (file.size > PRODUCT_QUOTAS.maxPreviewAudioBytes) {
+          throw createStageError('preview-audio-upload', 'Preview audio upload failed.')
+        }
         const path = `${STORAGE_PATHS.productAudioPreviewsRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
         await uploadBytes(ref(storage, path), file, { contentType: file.type || 'audio/*' })
         return path
@@ -923,6 +1000,9 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     if (Array.isArray(options.previewVideoFiles) && options.previewVideoFiles.length) {
       if (typeof options.onStatus === 'function') options.onStatus('Preview upload started.')
       previewVideoUploads = await Promise.all(options.previewVideoFiles.map(async (file, index) => {
+        if (file.size > PRODUCT_QUOTAS.maxPreviewVideoBytes) {
+          throw createStageError('preview-video-upload', 'Preview video upload failed.')
+        }
         const path = `${STORAGE_PATHS.productVideoPreviewsRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
         await uploadBytes(ref(storage, path), file, { contentType: file.type || 'video/*' })
         return path
@@ -966,8 +1046,8 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     galleryPaths: galleryUploads.length ? galleryUploads : basePayload.galleryPaths,
     previewAudioPaths: previewAudioUploads.length ? previewAudioUploads : basePayload.previewAudioPaths,
     previewVideoPaths: previewVideoUploads.length ? previewVideoUploads : basePayload.previewVideoPaths,
-    primaryPreviewPath: previewAudioUploads[0] || previewVideoUploads[0] || basePayload.primaryPreviewPath || '',
-    primaryPreviewType: previewAudioUploads[0] ? 'audio' : (previewVideoUploads[0] ? 'video' : basePayload.primaryPreviewType || ''),
+    primaryPreviewPath: options.previewAssignment?.hoverAudioPath || options.previewAssignment?.hoverVideoPath || previewAudioUploads[0] || previewVideoUploads[0] || basePayload.primaryPreviewPath || '',
+    primaryPreviewType: options.previewAssignment?.hoverAudioPath ? 'audio' : (options.previewAssignment?.hoverVideoPath ? 'video' : (previewAudioUploads[0] ? 'audio' : (previewVideoUploads[0] ? 'video' : basePayload.primaryPreviewType || ''))),
     primaryDownloadPath: deliverableUploads[0]?.storagePath || basePayload.primaryDownloadPath || basePayload.downloadPath || '',
     primaryDownloadBytes: deliverableUploads[0]?.sizeBytes || basePayload.primaryDownloadBytes || 0,
     assetSummary: {
@@ -976,6 +1056,12 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       previewableCount: fileManifestRows.filter((row) => row.canPreview).length || basePayload.assetSummary?.previewableCount || 0,
       downloadableCount: fileManifestRows.filter((row) => row.isDownloadable !== false).length || basePayload.assetSummary?.downloadableCount || 0
     },
+    previewAssignment: normalizePreviewAssignment({
+      ...(basePayload.previewAssignment || {}),
+      ...(options.previewAssignment || {}),
+      hoverAudioPath: options.previewAssignment?.hoverAudioPath || previewAudioUploads[0] || basePayload.previewAssignment?.hoverAudioPath || '',
+      hoverVideoPath: options.previewAssignment?.hoverVideoPath || previewVideoUploads[0] || basePayload.previewAssignment?.hoverVideoPath || ''
+    }, basePayload.productType),
     updatedAt: serverTimestamp(),
     createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
   }

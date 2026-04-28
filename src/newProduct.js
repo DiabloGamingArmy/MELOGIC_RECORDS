@@ -3,7 +3,7 @@ import './styles/newProduct.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState } from './firebase/auth'
-import { buildProductPayload, getProductById, isPlaceholderProductId, requestProductReview, saveProductDraft } from './data/productService'
+import { buildProductPayload, getProductById, isPlaceholderProductId, PRODUCT_QUOTAS, requestProductReview, saveProductDraft } from './data/productService'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES } from './utils/routes'
@@ -12,6 +12,7 @@ const PRODUCT_SECTIONS = [
   { key: 'basics', label: 'Product type' },
   { key: 'media', label: 'Listing media' },
   { key: 'distribution', label: 'Deliverables' },
+  { key: 'previewMedia', label: 'Preview media' },
   { key: 'preview', label: 'File browser preview' },
   { key: 'pricing', label: 'Pricing' },
   { key: 'details', label: 'Details' },
@@ -169,6 +170,18 @@ function createEmptyProductDraft(user = null, profile = null) {
     thumbnailPath: '',
     coverURL: '',
     thumbnailURL: ''
+    ,
+    previewAssignment: {
+      hoverEnabled: true,
+      hoverDelayMs: 500,
+      hoverVideoPath: '',
+      hoverAudioPath: '',
+      cardPreviewMode: 'audio',
+      detailHeroPreviewPath: '',
+      detailHeroPreviewType: '',
+      demoReelPath: '',
+      demoReelType: ''
+    }
   }
 }
 
@@ -180,6 +193,22 @@ function productTypeAccept(type = '', section = 'deliverable') {
   if (isPlugin) return '.zip,.exe,.dmg,.pkg,.msi,.rar,.7z'
   if (type === 'Single Sample') return 'audio/*,.zip'
   return '.zip,.rar,.7z,audio/*,video/*,application/*,text/*'
+}
+
+function validateDraftFiles(files = []) {
+  if (files.length > PRODUCT_QUOTAS.maxFileCount) return `Too many files. Maximum is ${PRODUCT_QUOTAS.maxFileCount}.`
+  let totalBytes = 0
+  for (const file of files) {
+    totalBytes += Number(file.size || 0)
+    if ((file.name || '').length > PRODUCT_QUOTAS.maxFileNameLength) return `Filename too long: ${file.name}`
+    const relative = file.webkitRelativePath || file.name || ''
+    const depth = relative.split('/').filter(Boolean).length
+    if (depth > PRODUCT_QUOTAS.maxFolderDepth + 1) return `Folder depth exceeds ${PRODUCT_QUOTAS.maxFolderDepth} levels.`
+    if (relative.length > PRODUCT_QUOTAS.maxPathLength) return `Path too long: ${relative}`
+    if (file.size > PRODUCT_QUOTAS.maxSingleDeliverableBytes) return 'This file exceeds the 512 MB single-file limit.'
+  }
+  if (totalBytes > PRODUCT_QUOTAS.maxTotalDeliverableBytes) return 'This product exceeds the 1 GB deliverable limit.'
+  return ''
 }
 
 function readSectionHash() {
@@ -502,14 +531,51 @@ function renderEditor() {
             </div>
           </article>
 
+          <article class="editor-panel ${section === 'previewMedia' ? 'is-active' : ''}">
+            <h2>Preview Media</h2>
+            <p class="panel-copy">Preview media is public. Product type suggests defaults, but preview behavior is controlled here.</p>
+            <div class="field-grid two-col">
+              <label><span>Card Preview Mode</span>
+                <select name="previewAssignment.cardPreviewMode">
+                  <option value="none" ${draft.previewAssignment?.cardPreviewMode === 'none' ? 'selected' : ''}>None</option>
+                  <option value="audio" ${draft.previewAssignment?.cardPreviewMode === 'audio' ? 'selected' : ''}>Audio only</option>
+                  <option value="video" ${draft.previewAssignment?.cardPreviewMode === 'video' ? 'selected' : ''}>Video only</option>
+                  <option value="video-audio" ${draft.previewAssignment?.cardPreviewMode === 'video-audio' ? 'selected' : ''}>Video + audio</option>
+                </select>
+              </label>
+              <label><span>Hover delay (ms)</span><input type="number" min="0" max="2000" name="previewAssignment.hoverDelayMs" value="${escapeHtml(draft.previewAssignment?.hoverDelayMs || 500)}" /></label>
+            </div>
+            <div class="field-grid two-col">
+              <label><span>Hover audio path</span><input name="previewAssignment.hoverAudioPath" value="${escapeHtml(draft.previewAssignment?.hoverAudioPath || '')}" placeholder="products/{id}/audio-previews/file.mp3" /></label>
+              <label><span>Hover video path</span><input name="previewAssignment.hoverVideoPath" value="${escapeHtml(draft.previewAssignment?.hoverVideoPath || '')}" placeholder="products/{id}/video-previews/file.mp4" /></label>
+            </div>
+            <div class="field-grid two-col">
+              <label><span>Detail Hero Preview Path</span><input name="previewAssignment.detailHeroPreviewPath" value="${escapeHtml(draft.previewAssignment?.detailHeroPreviewPath || '')}" /></label>
+              <label><span>Detail Hero Preview Type</span><select name="previewAssignment.detailHeroPreviewType"><option value="" ${!draft.previewAssignment?.detailHeroPreviewType ? 'selected' : ''}>None</option><option value="audio" ${draft.previewAssignment?.detailHeroPreviewType === 'audio' ? 'selected' : ''}>Audio</option><option value="video" ${draft.previewAssignment?.detailHeroPreviewType === 'video' ? 'selected' : ''}>Video</option><option value="image" ${draft.previewAssignment?.detailHeroPreviewType === 'image' ? 'selected' : ''}>Image</option></select></label>
+            </div>
+          </article>
+
           <article class="editor-panel ${section === 'preview' ? 'is-active' : ''}" data-preview-panel>
             <h2>File browser preview</h2>
             <p class="panel-copy">Manifest preview generated from selected deliverable files before save.</p>
             <div class="upload-card">
               <h3>Included files (${(editorState.mediaFiles.folderDeliverables.length || editorState.mediaFiles.deliverables.length)})</h3>
-              <ul>
-                ${[...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables].slice(0, 50).map((file) => `<li>${escapeHtml(file.webkitRelativePath || file.name)} · ${(Number(file.size || 0) / 1024).toFixed(1)} KB</li>`).join('') || '<li>No files selected yet.</li>'}
-              </ul>
+              <table class="file-preview-table">
+                <thead><tr><th>File</th><th>Size</th><th>Status</th><th>Preview Assignment</th></tr></thead>
+                <tbody>
+                  ${[...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables].slice(0, 50).map((file) => `
+                    <tr>
+                      <td>${escapeHtml(file.webkitRelativePath || file.name)}</td>
+                      <td>${(Number(file.size || 0) / 1024).toFixed(1)} KB</td>
+                      <td><span class="preview-badge">Deliverable</span></td>
+                      <td>
+                        <button type="button" class="button button-muted" data-assign-hover-audio="${escapeHtml(file.name)}">Hover Audio</button>
+                        <button type="button" class="button button-muted" data-assign-hover-video="${escapeHtml(file.name)}">Hover Video</button>
+                      </td>
+                    </tr>
+                  `).join('') || '<tr><td colspan="4">No files selected yet.</td></tr>'}
+                </tbody>
+              </table>
             </div>
             <div data-preview-card>
               ${previewCardMarkup(draft)}
@@ -519,6 +585,13 @@ function renderEditor() {
           <article class="editor-panel ${section === 'publish' ? 'is-active' : ''}">
             <h2>Publish</h2>
             <p class="panel-copy">Save draft metadata or promote listing state for publishing.</p>
+            <ul class="muted">
+              <li>${draft.productType ? '✅' : '⬜'} Product type selected</li>
+              <li>${(editorState.mediaFiles.cover || draft.coverPath) && (editorState.mediaFiles.thumbnail || draft.thumbnailPath) ? '✅' : '⬜'} Cover/thumbnail present</li>
+              <li>${draft.previewAssignment?.cardPreviewMode !== 'none' ? '✅' : '⬜'} Preview assigned</li>
+              <li>${(editorState.mediaFiles.deliverables.length + editorState.mediaFiles.folderDeliverables.length) ? '✅' : '⬜'} Deliverables present</li>
+              <li>${Number(draft.price || 0) >= 0 ? '✅' : '⬜'} Pricing valid</li>
+            </ul>
             <div class="actions-row">
               <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
               <button type="button" class="button button-muted" data-preview-listing>Preview Listing</button>
@@ -592,12 +665,26 @@ function renderEditor() {
     renderEditor()
   })
   deliverablesInput?.addEventListener('change', () => {
-    editorState.mediaFiles.deliverables = Array.from(deliverablesInput.files || [])
+    const next = Array.from(deliverablesInput.files || [])
+    const error = validateDraftFiles([...editorState.mediaFiles.folderDeliverables, ...next])
+    if (error) {
+      setStatus(error, 'error')
+      renderEditor()
+      return
+    }
+    editorState.mediaFiles.deliverables = next
     setStatus('Deliverable files selected. Save draft to upload.', 'info')
     renderEditor()
   })
   deliverablesFolderInput?.addEventListener('change', () => {
-    editorState.mediaFiles.folderDeliverables = Array.from(deliverablesFolderInput.files || [])
+    const next = Array.from(deliverablesFolderInput.files || [])
+    const error = validateDraftFiles([...editorState.mediaFiles.deliverables, ...next])
+    if (error) {
+      setStatus(error, 'error')
+      renderEditor()
+      return
+    }
+    editorState.mediaFiles.folderDeliverables = next
     setStatus('Folder files selected. Save draft to upload.', 'info')
     renderEditor()
   })
@@ -606,11 +693,20 @@ function renderEditor() {
     const target = event.target
     if (!target?.name) return
 
-    if (!(target.name in editorState.draft)) return
+    if (!target.name.includes('.') && !(target.name in editorState.draft)) return
     if (['artistName', 'artistUsername', 'artistProfilePath', 'artistId'].includes(target.name)) return
 
     const value = target.type === 'checkbox' ? target.checked : target.value
-    updateDraftField(target.name, value)
+    if (target.name.startsWith('previewAssignment.')) {
+      const key = target.name.replace('previewAssignment.', '')
+      editorState.draft.previewAssignment = {
+        ...(editorState.draft.previewAssignment || {}),
+        [key]: key === 'hoverDelayMs' ? Number(value || 0) : value
+      }
+      saveDraftState()
+    } else {
+      updateDraftField(target.name, value)
+    }
 
     if (target.name === 'slug') {
       editorState.slugLocked = Boolean(String(value || '').trim())
@@ -633,6 +729,30 @@ function renderEditor() {
 
   form?.addEventListener('input', syncFieldFromEvent)
   form?.addEventListener('change', syncFieldFromEvent)
+  editorRoot.querySelectorAll('[data-assign-hover-audio]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const fileName = button.getAttribute('data-assign-hover-audio') || ''
+      editorState.draft.previewAssignment = {
+        ...(editorState.draft.previewAssignment || {}),
+        hoverAudioPath: `products/${editorState.draft.id || '{id}'}/audio-previews/${fileName}`,
+        cardPreviewMode: editorState.draft.previewAssignment?.cardPreviewMode === 'video' ? 'video-audio' : 'audio'
+      }
+      setStatus('Hover audio assignment updated.', 'info')
+      renderEditor()
+    })
+  })
+  editorRoot.querySelectorAll('[data-assign-hover-video]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const fileName = button.getAttribute('data-assign-hover-video') || ''
+      editorState.draft.previewAssignment = {
+        ...(editorState.draft.previewAssignment || {}),
+        hoverVideoPath: `products/${editorState.draft.id || '{id}'}/video-previews/${fileName}`,
+        cardPreviewMode: editorState.draft.previewAssignment?.cardPreviewMode === 'audio' ? 'video-audio' : 'video'
+      }
+      setStatus('Hover video assignment updated.', 'info')
+      renderEditor()
+    })
+  })
 
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
@@ -651,6 +771,12 @@ function renderEditor() {
     renderEditor()
 
     try {
+      const deliverableValidation = validateDraftFiles([...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables])
+      if (deliverableValidation) {
+        setStatus(deliverableValidation, 'error')
+        renderEditor()
+        return
+      }
       const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
       const draftForSave = serializeDraftForFirestore({
         ...editorState.draft,
@@ -674,6 +800,7 @@ function renderEditor() {
         previewAudioFiles: editorState.mediaFiles.previewAudio,
         previewVideoFiles: editorState.mediaFiles.previewVideo,
         deliverableFiles: [...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables],
+        previewAssignment: editorState.draft.previewAssignment || {},
         onStatus: (message) => {
           setStatus(message, 'info')
           renderEditor()
