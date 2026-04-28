@@ -175,6 +175,8 @@ service cloud.firestore {
         'title',
         'shortDescription',
         'description',
+        'version',
+        'usageLicense',
         'productType',
         'productKind',
         'previewMode',
@@ -288,6 +290,8 @@ service cloud.firestore {
           request.resource.data.description is string
           && request.resource.data.description.size() <= 20000
         ))
+        && (!('version' in request.resource.data) || request.resource.data.version is string)
+        && (!('usageLicense' in request.resource.data) || request.resource.data.usageLicense is string)
         && (!('productType' in request.resource.data) || request.resource.data.productType is string)
         && (!('priceCents' in request.resource.data) || (
           request.resource.data.priceCents is number
