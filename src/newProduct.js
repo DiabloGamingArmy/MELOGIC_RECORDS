@@ -170,6 +170,8 @@ function createEmptyProductDraft(user = null, profile = null) {
     thumbnailURL: '',
     updatedAt: ''
   }
+  if (totalBytes > PRODUCT_QUOTAS.maxTotalDeliverableBytes) return 'This product exceeds the 1 GB deliverable limit.'
+  return ''
 }
 
 function readSectionHash() {
@@ -1132,6 +1134,17 @@ function renderEditor() {
     window.location.hash = next.key
     renderEditor()
   })
+  editorRoot.querySelector('[data-next-section]')?.addEventListener('click', () => {
+    const idx = PRODUCT_SECTIONS.findIndex((item) => item.key === section)
+    const next = PRODUCT_SECTIONS[idx + 1]
+    if (!next) return
+    window.location.hash = next.key
+    renderEditor()
+  })
+
+  const form = editorRoot.querySelector('[data-product-form]')
+
+  const form = editorRoot.querySelector('[data-product-form]')
 
   // Single form reference for all editor form bindings in this render cycle.
   const form = editorRoot.querySelector('[data-product-form]')
@@ -1472,6 +1485,12 @@ function renderEditor() {
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
     try {
+      const deliverableValidation = validateDraftFiles([...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables])
+      if (deliverableValidation) {
+        setStatus(deliverableValidation, 'error')
+        renderEditor()
+        return
+      }
       const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
       const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, currentStatus: editorState.draft.status || 'draft', status: desiredStatus === 'published' ? 'review_pending' : desiredStatus }, editorState.user)
       const result = await saveProductDraft(editorState.user, payload, {
