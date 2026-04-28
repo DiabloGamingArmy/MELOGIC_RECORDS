@@ -175,7 +175,12 @@ service cloud.firestore {
         'title',
         'shortDescription',
         'description',
+        'version',
+        'usageLicense',
         'productType',
+        'productKind',
+        'previewMode',
+        'distributionMode',
 
         'categories',
         'genres',
@@ -198,6 +203,11 @@ service cloud.firestore {
         'contributorIds',
         'contributorNames',
         'contributorCount',
+        'pendingContributorIds',
+        'contributorRequestCount',
+        'sellerAgreement',
+        'sellerAgreementAccepted',
+        'sellerAgreementVersion',
 
         'coverPath',
         'thumbnailPath',
@@ -208,6 +218,13 @@ service cloud.firestore {
         'previewVideoPaths',
         'downloadPath',
         'licensePath',
+        'assetSummary',
+        'primaryPreviewPath',
+        'primaryPreviewType',
+        'primaryPreviewDuration',
+        'primaryDownloadPath',
+        'primaryDownloadBytes',
+        'previewAssignment',
 
         'priceCents',
         'currency',
@@ -278,6 +295,8 @@ service cloud.firestore {
           request.resource.data.description is string
           && request.resource.data.description.size() <= 20000
         ))
+        && (!('version' in request.resource.data) || request.resource.data.version is string)
+        && (!('usageLicense' in request.resource.data) || request.resource.data.usageLicense is string)
         && (!('productType' in request.resource.data) || request.resource.data.productType is string)
         && (!('priceCents' in request.resource.data) || (
           request.resource.data.priceCents is number
@@ -322,6 +341,9 @@ service cloud.firestore {
           && request.resource.data.contributorCount >= 0
           && request.resource.data.contributorCount <= 25
         ))
+        && (!('sellerAgreement' in request.resource.data) || request.resource.data.sellerAgreement is map)
+        && (!('sellerAgreementAccepted' in request.resource.data) || request.resource.data.sellerAgreementAccepted is bool)
+        && (!('sellerAgreementVersion' in request.resource.data) || request.resource.data.sellerAgreementVersion is string)
         && (!('coverPath' in request.resource.data) || request.resource.data.coverPath is string)
         && (!('thumbnailPath' in request.resource.data) || request.resource.data.thumbnailPath is string)
         && (!('coverURL' in request.resource.data) || request.resource.data.coverURL is string)
@@ -408,6 +430,13 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read, write: if isOwner(uid);
+      match /entitlements/{productId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /agreementAcceptances/{agreementKey} {
+        allow read, write: if isOwner(uid);
+      }
 
       match /inboxThreads/{threadId} {
         allow read, write: if isOwner(uid);
@@ -478,6 +507,28 @@ service cloud.firestore {
         allow update, delete: if signedIn()
           && resource.data.uid == request.auth.uid;
       }
+
+      match /files/{fileId} {
+        allow read: if (get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+            && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public')
+          || (signedIn() && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid);
+        allow create, update, delete: if signedIn()
+          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+      }
+
+      match /contributors/{uid} {
+        allow read: if signedIn() && (
+            get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+            || request.auth.uid == uid
+          );
+        allow create, update, delete: if signedIn()
+          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+      }
+    }
+
+    match /platformSettings/{settingId} {
+      allow read: if settingId in ['marketplacePricing', 'marketplaceSellerAgreement'];
+      allow write: if false;
     }
 
     match /threads/{threadId} {

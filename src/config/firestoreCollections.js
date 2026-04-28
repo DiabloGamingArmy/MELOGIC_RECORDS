@@ -2,6 +2,7 @@ export const FIRESTORE_COLLECTIONS = {
   products: 'products',
   productSubcollections: {
     comments: 'comments',
+    files: 'files',
     likes: 'likes',
     dislikes: 'dislikes',
     saves: 'saves',
