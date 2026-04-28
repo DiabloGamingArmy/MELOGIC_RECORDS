@@ -4,6 +4,7 @@ import {
   getDoc,
   getDocs,
   limit,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
@@ -54,6 +55,40 @@ function normalizeKey(value) {
     .replace(/\s+/g, '-')
 }
 
+const PRODUCT_KIND_CONFIG = {
+  'single-sample': { previewMode: 'hover-audio', distributionMode: 'single-file' },
+  'sample-pack': { previewMode: 'demo-audio', distributionMode: 'folder-manifest' },
+  'drum-kit': { previewMode: 'demo-audio', distributionMode: 'folder-manifest' },
+  'vocal-pack': { previewMode: 'demo-audio', distributionMode: 'folder-manifest' },
+  'preset-bank': { previewMode: 'detail-browser', distributionMode: 'folder-manifest' },
+  'wavetable-pack': { previewMode: 'detail-browser', distributionMode: 'folder-manifest' },
+  'midi-pack': { previewMode: 'detail-browser', distributionMode: 'folder-manifest' },
+  'project-file': { previewMode: 'detail-browser', distributionMode: 'package-download' },
+  'plugin-vst': { previewMode: 'video-demo', distributionMode: 'installer-variants' },
+  'course-tutorial': { previewMode: 'video-demo', distributionMode: 'package-download' },
+  release: { previewMode: 'demo-audio', distributionMode: 'package-download' },
+  other: { previewMode: 'none', distributionMode: 'external-or-manual' }
+}
+
+export function normalizeProductKind(value = '') {
+  const key = normalizeKey(value)
+  if (PRODUCT_KIND_CONFIG[key]) return key
+  if (key === 'plugin-vst' || key === 'plugin-vst-au-aax') return 'plugin-vst'
+  if (key === 'course-tutorials') return 'course-tutorial'
+  if (key === 'wavetable-pack' || key === 'wavetables') return 'wavetable-pack'
+  return 'other'
+}
+
+function resolveKindSettings(productType, productKind, previewMode, distributionMode) {
+  const resolvedKind = productKind || normalizeProductKind(productType)
+  const defaults = PRODUCT_KIND_CONFIG[resolvedKind] || PRODUCT_KIND_CONFIG.other
+  return {
+    productKind: resolvedKind,
+    previewMode: previewMode || defaults.previewMode || 'none',
+    distributionMode: distributionMode || defaults.distributionMode || 'external-or-manual'
+  }
+}
+
 function toPriceLabel(product) {
   if (product?.isFree) return 'Free'
   if (!Number.isFinite(product?.priceCents)) return null
@@ -89,6 +124,7 @@ export async function resolveProductMedia(product) {
   const thumbnailURL = await safeStorageUrl(thumbnailPath)
   const coverURL = await safeStorageUrl(coverPath, thumbnailURL)
   const previewAudioURLs = await Promise.all((product.previewAudioPaths || []).map((path) => safeStorageUrl(path)))
+  const primaryPreviewURL = product.primaryPreviewPath ? await safeStorageUrl(product.primaryPreviewPath) : ''
   const galleryURLs = await Promise.all(galleryPaths.map((path) => safeStorageUrl(path)))
   const previewVideoURLs = await Promise.all(previewVideoPaths.map((path) => safeStorageUrl(path)))
 
@@ -98,6 +134,7 @@ export async function resolveProductMedia(product) {
     thumbnailURL,
     coverURL,
     previewAudioURLs: previewAudioURLs.filter(Boolean),
+    primaryPreviewURL: primaryPreviewURL || previewAudioURLs.find(Boolean) || '',
     galleryURLs: galleryURLs.filter(Boolean),
     previewVideoURLs: previewVideoURLs.filter(Boolean)
   }
@@ -120,6 +157,10 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const dawCompatibility = Array.isArray(rawProduct.dawCompatibility) ? rawProduct.dawCompatibility : []
   const formatKeys = Array.isArray(rawProduct.formatKeys) ? rawProduct.formatKeys : []
   const searchKeywords = Array.isArray(rawProduct.searchKeywords) ? rawProduct.searchKeywords : []
+  const kindSettings = resolveKindSettings(rawProduct.productType, rawProduct.productKind, rawProduct.previewMode, rawProduct.distributionMode)
+  const assetSummary = rawProduct.assetSummary && typeof rawProduct.assetSummary === 'object'
+    ? rawProduct.assetSummary
+    : {}
   return {
     id: rawProduct.id || productId,
     slug: rawProduct.slug || '',
@@ -129,6 +170,9 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     shortDescription: rawProduct.shortDescription || '',
     description: rawProduct.description || '',
     productType: rawProduct.productType || 'Release',
+    productKind: kindSettings.productKind,
+    previewMode: kindSettings.previewMode,
+    distributionMode: kindSettings.distributionMode,
     categories,
     genres,
     tags,
@@ -150,10 +194,22 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     previewAudioPaths: rawProduct.previewAudioPaths || [],
     previewVideoPaths: rawProduct.previewVideoPaths || [],
     previewAudioURLs: media.previewAudioURLs || [],
+    primaryPreviewURL: media.primaryPreviewURL || '',
     galleryURLs: media.galleryURLs || [],
     previewVideoURLs: media.previewVideoURLs || [],
     downloadPath: rawProduct.downloadPath || '',
     licensePath: rawProduct.licensePath || '',
+    assetSummary: {
+      totalFiles: Number(assetSummary.totalFiles || 0),
+      totalBytes: Number(assetSummary.totalBytes || 0),
+      previewableCount: Number(assetSummary.previewableCount || 0),
+      downloadableCount: Number(assetSummary.downloadableCount || 0)
+    },
+    primaryPreviewPath: rawProduct.primaryPreviewPath || rawProduct.previewAudioPaths?.[0] || '',
+    primaryPreviewType: rawProduct.primaryPreviewType || '',
+    primaryPreviewDuration: Number(rawProduct.primaryPreviewDuration || 0),
+    primaryDownloadPath: rawProduct.primaryDownloadPath || rawProduct.downloadPath || '',
+    primaryDownloadBytes: Number(rawProduct.primaryDownloadBytes || 0),
     priceCents: Number.isFinite(rawProduct.priceCents) ? rawProduct.priceCents : 0,
     currency: rawProduct.currency || 'USD',
     isFree: Boolean(rawProduct.isFree),
@@ -507,6 +563,19 @@ export function buildProductPayload(input = {}, user = null) {
   const slug = input.slug || slugify(input.title) || `product-${Date.now()}`
   const contributorNames = Array.isArray(input.contributorNames) ? input.contributorNames : parseCsv(input.contributorNames)
   const creator = getCreatorIdentity(user, input)
+  const kindSettings = resolveKindSettings(input.productType, input.productKind, input.previewMode, input.distributionMode)
+  const previewAudioPaths = Array.isArray(input.previewAudioPaths) ? input.previewAudioPaths : parseCsv(input.previewAudioPaths)
+  const previewVideoPaths = Array.isArray(input.previewVideoPaths) ? input.previewVideoPaths : parseCsv(input.previewVideoPaths)
+  const galleryPaths = Array.isArray(input.galleryPaths) ? input.galleryPaths : parseCsv(input.galleryPaths)
+  const primaryPreviewPath = input.primaryPreviewPath || previewAudioPaths[0] || previewVideoPaths[0] || ''
+  const primaryPreviewType = input.primaryPreviewType || (primaryPreviewPath ? (previewAudioPaths.includes(primaryPreviewPath) ? 'audio' : 'video') : '')
+  const deliverableRows = Array.isArray(input.deliverableFiles) ? input.deliverableFiles : []
+  const computedAssetSummary = {
+    totalFiles: Number(input.assetSummary?.totalFiles ?? deliverableRows.length ?? 0),
+    totalBytes: Number(input.assetSummary?.totalBytes ?? deliverableRows.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)),
+    previewableCount: Number(input.assetSummary?.previewableCount ?? deliverableRows.filter((row) => row.canPreview).length ?? 0),
+    downloadableCount: Number(input.assetSummary?.downloadableCount ?? deliverableRows.filter((row) => row.isDownloadable !== false).length ?? 0)
+  }
 
   return {
     id: input.id || slug,
@@ -517,6 +586,9 @@ export function buildProductPayload(input = {}, user = null) {
     shortDescription: input.shortDescription || '',
     description: input.description || '',
     productType: input.productType || 'Sample Pack',
+    productKind: kindSettings.productKind,
+    previewMode: kindSettings.previewMode,
+    distributionMode: kindSettings.distributionMode,
     categories: Array.isArray(input.categories) ? input.categories : parseCsv(input.categories),
     genres: Array.isArray(input.genres) ? input.genres : parseCsv(input.genres),
     tags: Array.isArray(input.tags) ? input.tags : parseCsv(input.tags),
@@ -533,11 +605,17 @@ export function buildProductPayload(input = {}, user = null) {
     thumbnailPath: input.thumbnailPath || '',
     coverURL: input.coverURL || '',
     thumbnailURL: input.thumbnailURL || '',
-    galleryPaths: Array.isArray(input.galleryPaths) ? input.galleryPaths : parseCsv(input.galleryPaths),
-    previewAudioPaths: Array.isArray(input.previewAudioPaths) ? input.previewAudioPaths : parseCsv(input.previewAudioPaths),
-    previewVideoPaths: Array.isArray(input.previewVideoPaths) ? input.previewVideoPaths : parseCsv(input.previewVideoPaths),
+    galleryPaths,
+    previewAudioPaths,
+    previewVideoPaths,
     downloadPath: input.downloadPath || '',
     licensePath: input.licensePath || '',
+    assetSummary: computedAssetSummary,
+    primaryPreviewPath,
+    primaryPreviewType,
+    primaryPreviewDuration: Number(input.primaryPreviewDuration || 0),
+    primaryDownloadPath: input.primaryDownloadPath || input.downloadPath || '',
+    primaryDownloadBytes: Number(input.primaryDownloadBytes || 0),
     priceCents: Number.isFinite(input.priceCents) ? input.priceCents : 0,
     currency: input.currency || 'USD',
     isFree: Boolean(input.isFree),
@@ -657,6 +735,116 @@ export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
   return uploads
 }
 
+function sanitizeStorageFileName(name = '') {
+  return String(name || 'file')
+    .trim()
+    .replace(/[^\w.\-() ]+/g, '-')
+    .replace(/\s+/g, '-')
+    .slice(0, 160) || `file-${Date.now()}`
+}
+
+function normalizeFileKind(raw = '', mimeType = '') {
+  const key = normalizeKey(raw)
+  if (key) return key
+  if (String(mimeType).startsWith('audio/')) return 'audio'
+  if (String(mimeType).startsWith('video/')) return 'video'
+  if (String(mimeType).startsWith('image/')) return 'image'
+  return 'file'
+}
+
+export function normalizeProductFile(fileId, raw = {}) {
+  const displayPath = String(raw.displayPath || raw.name || fileId || '')
+  const parentPath = String(raw.parentPath || (displayPath.includes('/') ? displayPath.split('/').slice(0, -1).join('/') : ''))
+  return {
+    id: raw.id || fileId,
+    productId: raw.productId || '',
+    name: raw.name || displayPath.split('/').pop() || 'file',
+    displayPath,
+    parentPath,
+    kind: normalizeFileKind(raw.kind, raw.mimeType),
+    mimeType: raw.mimeType || 'application/octet-stream',
+    sizeBytes: Number(raw.sizeBytes || 0),
+    storagePath: raw.storagePath || '',
+    previewPath: raw.previewPath || '',
+    previewMimeType: raw.previewMimeType || '',
+    durationSeconds: Number(raw.durationSeconds || 0),
+    bpm: Number(raw.bpm || 0) || null,
+    musicalKey: raw.musicalKey || '',
+    canPreview: Boolean(raw.canPreview),
+    isDownloadable: raw.isDownloadable !== false,
+    isPublicPreview: Boolean(raw.isPublicPreview),
+    sortIndex: Number(raw.sortIndex || 0),
+    createdAt: toIsoDate(raw.createdAt),
+    updatedAt: toIsoDate(raw.updatedAt)
+  }
+}
+
+export async function listProductFiles(productId = '') {
+  if (!db || !productId) return []
+  const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files'), orderBy('sortIndex', 'asc'), limit(500)))
+  return snapshot.docs.map((docSnap) => normalizeProductFile(docSnap.id, docSnap.data()))
+}
+
+export function subscribeToProductFiles(productId = '', callback = () => {}, onError = null) {
+  if (!db || !productId || typeof callback !== 'function') return () => {}
+  return onSnapshot(
+    query(collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files'), orderBy('sortIndex', 'asc'), limit(500)),
+    (snapshot) => callback(snapshot.docs.map((docSnap) => normalizeProductFile(docSnap.id, docSnap.data()))),
+    (error) => { if (typeof onError === 'function') onError(error) }
+  )
+}
+
+export async function uploadProductFiles(productId, files = [], options = {}) {
+  if (!storage || !productId) return []
+  const uploaded = []
+  const shouldUseSubfolder = Boolean(options.useSubfolder)
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index]
+    if (!(file instanceof File)) continue
+    const fileId = options.fileIdFactory ? options.fileIdFactory(file, index) : doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
+    const baseName = sanitizeStorageFileName(file.name)
+    const storagePath = shouldUseSubfolder
+      ? `products/${productId}/files/${fileId}/${baseName}`
+      : `products/${productId}/downloads/${baseName}`
+    await uploadBytes(ref(storage, storagePath), file, { contentType: file.type || 'application/octet-stream' })
+    uploaded.push({
+      id: fileId,
+      productId,
+      name: file.name,
+      displayPath: file.webkitRelativePath || file.name,
+      parentPath: String(file.webkitRelativePath || '').includes('/') ? file.webkitRelativePath.split('/').slice(0, -1).join('/') : '',
+      kind: normalizeFileKind('', file.type),
+      mimeType: file.type || 'application/octet-stream',
+      sizeBytes: Number(file.size || 0),
+      storagePath,
+      canPreview: String(file.type || '').startsWith('audio/'),
+      isDownloadable: true,
+      isPublicPreview: false,
+      sortIndex: index
+    })
+  }
+  return uploaded
+}
+
+export async function saveProductFileManifest(productId, fileRows = []) {
+  if (!db || !productId) return
+  const filesCol = collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files')
+  const batch = writeBatch(db)
+  fileRows.forEach((row, index) => {
+    const id = row.id || doc(filesCol).id
+    batch.set(doc(filesCol, id), {
+      ...row,
+      id,
+      productId,
+      sortIndex: Number(row.sortIndex ?? index),
+      updatedAt: serverTimestamp(),
+      createdAt: row.createdAt || serverTimestamp()
+    }, { merge: true })
+  })
+  await batch.commit()
+}
+
 export async function initializeProductDraft(user, input = {}, requestedId = '') {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
   const productId = !isPlaceholderProductId(requestedId) ? requestedId : createProductId()
@@ -710,6 +898,59 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     throw error?.stage ? error : createStageError('media-upload', 'Media upload failed.', error)
   }
 
+  let galleryUploads = []
+  let previewAudioUploads = []
+  let previewVideoUploads = []
+  let deliverableUploads = []
+  let fileManifestRows = Array.isArray(options.fileManifestRows) ? options.fileManifestRows : []
+  try {
+    if (Array.isArray(options.galleryFiles) && options.galleryFiles.length) {
+      if (typeof options.onStatus === 'function') options.onStatus('Gallery upload started.')
+      galleryUploads = await Promise.all(options.galleryFiles.map(async (file, index) => {
+        const path = `${STORAGE_PATHS.productGalleryRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
+        await uploadBytes(ref(storage, path), file, { contentType: file.type || 'image/*' })
+        return path
+      }))
+    }
+    if (Array.isArray(options.previewAudioFiles) && options.previewAudioFiles.length) {
+      if (typeof options.onStatus === 'function') options.onStatus('Preview upload started.')
+      previewAudioUploads = await Promise.all(options.previewAudioFiles.map(async (file, index) => {
+        const path = `${STORAGE_PATHS.productAudioPreviewsRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
+        await uploadBytes(ref(storage, path), file, { contentType: file.type || 'audio/*' })
+        return path
+      }))
+    }
+    if (Array.isArray(options.previewVideoFiles) && options.previewVideoFiles.length) {
+      if (typeof options.onStatus === 'function') options.onStatus('Preview upload started.')
+      previewVideoUploads = await Promise.all(options.previewVideoFiles.map(async (file, index) => {
+        const path = `${STORAGE_PATHS.productVideoPreviewsRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
+        await uploadBytes(ref(storage, path), file, { contentType: file.type || 'video/*' })
+        return path
+      }))
+    }
+  } catch (error) {
+    throw createStageError('preview-upload', 'Preview upload failed.', error)
+  }
+
+  try {
+    if (Array.isArray(options.deliverableFiles) && options.deliverableFiles.length) {
+      if (typeof options.onStatus === 'function') options.onStatus('Deliverable upload started.')
+      deliverableUploads = await uploadProductFiles(productId, options.deliverableFiles, { useSubfolder: true })
+      fileManifestRows = [...fileManifestRows, ...deliverableUploads]
+    }
+  } catch (error) {
+    throw createStageError('deliverable-upload', 'Deliverable upload failed.', error)
+  }
+
+  try {
+    if (fileManifestRows.length) {
+      await saveProductFileManifest(productId, fileManifestRows)
+      if (typeof options.onStatus === 'function') options.onStatus('File manifest saved.')
+    }
+  } catch (error) {
+    throw createStageError('file-manifest-save', 'File manifest save failed.', error)
+  }
+
   const desiredStatus = options.status || basePayload.status || 'draft'
   const editingPublishedListing = input.currentStatus === 'published' || basePayload.status === 'published'
   const normalizedStatus = editingPublishedListing ? 'review_pending' : (desiredStatus === 'published' ? 'review_pending' : desiredStatus)
@@ -722,6 +963,19 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     visibility: basePayload.visibility || 'private',
     coverPath: mediaUploads.coverPath || basePayload.coverPath,
     thumbnailPath: mediaUploads.thumbnailPath || basePayload.thumbnailPath,
+    galleryPaths: galleryUploads.length ? galleryUploads : basePayload.galleryPaths,
+    previewAudioPaths: previewAudioUploads.length ? previewAudioUploads : basePayload.previewAudioPaths,
+    previewVideoPaths: previewVideoUploads.length ? previewVideoUploads : basePayload.previewVideoPaths,
+    primaryPreviewPath: previewAudioUploads[0] || previewVideoUploads[0] || basePayload.primaryPreviewPath || '',
+    primaryPreviewType: previewAudioUploads[0] ? 'audio' : (previewVideoUploads[0] ? 'video' : basePayload.primaryPreviewType || ''),
+    primaryDownloadPath: deliverableUploads[0]?.storagePath || basePayload.primaryDownloadPath || basePayload.downloadPath || '',
+    primaryDownloadBytes: deliverableUploads[0]?.sizeBytes || basePayload.primaryDownloadBytes || 0,
+    assetSummary: {
+      totalFiles: fileManifestRows.length || basePayload.assetSummary?.totalFiles || 0,
+      totalBytes: fileManifestRows.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0) || basePayload.assetSummary?.totalBytes || 0,
+      previewableCount: fileManifestRows.filter((row) => row.canPreview).length || basePayload.assetSummary?.previewableCount || 0,
+      downloadableCount: fileManifestRows.filter((row) => row.isDownloadable !== false).length || basePayload.assetSummary?.downloadableCount || 0
+    },
     updatedAt: serverTimestamp(),
     createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
   }
@@ -746,6 +1000,10 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     productId,
     payload,
     mediaUploads,
+    galleryUploads,
+    previewAudioUploads,
+    previewVideoUploads,
+    deliverableUploads,
     draftCreated: created
   }
 }
