@@ -203,6 +203,8 @@ service cloud.firestore {
         'contributorIds',
         'contributorNames',
         'contributorCount',
+        'pendingContributorIds',
+        'contributorRequestCount',
 
         'coverPath',
         'thumbnailPath',
@@ -500,6 +502,15 @@ service cloud.firestore {
         allow read: if (get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
             && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public')
           || (signedIn() && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid);
+        allow create, update, delete: if signedIn()
+          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+      }
+
+      match /contributors/{uid} {
+        allow read: if signedIn() && (
+            get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+            || request.auth.uid == uid
+          );
         allow create, update, delete: if signedIn()
           && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
       }

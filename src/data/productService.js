@@ -843,6 +843,87 @@ export function normalizeProductFile(fileId, raw = {}) {
   }
 }
 
+export function normalizeProductContributor(contributorId, raw = {}) {
+  return {
+    uid: raw.uid || contributorId,
+    displayName: raw.displayName || '',
+    username: raw.username || '',
+    avatarURL: raw.avatarURL || raw.photoURL || '',
+    role: raw.role || '',
+    status: raw.status || 'pending',
+    requestedBy: raw.requestedBy || '',
+    requestedAt: toIsoDate(raw.requestedAt),
+    respondedAt: toIsoDate(raw.respondedAt),
+    decision: raw.decision || (raw.status === 'accepted' ? 'accepted' : raw.status === 'denied' ? 'denied' : 'pending'),
+    decisionAt: toIsoDate(raw.decisionAt),
+    updatedAt: toIsoDate(raw.updatedAt)
+  }
+}
+
+export async function listProductContributors(productId = '') {
+  if (!db || !productId) return []
+  const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.products, productId, 'contributors'), orderBy('updatedAt', 'desc'), limit(500)))
+  return snapshot.docs.map((docSnap) => normalizeProductContributor(docSnap.id, docSnap.data()))
+}
+
+export function subscribeToProductContributors(productId = '', callback = () => {}, onError = null) {
+  if (!db || !productId || typeof callback !== 'function') return () => {}
+  return onSnapshot(
+    query(collection(db, FIRESTORE_COLLECTIONS.products, productId, 'contributors'), orderBy('updatedAt', 'desc'), limit(500)),
+    (snapshot) => callback(snapshot.docs.map((docSnap) => normalizeProductContributor(docSnap.id, docSnap.data()))),
+    (error) => { if (typeof onError === 'function') onError(error) }
+  )
+}
+
+export async function addProductContributorRequest({ productId = '', ownerUid = '', targetProfile = {}, role = '' } = {}) {
+  if (!db || !productId || !ownerUid || !targetProfile?.uid) return null
+  const ref = doc(db, FIRESTORE_COLLECTIONS.products, productId, 'contributors', targetProfile.uid)
+  await setDoc(ref, {
+    uid: targetProfile.uid,
+    displayName: targetProfile.displayName || targetProfile.username || 'Contributor',
+    username: targetProfile.username || '',
+    avatarURL: targetProfile.avatarURL || targetProfile.photoURL || '',
+    role: role || '',
+    status: 'pending',
+    requestedBy: ownerUid,
+    requestedAt: serverTimestamp(),
+    decision: 'pending',
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return targetProfile.uid
+}
+
+export async function removeProductContributorRequest({ productId = '', ownerUid = '', targetUid = '' } = {}) {
+  if (!db || !productId || !ownerUid || !targetUid) return
+  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId, 'contributors', targetUid), {
+    status: 'removed',
+    decision: 'pending',
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+}
+
+export async function updateProductContributorRole({ productId = '', ownerUid = '', targetUid = '', role = '' } = {}) {
+  if (!db || !productId || !ownerUid || !targetUid) return
+  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId, 'contributors', targetUid), { role: role || '', updatedAt: serverTimestamp() }, { merge: true })
+}
+
+export async function recalculateAcceptedContributors(productId = '') {
+  if (!db || !productId) return { contributorIds: [], contributorNames: [], contributorCount: 0 }
+  const contributors = await listProductContributors(productId)
+  const accepted = contributors.filter((row) => row.status === 'accepted' || row.decision === 'accepted')
+  const contributorIds = accepted.map((row) => row.uid).filter(Boolean)
+  const contributorNames = accepted.map((row) => row.displayName).filter(Boolean)
+  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
+    contributorIds,
+    contributorNames,
+    contributorCount: contributorIds.length,
+    pendingContributorIds: contributors.filter((row) => row.status === 'pending').map((row) => row.uid),
+    contributorRequestCount: contributors.length,
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return { contributorIds, contributorNames, contributorCount: contributorIds.length }
+}
+
 export async function listProductFiles(productId = '') {
   if (!db || !productId) return []
   const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files'), orderBy('sortIndex', 'asc'), limit(500)))

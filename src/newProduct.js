@@ -3,10 +3,20 @@ import './styles/newProduct.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState } from './firebase/auth'
-import { buildProductPayload, getProductById, isPlaceholderProductId, PRODUCT_QUOTAS, requestProductReview, saveProductDraft } from './data/productService'
+import {
+  addProductContributorRequest,
+  buildProductPayload,
+  getProductById,
+  isPlaceholderProductId,
+  recalculateAcceptedContributors,
+  removeProductContributorRequest,
+  requestProductReview,
+  saveProductDraft
+} from './data/productService'
 import { doc, getDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
+import { searchProfilesByUsername } from './data/profileSearchService'
 
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
@@ -55,6 +65,13 @@ let editorState = {
   mediaPreview: {
     cover: '',
     gallery: []
+  },
+  contributorUI: {
+    search: '',
+    role: '',
+    filter: 'all',
+    results: [],
+    rows: []
   },
   status: { message: '', state: 'info' },
   creatorProfile: null,
@@ -122,6 +139,8 @@ function createEmptyProductDraft(user = null, profile = null) {
     includedFiles: '',
     contributorNames: '',
     contributorIds: '',
+    pendingContributorIds: [],
+    contributorRequestCount: 0,
     downloadPath: '',
     previewAudioPaths: '',
     previewVideoPaths: '',
@@ -371,6 +390,90 @@ function renderMediaUploadPanel() {
   `
 }
 
+function hydrateLegacyContributors() {
+  if (!editorState.contributorUI.rows.length) {
+    const names = String(editorState.draft?.contributorNames || '').split(',').map((item) => item.trim()).filter(Boolean)
+    const ids = String(editorState.draft?.contributorIds || '').split(',').map((item) => item.trim()).filter(Boolean)
+    editorState.contributorUI.rows = names.map((name, index) => ({
+      uid: ids[index] || `legacy-${index}`,
+      displayName: name,
+      username: '',
+      avatarURL: '',
+      role: '',
+      status: ids[index] ? 'accepted' : 'accepted',
+      decision: 'accepted',
+      requestedAt: new Date().toISOString(),
+      decisionAt: new Date().toISOString(),
+      legacy: !ids[index]
+    }))
+  }
+}
+
+function recalcContributorSummaryFromRows() {
+  const accepted = editorState.contributorUI.rows.filter((row) => row.status === 'accepted')
+  const pending = editorState.contributorUI.rows.filter((row) => row.status === 'pending')
+  updateDraftField('contributorIds', accepted.filter((row) => row.uid && !row.legacy).map((row) => row.uid).join(', '))
+  updateDraftField('contributorNames', accepted.map((row) => row.displayName).join(', '))
+  updateDraftField('contributorCount', accepted.length)
+  updateDraftField('pendingContributorIds', pending.map((row) => row.uid).filter(Boolean))
+  updateDraftField('contributorRequestCount', editorState.contributorUI.rows.length)
+}
+
+function renderContributorsPanel() {
+  hydrateLegacyContributors()
+  const rows = editorState.contributorUI.rows
+    .filter((row) => editorState.contributorUI.filter === 'all' ? true : row.status === editorState.contributorUI.filter)
+  return `
+    <section class=\"contributors-workspace\">
+      <article class=\"contributors-main-panel\">
+        <h3>Contributing Artists</h3>
+        <div class=\"contributors-toolbar\">
+          <input class=\"contributor-search\" type=\"search\" value=\"${escapeHtml(editorState.contributorUI.search)}\" placeholder=\"Search users by username or display name…\" data-contributor-search />
+          <input type=\"text\" value=\"${escapeHtml(editorState.contributorUI.role)}\" placeholder=\"Contribution role (Producer, Vocalist...)\" data-contributor-role />
+        </div>
+        ${editorState.contributorUI.results.length ? `
+          <div class=\"contributor-results\">
+            ${editorState.contributorUI.results.map((profile) => `
+              <button type=\"button\" data-add-contributor=\"${escapeHtml(profile.uid)}\">
+                <img class=\"contributor-avatar\" src=\"${escapeHtml(profile.avatarURL || profile.photoURL || '')}\" alt=\"\" />
+                <span>${escapeHtml(profile.displayName || 'User')} @${escapeHtml(profile.username || '')}</span>
+              </button>
+            `).join('')}
+          </div>
+        ` : ''}
+        <div class=\"contributor-filter-row\">
+          ${['all', 'pending', 'accepted', 'denied'].map((filter) => `<button type=\"button\" class=\"${editorState.contributorUI.filter === filter ? 'is-active' : ''}\" data-contributor-filter=\"${filter}\">${filter[0].toUpperCase()}${filter.slice(1)}</button>`).join('')}
+        </div>
+        <div class=\"contributor-table\">
+          ${rows.length ? rows.map((row) => `
+            <article class=\"contributor-row\">
+              <img class=\"contributor-avatar\" src=\"${escapeHtml(row.avatarURL || '')}\" alt=\"\" />
+              <div class=\"contributor-identity\">
+                <strong>${escapeHtml(row.displayName || 'Unknown')}</strong>
+                <p>@${escapeHtml(row.username || 'manual')}</p>
+                <p>${escapeHtml(row.uid || '')}</p>
+              </div>
+              <div><input type=\"text\" value=\"${escapeHtml(row.role || '')}\" data-contributor-role-edit=\"${escapeHtml(row.uid)}\" placeholder=\"Role\"/></div>
+              <div>${escapeHtml((row.requestedAt || '').slice(0, 10) || '—')}</div>
+              <div>${escapeHtml((row.decisionAt || '').slice(0, 10) || '—')}</div>
+              <div><span class=\"contributor-status-badge is-${escapeHtml(row.status || 'pending')}\">${escapeHtml(row.status || 'pending')}</span></div>
+              <div class=\"contributor-actions\">
+                <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:accepted\">Accept</button>
+                <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:denied\">Deny</button>
+                <button type=\"button\" data-contributor-remove=\"${escapeHtml(row.uid)}\">Remove</button>
+              </div>
+            </article>
+          `).join('') : '<p class=\"contributor-empty-state\">No contributing artists added yet.</p>'}
+        </div>
+      </article>
+      <aside class=\"contributors-notice\">
+        <h4>Collaboration Notice:</h4>
+        <p>To ensure accurate attribution, contributing artists are required to accept their collaboration request before being listed as credited additions to your product. Pending their acceptance, their names will not be visible on the product page.</p>
+      </aside>
+    </section>
+  `
+}
+
 function renderEditor() {
   const section = readSectionHash()
   const statusClass = editorState.status.message ? `is-visible is-${editorState.status.state}` : ''
@@ -392,7 +495,13 @@ function renderEditor() {
       <section class="marketplace-editor-workspace">
         <div class="product-status ${statusClass}">${editorState.status.message || ''}</div>
         <form data-product-form>
-          ${section === 'product-info' ? renderProductInfoPanel() : section === 'media-upload' ? renderMediaUploadPanel() : renderPlaceholderPanel(section)}
+          ${section === 'product-info'
+            ? renderProductInfoPanel()
+            : section === 'media-upload'
+              ? renderMediaUploadPanel()
+              : section === 'contributors'
+                ? renderContributorsPanel()
+                : renderPlaceholderPanel(section)}
           <div class="editor-actions">
             <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
             <button type="button" class="button button-accent" data-publish-product>Publish Product</button>
@@ -538,6 +647,97 @@ function renderEditor() {
     })
     updateDraftField('id', result.productId)
     window.open(`${productRoute(result.productId)}?preview=draft`, '_blank', 'noopener,noreferrer')
+  })
+
+  const contributorSearchInput = editorRoot.querySelector('[data-contributor-search]')
+  const contributorRoleInput = editorRoot.querySelector('[data-contributor-role]')
+  contributorSearchInput?.addEventListener('input', async () => {
+    editorState.contributorUI.search = contributorSearchInput.value
+    if (editorState.contributorUI.search.trim().length < 2) {
+      editorState.contributorUI.results = []
+      renderEditor()
+      return
+    }
+    try {
+      editorState.contributorUI.results = await searchProfilesByUsername(editorState.contributorUI.search.trim())
+    } catch {
+      editorState.contributorUI.results = []
+    }
+    renderEditor()
+  })
+  contributorRoleInput?.addEventListener('input', () => {
+    editorState.contributorUI.role = contributorRoleInput.value
+  })
+  editorRoot.querySelectorAll('[data-add-contributor]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const uid = button.getAttribute('data-add-contributor') || ''
+      const profile = editorState.contributorUI.results.find((row) => row.uid === uid)
+      if (!profile || !editorState.user) return
+      if (uid === editorState.user.uid) {
+        setStatus('You cannot add yourself as a contributor.', 'error')
+        renderEditor()
+        return
+      }
+      if (editorState.contributorUI.rows.some((row) => row.uid === uid && row.status !== 'removed')) {
+        setStatus('Contributor already added.', 'error')
+        renderEditor()
+        return
+      }
+      const row = {
+        uid,
+        displayName: profile.displayName || profile.username || 'Contributor',
+        username: profile.username || '',
+        avatarURL: profile.avatarURL || profile.photoURL || '',
+        role: editorState.contributorUI.role || '',
+        status: 'pending',
+        decision: 'pending',
+        requestedAt: new Date().toISOString(),
+        decisionAt: '',
+        legacy: false
+      }
+      editorState.contributorUI.rows = [row, ...editorState.contributorUI.rows]
+      editorState.contributorUI.results = []
+      editorState.contributorUI.search = ''
+      recalcContributorSummaryFromRows()
+      if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) {
+        await addProductContributorRequest({ productId: editorState.draft.id, ownerUid: editorState.user.uid, targetProfile: profile, role: row.role })
+      }
+      setStatus('Contributor request added (pending).', 'success')
+      renderEditor()
+    })
+  })
+  editorRoot.querySelectorAll('[data-contributor-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      editorState.contributorUI.filter = button.getAttribute('data-contributor-filter') || 'all'
+      renderEditor()
+    })
+  })
+  editorRoot.querySelectorAll('[data-contributor-status]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const [uid, status] = String(button.getAttribute('data-contributor-status') || '').split(':')
+      editorState.contributorUI.rows = editorState.contributorUI.rows.map((row) => row.uid === uid ? { ...row, status, decision: status, decisionAt: new Date().toISOString() } : row)
+      recalcContributorSummaryFromRows()
+      if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) await recalculateAcceptedContributors(editorState.draft.id)
+      renderEditor()
+    })
+  })
+  editorRoot.querySelectorAll('[data-contributor-remove]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const uid = button.getAttribute('data-contributor-remove') || ''
+      editorState.contributorUI.rows = editorState.contributorUI.rows.filter((row) => row.uid !== uid)
+      recalcContributorSummaryFromRows()
+      if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id) && editorState.user) {
+        await removeProductContributorRequest({ productId: editorState.draft.id, ownerUid: editorState.user.uid, targetUid: uid })
+      }
+      renderEditor()
+    })
+  })
+  editorRoot.querySelectorAll('[data-contributor-role-edit]').forEach((input) => {
+    input.addEventListener('input', (event) => {
+      const uid = input.getAttribute('data-contributor-role-edit') || ''
+      const value = event.target.value
+      editorState.contributorUI.rows = editorState.contributorUI.rows.map((row) => row.uid === uid ? { ...row, role: value } : row)
+    })
   })
 
   async function persistProduct(desiredStatus = 'draft') {
