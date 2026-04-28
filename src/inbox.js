@@ -598,6 +598,7 @@ function getDmOtherParticipant(thread) {
 }
 
 function getDmBlockState(thread) {
+  // dmBlockState on the thread doc is the cross-account source of truth for DM lockout.
   const state = thread?.dmBlockState || null
   const currentUid = appState.user?.uid || ''
   const otherUid = getDmOtherParticipant(thread)
@@ -611,6 +612,11 @@ function getDmBlockState(thread) {
     otherBlockedCurrentUser: Boolean(isBlocked && state.blockedBy === otherUid && state.blockedUid === currentUid),
     isDmBlocked: isBlocked
   }
+}
+
+function isThreadInteractionLocked(thread) {
+  const block = getDmBlockState(thread)
+  return Boolean(block?.isDm && block?.isBlocked)
 }
 
 function isBlockedMessageForViewer(thread, message) {
@@ -1688,6 +1694,8 @@ function clampMenuPosition(x, y, width = 180, height = 220) {
 function getContextMenuMarkup() {
   const menu = appState.messageContextMenu
   if (!menu) return ''
+  const menuThread = appState.threads.find((entry) => entry.id === menu.threadId)
+  const isLockedDm = isThreadInteractionLocked(menuThread)
   const isOwnMessage = menu.senderId === appState.user?.uid
   const isThreadOwner = Boolean(menu.threadCreatedBy) && menu.threadCreatedBy === appState.user?.uid
   const canEdit = isOwnMessage && !menu.deleted && menu.type === 'text' && !menu.hasAttachments
@@ -1708,22 +1716,22 @@ function getContextMenuMarkup() {
   return `
     <div class="message-context-backdrop" data-message-context-close>
       <div class="message-context-menu" data-message-context-menu style="left:${pos.x}px;top:${pos.y}px;">
-        ${canReply ? '<button type="button" data-menu-action="reply">Reply</button>' : ''}
-        ${canEdit ? '<button type="button" data-menu-action="edit">Edit Message</button>' : ''}
-        ${canReact ? '<button type="button" data-menu-action="react">React</button>' : ''}
-        ${canViewReactions ? '<button type="button" data-menu-action="view-reactions">View Reactions</button>' : ''}
+        ${!isLockedDm && canReply ? '<button type="button" data-menu-action="reply">Reply</button>' : ''}
+        ${!isLockedDm && canEdit ? '<button type="button" data-menu-action="edit">Edit Message</button>' : ''}
+        ${!isLockedDm && canReact ? '<button type="button" data-menu-action="react">React</button>' : ''}
+        ${!isLockedDm && canViewReactions ? '<button type="button" data-menu-action="view-reactions">View Reactions</button>' : ''}
         ${canCopy ? '<button type="button" data-menu-action="copy">Copy text</button>' : ''}
-        ${canShowDelete ? '<button type="button" data-menu-action="delete">Delete Message</button>' : ''}
+        ${!isLockedDm && canShowDelete ? '<button type="button" data-menu-action="delete">Delete Message</button>' : ''}
         ${menu.senderId && !isOwnMessage ? `<button type="button" data-menu-action="profile" data-href="${escapeHtml(profileHref)}">Open Profile</button>` : ''}
         <button type="button" data-menu-action="cancel">Cancel</button>
       </div>
-      ${appState.deleteSubmenuAnchor ? `
+      ${!isLockedDm && appState.deleteSubmenuAnchor ? `
         <div class="message-context-menu is-submenu" style="left:${deleteSubPos.x}px;top:${deleteSubPos.y}px;">
           <button type="button" data-menu-action="delete-me">Delete for me</button>
           <button type="button" data-menu-action="delete-everyone" ${canDeleteEveryone ? '' : 'disabled'}>Delete for everyone</button>
         </div>
       ` : ''}
-      ${appState.reactionPickerAnchor ? `
+      ${!isLockedDm && appState.reactionPickerAnchor ? `
         <div class="message-context-menu is-submenu is-emoji" style="left:${emojiPos.x}px;top:${emojiPos.y}px;">
           ${['👍', '❤️', '😂', '🔥', '👀', '🎵'].map((emoji) => `<button type="button" data-menu-action="emoji" data-emoji="${emoji}">${emoji}</button>`).join('')}
         </div>
@@ -1740,6 +1748,15 @@ async function handleFloatingMenuAction(button) {
   const action = button.getAttribute('data-menu-action')
   const menu = appState.messageContextMenu
   if (!menu) return
+  const menuThread = appState.threads.find((entry) => entry.id === menu.threadId)
+  const isLockedDm = isThreadInteractionLocked(menuThread)
+
+  // Blocked DMs intentionally allow only copy/profile/cancel from message context menus.
+  if (isLockedDm && !['cancel', 'copy', 'profile'].includes(action || '')) {
+    clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
 
   if (action === 'cancel') {
     clearFloatingOverlays()
@@ -2646,11 +2663,13 @@ function bindSharedEvents() {
   }
 
   messageForm?.querySelector('[data-action="attach-file"]')?.addEventListener('click', () => {
+    if (thread && isThreadInteractionLocked(thread)) return
     attachmentInput?.click()
   })
 
   attachmentInput?.addEventListener('change', () => {
     if (!thread) return
+    if (isThreadInteractionLocked(thread)) return
     setAttachmentDraft(thread.id, Array.from(attachmentInput.files || []).slice(0, 6))
     renderSignedInState()
   })
@@ -2727,6 +2746,7 @@ function bindSharedEvents() {
   inboxRoot.querySelectorAll('[data-edit-save]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (!thread?.id) return
+      if (isThreadInteractionLocked(thread)) return
       const messageId = button.getAttribute('data-edit-save')
       const body = appState.editDraftByMessageId[messageId] || ''
       await editMessage({ threadId: thread.id, messageId, uid: appState.user?.uid, body })
@@ -2754,6 +2774,7 @@ function bindSharedEvents() {
       const messageId = button.getAttribute('data-reaction-pill')
       const emoji = button.getAttribute('data-emoji') || ''
       if (!thread?.id || !messageId || !emoji) return
+      if (isThreadInteractionLocked(thread)) return
       const reactionRows = appState.reactionsByThreadId[thread.id]?.[messageId] || []
       const mine = reactionRows.find((entry) => entry.uid === appState.user?.uid && entry.emoji === emoji)
       const rollback = applyOptimisticReaction({
@@ -3174,6 +3195,7 @@ function startSystemNotificationSubscription() {
 
 function startBlockedUsersSubscription() {
   if (!appState.user?.uid) return
+  // Private blockedUsers docs are per-account records; cross-account DM lockout comes from dmBlockState.
   appState.blockedUsersUnsubscribe()
   appState.blockedUsersUnsubscribe = subscribeToBlockedUsers(
     appState.user.uid,

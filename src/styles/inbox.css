@@ -2,6 +2,31 @@ body.is-inbox-page {
   overflow: hidden;
 }
 
+body.is-inbox-page * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(103, 132, 197, 0.75) rgba(7, 10, 18, 0.85);
+}
+
+body.is-inbox-page *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+body.is-inbox-page *::-webkit-scrollbar-track {
+  background: rgba(7, 10, 18, 0.85);
+  border-radius: 999px;
+}
+
+body.is-inbox-page *::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(88, 116, 184, 0.95), rgba(74, 93, 158, 0.95));
+  border-radius: 999px;
+  border: 2px solid rgba(7, 10, 18, 0.85);
+}
+
+body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(121, 154, 230, 0.95), rgba(91, 116, 190, 0.95));
+}
+
 .inbox-main-shell {
   background: var(--bg);
   width: 100%;
