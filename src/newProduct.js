@@ -13,7 +13,7 @@ import {
   requestProductReview,
   saveProductDraft
 } from './data/productService'
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
+import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -536,6 +536,31 @@ function refreshAgreementAcceptButton() {
   const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
   const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
   button.disabled = !canAccept
+}
+
+async function ensureCurrentDraftProduct({ silent = true } = {}) {
+  if (!editorState.user || !editorState.draft) return ''
+  const existingId = String(editorState.draft.id || '')
+  if (existingId && !isPlaceholderProductId(existingId)) return existingId
+
+  const title = String(editorState.draft.title || '').trim()
+  if (!title) {
+    if (!silent) setStatus('Add a product title before accepting the agreement.', 'error')
+    return ''
+  }
+
+  const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
+  const result = await saveProductDraft(editorState.user, payload, {
+    productId: '',
+    status: 'draft',
+    isNew: true,
+    mediaFiles: editorState.mediaFiles,
+    galleryFiles: editorState.mediaFiles.gallery,
+    previewAudioFiles: editorState.mediaFiles.previewAudio,
+    previewVideoFiles: editorState.mediaFiles.previewVideo
+  })
+  updateDraftField('id', result.productId)
+  return result.productId
 }
 
 function bindContributorAddButtons(scope = editorRoot) {
@@ -1144,11 +1169,6 @@ function renderEditor() {
 
   const form = editorRoot.querySelector('[data-product-form]')
 
-  const form = editorRoot.querySelector('[data-product-form]')
-
-  // Single form reference for all editor form bindings in this render cycle.
-  const form = editorRoot.querySelector('[data-product-form]')
-
   form?.addEventListener('input', (event) => {
     const target = event.target
     if (!target?.name) return
@@ -1247,22 +1267,19 @@ function renderEditor() {
 
     editorState.agreement.accepting = true
     renderEditor()
+    let productId = String(editorState.draft.id || '')
+    const hadPlaceholderProductId = !productId || isPlaceholderProductId(productId)
+    let productDocExisted = false
     try {
-      let productId = editorState.draft.id
-      if (!productId || isPlaceholderProductId(productId)) {
-        const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
-        const result = await saveProductDraft(editorState.user, payload, {
-          productId: '',
-          status: 'draft',
-          isNew: true,
-          mediaFiles: editorState.mediaFiles,
-          galleryFiles: editorState.mediaFiles.gallery,
-          previewAudioFiles: editorState.mediaFiles.previewAudio,
-          previewVideoFiles: editorState.mediaFiles.previewVideo
-        })
-        productId = result.productId
-        updateDraftField('id', productId)
+      productId = await ensureCurrentDraftProduct({ silent: false })
+      if (!productId) {
+        renderEditor()
+        return
       }
+      const productRef = doc(db, 'products', productId)
+      const productSnap = await getDoc(productRef)
+      productDocExisted = productSnap.exists()
+      if (!productDocExisted) throw new Error('Draft product missing after initialization')
       const config = editorState.agreement.config
       const agreementPayload = {
         agreementId: config.agreementId,
@@ -1275,17 +1292,18 @@ function renderEditor() {
         acceptedAt: serverTimestamp(),
         accepted: true
       }
-      await setDoc(doc(db, 'products', productId), {
+      await updateDoc(productRef, {
         sellerAgreement: agreementPayload,
         sellerAgreementAccepted: true,
         sellerAgreementVersion: config.activeVersion,
         updatedAt: serverTimestamp()
-      }, { merge: true })
+      })
       await setDoc(doc(db, 'users', editorState.user.uid, 'agreementAcceptances', `${config.agreementId}_${config.activeVersion}`), {
         agreementId: config.agreementId,
         version: config.activeVersion,
         title: config.title,
         storagePath: config.storagePath,
+        format: config.format || 'markdown',
         signedName,
         productId,
         acceptedAt: serverTimestamp(),
@@ -1296,7 +1314,15 @@ function renderEditor() {
       updateDraftField('sellerAgreementVersion', config.activeVersion)
       setStatus('Agreement accepted.', 'success')
     } catch (error) {
-      console.warn('[new-product] agreement acceptance failed', error?.code || error?.message || error)
+      console.warn('[new-product] agreement acceptance failed', {
+        code: error?.code,
+        message: error?.message,
+        productId,
+        hasValidProductId: Boolean(productId) && !isPlaceholderProductId(productId),
+        hadPlaceholderProductId,
+        productDocExisted,
+        latestVersion: editorState.agreement.config?.activeVersion || ''
+      })
       setStatus('Could not save agreement acceptance. Please try again.', 'error')
     } finally {
       editorState.agreement.accepting = false
