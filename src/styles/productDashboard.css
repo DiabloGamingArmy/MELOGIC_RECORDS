@@ -463,3 +463,6 @@
   margin-bottom: 0.9rem;
   background: rgba(13, 17, 30, 0.75);
 }
+
+.draft-preview-banner { padding: .65rem .85rem; border: 1px solid rgba(111, 179, 244, .45); color: #b8e3ff; background: rgba(23, 45, 77, .5); margin-bottom: .8rem; }
+.preview-mode-disabled { opacity: .55; cursor: not-allowed; }

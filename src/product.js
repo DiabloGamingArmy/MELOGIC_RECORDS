@@ -13,7 +13,8 @@ const app = document.querySelector('#app')
 const state = {
   mediaItems: [],
   selectedMediaIndex: 0,
-  currentUser: null
+  currentUser: null,
+  isDraftPreview: false
 }
 
 function escapeHtml(value) {
@@ -188,6 +189,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   app.innerHTML = `
     ${navShell({ currentPage: 'products' })}
     <main>
+      ${state.isDraftPreview ? '<section class=\"section\"><div class=\"section-inner\"><article class=\"panel-surface draft-preview-banner\">Marketplace Preview — actions are disabled.</article></div></section>' : ''}
       <section class="section product-dashboard-shell">
         <div class="section-inner product-dashboard-layout">
           <section class="dashboard-media-area panel-surface" aria-label="Product media gallery">
@@ -311,9 +313,9 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
             <article class="panel-surface dashboard-side-card">
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
-              <button type="button" class="button button-accent" data-add-dashboard-cart>Add to Cart</button>
-              ${product.isFree ? '<button type="button" class="button button-muted" data-claim-free-product>Claim Free Product</button>' : ''}
-              ${(product.previewAudioURLs || []).length ? '<button type="button" class="button button-muted" data-play-dashboard-preview>Preview</button>' : ''}
+              <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Add to Cart</button>
+              ${product.isFree ? `<button type=\"button\" class=\"button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}\" data-claim-free-product ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Claim Free Product</button>` : ''}
+              ${(product.previewAudioURLs || []).length ? `<button type=\"button\" class=\"button button-muted\" data-play-dashboard-preview>Preview</button>` : ''}
               <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
@@ -345,6 +347,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   initShellChrome()
 
   app.querySelector('[data-add-dashboard-cart]')?.addEventListener('click', (event) => {
+    if (state.isDraftPreview) return
     event.preventDefault()
     addToCart(product)
     const button = event.currentTarget
@@ -365,6 +368,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   })
 
   app.querySelector('[data-claim-free-product]')?.addEventListener('click', async (event) => {
+    if (state.isDraftPreview) return
     if (!state.currentUser?.uid || !product?.id) return
     const button = event.currentTarget
     if (!(button instanceof HTMLButtonElement)) return
@@ -398,6 +402,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 async function init() {
   renderSkeleton()
   state.currentUser = await waitForInitialAuthState()
+  state.isDraftPreview = new URLSearchParams(window.location.search).get('preview') === 'draft'
 
   const id = parseProductIdFromLocation()
   if (!id) {
@@ -414,8 +419,12 @@ async function init() {
 
     const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
     const isPublic = product.status === 'published' && product.visibility === 'public'
-    if (!isPublic && !isOwner) {
+    if (!isPublic && !isOwner && !state.isDraftPreview) {
       renderState('Product not available.', 'This product is not currently available to the public.')
+      return
+    }
+    if (state.isDraftPreview && !isOwner) {
+      renderState('Preview unavailable.', 'Only the product owner can open draft marketplace preview mode.')
       return
     }
 
