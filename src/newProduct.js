@@ -168,6 +168,32 @@ function createEmptyProductDraft(user = null, profile = null) {
   }
 }
 
+function productTypeAccept(type = '', section = 'deliverable') {
+  const isPlugin = type === 'Plugin / VST'
+  if (section === 'previewAudio') return 'audio/*'
+  if (section === 'previewVideo') return 'video/*'
+  if (section === 'gallery') return 'image/*'
+  if (isPlugin) return '.zip,.exe,.dmg,.pkg,.msi,.rar,.7z'
+  if (type === 'Single Sample') return 'audio/*,.zip'
+  return '.zip,.rar,.7z,audio/*,video/*,application/*,text/*'
+}
+
+function validateDraftFiles(files = []) {
+  if (files.length > PRODUCT_QUOTAS.maxFileCount) return `Too many files. Maximum is ${PRODUCT_QUOTAS.maxFileCount}.`
+  let totalBytes = 0
+  for (const file of files) {
+    totalBytes += Number(file.size || 0)
+    if ((file.name || '').length > PRODUCT_QUOTAS.maxFileNameLength) return `Filename too long: ${file.name}`
+    const relative = file.webkitRelativePath || file.name || ''
+    const depth = relative.split('/').filter(Boolean).length
+    if (depth > PRODUCT_QUOTAS.maxFolderDepth + 1) return `Folder depth exceeds ${PRODUCT_QUOTAS.maxFolderDepth} levels.`
+    if (relative.length > PRODUCT_QUOTAS.maxPathLength) return `Path too long: ${relative}`
+    if (file.size > PRODUCT_QUOTAS.maxSingleDeliverableBytes) return 'This file exceeds the 512 MB single-file limit.'
+  }
+  if (totalBytes > PRODUCT_QUOTAS.maxTotalDeliverableBytes) return 'This product exceeds the 1 GB deliverable limit.'
+  return ''
+}
+
 function readSectionHash() {
   const hash = window.location.hash.replace('#', '')
   if (hash === 'preview') {
@@ -1096,6 +1122,12 @@ function renderEditor() {
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
     try {
+      const deliverableValidation = validateDraftFiles([...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables])
+      if (deliverableValidation) {
+        setStatus(deliverableValidation, 'error')
+        renderEditor()
+        return
+      }
       const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
       const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, currentStatus: editorState.draft.status || 'draft', status: desiredStatus === 'published' ? 'review_pending' : desiredStatus }, editorState.user)
       const result = await saveProductDraft(editorState.user, payload, {
