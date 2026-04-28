@@ -51,6 +51,11 @@ service firebase.storage {
       allow write: if false;
     }
 
+    match /legal/agreements/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
     // User-owned profile media uploads (avatar/banner).
     match /users/{uid}/{allPaths=**} {
       allow read: if true;
@@ -85,6 +90,11 @@ service firebase.storage {
     match /products/{productId}/downloads/{fileName} {
       allow read: if false;
       allow write: if isProductOwner(productId) && request.resource != null && request.resource.size <= 1024 * 1024 * 1024;
+    }
+
+    match /products/{productId}/files/{fileId}/{fileName} {
+      allow read: if false;
+      allow write: if isProductOwner(productId) && request.resource != null && request.resource.size <= 512 * 1024 * 1024;
     }
 
     match /products/{productId}/licenses/{fileName} {
