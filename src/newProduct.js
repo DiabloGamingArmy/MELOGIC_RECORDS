@@ -9,15 +9,35 @@ import { db } from './firebase/firestore'
 import { ROUTES } from './utils/routes'
 
 const PRODUCT_SECTIONS = [
-  { key: 'basics', label: 'Basics' },
-  { key: 'media', label: 'Media' },
+  { key: 'basics', label: 'Product type' },
+  { key: 'media', label: 'Listing media' },
+  { key: 'distribution', label: 'Deliverables' },
+  { key: 'preview', label: 'File browser preview' },
   { key: 'pricing', label: 'Pricing' },
   { key: 'details', label: 'Details' },
   { key: 'contributors', label: 'Contributors' },
-  { key: 'distribution', label: 'Distribution' },
-  { key: 'preview', label: 'Preview' },
   { key: 'publish', label: 'Publish' }
 ]
+
+const PRODUCT_TYPE_OPTIONS = [
+  'Single Sample', 'Sample Pack', 'Drum Kit', 'Vocal Pack', 'Preset Bank', 'Wavetable Pack',
+  'MIDI Pack', 'Project File', 'Plugin / VST', 'Course / Tutorial', 'Release', 'Other'
+]
+
+const PRODUCT_TYPE_GUIDANCE = {
+  'Single Sample': 'Upload one main audio file and a public audio preview. Single samples can preview from product cards.',
+  'Sample Pack': 'Upload a zip or folder files and one demo preview track. Product page shows file browser manifest.',
+  'Drum Kit': 'Upload a zip or folder files and one demo preview track. Product page shows file browser manifest.',
+  'Vocal Pack': 'Upload a zip or folder files and one demo preview track. Product page shows file browser manifest.',
+  'Preset Bank': 'Upload preset package or folders. Optional demo audio. Viewer focuses on file browser layout.',
+  'Wavetable Pack': 'Upload wavetable package or folders. Optional demo audio. Viewer focuses on file browser layout.',
+  'MIDI Pack': 'Upload MIDI package or folders. Optional demo audio. Viewer focuses on file browser layout.',
+  'Project File': 'Upload project/package plus DAW/version notes. Preview with rendered audio/video/screenshots.',
+  'Plugin / VST': 'Upload installer variants or package zip. Add OS/DAW/architecture notes. Use demo audio/video previews.',
+  'Course / Tutorial': 'Upload video previews, license/PDF, and course package. Viewer shows modules/files.',
+  Release: 'Upload release package and media previews for shoppers.',
+  Other: 'Choose flexible upload set. Preview files are public; deliverable files remain private.'
+}
 
 const app = document.querySelector('#app')
 app.innerHTML = `
@@ -51,7 +71,12 @@ let editorState = {
   slugLocked: false,
   mediaFiles: {
     cover: null,
-    thumbnail: null
+    thumbnail: null,
+    gallery: [],
+    previewAudio: [],
+    previewVideo: [],
+    deliverables: [],
+    folderDeliverables: []
   },
   mediaPreview: {
     cover: '',
@@ -113,7 +138,7 @@ function createEmptyProductDraft(user = null, profile = null) {
     slug: '',
     shortDescription: '',
     description: '',
-    productType: 'Sample Pack',
+    productType: 'Single Sample',
     artistId: creator.artistId,
     artistName: creator.artistName,
     artistUsername: creator.artistUsername,
@@ -145,6 +170,16 @@ function createEmptyProductDraft(user = null, profile = null) {
     coverURL: '',
     thumbnailURL: ''
   }
+}
+
+function productTypeAccept(type = '', section = 'deliverable') {
+  const isPlugin = type === 'Plugin / VST'
+  if (section === 'previewAudio') return 'audio/*'
+  if (section === 'previewVideo') return 'video/*'
+  if (section === 'gallery') return 'image/*'
+  if (isPlugin) return '.zip,.exe,.dmg,.pkg,.msi,.rar,.7z'
+  if (type === 'Single Sample') return 'audio/*,.zip'
+  return '.zip,.rar,.7z,audio/*,video/*,application/*,text/*'
 }
 
 function readSectionHash() {
@@ -337,18 +372,22 @@ function renderEditor() {
 
         <form data-product-form>
           <article class="editor-panel ${section === 'basics' ? 'is-active' : ''}">
-            <h2>Basics</h2>
-            <p class="panel-copy">Core listing identity and publication status.</p>
+            <h2>Product type</h2>
+            <p class="panel-copy">Choose product type first. It controls previews, deliverable mode, and viewer layout.</p>
+            <div class="upload-card">
+              <h3>Type selector</h3>
+              <label><span>Product Type</span>
+                <select name="productType">
+                  ${PRODUCT_TYPE_OPTIONS.map((option) => `<option ${draft.productType === option ? 'selected' : ''}>${option}</option>`).join('')}
+                </select>
+              </label>
+              <p class="muted">${escapeHtml(PRODUCT_TYPE_GUIDANCE[draft.productType] || PRODUCT_TYPE_GUIDANCE.Other)}</p>
+            </div>
             <div class="field-grid two-col">
               <label><span>Product Title</span><input name="title" required value="${escapeHtml(draft.title)}" /></label>
               <label><span>Slug</span><input name="slug" placeholder="auto-generated-from-title" value="${escapeHtml(draft.slug)}" /></label>
             </div>
             <div class="field-grid two-col">
-              <label><span>Product Type</span>
-                <select name="productType">
-                  <option ${draft.productType === 'VST' ? 'selected' : ''}>VST</option><option ${draft.productType === 'Sample Pack' ? 'selected' : ''}>Sample Pack</option><option ${draft.productType === 'Preset Bank' ? 'selected' : ''}>Preset Bank</option><option ${draft.productType === 'Wavetables' ? 'selected' : ''}>Wavetables</option><option ${draft.productType === 'Drum Kit' ? 'selected' : ''}>Drum Kit</option><option ${draft.productType === 'Vocal Pack' ? 'selected' : ''}>Vocal Pack</option>
-                </select>
-              </label>
               <label><span>Artist / Primary Creator</span><input name="artistName" value="${escapeHtml(draft.artistName)}" readonly aria-readonly="true" class="locked-input" /><small class="field-lock-note">Creator is tied to your account.</small></label>
             </div>
             <label><span>Short Description</span><textarea name="shortDescription" rows="2">${escapeHtml(draft.shortDescription)}</textarea></label>
@@ -364,8 +403,8 @@ function renderEditor() {
           </article>
 
           <article class="editor-panel ${section === 'media' ? 'is-active' : ''}">
-            <h2>Media</h2>
-            <p class="panel-copy">Upload listing visuals and preview assets. Cover/thumbnail upload is functional in this first pass.</p>
+            <h2>Listing media & preview media</h2>
+            <p class="panel-copy">Preview files are public. Download files are private and require ownership.</p>
             <div class="media-grid">
               <div class="upload-card">
                 <h3>Cover Image</h3>
@@ -380,10 +419,25 @@ function renderEditor() {
                 <p class="muted">Storage target: products/{id}/thumbnails/thumb.webp</p>
               </div>
             </div>
-            <div class="media-grid placeholders">
-              <div class="upload-card dashed"><h3>Gallery uploads</h3><p class="muted">Ready for products/{id}/gallery/{fileName}</p></div>
-              <div class="upload-card dashed"><h3>Audio previews</h3><p class="muted">Ready for products/{id}/audio-previews/{fileName}</p></div>
-              <div class="upload-card dashed"><h3>Video preview</h3><p class="muted">Ready for products/{id}/video-previews/{fileName}</p></div>
+            <div class="media-grid">
+              <div class="upload-card">
+                <h3>Gallery uploads</h3>
+                <button type="button" class="button button-muted" data-pick-file="gallery">Upload Gallery</button>
+                <input class="hidden-file" type="file" accept="${productTypeAccept(draft.productType, 'gallery')}" multiple data-gallery-input />
+                <p class="muted">${editorState.mediaFiles.gallery.length} selected · products/{id}/gallery/{fileName}</p>
+              </div>
+              <div class="upload-card">
+                <h3>Public audio previews</h3>
+                <button type="button" class="button button-muted" data-pick-file="preview-audio">Upload Audio Previews</button>
+                <input class="hidden-file" type="file" accept="${productTypeAccept(draft.productType, 'previewAudio')}" multiple data-preview-audio-input />
+                <p class="muted">${editorState.mediaFiles.previewAudio.length} selected · products/{id}/audio-previews/{fileName}</p>
+              </div>
+              <div class="upload-card">
+                <h3>Public video previews</h3>
+                <button type="button" class="button button-muted" data-pick-file="preview-video">Upload Video Previews</button>
+                <input class="hidden-file" type="file" accept="${productTypeAccept(draft.productType, 'previewVideo')}" multiple data-preview-video-input />
+                <p class="muted">${editorState.mediaFiles.previewVideo.length} selected · products/{id}/video-previews/{fileName}</p>
+              </div>
             </div>
             <div class="preview-strip">
               ${editorState.mediaPreview.cover ? `<img src="${editorState.mediaPreview.cover}" alt="Cover preview" />` : '<div class="preview-box">Cover preview</div>'}
@@ -425,11 +479,23 @@ function renderEditor() {
           </article>
 
           <article class="editor-panel ${section === 'distribution' ? 'is-active' : ''}">
-            <h2>Distribution</h2>
-            <p class="panel-copy">Control release and storefront visibility settings.</p>
-            <label><span>Download path</span><input name="downloadPath" placeholder="products/{id}/downloads/file.zip" value="${escapeHtml(draft.downloadPath)}" /></label>
-            <label><span>Audio preview paths (comma separated)</span><input name="previewAudioPaths" placeholder="products/{id}/audio-previews/demo.mp3" value="${escapeHtml(draft.previewAudioPaths)}" /></label>
-            <label><span>Video preview paths (comma separated)</span><input name="previewVideoPaths" placeholder="products/{id}/video-previews/demo.mp4" value="${escapeHtml(draft.previewVideoPaths)}" /></label>
+            <h2>Deliverables</h2>
+            <p class="panel-copy">Download files are private and require ownership. Packs open a product viewer with file previews.</p>
+            <div class="media-grid">
+              <div class="upload-card">
+                <h3>Deliverable files / package</h3>
+                <button type="button" class="button button-accent" data-pick-file="deliverables">Upload Files</button>
+                <input class="hidden-file" type="file" accept="${productTypeAccept(draft.productType, 'deliverable')}" multiple data-deliverables-input />
+                <p class="muted">${editorState.mediaFiles.deliverables.length} selected · products/{id}/files/{fileId}/{fileName}</p>
+              </div>
+              <div class="upload-card">
+                <h3>Folder upload (if supported)</h3>
+                <button type="button" class="button button-muted" data-pick-file="deliverables-folder">Upload Folder</button>
+                <input class="hidden-file" type="file" webkitdirectory multiple data-deliverables-folder-input />
+                <p class="muted">${editorState.mediaFiles.folderDeliverables.length} folder files selected</p>
+              </div>
+            </div>
+            <label><span>Download path (legacy)</span><input name="downloadPath" placeholder="products/{id}/downloads/file.zip" value="${escapeHtml(draft.downloadPath)}" /></label>
             <label><span>Release date</span><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></label>
             <div class="toggle-grid">
               <label><input type="checkbox" name="storefrontVisible" ${draft.storefrontVisible ? 'checked' : ''} /> Storefront visibility enabled</label>
@@ -437,8 +503,14 @@ function renderEditor() {
           </article>
 
           <article class="editor-panel ${section === 'preview' ? 'is-active' : ''}" data-preview-panel>
-            <h2>Preview</h2>
-            <p class="panel-copy">Live listing card preview based on current form values.</p>
+            <h2>File browser preview</h2>
+            <p class="panel-copy">Manifest preview generated from selected deliverable files before save.</p>
+            <div class="upload-card">
+              <h3>Included files (${(editorState.mediaFiles.folderDeliverables.length || editorState.mediaFiles.deliverables.length)})</h3>
+              <ul>
+                ${[...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables].slice(0, 50).map((file) => `<li>${escapeHtml(file.webkitRelativePath || file.name)} · ${(Number(file.size || 0) / 1024).toFixed(1)} KB</li>`).join('') || '<li>No files selected yet.</li>'}
+              </ul>
+            </div>
             <div data-preview-card>
               ${previewCardMarkup(draft)}
             </div>
@@ -464,6 +536,11 @@ function renderEditor() {
   const form = editorRoot.querySelector('[data-product-form]')
   const coverInput = editorRoot.querySelector('[data-cover-input]')
   const thumbnailInput = editorRoot.querySelector('[data-thumbnail-input]')
+  const galleryInput = editorRoot.querySelector('[data-gallery-input]')
+  const previewAudioInput = editorRoot.querySelector('[data-preview-audio-input]')
+  const previewVideoInput = editorRoot.querySelector('[data-preview-video-input]')
+  const deliverablesInput = editorRoot.querySelector('[data-deliverables-input]')
+  const deliverablesFolderInput = editorRoot.querySelector('[data-deliverables-folder-input]')
 
   navButtons.forEach((button) => {
     button.addEventListener('click', () => {
@@ -474,6 +551,11 @@ function renderEditor() {
 
   editorRoot.querySelector('[data-pick-file="cover"]')?.addEventListener('click', () => coverInput?.click())
   editorRoot.querySelector('[data-pick-file="thumbnail"]')?.addEventListener('click', () => thumbnailInput?.click())
+  editorRoot.querySelector('[data-pick-file="gallery"]')?.addEventListener('click', () => galleryInput?.click())
+  editorRoot.querySelector('[data-pick-file="preview-audio"]')?.addEventListener('click', () => previewAudioInput?.click())
+  editorRoot.querySelector('[data-pick-file="preview-video"]')?.addEventListener('click', () => previewVideoInput?.click())
+  editorRoot.querySelector('[data-pick-file="deliverables"]')?.addEventListener('click', () => deliverablesInput?.click())
+  editorRoot.querySelector('[data-pick-file="deliverables-folder"]')?.addEventListener('click', () => deliverablesFolderInput?.click())
 
   coverInput?.addEventListener('change', () => {
     const file = coverInput.files?.[0]
@@ -492,6 +574,31 @@ function renderEditor() {
     editorState.mediaPreview.thumbnail = URL.createObjectURL(file)
     setStatus('Thumbnail selected. Save draft to upload.', 'info')
     saveDraftState()
+    renderEditor()
+  })
+  galleryInput?.addEventListener('change', () => {
+    editorState.mediaFiles.gallery = Array.from(galleryInput.files || [])
+    setStatus('Gallery files selected. Save draft to upload.', 'info')
+    renderEditor()
+  })
+  previewAudioInput?.addEventListener('change', () => {
+    editorState.mediaFiles.previewAudio = Array.from(previewAudioInput.files || [])
+    setStatus('Audio previews selected. Save draft to upload.', 'info')
+    renderEditor()
+  })
+  previewVideoInput?.addEventListener('change', () => {
+    editorState.mediaFiles.previewVideo = Array.from(previewVideoInput.files || [])
+    setStatus('Video previews selected. Save draft to upload.', 'info')
+    renderEditor()
+  })
+  deliverablesInput?.addEventListener('change', () => {
+    editorState.mediaFiles.deliverables = Array.from(deliverablesInput.files || [])
+    setStatus('Deliverable files selected. Save draft to upload.', 'info')
+    renderEditor()
+  })
+  deliverablesFolderInput?.addEventListener('change', () => {
+    editorState.mediaFiles.folderDeliverables = Array.from(deliverablesFolderInput.files || [])
+    setStatus('Folder files selected. Save draft to upload.', 'info')
     renderEditor()
   })
 
@@ -563,6 +670,10 @@ function renderEditor() {
         status: desiredStatus === 'published' ? 'review_pending' : desiredStatus,
         isNew: wasNewDraft,
         mediaFiles: editorState.mediaFiles,
+        galleryFiles: editorState.mediaFiles.gallery,
+        previewAudioFiles: editorState.mediaFiles.previewAudio,
+        previewVideoFiles: editorState.mediaFiles.previewVideo,
+        deliverableFiles: [...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables],
         onStatus: (message) => {
           setStatus(message, 'info')
           renderEditor()
@@ -579,6 +690,11 @@ function renderEditor() {
       syncPreviewFromDraft()
       editorState.mediaFiles.cover = null
       editorState.mediaFiles.thumbnail = null
+      editorState.mediaFiles.gallery = []
+      editorState.mediaFiles.previewAudio = []
+      editorState.mediaFiles.previewVideo = []
+      editorState.mediaFiles.deliverables = []
+      editorState.mediaFiles.folderDeliverables = []
       if (desiredStatus === 'published') {
         const reviewResult = await requestProductReview(result.productId)
         updateDraftField('status', reviewResult?.status || 'review_pending')
@@ -602,6 +718,12 @@ function renderEditor() {
         console.warn('[new-product] Cover upload failed', error?.code || error?.message || error)
       } else if (stage === 'thumbnail-upload') {
         console.warn('[new-product] Thumbnail upload failed', error?.code || error?.message || error)
+      } else if (stage === 'preview-upload') {
+        console.warn('[new-product] Preview upload failed', error?.code || error?.message || error)
+      } else if (stage === 'deliverable-upload') {
+        console.warn('[new-product] Deliverable upload failed', error?.code || error?.message || error)
+      } else if (stage === 'file-manifest-save') {
+        console.warn('[new-product] File manifest save failed', error?.code || error?.message || error)
       } else if (stage === 'final-firestore-merge') {
         console.warn('[new-product] Final Firestore merge failed', error?.code || error?.message || error)
       } else if (stage === 'publish-transition') {
@@ -614,8 +736,14 @@ function renderEditor() {
         ? 'Could not initialize draft.'
         : stage === 'cover-upload'
           ? 'Cover upload failed.'
-          : stage === 'thumbnail-upload'
-            ? 'Thumbnail upload failed.'
+            : stage === 'thumbnail-upload'
+              ? 'Thumbnail upload failed.'
+              : stage === 'preview-upload'
+                ? 'Preview upload failed.'
+                : stage === 'deliverable-upload'
+                  ? 'Deliverable upload failed.'
+                  : stage === 'file-manifest-save'
+                    ? 'File manifest save failed.'
             : stage === 'final-firestore-merge'
               ? 'Final product metadata save failed.'
                 : stage === 'publish-transition'
