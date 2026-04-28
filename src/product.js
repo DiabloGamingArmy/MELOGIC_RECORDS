@@ -3,7 +3,8 @@ import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
-import { getProductById, listRecommendedProducts } from './data/productService'
+import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
+import { claimFreeProduct, userOwnsProduct } from './data/entitlementService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
 
@@ -12,7 +13,8 @@ const app = document.querySelector('#app')
 const state = {
   mediaItems: [],
   selectedMediaIndex: 0,
-  currentUser: null
+  currentUser: null,
+  isDraftPreview: false
 }
 
 function escapeHtml(value) {
@@ -160,7 +162,7 @@ function creatorInitials(name) {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')
 }
 
-function renderProduct(product, recommendations = [], ownerPreview = false) {
+function renderProduct(product, recommendations = [], ownerPreview = false, productFiles = [], ownsProduct = false) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
   state.selectedMediaIndex = 0
@@ -187,6 +189,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
   app.innerHTML = `
     ${navShell({ currentPage: 'products' })}
     <main>
+      ${state.isDraftPreview ? '<section class=\"section\"><div class=\"section-inner\"><article class=\"panel-surface draft-preview-banner\">Marketplace Preview — actions are disabled.</article></div></section>' : ''}
       <section class="section product-dashboard-shell">
         <div class="section-inner product-dashboard-layout">
           <section class="dashboard-media-area panel-surface" aria-label="Product media gallery">
@@ -226,6 +229,15 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
             <article class="dashboard-section-card">
               <h2>What’s included</h2>
               <p>${escapeHtml((product.categories || []).join(', ') || 'Details were not provided.')}</p>
+            </article>
+            <article class="dashboard-section-card">
+              <h2>File browser</h2>
+              <p>${ownsProduct ? 'Owned: private downloads available when backend signed URLs are implemented.' : 'Preview manifest only until product is owned.'}</p>
+              <ul>
+                ${productFiles.length
+                  ? productFiles.map((file) => `<li>${escapeHtml(file.displayPath || file.name)} · ${Math.max(0, Number(file.sizeBytes || 0) / 1024).toFixed(1)} KB ${file.canPreview ? '· previewable' : ''}</li>`).join('')
+                  : '<li>No included files listed yet.</li>'}
+              </ul>
             </article>
             <article class="dashboard-section-card">
               <h2>Compatibility</h2>
@@ -301,8 +313,9 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
             <article class="panel-surface dashboard-side-card">
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
-              <button type="button" class="button button-accent" data-add-dashboard-cart>Add to Cart</button>
-              ${(product.previewAudioURLs || []).length ? '<button type="button" class="button button-muted" data-play-dashboard-preview>Preview</button>' : ''}
+              <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Add to Cart</button>
+              ${product.isFree ? `<button type=\"button\" class=\"button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}\" data-claim-free-product ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Claim Free Product</button>` : ''}
+              ${(product.previewAudioURLs || []).length ? `<button type=\"button\" class=\"button button-muted\" data-play-dashboard-preview>Preview</button>` : ''}
               <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
@@ -334,6 +347,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
   initShellChrome()
 
   app.querySelector('[data-add-dashboard-cart]')?.addEventListener('click', (event) => {
+    if (state.isDraftPreview) return
     event.preventDefault()
     addToCart(product)
     const button = event.currentTarget
@@ -351,6 +365,21 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
     if (!(firstAudio instanceof HTMLAudioElement)) return
     firstAudio.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     firstAudio.play().catch(() => {})
+  })
+
+  app.querySelector('[data-claim-free-product]')?.addEventListener('click', async (event) => {
+    if (state.isDraftPreview) return
+    if (!state.currentUser?.uid || !product?.id) return
+    const button = event.currentTarget
+    if (!(button instanceof HTMLButtonElement)) return
+    button.disabled = true
+    try {
+      await claimFreeProduct(state.currentUser.uid, product.id)
+      button.textContent = 'Claimed'
+    } catch {
+      button.disabled = false
+      button.textContent = 'Claim failed'
+    }
   })
 
   app.querySelectorAll('[data-media-index]').forEach((button) => {
@@ -373,6 +402,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
 async function init() {
   renderSkeleton()
   state.currentUser = await waitForInitialAuthState()
+  state.isDraftPreview = new URLSearchParams(window.location.search).get('preview') === 'draft'
 
   const id = parseProductIdFromLocation()
   if (!id) {
@@ -389,13 +419,21 @@ async function init() {
 
     const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
     const isPublic = product.status === 'published' && product.visibility === 'public'
-    if (!isPublic && !isOwner) {
+    if (!isPublic && !isOwner && !state.isDraftPreview) {
       renderState('Product not available.', 'This product is not currently available to the public.')
       return
     }
+    if (state.isDraftPreview && !isOwner) {
+      renderState('Preview unavailable.', 'Only the product owner can open draft marketplace preview mode.')
+      return
+    }
 
-    const recommendations = await listRecommendedProducts({ product, pageSize: 8 })
-    renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner)
+    const [recommendations, productFiles, ownsProduct] = await Promise.all([
+      listRecommendedProducts({ product, pageSize: 8 }),
+      listProductFiles(product.id),
+      userOwnsProduct(state.currentUser?.uid || '', product.id)
+    ])
+    renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
   } catch {
     renderState('Product could not be loaded right now.', 'Please try again in a moment.')
   }
