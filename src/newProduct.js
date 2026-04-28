@@ -168,30 +168,6 @@ function createEmptyProductDraft(user = null, profile = null) {
     thumbnailURL: '',
     updatedAt: ''
   }
-}
-
-function productTypeAccept(type = '', section = 'deliverable') {
-  const isPlugin = type === 'Plugin / VST'
-  if (section === 'previewAudio') return 'audio/*'
-  if (section === 'previewVideo') return 'video/*'
-  if (section === 'gallery') return 'image/*'
-  if (isPlugin) return '.zip,.exe,.dmg,.pkg,.msi,.rar,.7z'
-  if (type === 'Single Sample') return 'audio/*,.zip'
-  return '.zip,.rar,.7z,audio/*,video/*,application/*,text/*'
-}
-
-function validateDraftFiles(files = []) {
-  if (files.length > PRODUCT_QUOTAS.maxFileCount) return `Too many files. Maximum is ${PRODUCT_QUOTAS.maxFileCount}.`
-  let totalBytes = 0
-  for (const file of files) {
-    totalBytes += Number(file.size || 0)
-    if ((file.name || '').length > PRODUCT_QUOTAS.maxFileNameLength) return `Filename too long: ${file.name}`
-    const relative = file.webkitRelativePath || file.name || ''
-    const depth = relative.split('/').filter(Boolean).length
-    if (depth > PRODUCT_QUOTAS.maxFolderDepth + 1) return `Folder depth exceeds ${PRODUCT_QUOTAS.maxFolderDepth} levels.`
-    if (relative.length > PRODUCT_QUOTAS.maxPathLength) return `Path too long: ${relative}`
-    if (file.size > PRODUCT_QUOTAS.maxSingleDeliverableBytes) return 'This file exceeds the 512 MB single-file limit.'
-  }
   if (totalBytes > PRODUCT_QUOTAS.maxTotalDeliverableBytes) return 'This product exceeds the 1 GB deliverable limit.'
   return ''
 }
@@ -531,7 +507,7 @@ function renderAgreementsPanel() {
             ${editorState.agreement.loading
               ? '<p class="agreement-loading">Loading agreement…</p>'
               : editorState.agreement.error
-                ? '<p class="agreement-error">Could not load the seller agreement. Please try again later.</p>'
+                ? `<p class="agreement-error">Could not load the seller agreement. Please try again later.${import.meta?.env?.DEV ? ' Storage CORS may not be configured.' : ''}</p>`
                 : renderAgreementMarkdown(editorState.agreement.markdown)}
           </div>
           ${agreementState.versionChanged ? '<p class="pricing-warning">A newer seller agreement version is available and must be accepted before publishing.</p>' : ''}

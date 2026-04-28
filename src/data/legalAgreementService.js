@@ -53,11 +53,18 @@ export async function getMarketplaceSellerAgreementConfig() {
 }
 
 export async function getAgreementMarkdown(storagePath = '') {
-  if (!storage || !storagePath) throw new Error('agreement-storage-unavailable')
-  const downloadUrl = await getDownloadURL(ref(storage, storagePath))
-  const response = await fetch(downloadUrl)
-  if (!response.ok) throw new Error('agreement-download-failed')
-  return response.text()
+  if (!storage || !storagePath) {
+    throw new Error('Agreement file could not be downloaded. Firebase Storage CORS may not be configured for this domain.')
+  }
+  try {
+    const downloadUrl = await getDownloadURL(ref(storage, storagePath))
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`agreement-download-failed:${response.status}`)
+    return response.text()
+  } catch (error) {
+    devWarn('[legalAgreementService] Failed to fetch agreement markdown from Storage.', error?.code || error?.message || error)
+    throw new Error('Agreement file could not be downloaded. Firebase Storage CORS may not be configured for this domain.')
+  }
 }
 
 function parseVersionFromPath(path = '') {
