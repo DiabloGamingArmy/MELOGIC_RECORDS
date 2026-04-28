@@ -3,7 +3,8 @@ import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
-import { getProductById, listRecommendedProducts } from './data/productService'
+import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
+import { claimFreeProduct, userOwnsProduct } from './data/entitlementService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
 
@@ -160,7 +161,7 @@ function creatorInitials(name) {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')
 }
 
-function renderProduct(product, recommendations = [], ownerPreview = false) {
+function renderProduct(product, recommendations = [], ownerPreview = false, productFiles = [], ownsProduct = false) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
   state.selectedMediaIndex = 0
@@ -226,6 +227,15 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
             <article class="dashboard-section-card">
               <h2>What’s included</h2>
               <p>${escapeHtml((product.categories || []).join(', ') || 'Details were not provided.')}</p>
+            </article>
+            <article class="dashboard-section-card">
+              <h2>File browser</h2>
+              <p>${ownsProduct ? 'Owned: private downloads available when backend signed URLs are implemented.' : 'Preview manifest only until product is owned.'}</p>
+              <ul>
+                ${productFiles.length
+                  ? productFiles.map((file) => `<li>${escapeHtml(file.displayPath || file.name)} · ${Math.max(0, Number(file.sizeBytes || 0) / 1024).toFixed(1)} KB ${file.canPreview ? '· previewable' : ''}</li>`).join('')
+                  : '<li>No included files listed yet.</li>'}
+              </ul>
             </article>
             <article class="dashboard-section-card">
               <h2>Compatibility</h2>
@@ -302,6 +312,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
               <button type="button" class="button button-accent" data-add-dashboard-cart>Add to Cart</button>
+              ${product.isFree ? '<button type="button" class="button button-muted" data-claim-free-product>Claim Free Product</button>' : ''}
               ${(product.previewAudioURLs || []).length ? '<button type="button" class="button button-muted" data-play-dashboard-preview>Preview</button>' : ''}
               <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
               <p class="dashboard-mini-note">Instant digital download</p>
@@ -353,6 +364,20 @@ function renderProduct(product, recommendations = [], ownerPreview = false) {
     firstAudio.play().catch(() => {})
   })
 
+  app.querySelector('[data-claim-free-product]')?.addEventListener('click', async (event) => {
+    if (!state.currentUser?.uid || !product?.id) return
+    const button = event.currentTarget
+    if (!(button instanceof HTMLButtonElement)) return
+    button.disabled = true
+    try {
+      await claimFreeProduct(state.currentUser.uid, product.id)
+      button.textContent = 'Claimed'
+    } catch {
+      button.disabled = false
+      button.textContent = 'Claim failed'
+    }
+  })
+
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     button.addEventListener('click', () => {
       state.selectedMediaIndex = Number(button.getAttribute('data-media-index')) || 0
@@ -394,8 +419,12 @@ async function init() {
       return
     }
 
-    const recommendations = await listRecommendedProducts({ product, pageSize: 8 })
-    renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner)
+    const [recommendations, productFiles, ownsProduct] = await Promise.all([
+      listRecommendedProducts({ product, pageSize: 8 }),
+      listProductFiles(product.id),
+      userOwnsProduct(state.currentUser?.uid || '', product.id)
+    ])
+    renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
   } catch {
     renderState('Product could not be loaded right now.', 'Please try again in a moment.')
   }
