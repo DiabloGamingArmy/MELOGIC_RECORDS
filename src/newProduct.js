@@ -1146,6 +1146,9 @@ function renderEditor() {
 
   const form = editorRoot.querySelector('[data-product-form]')
 
+  // Single form reference for all editor form bindings in this render cycle.
+  const form = editorRoot.querySelector('[data-product-form]')
+
   form?.addEventListener('input', (event) => {
     const target = event.target
     if (!target?.name) return
