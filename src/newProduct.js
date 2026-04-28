@@ -138,7 +138,7 @@ function createEmptyProductDraft(user = null, profile = null) {
 
 function readSectionHash() {
   const hash = window.location.hash.replace('#', '')
-  return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'product-info'
+  return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'media-upload'
 }
 
 function slugify(value) {
