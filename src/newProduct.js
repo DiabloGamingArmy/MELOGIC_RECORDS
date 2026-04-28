@@ -136,6 +136,8 @@ function createEmptyProductDraft(user = null, profile = null) {
     status: 'draft',
     visibility: 'private',
     price: '0',
+    priceCents: 0,
+    payoutTargetCents: 0,
     currency: 'USD',
     isFree: true,
     featured: false,
@@ -232,6 +234,58 @@ function formatBytes(size = 0) {
   const kb = Number(size || 0) / 1024
   if (kb < 1024) return `${kb.toFixed(1)} KB`
   return `${(kb / 1024).toFixed(2)} MB`
+}
+
+function isSingleSampleProduct(draft = {}) {
+  return String(draft?.productType || '').trim().toLowerCase() === 'single sample'
+}
+
+function isArchiveFile(file = null) {
+  const name = String(file?.name || '').toLowerCase()
+  return name.endsWith('.zip') || name.endsWith('.rar') || name.endsWith('.7z')
+}
+
+function validatePrimaryDeliverableSelection(files = [], draft = {}, hasExistingDeliverable = false) {
+  const selected = Array.from(files || [])
+  if (!selected.length) return { ok: false, message: 'No deliverable file selected.', level: 'error' }
+  if (selected.length > 1) {
+    return { ok: false, message: 'Only one primary deliverable is supported right now. Please upload a ZIP package.', level: 'error' }
+  }
+  if (hasExistingDeliverable) {
+    return { ok: false, message: 'Remove the existing deliverable before adding another.', level: 'error' }
+  }
+  const file = selected[0]
+  if (isSingleSampleProduct(draft)) {
+    if (String(file.type || '').startsWith('audio/') || isArchiveFile(file)) return { ok: true, file, level: 'info', message: '' }
+    return { ok: true, file, level: 'warning', message: 'Single Sample products usually use one audio file. ZIP is also supported.' }
+  }
+  if (!isArchiveFile(file)) {
+    return { ok: true, file, level: 'warning', message: 'ZIP is recommended for multi-file products.' }
+  }
+  return { ok: true, file, level: 'info', message: '' }
+}
+
+function buildFileTreeRows(entries = []) {
+  const folderSet = new Set()
+  const rows = []
+  entries
+    .slice()
+    .sort((a, b) => String(a.displayPath || a.name || '').localeCompare(String(b.displayPath || b.name || '')))
+    .forEach((entry) => {
+      const path = String(entry.displayPath || entry.name || '').replace(/^\/+/, '')
+      const parts = path.split('/').filter(Boolean)
+      const fileName = parts.pop() || entry.name
+      let folderPath = ''
+      parts.forEach((part, index) => {
+        folderPath = folderPath ? `${folderPath}/${part}` : part
+        if (!folderSet.has(folderPath)) {
+          folderSet.add(folderPath)
+          rows.push({ type: 'folder', id: `folder-${folderPath}`, name: part, depth: index })
+        }
+      })
+      rows.push({ type: 'file', entry, id: entry.id, name: fileName, depth: parts.length })
+    })
+  return rows
 }
 
 function gatherFileEntries() {
@@ -334,12 +388,8 @@ function renderPricingPanel() {
   const currency = String(draft.currency || settings.defaultCurrency || 'USD').toUpperCase()
   const supportedCurrencies = Array.isArray(settings.supportedCurrencies) && settings.supportedCurrencies.length ? settings.supportedCurrencies : [currency]
   const formatter = moneyFormatter(currency)
-  const priceCents = normalizePriceToCents(draft.price)
-  const platformFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.platformFeeBps || 0)) / 10000)
-  const processorFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.processorPercentBps || 0)) / 10000) + Number(settings.processorFixedFeeCents || 0)
-  const sellerNetPerSaleCentsRaw = priceCents - platformFeeCents - processorFeeCents
-  const sellerNetPerSaleCents = Math.max(0, sellerNetPerSaleCentsRaw)
-  const warning = priceCents > 0 && sellerNetPerSaleCentsRaw < 0
+  const metrics = pricingMetricsFromState()
+  const payoutTargetCents = metrics.sellerNetTargetCents
   const salesMilestones = Array.isArray(settings.salesMilestones) && settings.salesMilestones.length ? settings.salesMilestones : [100, 1000, 100000]
   const currencyControlDisabled = supportedCurrencies.length <= 1 ? 'disabled' : ''
 
@@ -350,46 +400,48 @@ function renderPricingPanel() {
         <article class="pricing-input-column">
           <div class="pricing-price-field">
             <div class="pricing-field-header">
-              <label for="pricing-product-price">Product Price (${escapeHtml(currency)})</label>
+              <label for="pricing-product-price">Seller Payout Target (${escapeHtml(currency)})</label>
               <select class="pricing-currency-action" data-pricing-currency ${currencyControlDisabled}>
                 ${supportedCurrencies.map((code) => `<option value="${escapeHtml(code)}" ${code === currency ? 'selected' : ''}>Change Currency · ${escapeHtml(code)}</option>`).join('')}
               </select>
             </div>
-            <input id="pricing-product-price" type="number" min="0" step="0.01" inputmode="decimal" name="price" value="${escapeHtml(centsToPriceInput(priceCents))}" data-pricing-price-input />
-            <label class="pricing-free-toggle"><input type="checkbox" data-pricing-free-toggle ${priceCents === 0 || draft.isFree ? 'checked' : ''} /> Free product</label>
+            <input id="pricing-product-price" type="number" min="0" step="0.01" inputmode="decimal" name="price" value="${escapeHtml(centsToPriceInput(payoutTargetCents))}" data-pricing-price-input />
+            <p class="pricing-help-copy">This is the amount you want to receive per sale before taxes.</p>
+            <label class="pricing-free-toggle"><input type="checkbox" data-pricing-free-toggle ${payoutTargetCents === 0 || draft.isFree ? 'checked' : ''} /> Free product</label>
           </div>
           <div class="pricing-fee-row">
             <span>${escapeHtml(settings.platformFeeLabel)}: ${(Number(settings.platformFeeBps || 0) / 100).toFixed(2)}%</span>
-            <strong data-pricing-platform-fee>${formatter.format(platformFeeCents / 100)}</strong>
+            <strong data-pricing-platform-fee>${formatter.format(metrics.platformFeeCents / 100)}</strong>
           </div>
           <div class="pricing-fee-row">
             <span>${escapeHtml(settings.processorFeeLabel)}: ${(Number(settings.processorPercentBps || 0) / 100).toFixed(2)}% + ${formatter.format(Number(settings.processorFixedFeeCents || 0) / 100)}</span>
-            <strong data-pricing-processor-fee>${formatter.format(processorFeeCents / 100)}</strong>
+            <strong data-pricing-processor-fee>${formatter.format(metrics.processorFeeCents / 100)}</strong>
           </div>
           <div class="pricing-breakdown" data-pricing-breakdown>
-            <p>Gross per sale: <strong>${formatter.format(priceCents / 100)}</strong></p>
-            <p>${escapeHtml(settings.platformFeeLabel)}: <strong>-${formatter.format(platformFeeCents / 100)}</strong></p>
-            <p>Processing fee: <strong>-${formatter.format(processorFeeCents / 100)}</strong></p>
-            <p>Estimated net per sale: <strong>${formatter.format(sellerNetPerSaleCents / 100)}</strong></p>
+            <p>Seller payout target: <strong>${formatter.format(metrics.sellerNetTargetCents / 100)}</strong></p>
+            <p>${escapeHtml(settings.platformFeeLabel)}: <strong>${formatter.format(metrics.platformFeeCents / 100)}</strong></p>
+            <p>Processing fee: <strong>${formatter.format(metrics.processorFeeCents / 100)}</strong></p>
+            <p>Customer listing price: <strong>${formatter.format(metrics.customerListingCents / 100)}</strong></p>
           </div>
           <div class="pricing-price-field">
             <div class="pricing-field-header">
-              <label>Final Buyer Listing Price (${escapeHtml(currency)})</label>
+              <label>Final Customer Price (${escapeHtml(currency)})</label>
               <button type="button" class="pricing-currency-action" disabled>Change Currency</button>
             </div>
-            <input type="text" readonly value="${escapeHtml(centsToPriceInput(priceCents))}" data-pricing-final-price />
+            <input type="text" readonly value="${escapeHtml(centsToPriceInput(metrics.customerListingCents))}" data-pricing-final-price />
+            <p class="pricing-help-copy">This is the estimated price customers pay after marketplace and processing fees.</p>
           </div>
-          <p class="pricing-warning ${warning ? '' : 'is-hidden'}" data-pricing-warning>Fees exceed the product price.</p>
+          <p class="pricing-warning ${metrics.invalidConfig ? '' : 'is-hidden'}" data-pricing-warning>Marketplace fee configuration is invalid.</p>
         </article>
 
         <article class="pricing-calculator-column">
           <div class="pricing-calculator">
-            <h3>Estimated Seller Payout:</h3>
+            <h3>Estimated Seller Earnings:</h3>
             <div data-pricing-milestones>
             ${salesMilestones.map((milestone) => `
               <div class="pricing-calculator-row">
                 <p>${Number(milestone).toLocaleString('en-US')} sales estimated payout:</p>
-                <strong>${formatter.format((sellerNetPerSaleCents * Number(milestone || 0)) / 100)}</strong>
+                <strong>${formatter.format((metrics.sellerNetTargetCents * Number(milestone || 0)) / 100)}</strong>
               </div>
             `).join('')}
             </div>
@@ -412,13 +464,30 @@ function pricingMetricsFromState() {
   const settings = getPricingSettings()
   const currency = String(draft.currency || settings.defaultCurrency || 'USD').toUpperCase()
   const formatter = moneyFormatter(currency)
-  const priceCents = normalizePriceToCents(draft.price)
-  const platformFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.platformFeeBps || 0)) / 10000)
-  const processorFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.processorPercentBps || 0)) / 10000) + Number(settings.processorFixedFeeCents || 0)
-  const sellerNetPerSaleCentsRaw = priceCents - platformFeeCents - processorFeeCents
-  const sellerNetPerSaleCents = Math.max(0, sellerNetPerSaleCentsRaw)
+  const sellerNetTargetCents = draft.isFree ? 0 : normalizePriceToCents(draft.price)
+  const platformRate = Number(settings.platformFeeBps || 0) / 10000
+  const processorRate = Number(settings.processorPercentBps || 0) / 10000
+  const fixedFeeCents = Number(settings.processorFixedFeeCents || 0)
+  const denominator = 1 - platformRate - processorRate
+  const invalidConfig = denominator <= 0
+  const calculatedGrossCents = sellerNetTargetCents <= 0 ? 0 : invalidConfig ? 0 : Math.ceil((sellerNetTargetCents + fixedFeeCents) / denominator)
+  const customerListingCents = draft.isFree ? 0 : Math.max(0, calculatedGrossCents)
+  const platformFeeCents = customerListingCents <= 0 ? 0 : Math.round(customerListingCents * platformRate)
+  const processorFeeCents = customerListingCents <= 0 ? 0 : Math.round(customerListingCents * processorRate) + fixedFeeCents
+  const estimatedSellerCents = customerListingCents - platformFeeCents - processorFeeCents
   const salesMilestones = Array.isArray(settings.salesMilestones) && settings.salesMilestones.length ? settings.salesMilestones : [100, 1000, 100000]
-  return { settings, currency, formatter, priceCents, platformFeeCents, processorFeeCents, sellerNetPerSaleCents, sellerNetPerSaleCentsRaw, salesMilestones }
+  return {
+    settings,
+    currency,
+    formatter,
+    sellerNetTargetCents,
+    customerListingCents,
+    platformFeeCents,
+    processorFeeCents,
+    estimatedSellerCents,
+    invalidConfig,
+    salesMilestones
+  }
 }
 
 function refreshPricingDom() {
@@ -428,14 +497,14 @@ function refreshPricingDom() {
   root.querySelector('[data-pricing-platform-fee]')?.replaceChildren(document.createTextNode(metrics.formatter.format(metrics.platformFeeCents / 100)))
   root.querySelector('[data-pricing-processor-fee]')?.replaceChildren(document.createTextNode(metrics.formatter.format(metrics.processorFeeCents / 100)))
   const finalInput = root.querySelector('[data-pricing-final-price]')
-  if (finalInput) finalInput.value = centsToPriceInput(metrics.priceCents)
+  if (finalInput) finalInput.value = centsToPriceInput(metrics.customerListingCents)
   const breakdown = root.querySelector('[data-pricing-breakdown]')
   if (breakdown) {
     breakdown.innerHTML = `
-      <p>Gross per sale: <strong>${metrics.formatter.format(metrics.priceCents / 100)}</strong></p>
-      <p>${escapeHtml(metrics.settings.platformFeeLabel)}: <strong>-${metrics.formatter.format(metrics.platformFeeCents / 100)}</strong></p>
-      <p>Processing fee: <strong>-${metrics.formatter.format(metrics.processorFeeCents / 100)}</strong></p>
-      <p>Estimated net per sale: <strong>${metrics.formatter.format(metrics.sellerNetPerSaleCents / 100)}</strong></p>
+      <p>Seller payout target: <strong>${metrics.formatter.format(metrics.sellerNetTargetCents / 100)}</strong></p>
+      <p>${escapeHtml(metrics.settings.platformFeeLabel)}: <strong>${metrics.formatter.format(metrics.platformFeeCents / 100)}</strong></p>
+      <p>Processing fee: <strong>${metrics.formatter.format(metrics.processorFeeCents / 100)}</strong></p>
+      <p>Customer listing price: <strong>${metrics.formatter.format(metrics.customerListingCents / 100)}</strong></p>
     `
   }
   const milestoneWrap = root.querySelector('[data-pricing-milestones]')
@@ -443,11 +512,21 @@ function refreshPricingDom() {
     milestoneWrap.innerHTML = metrics.salesMilestones.map((milestone) => `
       <div class="pricing-calculator-row">
         <p>${Number(milestone).toLocaleString('en-US')} sales estimated payout:</p>
-        <strong>${metrics.formatter.format((metrics.sellerNetPerSaleCents * Number(milestone || 0)) / 100)}</strong>
+        <strong>${metrics.formatter.format((metrics.sellerNetTargetCents * Number(milestone || 0)) / 100)}</strong>
       </div>
     `).join('')
   }
-  root.querySelector('[data-pricing-warning]')?.classList.toggle('is-hidden', !(metrics.priceCents > 0 && metrics.sellerNetPerSaleCentsRaw < 0))
+  root.querySelector('[data-pricing-warning]')?.classList.toggle('is-hidden', !metrics.invalidConfig)
+  syncPricingDraftFields(metrics)
+}
+
+function syncPricingDraftFields(metrics = null) {
+  if (!editorState.draft) return null
+  const next = metrics || pricingMetricsFromState()
+  updateDraftField('payoutTargetCents', next.sellerNetTargetCents)
+  updateDraftField('priceCents', next.customerListingCents)
+  updateDraftField('isFree', next.sellerNetTargetCents === 0)
+  return next
 }
 
 function refreshAgreementAcceptButton() {
@@ -657,7 +736,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   const hasDownload = Boolean(draft.downloadPath || deliverablesCount > 0)
   const hasPreviewMedia = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || state.mediaFiles?.previewAudio?.length || state.mediaFiles?.previewVideo?.length)
   const previewDecision = hasPreviewMedia || Boolean(draft.previewMode === 'none')
-  const priceCents = normalizePriceToCents(draft.price)
+  const pricingMetrics = pricingMetricsFromState()
   const pendingContributors = Number((draft.pendingContributorIds || []).length || 0)
   const acceptedContributors = Number(draft.contributorCount || 0)
   const latestVersion = String(latestAgreement?.activeVersion || state.agreement?.latestVersion || '').toLowerCase()
@@ -674,7 +753,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
     { id: 'thumbnail', label: 'Thumbnail exists', status: thumbnailReady ? 'ready' : 'blocked', message: thumbnailReady ? 'Thumbnail ready.' : 'Add a thumbnail image.', targetSection: 'media-upload' },
     { id: 'deliverables', label: 'Deliverable/download exists', status: hasDownload ? 'ready' : 'blocked', message: hasDownload ? 'Download source detected.' : 'Add at least one deliverable.', targetSection: 'media-upload' },
     { id: 'preview', label: 'Preview media decision made', status: previewDecision ? (hasPreviewMedia ? 'ready' : 'warning') : 'blocked', message: hasPreviewMedia ? 'Preview media assigned.' : (previewDecision ? 'No preview selected intentionally.' : 'Assign preview media or choose no preview.'), targetSection: 'media-upload' },
-    { id: 'price', label: 'Price/currency valid', status: draft.currency && (draft.isFree || priceCents > 0) ? 'ready' : 'blocked', message: draft.currency && (draft.isFree || priceCents > 0) ? 'Pricing configured.' : 'Set pricing and currency.', targetSection: 'pricing' },
+    { id: 'price', label: 'Price/currency valid', status: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'ready' : 'blocked', message: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'Pricing configured.' : (pricingMetrics.invalidConfig ? 'Marketplace fee configuration is invalid.' : 'Set pricing and currency.'), targetSection: 'pricing' },
     { id: 'contributors', label: 'Contributors resolved', status: pendingContributors > 0 ? 'warning' : 'ready', message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
     { id: 'agreement', label: 'Seller agreement accepted', status: agreementAccepted ? 'ready' : 'blocked', message: agreementAccepted ? `Accepted ${draft.sellerAgreementVersion || ''}.` : 'Accept seller agreement.', targetSection: 'agreements' },
     { id: 'agreement-version', label: 'Agreement version matches latest', status: agreementVersionMatch ? 'ready' : 'blocked', message: agreementVersionMatch ? `Latest version ${latestVersion} accepted.` : `Latest seller agreement ${latestVersion || 'version'} must be accepted before publishing.`, targetSection: 'agreements' },
@@ -828,6 +907,7 @@ function renderPlaceholderPanel(section) {
 function renderMediaUploadPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
   const fileEntries = gatherFileEntries()
+  const treeRows = buildFileTreeRows(fileEntries)
   const previewCount = fileEntries.filter((item) => item.isPublicPreview).length
   const deliverableCount = fileEntries.filter((item) => item.isDeliverable).length
   const totalBytes = fileEntries.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
@@ -837,13 +917,14 @@ function renderMediaUploadPanel() {
         <article class="listing-preview-panel">
           <h3>Listing Preview</h3>
           <article class="listing-preview-card">
-            <div class="listing-preview-cover">${editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL ? `<img src="${escapeHtml(editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL)}" alt="Listing preview cover" />` : '<div class="listing-preview-fallback">No cover yet</div>'}</div>
+            <div class="listing-preview-card-cover">${editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL ? `<img src="${escapeHtml(editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL)}" alt="Listing preview cover" />` : '<div class="listing-preview-fallback">No cover yet</div>'}</div>
             <div class="listing-preview-content">
               <p class="listing-preview-type">${escapeHtml(draft.productType || 'Product')}</p>
               <h4>${escapeHtml(draft.title || 'Untitled product')}</h4>
               <p>by ${escapeHtml(draft.artistName || 'Creator')}</p>
               <p>${escapeHtml(draft.shortDescription || 'Short description preview appears here.')}</p>
-              <p>${draft.isFree ? 'Free' : `${escapeHtml(draft.currency || 'USD')} ${Number(draft.price || 0).toFixed(2)}`}</p>
+              <p>${draft.isFree ? 'Free' : `${escapeHtml(draft.currency || 'USD')} ${centsToPriceInput(Number(draft.priceCents || 0))}`}</p>
+              <p>${tagValuesFor('tags').slice(0, 3).join(' · ') || tagValuesFor('genres').slice(0, 2).join(' · ') || 'No tags yet'}</p>
               <p>${(draft.previewAudioPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length ? 'Preview assigned' : 'No preview media assigned yet'}</p>
             </div>
           </article>
@@ -851,24 +932,31 @@ function renderMediaUploadPanel() {
 
         <article class="file-viewer-panel">
           <div class="file-viewer-toolbar">
-            <h3>File Viewer</h3>
-            <p>Total files: ${fileEntries.length} · Total size: ${formatBytes(totalBytes)} · Preview: ${previewCount} · Deliverables: ${deliverableCount}</p>
+            <div>
+              <h3>File Viewer</h3>
+              <p>Total files: ${fileEntries.length} · Total size: ${formatBytes(totalBytes)} · Preview: ${previewCount} · Deliverables: ${deliverableCount}</p>
+            </div>
+            <button type="button" class="file-viewer-add-btn" data-pick-file="deliverables">+ Add Deliverable</button>
           </div>
+          ${editorState.mediaFiles.folderDeliverables.length ? '<p class="file-viewer-warning">Folder structure preview is available, but this product currently supports one primary deliverable. Use a ZIP package for multi-file products.</p>' : ''}
           <div class="file-tree">
-            ${fileEntries.length
-              ? fileEntries.map((file, index) => `
-                <div class="file-tree-row is-file">
-                  <div><strong>${escapeHtml(file.name)}</strong><div class="path">${escapeHtml(file.displayPath)}</div></div>
-                  <div>${escapeHtml(formatBytes(file.sizeBytes))}</div>
-                  <div><span class="file-role-badge ${file.isPublicPreview ? 'is-public' : 'is-private'}">${file.isPublicPreview ? 'Public' : 'Private'}</span></div>
-                  <div class="file-row-actions">
-                    <button type="button" data-assign-role="${index}:hover-audio">Hover Audio</button>
-                    <button type="button" data-assign-role="${index}:hover-video">Hover Video</button>
-                    <button type="button" data-remove-file="${index}">Remove</button>
+            ${treeRows.length
+              ? treeRows.map((row) => row.type === 'folder'
+                ? `<div class="file-tree-row is-folder"><div class="file-tree-indent" style="--depth:${row.depth}"></div><div>📁 ${escapeHtml(row.name)}</div></div>`
+                : `
+                  <div class="file-tree-row is-file">
+                    <div class="file-tree-indent" style="--depth:${row.depth}"></div>
+                    <div><strong>${escapeHtml(row.entry.name)}</strong><div class="path">${escapeHtml(row.entry.displayPath)}</div></div>
+                    <div>${escapeHtml(formatBytes(row.entry.sizeBytes))}</div>
+                    <div><span class="file-role-badge ${row.entry.isPublicPreview ? 'is-public' : 'is-private'}">${row.entry.isDeliverable ? 'Private Deliverable' : row.entry.isPublicPreview ? 'Public Preview' : 'Listing Media'}</span></div>
+                    <div class="file-row-actions">
+                      ${String(row.entry.kind || '').startsWith('audio/') ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-audio">Assign Audio Preview</button>` : ''}
+                      ${String(row.entry.kind || '').startsWith('video/') ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-video">Assign Video Preview</button>` : ''}
+                      <button type="button" data-remove-file="${fileEntries.findIndex((f) => f.id === row.entry.id)}">Remove</button>
+                    </div>
                   </div>
-                </div>
-              `).join('')
-              : '<p class="muted">No files uploaded yet. Add product images, previews, or deliverables to build the product file tree.</p>'}
+                `).join('')
+              : '<p class="file-viewer-empty">No product files added yet. Use + Add to attach your main deliverable.</p>'}
           </div>
         </article>
 
@@ -882,6 +970,7 @@ function renderMediaUploadPanel() {
           <input class="hidden-file" type="file" accept="image/*" multiple data-gallery-input />
           <input class="hidden-file" type="file" accept="audio/*" multiple data-preview-audio-input />
           <input class="hidden-file" type="file" accept="video/*" multiple data-preview-video-input />
+          <input class="hidden-file" type="file" data-deliverables-input />
         </aside>
       </div>
     </section>
@@ -1045,6 +1134,15 @@ function renderEditor() {
     window.location.hash = next.key
     renderEditor()
   })
+  editorRoot.querySelector('[data-next-section]')?.addEventListener('click', () => {
+    const idx = PRODUCT_SECTIONS.findIndex((item) => item.key === section)
+    const next = PRODUCT_SECTIONS[idx + 1]
+    if (!next) return
+    window.location.hash = next.key
+    renderEditor()
+  })
+
+  const form = editorRoot.querySelector('[data-product-form]')
 
   const form = editorRoot.querySelector('[data-product-form]')
 
@@ -1102,9 +1200,9 @@ function renderEditor() {
 
   const pricingPriceInput = editorRoot.querySelector('[data-pricing-price-input]')
   pricingPriceInput?.addEventListener('input', () => {
-    const priceCents = normalizePriceToCents(pricingPriceInput.value)
-    updateDraftField('price', centsToPriceInput(priceCents))
-    updateDraftField('isFree', priceCents === 0)
+    const targetCents = normalizePriceToCents(pricingPriceInput.value)
+    updateDraftField('price', centsToPriceInput(targetCents))
+    syncPricingDraftFields()
     refreshPricingDom()
   })
 
@@ -1117,10 +1215,10 @@ function renderEditor() {
 
   editorRoot.querySelector('[data-pricing-free-toggle]')?.addEventListener('change', (event) => {
     const checked = Boolean(event.target.checked)
-    updateDraftField('isFree', checked)
     if (checked) updateDraftField('price', '0.00')
     if (!checked && normalizePriceToCents(editorState.draft?.price || '') === 0) updateDraftField('price', '1.00')
     if (pricingPriceInput) pricingPriceInput.value = editorState.draft.price
+    syncPricingDraftFields()
     refreshPricingDom()
   })
 
@@ -1207,10 +1305,12 @@ function renderEditor() {
   const galleryInput = editorRoot.querySelector('[data-gallery-input]')
   const previewAudioInput = editorRoot.querySelector('[data-preview-audio-input]')
   const previewVideoInput = editorRoot.querySelector('[data-preview-video-input]')
+  const deliverablesInput = editorRoot.querySelector('[data-deliverables-input]')
   editorRoot.querySelector('[data-pick-file="cover"]')?.addEventListener('click', () => coverInput?.click())
   editorRoot.querySelector('[data-pick-file="gallery"]')?.addEventListener('click', () => galleryInput?.click())
   editorRoot.querySelector('[data-pick-file="preview-audio"]')?.addEventListener('click', () => previewAudioInput?.click())
   editorRoot.querySelector('[data-pick-file="preview-video"]')?.addEventListener('click', () => previewVideoInput?.click())
+  editorRoot.querySelector('[data-pick-file="deliverables"]')?.addEventListener('click', () => deliverablesInput?.click())
   coverInput?.addEventListener('change', () => {
     const file = coverInput.files?.[0]
     if (!file) return
@@ -1232,6 +1332,19 @@ function renderEditor() {
   previewVideoInput?.addEventListener('change', () => {
     editorState.mediaFiles.previewVideo = Array.from(previewVideoInput.files || [])
     setStatus('Video previews selected. Save draft to upload.', 'info')
+    renderEditor()
+  })
+  deliverablesInput?.addEventListener('change', () => {
+    const validation = validatePrimaryDeliverableSelection(deliverablesInput.files || [], editorState.draft, Boolean(editorState.mediaFiles.deliverables.length))
+    if (!validation.ok) {
+      setStatus(validation.message, validation.level === 'warning' ? 'info' : 'error')
+      renderEditor()
+      return
+    }
+    editorState.mediaFiles.deliverables = [validation.file]
+    editorState.mediaFiles.folderDeliverables = []
+    if (validation.message) setStatus(validation.message, validation.level === 'warning' ? 'info' : 'success')
+    else setStatus('Primary deliverable selected. Save draft to upload.', 'info')
     renderEditor()
   })
   editorRoot.querySelectorAll('[data-remove-file]').forEach((button) => {
@@ -1265,6 +1378,11 @@ function renderEditor() {
   })
   editorRoot.querySelector('[data-open-marketplace-preview]')?.addEventListener('click', async () => {
     if (!editorState.user || !editorState.draft) return
+    if ((editorState.mediaFiles.deliverables || []).length > 1) {
+      setStatus('Only one primary deliverable is supported right now. Please upload a ZIP package.', 'error')
+      renderEditor()
+      return
+    }
     const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
     const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
     const result = await saveProductDraft(editorState.user, payload, {
@@ -1340,6 +1458,17 @@ function renderEditor() {
 
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
+    if ((editorState.mediaFiles.deliverables || []).length > 1) {
+      setStatus('Only one primary deliverable is supported right now. Please upload a ZIP package.', 'error')
+      renderEditor()
+      return
+    }
+    const pricingMetrics = syncPricingDraftFields()
+    if (pricingMetrics?.invalidConfig) {
+      setStatus('Marketplace fee configuration is invalid.', 'error')
+      renderEditor()
+      return
+    }
     if (desiredStatus === 'published') {
       const requiredVersion = String(editorState.agreement.latestVersion || editorState.agreement.config?.activeVersion || '')
       const acceptedVersion = String(editorState.draft.sellerAgreementVersion || '')
@@ -1424,6 +1553,12 @@ async function initPage() {
   if (!editorState.draft.currency) {
     updateDraftField('currency', editorState.marketplacePricingSettings?.defaultCurrency || 'USD')
   }
+  if (!normalizePriceToCents(editorState.draft.price) && Number.isFinite(editorState.draft.payoutTargetCents) && editorState.draft.payoutTargetCents > 0) {
+    updateDraftField('price', centsToPriceInput(editorState.draft.payoutTargetCents))
+  } else if (!normalizePriceToCents(editorState.draft.price) && Number.isFinite(editorState.draft.priceCents) && editorState.draft.priceCents > 0) {
+    updateDraftField('price', centsToPriceInput(editorState.draft.priceCents))
+  }
+  syncPricingDraftFields()
 
   editorState.agreement.signedName = String(editorState.draft.sellerAgreement?.signedName || '')
   try {

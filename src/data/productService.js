@@ -268,6 +268,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     primaryDownloadBytes: Number(rawProduct.primaryDownloadBytes || 0),
     previewAssignment: media.previewAssignment || previewAssignment,
     priceCents: Number.isFinite(rawProduct.priceCents) ? rawProduct.priceCents : 0,
+    payoutTargetCents: Number.isFinite(rawProduct.payoutTargetCents) ? rawProduct.payoutTargetCents : Number.isFinite(rawProduct.priceCents) ? rawProduct.priceCents : 0,
     currency: rawProduct.currency || 'USD',
     isFree: Boolean(rawProduct.isFree),
     priceLabel: toPriceLabel(rawProduct),
@@ -678,6 +679,9 @@ export function buildProductPayload(input = {}, user = null) {
     primaryDownloadBytes: Number(input.primaryDownloadBytes || 0),
     previewAssignment,
     priceCents: Number.isFinite(input.priceCents) ? input.priceCents : 0,
+    payoutTargetCents: Number.isFinite(input.payoutTargetCents)
+      ? input.payoutTargetCents
+      : Number.isFinite(input.priceCents) ? input.priceCents : 0,
     currency: input.currency || 'USD',
     isFree: Boolean(input.isFree),
     titleLower: String(input.title || '').toLowerCase(),
