@@ -57,6 +57,11 @@ const state = {
 
 let searchDebounceTimer = null
 let observer = null
+const previewController = {
+  audio: null,
+  productId: '',
+  hoverTimer: null
+}
 
 function escapeHtml(value) {
   return String(value || '')
@@ -110,7 +115,7 @@ function productCardMarkup(product) {
         </div>
 
         <div class="product-actions">
-          <button type="button" class="preview-btn" ${product.previewAudioURLs.length ? '' : 'disabled'} aria-label="Preview ${escapeHtml(product.title)}">▶ Preview</button>
+          <button type="button" class="preview-btn" ${(product.previewAudioURLs.length || product.primaryPreviewURL) ? '' : 'disabled'} aria-label="Preview ${escapeHtml(product.title)}">▶ Preview</button>
           <button type="button" class="add-btn" data-add-to-cart data-product-id="${escapeHtml(product.id)}" aria-label="Add ${escapeHtml(product.title)} to cart">Add to cart</button>
         </div>
       </div>
@@ -298,6 +303,7 @@ function bindProductActions(visibleProducts = []) {
       const productId = card.getAttribute('data-product-id')
       if (!productId) return
       const product = state.products.find((entry) => entry.id === productId)
+      stopPreview()
       window.location.href = productRoute(product || productId)
     }
 
@@ -317,6 +323,18 @@ function bindProductActions(visibleProducts = []) {
   app.querySelectorAll('.preview-btn').forEach((button) => {
     button.addEventListener('click', (event) => {
       event.stopPropagation()
+      const card = button.closest('[data-open-product]')
+      const productId = card?.getAttribute('data-product-id') || ''
+      const product = visibleProducts.find((entry) => entry.id === productId)
+      const previewUrl = product?.previewAudioURLs?.[0] || product?.primaryPreviewURL || ''
+      if (!previewUrl) return
+      if (previewController.productId === productId && previewController.audio && !previewController.audio.paused) {
+        previewController.audio.pause()
+        previewController.productId = ''
+        button.textContent = '▶ Preview'
+        return
+      }
+      startPreview(productId, previewUrl, button)
     })
   })
 
@@ -334,6 +352,59 @@ function bindProductActions(visibleProducts = []) {
       document.querySelector('[data-cart-trigger]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     })
   })
+
+  app.querySelectorAll('[data-open-product]').forEach((card) => {
+    const productId = card.getAttribute('data-product-id') || ''
+    const product = visibleProducts.find((entry) => entry.id === productId)
+    const previewUrl = product?.previewAudioURLs?.[0] || product?.primaryPreviewURL || ''
+    if (!previewUrl) return
+    const canHoverPreview = product.previewMode === 'hover-audio' || Boolean(product.primaryPreviewPath)
+    if (!canHoverPreview) return
+    card.addEventListener('pointerenter', () => {
+      clearTimeout(previewController.hoverTimer)
+      previewController.hoverTimer = setTimeout(() => {
+        startPreview(productId, previewUrl, card.querySelector('.preview-btn'))
+      }, 220)
+    })
+    card.addEventListener('pointerleave', stopPreview)
+    card.addEventListener('focusin', () => {
+      clearTimeout(previewController.hoverTimer)
+      previewController.hoverTimer = setTimeout(() => {
+        startPreview(productId, previewUrl, card.querySelector('.preview-btn'))
+      }, 280)
+    })
+    card.addEventListener('focusout', stopPreview)
+  })
+}
+
+function stopPreview() {
+  clearTimeout(previewController.hoverTimer)
+  if (!previewController.audio) return
+  previewController.audio.pause()
+  previewController.audio.currentTime = 0
+  previewController.productId = ''
+  app.querySelectorAll('.preview-btn').forEach((btn) => { btn.textContent = '▶ Preview' })
+}
+
+async function startPreview(productId, src, button) {
+  if (!src) return
+  if (!previewController.audio) {
+    previewController.audio = new Audio()
+    previewController.audio.preload = 'none'
+    previewController.audio.addEventListener('ended', () => {
+      previewController.productId = ''
+      app.querySelectorAll('.preview-btn').forEach((btn) => { btn.textContent = '▶ Preview' })
+    })
+  }
+  if (previewController.audio.src !== src) previewController.audio.src = src
+  previewController.productId = productId
+  try {
+    await previewController.audio.play()
+    app.querySelectorAll('.preview-btn').forEach((btn) => { btn.textContent = '▶ Preview' })
+    if (button) button.textContent = '⏸ Preview'
+  } catch {
+    // Autoplay blocked. Button click remains available fallback.
+  }
 }
 
 function setFilter(key, value) {
