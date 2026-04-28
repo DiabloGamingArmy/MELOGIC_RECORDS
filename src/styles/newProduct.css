@@ -59,7 +59,7 @@
 
 .marketplace-editor-tabs {
   display: grid;
-  grid-template-columns: repeat(7, minmax(160px, 1fr));
+  grid-template-columns: repeat(6, minmax(160px, 1fr));
   gap: 0.6rem;
   overflow-x: auto;
 }
@@ -205,7 +205,7 @@
 
 @media (max-width: 1100px) {
   .marketplace-editor-header { grid-template-columns: 1fr; }
-  .marketplace-editor-tabs { grid-template-columns: repeat(7, minmax(180px, 1fr)); }
+  .marketplace-editor-tabs { grid-template-columns: repeat(6, minmax(180px, 1fr)); }
   .product-info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .product-info-field.is-wide { grid-column: span 2; }
 }
@@ -273,3 +273,53 @@
   .contributor-row { grid-template-columns: 1fr; }
   .contributors-toolbar { grid-template-columns: 1fr; }
 }
+
+.pricing-workspace { min-height: 620px; }
+.pricing-main-grid { display: grid; grid-template-columns: 1.25fr .9fr .75fr; gap: .95rem; align-items: start; }
+.pricing-input-column, .pricing-calculator-column, .pricing-notice { border: 1px solid rgba(99,128,197,.28); border-radius: 14px; background: rgba(10,15,29,.88); padding: .95rem; }
+.pricing-input-column { display: grid; gap: .7rem; }
+.pricing-price-field { display: grid; gap: .45rem; }
+.pricing-field-header { display: flex; align-items: center; justify-content: space-between; gap: .45rem; }
+.pricing-price-field label { margin: 0; color: #9eb3e7; text-transform: uppercase; letter-spacing: .07em; font-size: .82rem; }
+.pricing-price-field input { min-height: 50px; border-radius: 12px; border: 1px solid rgba(102,129,201,.35); background: rgba(13,18,33,.95); color: #e8efff; padding: .65rem .78rem; font-size: 1.12rem; }
+.pricing-price-field input[readonly] { opacity: .85; cursor: not-allowed; }
+.pricing-price-field input:focus { outline: none; border-color: #6bcaf9; box-shadow: 0 0 0 2px rgba(54, 181, 240, 0.2); }
+.pricing-currency-action { border: 1px solid rgba(99,126,191,.4); background: rgba(19,26,48,.9); color: #cad9ff; border-radius: 999px; min-height: 28px; padding: 0 .6rem; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; }
+.pricing-currency-action:disabled { opacity: .6; cursor: not-allowed; }
+.pricing-free-toggle { display: inline-flex; align-items: center; gap: .45rem; color: #b8c8ef; font-size: .82rem; text-transform: none !important; letter-spacing: .02em !important; }
+.pricing-fee-row { display: flex; justify-content: space-between; gap: .5rem; align-items: center; border: 1px solid rgba(105,133,203,.24); border-radius: 11px; padding: .65rem .75rem; background: rgba(13, 20, 38, .93); color: #cfdcff; }
+.pricing-fee-row span { font-size: .96rem; letter-spacing: .02em; }
+.pricing-fee-row strong { font-size: 1.05rem; }
+.pricing-warning { margin: 0; color: #ffd3de; font-size: .83rem; border: 1px solid rgba(232, 89, 116, 0.42); background: rgba(154, 52, 71, 0.2); border-radius: 10px; padding: .55rem .7rem; }
+.pricing-calculator h3 { margin: 0 0 .8rem; color: #cad8ff; text-transform: uppercase; letter-spacing: .06em; }
+.pricing-calculator { display: grid; gap: .65rem; }
+.pricing-calculator-row { border: 1px solid rgba(107,135,205,.24); border-radius: 12px; padding: .75rem .85rem; background: rgba(13,20,38,.9); }
+.pricing-calculator-row p { margin: 0 0 .35rem; font-size: 1.04rem; text-transform: uppercase; color: #a9beeb; letter-spacing: .05em; }
+.pricing-calculator-row strong { font-size: 1.55rem; color: #f0f5ff; }
+.pricing-notice h4 { margin: 0 0 .75rem; color: #d7e4ff; }
+.pricing-notice p { margin: 0 0 .8rem; color: #b8caef; line-height: 1.48; }
+.pricing-notice p:last-child { margin-bottom: 0; }
+@media (max-width: 1280px) { .pricing-main-grid { grid-template-columns: 1fr; } }
+
+.agreements-workspace { min-height: 620px; }
+.agreements-main-grid { display: grid; grid-template-columns: 1.5fr .5fr; gap: .95rem; align-items: start; }
+.agreement-viewer-panel, .agreement-notice { border: 1px solid rgba(99,128,197,.28); border-radius: 14px; background: rgba(10,15,29,.88); padding: .95rem; }
+.agreement-viewer-panel h3 { margin: 0 0 .7rem; text-transform: uppercase; letter-spacing: .06em; color: #cad8ff; }
+.agreement-document { min-height: 470px; max-height: 560px; overflow: auto; border: 1px solid rgba(105,133,203,.24); border-radius: 12px; background: rgba(12, 19, 35, .95); padding: .9rem; color: #d9e6ff; line-height: 1.55; }
+.agreement-document h1, .agreement-document h2, .agreement-document h3, .agreement-document h4 { color: #edf3ff; margin: 0 0 .65rem; }
+.agreement-document p { margin: 0 0 .7rem; }
+.agreement-document ul, .agreement-document ol { margin: 0 0 .7rem 1.25rem; }
+.agreement-document hr { border: 0; border-top: 1px solid rgba(118, 144, 216, .35); margin: .95rem 0; }
+.agreement-loading, .agreement-error { margin: 0; color: #b8caef; }
+.agreement-error { color: #ffd3de; }
+.agreement-signature-row { margin-top: .75rem; display: grid; grid-template-columns: 1fr 260px; gap: .7rem; align-items: end; }
+.agreement-signature-field { display: grid; gap: .4rem; }
+.agreement-signature-field label { color: #9eb3e7; text-transform: uppercase; letter-spacing: .06em; font-size: .82rem; }
+.agreement-signature-field input { min-height: 50px; border-radius: 12px; border: 1px solid rgba(102,129,201,.35); background: rgba(13,18,33,.95); color: #e8efff; padding: .65rem .78rem; font-size: 1rem; }
+.agreement-signature-field input:disabled { opacity: .7; cursor: not-allowed; }
+.agreement-accept-button { min-height: 50px; border-radius: 12px; border: 1px solid rgba(101, 128, 194, .35); background: linear-gradient(180deg, rgba(24, 28, 52, 0.95), rgba(13, 16, 34, 0.95)); color: #dce7ff; text-transform: uppercase; letter-spacing: .05em; }
+.agreement-accept-button:disabled { opacity: .55; cursor: not-allowed; }
+.agreement-accepted-status { margin: .7rem 0 0; color: #a7fff3; border: 1px solid rgba(96, 214, 199, .45); background: rgba(74, 185, 168, .15); border-radius: 10px; padding: .45rem .62rem; }
+.agreement-notice h4 { margin: 0 0 .75rem; color: #d7e4ff; }
+.agreement-notice p { margin: 0 0 .85rem; color: #b8caef; line-height: 1.5; }
+@media (max-width: 1280px) { .agreements-main-grid { grid-template-columns: 1fr; } .agreement-signature-row { grid-template-columns: 1fr; } }

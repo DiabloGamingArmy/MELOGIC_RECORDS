@@ -13,17 +13,18 @@ import {
   requestProductReview,
   saveProductDraft
 } from './data/productService'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
 import { searchProfilesByUsername } from './data/profileSearchService'
+import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
+import { getAgreementMarkdown, getMarketplaceSellerAgreementConfig } from './data/legalAgreementService'
 
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
   { key: 'media-upload', label: 'Media & Upload' },
   { key: 'contributors', label: 'Contributors' },
   { key: 'pricing', label: 'Pricing' },
-  { key: 'preview', label: 'Preview' },
   { key: 'agreements', label: 'Agreements' },
   { key: 'publish', label: 'Publish' }
 ]
@@ -72,6 +73,15 @@ let editorState = {
     filter: 'all',
     results: [],
     rows: []
+  },
+  marketplacePricingSettings: null,
+  agreement: {
+    config: null,
+    markdown: '',
+    loading: false,
+    error: '',
+    signedName: '',
+    accepting: false
   },
   status: { message: '', state: 'info' },
   creatorProfile: null,
@@ -141,6 +151,9 @@ function createEmptyProductDraft(user = null, profile = null) {
     contributorIds: '',
     pendingContributorIds: [],
     contributorRequestCount: 0,
+    sellerAgreement: null,
+    sellerAgreementAccepted: false,
+    sellerAgreementVersion: '',
     downloadPath: '',
     previewAudioPaths: '',
     previewVideoPaths: '',
@@ -183,6 +196,10 @@ function validateDraftFiles(files = []) {
 
 function readSectionHash() {
   const hash = window.location.hash.replace('#', '')
+  if (hash === 'preview') {
+    window.location.hash = 'media-upload'
+    return 'media-upload'
+  }
   return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'media-upload'
 }
 
@@ -291,6 +308,250 @@ function formattedEditDate(value) {
   if (!value) return new Date().toISOString().slice(0, 10)
   const d = new Date(value)
   return Number.isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10)
+}
+
+function normalizePriceToCents(value) {
+  const raw = String(value ?? '').replace(/[^\d.]/g, '')
+  if (!raw) return 0
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0
+  return Math.max(0, Math.round(parsed * 100))
+}
+
+function centsToPriceInput(cents = 0) {
+  const normalized = Math.max(0, Number(cents || 0))
+  return (normalized / 100).toFixed(2)
+}
+
+function moneyFormatter(currency = 'USD') {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  } catch {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
+}
+
+function getPricingSettings() {
+  return editorState.marketplacePricingSettings || {
+    defaultCurrency: 'USD',
+    supportedCurrencies: ['USD'],
+    platformFeeLabel: 'Melogic Records Fee',
+    platformFeeBps: 1500,
+    processorFeeLabel: 'Stripe Fee',
+    processorPercentBps: 290,
+    processorFixedFeeCents: 30,
+    salesMilestones: [100, 1000, 100000],
+    transactionNotice: {
+      title: 'Transactions Notice:',
+      commission: 'Commission: Our platform applies a standard 15% commission on all digital product sales.',
+      processingFees: 'Processing Fees: Transactions are subject to standard third-party processing fees, which are deducted prior to payout.',
+      supportedMethods: 'Supported Methods: Buyers can purchase via Credit Card, Apple Pay, and PayPal. Sellers can receive payouts via Direct Deposit or PayPal.'
+    }
+  }
+}
+
+function renderPricingPanel() {
+  const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const settings = getPricingSettings()
+  const currency = String(draft.currency || settings.defaultCurrency || 'USD').toUpperCase()
+  const supportedCurrencies = Array.isArray(settings.supportedCurrencies) && settings.supportedCurrencies.length ? settings.supportedCurrencies : [currency]
+  const formatter = moneyFormatter(currency)
+  const priceCents = normalizePriceToCents(draft.price)
+  const platformFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.platformFeeBps || 0)) / 10000)
+  const processorFeeCents = priceCents <= 0 ? 0 : Math.round((priceCents * Number(settings.processorPercentBps || 0)) / 10000) + Number(settings.processorFixedFeeCents || 0)
+  const sellerNetPerSaleCentsRaw = priceCents - platformFeeCents - processorFeeCents
+  const sellerNetPerSaleCents = Math.max(0, sellerNetPerSaleCentsRaw)
+  const warning = priceCents > 0 && sellerNetPerSaleCentsRaw < 0
+  const salesMilestones = Array.isArray(settings.salesMilestones) && settings.salesMilestones.length ? settings.salesMilestones : [100, 1000, 100000]
+  const currencyControlDisabled = supportedCurrencies.length <= 1 ? 'disabled' : ''
+
+  // TODO: frontend pricing calculator is informational only; backend payout and checkout logic must remain the source of truth.
+  return `
+    <section class="pricing-workspace">
+      <div class="pricing-main-grid">
+        <article class="pricing-input-column">
+          <div class="pricing-price-field">
+            <div class="pricing-field-header">
+              <label for="pricing-product-price">Product Price (${escapeHtml(currency)})</label>
+              <select class="pricing-currency-action" data-pricing-currency ${currencyControlDisabled}>
+                ${supportedCurrencies.map((code) => `<option value="${escapeHtml(code)}" ${code === currency ? 'selected' : ''}>Change Currency · ${escapeHtml(code)}</option>`).join('')}
+              </select>
+            </div>
+            <input id="pricing-product-price" type="number" min="0" step="0.01" inputmode="decimal" name="price" value="${escapeHtml(centsToPriceInput(priceCents))}" data-pricing-price-input />
+            <label class="pricing-free-toggle"><input type="checkbox" data-pricing-free-toggle ${priceCents === 0 || draft.isFree ? 'checked' : ''} /> Free product</label>
+          </div>
+          <div class="pricing-fee-row">
+            <span>${escapeHtml(settings.platformFeeLabel)}: ${(Number(settings.platformFeeBps || 0) / 100).toFixed(2)}%</span>
+            <strong>${formatter.format(platformFeeCents / 100)}</strong>
+          </div>
+          <div class="pricing-fee-row">
+            <span>${escapeHtml(settings.processorFeeLabel)}: ${(Number(settings.processorPercentBps || 0) / 100).toFixed(2)}% + ${formatter.format(Number(settings.processorFixedFeeCents || 0) / 100)}</span>
+            <strong>${formatter.format(processorFeeCents / 100)}</strong>
+          </div>
+          <div class="pricing-price-field">
+            <div class="pricing-field-header">
+              <label>Final Listing Price (${escapeHtml(currency)})</label>
+              <button type="button" class="pricing-currency-action" disabled>Change Currency</button>
+            </div>
+            <input type="text" readonly value="${escapeHtml(centsToPriceInput(priceCents))}" />
+          </div>
+          ${warning ? '<p class="pricing-warning">Fees exceed listing price. Seller net is clamped to $0.00 for calculator display.</p>' : ''}
+        </article>
+
+        <article class="pricing-calculator-column">
+          <div class="pricing-calculator">
+            <h3>Profit Calculator:</h3>
+            ${salesMilestones.map((milestone) => `
+              <div class="pricing-calculator-row">
+                <p>${Number(milestone).toLocaleString('en-US')} Sales:</p>
+                <strong>${formatter.format((sellerNetPerSaleCents * Number(milestone || 0)) / 100)}</strong>
+              </div>
+            `).join('')}
+          </div>
+        </article>
+
+        <aside class="pricing-notice">
+          <h4>${escapeHtml(settings.transactionNotice?.title || 'Transactions Notice:')}</h4>
+          <p>${escapeHtml(settings.transactionNotice?.commission || '')}</p>
+          <p>${escapeHtml(settings.transactionNotice?.processingFees || '')}</p>
+          <p>${escapeHtml(settings.transactionNotice?.supportedMethods || '')}</p>
+        </aside>
+      </div>
+    </section>
+  `
+}
+
+function formatAgreementAcceptedDate(value = '') {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  return parsed.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function renderSafeInlineMarkdown(text = '') {
+  const escaped = escapeHtml(text)
+  return escaped
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+}
+
+function renderAgreementMarkdown(markdown = '') {
+  const lines = String(markdown || '').replace(/\r\n/g, '\n').split('\n')
+  const html = []
+  let paragraph = []
+  let listType = ''
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return
+    html.push(`<p>${renderSafeInlineMarkdown(paragraph.join(' '))}</p>`)
+    paragraph = []
+  }
+
+  const closeList = () => {
+    if (!listType) return
+    html.push(listType === 'ol' ? '</ol>' : '</ul>')
+    listType = ''
+  }
+
+  lines.forEach((line) => {
+    const trimmed = line.trim()
+    const orderedMatch = trimmed.match(/^\d+\.\s+(.*)$/)
+    const unorderedMatch = trimmed.match(/^[-*]\s+(.*)$/)
+    if (!trimmed) {
+      flushParagraph()
+      closeList()
+      return
+    }
+    if (/^---+$/.test(trimmed)) {
+      flushParagraph()
+      closeList()
+      html.push('<hr />')
+      return
+    }
+    const headingMatch = trimmed.match(/^(#{1,4})\s+(.*)$/)
+    if (headingMatch) {
+      flushParagraph()
+      closeList()
+      const level = Math.min(4, headingMatch[1].length)
+      html.push(`<h${level}>${renderSafeInlineMarkdown(headingMatch[2])}</h${level}>`)
+      return
+    }
+    if (orderedMatch) {
+      flushParagraph()
+      if (listType !== 'ol') {
+        closeList()
+        html.push('<ol>')
+        listType = 'ol'
+      }
+      html.push(`<li>${renderSafeInlineMarkdown(orderedMatch[1])}</li>`)
+      return
+    }
+    if (unorderedMatch) {
+      flushParagraph()
+      if (listType !== 'ul') {
+        closeList()
+        html.push('<ul>')
+        listType = 'ul'
+      }
+      html.push(`<li>${renderSafeInlineMarkdown(unorderedMatch[1])}</li>`)
+      return
+    }
+    closeList()
+    paragraph.push(trimmed)
+  })
+
+  flushParagraph()
+  closeList()
+  return html.join('')
+}
+
+function sellerAgreementState() {
+  const config = editorState.agreement.config || {}
+  const current = editorState.draft?.sellerAgreement || null
+  const acceptedVersion = String(editorState.draft?.sellerAgreementVersion || current?.version || '')
+  const activeVersion = String(config.activeVersion || '')
+  const accepted = Boolean(editorState.draft?.sellerAgreementAccepted) && acceptedVersion === activeVersion
+  const versionChanged = Boolean(editorState.draft?.sellerAgreementAccepted) && acceptedVersion && activeVersion && acceptedVersion !== activeVersion
+  return { accepted, versionChanged, current }
+}
+
+function renderAgreementsPanel() {
+  const agreementState = sellerAgreementState()
+  const config = editorState.agreement.config || {}
+  const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
+  const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
+  return `
+    <section class="agreements-workspace">
+      <div class="agreements-main-grid">
+        <article class="agreement-viewer-panel">
+          <h3>Agreement Form</h3>
+          <div class="agreement-document">
+            ${editorState.agreement.loading
+              ? '<p class="agreement-loading">Loading agreement…</p>'
+              : editorState.agreement.error
+                ? '<p class="agreement-error">Could not load the seller agreement. Please try again later.</p>'
+                : renderAgreementMarkdown(editorState.agreement.markdown)}
+          </div>
+          ${agreementState.versionChanged ? '<p class="pricing-warning">A newer agreement version is available and must be accepted before publishing.</p>' : ''}
+          ${agreementState.accepted ? `<p class="agreement-accepted-status">Agreement accepted by ${escapeHtml(agreementState.current?.signedName || '')}${agreementState.current?.acceptedAt ? ` on ${escapeHtml(formatAgreementAcceptedDate(agreementState.current.acceptedAt))}` : ''}.</p>` : ''}
+          <div class="agreement-signature-row">
+            <div class="agreement-signature-field">
+              <label>E-Signature (Your Full Legal Name):</label>
+              <input type="text" value="${escapeHtml(editorState.agreement.signedName)}" data-agreement-signed-name ${signatureDisabled ? 'disabled' : ''} placeholder="Enter full legal name" />
+            </div>
+            <button type="button" class="agreement-accept-button" data-accept-agreement ${canAccept ? '' : 'disabled'}>
+              ${agreementState.accepted ? 'Agreement Accepted' : editorState.agreement.accepting ? 'Saving…' : 'Accept Agreement'}
+            </button>
+          </div>
+        </article>
+        <aside class="agreement-notice">
+          <h4>Modifications to Agreements:</h4>
+          <p>We reserve the right to update or modify our agreements and policies at any time. If changes occur, you will be notified via email or an alert on your account dashboard. It is your responsibility to review and understand any updates, as all changes take effect immediately upon being posted.</p>
+          ${config.title ? `<p>Current: ${escapeHtml(config.title)} ${escapeHtml(String(config.activeVersion || ''))}</p>` : ''}
+        </aside>
+      </div>
+    </section>
+  `
 }
 
 function renderProductInfoPanel() {
@@ -501,6 +762,10 @@ function renderEditor() {
               ? renderMediaUploadPanel()
               : section === 'contributors'
                 ? renderContributorsPanel()
+                : section === 'pricing'
+                  ? renderPricingPanel()
+                  : section === 'agreements'
+                    ? renderAgreementsPanel()
                 : renderPlaceholderPanel(section)}
           <div class="editor-actions">
             <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
@@ -570,6 +835,108 @@ function renderEditor() {
       setTagValues(field, tagValuesFor(field).filter((tag) => tag !== value))
       renderEditor()
     })
+  })
+
+  const pricingPriceInput = editorRoot.querySelector('[data-pricing-price-input]')
+  pricingPriceInput?.addEventListener('input', () => {
+    const priceCents = normalizePriceToCents(pricingPriceInput.value)
+    updateDraftField('price', centsToPriceInput(priceCents))
+    updateDraftField('isFree', priceCents === 0)
+    renderEditor()
+  })
+
+  editorRoot.querySelector('[data-pricing-currency]')?.addEventListener('change', (event) => {
+    const selectedCurrency = String(event.target.value || '').trim().toUpperCase()
+    if (!selectedCurrency) return
+    updateDraftField('currency', selectedCurrency)
+    renderEditor()
+  })
+
+  editorRoot.querySelector('[data-pricing-free-toggle]')?.addEventListener('change', (event) => {
+    const checked = Boolean(event.target.checked)
+    updateDraftField('isFree', checked)
+    if (checked) updateDraftField('price', '0.00')
+    if (!checked && normalizePriceToCents(editorState.draft?.price || '') === 0) updateDraftField('price', '1.00')
+    renderEditor()
+  })
+
+  editorRoot.querySelector('[data-agreement-signed-name]')?.addEventListener('input', (event) => {
+    editorState.agreement.signedName = event.target.value
+    renderEditor()
+  })
+
+  editorRoot.querySelector('[data-accept-agreement]')?.addEventListener('click', async () => {
+    if (!editorState.user || !editorState.draft) return
+    if (!editorState.agreement.config || editorState.agreement.loading || editorState.agreement.error) return
+    const signedName = String(editorState.agreement.signedName || '').trim()
+    if (signedName.length < 3) {
+      setStatus('Please enter your full legal name before accepting the agreement.', 'error')
+      renderEditor()
+      return
+    }
+    if (!signedName.includes(' ') && signedName.length < 6) {
+      setStatus('Please enter a full legal name (first and last preferred).', 'error')
+      renderEditor()
+      return
+    }
+
+    editorState.agreement.accepting = true
+    renderEditor()
+    try {
+      let productId = editorState.draft.id
+      if (!productId || isPlaceholderProductId(productId)) {
+        const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
+        const result = await saveProductDraft(editorState.user, payload, {
+          productId: '',
+          status: 'draft',
+          isNew: true,
+          mediaFiles: editorState.mediaFiles,
+          galleryFiles: editorState.mediaFiles.gallery,
+          previewAudioFiles: editorState.mediaFiles.previewAudio,
+          previewVideoFiles: editorState.mediaFiles.previewVideo
+        })
+        productId = result.productId
+        updateDraftField('id', productId)
+      }
+      const config = editorState.agreement.config
+      const agreementPayload = {
+        agreementId: config.agreementId,
+        version: config.activeVersion,
+        title: config.title,
+        storagePath: config.storagePath,
+        format: config.format || 'markdown',
+        signedName,
+        acceptedBy: editorState.user.uid,
+        acceptedAt: serverTimestamp(),
+        accepted: true
+      }
+      await setDoc(doc(db, 'products', productId), {
+        sellerAgreement: agreementPayload,
+        sellerAgreementAccepted: true,
+        sellerAgreementVersion: config.activeVersion,
+        updatedAt: serverTimestamp()
+      }, { merge: true })
+      await setDoc(doc(db, 'users', editorState.user.uid, 'agreementAcceptances', `${config.agreementId}_${config.activeVersion}`), {
+        agreementId: config.agreementId,
+        version: config.activeVersion,
+        title: config.title,
+        storagePath: config.storagePath,
+        signedName,
+        productId,
+        acceptedAt: serverTimestamp(),
+        accepted: true
+      }, { merge: true })
+      updateDraftField('sellerAgreement', { ...agreementPayload, acceptedAt: new Date().toISOString() })
+      updateDraftField('sellerAgreementAccepted', true)
+      updateDraftField('sellerAgreementVersion', config.activeVersion)
+      setStatus('Agreement accepted.', 'success')
+    } catch (error) {
+      console.warn('[new-product] agreement acceptance failed', error?.code || error?.message || error)
+      setStatus('Could not save agreement acceptance. Please try again.', 'error')
+    } finally {
+      editorState.agreement.accepting = false
+      renderEditor()
+    }
   })
 
   const coverInput = editorRoot.querySelector('[data-cover-input]')
@@ -742,6 +1109,16 @@ function renderEditor() {
 
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
+    if (desiredStatus === 'published') {
+      const requiredVersion = String(editorState.agreement.config?.activeVersion || '')
+      const acceptedVersion = String(editorState.draft.sellerAgreementVersion || '')
+      const accepted = Boolean(editorState.draft.sellerAgreementAccepted) && acceptedVersion && acceptedVersion === requiredVersion
+      if (!accepted) {
+        setStatus('You must accept the Marketplace Product Seller Agreement before publishing.', 'error')
+        renderEditor()
+        return
+      }
+    }
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
     try {
@@ -795,6 +1172,9 @@ async function initPage() {
 
   editorState.user = user
   editorState.creatorProfile = await fetchPublicCreatorProfile(user.uid)
+  editorState.marketplacePricingSettings = await getMarketplacePricingSettings()
+  editorState.agreement.loading = true
+  editorState.agreement.error = ''
 
   if (editorState.requestedProductId) {
     const existingProduct = await getProductById(editorState.requestedProductId)
@@ -805,6 +1185,25 @@ async function initPage() {
     editorState.draft = applyCreatorIdentity({ ...createEmptyProductDraft(user, editorState.creatorProfile), ...existingProduct, id: existingProduct.id }, user, editorState.creatorProfile)
   } else {
     editorState.draft = applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile)
+  }
+
+  if (!editorState.draft.currency) {
+    updateDraftField('currency', editorState.marketplacePricingSettings?.defaultCurrency || 'USD')
+  }
+
+  editorState.agreement.signedName = String(editorState.draft.sellerAgreement?.signedName || '')
+  try {
+    const agreementConfig = await getMarketplaceSellerAgreementConfig()
+    editorState.agreement.config = agreementConfig
+    editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
+    if (editorState.draft.sellerAgreementVersion && editorState.draft.sellerAgreementVersion !== agreementConfig.activeVersion) {
+      updateDraftField('sellerAgreementAccepted', false)
+    }
+  } catch (error) {
+    console.warn('[new-product] agreement load failed', error?.code || error?.message || error)
+    editorState.agreement.error = 'Could not load seller agreement.'
+  } finally {
+    editorState.agreement.loading = false
   }
 
   renderEditor()
