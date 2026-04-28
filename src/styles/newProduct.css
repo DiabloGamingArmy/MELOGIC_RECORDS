@@ -239,6 +239,7 @@
 .file-role-badge.is-private { background: rgba(133, 123, 200, .22); color: #ccc8ff; border: 1px solid rgba(159, 146, 230, .5); }
 .file-row-actions { display: flex; gap: .3rem; flex-wrap: wrap; justify-content: flex-end; }
 .file-row-actions button { border: 1px solid rgba(99, 126, 191, .4); background: rgba(21, 29, 55, .95); color: #d4dfff; border-radius: 8px; padding: .25rem .45rem; font-size: .75rem; }
+.hidden-file { display: none !important; }
 .media-upload-actions { display: grid; gap: .6rem; align-content: start; min-height: 620px; }
 .media-upload-action-btn { min-height: 48px; border-radius: 10px; border: 1px solid rgba(102,130,202,.45); background: linear-gradient(180deg, rgba(29,40,76,.94), rgba(14,20,39,.96)); color: #e4edff; }
 .marketplace-preview-btn { margin-top: auto; background: linear-gradient(90deg, rgba(55,198,239,.22), rgba(124,95,250,.22)); }
@@ -250,6 +251,7 @@
 .contributors-toolbar { display: grid; grid-template-columns: 1fr 280px; gap: .6rem; margin-bottom: .55rem; }
 .contributor-search, .contributors-toolbar input[type='text'] { min-height: 44px; border-radius: 10px; border: 1px solid rgba(101,128,194,.35); background: rgba(14,20,37,.96); color: #e6eeff; padding: .55rem .7rem; }
 .contributor-results { display: grid; gap: .35rem; margin-bottom: .55rem; }
+.contributor-results.is-hidden { display: none; }
 .contributor-results button { display: flex; gap: .5rem; align-items: center; border: 1px solid rgba(98,126,191,.35); background: rgba(16,23,44,.95); color: #dae6ff; border-radius: 10px; padding: .35rem .45rem; text-align: left; }
 .contributor-filter-row { display: flex; gap: .4rem; margin-bottom: .55rem; }
 .contributor-filter-row button { border: 1px solid rgba(103,130,198,.35); background: rgba(20,26,48,.92); color: #cad8ff; border-radius: 999px; padding: .2rem .6rem; }
@@ -291,6 +293,10 @@
 .pricing-fee-row span { font-size: .96rem; letter-spacing: .02em; }
 .pricing-fee-row strong { font-size: 1.05rem; }
 .pricing-warning { margin: 0; color: #ffd3de; font-size: .83rem; border: 1px solid rgba(232, 89, 116, 0.42); background: rgba(154, 52, 71, 0.2); border-radius: 10px; padding: .55rem .7rem; }
+.pricing-warning.is-hidden { display: none; }
+.pricing-breakdown { border: 1px solid rgba(105,133,203,.24); border-radius: 11px; padding: .65rem .75rem; background: rgba(13, 20, 38, .93); color: #cfdcff; }
+.pricing-breakdown p { margin: 0 0 .35rem; font-size: .9rem; }
+.pricing-breakdown p:last-child { margin-bottom: 0; }
 .pricing-calculator h3 { margin: 0 0 .8rem; color: #cad8ff; text-transform: uppercase; letter-spacing: .06em; }
 .pricing-calculator { display: grid; gap: .65rem; }
 .pricing-calculator-row { border: 1px solid rgba(107,135,205,.24); border-radius: 12px; padding: .75rem .85rem; background: rgba(13,20,38,.9); }
