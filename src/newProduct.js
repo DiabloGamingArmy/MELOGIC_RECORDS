@@ -1561,38 +1561,63 @@ async function initPage() {
   syncPricingDraftFields()
 
   editorState.agreement.signedName = String(editorState.draft.sellerAgreement?.signedName || '')
+  let agreementId = ''
+  let latestVersion = ''
   try {
+    let stage = 'latest-agreement-config'
     const agreementConfig = await getLatestMarketplaceSellerAgreement()
     editorState.agreement.config = agreementConfig
     editorState.agreement.latestVersion = agreementConfig.activeVersion
+    agreementId = String(agreementConfig.agreementId || '')
+    latestVersion = String(agreementConfig.activeVersion || '')
+
+    stage = 'agreement-markdown'
     editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
-    const agreementId = String(agreementConfig.agreementId || '')
-    const latestVersion = String(agreementConfig.activeVersion || '')
-    const formKey = `${agreementId}_${latestVersion}`
-    const signedFormSnap = await getDoc(doc(db, 'users', user.uid, 'signedForms', formKey))
-    if (signedFormSnap.exists() && signedFormSnap.data()?.accepted === true) {
-      const signedForm = signedFormSnap.data() || {}
-      updateDraftField('sellerAgreement', {
+
+    try {
+      stage = 'signed-form-read'
+      const formKey = `${agreementId}_${latestVersion}`
+      const signedFormSnap = await getDoc(doc(db, 'users', user.uid, 'signedForms', formKey))
+      if (signedFormSnap.exists() && signedFormSnap.data()?.accepted === true) {
+        const signedForm = signedFormSnap.data() || {}
+        updateDraftField('sellerAgreement', {
+          agreementId,
+          version: latestVersion,
+          title: signedForm.title || agreementConfig.title,
+          storagePath: signedForm.storagePath || agreementConfig.storagePath,
+          format: signedForm.format || agreementConfig.format || 'markdown',
+          signedName: signedForm.signedName || editorState.agreement.signedName || '',
+          acceptedBy: user.uid,
+          accepted: true,
+          signedFormPath: `users/${user.uid}/signedForms/${formKey}`,
+          acceptedAt: (typeof signedForm.signedAt?.toDate === 'function' ? signedForm.signedAt.toDate().toISOString() : new Date().toISOString())
+        })
+        updateDraftField('sellerAgreementAccepted', true)
+        updateDraftField('sellerAgreementVersion', latestVersion)
+        editorState.agreement.signedName = String(signedForm.signedName || editorState.agreement.signedName || '')
+      }
+    } catch (error) {
+      console.warn('[new-product] agreement load failed', {
+        stage: 'signed-form-read',
+        code: error?.code,
+        message: error?.message,
+        uid: editorState.user?.uid || '',
         agreementId,
-        version: latestVersion,
-        title: signedForm.title || agreementConfig.title,
-        storagePath: signedForm.storagePath || agreementConfig.storagePath,
-        format: signedForm.format || agreementConfig.format || 'markdown',
-        signedName: signedForm.signedName || editorState.agreement.signedName || '',
-        acceptedBy: user.uid,
-        accepted: true,
-        signedFormPath: `users/${user.uid}/signedForms/${formKey}`,
-        acceptedAt: (typeof signedForm.signedAt?.toDate === 'function' ? signedForm.signedAt.toDate().toISOString() : new Date().toISOString())
+        latestVersion
       })
-      updateDraftField('sellerAgreementAccepted', true)
-      updateDraftField('sellerAgreementVersion', latestVersion)
-      editorState.agreement.signedName = String(signedForm.signedName || editorState.agreement.signedName || '')
     }
     if (editorState.draft.sellerAgreementVersion && editorState.draft.sellerAgreementVersion !== agreementConfig.activeVersion) {
       updateDraftField('sellerAgreementAccepted', false)
     }
   } catch (error) {
-    console.warn('[new-product] agreement load failed', error?.code || error?.message || error)
+    console.warn('[new-product] agreement load failed', {
+      stage: editorState.agreement.config ? 'agreement-markdown' : 'latest-agreement-config',
+      code: error?.code,
+      message: error?.message,
+      uid: editorState.user?.uid || '',
+      agreementId,
+      latestVersion
+    })
     editorState.agreement.latestVersion = ''
     editorState.agreement.error = 'Could not load seller agreement.'
   } finally {
