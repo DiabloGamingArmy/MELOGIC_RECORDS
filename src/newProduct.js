@@ -263,6 +263,35 @@ function validatePrimaryDeliverableSelection(files = [], draft = {}, hasExisting
   return { ok: true, file, level: 'info', message: '' }
 }
 
+function validateDraftFiles(draft = editorState.draft, mediaFiles = editorState.mediaFiles) {
+  const errors = []
+  const warnings = []
+  const deliverables = Array.from(mediaFiles?.deliverables || [])
+  const folderDeliverables = Array.from(mediaFiles?.folderDeliverables || [])
+  const allDeliverables = [...deliverables, ...folderDeliverables]
+
+  if (allDeliverables.length > 1) {
+    errors.push('Only one primary deliverable is supported right now. Please upload a ZIP package.')
+  }
+  if (!allDeliverables.length && !String(draft?.downloadPath || draft?.primaryDownloadPath || '').trim()) {
+    warnings.push('No deliverable has been added yet.')
+  }
+
+  const firstDeliverable = allDeliverables[0] || null
+  if (firstDeliverable) {
+    const isSingleSample = isSingleSampleProduct(draft)
+    const isAudio = String(firstDeliverable.type || '').startsWith('audio/')
+    const archive = isArchiveFile(firstDeliverable)
+    if (isSingleSample) {
+      if (!isAudio && !archive) warnings.push('Single Sample products usually use one audio file. ZIP is also supported.')
+    } else if (!archive) {
+      warnings.push('ZIP is recommended for multi-file products.')
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings }
+}
+
 function buildFileTreeRows(entries = []) {
   const folderSet = new Set()
   const rows = []
@@ -1470,9 +1499,14 @@ function renderEditor() {
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
     try {
-      const deliverableValidation = validateDraftFiles([...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables])
-      if (deliverableValidation) {
-        setStatus(deliverableValidation, 'error')
+      const deliverableValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
+      if (!deliverableValidation.ok) {
+        setStatus(deliverableValidation.errors[0], 'error')
+        renderEditor()
+        return
+      }
+      if (desiredStatus === 'published' && deliverableValidation.warnings.includes('No deliverable has been added yet.')) {
+        setStatus('Add a deliverable before submitting for review.', 'error')
         renderEditor()
         return
       }
@@ -1491,9 +1525,19 @@ function renderEditor() {
   }
 
   editorRoot.querySelector('[data-save-draft]')?.addEventListener('click', () => persistProduct('draft'))
-  editorRoot.querySelector('[data-confirm-submit-review]')?.addEventListener('click', () => {
+  editorRoot.querySelector('[data-confirm-submit-review]')?.addEventListener('click', async () => {
     editorState.publishConfirmOpen = false
-    persistProduct('published')
+    try {
+      await persistProduct('published')
+    } catch (error) {
+      console.warn('[new-product] submit review failed', {
+        code: error?.code,
+        message: error?.message,
+        stage: error?.stage || 'submit-review'
+      })
+      setStatus('Could not submit for review.', 'error')
+      renderEditor()
+    }
   })
 }
 
@@ -1608,6 +1652,11 @@ async function saveCurrentDraftAndReturnId({ reason = 'save', desiredStatus = 'd
   if (!editorState.user || !editorState.draft) throw new Error('missing-user-or-draft')
   if (!String(editorState.draft.title || '').trim()) throw new Error('Add a product title before saving this draft.')
   if (!String(editorState.draft.artistId || editorState.user.uid || '').trim()) throw new Error('missing-artist-id')
+  const fileValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
+  if (!fileValidation.ok) throw new Error(fileValidation.errors[0] || 'draft-file-validation-failed')
+  if (reason === 'submit-review' && fileValidation.warnings.includes('No deliverable has been added yet.')) {
+    throw new Error('Add a deliverable before submitting for review.')
+  }
   const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
   const payload = buildProductPayload({
     ...editorState.draft,
