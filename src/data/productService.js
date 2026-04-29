@@ -14,7 +14,7 @@ import {
   writeBatch
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
+import { getDownloadURL, ref, uploadBytes, uploadBytesResumable } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
@@ -1399,6 +1399,108 @@ export async function submitMarketplaceProductForReview({ user, productId, produ
       uid: user?.uid || null
     })
   }
+  return requestProductReview(productId)
+}
+
+export function resolveProductId(input = {}) {
+  const rawId = String(input?.id || input?.productId || '').trim()
+  if (rawId && !isPlaceholderProductId(rawId)) return rawId
+  const slugId = slugify(input?.slug || input?.title || '')
+  return slugId || doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
+}
+
+export async function createOrUpdateProductShell(input = {}, user = null) {
+  if (!db || !user?.uid) throw new Error('Authenticated user required.')
+  const productId = resolveProductId(input)
+  const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
+  const existing = await getDoc(productRef)
+  const creator = getCreatorIdentity(user, input)
+  const payload = {
+    id: productId,
+    slug: String(input.slug || productId),
+    status: 'draft',
+    visibility: 'private',
+    title: String(input.title || '').trim() || 'Untitled product',
+    shortDescription: String(input.shortDescription || ''),
+    description: String(input.description || ''),
+    productType: String(input.productType || 'Sample Pack'),
+    artistId: user.uid,
+    artistName: String(creator.artistName || 'Creator'),
+    artistDisplayName: String(creator.artistDisplayName || creator.artistName || 'Creator'),
+    artistUsername: String(creator.artistUsername || ''),
+    artistProfilePath: `profiles/${user.uid}`,
+    artistAvatarURL: String(creator.artistAvatarURL || ''),
+    artistPhotoURL: String(creator.artistPhotoURL || ''),
+    updatedAt: serverTimestamp(),
+    ...(existing.exists() ? {} : { createdAt: serverTimestamp() })
+  }
+  await setDoc(productRef, payload, { merge: true })
+  return { productId, payload }
+}
+
+export async function uploadProductFile({ productId, queueItem, onProgress } = {}) {
+  if (!storage || !productId || !queueItem?.file) throw new Error('Missing upload inputs.')
+  const safeName = sanitizeStorageFileName(queueItem.name || queueItem.file.name)
+  const storagePath = STORAGE_PATHS.productRoleFile(productId, queueItem.role, queueItem.id, safeName)
+  const storageRef = ref(storage, storagePath)
+  const task = uploadBytesResumable(storageRef, queueItem.file, { contentType: queueItem.contentType || queueItem.file.type || 'application/octet-stream' })
+  await new Promise((resolve, reject) => {
+    task.on('state_changed', (snapshot) => {
+      const progress = snapshot.totalBytes ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) : 0
+      if (typeof onProgress === 'function') onProgress(progress)
+    }, reject, resolve)
+  })
+  return { ...queueItem, storagePath, progress: 100, status: 'uploaded' }
+}
+
+export async function saveProductManifest({ productId, draft = {}, uploadedFiles = [] } = {}) {
+  if (!db || !productId) throw new Error('Missing productId.')
+  const byRole = (role) => uploadedFiles.filter((item) => item.role === role)
+  const cover = byRole('cover')[0]
+  const thumbnail = byRole('thumbnail')[0]
+  const deliverable = byRole('deliverable')[0]
+  const license = byRole('license')[0]
+  const gallery = byRole('gallery').map((item) => item.storagePath).filter(Boolean)
+  const previewAudio = byRole('previewAudio').map((item) => item.storagePath).filter(Boolean)
+  const previewVideo = byRole('previewVideo').map((item) => item.storagePath).filter(Boolean)
+  const totalBytes = uploadedFiles.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
+  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
+    coverPath: cover?.storagePath || draft.coverPath || '',
+    thumbnailPath: thumbnail?.storagePath || draft.thumbnailPath || '',
+    galleryPaths: gallery,
+    previewAudioPaths: previewAudio,
+    previewVideoPaths: previewVideo,
+    downloadPath: deliverable?.storagePath || '',
+    primaryDownloadPath: deliverable?.storagePath || '',
+    primaryDownloadBytes: Number(deliverable?.sizeBytes || 0),
+    licensePath: license?.storagePath || '',
+    assetSummary: { totalFiles: uploadedFiles.length, totalBytes },
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+
+  const filesCol = collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files')
+  const batch = writeBatch(db)
+  uploadedFiles.forEach((row) => {
+    const fileRef = doc(filesCol, row.id)
+    batch.set(fileRef, {
+      id: row.id,
+      productId,
+      name: row.name,
+      displayPath: row.name,
+      storagePath: row.storagePath,
+      role: row.role,
+      sizeBytes: Number(row.sizeBytes || 0),
+      contentType: row.contentType || 'application/octet-stream',
+      isDeliverable: row.role === 'deliverable',
+      isPublicPreview: row.role === 'previewAudio' || row.role === 'previewVideo' || row.role === 'gallery',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+  })
+  await batch.commit()
+}
+
+export async function submitProductForReview({ productId } = {}) {
   return requestProductReview(productId)
 }
 
