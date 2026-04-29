@@ -9,6 +9,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   startAfter,
   where,
   writeBatch
@@ -1031,6 +1032,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   const requestedId = options.productId || input.id || ''
   let productId = ''
   let created = false
+  let stage = 'draft-initialization'
   try {
     const initialization = await initializeProductDraft(user, input, requestedId)
     productId = initialization.productId
@@ -1043,6 +1045,19 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       throw createStageError('draft-verification', 'Draft existence check failed after initialization.')
     }
   } catch (error) {
+    console.warn('[productService] draft save failed', {
+      stage,
+      code: error?.code || error?.cause?.code,
+      message: error?.message || error?.cause?.message,
+      productId,
+      payloadId: input?.id,
+      artistId: input?.artistId,
+      currentUid: user?.uid,
+      title: Boolean(input?.title),
+      status: input?.status,
+      visibility: input?.visibility,
+      payloadKeys: Object.keys(input || {})
+    })
     throw createStageError('draft-initialization', 'Draft initialization failed.', error)
   }
 
@@ -1187,6 +1202,57 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     deliverableUploads,
     draftCreated: created
   }
+}
+
+export async function submitMarketplaceProductForReview({ user, productId, product }) {
+  if (!db || !user?.uid || !productId) throw new Error('Missing review submission context.')
+  await updateDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
+    status: 'review_pending',
+    moderationStatus: 'pending_ai_review',
+    updatedAt: serverTimestamp()
+  })
+  await setDoc(doc(db, 'pendingReview', 'marketplace', 'items', productId), {
+    id: productId,
+    productId,
+    productPath: `products/${productId}`,
+    sellerId: user.uid,
+    sellerProfilePath: `profiles/${user.uid}`,
+    status: 'pending_ai_review',
+    reviewType: 'marketplace-product',
+    source: 'new-product-editor',
+    productSnapshot: {
+      title: product?.title || '',
+      slug: product?.slug || '',
+      shortDescription: product?.shortDescription || '',
+      description: product?.description || '',
+      productType: product?.productType || '',
+      productKind: product?.productKind || '',
+      categories: product?.categories || [],
+      genres: product?.genres || [],
+      tags: product?.tags || [],
+      priceCents: Number(product?.priceCents || 0),
+      payoutTargetCents: Number(product?.payoutTargetCents || 0),
+      currency: product?.currency || 'USD',
+      isFree: Boolean(product?.isFree),
+      visibility: product?.visibility || 'private',
+      coverPath: product?.coverPath || '',
+      thumbnailPath: product?.thumbnailPath || '',
+      previewAudioPaths: product?.previewAudioPaths || [],
+      previewVideoPaths: product?.previewVideoPaths || [],
+      primaryDownloadPath: product?.primaryDownloadPath || '',
+      assetSummary: product?.assetSummary || {},
+      sellerAgreementVersion: product?.sellerAgreementVersion || '',
+      sellerAgreementAccepted: Boolean(product?.sellerAgreementAccepted)
+    },
+    checks: {
+      ai: { status: 'pending', score: null, reasons: [], reviewedAt: null },
+      rules: { status: 'pending', blockers: [], warnings: [] },
+      human: { status: 'not_required', reviewedBy: '', reviewedAt: null, notes: '' }
+    },
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return { status: 'review_pending' }
 }
 
 export async function requestProductReview(productId = '') {
