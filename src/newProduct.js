@@ -1289,6 +1289,22 @@ function renderEditor() {
         renderEditor()
         return
       }
+      stage = 'product-read'
+      const productRef = doc(db, 'products', productId)
+      const productSnap = await getDoc(productRef)
+      productExists = productSnap.exists()
+      if (!productExists) throw new Error('agreement-product-missing-after-save')
+      const productData = productSnap.data() || {}
+      productArtistId = String(productData.artistId || '')
+      productStatus = String(productData.status || '')
+      if (productArtistId !== currentUid) {
+        setStatus('You do not have permission to accept this agreement for this product.', 'error')
+        throw new Error('agreement-product-owner-mismatch')
+      }
+      if (productStatus === 'published') {
+        setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
+        return
+      }
       const productRef = doc(db, 'products', productId)
       const productSnap = await getDoc(productRef)
       productExists = productSnap.exists()
@@ -1329,7 +1345,8 @@ function renderEditor() {
         updatedAt: serverTimestamp()
       })
       stage = 'user-acceptance-write'
-      await setDoc(doc(db, 'users', editorState.user.uid, 'agreementAcceptances', `${config.agreementId}_${config.activeVersion}`), {
+      const userAcceptanceRef = doc(db, 'users', editorState.user.uid, 'agreementAcceptances', `${config.agreementId}_${config.activeVersion}`)
+      await setDoc(userAcceptanceRef, {
         agreementId: config.agreementId,
         version: latestVersion,
         title: config.title,
