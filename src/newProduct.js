@@ -1678,12 +1678,15 @@ async function saveCurrentDraftAndReturnId({ reason = 'save', desiredStatus = 'd
     previewVideoFiles: editorState.mediaFiles.previewVideo
   })
   const savedId = result?.id || result?.productId || ''
+  if (savedId) {
+    editorState.draft.id = savedId
+    updateDraftField('id', savedId)
+  }
   editorState.draft = {
     ...editorState.draft,
     ...(result?.payload || {}),
     ...(savedId ? { id: savedId } : {})
   }
-  updateDraftField('id', savedId)
   updateDraftField('status', result.payload?.status || editorState.draft.status)
   updateDraftField('slug', result.payload?.slug || payload.slug)
   return savedId
