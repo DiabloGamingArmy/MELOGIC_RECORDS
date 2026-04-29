@@ -9,7 +9,6 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  updateDoc,
   startAfter,
   where,
   writeBatch
@@ -723,11 +722,66 @@ const CLIENT_PROTECTED_PRODUCT_KEYS = [
   'featured', 'promoted', 'moderationStatus', 'moderationSummary', 'moderationReasons', 'reviewedAt', 'reviewedBy',
   'publishedAt', 'salesCount', 'revenue', 'entitlementCount'
 ]
+const CLIENT_STRIPPED_PRODUCT_KEYS = [
+  'price',
+  'priceLabel',
+  'mediaFiles',
+  'deliverableFiles',
+  'folderDeliverables',
+  'previewAudioURLs',
+  'previewVideoURLs',
+  'galleryURLs',
+  'primaryPreviewURL',
+  'blobURL',
+  'objectURL',
+  'localPreviewURL',
+  'previewURL'
+]
+const FIRESTORE_PRODUCT_CLIENT_ALLOWED_KEYS = new Set([
+  'id', 'slug', 'status', 'visibility',
+  'title', 'shortDescription', 'description', 'version', 'usageLicense', 'productType', 'productKind', 'previewMode', 'distributionMode',
+  'categories', 'genres', 'tags', 'categoryKeys', 'genreKeys', 'tagKeys', 'searchKeywords',
+  'artistId', 'artistName', 'artistDisplayName', 'artistUsername', 'artistProfilePath', 'artistAvatarURL', 'artistPhotoURL', 'artistNameLower', 'artistUsernameLower',
+  'contributorIds', 'contributorNames', 'contributorCount', 'pendingContributorIds', 'contributorRequestCount', 'sellerAgreement', 'sellerAgreementAccepted', 'sellerAgreementVersion',
+  'coverPath', 'thumbnailPath', 'coverURL', 'thumbnailURL', 'galleryPaths', 'previewAudioPaths', 'previewVideoPaths', 'downloadPath', 'licensePath', 'assetSummary',
+  'primaryPreviewPath', 'primaryPreviewType', 'primaryPreviewDuration', 'primaryDownloadPath', 'primaryDownloadBytes', 'previewAssignment',
+  'priceCents', 'payoutTargetCents', 'currency', 'isFree', 'saleEnabled', 'storefrontVisible',
+  'dawCompatibility', 'formatKeys', 'formatNotes', 'compatibilityNotes', 'includedFiles',
+  'releasedAt', 'createdAt', 'updatedAt'
+])
 
 function sanitizeClientProductDraftPayload(payload = {}) {
-  const sanitized = { ...(payload || {}) }
+  const sanitized = {}
+  Object.entries(payload || {}).forEach(([key, value]) => {
+    if (FIRESTORE_PRODUCT_CLIENT_ALLOWED_KEYS.has(key)) sanitized[key] = value
+  })
   CLIENT_PROTECTED_PRODUCT_KEYS.forEach((key) => delete sanitized[key])
+  CLIENT_STRIPPED_PRODUCT_KEYS.forEach((key) => delete sanitized[key])
   return sanitized
+}
+
+function logDraftFirestoreWrite({
+  operation = '',
+  path = '',
+  user = null,
+  productId = '',
+  payload = null,
+  batchTargets = []
+} = {}) {
+  if (!isDevelopmentRuntime) return
+  console.debug('[productService] draft write diagnostic', {
+    operation,
+    path,
+    uid: user?.uid || null,
+    productId: productId || null,
+    payloadId: payload?.id || null,
+    payloadArtistId: payload?.artistId || null,
+    payloadStatus: payload?.status || null,
+    payloadVisibility: payload?.visibility || null,
+    payloadKeys: payload ? Object.keys(payload).sort() : [],
+    payload: payload || null,
+    batchTargets
+  })
 }
 
 function createStageError(stage, message, cause = null) {
@@ -763,25 +817,33 @@ async function ensureDraftProductDocument(user, input = {}, productId = '') {
   const creator = getCreatorIdentity(user, input)
 
   const now = serverTimestamp()
+  const payload = {
+    id: productId,
+    artistId: creator.artistId || user.uid,
+    artistName: creator.artistName,
+    artistDisplayName: creator.artistDisplayName,
+    artistUsername: creator.artistUsername,
+    artistProfilePath: creator.artistProfilePath,
+    artistAvatarURL: creator.artistAvatarURL,
+    artistPhotoURL: creator.artistPhotoURL,
+    title: String(input.title || '').trim() || 'Untitled product',
+    productType: input.productType || 'Sample Pack',
+    slug: input.slug || productId,
+    status: 'draft',
+    visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private'),
+    createdAt: now,
+    updatedAt: now
+  }
+  logDraftFirestoreWrite({
+    operation: 'setDoc ensureDraftProductDocument',
+    path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
+    user,
+    productId,
+    payload
+  })
   await setDoc(
     doc(db, FIRESTORE_COLLECTIONS.products, productId),
-    {
-      id: productId,
-      artistId: creator.artistId || user.uid,
-      artistName: creator.artistName,
-      artistDisplayName: creator.artistDisplayName,
-      artistUsername: creator.artistUsername,
-      artistProfilePath: creator.artistProfilePath,
-      artistAvatarURL: creator.artistAvatarURL,
-      artistPhotoURL: creator.artistPhotoURL,
-      title: String(input.title || '').trim() || 'Untitled product',
-      productType: input.productType || 'Sample Pack',
-      slug: input.slug || productId,
-      status: 'draft',
-      visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private'),
-      createdAt: now,
-      updatedAt: now
-    },
+    payload,
     { merge: true }
   )
 }
@@ -1008,20 +1070,42 @@ export async function uploadProductFiles(productId, files = [], options = {}) {
   return uploaded
 }
 
-export async function saveProductFileManifest(productId, fileRows = []) {
+export async function saveProductFileManifest(productId, fileRows = [], user = null) {
   if (!db || !productId) return
   const filesCol = collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files')
   const batch = writeBatch(db)
   fileRows.forEach((row, index) => {
     const id = row.id || doc(filesCol).id
-    batch.set(doc(filesCol, id), {
+    const filePayload = {
       ...row,
       id,
       productId,
       sortIndex: Number(row.sortIndex ?? index),
       updatedAt: serverTimestamp(),
       createdAt: row.createdAt || serverTimestamp()
-    }, { merge: true })
+    }
+    batch.set(doc(filesCol, id), filePayload, { merge: true })
+  })
+  logDraftFirestoreWrite({
+    operation: 'batch.commit saveProductFileManifest',
+    path: `${FIRESTORE_COLLECTIONS.products}/${productId}/files/*`,
+    user,
+    productId,
+    payload: null,
+    batchTargets: fileRows.map((row, index) => {
+      const id = row.id || `generated-${index}`
+      return {
+        path: `${FIRESTORE_COLLECTIONS.products}/${productId}/files/${id}`,
+        payloadKeys: Object.keys({
+          ...row,
+          id,
+          productId,
+          sortIndex: Number(row.sortIndex ?? index),
+          updatedAt: true,
+          createdAt: true
+        }).sort()
+      }
+    })
   })
   await batch.commit()
 }
@@ -1058,21 +1142,18 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       throw createStageError('draft-verification', 'Draft existence check failed after initialization.')
     }
   } catch (error) {
-    console.warn('[productService] draft save failed', {
-      stage,
+    console.error('[productService] draft save failed', {
       code: error?.code,
       message: error?.message,
+      name: error?.name,
+      stack: error?.stack,
       productId,
-      payloadId: payload?.id,
-      idsMatch: payload?.id === productId,
-      artistId: payload?.artistId,
-      currentUid: user?.uid,
-      artistMatchesUser: payload?.artistId === user?.uid,
-      titlePresent: Boolean(String(payload?.title || '').trim()),
-      status: payload?.status,
-      visibility: payload?.visibility,
-      payloadKeys: Object.keys(payload || {}),
-      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
+      uid: user?.uid || null,
+      payloadId: payload?.id || null,
+      payloadArtistId: payload?.artistId || null,
+      payloadStatus: payload?.status || null,
+      payloadKeys: payload ? Object.keys(payload).sort() : [],
+      payload
     })
     throw createStageError('draft-initialization', 'Draft initialization failed.', error)
   }
@@ -1150,7 +1231,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
 
   try {
     if (fileManifestRows.length) {
-      await saveProductFileManifest(productId, fileManifestRows)
+      await saveProductFileManifest(productId, fileManifestRows, user)
       if (typeof options.onStatus === 'function') options.onStatus('File manifest saved.')
     }
   } catch (error) {
@@ -1199,27 +1280,31 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     delete payload.productType
   }
 
+  logDraftFirestoreWrite({
+    operation: 'setDoc saveProductDraft final-firestore-merge',
+    path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
+    user,
+    productId,
+    payload
+  })
   try {
     await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
     if (typeof options.onStatus === 'function') {
       options.onStatus('Final product metadata saved.')
     }
   } catch (error) {
-    console.warn('[productService] draft save failed', {
-      stage: 'final-firestore-merge',
+    console.error('[productService] draft save failed', {
       code: error?.code,
       message: error?.message,
+      name: error?.name,
+      stack: error?.stack,
       productId,
-      payloadId: payload?.id,
-      idsMatch: payload?.id === productId,
-      artistId: payload?.artistId,
-      currentUid: user?.uid,
-      artistMatchesUser: payload?.artistId === user?.uid,
-      titlePresent: Boolean(String(payload?.title || '').trim()),
-      status: payload?.status,
-      visibility: payload?.visibility,
-      payloadKeys: Object.keys(payload || {}),
-      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
+      uid: user?.uid || null,
+      payloadId: payload?.id || null,
+      payloadArtistId: payload?.artistId || null,
+      payloadStatus: payload?.status || null,
+      payloadKeys: payload ? Object.keys(payload).sort() : [],
+      payload
     })
     throw createStageError('final-firestore-merge', 'Final product metadata save failed.', error)
   }
@@ -1237,54 +1322,8 @@ export async function saveProductDraft(user, input = {}, options = {}) {
 }
 
 export async function submitMarketplaceProductForReview({ user, productId, product }) {
-  if (!db || !user?.uid || !productId) throw new Error('Missing review submission context.')
-  await updateDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
-    status: 'review_pending',
-    moderationStatus: 'pending_ai_review',
-    updatedAt: serverTimestamp()
-  })
-  await setDoc(doc(db, 'pendingReview', 'marketplace', 'items', productId), {
-    id: productId,
-    productId,
-    productPath: `products/${productId}`,
-    sellerId: user.uid,
-    sellerProfilePath: `profiles/${user.uid}`,
-    status: 'pending_ai_review',
-    reviewType: 'marketplace-product',
-    source: 'new-product-editor',
-    productSnapshot: {
-      title: product?.title || '',
-      slug: product?.slug || '',
-      shortDescription: product?.shortDescription || '',
-      description: product?.description || '',
-      productType: product?.productType || '',
-      productKind: product?.productKind || '',
-      categories: product?.categories || [],
-      genres: product?.genres || [],
-      tags: product?.tags || [],
-      priceCents: Number(product?.priceCents || 0),
-      payoutTargetCents: Number(product?.payoutTargetCents || 0),
-      currency: product?.currency || 'USD',
-      isFree: Boolean(product?.isFree),
-      visibility: product?.visibility || 'private',
-      coverPath: product?.coverPath || '',
-      thumbnailPath: product?.thumbnailPath || '',
-      previewAudioPaths: product?.previewAudioPaths || [],
-      previewVideoPaths: product?.previewVideoPaths || [],
-      primaryDownloadPath: product?.primaryDownloadPath || '',
-      assetSummary: product?.assetSummary || {},
-      sellerAgreementVersion: product?.sellerAgreementVersion || '',
-      sellerAgreementAccepted: Boolean(product?.sellerAgreementAccepted)
-    },
-    checks: {
-      ai: { status: 'pending', score: null, reasons: [], reviewedAt: null },
-      rules: { status: 'pending', blockers: [], warnings: [] },
-      human: { status: 'not_required', reviewedBy: '', reviewedAt: null, notes: '' }
-    },
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  }, { merge: true })
-  return { status: 'review_pending' }
+  if (!user?.uid || !productId) throw new Error('Missing review submission context.')
+  return requestProductReview(productId)
 }
 
 export async function requestProductReview(productId = '') {
