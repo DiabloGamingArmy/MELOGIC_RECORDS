@@ -1127,6 +1127,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
   if (!String(input?.title || '').trim()) throw new Error('Add a product title before saving this draft.')
 
+  let saveStep = 'starting'
   const existingId = String(options.productId || input.id || '').trim()
   const hasExistingId = Boolean(existingId) && !isPlaceholderProductId(existingId)
   const productRef = hasExistingId
@@ -1137,17 +1138,44 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   let created = false
   let payload = null
   try {
-    const initialization = await initializeProductDraft(user, input, productId)
-    created = initialization.created
-    if (typeof options.onStatus === 'function' && created) {
-      options.onStatus('Draft document created.')
+    const initialSnapshot = await getDoc(productRef)
+    created = !initialSnapshot.exists()
+    const creator = getCreatorIdentity(user, input)
+    const existing = initialSnapshot.data() || {}
+    const ownerPayload = {
+      id: productId,
+      slug: String(input.slug || existing.slug || productId),
+      status: 'draft',
+      visibility: 'private',
+      title: String(input.title || existing.title || '').trim() || 'Untitled product',
+      shortDescription: String(input.shortDescription || existing.shortDescription || ''),
+      description: String(input.description || existing.description || ''),
+      productType: String(input.productType || existing.productType || 'Sample Pack'),
+      artistId: user.uid,
+      artistName: String(existing.artistName || creator.artistName || 'Creator'),
+      artistDisplayName: String(existing.artistDisplayName || creator.artistDisplayName || creator.artistName || 'Creator'),
+      artistUsername: String(existing.artistUsername || creator.artistUsername || ''),
+      artistProfilePath: String(existing.artistProfilePath || creator.artistProfilePath || ''),
+      artistAvatarURL: String(existing.artistAvatarURL || creator.artistAvatarURL || ''),
+      artistPhotoURL: String(existing.artistPhotoURL || creator.artistPhotoURL || ''),
+      updatedAt: serverTimestamp(),
+      ...(created ? { createdAt: serverTimestamp() } : {})
     }
-    const existsAfterInit = await waitForDraftDocument(productId)
-    if (!existsAfterInit) {
-      throw createStageError('draft-verification', 'Draft existence check failed after initialization.')
+    saveStep = 'pre-save-owner-doc'
+    if (isDevelopmentRuntime) {
+      console.info('[productService] draft pre-save owner doc', {
+        path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
+        uid: user.uid,
+        productId,
+        title: ownerPayload.title,
+        slug: ownerPayload.slug
+      })
     }
+    await setDoc(productRef, ownerPayload, { merge: true })
+    if (typeof options.onStatus === 'function' && created) options.onStatus('Draft document created.')
   } catch (error) {
     console.error('[productService] draft save failed', {
+      saveStep,
       code: error?.code,
       message: error?.message,
       name: error?.name,
@@ -1167,8 +1195,16 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   const basePayload = buildProductPayload({ ...input, ...creator, id: productId }, user)
   let mediaUploads = {}
   try {
+    saveStep = 'upload-cover'
+    if (isDevelopmentRuntime) {
+      console.info('[productService] uploading product media', { productId, paths: { cover: STORAGE_PATHS.productCover(productId) } })
+    }
     if (typeof options.onStatus === 'function' && options.mediaFiles?.cover) {
       options.onStatus('Cover upload started.')
+    }
+    saveStep = 'upload-thumbnail'
+    if (isDevelopmentRuntime) {
+      console.info('[productService] uploading product media', { productId, paths: { thumbnail: STORAGE_PATHS.productThumb(productId) } })
     }
     if (typeof options.onStatus === 'function' && options.mediaFiles?.thumbnail) {
       options.onStatus('Thumbnail upload started.')
@@ -1191,6 +1227,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   let fileManifestRows = Array.isArray(options.fileManifestRows) ? options.fileManifestRows : []
   try {
     if (Array.isArray(options.galleryFiles) && options.galleryFiles.length) {
+      saveStep = 'upload-gallery'
       if (typeof options.onStatus === 'function') options.onStatus('Gallery upload started.')
       galleryUploads = await Promise.all(options.galleryFiles.map(async (file, index) => {
         const path = `${STORAGE_PATHS.productGalleryRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
@@ -1199,6 +1236,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       }))
     }
     if (Array.isArray(options.previewAudioFiles) && options.previewAudioFiles.length) {
+      saveStep = 'upload-preview-audio'
       if (typeof options.onStatus === 'function') options.onStatus('Preview upload started.')
       previewAudioUploads = await Promise.all(options.previewAudioFiles.map(async (file, index) => {
         if (file.size > PRODUCT_QUOTAS.maxPreviewAudioBytes) {
@@ -1210,6 +1248,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       }))
     }
     if (Array.isArray(options.previewVideoFiles) && options.previewVideoFiles.length) {
+      saveStep = 'upload-preview-video'
       if (typeof options.onStatus === 'function') options.onStatus('Preview upload started.')
       previewVideoUploads = await Promise.all(options.previewVideoFiles.map(async (file, index) => {
         if (file.size > PRODUCT_QUOTAS.maxPreviewVideoBytes) {
@@ -1226,6 +1265,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
 
   try {
     if (Array.isArray(options.deliverableFiles) && options.deliverableFiles.length) {
+      saveStep = 'upload-download'
       if (typeof options.onStatus === 'function') options.onStatus('Deliverable upload started.')
       deliverableUploads = await uploadProductFiles(productId, options.deliverableFiles, { useSubfolder: true })
       fileManifestRows = [...fileManifestRows, ...deliverableUploads]
@@ -1296,7 +1336,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     payload
   })
   if (isDevelopmentRuntime) {
-    console.info('[productService] saving draft', {
+    console.info('[productService] draft final save', {
       path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
       productId,
       payloadId: payload.id,
@@ -1307,12 +1347,14 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     })
   }
   try {
+    saveStep = 'final-product-save'
     await setDoc(productRef, payload, { merge: true })
     if (typeof options.onStatus === 'function') {
       options.onStatus('Final product metadata saved.')
     }
   } catch (error) {
     console.error('[productService] draft save failed', {
+      saveStep,
       code: error?.code,
       message: error?.message,
       name: error?.name,
