@@ -554,6 +554,25 @@ service cloud.firestore {
       }
     }
 
+    match /pendingReview/{reviewArea}/items/{productId} {
+      allow read: if signedIn()
+        && resource.data.sellerId == request.auth.uid;
+
+      allow create: if signedIn()
+        && reviewArea == 'marketplace'
+        && request.resource.data.productId == productId
+        && request.resource.data.sellerId == request.auth.uid
+        && request.resource.data.status == 'pending_ai_review'
+        && request.resource.data.reviewType == 'marketplace-product';
+
+      allow update: if signedIn()
+        && resource.data.sellerId == request.auth.uid
+        && request.resource.data.sellerId == resource.data.sellerId
+        && request.resource.data.productId == resource.data.productId
+        && request.resource.data.status in ['pending_ai_review', 'cancelled_by_seller'];
+      allow delete: if false;
+    }
+
     match /platformSettings/{settingId} {
       allow read: if settingId in ['marketplacePricing', 'marketplaceSellerAgreement'];
       allow write: if false;

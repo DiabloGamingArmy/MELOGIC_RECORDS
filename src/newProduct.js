@@ -10,8 +10,8 @@ import {
   isPlaceholderProductId,
   recalculateAcceptedContributors,
   removeProductContributorRequest,
-  requestProductReview,
-  saveProductDraft
+  saveProductDraft,
+  submitMarketplaceProductForReview
 } from './data/productService'
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
@@ -1370,27 +1370,17 @@ function renderEditor() {
       renderEditor()
     })
   })
-  editorRoot.querySelector('[data-open-marketplace-preview]')?.addEventListener('click', async () => {
-    if (!editorState.user || !editorState.draft) return
-    if ((editorState.mediaFiles.deliverables || []).length > 1) {
-      setStatus('Only one primary deliverable is supported right now. Please upload a ZIP package.', 'error')
+  editorRoot.querySelectorAll('[data-open-marketplace-preview]').forEach((btn) => btn.addEventListener('click', async () => {
+    try {
+      const productId = await saveCurrentDraftAndReturnId({ reason: 'marketplace-preview', desiredStatus: 'draft' })
+      if (!productId) throw new Error('missing-product-id-after-save')
+      window.open(`${productRoute(productId)}?preview=draft`, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      console.warn('[new-product] marketplace preview failed', { code: error?.code, message: error?.message })
+      setStatus('Could not save draft for preview. Check required fields and try again.', 'error')
       renderEditor()
-      return
     }
-    const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
-    const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
-    const result = await saveProductDraft(editorState.user, payload, {
-      productId: wasNewDraft ? '' : editorState.draft.id,
-      status: 'draft',
-      isNew: wasNewDraft,
-      mediaFiles: editorState.mediaFiles,
-      galleryFiles: editorState.mediaFiles.gallery,
-      previewAudioFiles: editorState.mediaFiles.previewAudio,
-      previewVideoFiles: editorState.mediaFiles.previewVideo
-    })
-    updateDraftField('id', result.productId)
-    window.open(`${productRoute(result.productId)}?preview=draft`, '_blank', 'noopener,noreferrer')
-  })
+  }))
 
   const contributorSearchInput = editorRoot.querySelector('[data-contributor-search]')
   const contributorRoleInput = editorRoot.querySelector('[data-contributor-role]')
@@ -1486,26 +1476,9 @@ function renderEditor() {
         renderEditor()
         return
       }
-      const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
-      const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, currentStatus: editorState.draft.status || 'draft', status: desiredStatus === 'published' ? 'review_pending' : desiredStatus }, editorState.user)
-      const result = await saveProductDraft(editorState.user, payload, {
-        productId: wasNewDraft ? '' : editorState.draft.id,
-        status: desiredStatus === 'published' ? 'review_pending' : desiredStatus,
-        isNew: wasNewDraft,
-        mediaFiles: editorState.mediaFiles,
-        galleryFiles: editorState.mediaFiles.gallery,
-        previewAudioFiles: editorState.mediaFiles.previewAudio,
-        previewVideoFiles: editorState.mediaFiles.previewVideo,
-        onStatus: (message) => {
-          setStatus(message, 'info')
-          renderEditor()
-        }
-      })
-      updateDraftField('id', result.productId)
-      updateDraftField('status', result.payload?.status || editorState.draft.status)
-      updateDraftField('slug', payload.slug)
+      const productId = await saveCurrentDraftAndReturnId({ reason: desiredStatus === 'published' ? 'submit-review' : 'save', desiredStatus })
       if (desiredStatus === 'published') {
-        const reviewResult = await requestProductReview(result.productId)
+        const reviewResult = await submitMarketplaceProductForReview({ user: editorState.user, productId, product: editorState.draft })
         updateDraftField('status', reviewResult?.status || 'review_pending')
       }
       setStatus(desiredStatus === 'published' ? 'Submitted for review.' : 'Draft saved.', 'success')
@@ -1631,3 +1604,28 @@ window.addEventListener('hashchange', () => {
 })
 
 initPage()
+async function saveCurrentDraftAndReturnId({ reason = 'save', desiredStatus = 'draft' } = {}) {
+  if (!editorState.user || !editorState.draft) throw new Error('missing-user-or-draft')
+  if (!String(editorState.draft.title || '').trim()) throw new Error('Add a product title before saving this draft.')
+  if (!String(editorState.draft.artistId || editorState.user.uid || '').trim()) throw new Error('missing-artist-id')
+  const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
+  const payload = buildProductPayload({
+    ...editorState.draft,
+    artistId: editorState.user.uid,
+    visibility: editorState.draft.visibility || 'private',
+    status: desiredStatus === 'published' ? 'review_pending' : 'draft'
+  }, editorState.user)
+  const result = await saveProductDraft(editorState.user, payload, {
+    productId: wasNewDraft ? '' : editorState.draft.id,
+    status: desiredStatus === 'published' ? 'review_pending' : 'draft',
+    isNew: wasNewDraft,
+    mediaFiles: editorState.mediaFiles,
+    galleryFiles: editorState.mediaFiles.gallery,
+    previewAudioFiles: editorState.mediaFiles.previewAudio,
+    previewVideoFiles: editorState.mediaFiles.previewVideo
+  })
+  updateDraftField('id', result.productId)
+  updateDraftField('status', result.payload?.status || editorState.draft.status)
+  updateDraftField('slug', result.payload?.slug || payload.slug)
+  return result.productId
+}
