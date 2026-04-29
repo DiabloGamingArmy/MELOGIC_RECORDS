@@ -1128,20 +1128,24 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   if (!String(input?.title || '').trim()) throw new Error('Add a product title before saving this draft.')
 
   let saveStep = 'starting'
-  const existingId = String(options.productId || input.id || '').trim()
-  const hasExistingId = Boolean(existingId) && !isPlaceholderProductId(existingId)
-  const productRef = hasExistingId
-    ? doc(db, FIRESTORE_COLLECTIONS.products, existingId)
-    : doc(collection(db, FIRESTORE_COLLECTIONS.products))
-  const productId = productRef.id
+  const rawId = String(options.productId || input.id || '').trim()
+  const slugId = slugify(input?.slug || input?.title || '')
+  const existingId = rawId && !isPlaceholderProductId(rawId) ? rawId : ''
+  const productId = existingId || slugId || doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
+  const hasExistingId = Boolean(existingId)
+  const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
   if (!productId) throw new Error('Could not create product id for draft save.')
-  let created = false
+  let created = !hasExistingId
   let payload = null
   try {
-    const initialSnapshot = await getDoc(productRef)
-    created = !initialSnapshot.exists()
+    let existing = {}
+    if (hasExistingId) {
+      saveStep = 'initial-existing-product-read'
+      const initialSnapshot = await getDoc(productRef)
+      created = !initialSnapshot.exists()
+      existing = initialSnapshot.data() || {}
+    }
     const creator = getCreatorIdentity(user, input)
-    const existing = initialSnapshot.data() || {}
     const ownerPayload = {
       id: productId,
       slug: String(input.slug || existing.slug || productId),
@@ -1276,6 +1280,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
 
   try {
     if (fileManifestRows.length) {
+      saveStep = 'file-manifest-save'
       await saveProductFileManifest(productId, fileManifestRows, user)
       if (typeof options.onStatus === 'function') options.onStatus('File manifest saved.')
     }
@@ -1401,6 +1406,7 @@ export async function requestProductReview(productId = '') {
   if (!functions || !productId) throw new Error('Missing product id for review request.')
   try {
     const callable = httpsCallable(functions, 'requestProductReview')
+    const saveStep = 'request-product-review-callable'
     const result = await callable({ productId })
     return result?.data || { status: 'review_pending', aiEnabled: false }
   } catch (error) {
