@@ -242,8 +242,11 @@ service cloud.firestore {
         'releasedAt',
         'createdAt',
         'updatedAt',
-        'publishedAt',
 
+        // Backend-owned fields.
+        // These are listed here because existing frontend payloads may include safe defaults.
+        // The safety checks below prevent normal users from escalating them.
+        'publishedAt',
         'moderationStatus',
         'moderationSummary',
         'moderationReasons',
@@ -267,6 +270,17 @@ service cloud.firestore {
       ]);
     }
 
+    function productStatusIsCreatorWritable() {
+      return request.resource.data.status in [
+        'draft',
+        'review_pending',
+        'pending_ai_review',
+        'needs_changes',
+        'rejected',
+        'archived'
+      ];
+    }
+
     function productFieldShapesAreValid() {
       return request.resource.data.id is string
         && request.resource.data.id.size() > 0
@@ -275,13 +289,7 @@ service cloud.firestore {
         && request.resource.data.title.size() <= 160
         && request.resource.data.artistId is string
         && request.resource.data.artistId == request.auth.uid
-        && request.resource.data.status in [
-          'draft',
-          'review_pending',
-          'needs_changes',
-          'rejected',
-          'archived'
-        ]
+        && productStatusIsCreatorWritable()
         && request.resource.data.visibility in [
           'public',
           'private',
@@ -299,6 +307,9 @@ service cloud.firestore {
         && (!('version' in request.resource.data) || request.resource.data.version is string)
         && (!('usageLicense' in request.resource.data) || request.resource.data.usageLicense is string)
         && (!('productType' in request.resource.data) || request.resource.data.productType is string)
+        && (!('productKind' in request.resource.data) || request.resource.data.productKind is string)
+        && (!('previewMode' in request.resource.data) || request.resource.data.previewMode is string)
+        && (!('distributionMode' in request.resource.data) || request.resource.data.distributionMode is string)
         && (!('priceCents' in request.resource.data) || (
           request.resource.data.priceCents is number
           && request.resource.data.priceCents >= 0
@@ -347,6 +358,15 @@ service cloud.firestore {
           && request.resource.data.contributorCount >= 0
           && request.resource.data.contributorCount <= 25
         ))
+        && (!('pendingContributorIds' in request.resource.data) || (
+          request.resource.data.pendingContributorIds is list
+          && request.resource.data.pendingContributorIds.size() <= 25
+        ))
+        && (!('contributorRequestCount' in request.resource.data) || (
+          request.resource.data.contributorRequestCount is number
+          && request.resource.data.contributorRequestCount >= 0
+          && request.resource.data.contributorRequestCount <= 25
+        ))
         && (!('sellerAgreement' in request.resource.data) || request.resource.data.sellerAgreement is map)
         && (!('sellerAgreementAccepted' in request.resource.data) || request.resource.data.sellerAgreementAccepted is bool)
         && (!('sellerAgreementVersion' in request.resource.data) || request.resource.data.sellerAgreementVersion is string)
@@ -368,6 +388,19 @@ service cloud.firestore {
         ))
         && (!('downloadPath' in request.resource.data) || request.resource.data.downloadPath is string)
         && (!('licensePath' in request.resource.data) || request.resource.data.licensePath is string)
+        && (!('assetSummary' in request.resource.data) || request.resource.data.assetSummary is map)
+        && (!('primaryPreviewPath' in request.resource.data) || request.resource.data.primaryPreviewPath is string)
+        && (!('primaryPreviewType' in request.resource.data) || request.resource.data.primaryPreviewType is string)
+        && (!('primaryPreviewDuration' in request.resource.data) || (
+          request.resource.data.primaryPreviewDuration is number
+          && request.resource.data.primaryPreviewDuration >= 0
+        ))
+        && (!('primaryDownloadPath' in request.resource.data) || request.resource.data.primaryDownloadPath is string)
+        && (!('primaryDownloadBytes' in request.resource.data) || (
+          request.resource.data.primaryDownloadBytes is number
+          && request.resource.data.primaryDownloadBytes >= 0
+        ))
+        && (!('previewAssignment' in request.resource.data) || request.resource.data.previewAssignment is map)
         && (!('formatNotes' in request.resource.data) || (
           request.resource.data.formatNotes is string
           && request.resource.data.formatNotes.size() <= 5000
@@ -382,31 +415,283 @@ service cloud.firestore {
         ));
     }
 
-    function productProtectedFieldsAffected() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasAny([
-        'likeCount',
-        'dislikeCount',
-        'saveCount',
-        'downloadCount',
-        'commentCount',
-        'shareCount',
-        'followCount',
-        'counts',
+    function zeroOrMissing(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == 0;
+    }
 
-        'featured',
-        'promoted',
+    function falseOrMissing(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == false;
+    }
 
-        'moderationStatus',
-        'moderationSummary',
-        'moderationReasons',
-        'reviewedAt',
-        'reviewedBy',
-        'publishedAt',
+    function nullOrMissing(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null;
+    }
 
-        'salesCount',
-        'revenue',
-        'entitlementCount'
-      ]);
+    function emptyStringNullOrMissing(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == ''
+        || request.resource.data[field] == null;
+    }
+
+    function emptyListOrMissing(field) {
+      return !(field in request.resource.data)
+        || (
+          request.resource.data[field] is list
+          && request.resource.data[field].size() == 0
+        );
+    }
+
+    function stableOrSafeDefault(field, defaultValue) {
+      return !(field in request.resource.data)
+        || (
+          field in resource.data
+          && request.resource.data[field] == resource.data[field]
+        )
+        || (
+          !(field in resource.data)
+          && request.resource.data[field] == defaultValue
+        );
+    }
+
+    function stableZeroOrDefault(field) {
+      return !(field in request.resource.data)
+        || (
+          field in resource.data
+          && request.resource.data[field] == resource.data[field]
+        )
+        || (
+          !(field in resource.data)
+          && request.resource.data[field] == 0
+        );
+    }
+
+    function stableFalseOrDefault(field) {
+      return !(field in request.resource.data)
+        || (
+          field in resource.data
+          && request.resource.data[field] == resource.data[field]
+        )
+        || (
+          !(field in resource.data)
+          && request.resource.data[field] == false
+        );
+    }
+
+    function stableNullOrDefault(field) {
+      return !(field in request.resource.data)
+        || (
+          field in resource.data
+          && request.resource.data[field] == resource.data[field]
+        )
+        || (
+          !(field in resource.data)
+          && request.resource.data[field] == null
+        );
+    }
+
+    function stableEmptyStringNullOrDefault(field) {
+      return !(field in request.resource.data)
+        || (
+          field in resource.data
+          && request.resource.data[field] == resource.data[field]
+        )
+        || (
+          !(field in resource.data)
+          && (
+            request.resource.data[field] == ''
+            || request.resource.data[field] == null
+          )
+        );
+    }
+
+    function stableEmptyListOrDefault(field) {
+      return !(field in request.resource.data)
+        || (
+          field in resource.data
+          && request.resource.data[field] == resource.data[field]
+        )
+        || (
+          !(field in resource.data)
+          && request.resource.data[field] is list
+          && request.resource.data[field].size() == 0
+        );
+    }
+
+    function safeCountsMapCreate() {
+      return !('counts' in request.resource.data)
+        || (
+          request.resource.data.counts is map
+          && request.resource.data.counts.keys().hasOnly([
+            'likes',
+            'dislikes',
+            'saves',
+            'shares',
+            'comments',
+            'downloads',
+            'follows'
+          ])
+          && (!('likes' in request.resource.data.counts) || request.resource.data.counts.likes == 0)
+          && (!('dislikes' in request.resource.data.counts) || request.resource.data.counts.dislikes == 0)
+          && (!('saves' in request.resource.data.counts) || request.resource.data.counts.saves == 0)
+          && (!('shares' in request.resource.data.counts) || request.resource.data.counts.shares == 0)
+          && (!('comments' in request.resource.data.counts) || request.resource.data.counts.comments == 0)
+          && (!('downloads' in request.resource.data.counts) || request.resource.data.counts.downloads == 0)
+          && (!('follows' in request.resource.data.counts) || request.resource.data.counts.follows == 0)
+        );
+    }
+
+    function safeCountsMapUpdate() {
+      return !('counts' in request.resource.data)
+        || (
+          'counts' in resource.data
+          && request.resource.data.counts == resource.data.counts
+        )
+        || (
+          !('counts' in resource.data)
+          && safeCountsMapCreate()
+        );
+    }
+
+    function safeModerationStatusCreate() {
+      return !('moderationStatus' in request.resource.data)
+        || request.resource.data.moderationStatus == null
+        || request.resource.data.moderationStatus == ''
+        || request.resource.data.moderationStatus == 'not_submitted'
+        || request.resource.data.moderationStatus == 'pending'
+        || request.resource.data.moderationStatus == 'queued';
+    }
+
+    function isProductReviewSubmission() {
+      return resource.data.status in [
+          'draft',
+          'needs_changes',
+          'rejected',
+          'review_pending',
+          'pending_ai_review'
+        ]
+        && request.resource.data.status in [
+          'review_pending',
+          'pending_ai_review'
+        ];
+    }
+
+    function safeModerationStatusUpdate() {
+      return !('moderationStatus' in request.resource.data)
+        || (
+          'moderationStatus' in resource.data
+          && request.resource.data.moderationStatus == resource.data.moderationStatus
+        )
+        || (
+          !('moderationStatus' in resource.data)
+          && safeModerationStatusCreate()
+        )
+        || (
+          isProductReviewSubmission()
+          && (
+            request.resource.data.moderationStatus == 'pending'
+            || request.resource.data.moderationStatus == 'queued'
+            || request.resource.data.moderationStatus == null
+            || request.resource.data.moderationStatus == ''
+          )
+        );
+    }
+
+    function safeModerationSummaryUpdate() {
+      return stableEmptyStringNullOrDefault('moderationSummary')
+        || (
+          isProductReviewSubmission()
+          && (
+            request.resource.data.moderationSummary == ''
+            || request.resource.data.moderationSummary == null
+          )
+        );
+    }
+
+    function safeModerationReasonsUpdate() {
+      return stableEmptyListOrDefault('moderationReasons')
+        || (
+          isProductReviewSubmission()
+          && request.resource.data.moderationReasons is list
+          && request.resource.data.moderationReasons.size() == 0
+        );
+    }
+
+    function safeReviewedAtUpdate() {
+      return stableNullOrDefault('reviewedAt')
+        || (
+          isProductReviewSubmission()
+          && request.resource.data.reviewedAt == null
+        );
+    }
+
+    function safeReviewedByUpdate() {
+      return stableEmptyStringNullOrDefault('reviewedBy')
+        || (
+          isProductReviewSubmission()
+          && (
+            request.resource.data.reviewedBy == ''
+            || request.resource.data.reviewedBy == null
+          )
+        );
+    }
+
+    function safePublishedAtUpdate() {
+      return stableNullOrDefault('publishedAt')
+        || (
+          request.resource.data.status != 'published'
+          && request.resource.data.publishedAt == null
+        );
+    }
+
+    function productServerFieldsSafeOnCreate() {
+      return safeModerationStatusCreate()
+        && emptyStringNullOrMissing('moderationSummary')
+        && emptyListOrMissing('moderationReasons')
+        && nullOrMissing('reviewedAt')
+        && emptyStringNullOrMissing('reviewedBy')
+        && nullOrMissing('publishedAt')
+
+        && zeroOrMissing('likeCount')
+        && zeroOrMissing('dislikeCount')
+        && zeroOrMissing('saveCount')
+        && zeroOrMissing('downloadCount')
+        && zeroOrMissing('commentCount')
+        && zeroOrMissing('shareCount')
+        && zeroOrMissing('followCount')
+        && safeCountsMapCreate()
+
+        && falseOrMissing('featured')
+        && falseOrMissing('promoted')
+        && zeroOrMissing('salesCount')
+        && zeroOrMissing('revenue')
+        && zeroOrMissing('entitlementCount');
+    }
+
+    function productServerFieldsSafeOnUpdate() {
+      return safeModerationStatusUpdate()
+        && safeModerationSummaryUpdate()
+        && safeModerationReasonsUpdate()
+        && safeReviewedAtUpdate()
+        && safeReviewedByUpdate()
+        && safePublishedAtUpdate()
+
+        && stableZeroOrDefault('likeCount')
+        && stableZeroOrDefault('dislikeCount')
+        && stableZeroOrDefault('saveCount')
+        && stableZeroOrDefault('downloadCount')
+        && stableZeroOrDefault('commentCount')
+        && stableZeroOrDefault('shareCount')
+        && stableZeroOrDefault('followCount')
+        && safeCountsMapUpdate()
+
+        && stableFalseOrDefault('featured')
+        && stableFalseOrDefault('promoted')
+        && stableZeroOrDefault('salesCount')
+        && stableZeroOrDefault('revenue')
+        && stableZeroOrDefault('entitlementCount');
     }
 
     function creatorIdentityIsStable() {
@@ -421,21 +706,24 @@ service cloud.firestore {
         && request.resource.data.artistId == request.auth.uid
         && productAllowedKeys()
         && productFieldShapesAreValid()
+        && productServerFieldsSafeOnCreate()
         && request.resource.data.status != 'published';
     }
 
     function productUpdateIsAllowed() {
       return signedIn()
         && resource.data.artistId == request.auth.uid
+        && resource.data.status != 'published'
         && creatorIdentityIsStable()
         && productAllowedKeys()
         && productFieldShapesAreValid()
-        && !productProtectedFieldsAffected()
+        && productServerFieldsSafeOnUpdate()
         && request.resource.data.status != 'published';
     }
 
     match /users/{uid} {
       allow read, write: if isOwner(uid);
+
       match /entitlements/{productId} {
         allow read, write: if isOwner(uid);
       }
@@ -463,6 +751,7 @@ service cloud.firestore {
           && request.resource.data.storagePath == resource.data.storagePath
           && request.resource.data.formKey == resource.data.formKey
           && request.resource.data.accepted == true;
+
         allow delete: if false;
       }
 
@@ -488,20 +777,25 @@ service cloud.firestore {
 
     match /profiles/{uid} {
       allow read: if true;
+
       allow create, update: if isOwner(uid)
         && request.resource.data.uid == uid;
+
       allow delete: if isOwner(uid);
     }
 
     match /usernameClaims/{usernameLower} {
       allow read: if true;
+
       allow create: if signedIn()
         && request.resource.data.uid == request.auth.uid
         && isUsernameDocIdValid(usernameLower);
+
       allow update: if signedIn()
         && resource.data.uid == request.auth.uid
         && request.resource.data.uid == resource.data.uid
         && isUsernameDocIdValid(usernameLower);
+
       allow delete: if signedIn()
         && resource.data.uid == request.auth.uid;
     }
@@ -521,17 +815,20 @@ service cloud.firestore {
       match /reviews/{reviewId} {
         allow read: if signedIn()
           && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+
         allow write: if false;
       }
 
       match /comments/{commentId} {
         allow read: if get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
           && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public';
+
         allow create: if signedIn()
           && request.resource.data.uid == request.auth.uid
           && request.resource.data.body is string
           && request.resource.data.body.size() > 0
           && request.resource.data.body.size() <= 5000;
+
         allow update, delete: if signedIn()
           && resource.data.uid == request.auth.uid;
       }
@@ -540,8 +837,10 @@ service cloud.firestore {
         allow read: if (get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
             && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public')
           || (signedIn() && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid);
+
         allow create, update, delete: if signedIn()
-          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+          && get(/databases/$(database)/documents/products/$(productId)).data.status != 'published';
       }
 
       match /contributors/{uid} {
@@ -549,8 +848,10 @@ service cloud.firestore {
             get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
             || request.auth.uid == uid
           );
+
         allow create, update, delete: if signedIn()
-          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+          && get(/databases/$(database)/documents/products/$(productId)).data.status != 'published';
       }
     }
 
@@ -570,19 +871,21 @@ service cloud.firestore {
         && request.resource.data.sellerId == resource.data.sellerId
         && request.resource.data.productId == resource.data.productId
         && request.resource.data.status in ['pending_ai_review', 'cancelled_by_seller'];
+
       allow delete: if false;
     }
 
     match /platformSettings/{settingId} {
-      allow read: if settingId in ['marketplacePricing', 'marketplaceSellerAgreement'];
+      allow read: if settingId in [
+        'marketplacePricing',
+        'marketplaceSellerAgreement'
+      ];
+
       allow write: if false;
     }
 
     match /threads/{threadId} {
-      // This is the critical fix for account-based conversation recall.
-      // Queries like:
-      // collection('threads').where('participantIds', 'array-contains', uid)
-      // must be authorized from resource.data, not get(threadPath(threadId)).
+      // Parent document get/list rules must authorize from resource.data.
       allow get, list: if isThreadParticipantResource();
 
       allow create: if signedIn()
