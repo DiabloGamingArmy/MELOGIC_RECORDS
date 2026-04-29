@@ -444,6 +444,28 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
+      match /signedForms/{formKey} {
+        allow read: if isOwner(uid);
+
+        allow create: if isOwner(uid)
+          && request.resource.data.signedBy == uid
+          && request.resource.data.accepted == true
+          && request.resource.data.agreementId is string
+          && request.resource.data.version is string
+          && request.resource.data.storagePath is string
+          && request.resource.data.formKey == formKey;
+
+        allow update: if isOwner(uid)
+          && resource.data.signedBy == uid
+          && request.resource.data.signedBy == resource.data.signedBy
+          && request.resource.data.agreementId == resource.data.agreementId
+          && request.resource.data.version == resource.data.version
+          && request.resource.data.storagePath == resource.data.storagePath
+          && request.resource.data.formKey == resource.data.formKey
+          && request.resource.data.accepted == true;
+        allow delete: if false;
+      }
+
       match /inboxThreads/{threadId} {
         allow read, write: if isOwner(uid);
       }
