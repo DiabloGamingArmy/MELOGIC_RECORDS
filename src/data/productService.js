@@ -9,6 +9,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  updateDoc,
   startAfter,
   where,
   writeBatch
@@ -717,6 +718,17 @@ function createProductId() {
 }
 
 const PLACEHOLDER_PRODUCT_IDS = new Set(['test', 'temp', 'tmp', 'placeholder', 'fake'])
+const CLIENT_PROTECTED_PRODUCT_KEYS = [
+  'likeCount', 'dislikeCount', 'saveCount', 'downloadCount', 'commentCount', 'shareCount', 'followCount', 'counts',
+  'featured', 'promoted', 'moderationStatus', 'moderationSummary', 'moderationReasons', 'reviewedAt', 'reviewedBy',
+  'publishedAt', 'salesCount', 'revenue', 'entitlementCount'
+]
+
+function sanitizeClientProductDraftPayload(payload = {}) {
+  const sanitized = { ...(payload || {}) }
+  CLIENT_PROTECTED_PRODUCT_KEYS.forEach((key) => delete sanitized[key])
+  return sanitized
+}
 
 function createStageError(stage, message, cause = null) {
   const error = new Error(message)
@@ -1027,10 +1039,13 @@ export async function initializeProductDraft(user, input = {}, requestedId = '')
 
 export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
+  if (!String(input?.title || '').trim()) throw new Error('Add a product title before saving this draft.')
 
   const requestedId = options.productId || input.id || ''
   let productId = ''
   let created = false
+  let payload = null
+  let stage = 'draft-initialization'
   try {
     const initialization = await initializeProductDraft(user, input, requestedId)
     productId = initialization.productId
@@ -1043,6 +1058,22 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       throw createStageError('draft-verification', 'Draft existence check failed after initialization.')
     }
   } catch (error) {
+    console.warn('[productService] draft save failed', {
+      stage,
+      code: error?.code,
+      message: error?.message,
+      productId,
+      payloadId: payload?.id,
+      idsMatch: payload?.id === productId,
+      artistId: payload?.artistId,
+      currentUid: user?.uid,
+      artistMatchesUser: payload?.artistId === user?.uid,
+      titlePresent: Boolean(String(payload?.title || '').trim()),
+      status: payload?.status,
+      visibility: payload?.visibility,
+      payloadKeys: Object.keys(payload || {}),
+      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
+    })
     throw createStageError('draft-initialization', 'Draft initialization failed.', error)
   }
 
@@ -1129,7 +1160,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   const desiredStatus = options.status || basePayload.status || 'draft'
   const editingPublishedListing = input.currentStatus === 'published' || basePayload.status === 'published'
   const normalizedStatus = editingPublishedListing ? 'review_pending' : (desiredStatus === 'published' ? 'review_pending' : desiredStatus)
-  const payload = {
+  payload = sanitizeClientProductDraftPayload({
     ...basePayload,
     id: productId,
     ...creator,
@@ -1159,7 +1190,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     }, basePayload.productType),
     updatedAt: serverTimestamp(),
     createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
-  }
+  })
   const isSubmittingForReview = desiredStatus === 'published'
   if (!isSubmittingForReview && !String(input.title || '').trim()) {
     delete payload.title
@@ -1174,6 +1205,22 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       options.onStatus('Final product metadata saved.')
     }
   } catch (error) {
+    console.warn('[productService] draft save failed', {
+      stage: 'final-firestore-merge',
+      code: error?.code,
+      message: error?.message,
+      productId,
+      payloadId: payload?.id,
+      idsMatch: payload?.id === productId,
+      artistId: payload?.artistId,
+      currentUid: user?.uid,
+      artistMatchesUser: payload?.artistId === user?.uid,
+      titlePresent: Boolean(String(payload?.title || '').trim()),
+      status: payload?.status,
+      visibility: payload?.visibility,
+      payloadKeys: Object.keys(payload || {}),
+      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
+    })
     throw createStageError('final-firestore-merge', 'Final product metadata save failed.', error)
   }
 
@@ -1187,6 +1234,57 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     deliverableUploads,
     draftCreated: created
   }
+}
+
+export async function submitMarketplaceProductForReview({ user, productId, product }) {
+  if (!db || !user?.uid || !productId) throw new Error('Missing review submission context.')
+  await updateDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
+    status: 'review_pending',
+    moderationStatus: 'pending_ai_review',
+    updatedAt: serverTimestamp()
+  })
+  await setDoc(doc(db, 'pendingReview', 'marketplace', 'items', productId), {
+    id: productId,
+    productId,
+    productPath: `products/${productId}`,
+    sellerId: user.uid,
+    sellerProfilePath: `profiles/${user.uid}`,
+    status: 'pending_ai_review',
+    reviewType: 'marketplace-product',
+    source: 'new-product-editor',
+    productSnapshot: {
+      title: product?.title || '',
+      slug: product?.slug || '',
+      shortDescription: product?.shortDescription || '',
+      description: product?.description || '',
+      productType: product?.productType || '',
+      productKind: product?.productKind || '',
+      categories: product?.categories || [],
+      genres: product?.genres || [],
+      tags: product?.tags || [],
+      priceCents: Number(product?.priceCents || 0),
+      payoutTargetCents: Number(product?.payoutTargetCents || 0),
+      currency: product?.currency || 'USD',
+      isFree: Boolean(product?.isFree),
+      visibility: product?.visibility || 'private',
+      coverPath: product?.coverPath || '',
+      thumbnailPath: product?.thumbnailPath || '',
+      previewAudioPaths: product?.previewAudioPaths || [],
+      previewVideoPaths: product?.previewVideoPaths || [],
+      primaryDownloadPath: product?.primaryDownloadPath || '',
+      assetSummary: product?.assetSummary || {},
+      sellerAgreementVersion: product?.sellerAgreementVersion || '',
+      sellerAgreementAccepted: Boolean(product?.sellerAgreementAccepted)
+    },
+    checks: {
+      ai: { status: 'pending', score: null, reasons: [], reviewedAt: null },
+      rules: { status: 'pending', blockers: [], warnings: [] },
+      human: { status: 'not_required', reviewedBy: '', reviewedAt: null, notes: '' }
+    },
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true })
+  return { status: 'review_pending' }
 }
 
 export async function requestProductReview(productId = '') {
