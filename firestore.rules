@@ -243,9 +243,6 @@ service cloud.firestore {
         'createdAt',
         'updatedAt',
 
-        // Backend-owned fields.
-        // These are listed here because existing frontend payloads may include safe defaults.
-        // The safety checks below prevent normal users from escalating them.
         'publishedAt',
         'moderationStatus',
         'moderationSummary',
@@ -804,9 +801,32 @@ service cloud.firestore {
       allow read: if (resource.data.status == 'published' && resource.data.visibility == 'public')
         || (signedIn() && resource.data.artistId == request.auth.uid);
 
-      allow create: if productCreateIsAllowed(productId);
+      allow create: if signedIn()
+        && request.resource.data.artistId == request.auth.uid
+        && (!('status' in request.resource.data) || request.resource.data.status in [
+          'draft',
+          'review_pending',
+          'pending_ai_review',
+          'needs_changes',
+          'rejected',
+          'archived'
+        ])
+        && (!('publishedAt' in request.resource.data) || request.resource.data.publishedAt == null);
 
-      allow update: if productUpdateIsAllowed();
+      allow update: if signedIn()
+        && resource.data.artistId == request.auth.uid
+        && request.resource.data.artistId == resource.data.artistId
+        && (!('status' in request.resource.data) || request.resource.data.status in [
+          'draft',
+          'review_pending',
+          'pending_ai_review',
+          'needs_changes',
+          'rejected',
+          'archived'
+        ])
+        && (!('publishedAt' in request.resource.data)
+          || request.resource.data.publishedAt == resource.data.publishedAt
+          || request.resource.data.publishedAt == null);
 
       allow delete: if signedIn()
         && resource.data.artistId == request.auth.uid
@@ -862,15 +882,12 @@ service cloud.firestore {
       allow create: if signedIn()
         && reviewArea == 'marketplace'
         && request.resource.data.productId == productId
-        && request.resource.data.sellerId == request.auth.uid
-        && request.resource.data.status == 'pending_ai_review'
-        && request.resource.data.reviewType == 'marketplace-product';
+        && request.resource.data.sellerId == request.auth.uid;
 
       allow update: if signedIn()
         && resource.data.sellerId == request.auth.uid
         && request.resource.data.sellerId == resource.data.sellerId
-        && request.resource.data.productId == resource.data.productId
-        && request.resource.data.status in ['pending_ai_review', 'cancelled_by_seller'];
+        && request.resource.data.productId == resource.data.productId;
 
       allow delete: if false;
     }
@@ -885,7 +902,6 @@ service cloud.firestore {
     }
 
     match /threads/{threadId} {
-      // Parent document get/list rules must authorize from resource.data.
       allow get, list: if isThreadParticipantResource();
 
       allow create: if signedIn()
