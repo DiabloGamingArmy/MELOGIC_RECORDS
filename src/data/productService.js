@@ -1116,8 +1116,10 @@ export async function initializeProductDraft(user, input = {}, requestedId = '')
   const draftRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
   const draftSnapshot = await getDoc(draftRef)
   const created = !draftSnapshot.exists()
-  const basePayload = buildProductPayload({ ...input, id: productId }, user)
-  await ensureDraftProductDocument(user, basePayload, productId)
+  if (created) {
+    const basePayload = buildProductPayload({ ...input, id: productId }, user)
+    await ensureDraftProductDocument(user, basePayload, productId)
+  }
   return { productId, created }
 }
 
