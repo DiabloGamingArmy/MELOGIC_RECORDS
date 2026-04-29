@@ -790,30 +790,34 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   const agreementAccepted = Boolean(draft.sellerAgreementAccepted)
   const agreementVersionMatch = agreementAccepted && acceptedVersion && latestVersion && acceptedVersion === latestVersion
   return [
-    { id: 'title', label: 'Product title exists', status: title ? 'ready' : 'blocked', message: title ? 'Title added.' : 'Add a product title.', targetSection: 'product-info' },
-    { id: 'type', label: 'Product type selected', status: draft.productType ? 'ready' : 'blocked', message: draft.productType ? 'Product type selected.' : 'Select a product type.', targetSection: 'product-info' },
-    { id: 'slug', label: 'Slug exists', status: slug ? 'ready' : 'blocked', message: slug ? 'Slug ready.' : 'Add a slug.', targetSection: 'product-info' },
-    { id: 'short', label: 'Short description exists', status: shortDescription ? 'ready' : 'blocked', message: shortDescription ? 'Short description ready.' : 'Add a short description.', targetSection: 'product-info' },
-    { id: 'long', label: 'Long description exists', status: description ? 'ready' : 'blocked', message: description ? 'Long description ready.' : 'Add a long description.', targetSection: 'product-info' },
-    { id: 'cover', label: 'Cover image exists', status: coverReady ? 'ready' : 'blocked', message: coverReady ? 'Cover ready.' : 'Upload a cover image.', targetSection: 'media-upload' },
-    { id: 'thumbnail', label: 'Thumbnail exists', status: thumbnailReady ? 'ready' : 'blocked', message: thumbnailReady ? 'Thumbnail ready.' : 'Add a thumbnail image.', targetSection: 'media-upload' },
-    { id: 'deliverables', label: 'Deliverable/download exists', status: hasDownload ? 'ready' : 'blocked', message: hasDownload ? 'Download source detected.' : 'Add at least one deliverable.', targetSection: 'media-upload' },
-    { id: 'preview', label: 'Preview media decision made', status: previewDecision ? (hasPreviewMedia ? 'ready' : 'warning') : 'blocked', message: hasPreviewMedia ? 'Preview media assigned.' : (previewDecision ? 'No preview selected intentionally.' : 'Assign preview media or choose no preview.'), targetSection: 'media-upload' },
-    { id: 'price', label: 'Price/currency valid', status: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'ready' : 'blocked', message: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'Pricing configured.' : (pricingMetrics.invalidConfig ? 'Marketplace fee configuration is invalid.' : 'Set pricing and currency.'), targetSection: 'pricing' },
-    { id: 'contributors', label: 'Contributors resolved', status: pendingContributors > 0 ? 'warning' : 'ready', message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
-    { id: 'agreement', label: 'Seller agreement accepted', status: agreementAccepted ? 'ready' : 'blocked', message: agreementAccepted ? `Accepted ${draft.sellerAgreementVersion || ''}.` : 'Accept seller agreement.', targetSection: 'agreements' },
-    { id: 'agreement-version', label: 'Agreement version matches latest', status: agreementVersionMatch ? 'ready' : 'blocked', message: agreementVersionMatch ? `Latest version ${latestVersion} accepted.` : `Latest seller agreement ${latestVersion || 'version'} must be accepted before publishing.`, targetSection: 'agreements' },
-    { id: 'visibility', label: 'Visibility selected', status: draft.visibility ? 'ready' : 'blocked', message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
-    { id: 'quota', label: 'No quota errors', status: 'ready', message: 'No quota errors detected.', targetSection: 'media-upload' },
-    { id: 'save-errors', label: 'No upload/save errors', status: state.status?.state === 'error' ? 'warning' : 'ready', message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' }
-    , { id: 'ai-review', label: 'AI review availability', status: state.reviewResult?.aiEnabled ? 'ready' : 'warning', message: state.reviewResult?.aiEnabled ? 'AI review enabled.' : 'AI review unavailable; rule-based review used.', targetSection: 'publish' }
+    { id: 'title', label: 'Product title exists', severity: title ? 'success' : 'error', blocking: !title, message: title ? 'Title added.' : 'Add a product title.', targetSection: 'product-info' },
+    { id: 'type', label: 'Product type selected', severity: draft.productType ? 'success' : 'error', blocking: !draft.productType, message: draft.productType ? 'Product type selected.' : 'Select a product type.', targetSection: 'product-info' },
+    { id: 'slug', label: 'Slug exists', severity: slug ? 'success' : 'error', blocking: !slug, message: slug ? 'Slug ready.' : 'Add a slug.', targetSection: 'product-info' },
+    { id: 'short', label: 'Short description exists', severity: shortDescription ? 'success' : 'error', blocking: !shortDescription, message: shortDescription ? 'Short description ready.' : 'Add a short description.', targetSection: 'product-info' },
+    { id: 'long', label: 'Long description exists', severity: description ? 'success' : 'error', blocking: !description, message: description ? 'Long description ready.' : 'Add a long description.', targetSection: 'product-info' },
+    { id: 'cover', label: 'Cover image exists', severity: coverReady ? 'success' : 'error', blocking: !coverReady, message: coverReady ? 'Cover ready.' : 'Upload a cover image.', targetSection: 'media-upload' },
+    { id: 'thumbnail', label: 'Thumbnail exists', severity: thumbnailReady ? 'success' : 'error', blocking: !thumbnailReady, message: thumbnailReady ? 'Thumbnail ready.' : 'Add a thumbnail image.', targetSection: 'media-upload' },
+    { id: 'deliverables', label: 'Deliverable/download exists', severity: hasDownload ? 'success' : 'error', blocking: !hasDownload, message: hasDownload ? 'Download source detected.' : 'Add at least one deliverable.', targetSection: 'media-upload' },
+    { id: 'preview', label: 'Preview media decision made', severity: previewDecision ? (hasPreviewMedia ? 'success' : 'warning') : 'error', blocking: !previewDecision, message: hasPreviewMedia ? 'Preview media assigned.' : (previewDecision ? 'No preview selected intentionally.' : 'Assign preview media or choose no preview.'), targetSection: 'media-upload' },
+    { id: 'price', label: 'Price/currency valid', severity: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'success' : 'error', blocking: Boolean(pricingMetrics.invalidConfig || !draft.currency || (!draft.isFree && pricingMetrics.sellerNetTargetCents <= 0)), message: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'Pricing configured.' : (pricingMetrics.invalidConfig ? 'Marketplace fee configuration is invalid.' : 'Set pricing and currency.'), targetSection: 'pricing' },
+    { id: 'contributors', label: 'Contributors resolved', severity: pendingContributors > 0 ? 'warning' : 'success', blocking: false, message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
+    { id: 'agreement', label: 'Seller agreement accepted', severity: agreementAccepted ? 'success' : 'error', blocking: !agreementAccepted, message: agreementAccepted ? `Accepted ${draft.sellerAgreementVersion || ''}.` : 'Accept seller agreement.', targetSection: 'agreements' },
+    { id: 'agreement-version', label: 'Agreement version matches latest', severity: agreementVersionMatch ? 'success' : 'error', blocking: !agreementVersionMatch, message: agreementVersionMatch ? `Latest version ${latestVersion} accepted.` : `Latest seller agreement ${latestVersion || 'version'} must be accepted before publishing.`, targetSection: 'agreements' },
+    { id: 'visibility', label: 'Visibility selected', severity: draft.visibility ? 'success' : 'error', blocking: !draft.visibility, message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
+    { id: 'quota', label: 'No quota errors', severity: 'success', blocking: false, message: 'No quota errors detected.', targetSection: 'media-upload' },
+    { id: 'save-errors', label: 'No upload/save errors', severity: state.status?.state === 'error' ? 'warning' : 'success', blocking: false, message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' },
+    { id: 'ai-review', label: 'AI review availability', severity: state.reviewResult?.aiEnabled ? 'success' : 'warning', blocking: false, message: state.reviewResult?.aiEnabled ? 'AI review enabled.' : 'AI review unavailable; rule-based review used.', targetSection: 'publish' }
   ]
 }
 
+function getBlockingPublishIssues(items = []) {
+  return items.filter((item) => item.blocking === true)
+}
+
 function calculateLaunchReadiness(checks = []) {
-  const readyCount = checks.filter((item) => item.status === 'ready').length
-  const warningCount = checks.filter((item) => item.status === 'warning').length
-  const blockedCount = checks.filter((item) => item.status === 'blocked').length
+  const readyCount = checks.filter((item) => item.severity === 'success').length
+  const warningCount = checks.filter((item) => item.severity === 'warning').length
+  const blockedCount = checks.filter((item) => item.blocking).length
   const totalCount = checks.length || 1
   return {
     readyCount,
@@ -828,14 +832,14 @@ function renderPublishPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
   const checks = buildPublishChecklist(draft, editorState, editorState.agreement.config || {})
   const readiness = calculateLaunchReadiness(checks)
-  const blockedCount = readiness.blockedCount
+  const blockingIssues = getBlockingPublishIssues(checks)
   const agreementLatest = editorState.agreement.latestVersion || editorState.agreement.config?.activeVersion || 'v1'
   const agreementAccepted = draft.sellerAgreementVersion || '—'
   const fileEntries = gatherFileEntries()
   const deliverables = fileEntries.filter((item) => item.isDeliverable)
   const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
   const previewAssigned = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
-  const canSubmit = blockedCount === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
+  const canSubmit = blockingIssues.length === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
 
   return `
     <section class="publish-workspace">
@@ -859,9 +863,9 @@ function renderPublishPanel() {
         <article class="publish-checklist-panel">
           <h3>Publish Checklist</h3>
           ${checks.map((check) => `
-            <div class="publish-checklist-row is-${check.status}">
+            <div class="publish-checklist-row is-${check.severity === 'success' ? 'ready' : check.severity}">
               <div>
-                <p><strong>${check.status === 'ready' ? 'Ready' : check.status === 'warning' ? 'Warning' : 'Blocked'}</strong> · ${escapeHtml(check.label)}</p>
+                <p><strong>${check.severity === 'success' ? 'Ready' : check.severity === 'warning' ? 'Warning' : check.severity === 'info' ? 'Info' : 'Blocked'}</strong> · ${escapeHtml(check.label)}</p>
                 <p>${escapeHtml(check.message || '')}</p>
               </div>
               <button type="button" data-publish-fix="${escapeHtml(check.targetSection || 'product-info')}">Fix</button>
@@ -879,7 +883,7 @@ function renderPublishPanel() {
           <div class="launch-readiness">
             <p>${readiness.readyCount}/${readiness.totalCount} checks complete · ${readiness.percent}%</p>
             <div class="launch-readiness-bar"><span style="width:${readiness.percent}%"></span></div>
-            <p>Warnings: ${readiness.warningCount} · Blocked: ${readiness.blockedCount}</p>
+            <p>Warnings: ${readiness.warningCount} · Blocking: ${blockingIssues.length}</p>
           </div>
           <div class="publish-next-steps">
             <h4>What happens next?</h4>
@@ -1580,6 +1584,7 @@ function renderEditor() {
         updateDraftField('status', reviewResult?.status || 'review_pending')
         if (reviewResult?.status === 'published') setStatus('Product approved and published.', 'success')
         else if (reviewResult?.status === 'needs_changes') setStatus(`Product needs changes. ${reviewResult?.summary || (reviewResult?.reasons || []).join(' ')}`.trim(), 'error')
+        else if (reviewResult?.aiEnabled === false) setStatus('Submitted for review. AI review unavailable; rule-based review used.', 'success')
         else setStatus('Product submitted for review.', 'success')
       }
       if (desiredStatus !== 'published') setStatus('Draft saved.', 'success')
