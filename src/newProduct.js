@@ -1519,7 +1519,11 @@ function renderEditor() {
       renderEditor()
     } catch (error) {
       console.warn('[new-product] save failed', error?.code || error?.message || error)
-      setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
+      if (String(error?.code || '').includes('permission-denied')) {
+        setStatus('Could not save product draft. Please check that you are signed in and that the product fields are valid.', 'error')
+      } else {
+        setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
+      }
       renderEditor()
     }
   }
@@ -1673,8 +1677,14 @@ async function saveCurrentDraftAndReturnId({ reason = 'save', desiredStatus = 'd
     previewAudioFiles: editorState.mediaFiles.previewAudio,
     previewVideoFiles: editorState.mediaFiles.previewVideo
   })
-  updateDraftField('id', result.productId)
+  const savedId = result?.id || result?.productId || ''
+  editorState.draft = {
+    ...editorState.draft,
+    ...(result?.payload || {}),
+    ...(savedId ? { id: savedId } : {})
+  }
+  updateDraftField('id', savedId)
   updateDraftField('status', result.payload?.status || editorState.draft.status)
   updateDraftField('slug', result.payload?.slug || payload.slug)
-  return result.productId
+  return savedId
 }
