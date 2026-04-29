@@ -35,13 +35,60 @@ function runRuleBasedModeration(product = {}) {
 
 async function moderateProductWithAI(product = {}) {
   const model = process.env.PRODUCT_MODERATION_MODEL || ''
-  if (!model) {
+  const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || ''
+  if (!model || !apiKey) {
     return { approved: true, reasons: [], riskLevel: 'low', suggestedAction: 'approve', aiEnabled: false }
   }
-
-  // TODO: integrate Vertex AI / Genkit call with strict JSON response schema.
-  // TODO: add malware scanning, copyrighted content detection, NSFW detection, audio fingerprinting.
-  return { approved: true, reasons: [], riskLevel: 'low', suggestedAction: 'approve', aiEnabled: true }
+  const moderationInput = {
+    title: product.title || '',
+    shortDescription: product.shortDescription || '',
+    description: product.description || '',
+    productType: product.productType || '',
+    categories: Array.isArray(product.categories) ? product.categories : [],
+    genres: Array.isArray(product.genres) ? product.genres : [],
+    tags: Array.isArray(product.tags) ? product.tags : [],
+    filePaths: [
+      ...(Array.isArray(product.galleryPaths) ? product.galleryPaths : []),
+      ...(Array.isArray(product.previewAudioPaths) ? product.previewAudioPaths : []),
+      ...(Array.isArray(product.previewVideoPaths) ? product.previewVideoPaths : []),
+      product.coverPath || '',
+      product.downloadPath || ''
+    ].filter(Boolean),
+    assetSummary: product.assetSummary || {},
+    priceCents: product.priceCents,
+    isFree: product.isFree
+  }
+  const prompt = `Return ONLY strict JSON with keys approved,riskLevel,suggestedAction,reasons,summary.\n${JSON.stringify(moderationInput)}`
+  try {
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+    })
+    if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`)
+    const data = await resp.json()
+    const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('') || ''
+    const cleaned = text.replace(/```json|```/g, '').trim()
+    const parsed = JSON.parse(cleaned)
+    return {
+      approved: parsed?.approved !== false,
+      riskLevel: ['low', 'medium', 'high'].includes(parsed?.riskLevel) ? parsed.riskLevel : 'unknown',
+      suggestedAction: ['approve', 'review_pending', 'needs_changes', 'reject'].includes(parsed?.suggestedAction) ? parsed.suggestedAction : 'review_pending',
+      reasons: Array.isArray(parsed?.reasons) ? parsed.reasons.map(String) : ['AI moderation returned an unreadable response.'],
+      summary: String(parsed?.summary || 'AI moderation was inconclusive.'),
+      aiEnabled: true
+    }
+  } catch (error) {
+    return {
+      approved: true,
+      riskLevel: 'unknown',
+      suggestedAction: 'review_pending',
+      reasons: [],
+      summary: 'AI moderation unavailable; product remains pending review.',
+      aiEnabled: true,
+      error: error?.message || 'ai-error'
+    }
+  }
 }
 
 exports.requestProductReview = onCall(async (request) => {
@@ -64,9 +111,11 @@ exports.requestProductReview = onCall(async (request) => {
   if (!String(product.shortDescription || product.description || '').trim()) {
     throw new HttpsError('failed-precondition', 'Description is required.')
   }
-  if (!Number.isFinite(Number(product.priceCents)) || Number(product.priceCents) < 0) {
-    throw new HttpsError('failed-precondition', 'Invalid price.')
+  const priceCents = Number(product.priceCents)
+  if (!Number.isFinite(priceCents) || priceCents < 0) {
+    throw new HttpsError('failed-precondition', `Invalid price. priceCents=${JSON.stringify(product.priceCents)}`)
   }
+  const normalizedPriceCents = Math.max(0, Math.round(priceCents))
 
   await productRef.set({
     status: 'review_pending',
@@ -87,6 +136,9 @@ exports.requestProductReview = onCall(async (request) => {
   if (!ruleResult.approved) {
     finalStatus = 'needs_changes'
     moderationStatus = 'rejected'
+  } else if (aiResult.suggestedAction === 'needs_changes' || aiResult.suggestedAction === 'reject') {
+    finalStatus = 'needs_changes'
+    moderationStatus = 'rejected'
   } else if (autoApprove && aiResult.suggestedAction === 'approve') {
     finalStatus = 'published'
     moderationStatus = 'approved'
@@ -99,7 +151,12 @@ exports.requestProductReview = onCall(async (request) => {
     visibility: nextVisibility,
     moderationStatus,
     moderationReasons: reasons,
-    moderationSummary: reasons.length ? 'Automated moderation flagged content.' : 'Automated moderation passed.',
+    moderationSummary: aiResult.summary || (reasons.length ? 'Automated moderation flagged content.' : 'Automated moderation passed.'),
+    moderationRiskLevel: aiResult.riskLevel || 'unknown',
+    moderationAIEnabled: Boolean(aiResult.aiEnabled),
+    priceCents: normalizedPriceCents,
+    isFree: normalizedPriceCents === 0,
+    currency: String(product.currency || 'USD').trim().toUpperCase() || 'USD',
     reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
     reviewedBy: 'system',
     publishedAt: finalStatus === 'published' ? admin.firestore.FieldValue.serverTimestamp() : null,

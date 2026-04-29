@@ -10,8 +10,10 @@ import {
   isPlaceholderProductId,
   recalculateAcceptedContributors,
   removeProductContributorRequest,
-  saveProductDraft,
-  submitMarketplaceProductForReview
+  createOrUpdateProductShell,
+  saveProductManifest,
+  submitProductForReview,
+  uploadProductFile
 } from './data/productService'
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
@@ -63,6 +65,7 @@ let editorState = {
     deliverables: [],
     folderDeliverables: []
   },
+  uploadQueue: [],
   mediaPreview: {
     cover: '',
     gallery: []
@@ -86,6 +89,7 @@ let editorState = {
   },
   publishConfirmOpen: false,
   status: { message: '', state: 'info' },
+  reviewResult: null,
   creatorProfile: null,
   draft: null,
   requestedProductId: new URLSearchParams(window.location.search).get('id') || ''
@@ -232,6 +236,21 @@ function formatBytes(size = 0) {
   const kb = Number(size || 0) / 1024
   if (kb < 1024) return `${kb.toFixed(1)} KB`
   return `${(kb / 1024).toFixed(2)} MB`
+}
+
+function queueFile(role, file) {
+  return {
+    id: crypto.randomUUID(),
+    role,
+    file,
+    name: file.name,
+    sizeBytes: Number(file.size || 0),
+    contentType: file.type || 'application/octet-stream',
+    status: 'queued',
+    progress: 0,
+    storagePath: '',
+    error: ''
+  }
 }
 
 function isSingleSampleProduct(draft = {}) {
@@ -787,6 +806,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
     { id: 'visibility', label: 'Visibility selected', status: draft.visibility ? 'ready' : 'blocked', message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
     { id: 'quota', label: 'No quota errors', status: 'ready', message: 'No quota errors detected.', targetSection: 'media-upload' },
     { id: 'save-errors', label: 'No upload/save errors', status: state.status?.state === 'error' ? 'warning' : 'ready', message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' }
+    , { id: 'ai-review', label: 'AI review availability', status: state.reviewResult?.aiEnabled ? 'ready' : 'warning', message: state.reviewResult?.aiEnabled ? 'AI review enabled.' : 'AI review unavailable; rule-based review used.', targetSection: 'publish' }
   ]
 }
 
@@ -1339,22 +1359,35 @@ function renderEditor() {
     if (!file) return
     editorState.mediaFiles.cover = file
     editorState.mediaPreview.cover = URL.createObjectURL(file)
-    setStatus('Cover image selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [...editorState.uploadQueue.filter((item) => item.role !== 'cover'), queueFile('cover', file)]
+    setStatus('Cover image selected and queued.', 'info')
     renderEditor()
   })
   galleryInput?.addEventListener('change', () => {
     editorState.mediaFiles.gallery = Array.from(galleryInput.files || [])
-    setStatus('Product images selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [
+      ...editorState.uploadQueue.filter((item) => item.role !== 'gallery'),
+      ...editorState.mediaFiles.gallery.map((file) => queueFile('gallery', file))
+    ]
+    setStatus('Product images selected and queued.', 'info')
     renderEditor()
   })
   previewAudioInput?.addEventListener('change', () => {
     editorState.mediaFiles.previewAudio = Array.from(previewAudioInput.files || [])
-    setStatus('Audio previews selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [
+      ...editorState.uploadQueue.filter((item) => item.role !== 'previewAudio'),
+      ...editorState.mediaFiles.previewAudio.map((file) => queueFile('previewAudio', file))
+    ]
+    setStatus('Audio previews selected and queued.', 'info')
     renderEditor()
   })
   previewVideoInput?.addEventListener('change', () => {
     editorState.mediaFiles.previewVideo = Array.from(previewVideoInput.files || [])
-    setStatus('Video previews selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [
+      ...editorState.uploadQueue.filter((item) => item.role !== 'previewVideo'),
+      ...editorState.mediaFiles.previewVideo.map((file) => queueFile('previewVideo', file))
+    ]
+    setStatus('Video previews selected and queued.', 'info')
     renderEditor()
   })
   deliverablesInput?.addEventListener('change', () => {
@@ -1366,8 +1399,12 @@ function renderEditor() {
     }
     editorState.mediaFiles.deliverables = [validation.file]
     editorState.mediaFiles.folderDeliverables = []
-    if (validation.message) setStatus(validation.message, validation.level === 'warning' ? 'info' : 'success')
-    else setStatus('Primary deliverable selected. Save draft to upload.', 'info')
+    if (validation.message) {
+      setStatus(validation.message, validation.level === 'warning' ? 'info' : 'success')
+    } else {
+      setStatus('Primary deliverable selected and queued.', 'info')
+    }
+    editorState.uploadQueue = [...editorState.uploadQueue.filter((item) => item.role !== 'deliverable'), queueFile('deliverable', validation.file)]
     renderEditor()
   })
   editorRoot.querySelectorAll('[data-remove-file]').forEach((button) => {
@@ -1498,6 +1535,7 @@ function renderEditor() {
     }
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
+    let submitStep = 'starting'
     try {
       const deliverableValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
       if (!deliverableValidation.ok) {
@@ -1510,20 +1548,52 @@ function renderEditor() {
         renderEditor()
         return
       }
-      const productId = await saveCurrentDraftAndReturnId({ reason: desiredStatus === 'published' ? 'submit-review' : 'save', desiredStatus })
-      if (desiredStatus === 'published') {
-        const reviewResult = await submitMarketplaceProductForReview({ user: editorState.user, productId, product: editorState.draft })
-        updateDraftField('status', reviewResult?.status || 'review_pending')
+      submitStep = 'create-product-shell'
+      const shell = await createOrUpdateProductShell(editorState.draft, editorState.user)
+      const productId = shell.productId
+      editorState.draft.id = productId
+      updateDraftField('id', productId)
+      submitStep = 'upload-files'
+      const uploadedFiles = []
+      for (let index = 0; index < editorState.uploadQueue.length; index += 1) {
+        const item = editorState.uploadQueue[index]
+        submitStep = `upload-${item.role}`
+        editorState.uploadQueue[index] = { ...item, status: 'uploading', error: '' }
+        renderEditor()
+        const uploaded = await uploadProductFile({
+          productId,
+          queueItem: item,
+          onProgress: (progress) => {
+            editorState.uploadQueue[index] = { ...editorState.uploadQueue[index], progress, status: 'uploading' }
+            renderEditor()
+          }
+        })
+        editorState.uploadQueue[index] = { ...uploaded, status: 'uploaded', progress: 100 }
+        uploadedFiles.push(uploaded)
       }
-      setStatus(desiredStatus === 'published' ? 'Submitted for review.' : 'Draft saved.', 'success')
+      submitStep = 'save-product-manifest'
+      await saveProductManifest({ productId, draft: editorState.draft, uploadedFiles, user: editorState.user })
+      if (desiredStatus === 'published') {
+        submitStep = 'submit-for-review'
+        const reviewResult = await submitProductForReview({ productId })
+        editorState.reviewResult = reviewResult || null
+        updateDraftField('status', reviewResult?.status || 'review_pending')
+        if (reviewResult?.status === 'published') setStatus('Product approved and published.', 'success')
+        else if (reviewResult?.status === 'needs_changes') setStatus(`Product needs changes. ${reviewResult?.summary || (reviewResult?.reasons || []).join(' ')}`.trim(), 'error')
+        else setStatus('Product submitted for review.', 'success')
+      }
+      if (desiredStatus !== 'published') setStatus('Draft saved.', 'success')
       renderEditor()
     } catch (error) {
-      console.warn('[new-product] save failed', error?.code || error?.message || error)
-      if (String(error?.code || '').includes('permission-denied')) {
-        setStatus('Could not save product draft. Please check that you are signed in and that the product fields are valid.', 'error')
-      } else {
-        setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
-      }
+      console.error('[new-product] submit failed', {
+        submitStep,
+        code: error?.code,
+        message: error?.message,
+        productId: editorState.draft?.id || '',
+        uid: editorState.user?.uid || '',
+        error
+      })
+      setStatus(`Submit failed during ${submitStep}: ${error?.message || 'Unknown error'}`, 'error')
       renderEditor()
     }
   }
