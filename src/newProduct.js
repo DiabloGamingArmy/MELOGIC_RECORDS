@@ -13,7 +13,7 @@ import {
   requestProductReview,
   saveProductDraft
 } from './data/productService'
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -534,42 +534,6 @@ function refreshAgreementAcceptButton() {
   const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
   const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
   button.disabled = !canAccept
-}
-
-async function ensureCurrentDraftProductForAgreement() {
-  if (!editorState.user || !editorState.draft) return ''
-  const title = String(editorState.draft.title || '').trim()
-  if (!title) {
-    setStatus('Add a product title before accepting the agreement.', 'error')
-    return ''
-  }
-
-  const existingId = String(editorState.draft.id || '')
-  if (existingId && !isPlaceholderProductId(existingId)) {
-    const existingSnap = await getDoc(doc(db, 'products', existingId))
-    if (existingSnap.exists()) {
-      const existingData = existingSnap.data() || {}
-      if (String(existingData.artistId || '') !== String(editorState.user.uid || '')) {
-        throw new Error('agreement-product-owner-mismatch')
-      }
-      return existingId
-    }
-  }
-
-  const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
-  const result = await saveProductDraft(editorState.user, payload, {
-    productId: '',
-    status: 'draft',
-    isNew: true,
-    mediaFiles: editorState.mediaFiles,
-    galleryFiles: editorState.mediaFiles.gallery,
-    previewAudioFiles: editorState.mediaFiles.previewAudio,
-    previewVideoFiles: editorState.mediaFiles.previewVideo
-  })
-  updateDraftField('id', result.productId)
-  const savedSnap = await getDoc(doc(db, 'products', result.productId))
-  if (!savedSnap.exists()) throw new Error('agreement-product-missing-after-save')
-  return result.productId
 }
 
 function bindContributorAddButtons(scope = editorRoot) {
@@ -1276,115 +1240,57 @@ function renderEditor() {
 
     editorState.agreement.accepting = true
     renderEditor()
-    let stage = 'ensure-draft'
-    let productId = String(editorState.draft.id || '')
-    let productExists = false
-    let productArtistId = ''
-    let productStatus = ''
+    let stage = 'signed-form-write'
     let latestVersion = String(editorState.agreement.config?.activeVersion || '')
+    const agreementId = String(editorState.agreement.config?.agreementId || '')
+    const uid = String(editorState.user.uid || '')
+    const formKey = `${agreementId}_${latestVersion}`
     const currentUid = String(editorState.user.uid || '')
     try {
-      productId = await ensureCurrentDraftProductForAgreement()
-      if (!productId) {
-        renderEditor()
-        return
-      }
-      stage = 'product-read'
-      const productRef = doc(db, 'products', productId)
-      const productSnap = await getDoc(productRef)
-      productExists = productSnap.exists()
-      if (!productExists) throw new Error('agreement-product-missing-after-save')
-      const productData = productSnap.data() || {}
-      productArtistId = String(productData.artistId || '')
-      productStatus = String(productData.status || '')
-      if (productArtistId !== currentUid) {
-        setStatus('You do not have permission to accept this agreement for this product.', 'error')
-        throw new Error('agreement-product-owner-mismatch')
-      }
-      if (productStatus === 'published') {
-        setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
-        return
-      }
-      const productRef = doc(db, 'products', productId)
-      const productSnap = await getDoc(productRef)
-      productExists = productSnap.exists()
-      if (!productExists) throw new Error('agreement-product-missing-after-save')
-      const productData = productSnap.data() || {}
-      productArtistId = String(productData.artistId || '')
-      productStatus = String(productData.status || '')
-      if (productArtistId !== currentUid) {
-        setStatus('You do not have permission to accept this agreement for this product.', 'error')
-        throw new Error('agreement-product-owner-mismatch')
-      }
-      if (productStatus === 'published') {
-        setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
-        return
-      }
-      const productRef = doc(db, 'products', productId)
-      const productSnap = await getDoc(productRef)
-      productDocExisted = productSnap.exists()
-      if (!productDocExisted) throw new Error('Draft product missing after initialization')
       const config = editorState.agreement.config
-      latestVersion = String(config.activeVersion || '')
+      latestVersion = String(config.activeVersion || 'v1')
       const agreementPayload = {
-        agreementId: config.agreementId,
+        agreementId,
         version: latestVersion,
         title: config.title,
         storagePath: config.storagePath,
         format: config.format || 'markdown',
         signedName,
-        acceptedBy: editorState.user.uid,
-        acceptedAt: serverTimestamp(),
-        accepted: true
+        acceptedBy: uid,
+        accepted: true,
+        signedFormPath: `users/${uid}/signedForms/${formKey}`,
+        acceptedAt: new Date().toISOString()
       }
-      stage = 'product-update'
-      await updateDoc(productRef, {
-        sellerAgreement: agreementPayload,
-        sellerAgreementAccepted: true,
-        sellerAgreementVersion: latestVersion,
-        updatedAt: serverTimestamp()
-      })
-      stage = 'user-acceptance-write'
-      const userAcceptanceRef = doc(db, 'users', editorState.user.uid, 'agreementAcceptances', `${config.agreementId}_${config.activeVersion}`)
-      await setDoc(userAcceptanceRef, {
-        agreementId: config.agreementId,
+      const signedFormRef = doc(db, 'users', uid, 'signedForms', formKey)
+      await setDoc(signedFormRef, {
+        formKey,
+        agreementId,
         version: latestVersion,
         title: config.title,
         storagePath: config.storagePath,
         format: config.format || 'markdown',
-        productId,
-        acceptedAt: serverTimestamp(),
-        accepted: true
+        signedName,
+        signedBy: uid,
+        signedAt: serverTimestamp(),
+        accepted: true,
+        source: 'new-product-editor',
+        updatedAt: serverTimestamp()
       }, { merge: true })
-      stage = 'local-state-update'
-      updateDraftField('sellerAgreement', { ...agreementPayload, acceptedAt: new Date().toISOString() })
+      updateDraftField('sellerAgreement', agreementPayload)
       updateDraftField('sellerAgreementAccepted', true)
       updateDraftField('sellerAgreementVersion', latestVersion)
       saveDraftState()
       setStatus('Agreement accepted.', 'success')
     } catch (error) {
-      const hasValidProductId = Boolean(productId) && !isPlaceholderProductId(productId)
-      console.warn('[new-product] agreement acceptance failed', {
-        stage,
+      console.warn('[new-product] signed form acceptance failed', {
         code: error?.code,
         message: error?.message,
-        productId,
-        hasValidProductId,
-        productExists,
-        productArtistId,
-        currentUid,
-        productStatus,
+        uid: editorState.user?.uid || '',
+        formKey,
+        agreementId,
         latestVersion
       })
-      if (stage === 'product-update' && error?.code === 'permission-denied') {
-        setStatus('Could not save agreement acceptance. Please save the draft first, then try again.', 'error')
-      } else if (stage === 'user-acceptance-write') {
-        setStatus('Agreement was saved to the product, but the account acceptance record could not be saved. Please try again.', 'error')
-      } else if (error?.message === 'agreement-product-owner-mismatch') {
-        setStatus('You do not have permission to accept this agreement for this product.', 'error')
-      } else if (error?.message !== 'agreement-product-owner-mismatch') {
-        setStatus('Could not save agreement acceptance. Please try again.', 'error')
-      }
+      setStatus('Could not save agreement acceptance. Please try again.', 'error')
     } finally {
       editorState.agreement.accepting = false
       renderEditor()
@@ -1561,10 +1467,14 @@ function renderEditor() {
     }
     if (desiredStatus === 'published') {
       const requiredVersion = String(editorState.agreement.latestVersion || editorState.agreement.config?.activeVersion || '')
+      const agreementId = String(editorState.agreement.config?.agreementId || '')
+      const formKey = `${agreementId}_${requiredVersion}`
+      const signedFormSnap = await getDoc(doc(db, 'users', editorState.user.uid, 'signedForms', formKey))
+      const signedFormAccepted = signedFormSnap.exists() && signedFormSnap.data()?.accepted === true
       const acceptedVersion = String(editorState.draft.sellerAgreementVersion || '')
-      const accepted = Boolean(editorState.draft.sellerAgreementAccepted) && acceptedVersion && acceptedVersion === requiredVersion
+      const accepted = signedFormAccepted || (Boolean(editorState.draft.sellerAgreementAccepted) && acceptedVersion && acceptedVersion === requiredVersion)
       if (!accepted) {
-        setStatus('Agreement must be accepted before publishing.', 'error')
+        setStatus(`Latest seller agreement ${requiredVersion || 'version'} must be accepted before publishing.`, 'error')
         renderEditor()
         return
       }
@@ -1656,6 +1566,28 @@ async function initPage() {
     editorState.agreement.config = agreementConfig
     editorState.agreement.latestVersion = agreementConfig.activeVersion
     editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
+    const agreementId = String(agreementConfig.agreementId || '')
+    const latestVersion = String(agreementConfig.activeVersion || '')
+    const formKey = `${agreementId}_${latestVersion}`
+    const signedFormSnap = await getDoc(doc(db, 'users', user.uid, 'signedForms', formKey))
+    if (signedFormSnap.exists() && signedFormSnap.data()?.accepted === true) {
+      const signedForm = signedFormSnap.data() || {}
+      updateDraftField('sellerAgreement', {
+        agreementId,
+        version: latestVersion,
+        title: signedForm.title || agreementConfig.title,
+        storagePath: signedForm.storagePath || agreementConfig.storagePath,
+        format: signedForm.format || agreementConfig.format || 'markdown',
+        signedName: signedForm.signedName || editorState.agreement.signedName || '',
+        acceptedBy: user.uid,
+        accepted: true,
+        signedFormPath: `users/${user.uid}/signedForms/${formKey}`,
+        acceptedAt: (typeof signedForm.signedAt?.toDate === 'function' ? signedForm.signedAt.toDate().toISOString() : new Date().toISOString())
+      })
+      updateDraftField('sellerAgreementAccepted', true)
+      updateDraftField('sellerAgreementVersion', latestVersion)
+      editorState.agreement.signedName = String(signedForm.signedName || editorState.agreement.signedName || '')
+    }
     if (editorState.draft.sellerAgreementVersion && editorState.draft.sellerAgreementVersion !== agreementConfig.activeVersion) {
       updateDraftField('sellerAgreementAccepted', false)
     }
