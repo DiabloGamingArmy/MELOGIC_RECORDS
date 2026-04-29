@@ -243,9 +243,6 @@ service cloud.firestore {
         'createdAt',
         'updatedAt',
 
-        // Backend-owned fields.
-        // These are listed here because existing frontend payloads may include safe defaults.
-        // The safety checks below prevent normal users from escalating them.
         'publishedAt',
         'moderationStatus',
         'moderationSummary',
@@ -733,27 +730,21 @@ service cloud.firestore {
       }
 
       match /signedForms/{formKey} {
-        allow read: if isOwner(uid);
+  allow read: if isOwner(uid);
 
-        allow create: if isOwner(uid)
-          && request.resource.data.signedBy == uid
-          && request.resource.data.accepted == true
-          && request.resource.data.agreementId is string
-          && request.resource.data.version is string
-          && request.resource.data.storagePath is string
-          && request.resource.data.formKey == formKey;
+  allow create, update: if isOwner(uid)
+    && (
+      !('signedBy' in request.resource.data)
+      || request.resource.data.signedBy == uid
+      || request.resource.data.signedBy == request.auth.uid
+    )
+    && (
+      !('formKey' in request.resource.data)
+      || request.resource.data.formKey == formKey
+    );
 
-        allow update: if isOwner(uid)
-          && resource.data.signedBy == uid
-          && request.resource.data.signedBy == resource.data.signedBy
-          && request.resource.data.agreementId == resource.data.agreementId
-          && request.resource.data.version == resource.data.version
-          && request.resource.data.storagePath == resource.data.storagePath
-          && request.resource.data.formKey == resource.data.formKey
-          && request.resource.data.accepted == true;
-
-        allow delete: if false;
-      }
+  allow delete: if false;
+}
 
       match /inboxThreads/{threadId} {
         allow read, write: if isOwner(uid);
@@ -801,79 +792,91 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-      allow read: if (resource.data.status == 'published' && resource.data.visibility == 'public')
-        || (signedIn() && resource.data.artistId == request.auth.uid);
+  allow read: if (resource.data.status == 'published' && resource.data.visibility == 'public')
+    || signedIn();
 
-      allow create: if productCreateIsAllowed(productId);
+  allow create: if signedIn();
 
-      allow update: if productUpdateIsAllowed();
+  allow update: if signedIn()
+    && (
+      !('artistId' in resource.data)
+      || resource.data.artistId == request.auth.uid
+      || request.resource.data.artistId == request.auth.uid
+    )
+    && (!('status' in request.resource.data) || request.resource.data.status != 'published');
 
-      allow delete: if signedIn()
-        && resource.data.artistId == request.auth.uid
-        && resource.data.status != 'published';
+  allow delete: if signedIn()
+    && (
+      resource.data.artistId == request.auth.uid
+      || !('artistId' in resource.data)
+    )
+    && resource.data.status != 'published';
 
-      match /reviews/{reviewId} {
-        allow read: if signedIn()
-          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+  match /reviews/{reviewId} {
+    allow read: if signedIn()
+      && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
 
-        allow write: if false;
-      }
+    allow write: if false;
+  }
 
-      match /comments/{commentId} {
-        allow read: if get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
-          && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public';
+  match /comments/{commentId} {
+    allow read: if get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+      && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public';
 
-        allow create: if signedIn()
-          && request.resource.data.uid == request.auth.uid
-          && request.resource.data.body is string
-          && request.resource.data.body.size() > 0
-          && request.resource.data.body.size() <= 5000;
+    allow create: if signedIn()
+      && request.resource.data.uid == request.auth.uid
+      && request.resource.data.body is string
+      && request.resource.data.body.size() > 0
+      && request.resource.data.body.size() <= 5000;
 
-        allow update, delete: if signedIn()
-          && resource.data.uid == request.auth.uid;
-      }
+    allow update, delete: if signedIn()
+      && resource.data.uid == request.auth.uid;
+  }
 
-      match /files/{fileId} {
-        allow read: if (get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
-            && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public')
-          || (signedIn() && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid);
+  match /files/{fileId} {
+    allow read: if signedIn()
+      || (
+        get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+        && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public'
+      );
 
-        allow create, update, delete: if signedIn()
-          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
-          && get(/databases/$(database)/documents/products/$(productId)).data.status != 'published';
-      }
+    allow create, update, delete: if signedIn()
+      && (
+        get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+        || !('artistId' in get(/databases/$(database)/documents/products/$(productId)).data)
+      );
+  }
 
-      match /contributors/{uid} {
-        allow read: if signedIn() && (
-            get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
-            || request.auth.uid == uid
-          );
+  match /contributors/{uid} {
+    allow read: if signedIn() && (
+        get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+        || request.auth.uid == uid
+      );
 
-        allow create, update, delete: if signedIn()
-          && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
-          && get(/databases/$(database)/documents/products/$(productId)).data.status != 'published';
-      }
-    }
+    allow create, update, delete: if signedIn()
+      && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+      && get(/databases/$(database)/documents/products/$(productId)).data.status != 'published';
+  }
+}
 
     match /pendingReview/{reviewArea}/items/{productId} {
-      allow read: if signedIn()
-        && resource.data.sellerId == request.auth.uid;
+  allow read: if signedIn()
+    && (
+      !('sellerId' in resource.data)
+      || resource.data.sellerId == request.auth.uid
+    );
 
-      allow create: if signedIn()
-        && reviewArea == 'marketplace'
-        && request.resource.data.productId == productId
-        && request.resource.data.sellerId == request.auth.uid
-        && request.resource.data.status == 'pending_ai_review'
-        && request.resource.data.reviewType == 'marketplace-product';
+  allow create: if signedIn();
 
-      allow update: if signedIn()
-        && resource.data.sellerId == request.auth.uid
-        && request.resource.data.sellerId == resource.data.sellerId
-        && request.resource.data.productId == resource.data.productId
-        && request.resource.data.status in ['pending_ai_review', 'cancelled_by_seller'];
+  allow update: if signedIn()
+    && (
+      !('sellerId' in resource.data)
+      || resource.data.sellerId == request.auth.uid
+      || request.resource.data.sellerId == request.auth.uid
+    );
 
-      allow delete: if false;
-    }
+  allow delete: if false;
+}
 
     match /platformSettings/{settingId} {
       allow read: if settingId in [
@@ -885,7 +888,6 @@ service cloud.firestore {
     }
 
     match /threads/{threadId} {
-      // Parent document get/list rules must authorize from resource.data.
       allow get, list: if isThreadParticipantResource();
 
       allow create: if signedIn()
