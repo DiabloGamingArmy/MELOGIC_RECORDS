@@ -10,8 +10,10 @@ import {
   isPlaceholderProductId,
   recalculateAcceptedContributors,
   removeProductContributorRequest,
-  saveProductDraft,
-  submitMarketplaceProductForReview
+  createOrUpdateProductShell,
+  saveProductManifest,
+  submitProductForReview,
+  uploadProductFile
 } from './data/productService'
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
@@ -63,6 +65,7 @@ let editorState = {
     deliverables: [],
     folderDeliverables: []
   },
+  uploadQueue: [],
   mediaPreview: {
     cover: '',
     gallery: []
@@ -86,6 +89,7 @@ let editorState = {
   },
   publishConfirmOpen: false,
   status: { message: '', state: 'info' },
+  reviewResult: null,
   creatorProfile: null,
   draft: null,
   requestedProductId: new URLSearchParams(window.location.search).get('id') || ''
@@ -232,6 +236,21 @@ function formatBytes(size = 0) {
   const kb = Number(size || 0) / 1024
   if (kb < 1024) return `${kb.toFixed(1)} KB`
   return `${(kb / 1024).toFixed(2)} MB`
+}
+
+function queueFile(role, file) {
+  return {
+    id: crypto.randomUUID(),
+    role,
+    file,
+    name: file.name,
+    sizeBytes: Number(file.size || 0),
+    contentType: file.type || 'application/octet-stream',
+    status: 'queued',
+    progress: 0,
+    storagePath: '',
+    error: ''
+  }
 }
 
 function isSingleSampleProduct(draft = {}) {
@@ -771,29 +790,34 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   const agreementAccepted = Boolean(draft.sellerAgreementAccepted)
   const agreementVersionMatch = agreementAccepted && acceptedVersion && latestVersion && acceptedVersion === latestVersion
   return [
-    { id: 'title', label: 'Product title exists', status: title ? 'ready' : 'blocked', message: title ? 'Title added.' : 'Add a product title.', targetSection: 'product-info' },
-    { id: 'type', label: 'Product type selected', status: draft.productType ? 'ready' : 'blocked', message: draft.productType ? 'Product type selected.' : 'Select a product type.', targetSection: 'product-info' },
-    { id: 'slug', label: 'Slug exists', status: slug ? 'ready' : 'blocked', message: slug ? 'Slug ready.' : 'Add a slug.', targetSection: 'product-info' },
-    { id: 'short', label: 'Short description exists', status: shortDescription ? 'ready' : 'blocked', message: shortDescription ? 'Short description ready.' : 'Add a short description.', targetSection: 'product-info' },
-    { id: 'long', label: 'Long description exists', status: description ? 'ready' : 'blocked', message: description ? 'Long description ready.' : 'Add a long description.', targetSection: 'product-info' },
-    { id: 'cover', label: 'Cover image exists', status: coverReady ? 'ready' : 'blocked', message: coverReady ? 'Cover ready.' : 'Upload a cover image.', targetSection: 'media-upload' },
-    { id: 'thumbnail', label: 'Thumbnail exists', status: thumbnailReady ? 'ready' : 'blocked', message: thumbnailReady ? 'Thumbnail ready.' : 'Add a thumbnail image.', targetSection: 'media-upload' },
-    { id: 'deliverables', label: 'Deliverable/download exists', status: hasDownload ? 'ready' : 'blocked', message: hasDownload ? 'Download source detected.' : 'Add at least one deliverable.', targetSection: 'media-upload' },
-    { id: 'preview', label: 'Preview media decision made', status: previewDecision ? (hasPreviewMedia ? 'ready' : 'warning') : 'blocked', message: hasPreviewMedia ? 'Preview media assigned.' : (previewDecision ? 'No preview selected intentionally.' : 'Assign preview media or choose no preview.'), targetSection: 'media-upload' },
-    { id: 'price', label: 'Price/currency valid', status: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'ready' : 'blocked', message: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'Pricing configured.' : (pricingMetrics.invalidConfig ? 'Marketplace fee configuration is invalid.' : 'Set pricing and currency.'), targetSection: 'pricing' },
-    { id: 'contributors', label: 'Contributors resolved', status: pendingContributors > 0 ? 'warning' : 'ready', message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
-    { id: 'agreement', label: 'Seller agreement accepted', status: agreementAccepted ? 'ready' : 'blocked', message: agreementAccepted ? `Accepted ${draft.sellerAgreementVersion || ''}.` : 'Accept seller agreement.', targetSection: 'agreements' },
-    { id: 'agreement-version', label: 'Agreement version matches latest', status: agreementVersionMatch ? 'ready' : 'blocked', message: agreementVersionMatch ? `Latest version ${latestVersion} accepted.` : `Latest seller agreement ${latestVersion || 'version'} must be accepted before publishing.`, targetSection: 'agreements' },
-    { id: 'visibility', label: 'Visibility selected', status: draft.visibility ? 'ready' : 'blocked', message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
-    { id: 'quota', label: 'No quota errors', status: 'ready', message: 'No quota errors detected.', targetSection: 'media-upload' },
-    { id: 'save-errors', label: 'No upload/save errors', status: state.status?.state === 'error' ? 'warning' : 'ready', message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' }
+    { id: 'title', label: 'Product title exists', severity: title ? 'success' : 'error', blocking: !title, message: title ? 'Title added.' : 'Add a product title.', targetSection: 'product-info' },
+    { id: 'type', label: 'Product type selected', severity: draft.productType ? 'success' : 'error', blocking: !draft.productType, message: draft.productType ? 'Product type selected.' : 'Select a product type.', targetSection: 'product-info' },
+    { id: 'slug', label: 'Slug exists', severity: slug ? 'success' : 'error', blocking: !slug, message: slug ? 'Slug ready.' : 'Add a slug.', targetSection: 'product-info' },
+    { id: 'short', label: 'Short description exists', severity: shortDescription ? 'success' : 'error', blocking: !shortDescription, message: shortDescription ? 'Short description ready.' : 'Add a short description.', targetSection: 'product-info' },
+    { id: 'long', label: 'Long description exists', severity: description ? 'success' : 'error', blocking: !description, message: description ? 'Long description ready.' : 'Add a long description.', targetSection: 'product-info' },
+    { id: 'cover', label: 'Cover image exists', severity: coverReady ? 'success' : 'error', blocking: !coverReady, message: coverReady ? 'Cover ready.' : 'Upload a cover image.', targetSection: 'media-upload' },
+    { id: 'thumbnail', label: 'Thumbnail exists', severity: thumbnailReady ? 'success' : 'error', blocking: !thumbnailReady, message: thumbnailReady ? 'Thumbnail ready.' : 'Add a thumbnail image.', targetSection: 'media-upload' },
+    { id: 'deliverables', label: 'Deliverable/download exists', severity: hasDownload ? 'success' : 'error', blocking: !hasDownload, message: hasDownload ? 'Download source detected.' : 'Add at least one deliverable.', targetSection: 'media-upload' },
+    { id: 'preview', label: 'Preview media decision made', severity: previewDecision ? (hasPreviewMedia ? 'success' : 'warning') : 'error', blocking: !previewDecision, message: hasPreviewMedia ? 'Preview media assigned.' : (previewDecision ? 'No preview selected intentionally.' : 'Assign preview media or choose no preview.'), targetSection: 'media-upload' },
+    { id: 'price', label: 'Price/currency valid', severity: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'success' : 'error', blocking: Boolean(pricingMetrics.invalidConfig || !draft.currency || (!draft.isFree && pricingMetrics.sellerNetTargetCents <= 0)), message: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'Pricing configured.' : (pricingMetrics.invalidConfig ? 'Marketplace fee configuration is invalid.' : 'Set pricing and currency.'), targetSection: 'pricing' },
+    { id: 'contributors', label: 'Contributors resolved', severity: pendingContributors > 0 ? 'warning' : 'success', blocking: false, message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
+    { id: 'agreement', label: 'Seller agreement accepted', severity: agreementAccepted ? 'success' : 'error', blocking: !agreementAccepted, message: agreementAccepted ? `Accepted ${draft.sellerAgreementVersion || ''}.` : 'Accept seller agreement.', targetSection: 'agreements' },
+    { id: 'agreement-version', label: 'Agreement version matches latest', severity: agreementVersionMatch ? 'success' : 'error', blocking: !agreementVersionMatch, message: agreementVersionMatch ? `Latest version ${latestVersion} accepted.` : `Latest seller agreement ${latestVersion || 'version'} must be accepted before publishing.`, targetSection: 'agreements' },
+    { id: 'visibility', label: 'Visibility selected', severity: draft.visibility ? 'success' : 'error', blocking: !draft.visibility, message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
+    { id: 'quota', label: 'No quota errors', severity: 'success', blocking: false, message: 'No quota errors detected.', targetSection: 'media-upload' },
+    { id: 'save-errors', label: 'No upload/save errors', severity: state.status?.state === 'error' ? 'warning' : 'success', blocking: false, message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' },
+    { id: 'ai-review', label: 'AI review availability', severity: state.reviewResult?.aiEnabled ? 'success' : 'warning', blocking: false, message: state.reviewResult?.aiEnabled ? 'AI review enabled.' : 'AI review unavailable; rule-based review used.', targetSection: 'publish' }
   ]
 }
 
+function getBlockingPublishIssues(items = []) {
+  return items.filter((item) => item.blocking === true)
+}
+
 function calculateLaunchReadiness(checks = []) {
-  const readyCount = checks.filter((item) => item.status === 'ready').length
-  const warningCount = checks.filter((item) => item.status === 'warning').length
-  const blockedCount = checks.filter((item) => item.status === 'blocked').length
+  const readyCount = checks.filter((item) => item.severity === 'success').length
+  const warningCount = checks.filter((item) => item.severity === 'warning').length
+  const blockedCount = checks.filter((item) => item.blocking).length
   const totalCount = checks.length || 1
   return {
     readyCount,
@@ -808,14 +832,14 @@ function renderPublishPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
   const checks = buildPublishChecklist(draft, editorState, editorState.agreement.config || {})
   const readiness = calculateLaunchReadiness(checks)
-  const blockedCount = readiness.blockedCount
+  const blockingIssues = getBlockingPublishIssues(checks)
   const agreementLatest = editorState.agreement.latestVersion || editorState.agreement.config?.activeVersion || 'v1'
   const agreementAccepted = draft.sellerAgreementVersion || '—'
   const fileEntries = gatherFileEntries()
   const deliverables = fileEntries.filter((item) => item.isDeliverable)
   const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
   const previewAssigned = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
-  const canSubmit = blockedCount === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
+  const canSubmit = blockingIssues.length === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
 
   return `
     <section class="publish-workspace">
@@ -839,9 +863,9 @@ function renderPublishPanel() {
         <article class="publish-checklist-panel">
           <h3>Publish Checklist</h3>
           ${checks.map((check) => `
-            <div class="publish-checklist-row is-${check.status}">
+            <div class="publish-checklist-row is-${check.severity === 'success' ? 'ready' : check.severity}">
               <div>
-                <p><strong>${check.status === 'ready' ? 'Ready' : check.status === 'warning' ? 'Warning' : 'Blocked'}</strong> · ${escapeHtml(check.label)}</p>
+                <p><strong>${check.severity === 'success' ? 'Ready' : check.severity === 'warning' ? 'Warning' : check.severity === 'info' ? 'Info' : 'Blocked'}</strong> · ${escapeHtml(check.label)}</p>
                 <p>${escapeHtml(check.message || '')}</p>
               </div>
               <button type="button" data-publish-fix="${escapeHtml(check.targetSection || 'product-info')}">Fix</button>
@@ -859,7 +883,7 @@ function renderPublishPanel() {
           <div class="launch-readiness">
             <p>${readiness.readyCount}/${readiness.totalCount} checks complete · ${readiness.percent}%</p>
             <div class="launch-readiness-bar"><span style="width:${readiness.percent}%"></span></div>
-            <p>Warnings: ${readiness.warningCount} · Blocked: ${readiness.blockedCount}</p>
+            <p>Warnings: ${readiness.warningCount} · Blocking: ${blockingIssues.length}</p>
           </div>
           <div class="publish-next-steps">
             <h4>What happens next?</h4>
@@ -1339,22 +1363,35 @@ function renderEditor() {
     if (!file) return
     editorState.mediaFiles.cover = file
     editorState.mediaPreview.cover = URL.createObjectURL(file)
-    setStatus('Cover image selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [...editorState.uploadQueue.filter((item) => item.role !== 'cover'), queueFile('cover', file)]
+    setStatus('Cover image selected and queued.', 'info')
     renderEditor()
   })
   galleryInput?.addEventListener('change', () => {
     editorState.mediaFiles.gallery = Array.from(galleryInput.files || [])
-    setStatus('Product images selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [
+      ...editorState.uploadQueue.filter((item) => item.role !== 'gallery'),
+      ...editorState.mediaFiles.gallery.map((file) => queueFile('gallery', file))
+    ]
+    setStatus('Product images selected and queued.', 'info')
     renderEditor()
   })
   previewAudioInput?.addEventListener('change', () => {
     editorState.mediaFiles.previewAudio = Array.from(previewAudioInput.files || [])
-    setStatus('Audio previews selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [
+      ...editorState.uploadQueue.filter((item) => item.role !== 'previewAudio'),
+      ...editorState.mediaFiles.previewAudio.map((file) => queueFile('previewAudio', file))
+    ]
+    setStatus('Audio previews selected and queued.', 'info')
     renderEditor()
   })
   previewVideoInput?.addEventListener('change', () => {
     editorState.mediaFiles.previewVideo = Array.from(previewVideoInput.files || [])
-    setStatus('Video previews selected. Save draft to upload.', 'info')
+    editorState.uploadQueue = [
+      ...editorState.uploadQueue.filter((item) => item.role !== 'previewVideo'),
+      ...editorState.mediaFiles.previewVideo.map((file) => queueFile('previewVideo', file))
+    ]
+    setStatus('Video previews selected and queued.', 'info')
     renderEditor()
   })
   deliverablesInput?.addEventListener('change', () => {
@@ -1366,8 +1403,12 @@ function renderEditor() {
     }
     editorState.mediaFiles.deliverables = [validation.file]
     editorState.mediaFiles.folderDeliverables = []
-    if (validation.message) setStatus(validation.message, validation.level === 'warning' ? 'info' : 'success')
-    else setStatus('Primary deliverable selected. Save draft to upload.', 'info')
+    if (validation.message) {
+      setStatus(validation.message, validation.level === 'warning' ? 'info' : 'success')
+    } else {
+      setStatus('Primary deliverable selected and queued.', 'info')
+    }
+    editorState.uploadQueue = [...editorState.uploadQueue.filter((item) => item.role !== 'deliverable'), queueFile('deliverable', validation.file)]
     renderEditor()
   })
   editorRoot.querySelectorAll('[data-remove-file]').forEach((button) => {
@@ -1498,6 +1539,7 @@ function renderEditor() {
     }
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
+    let submitStep = 'starting'
     try {
       const deliverableValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
       if (!deliverableValidation.ok) {
@@ -1510,20 +1552,53 @@ function renderEditor() {
         renderEditor()
         return
       }
-      const productId = await saveCurrentDraftAndReturnId({ reason: desiredStatus === 'published' ? 'submit-review' : 'save', desiredStatus })
-      if (desiredStatus === 'published') {
-        const reviewResult = await submitMarketplaceProductForReview({ user: editorState.user, productId, product: editorState.draft })
-        updateDraftField('status', reviewResult?.status || 'review_pending')
+      submitStep = 'create-product-shell'
+      const shell = await createOrUpdateProductShell(editorState.draft, editorState.user)
+      const productId = shell.productId
+      editorState.draft.id = productId
+      updateDraftField('id', productId)
+      submitStep = 'upload-files'
+      const uploadedFiles = []
+      for (let index = 0; index < editorState.uploadQueue.length; index += 1) {
+        const item = editorState.uploadQueue[index]
+        submitStep = `upload-${item.role}`
+        editorState.uploadQueue[index] = { ...item, status: 'uploading', error: '' }
+        renderEditor()
+        const uploaded = await uploadProductFile({
+          productId,
+          queueItem: item,
+          onProgress: (progress) => {
+            editorState.uploadQueue[index] = { ...editorState.uploadQueue[index], progress, status: 'uploading' }
+            renderEditor()
+          }
+        })
+        editorState.uploadQueue[index] = { ...uploaded, status: 'uploaded', progress: 100 }
+        uploadedFiles.push(uploaded)
       }
-      setStatus(desiredStatus === 'published' ? 'Submitted for review.' : 'Draft saved.', 'success')
+      submitStep = 'save-product-manifest'
+      await saveProductManifest({ productId, draft: editorState.draft, uploadedFiles, user: editorState.user })
+      if (desiredStatus === 'published') {
+        submitStep = 'submit-for-review'
+        const reviewResult = await submitProductForReview({ productId })
+        editorState.reviewResult = reviewResult || null
+        updateDraftField('status', reviewResult?.status || 'review_pending')
+        if (reviewResult?.status === 'published') setStatus('Product approved and published.', 'success')
+        else if (reviewResult?.status === 'needs_changes') setStatus(`Product needs changes. ${reviewResult?.summary || (reviewResult?.reasons || []).join(' ')}`.trim(), 'error')
+        else if (reviewResult?.aiEnabled === false) setStatus('Submitted for review. AI review unavailable; rule-based review used.', 'success')
+        else setStatus('Product submitted for review.', 'success')
+      }
+      if (desiredStatus !== 'published') setStatus('Draft saved.', 'success')
       renderEditor()
     } catch (error) {
-      console.warn('[new-product] save failed', error?.code || error?.message || error)
-      if (String(error?.code || '').includes('permission-denied')) {
-        setStatus('Could not save product draft. Please check that you are signed in and that the product fields are valid.', 'error')
-      } else {
-        setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
-      }
+      console.error('[new-product] submit failed', {
+        submitStep,
+        code: error?.code,
+        message: error?.message,
+        productId: editorState.draft?.id || '',
+        uid: editorState.user?.uid || '',
+        error
+      })
+      setStatus(`Submit failed during ${submitStep}: ${error?.message || 'Unknown error'}`, 'error')
       renderEditor()
     }
   }
