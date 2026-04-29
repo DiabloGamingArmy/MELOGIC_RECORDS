@@ -1305,6 +1305,25 @@ function renderEditor() {
         setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
         return
       }
+      const productRef = doc(db, 'products', productId)
+      const productSnap = await getDoc(productRef)
+      productExists = productSnap.exists()
+      if (!productExists) throw new Error('agreement-product-missing-after-save')
+      const productData = productSnap.data() || {}
+      productArtistId = String(productData.artistId || '')
+      productStatus = String(productData.status || '')
+      if (productArtistId !== currentUid) {
+        setStatus('You do not have permission to accept this agreement for this product.', 'error')
+        throw new Error('agreement-product-owner-mismatch')
+      }
+      if (productStatus === 'published') {
+        setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
+        return
+      }
+      const productRef = doc(db, 'products', productId)
+      const productSnap = await getDoc(productRef)
+      productDocExisted = productSnap.exists()
+      if (!productDocExisted) throw new Error('Draft product missing after initialization')
       const config = editorState.agreement.config
       latestVersion = String(config.activeVersion || '')
       const agreementPayload = {
