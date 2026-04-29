@@ -1125,14 +1125,17 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
   if (!String(input?.title || '').trim()) throw new Error('Add a product title before saving this draft.')
 
-  const requestedId = options.productId || input.id || ''
-  let productId = ''
+  const existingId = String(options.productId || input.id || '').trim()
+  const hasExistingId = Boolean(existingId) && !isPlaceholderProductId(existingId)
+  const productRef = hasExistingId
+    ? doc(db, FIRESTORE_COLLECTIONS.products, existingId)
+    : doc(collection(db, FIRESTORE_COLLECTIONS.products))
+  const productId = productRef.id
+  if (!productId) throw new Error('Could not create product id for draft save.')
   let created = false
   let payload = null
-  let stage = 'draft-initialization'
   try {
-    const initialization = await initializeProductDraft(user, input, requestedId)
-    productId = initialization.productId
+    const initialization = await initializeProductDraft(user, input, productId)
     created = initialization.created
     if (typeof options.onStatus === 'function' && created) {
       options.onStatus('Draft document created.')
@@ -1246,6 +1249,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     id: productId,
     ...creator,
     artistId: user.uid,
+    artistDisplayName: creator.artistDisplayName || creator.artistName || '',
     status: normalizedStatus,
     visibility: basePayload.visibility || 'private',
     coverPath: mediaUploads.coverPath || basePayload.coverPath,
@@ -1279,6 +1283,8 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   if (!isSubmittingForReview && !String(input.productType || '').trim()) {
     delete payload.productType
   }
+  payload.id = productId
+  payload.artistId = user.uid
 
   logDraftFirestoreWrite({
     operation: 'setDoc saveProductDraft final-firestore-merge',
@@ -1287,8 +1293,19 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     productId,
     payload
   })
+  if (isDevelopmentRuntime) {
+    console.info('[productService] saving draft', {
+      path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
+      productId,
+      payloadId: payload.id,
+      uid: user?.uid || null,
+      artistId: payload.artistId,
+      status: payload.status,
+      keys: Object.keys(payload).sort()
+    })
+  }
   try {
-    await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
+    await setDoc(productRef, payload, { merge: true })
     if (typeof options.onStatus === 'function') {
       options.onStatus('Final product metadata saved.')
     }
@@ -1310,6 +1327,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   }
 
   return {
+    id: productId,
     productId,
     payload,
     mediaUploads,
@@ -1322,7 +1340,16 @@ export async function saveProductDraft(user, input = {}, options = {}) {
 }
 
 export async function submitMarketplaceProductForReview({ user, productId, product }) {
-  if (!user?.uid || !productId) throw new Error('Missing review submission context.')
+  if (!user?.uid) throw new Error('Missing review submission context.')
+  if (!productId) {
+    throw new Error('Cannot submit product for review because no product ID was created.')
+  }
+  if (isDevelopmentRuntime) {
+    console.info('[productService] submitting product for review', {
+      productId,
+      uid: user?.uid || null
+    })
+  }
   return requestProductReview(productId)
 }
 
