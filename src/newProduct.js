@@ -1304,6 +1304,10 @@ function renderEditor() {
         setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
         return
       }
+      const productRef = doc(db, 'products', productId)
+      const productSnap = await getDoc(productRef)
+      productDocExisted = productSnap.exists()
+      if (!productDocExisted) throw new Error('Draft product missing after initialization')
       const config = editorState.agreement.config
       latestVersion = String(config.activeVersion || '')
       const agreementPayload = {
