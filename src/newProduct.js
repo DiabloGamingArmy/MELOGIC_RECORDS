@@ -10,10 +10,10 @@ import {
   isPlaceholderProductId,
   recalculateAcceptedContributors,
   removeProductContributorRequest,
-  requestProductReview,
-  saveProductDraft
+  saveProductDraft,
+  submitMarketplaceProductForReview
 } from './data/productService'
-import { doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore'
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -261,6 +261,35 @@ function validatePrimaryDeliverableSelection(files = [], draft = {}, hasExisting
     return { ok: true, file, level: 'warning', message: 'ZIP is recommended for multi-file products.' }
   }
   return { ok: true, file, level: 'info', message: '' }
+}
+
+function validateDraftFiles(draft = editorState.draft, mediaFiles = editorState.mediaFiles) {
+  const errors = []
+  const warnings = []
+  const deliverables = Array.from(mediaFiles?.deliverables || [])
+  const folderDeliverables = Array.from(mediaFiles?.folderDeliverables || [])
+  const allDeliverables = [...deliverables, ...folderDeliverables]
+
+  if (allDeliverables.length > 1) {
+    errors.push('Only one primary deliverable is supported right now. Please upload a ZIP package.')
+  }
+  if (!allDeliverables.length && !String(draft?.downloadPath || draft?.primaryDownloadPath || '').trim()) {
+    warnings.push('No deliverable has been added yet.')
+  }
+
+  const firstDeliverable = allDeliverables[0] || null
+  if (firstDeliverable) {
+    const isSingleSample = isSingleSampleProduct(draft)
+    const isAudio = String(firstDeliverable.type || '').startsWith('audio/')
+    const archive = isArchiveFile(firstDeliverable)
+    if (isSingleSample) {
+      if (!isAudio && !archive) warnings.push('Single Sample products usually use one audio file. ZIP is also supported.')
+    } else if (!archive) {
+      warnings.push('ZIP is recommended for multi-file products.')
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings }
 }
 
 function buildFileTreeRows(entries = []) {
@@ -534,42 +563,6 @@ function refreshAgreementAcceptButton() {
   const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
   const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
   button.disabled = !canAccept
-}
-
-async function ensureCurrentDraftProductForAgreement() {
-  if (!editorState.user || !editorState.draft) return ''
-  const title = String(editorState.draft.title || '').trim()
-  if (!title) {
-    setStatus('Add a product title before accepting the agreement.', 'error')
-    return ''
-  }
-
-  const existingId = String(editorState.draft.id || '')
-  if (existingId && !isPlaceholderProductId(existingId)) {
-    const existingSnap = await getDoc(doc(db, 'products', existingId))
-    if (existingSnap.exists()) {
-      const existingData = existingSnap.data() || {}
-      if (String(existingData.artistId || '') !== String(editorState.user.uid || '')) {
-        throw new Error('agreement-product-owner-mismatch')
-      }
-      return existingId
-    }
-  }
-
-  const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
-  const result = await saveProductDraft(editorState.user, payload, {
-    productId: '',
-    status: 'draft',
-    isNew: true,
-    mediaFiles: editorState.mediaFiles,
-    galleryFiles: editorState.mediaFiles.gallery,
-    previewAudioFiles: editorState.mediaFiles.previewAudio,
-    previewVideoFiles: editorState.mediaFiles.previewVideo
-  })
-  updateDraftField('id', result.productId)
-  const savedSnap = await getDoc(doc(db, 'products', result.productId))
-  if (!savedSnap.exists()) throw new Error('agreement-product-missing-after-save')
-  return result.productId
 }
 
 function bindContributorAddButtons(scope = editorRoot) {
@@ -1095,7 +1088,6 @@ function renderContributorsPanel() {
 
 function renderEditor() {
   const section = readSectionHash()
-  const statusClass = editorState.status.message ? `is-visible is-${editorState.status.state}` : ''
 
   editorRoot.innerHTML = `
     <div class="marketplace-editor-page">
@@ -1112,7 +1104,6 @@ function renderEditor() {
       </section>
 
       <section class="marketplace-editor-workspace">
-        <div class="product-status ${statusClass}">${editorState.status.message || ''}</div>
         <form data-product-form>
           ${section === 'product-info'
             ? renderProductInfoPanel()
@@ -1276,115 +1267,57 @@ function renderEditor() {
 
     editorState.agreement.accepting = true
     renderEditor()
-    let stage = 'ensure-draft'
-    let productId = String(editorState.draft.id || '')
-    let productExists = false
-    let productArtistId = ''
-    let productStatus = ''
+    let stage = 'signed-form-write'
     let latestVersion = String(editorState.agreement.config?.activeVersion || '')
+    const agreementId = String(editorState.agreement.config?.agreementId || '')
+    const uid = String(editorState.user.uid || '')
+    const formKey = `${agreementId}_${latestVersion}`
     const currentUid = String(editorState.user.uid || '')
     try {
-      productId = await ensureCurrentDraftProductForAgreement()
-      if (!productId) {
-        renderEditor()
-        return
-      }
-      stage = 'product-read'
-      const productRef = doc(db, 'products', productId)
-      const productSnap = await getDoc(productRef)
-      productExists = productSnap.exists()
-      if (!productExists) throw new Error('agreement-product-missing-after-save')
-      const productData = productSnap.data() || {}
-      productArtistId = String(productData.artistId || '')
-      productStatus = String(productData.status || '')
-      if (productArtistId !== currentUid) {
-        setStatus('You do not have permission to accept this agreement for this product.', 'error')
-        throw new Error('agreement-product-owner-mismatch')
-      }
-      if (productStatus === 'published') {
-        setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
-        return
-      }
-      const productRef = doc(db, 'products', productId)
-      const productSnap = await getDoc(productRef)
-      productExists = productSnap.exists()
-      if (!productExists) throw new Error('agreement-product-missing-after-save')
-      const productData = productSnap.data() || {}
-      productArtistId = String(productData.artistId || '')
-      productStatus = String(productData.status || '')
-      if (productArtistId !== currentUid) {
-        setStatus('You do not have permission to accept this agreement for this product.', 'error')
-        throw new Error('agreement-product-owner-mismatch')
-      }
-      if (productStatus === 'published') {
-        setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
-        return
-      }
-      const productRef = doc(db, 'products', productId)
-      const productSnap = await getDoc(productRef)
-      productDocExisted = productSnap.exists()
-      if (!productDocExisted) throw new Error('Draft product missing after initialization')
       const config = editorState.agreement.config
-      latestVersion = String(config.activeVersion || '')
+      latestVersion = String(config.activeVersion || 'v1')
       const agreementPayload = {
-        agreementId: config.agreementId,
+        agreementId,
         version: latestVersion,
         title: config.title,
         storagePath: config.storagePath,
         format: config.format || 'markdown',
         signedName,
-        acceptedBy: editorState.user.uid,
-        acceptedAt: serverTimestamp(),
-        accepted: true
+        acceptedBy: uid,
+        accepted: true,
+        signedFormPath: `users/${uid}/signedForms/${formKey}`,
+        acceptedAt: new Date().toISOString()
       }
-      stage = 'product-update'
-      await updateDoc(productRef, {
-        sellerAgreement: agreementPayload,
-        sellerAgreementAccepted: true,
-        sellerAgreementVersion: latestVersion,
-        updatedAt: serverTimestamp()
-      })
-      stage = 'user-acceptance-write'
-      const userAcceptanceRef = doc(db, 'users', editorState.user.uid, 'agreementAcceptances', `${config.agreementId}_${config.activeVersion}`)
-      await setDoc(userAcceptanceRef, {
-        agreementId: config.agreementId,
+      const signedFormRef = doc(db, 'users', uid, 'signedForms', formKey)
+      await setDoc(signedFormRef, {
+        formKey,
+        agreementId,
         version: latestVersion,
         title: config.title,
         storagePath: config.storagePath,
         format: config.format || 'markdown',
-        productId,
-        acceptedAt: serverTimestamp(),
-        accepted: true
+        signedName,
+        signedBy: uid,
+        signedAt: serverTimestamp(),
+        accepted: true,
+        source: 'new-product-editor',
+        updatedAt: serverTimestamp()
       }, { merge: true })
-      stage = 'local-state-update'
-      updateDraftField('sellerAgreement', { ...agreementPayload, acceptedAt: new Date().toISOString() })
+      updateDraftField('sellerAgreement', agreementPayload)
       updateDraftField('sellerAgreementAccepted', true)
       updateDraftField('sellerAgreementVersion', latestVersion)
       saveDraftState()
       setStatus('Agreement accepted.', 'success')
     } catch (error) {
-      const hasValidProductId = Boolean(productId) && !isPlaceholderProductId(productId)
-      console.warn('[new-product] agreement acceptance failed', {
-        stage,
+      console.warn('[new-product] signed form acceptance failed', {
         code: error?.code,
         message: error?.message,
-        productId,
-        hasValidProductId,
-        productExists,
-        productArtistId,
-        currentUid,
-        productStatus,
+        uid: editorState.user?.uid || '',
+        formKey,
+        agreementId,
         latestVersion
       })
-      if (stage === 'product-update' && error?.code === 'permission-denied') {
-        setStatus('Could not save agreement acceptance. Please save the draft first, then try again.', 'error')
-      } else if (stage === 'user-acceptance-write') {
-        setStatus('Agreement was saved to the product, but the account acceptance record could not be saved. Please try again.', 'error')
-      } else if (error?.message === 'agreement-product-owner-mismatch') {
-        setStatus('You do not have permission to accept this agreement for this product.', 'error')
-      } else if (error?.message !== 'agreement-product-owner-mismatch') {
-        setStatus('Could not save agreement acceptance. Please try again.', 'error')
-      }
+      setStatus('Could not save agreement acceptance. Please try again.', 'error')
     } finally {
       editorState.agreement.accepting = false
       renderEditor()
@@ -1466,27 +1399,17 @@ function renderEditor() {
       renderEditor()
     })
   })
-  editorRoot.querySelector('[data-open-marketplace-preview]')?.addEventListener('click', async () => {
-    if (!editorState.user || !editorState.draft) return
-    if ((editorState.mediaFiles.deliverables || []).length > 1) {
-      setStatus('Only one primary deliverable is supported right now. Please upload a ZIP package.', 'error')
+  editorRoot.querySelectorAll('[data-open-marketplace-preview]').forEach((btn) => btn.addEventListener('click', async () => {
+    try {
+      const productId = await saveCurrentDraftAndReturnId({ reason: 'marketplace-preview', desiredStatus: 'draft' })
+      if (!productId) throw new Error('missing-product-id-after-save')
+      window.open(`${productRoute(productId)}?preview=draft`, '_blank', 'noopener,noreferrer')
+    } catch (error) {
+      console.warn('[new-product] marketplace preview failed', { code: error?.code, message: error?.message })
+      setStatus('Could not save draft for preview. Check required fields and try again.', 'error')
       renderEditor()
-      return
     }
-    const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
-    const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
-    const result = await saveProductDraft(editorState.user, payload, {
-      productId: wasNewDraft ? '' : editorState.draft.id,
-      status: 'draft',
-      isNew: wasNewDraft,
-      mediaFiles: editorState.mediaFiles,
-      galleryFiles: editorState.mediaFiles.gallery,
-      previewAudioFiles: editorState.mediaFiles.previewAudio,
-      previewVideoFiles: editorState.mediaFiles.previewVideo
-    })
-    updateDraftField('id', result.productId)
-    window.open(`${productRoute(result.productId)}?preview=draft`, '_blank', 'noopener,noreferrer')
-  })
+  }))
 
   const contributorSearchInput = editorRoot.querySelector('[data-contributor-search]')
   const contributorRoleInput = editorRoot.querySelector('[data-contributor-role]')
@@ -1561,10 +1484,14 @@ function renderEditor() {
     }
     if (desiredStatus === 'published') {
       const requiredVersion = String(editorState.agreement.latestVersion || editorState.agreement.config?.activeVersion || '')
+      const agreementId = String(editorState.agreement.config?.agreementId || '')
+      const formKey = `${agreementId}_${requiredVersion}`
+      const signedFormSnap = await getDoc(doc(db, 'users', editorState.user.uid, 'signedForms', formKey))
+      const signedFormAccepted = signedFormSnap.exists() && signedFormSnap.data()?.accepted === true
       const acceptedVersion = String(editorState.draft.sellerAgreementVersion || '')
-      const accepted = Boolean(editorState.draft.sellerAgreementAccepted) && acceptedVersion && acceptedVersion === requiredVersion
+      const accepted = signedFormAccepted || (Boolean(editorState.draft.sellerAgreementAccepted) && acceptedVersion && acceptedVersion === requiredVersion)
       if (!accepted) {
-        setStatus('Agreement must be accepted before publishing.', 'error')
+        setStatus(`Latest seller agreement ${requiredVersion || 'version'} must be accepted before publishing.`, 'error')
         renderEditor()
         return
       }
@@ -1572,47 +1499,45 @@ function renderEditor() {
     setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
     renderEditor()
     try {
-      const deliverableValidation = validateDraftFiles([...editorState.mediaFiles.folderDeliverables, ...editorState.mediaFiles.deliverables])
-      if (deliverableValidation) {
-        setStatus(deliverableValidation, 'error')
+      const deliverableValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
+      if (!deliverableValidation.ok) {
+        setStatus(deliverableValidation.errors[0], 'error')
         renderEditor()
         return
       }
-      const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
-      const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, currentStatus: editorState.draft.status || 'draft', status: desiredStatus === 'published' ? 'review_pending' : desiredStatus }, editorState.user)
-      const result = await saveProductDraft(editorState.user, payload, {
-        productId: wasNewDraft ? '' : editorState.draft.id,
-        status: desiredStatus === 'published' ? 'review_pending' : desiredStatus,
-        isNew: wasNewDraft,
-        mediaFiles: editorState.mediaFiles,
-        galleryFiles: editorState.mediaFiles.gallery,
-        previewAudioFiles: editorState.mediaFiles.previewAudio,
-        previewVideoFiles: editorState.mediaFiles.previewVideo,
-        onStatus: (message) => {
-          setStatus(message, 'info')
-          renderEditor()
-        }
-      })
-      updateDraftField('id', result.productId)
-      updateDraftField('status', result.payload?.status || editorState.draft.status)
-      updateDraftField('slug', payload.slug)
+      if (desiredStatus === 'published' && deliverableValidation.warnings.includes('No deliverable has been added yet.')) {
+        setStatus('Add a deliverable before submitting for review.', 'error')
+        renderEditor()
+        return
+      }
+      const productId = await saveCurrentDraftAndReturnId({ reason: desiredStatus === 'published' ? 'submit-review' : 'save', desiredStatus })
       if (desiredStatus === 'published') {
-        const reviewResult = await requestProductReview(result.productId)
+        const reviewResult = await submitMarketplaceProductForReview({ user: editorState.user, productId, product: editorState.draft })
         updateDraftField('status', reviewResult?.status || 'review_pending')
       }
       setStatus(desiredStatus === 'published' ? 'Submitted for review.' : 'Draft saved.', 'success')
       renderEditor()
     } catch (error) {
       console.warn('[new-product] save failed', error?.code || error?.message || error)
-      setStatus(desiredStatus === 'published' ? 'Could not submit for review.' : 'Could not save draft.', 'error')
+      setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
       renderEditor()
     }
   }
 
   editorRoot.querySelector('[data-save-draft]')?.addEventListener('click', () => persistProduct('draft'))
-  editorRoot.querySelector('[data-confirm-submit-review]')?.addEventListener('click', () => {
+  editorRoot.querySelector('[data-confirm-submit-review]')?.addEventListener('click', async () => {
     editorState.publishConfirmOpen = false
-    persistProduct('published')
+    try {
+      await persistProduct('published')
+    } catch (error) {
+      console.warn('[new-product] submit review failed', {
+        code: error?.code,
+        message: error?.message,
+        stage: error?.stage || 'submit-review'
+      })
+      setStatus('Could not submit for review.', 'error')
+      renderEditor()
+    }
   })
 }
 
@@ -1651,16 +1576,63 @@ async function initPage() {
   syncPricingDraftFields()
 
   editorState.agreement.signedName = String(editorState.draft.sellerAgreement?.signedName || '')
+  let agreementId = ''
+  let latestVersion = ''
   try {
+    let stage = 'latest-agreement-config'
     const agreementConfig = await getLatestMarketplaceSellerAgreement()
     editorState.agreement.config = agreementConfig
     editorState.agreement.latestVersion = agreementConfig.activeVersion
+    agreementId = String(agreementConfig.agreementId || '')
+    latestVersion = String(agreementConfig.activeVersion || '')
+
+    stage = 'agreement-markdown'
     editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
+
+    try {
+      stage = 'signed-form-read'
+      const formKey = `${agreementId}_${latestVersion}`
+      const signedFormSnap = await getDoc(doc(db, 'users', user.uid, 'signedForms', formKey))
+      if (signedFormSnap.exists() && signedFormSnap.data()?.accepted === true) {
+        const signedForm = signedFormSnap.data() || {}
+        updateDraftField('sellerAgreement', {
+          agreementId,
+          version: latestVersion,
+          title: signedForm.title || agreementConfig.title,
+          storagePath: signedForm.storagePath || agreementConfig.storagePath,
+          format: signedForm.format || agreementConfig.format || 'markdown',
+          signedName: signedForm.signedName || editorState.agreement.signedName || '',
+          acceptedBy: user.uid,
+          accepted: true,
+          signedFormPath: `users/${user.uid}/signedForms/${formKey}`,
+          acceptedAt: (typeof signedForm.signedAt?.toDate === 'function' ? signedForm.signedAt.toDate().toISOString() : new Date().toISOString())
+        })
+        updateDraftField('sellerAgreementAccepted', true)
+        updateDraftField('sellerAgreementVersion', latestVersion)
+        editorState.agreement.signedName = String(signedForm.signedName || editorState.agreement.signedName || '')
+      }
+    } catch (error) {
+      console.warn('[new-product] agreement load failed', {
+        stage: 'signed-form-read',
+        code: error?.code,
+        message: error?.message,
+        uid: editorState.user?.uid || '',
+        agreementId,
+        latestVersion
+      })
+    }
     if (editorState.draft.sellerAgreementVersion && editorState.draft.sellerAgreementVersion !== agreementConfig.activeVersion) {
       updateDraftField('sellerAgreementAccepted', false)
     }
   } catch (error) {
-    console.warn('[new-product] agreement load failed', error?.code || error?.message || error)
+    console.warn('[new-product] agreement load failed', {
+      stage: editorState.agreement.config ? 'agreement-markdown' : 'latest-agreement-config',
+      code: error?.code,
+      message: error?.message,
+      uid: editorState.user?.uid || '',
+      agreementId,
+      latestVersion
+    })
     editorState.agreement.latestVersion = ''
     editorState.agreement.error = 'Could not load seller agreement.'
   } finally {
@@ -1676,3 +1648,33 @@ window.addEventListener('hashchange', () => {
 })
 
 initPage()
+async function saveCurrentDraftAndReturnId({ reason = 'save', desiredStatus = 'draft' } = {}) {
+  if (!editorState.user || !editorState.draft) throw new Error('missing-user-or-draft')
+  if (!String(editorState.draft.title || '').trim()) throw new Error('Add a product title before saving this draft.')
+  if (!String(editorState.draft.artistId || editorState.user.uid || '').trim()) throw new Error('missing-artist-id')
+  const fileValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
+  if (!fileValidation.ok) throw new Error(fileValidation.errors[0] || 'draft-file-validation-failed')
+  if (reason === 'submit-review' && fileValidation.warnings.includes('No deliverable has been added yet.')) {
+    throw new Error('Add a deliverable before submitting for review.')
+  }
+  const wasNewDraft = !editorState.draft.id || isPlaceholderProductId(editorState.draft.id)
+  const payload = buildProductPayload({
+    ...editorState.draft,
+    artistId: editorState.user.uid,
+    visibility: editorState.draft.visibility || 'private',
+    status: desiredStatus === 'published' ? 'review_pending' : 'draft'
+  }, editorState.user)
+  const result = await saveProductDraft(editorState.user, payload, {
+    productId: wasNewDraft ? '' : editorState.draft.id,
+    status: desiredStatus === 'published' ? 'review_pending' : 'draft',
+    isNew: wasNewDraft,
+    mediaFiles: editorState.mediaFiles,
+    galleryFiles: editorState.mediaFiles.gallery,
+    previewAudioFiles: editorState.mediaFiles.previewAudio,
+    previewVideoFiles: editorState.mediaFiles.previewVideo
+  })
+  updateDraftField('id', result.productId)
+  updateDraftField('status', result.payload?.status || editorState.draft.status)
+  updateDraftField('slug', result.payload?.slug || payload.slug)
+  return result.productId
+}
