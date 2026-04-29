@@ -885,6 +885,15 @@ function sanitizeStorageFileName(name = '') {
     .slice(0, 160) || `file-${Date.now()}`
 }
 
+function normalizePriceFields(draft = {}) {
+  const rawPriceCents = Number(draft.priceCents)
+  const rawPayoutTargetCents = Number(draft.payoutTargetCents)
+  const priceCents = Number.isFinite(rawPriceCents) ? Math.max(0, Math.round(rawPriceCents)) : 0
+  const payoutTargetCents = Number.isFinite(rawPayoutTargetCents) ? Math.max(0, Math.round(rawPayoutTargetCents)) : priceCents
+  const currency = String(draft.currency || 'USD').trim().toUpperCase() || 'USD'
+  return { priceCents, payoutTargetCents, isFree: priceCents === 0, currency }
+}
+
 function normalizeFileKind(raw = '', mimeType = '') {
   const key = normalizeKey(raw)
   if (key) return key
@@ -1415,6 +1424,7 @@ export async function createOrUpdateProductShell(input = {}, user = null) {
   const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
   const existing = await getDoc(productRef)
   const creator = getCreatorIdentity(user, input)
+  const pricing = normalizePriceFields(input)
   const payload = {
     id: productId,
     slug: String(input.slug || productId),
@@ -1431,6 +1441,7 @@ export async function createOrUpdateProductShell(input = {}, user = null) {
     artistProfilePath: `profiles/${user.uid}`,
     artistAvatarURL: String(creator.artistAvatarURL || ''),
     artistPhotoURL: String(creator.artistPhotoURL || ''),
+    ...pricing,
     updatedAt: serverTimestamp(),
     ...(existing.exists() ? {} : { createdAt: serverTimestamp() })
   }
@@ -1464,7 +1475,9 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
   const previewAudio = byRole('previewAudio').map((item) => item.storagePath).filter(Boolean)
   const previewVideo = byRole('previewVideo').map((item) => item.storagePath).filter(Boolean)
   const totalBytes = uploadedFiles.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
-  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
+  const pricing = normalizePriceFields(draft)
+  const payload = {
+    ...pricing,
     coverPath: cover?.storagePath || draft.coverPath || '',
     thumbnailPath: thumbnail?.storagePath || draft.thumbnailPath || '',
     galleryPaths: gallery,
@@ -1476,6 +1489,16 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
     licensePath: license?.storagePath || '',
     assetSummary: { totalFiles: uploadedFiles.length, totalBytes },
     updatedAt: serverTimestamp()
+  }
+  console.info('[productService] saving product pricing fields', {
+    productId,
+    priceCents: payload.priceCents,
+    payoutTargetCents: payload.payoutTargetCents,
+    isFree: payload.isFree,
+    currency: payload.currency
+  })
+  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
+    ...payload
   }, { merge: true })
 
   const filesCol = collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files')

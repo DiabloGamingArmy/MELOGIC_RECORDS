@@ -89,6 +89,7 @@ let editorState = {
   },
   publishConfirmOpen: false,
   status: { message: '', state: 'info' },
+  reviewResult: null,
   creatorProfile: null,
   draft: null,
   requestedProductId: new URLSearchParams(window.location.search).get('id') || ''
@@ -805,6 +806,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
     { id: 'visibility', label: 'Visibility selected', status: draft.visibility ? 'ready' : 'blocked', message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
     { id: 'quota', label: 'No quota errors', status: 'ready', message: 'No quota errors detected.', targetSection: 'media-upload' },
     { id: 'save-errors', label: 'No upload/save errors', status: state.status?.state === 'error' ? 'warning' : 'ready', message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' }
+    , { id: 'ai-review', label: 'AI review availability', status: state.reviewResult?.aiEnabled ? 'ready' : 'warning', message: state.reviewResult?.aiEnabled ? 'AI review enabled.' : 'AI review unavailable; rule-based review used.', targetSection: 'publish' }
   ]
 }
 
@@ -1574,9 +1576,13 @@ function renderEditor() {
       if (desiredStatus === 'published') {
         submitStep = 'submit-for-review'
         const reviewResult = await submitProductForReview({ productId })
+        editorState.reviewResult = reviewResult || null
         updateDraftField('status', reviewResult?.status || 'review_pending')
+        if (reviewResult?.status === 'published') setStatus('Product approved and published.', 'success')
+        else if (reviewResult?.status === 'needs_changes') setStatus(`Product needs changes. ${reviewResult?.summary || (reviewResult?.reasons || []).join(' ')}`.trim(), 'error')
+        else setStatus('Product submitted for review.', 'success')
       }
-      setStatus(desiredStatus === 'published' ? 'Submitted for review.' : 'Draft saved.', 'success')
+      if (desiredStatus !== 'published') setStatus('Draft saved.', 'success')
       renderEditor()
     } catch (error) {
       console.error('[new-product] submit failed', {
