@@ -1519,7 +1519,11 @@ function renderEditor() {
       renderEditor()
     } catch (error) {
       console.warn('[new-product] save failed', error?.code || error?.message || error)
-      setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
+      if (String(error?.code || '').includes('permission-denied')) {
+        setStatus('Could not save product draft. Please check that you are signed in and that the product fields are valid.', 'error')
+      } else {
+        setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
+      }
       renderEditor()
     }
   }
