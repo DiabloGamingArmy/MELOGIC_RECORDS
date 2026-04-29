@@ -1519,7 +1519,7 @@ function renderEditor() {
       renderEditor()
     } catch (error) {
       console.warn('[new-product] save failed', error?.code || error?.message || error)
-      setStatus(desiredStatus === 'published' ? 'Could not submit for review.' : 'Could not save draft.', 'error')
+      setStatus(desiredStatus === 'published' ? 'Could not save draft. Check required fields and try again.' : 'Could not save draft.', 'error')
       renderEditor()
     }
   }

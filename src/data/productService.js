@@ -718,6 +718,17 @@ function createProductId() {
 }
 
 const PLACEHOLDER_PRODUCT_IDS = new Set(['test', 'temp', 'tmp', 'placeholder', 'fake'])
+const CLIENT_PROTECTED_PRODUCT_KEYS = [
+  'likeCount', 'dislikeCount', 'saveCount', 'downloadCount', 'commentCount', 'shareCount', 'followCount', 'counts',
+  'featured', 'promoted', 'moderationStatus', 'moderationSummary', 'moderationReasons', 'reviewedAt', 'reviewedBy',
+  'publishedAt', 'salesCount', 'revenue', 'entitlementCount'
+]
+
+function sanitizeClientProductDraftPayload(payload = {}) {
+  const sanitized = { ...(payload || {}) }
+  CLIENT_PROTECTED_PRODUCT_KEYS.forEach((key) => delete sanitized[key])
+  return sanitized
+}
 
 function createStageError(stage, message, cause = null) {
   const error = new Error(message)
@@ -1028,10 +1039,12 @@ export async function initializeProductDraft(user, input = {}, requestedId = '')
 
 export async function saveProductDraft(user, input = {}, options = {}) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
+  if (!String(input?.title || '').trim()) throw new Error('Add a product title before saving this draft.')
 
   const requestedId = options.productId || input.id || ''
   let productId = ''
   let created = false
+  let payload = null
   let stage = 'draft-initialization'
   try {
     const initialization = await initializeProductDraft(user, input, requestedId)
@@ -1047,16 +1060,19 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   } catch (error) {
     console.warn('[productService] draft save failed', {
       stage,
-      code: error?.code || error?.cause?.code,
-      message: error?.message || error?.cause?.message,
+      code: error?.code,
+      message: error?.message,
       productId,
-      payloadId: input?.id,
-      artistId: input?.artistId,
+      payloadId: payload?.id,
+      idsMatch: payload?.id === productId,
+      artistId: payload?.artistId,
       currentUid: user?.uid,
-      title: Boolean(input?.title),
-      status: input?.status,
-      visibility: input?.visibility,
-      payloadKeys: Object.keys(input || {})
+      artistMatchesUser: payload?.artistId === user?.uid,
+      titlePresent: Boolean(String(payload?.title || '').trim()),
+      status: payload?.status,
+      visibility: payload?.visibility,
+      payloadKeys: Object.keys(payload || {}),
+      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
     })
     throw createStageError('draft-initialization', 'Draft initialization failed.', error)
   }
@@ -1144,7 +1160,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   const desiredStatus = options.status || basePayload.status || 'draft'
   const editingPublishedListing = input.currentStatus === 'published' || basePayload.status === 'published'
   const normalizedStatus = editingPublishedListing ? 'review_pending' : (desiredStatus === 'published' ? 'review_pending' : desiredStatus)
-  const payload = {
+  payload = sanitizeClientProductDraftPayload({
     ...basePayload,
     id: productId,
     ...creator,
@@ -1174,7 +1190,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     }, basePayload.productType),
     updatedAt: serverTimestamp(),
     createdAt: options.isNew ? serverTimestamp() : basePayload.createdAt || serverTimestamp()
-  }
+  })
   const isSubmittingForReview = desiredStatus === 'published'
   if (!isSubmittingForReview && !String(input.title || '').trim()) {
     delete payload.title
@@ -1189,6 +1205,22 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       options.onStatus('Final product metadata saved.')
     }
   } catch (error) {
+    console.warn('[productService] draft save failed', {
+      stage: 'final-firestore-merge',
+      code: error?.code,
+      message: error?.message,
+      productId,
+      payloadId: payload?.id,
+      idsMatch: payload?.id === productId,
+      artistId: payload?.artistId,
+      currentUid: user?.uid,
+      artistMatchesUser: payload?.artistId === user?.uid,
+      titlePresent: Boolean(String(payload?.title || '').trim()),
+      status: payload?.status,
+      visibility: payload?.visibility,
+      payloadKeys: Object.keys(payload || {}),
+      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
+    })
     throw createStageError('final-firestore-merge', 'Final product metadata save failed.', error)
   }
 
