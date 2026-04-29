@@ -9,7 +9,6 @@ import {
   query,
   serverTimestamp,
   setDoc,
-  updateDoc,
   startAfter,
   where,
   writeBatch
@@ -723,10 +722,41 @@ const CLIENT_PROTECTED_PRODUCT_KEYS = [
   'featured', 'promoted', 'moderationStatus', 'moderationSummary', 'moderationReasons', 'reviewedAt', 'reviewedBy',
   'publishedAt', 'salesCount', 'revenue', 'entitlementCount'
 ]
+const CLIENT_STRIPPED_PRODUCT_KEYS = [
+  'price',
+  'priceLabel',
+  'mediaFiles',
+  'deliverableFiles',
+  'folderDeliverables',
+  'previewAudioURLs',
+  'previewVideoURLs',
+  'galleryURLs',
+  'primaryPreviewURL',
+  'blobURL',
+  'objectURL',
+  'localPreviewURL',
+  'previewURL'
+]
+const FIRESTORE_PRODUCT_CLIENT_ALLOWED_KEYS = new Set([
+  'id', 'slug', 'status', 'visibility',
+  'title', 'shortDescription', 'description', 'version', 'usageLicense', 'productType', 'productKind', 'previewMode', 'distributionMode',
+  'categories', 'genres', 'tags', 'categoryKeys', 'genreKeys', 'tagKeys', 'searchKeywords',
+  'artistId', 'artistName', 'artistDisplayName', 'artistUsername', 'artistProfilePath', 'artistAvatarURL', 'artistPhotoURL', 'artistNameLower', 'artistUsernameLower',
+  'contributorIds', 'contributorNames', 'contributorCount', 'pendingContributorIds', 'contributorRequestCount', 'sellerAgreement', 'sellerAgreementAccepted', 'sellerAgreementVersion',
+  'coverPath', 'thumbnailPath', 'coverURL', 'thumbnailURL', 'galleryPaths', 'previewAudioPaths', 'previewVideoPaths', 'downloadPath', 'licensePath', 'assetSummary',
+  'primaryPreviewPath', 'primaryPreviewType', 'primaryPreviewDuration', 'primaryDownloadPath', 'primaryDownloadBytes', 'previewAssignment',
+  'priceCents', 'payoutTargetCents', 'currency', 'isFree', 'saleEnabled', 'storefrontVisible',
+  'dawCompatibility', 'formatKeys', 'formatNotes', 'compatibilityNotes', 'includedFiles',
+  'releasedAt', 'createdAt', 'updatedAt'
+])
 
 function sanitizeClientProductDraftPayload(payload = {}) {
-  const sanitized = { ...(payload || {}) }
+  const sanitized = {}
+  Object.entries(payload || {}).forEach(([key, value]) => {
+    if (FIRESTORE_PRODUCT_CLIENT_ALLOWED_KEYS.has(key)) sanitized[key] = value
+  })
   CLIENT_PROTECTED_PRODUCT_KEYS.forEach((key) => delete sanitized[key])
+  CLIENT_STRIPPED_PRODUCT_KEYS.forEach((key) => delete sanitized[key])
   return sanitized
 }
 
@@ -1199,6 +1229,15 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     delete payload.productType
   }
 
+  if (isDevelopmentRuntime) {
+    console.debug('[productService] saveProductDraft payload debug', {
+      productId,
+      payloadKeys: Object.keys(payload || {}),
+      status: payload?.status,
+      artistId: payload?.artistId,
+      uid: user?.uid
+    })
+  }
   try {
     await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
     if (typeof options.onStatus === 'function') {
@@ -1237,54 +1276,8 @@ export async function saveProductDraft(user, input = {}, options = {}) {
 }
 
 export async function submitMarketplaceProductForReview({ user, productId, product }) {
-  if (!db || !user?.uid || !productId) throw new Error('Missing review submission context.')
-  await updateDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
-    status: 'review_pending',
-    moderationStatus: 'pending_ai_review',
-    updatedAt: serverTimestamp()
-  })
-  await setDoc(doc(db, 'pendingReview', 'marketplace', 'items', productId), {
-    id: productId,
-    productId,
-    productPath: `products/${productId}`,
-    sellerId: user.uid,
-    sellerProfilePath: `profiles/${user.uid}`,
-    status: 'pending_ai_review',
-    reviewType: 'marketplace-product',
-    source: 'new-product-editor',
-    productSnapshot: {
-      title: product?.title || '',
-      slug: product?.slug || '',
-      shortDescription: product?.shortDescription || '',
-      description: product?.description || '',
-      productType: product?.productType || '',
-      productKind: product?.productKind || '',
-      categories: product?.categories || [],
-      genres: product?.genres || [],
-      tags: product?.tags || [],
-      priceCents: Number(product?.priceCents || 0),
-      payoutTargetCents: Number(product?.payoutTargetCents || 0),
-      currency: product?.currency || 'USD',
-      isFree: Boolean(product?.isFree),
-      visibility: product?.visibility || 'private',
-      coverPath: product?.coverPath || '',
-      thumbnailPath: product?.thumbnailPath || '',
-      previewAudioPaths: product?.previewAudioPaths || [],
-      previewVideoPaths: product?.previewVideoPaths || [],
-      primaryDownloadPath: product?.primaryDownloadPath || '',
-      assetSummary: product?.assetSummary || {},
-      sellerAgreementVersion: product?.sellerAgreementVersion || '',
-      sellerAgreementAccepted: Boolean(product?.sellerAgreementAccepted)
-    },
-    checks: {
-      ai: { status: 'pending', score: null, reasons: [], reviewedAt: null },
-      rules: { status: 'pending', blockers: [], warnings: [] },
-      human: { status: 'not_required', reviewedBy: '', reviewedAt: null, notes: '' }
-    },
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  }, { merge: true })
-  return { status: 'review_pending' }
+  if (!user?.uid || !productId) throw new Error('Missing review submission context.')
+  return requestProductReview(productId)
 }
 
 export async function requestProductReview(productId = '') {
