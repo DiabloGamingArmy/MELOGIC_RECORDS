@@ -170,8 +170,6 @@ function createEmptyProductDraft(user = null, profile = null) {
     thumbnailURL: '',
     updatedAt: ''
   }
-  if (totalBytes > PRODUCT_QUOTAS.maxTotalDeliverableBytes) return 'This product exceeds the 1 GB deliverable limit.'
-  return ''
 }
 
 function readSectionHash() {
@@ -538,15 +536,24 @@ function refreshAgreementAcceptButton() {
   button.disabled = !canAccept
 }
 
-async function ensureCurrentDraftProduct({ silent = true } = {}) {
+async function ensureCurrentDraftProductForAgreement() {
   if (!editorState.user || !editorState.draft) return ''
-  const existingId = String(editorState.draft.id || '')
-  if (existingId && !isPlaceholderProductId(existingId)) return existingId
-
   const title = String(editorState.draft.title || '').trim()
   if (!title) {
-    if (!silent) setStatus('Add a product title before accepting the agreement.', 'error')
+    setStatus('Add a product title before accepting the agreement.', 'error')
     return ''
+  }
+
+  const existingId = String(editorState.draft.id || '')
+  if (existingId && !isPlaceholderProductId(existingId)) {
+    const existingSnap = await getDoc(doc(db, 'products', existingId))
+    if (existingSnap.exists()) {
+      const existingData = existingSnap.data() || {}
+      if (String(existingData.artistId || '') !== String(editorState.user.uid || '')) {
+        throw new Error('agreement-product-owner-mismatch')
+      }
+      return existingId
+    }
   }
 
   const payload = buildProductPayload({ ...editorState.draft, profile: editorState.creatorProfile || {}, status: 'draft' }, editorState.user)
@@ -560,6 +567,8 @@ async function ensureCurrentDraftProduct({ silent = true } = {}) {
     previewVideoFiles: editorState.mediaFiles.previewVideo
   })
   updateDraftField('id', result.productId)
+  const savedSnap = await getDoc(doc(db, 'products', result.productId))
+  if (!savedSnap.exists()) throw new Error('agreement-product-missing-after-save')
   return result.productId
 }
 
@@ -1267,13 +1276,32 @@ function renderEditor() {
 
     editorState.agreement.accepting = true
     renderEditor()
+    let stage = 'ensure-draft'
     let productId = String(editorState.draft.id || '')
-    const hadPlaceholderProductId = !productId || isPlaceholderProductId(productId)
-    let productDocExisted = false
+    let productExists = false
+    let productArtistId = ''
+    let productStatus = ''
+    let latestVersion = String(editorState.agreement.config?.activeVersion || '')
+    const currentUid = String(editorState.user.uid || '')
     try {
-      productId = await ensureCurrentDraftProduct({ silent: false })
+      productId = await ensureCurrentDraftProductForAgreement()
       if (!productId) {
         renderEditor()
+        return
+      }
+      const productRef = doc(db, 'products', productId)
+      const productSnap = await getDoc(productRef)
+      productExists = productSnap.exists()
+      if (!productExists) throw new Error('agreement-product-missing-after-save')
+      const productData = productSnap.data() || {}
+      productArtistId = String(productData.artistId || '')
+      productStatus = String(productData.status || '')
+      if (productArtistId !== currentUid) {
+        setStatus('You do not have permission to accept this agreement for this product.', 'error')
+        throw new Error('agreement-product-owner-mismatch')
+      }
+      if (productStatus === 'published') {
+        setStatus('Published products cannot accept a new seller agreement from this editor.', 'error')
         return
       }
       const productRef = doc(db, 'products', productId)
@@ -1281,9 +1309,10 @@ function renderEditor() {
       productDocExisted = productSnap.exists()
       if (!productDocExisted) throw new Error('Draft product missing after initialization')
       const config = editorState.agreement.config
+      latestVersion = String(config.activeVersion || '')
       const agreementPayload = {
         agreementId: config.agreementId,
-        version: config.activeVersion,
+        version: latestVersion,
         title: config.title,
         storagePath: config.storagePath,
         format: config.format || 'markdown',
@@ -1292,38 +1321,53 @@ function renderEditor() {
         acceptedAt: serverTimestamp(),
         accepted: true
       }
+      stage = 'product-update'
       await updateDoc(productRef, {
         sellerAgreement: agreementPayload,
         sellerAgreementAccepted: true,
-        sellerAgreementVersion: config.activeVersion,
+        sellerAgreementVersion: latestVersion,
         updatedAt: serverTimestamp()
       })
+      stage = 'user-acceptance-write'
       await setDoc(doc(db, 'users', editorState.user.uid, 'agreementAcceptances', `${config.agreementId}_${config.activeVersion}`), {
         agreementId: config.agreementId,
-        version: config.activeVersion,
+        version: latestVersion,
         title: config.title,
         storagePath: config.storagePath,
         format: config.format || 'markdown',
-        signedName,
         productId,
         acceptedAt: serverTimestamp(),
         accepted: true
       }, { merge: true })
+      stage = 'local-state-update'
       updateDraftField('sellerAgreement', { ...agreementPayload, acceptedAt: new Date().toISOString() })
       updateDraftField('sellerAgreementAccepted', true)
-      updateDraftField('sellerAgreementVersion', config.activeVersion)
+      updateDraftField('sellerAgreementVersion', latestVersion)
+      saveDraftState()
       setStatus('Agreement accepted.', 'success')
     } catch (error) {
+      const hasValidProductId = Boolean(productId) && !isPlaceholderProductId(productId)
       console.warn('[new-product] agreement acceptance failed', {
+        stage,
         code: error?.code,
         message: error?.message,
         productId,
-        hasValidProductId: Boolean(productId) && !isPlaceholderProductId(productId),
-        hadPlaceholderProductId,
-        productDocExisted,
-        latestVersion: editorState.agreement.config?.activeVersion || ''
+        hasValidProductId,
+        productExists,
+        productArtistId,
+        currentUid,
+        productStatus,
+        latestVersion
       })
-      setStatus('Could not save agreement acceptance. Please try again.', 'error')
+      if (stage === 'product-update' && error?.code === 'permission-denied') {
+        setStatus('Could not save agreement acceptance. Please save the draft first, then try again.', 'error')
+      } else if (stage === 'user-acceptance-write') {
+        setStatus('Agreement was saved to the product, but the account acceptance record could not be saved. Please try again.', 'error')
+      } else if (error?.message === 'agreement-product-owner-mismatch') {
+        setStatus('You do not have permission to accept this agreement for this product.', 'error')
+      } else if (error?.message !== 'agreement-product-owner-mismatch') {
+        setStatus('Could not save agreement acceptance. Please try again.', 'error')
+      }
     } finally {
       editorState.agreement.accepting = false
       renderEditor()
