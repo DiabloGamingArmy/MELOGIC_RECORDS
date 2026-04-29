@@ -760,6 +760,30 @@ function sanitizeClientProductDraftPayload(payload = {}) {
   return sanitized
 }
 
+function logDraftFirestoreWrite({
+  operation = '',
+  path = '',
+  user = null,
+  productId = '',
+  payload = null,
+  batchTargets = []
+} = {}) {
+  if (!isDevelopmentRuntime) return
+  console.debug('[productService] draft write diagnostic', {
+    operation,
+    path,
+    uid: user?.uid || null,
+    productId: productId || null,
+    payloadId: payload?.id || null,
+    payloadArtistId: payload?.artistId || null,
+    payloadStatus: payload?.status || null,
+    payloadVisibility: payload?.visibility || null,
+    payloadKeys: payload ? Object.keys(payload).sort() : [],
+    payload: payload || null,
+    batchTargets
+  })
+}
+
 function createStageError(stage, message, cause = null) {
   const error = new Error(message)
   error.stage = stage
@@ -793,25 +817,33 @@ async function ensureDraftProductDocument(user, input = {}, productId = '') {
   const creator = getCreatorIdentity(user, input)
 
   const now = serverTimestamp()
+  const payload = {
+    id: productId,
+    artistId: creator.artistId || user.uid,
+    artistName: creator.artistName,
+    artistDisplayName: creator.artistDisplayName,
+    artistUsername: creator.artistUsername,
+    artistProfilePath: creator.artistProfilePath,
+    artistAvatarURL: creator.artistAvatarURL,
+    artistPhotoURL: creator.artistPhotoURL,
+    title: String(input.title || '').trim() || 'Untitled product',
+    productType: input.productType || 'Sample Pack',
+    slug: input.slug || productId,
+    status: 'draft',
+    visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private'),
+    createdAt: now,
+    updatedAt: now
+  }
+  logDraftFirestoreWrite({
+    operation: 'setDoc ensureDraftProductDocument',
+    path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
+    user,
+    productId,
+    payload
+  })
   await setDoc(
     doc(db, FIRESTORE_COLLECTIONS.products, productId),
-    {
-      id: productId,
-      artistId: creator.artistId || user.uid,
-      artistName: creator.artistName,
-      artistDisplayName: creator.artistDisplayName,
-      artistUsername: creator.artistUsername,
-      artistProfilePath: creator.artistProfilePath,
-      artistAvatarURL: creator.artistAvatarURL,
-      artistPhotoURL: creator.artistPhotoURL,
-      title: String(input.title || '').trim() || 'Untitled product',
-      productType: input.productType || 'Sample Pack',
-      slug: input.slug || productId,
-      status: 'draft',
-      visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private'),
-      createdAt: now,
-      updatedAt: now
-    },
+    payload,
     { merge: true }
   )
 }
@@ -1038,20 +1070,42 @@ export async function uploadProductFiles(productId, files = [], options = {}) {
   return uploaded
 }
 
-export async function saveProductFileManifest(productId, fileRows = []) {
+export async function saveProductFileManifest(productId, fileRows = [], user = null) {
   if (!db || !productId) return
   const filesCol = collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files')
   const batch = writeBatch(db)
   fileRows.forEach((row, index) => {
     const id = row.id || doc(filesCol).id
-    batch.set(doc(filesCol, id), {
+    const filePayload = {
       ...row,
       id,
       productId,
       sortIndex: Number(row.sortIndex ?? index),
       updatedAt: serverTimestamp(),
       createdAt: row.createdAt || serverTimestamp()
-    }, { merge: true })
+    }
+    batch.set(doc(filesCol, id), filePayload, { merge: true })
+  })
+  logDraftFirestoreWrite({
+    operation: 'batch.commit saveProductFileManifest',
+    path: `${FIRESTORE_COLLECTIONS.products}/${productId}/files/*`,
+    user,
+    productId,
+    payload: null,
+    batchTargets: fileRows.map((row, index) => {
+      const id = row.id || `generated-${index}`
+      return {
+        path: `${FIRESTORE_COLLECTIONS.products}/${productId}/files/${id}`,
+        payloadKeys: Object.keys({
+          ...row,
+          id,
+          productId,
+          sortIndex: Number(row.sortIndex ?? index),
+          updatedAt: true,
+          createdAt: true
+        }).sort()
+      }
+    })
   })
   await batch.commit()
 }
@@ -1088,21 +1142,18 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       throw createStageError('draft-verification', 'Draft existence check failed after initialization.')
     }
   } catch (error) {
-    console.warn('[productService] draft save failed', {
-      stage,
+    console.error('[productService] draft save failed', {
       code: error?.code,
       message: error?.message,
+      name: error?.name,
+      stack: error?.stack,
       productId,
-      payloadId: payload?.id,
-      idsMatch: payload?.id === productId,
-      artistId: payload?.artistId,
-      currentUid: user?.uid,
-      artistMatchesUser: payload?.artistId === user?.uid,
-      titlePresent: Boolean(String(payload?.title || '').trim()),
-      status: payload?.status,
-      visibility: payload?.visibility,
-      payloadKeys: Object.keys(payload || {}),
-      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
+      uid: user?.uid || null,
+      payloadId: payload?.id || null,
+      payloadArtistId: payload?.artistId || null,
+      payloadStatus: payload?.status || null,
+      payloadKeys: payload ? Object.keys(payload).sort() : [],
+      payload
     })
     throw createStageError('draft-initialization', 'Draft initialization failed.', error)
   }
@@ -1180,7 +1231,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
 
   try {
     if (fileManifestRows.length) {
-      await saveProductFileManifest(productId, fileManifestRows)
+      await saveProductFileManifest(productId, fileManifestRows, user)
       if (typeof options.onStatus === 'function') options.onStatus('File manifest saved.')
     }
   } catch (error) {
@@ -1229,36 +1280,31 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     delete payload.productType
   }
 
-  if (isDevelopmentRuntime) {
-    console.debug('[productService] saveProductDraft payload debug', {
-      productId,
-      payloadKeys: Object.keys(payload || {}),
-      status: payload?.status,
-      artistId: payload?.artistId,
-      uid: user?.uid
-    })
-  }
+  logDraftFirestoreWrite({
+    operation: 'setDoc saveProductDraft final-firestore-merge',
+    path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
+    user,
+    productId,
+    payload
+  })
   try {
     await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), payload, { merge: true })
     if (typeof options.onStatus === 'function') {
       options.onStatus('Final product metadata saved.')
     }
   } catch (error) {
-    console.warn('[productService] draft save failed', {
-      stage: 'final-firestore-merge',
+    console.error('[productService] draft save failed', {
       code: error?.code,
       message: error?.message,
+      name: error?.name,
+      stack: error?.stack,
       productId,
-      payloadId: payload?.id,
-      idsMatch: payload?.id === productId,
-      artistId: payload?.artistId,
-      currentUid: user?.uid,
-      artistMatchesUser: payload?.artistId === user?.uid,
-      titlePresent: Boolean(String(payload?.title || '').trim()),
-      status: payload?.status,
-      visibility: payload?.visibility,
-      payloadKeys: Object.keys(payload || {}),
-      protectedKeysPresent: CLIENT_PROTECTED_PRODUCT_KEYS.filter((key) => key in (payload || {}))
+      uid: user?.uid || null,
+      payloadId: payload?.id || null,
+      payloadArtistId: payload?.artistId || null,
+      payloadStatus: payload?.status || null,
+      payloadKeys: payload ? Object.keys(payload).sort() : [],
+      payload
     })
     throw createStageError('final-firestore-merge', 'Final product metadata save failed.', error)
   }
