@@ -233,9 +233,34 @@ exports.requestProductReview = onCall(
 
   const nextVisibility = finalStatus === 'published' ? 'public' : (product.visibility === 'public' ? 'unlisted' : (product.visibility || 'private'))
 
+
+  const releasedAtValue = finalStatus === 'published'
+    ? (product.releasedAt || admin.firestore.FieldValue.serverTimestamp())
+    : (product.releasedAt || null)
+  const featuredValue = finalStatus === 'published' ? (product.featured === true) : false
+  const listingCounts = {
+    likeCount: Number(product.likeCount || 0),
+    saveCount: Number(product.saveCount || 0),
+    downloadCount: Number(product.downloadCount || 0),
+    commentCount: Number(product.commentCount || 0),
+    shareCount: Number(product.shareCount || 0),
+    followCount: Number(product.followCount || 0),
+    counts: {
+      likes: Number(product.counts?.likes || 0),
+      dislikes: Number(product.counts?.dislikes || 0),
+      saves: Number(product.counts?.saves || 0),
+      shares: Number(product.counts?.shares || 0),
+      comments: Number(product.counts?.comments || 0),
+      downloads: Number(product.counts?.downloads || 0),
+      follows: Number(product.counts?.follows || 0)
+    }
+  }
+
   await productRef.set({
     status: finalStatus,
     visibility: nextVisibility,
+    featured: featuredValue,
+    releasedAt: releasedAtValue,
     moderationStatus,
     moderationReasons: reasons,
     moderationSummary: aiResult.summary || (reasons.length ? 'Automated moderation flagged content.' : 'Automated moderation passed.'),
@@ -247,6 +272,7 @@ exports.requestProductReview = onCall(
     moderationAIModel: model || '',
     moderationAIError: aiResult.error || '',
     moderationAICompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+    ...listingCounts,
     priceCents: normalizedPriceCents,
     isFree: normalizedPriceCents === 0,
     currency: String(product.currency || 'USD').trim().toUpperCase() || 'USD',
@@ -273,5 +299,12 @@ exports.requestProductReview = onCall(
     readAt: null
   })
 
-  return { status: finalStatus, aiEnabled: Boolean(aiResult.aiEnabled) }
+  return {
+    status: finalStatus,
+    aiEnabled: Boolean(aiResult.aiEnabled),
+    aiConfigured: Boolean(aiResult.aiConfigured),
+    aiSucceeded: Boolean(aiResult.aiSucceeded),
+    summary: aiResult.summary || '',
+    reasons: Array.isArray(aiResult.reasons) ? aiResult.reasons : []
+  }
 })

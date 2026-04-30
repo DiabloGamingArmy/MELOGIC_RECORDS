@@ -806,7 +806,22 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
     { id: 'visibility', label: 'Visibility selected', severity: draft.visibility ? 'success' : 'error', blocking: !draft.visibility, message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
     { id: 'quota', label: 'No quota errors', severity: 'success', blocking: false, message: 'No quota errors detected.', targetSection: 'media-upload' },
     { id: 'save-errors', label: 'No upload/save errors', severity: state.status?.state === 'error' ? 'warning' : 'success', blocking: false, message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' },
-    { id: 'ai-review', label: 'AI review availability', severity: state.reviewResult?.aiEnabled ? 'success' : 'warning', blocking: false, message: state.reviewResult?.aiEnabled ? 'AI review enabled.' : 'AI review unavailable; rule-based review used.', targetSection: 'publish' }
+    {
+      id: 'ai-review',
+      label: 'AI review availability',
+      severity: state.reviewResult
+        ? (state.reviewResult?.aiConfigured === true && state.reviewResult?.aiSucceeded === true ? 'success' : 'warning')
+        : 'info',
+      blocking: false,
+      message: state.reviewResult
+        ? (state.reviewResult?.aiConfigured === true && state.reviewResult?.aiSucceeded === true
+            ? 'AI review completed.'
+            : state.reviewResult?.aiConfigured === true
+              ? 'AI configured but failed; rule-based fallback used.'
+              : 'AI not configured; rule-based fallback used.')
+        : 'AI review availability will be checked during submission.',
+      targetSection: 'publish'
+    }
   ]
 }
 
@@ -1584,7 +1599,8 @@ function renderEditor() {
         updateDraftField('status', reviewResult?.status || 'review_pending')
         if (reviewResult?.status === 'published') setStatus('Product approved and published.', 'success')
         else if (reviewResult?.status === 'needs_changes') setStatus(`Product needs changes. ${reviewResult?.summary || (reviewResult?.reasons || []).join(' ')}`.trim(), 'error')
-        else if (reviewResult?.aiEnabled === false) setStatus('Submitted for review. AI review unavailable; rule-based review used.', 'success')
+        else if (reviewResult?.aiConfigured === true && reviewResult?.aiSucceeded === false) setStatus('Submitted for review. AI configured but failed; rule-based fallback used.', 'success')
+        else if (reviewResult?.aiConfigured === false) setStatus('Submitted for review. AI not configured; rule-based fallback used.', 'success')
         else setStatus('Product submitted for review.', 'success')
       }
       if (desiredStatus !== 'published') setStatus('Draft saved.', 'success')
