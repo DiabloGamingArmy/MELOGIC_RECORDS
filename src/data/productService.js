@@ -157,14 +157,15 @@ async function safeStorageUrl(path, fallback = '') {
 }
 
 export async function resolveProductMedia(product) {
-  const productId = product.id
-  const thumbnailPath = product.thumbnailPath || STORAGE_PATHS.productThumb(productId)
-  const coverPath = product.coverPath || STORAGE_PATHS.productCover(productId)
+  const explicitThumbnailPath = String(product.thumbnailPath || '').trim()
+  const explicitCoverPath = String(product.coverPath || '').trim()
   const galleryPaths = Array.isArray(product.galleryPaths) ? product.galleryPaths.slice(0, 12) : []
   const previewVideoPaths = Array.isArray(product.previewVideoPaths) ? product.previewVideoPaths.slice(0, 6) : []
 
-  const thumbnailURL = await safeStorageUrl(thumbnailPath)
-  const coverURL = await safeStorageUrl(coverPath, thumbnailURL)
+  const coverURL = explicitCoverPath ? await safeStorageUrl(explicitCoverPath) : ''
+  const thumbnailURL = explicitThumbnailPath
+    ? await safeStorageUrl(explicitThumbnailPath, coverURL)
+    : coverURL
   const previewAudioURLs = await Promise.all((product.previewAudioPaths || []).map((path) => safeStorageUrl(path)))
   const primaryPreviewURL = product.primaryPreviewPath ? await safeStorageUrl(product.primaryPreviewPath) : ''
   const galleryURLs = await Promise.all(galleryPaths.map((path) => safeStorageUrl(path)))
@@ -174,10 +175,10 @@ export async function resolveProductMedia(product) {
   const hoverVideoURL = assignment.hoverVideoURL || await safeStorageUrl(assignment.hoverVideoPath)
 
   return {
-    thumbnailPath,
-    coverPath,
+    thumbnailPath: explicitThumbnailPath || explicitCoverPath,
+    coverPath: explicitCoverPath,
     thumbnailURL,
-    coverURL,
+    coverURL: coverURL || thumbnailURL,
     previewAudioURLs: previewAudioURLs.filter(Boolean),
     primaryPreviewURL: primaryPreviewURL || previewAudioURLs.find(Boolean) || '',
     galleryURLs: galleryURLs.filter(Boolean),
@@ -1441,6 +1442,15 @@ export async function createOrUpdateProductShell(input = {}, user = null) {
     artistProfilePath: `profiles/${user.uid}`,
     artistAvatarURL: String(creator.artistAvatarURL || ''),
     artistPhotoURL: String(creator.artistPhotoURL || ''),
+    featured: false,
+    releasedAt: null,
+    likeCount: 0,
+    saveCount: 0,
+    downloadCount: 0,
+    commentCount: 0,
+    shareCount: 0,
+    followCount: 0,
+    counts: { likes: 0, dislikes: 0, saves: 0, shares: 0, comments: 0, downloads: 0, follows: 0 },
     ...pricing,
     updatedAt: serverTimestamp(),
     ...(existing.exists() ? {} : { createdAt: serverTimestamp() })
@@ -1476,10 +1486,12 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
   const previewVideo = byRole('previewVideo').map((item) => item.storagePath).filter(Boolean)
   const totalBytes = uploadedFiles.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
   const pricing = normalizePriceFields(draft)
+  const resolvedCoverPath = cover?.storagePath || draft.coverPath || ''
+  const resolvedThumbnailPath = thumbnail?.storagePath || draft.thumbnailPath || resolvedCoverPath || ''
   const payload = {
     ...pricing,
-    coverPath: cover?.storagePath || draft.coverPath || '',
-    thumbnailPath: thumbnail?.storagePath || draft.thumbnailPath || '',
+    coverPath: resolvedCoverPath,
+    thumbnailPath: resolvedThumbnailPath,
     galleryPaths: gallery,
     previewAudioPaths: previewAudio,
     previewVideoPaths: previewVideo,
