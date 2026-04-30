@@ -1,5 +1,11 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
+const { defineSecret, defineString } = require('firebase-functions/params')
 const admin = require('firebase-admin')
+
+const geminiApiKey = defineSecret('GEMINI_API_KEY')
+const productModerationModel = defineString('PRODUCT_MODERATION_MODEL', {
+  default: 'gemini-1.5-flash'
+})
 
 const BLOCKED_KEYWORDS = [
   'terrorist',
@@ -33,9 +39,7 @@ function runRuleBasedModeration(product = {}) {
   }
 }
 
-async function moderateProductWithAI(product = {}) {
-  const model = process.env.PRODUCT_MODERATION_MODEL || ''
-  const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY || ''
+async function moderateProductWithAI(product = {}, { model = '', apiKey = '' } = {}) {
   if (!model || !apiKey) {
     return { approved: true, reasons: [], riskLevel: 'low', suggestedAction: 'approve', aiEnabled: false }
   }
@@ -91,7 +95,13 @@ async function moderateProductWithAI(product = {}) {
   }
 }
 
-exports.requestProductReview = onCall(async (request) => {
+exports.requestProductReview = onCall(
+  {
+    secrets: [geminiApiKey],
+    timeoutSeconds: 60,
+    memory: '256MiB'
+  },
+  async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Authentication required.')
 
@@ -126,7 +136,31 @@ exports.requestProductReview = onCall(async (request) => {
   }, { merge: true })
 
   const ruleResult = runRuleBasedModeration(product)
-  const aiResult = await moderateProductWithAI(product).catch(() => ({ approved: true, reasons: [], suggestedAction: 'approve', aiEnabled: false }))
+  const model = productModerationModel.value() || 'gemini-1.5-flash'
+  const apiKey = geminiApiKey.value()
+
+  await productRef.set({
+    moderationAIConfigured: Boolean(apiKey && model),
+    moderationAIModel: model || '',
+    moderationAIConfigCheckedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+
+  console.info('[requestProductReview] moderation config', {
+    productId,
+    hasApiKey: Boolean(apiKey),
+    model: model || '',
+    aiConfigured: Boolean(apiKey && model)
+  })
+
+  const aiResult = await moderateProductWithAI(product, { model, apiKey })
+    .catch(() => ({
+      approved: true,
+      reasons: [],
+      riskLevel: 'unknown',
+      suggestedAction: 'review_pending',
+      summary: 'AI moderation unavailable; product remains pending review.',
+      aiEnabled: false
+    }))
   const autoApprove = process.env.AUTO_APPROVE_PRODUCTS === 'true'
 
   let finalStatus = 'review_pending'
