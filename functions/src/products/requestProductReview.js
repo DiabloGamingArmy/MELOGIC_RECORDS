@@ -139,10 +139,17 @@ exports.requestProductReview = onCall(
   const model = productModerationModel.value() || 'gemini-1.5-flash'
   const apiKey = geminiApiKey.value()
 
+  await productRef.set({
+    moderationAIConfigured: Boolean(apiKey && model),
+    moderationAIModel: model || '',
+    moderationAIConfigCheckedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+
   console.info('[requestProductReview] moderation config', {
     productId,
-    aiConfigured: Boolean(apiKey && model),
-    model
+    hasApiKey: Boolean(apiKey),
+    model: model || '',
+    aiConfigured: Boolean(apiKey && model)
   })
 
   const aiResult = await moderateProductWithAI(product, { model, apiKey })
