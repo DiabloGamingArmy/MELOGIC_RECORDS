@@ -5,6 +5,8 @@ import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
 import { claimFreeProduct, userOwnsProduct } from './data/entitlementService'
+import { getUserProductEngagementState, setProductReaction, setProductSaved } from './data/productEngagementService'
+import { createProductReview, listProductReviews } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
 
@@ -14,7 +16,11 @@ const state = {
   mediaItems: [],
   selectedMediaIndex: 0,
   currentUser: null,
-  isDraftPreview: false
+  isDraftPreview: false,
+  interaction: { reaction: null, saved: false },
+  engagementCounts: { likeCount: 0, dislikeCount: 0, saveCount: 0 },
+  engagementProductId: '',
+  reviews: []
 }
 
 function escapeHtml(value) {
@@ -93,6 +99,48 @@ function renderMainMedia() {
     ? `<video src="${escapeHtml(selected.url)}" controls preload="metadata" aria-label="${escapeHtml(selected.label)}"></video>`
     : `<img src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
 
+
+
+  const audios = Array.from(app.querySelectorAll('[data-dashboard-audio]'))
+  const syncAudioUi = (audio, index) => {
+    const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
+    const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
+    const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+    if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
+    if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
+    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
+  }
+  audios.forEach((audio, index) => {
+    audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
+    audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
+    audio.addEventListener('ended', () => syncAudioUi(audio, index))
+  })
+  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
+    const index = Number(button.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio) return
+    audios.forEach((other, i) => { if (i !== index) other.pause() })
+    if (audio.paused) await audio.play().catch(() => {})
+    else audio.pause()
+    syncAudioUi(audio, index)
+  }))
+  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
+    const index = Number(range.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return
+    audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
+    syncAudioUi(audio, index)
+  }))
+
+  const ratingSlider = app.querySelector('[data-rating-slider]')
+  const ratingFill = app.querySelector('[data-rating-fill]')
+  const ratingValue = app.querySelector('[data-rating-value]')
+  ratingSlider?.addEventListener('input', () => {
+    const val = Number(ratingSlider.value || 0)
+    if (ratingFill) ratingFill.style.width = `${Math.max(0, Math.min(100, (val / 5) * 100))}%`
+    if (ratingValue) ratingValue.textContent = `${val % 1 ? val.toFixed(1) : val.toFixed(0)} / 5`
+  })
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     const index = Number(button.getAttribute('data-media-index'))
     button.classList.toggle('is-active', index === state.selectedMediaIndex)
@@ -156,6 +204,37 @@ function recommendationCardMarkup(product) {
   `
 }
 
+
+function formatReviewTime(value) {
+  const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value || 0)
+  if (Number.isNaN(date.getTime())) return 'Just now'
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function reviewInitials(name) {
+  return creatorInitials(name || 'User')
+}
+
+
+function getLikeRatio(likes = 0, dislikes = 0) {
+  const safeLikes = Math.max(0, Number(likes || 0))
+  const safeDislikes = Math.max(0, Number(dislikes || 0))
+  const total = safeLikes + safeDislikes
+  if (!total) return { likePercent: 50, dislikePercent: 50, total: 0 }
+  return { likePercent: Math.round((safeLikes / total) * 100), dislikePercent: Math.round((safeDislikes / total) * 100), total }
+}
+
+function formatAudioTime(seconds) {
+  const total = Math.max(0, Number(seconds || 0))
+  const mins = Math.floor(total / 60)
+  const secs = Math.floor(total % 60)
+  return `${mins}:${String(secs).padStart(2, '0')}`
+}
+
+function renderRatingStars(value = 0) {
+  const width = Math.max(0, Math.min(100, (Number(value || 0) / 5) * 100))
+  return `<span class="dashboard-rating-stars" aria-hidden="true"><span class="dashboard-rating-stars-empty">★★★★★</span><span class="dashboard-rating-stars-fill" style="width:${width}%">★★★★★</span></span>`
+}
 function creatorInitials(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
   if (!parts.length) return 'CR'
@@ -170,8 +249,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const listingThumbnailURL = product.thumbnailURL || product.coverURL || ''
   const typeLabel = product.productType || 'Product'
   const creatorHref = product.artistId ? publicProfileRoute({ uid: product.artistId }) : ROUTES.profilePublic
-  const likeCount = product.likeCount ?? product.counts?.likes ?? 0
-  const dislikeCount = product.counts?.dislikes ?? 0
+  if (state.engagementProductId !== product.id) {
+    state.engagementCounts = {
+      likeCount: Number(product.likeCount ?? product.counts?.likes ?? 0),
+      dislikeCount: Number(product.dislikeCount ?? product.counts?.dislikes ?? 0),
+      saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0)
+    }
+    state.engagementProductId = product.id
+  }
+  const likeCount = state.engagementCounts.likeCount
+  const dislikeCount = state.engagementCounts.dislikeCount
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
   const artistHandle = product.artistUsername ? `@${product.artistUsername}` : '@creator'
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
@@ -215,7 +302,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <section class="dashboard-audio-panel">
                 <h3>Audio previews</h3>
                 <div class="dashboard-audio-row" data-dashboard-audio-row>
-                  ${product.previewAudioURLs.map((url, index) => `<audio controls src="${escapeHtml(url)}" aria-label="Audio preview ${index + 1}"></audio>`).join('')}
+                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}">Play</button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
                 </div>
               </section>
             ` : ''}
@@ -261,16 +348,37 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h2>Stats</h2>
               <p>👍 ${likeCount} · 👎 ${dislikeCount} · Saves ${product.saveCount ?? product.counts?.saves ?? 0} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
             </article>
-            <article class="dashboard-section-card dashboard-section-reviews">
-              <h2>Reviews</h2>
+            <article class="dashboard-section-card dashboard-section-recommendations">
+              <div class="dashboard-section-heading-row">
+                <h2>Recommended products</h2>
+                <a href="${ROUTES.products}">Browse all</a>
+              </div>
               ${recommendations.length
-                ? `
-                  <div class="dashboard-recommend-carousel" aria-label="Recommended products">
-                    ${recommendations.map((item) => recommendationCardMarkup(item)).join('')}
-                  </div>
-                `
-                : ''}
-              <p>Reviews are coming soon.</p>
+                ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>`
+                : '<p>No recommendations yet.</p>'}
+            </article>
+            <article class="dashboard-section-card dashboard-section-reviews">
+              <h2>Reviews (${product.reviewCount ?? product.commentCount ?? state.reviews.length})</h2>
+              <p class="dashboard-review-rating">${product.averageRating ? `Average rating ${Number(product.averageRating).toFixed(1)} / 5` : 'No ratings yet.'}</p>
+              ${state.currentUser?.uid ? `
+                <form class="dashboard-review-composer" data-review-form>
+                  <label for="review-body">Write a review</label>
+                  <div class="dashboard-rating-control" data-rating-control><div>${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div>
+                  <textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea>
+                  <button class="button button-accent" type="submit">Submit review</button>
+                </form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
+              <div class="dashboard-review-list">
+                ${state.reviews.length ? state.reviews.map((review) => `
+                  <article class="dashboard-review-card">
+                    <div class="dashboard-creator-block">
+                      ${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}
+                      <div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div>
+                    </div>
+                    <p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p>
+                    <p>${escapeHtml(review.body || '')}</p>
+                    <p class="dashboard-mini-note">Like · Reply</p>
+                  </article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}
+              </div>
             </article>
           </section>
 
@@ -297,6 +405,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
               </div>
               <p class="dashboard-engagement">👍 ${likeCount} · 👎 ${dislikeCount}</p>
+              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
 
               <div class="dashboard-creator-block">
                 ${creatorAvatar
@@ -313,10 +422,20 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
             <article class="panel-surface dashboard-side-card">
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
-              <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Add to Cart</button>
-              ${product.isFree ? `<button type=\"button\" class=\"button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}\" data-claim-free-product ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Claim Free Product</button>` : ''}
-              ${(product.previewAudioURLs || []).length ? `<button type=\"button\" class=\"button button-muted\" data-play-dashboard-preview>Preview</button>` : ''}
-              <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
+              <div class="dashboard-action-stack">
+                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${product.isFree ? 'Add to Library' : 'Add to Cart'}</button>
+                <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
+                <div class="dashboard-action-row">
+                  <button type="button" class="button button-muted" data-product-like aria-label="Like this product" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Like ${likeCount}</button>
+                  <button type="button" class="button button-muted" data-product-dislike aria-label="Dislike this product" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Dislike ${dislikeCount}</button>
+                </div>
+                <div class="dashboard-action-row">
+                  <button type="button" class="button button-muted" data-product-save aria-label="Save this product" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${state.interaction.saved ? 'Saved' : 'Save'} ${state.engagementCounts.saveCount}</button>
+                  <button type="button" class="button button-muted" data-product-share aria-label="Share this product">Share</button>
+                </div>
+                ${product.isFree ? `<button type="button" class="button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-claim-free-product ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Claim Free Product</button>` : ''}
+                ${(product.previewAudioURLs || []).length ? `<button type="button" class="button button-muted" data-play-dashboard-preview>Preview</button>` : ''}
+              </div>
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
               <p class="dashboard-mini-note">Created by ${escapeHtml(product.artistName)}</p>
@@ -332,7 +451,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
             <article class="panel-surface dashboard-side-card">
               <h3>Community activity</h3>
               <p>👍 ${likeCount} · 👎 ${dislikeCount}</p>
-              <p>Saves: ${product.saveCount ?? product.counts?.saves ?? 0}</p>
+              <p>Saves: ${state.engagementCounts.saveCount}</p>
               <p>Downloads: ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
               <p>Comments: ${product.commentCount ?? product.counts?.comments ?? 0}</p>
             </article>
@@ -361,10 +480,12 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   })
 
   app.querySelector('[data-play-dashboard-preview]')?.addEventListener('click', () => {
-    const firstAudio = app.querySelector('[data-dashboard-audio-row] audio')
+    const firstAudio = app.querySelector('[data-dashboard-audio]')
     if (!(firstAudio instanceof HTMLAudioElement)) return
     firstAudio.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    firstAudio.play().catch(() => {})
+    firstAudio.play().catch((error) => {
+      console.warn('[product] preview playback failed', error?.message || error)
+    })
   })
 
   app.querySelector('[data-claim-free-product]')?.addEventListener('click', async (event) => {
@@ -382,6 +503,152 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     }
   })
 
+
+  const showActionMessage = (message) => {
+    const note = app.querySelector('.dashboard-mini-note')
+    if (note) note.textContent = message
+  }
+
+  const requireAuth = () => {
+    if (state.currentUser?.uid) return true
+    showActionMessage('Sign in to interact with products.')
+    return false
+  }
+
+  app.querySelector('[data-product-like]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const prev = state.interaction.reaction
+    const previousCounts = { ...state.engagementCounts }
+    const next = prev === 'like' ? null : 'like'
+    if (prev === 'like') state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount - 1)
+    if (prev === 'dislike') state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount - 1)
+    if (next === 'like') state.engagementCounts.likeCount += 1
+    if (next === 'dislike') state.engagementCounts.dislikeCount += 1
+    state.interaction.reaction = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try { await setProductReaction(product.id, next) } catch (error) {
+      state.interaction.reaction = prev
+      state.engagementCounts = previousCounts
+      console.warn('[product] engagement update failed', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details
+      })
+      showActionMessage('Could not update reaction')
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    }
+  })
+
+  app.querySelector('[data-product-dislike]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const prev = state.interaction.reaction
+    const previousCounts = { ...state.engagementCounts }
+    const next = prev === 'dislike' ? null : 'dislike'
+    if (prev === 'like') state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount - 1)
+    if (prev === 'dislike') state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount - 1)
+    if (next === 'like') state.engagementCounts.likeCount += 1
+    if (next === 'dislike') state.engagementCounts.dislikeCount += 1
+    state.interaction.reaction = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try { await setProductReaction(product.id, next) } catch (error) {
+      state.interaction.reaction = prev
+      state.engagementCounts = previousCounts
+      console.warn('[product] engagement update failed', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details
+      })
+      showActionMessage('Could not update reaction')
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    }
+  })
+
+  app.querySelector('[data-product-save]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const previousSaved = state.interaction.saved
+    const previousCounts = { ...state.engagementCounts }
+    const next = !previousSaved
+    state.interaction.saved = next
+    state.engagementCounts.saveCount = Math.max(0, state.engagementCounts.saveCount + (next ? 1 : -1))
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    showActionMessage(next ? 'Saved' : 'Removed from saved')
+    try { await setProductSaved(product.id, next) } catch (error) {
+      state.interaction.saved = previousSaved
+      state.engagementCounts = previousCounts
+      console.warn('[product] engagement update failed', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details
+      })
+      showActionMessage('Could not update save state')
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    }
+  })
+
+  app.querySelector('[data-product-share]')?.addEventListener('click', async () => {
+    const shareData = { title: product.title, text: product.shortDescription || 'Check this product', url: window.location.href }
+    try {
+      if (navigator.share) await navigator.share(shareData)
+      else if (navigator.clipboard) await navigator.clipboard.writeText(window.location.href)
+      showActionMessage('Copied link')
+    } catch {}
+  })
+
+  app.querySelector('[data-review-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    if (!state.currentUser?.uid) return
+    const form = event.currentTarget
+    const data = new FormData(form)
+    const body = String(data.get('body') || '').trim()
+    const rawRating = Number(data.get('rating') || 0)
+    const rating = rawRating > 0 ? rawRating : null
+    if (!body) return
+    await createProductReview(product.id, state.currentUser, {}, { body, rating })
+    state.reviews = await listProductReviews(product.id, { limitCount: 20 })
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+  })
+
+
+  const audios = Array.from(app.querySelectorAll('[data-dashboard-audio]'))
+  const syncAudioUi = (audio, index) => {
+    const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
+    const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
+    const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+    if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
+    if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
+    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
+  }
+  audios.forEach((audio, index) => {
+    audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
+    audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
+    audio.addEventListener('ended', () => syncAudioUi(audio, index))
+  })
+  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
+    const index = Number(button.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio) return
+    audios.forEach((other, i) => { if (i !== index) other.pause() })
+    if (audio.paused) await audio.play().catch(() => {})
+    else audio.pause()
+    syncAudioUi(audio, index)
+  }))
+  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
+    const index = Number(range.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return
+    audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
+    syncAudioUi(audio, index)
+  }))
+
+  const ratingSlider = app.querySelector('[data-rating-slider]')
+  const ratingFill = app.querySelector('[data-rating-fill]')
+  const ratingValue = app.querySelector('[data-rating-value]')
+  ratingSlider?.addEventListener('input', () => {
+    const val = Number(ratingSlider.value || 0)
+    if (ratingFill) ratingFill.style.width = `${Math.max(0, Math.min(100, (val / 5) * 100))}%`
+    if (ratingValue) ratingValue.textContent = `${val % 1 ? val.toFixed(1) : val.toFixed(0)} / 5`
+  })
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     button.addEventListener('click', () => {
       state.selectedMediaIndex = Number(button.getAttribute('data-media-index')) || 0
@@ -428,13 +695,31 @@ async function init() {
       return
     }
 
-    const [recommendations, productFiles, ownsProduct] = await Promise.all([
-      listRecommendedProducts({ product, pageSize: 8 }),
-      listProductFiles(product.id),
-      userOwnsProduct(state.currentUser?.uid || '', product.id)
-    ])
+    const safe = async (label, fallback, task) => {
+      try {
+        return await task()
+      } catch (error) {
+        console.warn(`[product] optional ${label} load failed`, error?.message || error)
+        return fallback
+      }
+    }
+
+    const recommendations = await safe('recommendations', [], () => listRecommendedProducts({ product, pageSize: 8 }))
+    const productFiles = await safe('files', [], () => listProductFiles(product.id))
+    const ownsProduct = await safe('ownership', false, () => userOwnsProduct(state.currentUser?.uid || '', product.id))
+    const reviews = await safe('reviews', [], () => listProductReviews(product.id, { limitCount: 20 }))
+    const engagement = await safe('engagement', { reaction: null, saved: false }, () => state.currentUser?.uid
+      ? getUserProductEngagementState(product.id, state.currentUser.uid)
+      : Promise.resolve({ reaction: null, saved: false }))
+    state.reviews = reviews
+    state.interaction = engagement
     renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
-  } catch {
+  } catch (error) {
+    console.error('[product] failed to load product page', {
+      message: error?.message,
+      code: error?.code,
+      stack: error?.stack
+    })
     renderState('Product could not be loaded right now.', 'Please try again in a moment.')
   }
 }
