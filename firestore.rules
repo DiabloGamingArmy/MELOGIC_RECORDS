@@ -718,11 +718,22 @@ service cloud.firestore {
         && request.resource.data.status != 'published';
     }
 
+
+
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
       match /entitlements/{productId} {
         allow read, write: if isOwner(uid);
+      }
+
+      match /savedProducts/{productId} {
+        allow read: if isOwner(uid);
+
+        allow create, update: if isOwner(uid)
+          && request.resource.data.productId == productId;
+
+        allow delete: if isOwner(uid);
       }
 
       match /agreementAcceptances/{agreementKey} {
@@ -797,13 +808,15 @@ service cloud.firestore {
 
   allow create: if signedIn();
 
-  allow update: if signedIn()
-    && (
-      !('artistId' in resource.data)
-      || resource.data.artistId == request.auth.uid
-      || request.resource.data.artistId == request.auth.uid
-    )
-    && (!('status' in request.resource.data) || request.resource.data.status != 'published');
+  allow update: if (
+      signedIn()
+      && (
+        !('artistId' in resource.data)
+        || resource.data.artistId == request.auth.uid
+        || request.resource.data.artistId == request.auth.uid
+      )
+      && (!('status' in request.resource.data) || request.resource.data.status != 'published')
+    );
 
   allow delete: if signedIn()
     && (
@@ -813,10 +826,30 @@ service cloud.firestore {
     && resource.data.status != 'published';
 
   match /reviews/{reviewId} {
-    allow read: if signedIn()
-      && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+    allow read: if (get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+      && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public')
+      || (signedIn() && (
+        get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+        || resource.data.uid == request.auth.uid
+      ));
 
-    allow write: if false;
+    allow create: if signedIn()
+      && request.resource.data.uid == request.auth.uid
+      && request.resource.data.body is string
+      && request.resource.data.body.size() > 0
+      && request.resource.data.body.size() <= 5000
+      && (!('rating' in request.resource.data) || (request.resource.data.rating is number && request.resource.data.rating >= 1 && request.resource.data.rating <= 5));
+
+    allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
+  }
+
+  match /reactions/{reactionId} {
+    allow read: if true;
+    allow create, update: if signedIn()
+      && reactionId == request.auth.uid
+      && request.resource.data.uid == request.auth.uid
+      && (!('reaction' in request.resource.data) || request.resource.data.reaction in ['like', 'dislike', null]);
+    allow delete: if signedIn() && resource.data.uid == request.auth.uid;
   }
 
   match /comments/{commentId} {
