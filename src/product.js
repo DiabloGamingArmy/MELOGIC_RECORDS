@@ -469,7 +469,11 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     try { await setProductReaction(product.id, next) } catch (error) {
       state.interaction.reaction = prev
       state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', error?.message || error)
+      console.warn('[product] engagement update failed', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details
+      })
       showActionMessage('Could not update reaction')
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     }
@@ -483,7 +487,11 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     try { await setProductReaction(product.id, next) } catch (error) {
       state.interaction.reaction = prev
       state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', error?.message || error)
+      console.warn('[product] engagement update failed', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details
+      })
       showActionMessage('Could not update reaction')
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     }
@@ -501,7 +509,11 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     try { await setProductSaved(product.id, next) } catch (error) {
       state.interaction.saved = previousSaved
       state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', error?.message || error)
+      console.warn('[product] engagement update failed', {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details
+      })
       showActionMessage('Could not update save state')
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     }
