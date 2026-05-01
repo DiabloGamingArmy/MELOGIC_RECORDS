@@ -838,7 +838,7 @@ service cloud.firestore {
       && request.resource.data.body is string
       && request.resource.data.body.size() > 0
       && request.resource.data.body.size() <= 5000
-      && (!('rating' in request.resource.data) || (request.resource.data.rating is number && request.resource.data.rating >= 1 && request.resource.data.rating <= 5));
+      && (!('rating' in request.resource.data) || (request.resource.data.rating is number && request.resource.data.rating >= 0.5 && request.resource.data.rating <= 5));
 
     allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
   }
