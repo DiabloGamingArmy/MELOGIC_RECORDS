@@ -18,6 +18,8 @@ const state = {
   currentUser: null,
   isDraftPreview: false,
   interaction: { reaction: null, saved: false },
+  engagementCounts: { likeCount: 0, dislikeCount: 0, saveCount: 0 },
+  engagementProductId: '',
   reviews: []
 }
 
@@ -186,8 +188,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const listingThumbnailURL = product.thumbnailURL || product.coverURL || ''
   const typeLabel = product.productType || 'Product'
   const creatorHref = product.artistId ? publicProfileRoute({ uid: product.artistId }) : ROUTES.profilePublic
-  const likeCount = product.likeCount ?? product.counts?.likes ?? 0
-  const dislikeCount = product.counts?.dislikes ?? 0
+  if (state.engagementProductId !== product.id) {
+    state.engagementCounts = {
+      likeCount: Number(product.likeCount ?? product.counts?.likes ?? 0),
+      dislikeCount: Number(product.dislikeCount ?? product.counts?.dislikes ?? 0),
+      saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0)
+    }
+    state.engagementProductId = product.id
+  }
+  const likeCount = state.engagementCounts.likeCount
+  const dislikeCount = state.engagementCounts.dislikeCount
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
   const artistHandle = product.artistUsername ? `@${product.artistUsername}` : '@creator'
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
@@ -356,11 +366,11 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${product.isFree ? 'Add to Library' : 'Add to Cart'}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
                 <div class="dashboard-action-row">
-                  <button type="button" class="button button-muted" data-product-like aria-label="Like this product" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Like</button>
-                  <button type="button" class="button button-muted" data-product-dislike aria-label="Dislike this product" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Dislike</button>
+                  <button type="button" class="button button-muted" data-product-like aria-label="Like this product" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Like ${likeCount}</button>
+                  <button type="button" class="button button-muted" data-product-dislike aria-label="Dislike this product" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Dislike ${dislikeCount}</button>
                 </div>
                 <div class="dashboard-action-row">
-                  <button type="button" class="button button-muted" data-product-save aria-label="Save this product" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${state.interaction.saved ? 'Saved' : 'Save'}</button>
+                  <button type="button" class="button button-muted" data-product-save aria-label="Save this product" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${state.interaction.saved ? 'Saved' : 'Save'} ${state.engagementCounts.saveCount}</button>
                   <button type="button" class="button button-muted" data-product-share aria-label="Share this product">Share</button>
                 </div>
                 ${product.isFree ? `<button type="button" class="button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-claim-free-product ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Claim Free Product</button>` : ''}
@@ -381,7 +391,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
             <article class="panel-surface dashboard-side-card">
               <h3>Community activity</h3>
               <p>👍 ${likeCount} · 👎 ${dislikeCount}</p>
-              <p>Saves: ${product.saveCount ?? product.counts?.saves ?? 0}</p>
+              <p>Saves: ${state.engagementCounts.saveCount}</p>
               <p>Downloads: ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
               <p>Comments: ${product.commentCount ?? product.counts?.comments ?? 0}</p>
             </article>
@@ -413,7 +423,9 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const firstAudio = app.querySelector('[data-dashboard-audio-row] audio')
     if (!(firstAudio instanceof HTMLAudioElement)) return
     firstAudio.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    firstAudio.play().catch(() => {})
+    firstAudio.play().catch((error) => {
+      console.warn('[product] preview playback failed', error?.message || error)
+    })
   })
 
   app.querySelector('[data-claim-free-product]')?.addEventListener('click', async (event) => {
@@ -445,10 +457,22 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
   app.querySelector('[data-product-like]')?.addEventListener('click', async () => {
     if (state.isDraftPreview || !requireAuth()) return
-    const next = state.interaction.reaction === 'like' ? null : 'like'
+    const prev = state.interaction.reaction
+    const previousCounts = { ...state.engagementCounts }
+    const next = prev === 'like' ? null : 'like'
+    if (prev === 'like') state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount - 1)
+    if (prev === 'dislike') state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount - 1)
+    if (next === 'like') state.engagementCounts.likeCount += 1
+    if (next === 'dislike') state.engagementCounts.dislikeCount += 1
     state.interaction.reaction = next
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
+    try { await setProductReaction(product.id, next) } catch (error) {
+      state.interaction.reaction = prev
+      state.engagementCounts = previousCounts
+      console.warn('[product] engagement update failed', error?.message || error)
+      showActionMessage('Could not update reaction')
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    }
   })
 
   app.querySelector('[data-product-dislike]')?.addEventListener('click', async () => {
@@ -456,16 +480,31 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const next = state.interaction.reaction === 'dislike' ? null : 'dislike'
     state.interaction.reaction = next
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
+    try { await setProductReaction(product.id, next) } catch (error) {
+      state.interaction.reaction = prev
+      state.engagementCounts = previousCounts
+      console.warn('[product] engagement update failed', error?.message || error)
+      showActionMessage('Could not update reaction')
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    }
   })
 
   app.querySelector('[data-product-save]')?.addEventListener('click', async () => {
     if (state.isDraftPreview || !requireAuth()) return
-    const next = !state.interaction.saved
+    const previousSaved = state.interaction.saved
+    const previousCounts = { ...state.engagementCounts }
+    const next = !previousSaved
     state.interaction.saved = next
+    state.engagementCounts.saveCount = Math.max(0, state.engagementCounts.saveCount + (next ? 1 : -1))
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     showActionMessage(next ? 'Saved' : 'Removed from saved')
-    try { await setProductSaved(product.id, state.currentUser.uid, next) } catch {}
+    try { await setProductSaved(product.id, next) } catch (error) {
+      state.interaction.saved = previousSaved
+      state.engagementCounts = previousCounts
+      console.warn('[product] engagement update failed', error?.message || error)
+      showActionMessage('Could not update save state')
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    }
   })
 
   app.querySelector('[data-product-share]')?.addEventListener('click', async () => {

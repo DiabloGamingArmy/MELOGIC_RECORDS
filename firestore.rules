@@ -719,19 +719,6 @@ service cloud.firestore {
     }
 
 
-    function productEngagementCounterUpdateIsSafe() {
-      let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return signedIn()
-        && resource.data.status == 'published'
-        && resource.data.visibility == 'public'
-        && request.resource.data.artistId == resource.data.artistId
-        && changed.hasOnly([
-          'likeCount',
-          'dislikeCount',
-          'saveCount',
-          'counts'
-        ]);
-    }
 
     match /users/{uid} {
       allow read, write: if isOwner(uid);
@@ -829,8 +816,7 @@ service cloud.firestore {
         || request.resource.data.artistId == request.auth.uid
       )
       && (!('status' in request.resource.data) || request.resource.data.status != 'published')
-    )
-    || productEngagementCounterUpdateIsSafe();
+    );
 
   allow delete: if signedIn()
     && (

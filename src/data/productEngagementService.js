@@ -1,9 +1,10 @@
-import { deleteDoc, doc, getDoc, increment, serverTimestamp, setDoc, writeBatch } from 'firebase/firestore'
+import { doc, getDoc } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
+import { functions } from '../firebase/functions'
 
-function productRef(productId) {
-  return doc(db, 'products', String(productId || ''))
-}
+const callSetProductReaction = httpsCallable(functions, 'setProductReaction')
+const callSetProductSaved = httpsCallable(functions, 'setProductSaved')
 
 export async function getUserProductEngagementState(productId, uid) {
   if (!productId || !uid) return { reaction: null, saved: false }
@@ -17,45 +18,13 @@ export async function getUserProductEngagementState(productId, uid) {
   }
 }
 
-export async function setProductReaction(productId, uid, nextReaction) {
+export async function setProductReaction(productId, nextReaction) {
   const normalized = nextReaction === 'like' || nextReaction === 'dislike' ? nextReaction : null
-  const reactionRef = doc(db, 'products', productId, 'reactions', uid)
-  const currentSnap = await getDoc(reactionRef)
-  const prev = currentSnap.exists() ? (currentSnap.data()?.reaction || null) : null
-  if (prev === normalized) return { reaction: normalized }
-
-  const batch = writeBatch(db)
-  batch.set(reactionRef, { uid, reaction: normalized, updatedAt: serverTimestamp() }, { merge: true })
-
-  const likeDelta = (normalized === 'like' ? 1 : 0) - (prev === 'like' ? 1 : 0)
-  const dislikeDelta = (normalized === 'dislike' ? 1 : 0) - (prev === 'dislike' ? 1 : 0)
-  const updates = {}
-  if (likeDelta) {
-    updates.likeCount = increment(likeDelta)
-    updates['counts.likes'] = increment(likeDelta)
-  }
-  if (dislikeDelta) {
-    updates.dislikeCount = increment(dislikeDelta)
-    updates['counts.dislikes'] = increment(dislikeDelta)
-  }
-  if (Object.keys(updates).length) batch.set(productRef(productId), updates, { merge: true })
-  await batch.commit()
-  return { reaction: normalized }
+  const response = await callSetProductReaction({ productId, reaction: normalized })
+  return response?.data || { reaction: normalized, likeDelta: 0, dislikeDelta: 0 }
 }
 
-export async function setProductSaved(productId, uid, shouldSave) {
-  const saveRef = doc(db, 'users', uid, 'savedProducts', productId)
-  const existing = await getDoc(saveRef)
-  if (Boolean(shouldSave) === existing.exists()) return { saved: Boolean(shouldSave) }
-
-  const batch = writeBatch(db)
-  if (shouldSave) {
-    batch.set(saveRef, { productId, savedAt: serverTimestamp() }, { merge: true })
-    batch.set(productRef(productId), { saveCount: increment(1), 'counts.saves': increment(1) }, { merge: true })
-  } else {
-    batch.delete(saveRef)
-    batch.set(productRef(productId), { saveCount: increment(-1), 'counts.saves': increment(-1) }, { merge: true })
-  }
-  await batch.commit()
-  return { saved: Boolean(shouldSave) }
+export async function setProductSaved(productId, shouldSave) {
+  const response = await callSetProductSaved({ productId, saved: Boolean(shouldSave) })
+  return response?.data || { saved: Boolean(shouldSave), saveDelta: 0 }
 }
