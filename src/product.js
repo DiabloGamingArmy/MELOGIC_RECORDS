@@ -98,64 +98,6 @@ function renderMainMedia() {
     : `<img src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
 
 
-  const showActionMessage = (message) => {
-    const note = app.querySelector('.dashboard-mini-note')
-    if (note) note.textContent = message
-  }
-
-  const requireAuth = () => {
-    if (state.currentUser?.uid) return true
-    showActionMessage('Sign in to interact with products.')
-    return false
-  }
-
-  app.querySelector('[data-product-like]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const next = state.interaction.reaction === 'like' ? null : 'like'
-    state.interaction.reaction = next
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
-  })
-
-  app.querySelector('[data-product-dislike]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const next = state.interaction.reaction === 'dislike' ? null : 'dislike'
-    state.interaction.reaction = next
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
-  })
-
-  app.querySelector('[data-product-save]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const next = !state.interaction.saved
-    state.interaction.saved = next
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    showActionMessage(next ? 'Saved' : 'Removed from saved')
-    try { await setProductSaved(product.id, state.currentUser.uid, next) } catch {}
-  })
-
-  app.querySelector('[data-product-share]')?.addEventListener('click', async () => {
-    const shareData = { title: product.title, text: product.shortDescription || 'Check this product', url: window.location.href }
-    try {
-      if (navigator.share) await navigator.share(shareData)
-      else if (navigator.clipboard) await navigator.clipboard.writeText(window.location.href)
-      showActionMessage('Copied link')
-    } catch {}
-  })
-
-  app.querySelector('[data-review-form]')?.addEventListener('submit', async (event) => {
-    event.preventDefault()
-    if (!state.currentUser?.uid) return
-    const form = event.currentTarget
-    const data = new FormData(form)
-    const body = String(data.get('body') || '').trim()
-    const rating = data.get('rating') ? Number(data.get('rating')) : null
-    if (!body) return
-    await createProductReview(product.id, state.currentUser, {}, { body, rating })
-    state.reviews = await listProductReviews(product.id, { limitCount: 20 })
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-  })
-
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     const index = Number(button.getAttribute('data-media-index'))
     button.classList.toggle('is-active', index === state.selectedMediaIndex)
@@ -410,10 +352,20 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
             <article class="panel-surface dashboard-side-card">
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
-              <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Add to Cart</button>
-              ${product.isFree ? `<button type=\"button\" class=\"button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}\" data-claim-free-product ${state.isDraftPreview ? 'disabled title=\"Disabled in marketplace preview.\"' : ''}>Claim Free Product</button>` : ''}
-              ${(product.previewAudioURLs || []).length ? `<button type=\"button\" class=\"button button-muted\" data-play-dashboard-preview>Preview</button>` : ''}
-              <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
+              <div class="dashboard-action-stack">
+                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${product.isFree ? 'Add to Library' : 'Add to Cart'}</button>
+                <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
+                <div class="dashboard-action-row">
+                  <button type="button" class="button button-muted" data-product-like aria-label="Like this product" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Like</button>
+                  <button type="button" class="button button-muted" data-product-dislike aria-label="Dislike this product" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Dislike</button>
+                </div>
+                <div class="dashboard-action-row">
+                  <button type="button" class="button button-muted" data-product-save aria-label="Save this product" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${state.interaction.saved ? 'Saved' : 'Save'}</button>
+                  <button type="button" class="button button-muted" data-product-share aria-label="Share this product">Share</button>
+                </div>
+                ${product.isFree ? `<button type="button" class="button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-claim-free-product ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Claim Free Product</button>` : ''}
+                ${(product.previewAudioURLs || []).length ? `<button type="button" class="button button-muted" data-play-dashboard-preview>Preview</button>` : ''}
+              </div>
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
               <p class="dashboard-mini-note">Created by ${escapeHtml(product.artistName)}</p>
@@ -584,17 +536,31 @@ async function init() {
       return
     }
 
-    const [recommendations, productFiles, ownsProduct, reviews, engagement] = await Promise.all([
-      listRecommendedProducts({ product, pageSize: 8 }),
-      listProductFiles(product.id),
-      userOwnsProduct(state.currentUser?.uid || '', product.id),
-      listProductReviews(product.id, { limitCount: 20 }),
-      state.currentUser?.uid ? getUserProductEngagementState(product.id, state.currentUser.uid) : Promise.resolve({ reaction: null, saved: false })
-    ])
+    const safe = async (label, fallback, task) => {
+      try {
+        return await task()
+      } catch (error) {
+        console.warn(`[product] optional ${label} load failed`, error?.message || error)
+        return fallback
+      }
+    }
+
+    const recommendations = await safe('recommendations', [], () => listRecommendedProducts({ product, pageSize: 8 }))
+    const productFiles = await safe('files', [], () => listProductFiles(product.id))
+    const ownsProduct = await safe('ownership', false, () => userOwnsProduct(state.currentUser?.uid || '', product.id))
+    const reviews = await safe('reviews', [], () => listProductReviews(product.id, { limitCount: 20 }))
+    const engagement = await safe('engagement', { reaction: null, saved: false }, () => state.currentUser?.uid
+      ? getUserProductEngagementState(product.id, state.currentUser.uid)
+      : Promise.resolve({ reaction: null, saved: false }))
     state.reviews = reviews
     state.interaction = engagement
     renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
-  } catch {
+  } catch (error) {
+    console.error('[product] failed to load product page', {
+      message: error?.message,
+      code: error?.code,
+      stack: error?.stack
+    })
     renderState('Product could not be loaded right now.', 'Please try again in a moment.')
   }
 }
