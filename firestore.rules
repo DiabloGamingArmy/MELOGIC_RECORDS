@@ -718,11 +718,35 @@ service cloud.firestore {
         && request.resource.data.status != 'published';
     }
 
+
+    function productEngagementCounterUpdateIsSafe() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return signedIn()
+        && resource.data.status == 'published'
+        && resource.data.visibility == 'public'
+        && request.resource.data.artistId == resource.data.artistId
+        && changed.hasOnly([
+          'likeCount',
+          'dislikeCount',
+          'saveCount',
+          'counts'
+        ]);
+    }
+
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
       match /entitlements/{productId} {
         allow read, write: if isOwner(uid);
+      }
+
+      match /savedProducts/{productId} {
+        allow read: if isOwner(uid);
+
+        allow create, update: if isOwner(uid)
+          && request.resource.data.productId == productId;
+
+        allow delete: if isOwner(uid);
       }
 
       match /agreementAcceptances/{agreementKey} {
@@ -797,13 +821,16 @@ service cloud.firestore {
 
   allow create: if signedIn();
 
-  allow update: if signedIn()
-    && (
-      !('artistId' in resource.data)
-      || resource.data.artistId == request.auth.uid
-      || request.resource.data.artistId == request.auth.uid
+  allow update: if (
+      signedIn()
+      && (
+        !('artistId' in resource.data)
+        || resource.data.artistId == request.auth.uid
+        || request.resource.data.artistId == request.auth.uid
+      )
+      && (!('status' in request.resource.data) || request.resource.data.status != 'published')
     )
-    && (!('status' in request.resource.data) || request.resource.data.status != 'published');
+    || productEngagementCounterUpdateIsSafe();
 
   allow delete: if signedIn()
     && (
