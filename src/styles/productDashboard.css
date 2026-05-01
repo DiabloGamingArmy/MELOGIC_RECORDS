@@ -466,3 +466,13 @@
 
 .draft-preview-banner { padding: .65rem .85rem; border: 1px solid rgba(111, 179, 244, .45); color: #b8e3ff; background: rgba(23, 45, 77, .5); margin-bottom: .8rem; }
 .preview-mode-disabled { opacity: .55; cursor: not-allowed; }
+
+.dashboard-action-stack { display: grid; gap: 0.5rem; margin-top: 0.5rem; }
+.dashboard-action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
+.dashboard-section-recommendations { grid-column: 1 / -1; }
+.dashboard-section-heading-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.dashboard-review-composer { display: grid; gap: 0.45rem; margin: 0.55rem 0; }
+.dashboard-review-composer textarea { min-height: 88px; resize: vertical; }
+.dashboard-review-list { display: grid; gap: 0.55rem; }
+.dashboard-review-card { border: 1px solid rgba(126, 160, 219, 0.24); border-radius: 0.7rem; padding: 0.6rem; background: rgba(12, 18, 31, 0.75); }
+.dashboard-review-rating { color: #f7d58b; font-size: 0.86rem; }
