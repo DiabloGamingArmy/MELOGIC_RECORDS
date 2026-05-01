@@ -16,7 +16,8 @@ export async function createProductReview(productId, user, profile = {}, { ratin
   if (!user?.uid) throw new Error('auth-required')
   const trimmed = String(body || '').trim()
   if (!trimmed) throw new Error('review-body-required')
-  const numericRating = Number.isFinite(Number(rating)) ? Number(rating) : null
+  const parsedRating = Number(rating)
+  const numericRating = Number.isFinite(parsedRating) && parsedRating >= 0.5 && parsedRating <= 5 ? Math.round(parsedRating * 2) / 2 : null
   const payload = {
     productId,
     uid: user.uid,

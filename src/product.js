@@ -100,6 +100,47 @@ function renderMainMedia() {
     : `<img src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
 
 
+
+  const audios = Array.from(app.querySelectorAll('[data-dashboard-audio]'))
+  const syncAudioUi = (audio, index) => {
+    const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
+    const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
+    const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+    if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
+    if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
+    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
+  }
+  audios.forEach((audio, index) => {
+    audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
+    audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
+    audio.addEventListener('ended', () => syncAudioUi(audio, index))
+  })
+  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
+    const index = Number(button.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio) return
+    audios.forEach((other, i) => { if (i !== index) other.pause() })
+    if (audio.paused) await audio.play().catch(() => {})
+    else audio.pause()
+    syncAudioUi(audio, index)
+  }))
+  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
+    const index = Number(range.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return
+    audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
+    syncAudioUi(audio, index)
+  }))
+
+  const ratingSlider = app.querySelector('[data-rating-slider]')
+  const ratingFill = app.querySelector('[data-rating-fill]')
+  const ratingValue = app.querySelector('[data-rating-value]')
+  ratingSlider?.addEventListener('input', () => {
+    const val = Number(ratingSlider.value || 0)
+    if (ratingFill) ratingFill.style.width = `${Math.max(0, Math.min(100, (val / 5) * 100))}%`
+    if (ratingValue) ratingValue.textContent = `${val % 1 ? val.toFixed(1) : val.toFixed(0)} / 5`
+  })
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     const index = Number(button.getAttribute('data-media-index'))
     button.classList.toggle('is-active', index === state.selectedMediaIndex)
@@ -174,6 +215,26 @@ function reviewInitials(name) {
   return creatorInitials(name || 'User')
 }
 
+
+function getLikeRatio(likes = 0, dislikes = 0) {
+  const safeLikes = Math.max(0, Number(likes || 0))
+  const safeDislikes = Math.max(0, Number(dislikes || 0))
+  const total = safeLikes + safeDislikes
+  if (!total) return { likePercent: 50, dislikePercent: 50, total: 0 }
+  return { likePercent: Math.round((safeLikes / total) * 100), dislikePercent: Math.round((safeDislikes / total) * 100), total }
+}
+
+function formatAudioTime(seconds) {
+  const total = Math.max(0, Number(seconds || 0))
+  const mins = Math.floor(total / 60)
+  const secs = Math.floor(total % 60)
+  return `${mins}:${String(secs).padStart(2, '0')}`
+}
+
+function renderRatingStars(value = 0) {
+  const width = Math.max(0, Math.min(100, (Number(value || 0) / 5) * 100))
+  return `<span class="dashboard-rating-stars" aria-hidden="true"><span class="dashboard-rating-stars-empty">★★★★★</span><span class="dashboard-rating-stars-fill" style="width:${width}%">★★★★★</span></span>`
+}
 function creatorInitials(name) {
   const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
   if (!parts.length) return 'CR'
@@ -241,7 +302,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <section class="dashboard-audio-panel">
                 <h3>Audio previews</h3>
                 <div class="dashboard-audio-row" data-dashboard-audio-row>
-                  ${product.previewAudioURLs.map((url, index) => `<audio controls src="${escapeHtml(url)}" aria-label="Audio preview ${index + 1}"></audio>`).join('')}
+                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}">Play</button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
                 </div>
               </section>
             ` : ''}
@@ -302,9 +363,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               ${state.currentUser?.uid ? `
                 <form class="dashboard-review-composer" data-review-form>
                   <label for="review-body">Write a review</label>
-                  <select name="rating" aria-label="Rating">
-                    <option value="">No rating</option><option value="5">5 stars</option><option value="4">4 stars</option><option value="3">3 stars</option><option value="2">2 stars</option><option value="1">1 star</option>
-                  </select>
+                  <div class="dashboard-rating-control" data-rating-control><div>${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div>
                   <textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea>
                   <button class="button button-accent" type="submit">Submit review</button>
                 </form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
@@ -315,10 +374,10 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                       ${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}
                       <div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div>
                     </div>
-                    <p class="dashboard-review-rating">${review.rating ? '★'.repeat(Math.max(1, Math.min(5, Number(review.rating)))) : 'No star rating'}</p>
+                    <p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p>
                     <p>${escapeHtml(review.body || '')}</p>
                     <p class="dashboard-mini-note">Like · Reply</p>
-                  </article>`).join('') : '<p>No reviews yet. Be the first to review this product.</p>'}
+                  </article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}
               </div>
             </article>
           </section>
@@ -346,6 +405,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
               </div>
               <p class="dashboard-engagement">👍 ${likeCount} · 👎 ${dislikeCount}</p>
+              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
 
               <div class="dashboard-creator-block">
                 ${creatorAvatar
@@ -420,7 +480,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   })
 
   app.querySelector('[data-play-dashboard-preview]')?.addEventListener('click', () => {
-    const firstAudio = app.querySelector('[data-dashboard-audio-row] audio')
+    const firstAudio = app.querySelector('[data-dashboard-audio]')
     if (!(firstAudio instanceof HTMLAudioElement)) return
     firstAudio.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     firstAudio.play().catch((error) => {
@@ -481,7 +541,13 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
   app.querySelector('[data-product-dislike]')?.addEventListener('click', async () => {
     if (state.isDraftPreview || !requireAuth()) return
-    const next = state.interaction.reaction === 'dislike' ? null : 'dislike'
+    const prev = state.interaction.reaction
+    const previousCounts = { ...state.engagementCounts }
+    const next = prev === 'dislike' ? null : 'dislike'
+    if (prev === 'like') state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount - 1)
+    if (prev === 'dislike') state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount - 1)
+    if (next === 'like') state.engagementCounts.likeCount += 1
+    if (next === 'dislike') state.engagementCounts.dislikeCount += 1
     state.interaction.reaction = next
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     try { await setProductReaction(product.id, next) } catch (error) {
@@ -534,13 +600,55 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const form = event.currentTarget
     const data = new FormData(form)
     const body = String(data.get('body') || '').trim()
-    const rating = data.get('rating') ? Number(data.get('rating')) : null
+    const rawRating = Number(data.get('rating') || 0)
+    const rating = rawRating > 0 ? rawRating : null
     if (!body) return
     await createProductReview(product.id, state.currentUser, {}, { body, rating })
     state.reviews = await listProductReviews(product.id, { limitCount: 20 })
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
   })
 
+
+  const audios = Array.from(app.querySelectorAll('[data-dashboard-audio]'))
+  const syncAudioUi = (audio, index) => {
+    const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
+    const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
+    const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
+    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+    if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
+    if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
+    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
+  }
+  audios.forEach((audio, index) => {
+    audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
+    audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
+    audio.addEventListener('ended', () => syncAudioUi(audio, index))
+  })
+  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
+    const index = Number(button.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio) return
+    audios.forEach((other, i) => { if (i !== index) other.pause() })
+    if (audio.paused) await audio.play().catch(() => {})
+    else audio.pause()
+    syncAudioUi(audio, index)
+  }))
+  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
+    const index = Number(range.getAttribute('data-audio-index'))
+    const audio = audios[index]
+    if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return
+    audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
+    syncAudioUi(audio, index)
+  }))
+
+  const ratingSlider = app.querySelector('[data-rating-slider]')
+  const ratingFill = app.querySelector('[data-rating-fill]')
+  const ratingValue = app.querySelector('[data-rating-value]')
+  ratingSlider?.addEventListener('input', () => {
+    const val = Number(ratingSlider.value || 0)
+    if (ratingFill) ratingFill.style.width = `${Math.max(0, Math.min(100, (val / 5) * 100))}%`
+    if (ratingValue) ratingValue.textContent = `${val % 1 ? val.toFixed(1) : val.toFixed(0)} / 5`
+  })
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     button.addEventListener('click', () => {
       state.selectedMediaIndex = Number(button.getAttribute('data-media-index')) || 0
