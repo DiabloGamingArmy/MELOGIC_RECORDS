@@ -5,6 +5,8 @@ import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
 import { claimFreeProduct, userOwnsProduct } from './data/entitlementService'
+import { getUserProductEngagementState, setProductReaction, setProductSaved } from './data/productEngagementService'
+import { createProductReview, listProductReviews } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
 
@@ -14,7 +16,9 @@ const state = {
   mediaItems: [],
   selectedMediaIndex: 0,
   currentUser: null,
-  isDraftPreview: false
+  isDraftPreview: false,
+  interaction: { reaction: null, saved: false },
+  reviews: []
 }
 
 function escapeHtml(value) {
@@ -93,6 +97,65 @@ function renderMainMedia() {
     ? `<video src="${escapeHtml(selected.url)}" controls preload="metadata" aria-label="${escapeHtml(selected.label)}"></video>`
     : `<img src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
 
+
+  const showActionMessage = (message) => {
+    const note = app.querySelector('.dashboard-mini-note')
+    if (note) note.textContent = message
+  }
+
+  const requireAuth = () => {
+    if (state.currentUser?.uid) return true
+    showActionMessage('Sign in to interact with products.')
+    return false
+  }
+
+  app.querySelector('[data-product-like]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const next = state.interaction.reaction === 'like' ? null : 'like'
+    state.interaction.reaction = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
+  })
+
+  app.querySelector('[data-product-dislike]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const next = state.interaction.reaction === 'dislike' ? null : 'dislike'
+    state.interaction.reaction = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
+  })
+
+  app.querySelector('[data-product-save]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const next = !state.interaction.saved
+    state.interaction.saved = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    showActionMessage(next ? 'Saved' : 'Removed from saved')
+    try { await setProductSaved(product.id, state.currentUser.uid, next) } catch {}
+  })
+
+  app.querySelector('[data-product-share]')?.addEventListener('click', async () => {
+    const shareData = { title: product.title, text: product.shortDescription || 'Check this product', url: window.location.href }
+    try {
+      if (navigator.share) await navigator.share(shareData)
+      else if (navigator.clipboard) await navigator.clipboard.writeText(window.location.href)
+      showActionMessage('Copied link')
+    } catch {}
+  })
+
+  app.querySelector('[data-review-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    if (!state.currentUser?.uid) return
+    const form = event.currentTarget
+    const data = new FormData(form)
+    const body = String(data.get('body') || '').trim()
+    const rating = data.get('rating') ? Number(data.get('rating')) : null
+    if (!body) return
+    await createProductReview(product.id, state.currentUser, {}, { body, rating })
+    state.reviews = await listProductReviews(product.id, { limitCount: 20 })
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+  })
+
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     const index = Number(button.getAttribute('data-media-index'))
     button.classList.toggle('is-active', index === state.selectedMediaIndex)
@@ -154,6 +217,17 @@ function recommendationCardMarkup(product) {
       </div>
     </a>
   `
+}
+
+
+function formatReviewTime(value) {
+  const date = typeof value?.toDate === 'function' ? value.toDate() : new Date(value || 0)
+  if (Number.isNaN(date.getTime())) return 'Just now'
+  return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function reviewInitials(name) {
+  return creatorInitials(name || 'User')
 }
 
 function creatorInitials(name) {
@@ -261,16 +335,39 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h2>Stats</h2>
               <p>👍 ${likeCount} · 👎 ${dislikeCount} · Saves ${product.saveCount ?? product.counts?.saves ?? 0} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
             </article>
-            <article class="dashboard-section-card dashboard-section-reviews">
-              <h2>Reviews</h2>
+            <article class="dashboard-section-card dashboard-section-recommendations">
+              <div class="dashboard-section-heading-row">
+                <h2>Recommended products</h2>
+                <a href="${ROUTES.products}">Browse all</a>
+              </div>
               ${recommendations.length
-                ? `
-                  <div class="dashboard-recommend-carousel" aria-label="Recommended products">
-                    ${recommendations.map((item) => recommendationCardMarkup(item)).join('')}
-                  </div>
-                `
-                : ''}
-              <p>Reviews are coming soon.</p>
+                ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>`
+                : '<p>No recommendations yet.</p>'}
+            </article>
+            <article class="dashboard-section-card dashboard-section-reviews">
+              <h2>Reviews (${product.reviewCount ?? product.commentCount ?? state.reviews.length})</h2>
+              <p class="dashboard-review-rating">${product.averageRating ? `Average rating ${Number(product.averageRating).toFixed(1)} / 5` : 'No ratings yet.'}</p>
+              ${state.currentUser?.uid ? `
+                <form class="dashboard-review-composer" data-review-form>
+                  <label for="review-body">Write a review</label>
+                  <select name="rating" aria-label="Rating">
+                    <option value="">No rating</option><option value="5">5 stars</option><option value="4">4 stars</option><option value="3">3 stars</option><option value="2">2 stars</option><option value="1">1 star</option>
+                  </select>
+                  <textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea>
+                  <button class="button button-accent" type="submit">Submit review</button>
+                </form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
+              <div class="dashboard-review-list">
+                ${state.reviews.length ? state.reviews.map((review) => `
+                  <article class="dashboard-review-card">
+                    <div class="dashboard-creator-block">
+                      ${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}
+                      <div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div>
+                    </div>
+                    <p class="dashboard-review-rating">${review.rating ? '★'.repeat(Math.max(1, Math.min(5, Number(review.rating)))) : 'No star rating'}</p>
+                    <p>${escapeHtml(review.body || '')}</p>
+                    <p class="dashboard-mini-note">Like · Reply</p>
+                  </article>`).join('') : '<p>No reviews yet. Be the first to review this product.</p>'}
+              </div>
             </article>
           </section>
 
@@ -382,6 +479,65 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     }
   })
 
+
+  const showActionMessage = (message) => {
+    const note = app.querySelector('.dashboard-mini-note')
+    if (note) note.textContent = message
+  }
+
+  const requireAuth = () => {
+    if (state.currentUser?.uid) return true
+    showActionMessage('Sign in to interact with products.')
+    return false
+  }
+
+  app.querySelector('[data-product-like]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const next = state.interaction.reaction === 'like' ? null : 'like'
+    state.interaction.reaction = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
+  })
+
+  app.querySelector('[data-product-dislike]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const next = state.interaction.reaction === 'dislike' ? null : 'dislike'
+    state.interaction.reaction = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try { await setProductReaction(product.id, state.currentUser.uid, next) } catch {}
+  })
+
+  app.querySelector('[data-product-save]')?.addEventListener('click', async () => {
+    if (state.isDraftPreview || !requireAuth()) return
+    const next = !state.interaction.saved
+    state.interaction.saved = next
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    showActionMessage(next ? 'Saved' : 'Removed from saved')
+    try { await setProductSaved(product.id, state.currentUser.uid, next) } catch {}
+  })
+
+  app.querySelector('[data-product-share]')?.addEventListener('click', async () => {
+    const shareData = { title: product.title, text: product.shortDescription || 'Check this product', url: window.location.href }
+    try {
+      if (navigator.share) await navigator.share(shareData)
+      else if (navigator.clipboard) await navigator.clipboard.writeText(window.location.href)
+      showActionMessage('Copied link')
+    } catch {}
+  })
+
+  app.querySelector('[data-review-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    if (!state.currentUser?.uid) return
+    const form = event.currentTarget
+    const data = new FormData(form)
+    const body = String(data.get('body') || '').trim()
+    const rating = data.get('rating') ? Number(data.get('rating')) : null
+    if (!body) return
+    await createProductReview(product.id, state.currentUser, {}, { body, rating })
+    state.reviews = await listProductReviews(product.id, { limitCount: 20 })
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+  })
+
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     button.addEventListener('click', () => {
       state.selectedMediaIndex = Number(button.getAttribute('data-media-index')) || 0
@@ -428,11 +584,15 @@ async function init() {
       return
     }
 
-    const [recommendations, productFiles, ownsProduct] = await Promise.all([
+    const [recommendations, productFiles, ownsProduct, reviews, engagement] = await Promise.all([
       listRecommendedProducts({ product, pageSize: 8 }),
       listProductFiles(product.id),
-      userOwnsProduct(state.currentUser?.uid || '', product.id)
+      userOwnsProduct(state.currentUser?.uid || '', product.id),
+      listProductReviews(product.id, { limitCount: 20 }),
+      state.currentUser?.uid ? getUserProductEngagementState(product.id, state.currentUser.uid) : Promise.resolve({ reaction: null, saved: false })
     ])
+    state.reviews = reviews
+    state.interaction = engagement
     renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
   } catch {
     renderState('Product could not be loaded right now.', 'Please try again in a moment.')
