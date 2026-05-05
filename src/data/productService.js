@@ -55,6 +55,11 @@ function normalizeKey(value) {
     .replace(/\s+/g, '-')
 }
 
+function toPathArray(value) {
+  if (Array.isArray(value)) return value.map(String).map((v) => v.trim()).filter(Boolean)
+  return String(value || '').split(',').map((v) => v.trim()).filter(Boolean)
+}
+
 const PRODUCT_KIND_CONFIG = {
   'single-sample': { previewMode: 'hover-audio', distributionMode: 'single-file' },
   'sample-pack': { previewMode: 'demo-audio', distributionMode: 'folder-manifest' },
@@ -247,14 +252,15 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     thumbnailPath: media.thumbnailPath || rawProduct.thumbnailPath || '',
     thumbnailURL: media.thumbnailURL || '',
     coverURL: media.coverURL || '',
-    galleryPaths: rawProduct.galleryPaths || [],
-    previewAudioPaths: rawProduct.previewAudioPaths || [],
-    previewVideoPaths: rawProduct.previewVideoPaths || [],
+    galleryPaths: toPathArray(rawProduct.galleryPaths),
+    previewAudioPaths: toPathArray(rawProduct.previewAudioPaths),
+    previewVideoPaths: toPathArray(rawProduct.previewVideoPaths),
     previewAudioURLs: media.previewAudioURLs || [],
     primaryPreviewURL: media.primaryPreviewURL || '',
     galleryURLs: media.galleryURLs || [],
     previewVideoURLs: media.previewVideoURLs || [],
     downloadPath: rawProduct.downloadPath || '',
+    deliverableFiles: Array.isArray(rawProduct.deliverableFiles) ? rawProduct.deliverableFiles : [],
     licensePath: rawProduct.licensePath || '',
     assetSummary: {
       totalFiles: Number(assetSummary.totalFiles || 0),
@@ -623,9 +629,9 @@ export function buildProductPayload(input = {}, user = null) {
   const contributorNames = Array.isArray(input.contributorNames) ? input.contributorNames : parseCsv(input.contributorNames)
   const creator = getCreatorIdentity(user, input)
   const kindSettings = resolveKindSettings(input.productType, input.productKind, input.previewMode, input.distributionMode)
-  const previewAudioPaths = Array.isArray(input.previewAudioPaths) ? input.previewAudioPaths : parseCsv(input.previewAudioPaths)
-  const previewVideoPaths = Array.isArray(input.previewVideoPaths) ? input.previewVideoPaths : parseCsv(input.previewVideoPaths)
-  const galleryPaths = Array.isArray(input.galleryPaths) ? input.galleryPaths : parseCsv(input.galleryPaths)
+  const previewAudioPaths = toPathArray(input.previewAudioPaths)
+  const previewVideoPaths = toPathArray(input.previewVideoPaths)
+  const galleryPaths = toPathArray(input.galleryPaths)
   const primaryPreviewPath = input.primaryPreviewPath || previewAudioPaths[0] || previewVideoPaths[0] || ''
   const primaryPreviewType = input.primaryPreviewType || (primaryPreviewPath ? (previewAudioPaths.includes(primaryPreviewPath) ? 'audio' : 'video') : '')
   const deliverableRows = Array.isArray(input.deliverableFiles) ? input.deliverableFiles : []
@@ -744,7 +750,7 @@ const FIRESTORE_PRODUCT_CLIENT_ALLOWED_KEYS = new Set([
   'categories', 'genres', 'tags', 'categoryKeys', 'genreKeys', 'tagKeys', 'searchKeywords',
   'artistId', 'artistName', 'artistDisplayName', 'artistUsername', 'artistProfilePath', 'artistAvatarURL', 'artistPhotoURL', 'artistNameLower', 'artistUsernameLower',
   'contributorIds', 'contributorNames', 'contributorCount', 'pendingContributorIds', 'contributorRequestCount', 'sellerAgreement', 'sellerAgreementAccepted', 'sellerAgreementVersion',
-  'coverPath', 'thumbnailPath', 'coverURL', 'thumbnailURL', 'galleryPaths', 'previewAudioPaths', 'previewVideoPaths', 'downloadPath', 'licensePath', 'assetSummary',
+  'coverPath', 'thumbnailPath', 'coverURL', 'thumbnailURL', 'galleryPaths', 'previewAudioPaths', 'previewVideoPaths', 'downloadPath', 'deliverableFiles', 'licensePath', 'assetSummary',
   'primaryPreviewPath', 'primaryPreviewType', 'primaryPreviewDuration', 'primaryDownloadPath', 'primaryDownloadBytes', 'previewAssignment',
   'priceCents', 'payoutTargetCents', 'currency', 'isFree', 'saleEnabled', 'storefrontVisible',
   'dawCompatibility', 'formatKeys', 'formatNotes', 'compatibilityNotes', 'includedFiles',
@@ -914,7 +920,11 @@ export function normalizeProductFile(fileId, raw = {}) {
     displayPath,
     parentPath,
     kind: normalizeFileKind(raw.kind, raw.mimeType),
-    mimeType: raw.mimeType || 'application/octet-stream',
+    mimeType: raw.mimeType || raw.contentType || 'application/octet-stream',
+    contentType: raw.contentType || raw.mimeType || 'application/octet-stream',
+    description: raw.description || '',
+    category: raw.category || '',
+    role: raw.role || '',
     sizeBytes: Number(raw.sizeBytes || 0),
     storagePath: raw.storagePath || '',
     previewPath: raw.previewPath || '',
@@ -1479,11 +1489,14 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
   const byRole = (role) => uploadedFiles.filter((item) => item.role === role)
   const cover = byRole('cover')[0]
   const thumbnail = byRole('thumbnail')[0]
-  const deliverable = byRole('deliverable')[0]
+  const deliverables = byRole('deliverable').filter((item) => item.storagePath)
+  const deliverable = deliverables[0]
   const license = byRole('license')[0]
   const gallery = byRole('gallery').map((item) => item.storagePath).filter(Boolean)
   const previewAudio = byRole('previewAudio').map((item) => item.storagePath).filter(Boolean)
   const previewVideo = byRole('previewVideo').map((item) => item.storagePath).filter(Boolean)
+  const existingDeliverables = Array.isArray(draft.deliverableFiles) ? draft.deliverableFiles : []
+  const deliverableRows = deliverables.length ? deliverables : existingDeliverables
   const totalBytes = uploadedFiles.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
   const pricing = normalizePriceFields(draft)
   const resolvedCoverPath = cover?.storagePath || draft.coverPath || ''
@@ -1492,12 +1505,30 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
     ...pricing,
     coverPath: resolvedCoverPath,
     thumbnailPath: resolvedThumbnailPath,
-    galleryPaths: gallery,
-    previewAudioPaths: previewAudio,
-    previewVideoPaths: previewVideo,
-    downloadPath: deliverable?.storagePath || '',
-    primaryDownloadPath: deliverable?.storagePath || '',
-    primaryDownloadBytes: Number(deliverable?.sizeBytes || 0),
+    galleryPaths: gallery.length ? gallery : (Array.isArray(draft.galleryPaths) ? draft.galleryPaths : []),
+    previewAudioPaths: previewAudio.length ? previewAudio : (Array.isArray(draft.previewAudioPaths) ? draft.previewAudioPaths : []),
+    previewVideoPaths: previewVideo.length ? previewVideo : (Array.isArray(draft.previewVideoPaths) ? draft.previewVideoPaths : []),
+    downloadPath: deliverable?.storagePath || draft.downloadPath || '',
+    deliverableFiles: deliverableRows.map((row) => ({
+      id: row.id,
+      productId,
+      name: row.name,
+      displayPath: row.displayPath || row.name,
+      storagePath: row.storagePath,
+      sizeBytes: Number(row.sizeBytes || 0),
+      contentType: row.contentType || 'application/octet-stream',
+      extension: String(row.name || '').split('.').pop() || '',
+      type: row.contentType || 'file',
+      category: 'Deliverables',
+      role: 'deliverable',
+      isDeliverable: true,
+      isDownloadable: true,
+      canPreview: String(row.contentType || '').startsWith('audio/'),
+      description: String(row.description || '').slice(0, 150),
+      updatedAt: new Date().toISOString()
+    })),
+    primaryDownloadPath: deliverable?.storagePath || draft.primaryDownloadPath || draft.downloadPath || '',
+    primaryDownloadBytes: Number(deliverable?.sizeBytes || draft.primaryDownloadBytes || 0),
     licensePath: license?.storagePath || '',
     assetSummary: { totalFiles: uploadedFiles.length, totalBytes },
     updatedAt: serverTimestamp()
@@ -1521,11 +1552,17 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
       id: row.id,
       productId,
       name: row.name,
-      displayPath: row.name,
+      displayPath: row.displayPath || row.name,
       storagePath: row.storagePath,
       role: row.role,
+      category: row.role === 'deliverable' ? 'Deliverables' : row.role === 'gallery' ? 'Listing Media' : 'Preview Media',
       sizeBytes: Number(row.sizeBytes || 0),
       contentType: row.contentType || 'application/octet-stream',
+      extension: String(row.name || '').split('.').pop() || '',
+      type: row.contentType || 'file',
+      description: String(row.description || '').slice(0, 150),
+      isDownloadable: row.role === 'deliverable',
+      canPreview: row.role === 'deliverable' && String(row.contentType || '').startsWith('audio/'),
       isDeliverable: row.role === 'deliverable',
       isPublicPreview: row.role === 'previewAudio' || row.role === 'previewVideo' || row.role === 'gallery',
       createdAt: serverTimestamp(),
