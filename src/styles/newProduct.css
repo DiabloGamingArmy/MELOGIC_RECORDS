@@ -365,3 +365,7 @@
 .publish-confirm-modal h4 { margin: 0 0 .55rem; color: #e6edff; }
 .publish-confirm-modal p { margin: 0; color: #c1d3f7; line-height: 1.45; }
 @media (max-width: 1320px) { .publish-grid { grid-template-columns: 1fr; } }
+.rich-editor-toolbar{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.45rem}
+.rich-editor-toolbar button,.rich-editor-toolbar select,.rich-editor-toolbar input[type='color']{min-height:34px;border-radius:8px;border:1px solid rgba(102,129,201,.35);background:rgba(13,18,33,.95);color:#e8efff;padding:.2rem .45rem}
+.rich-description-editor{min-height:240px;border:1px solid rgba(102,129,201,.35);border-radius:12px;background:rgba(13,18,33,.95);padding:.65rem .75rem;color:#e8efff;overflow:auto}
+.rich-description-editor:focus{outline:none;border-color:#6bcaf9;box-shadow:0 0 0 2px rgba(54,181,240,.2)}
