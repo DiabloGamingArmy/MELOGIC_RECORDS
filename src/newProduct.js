@@ -71,6 +71,7 @@ let editorState = {
     cover: '',
     gallery: []
   },
+  deliverableFolderPath: '',
   contributorUI: {
     search: '',
     role: '',
@@ -239,18 +240,41 @@ function formatBytes(size = 0) {
   return `${(kb / 1024).toFixed(2)} MB`
 }
 
-function queueFile(role, file) {
+function sanitizeDeliverableFolderPath(value = '') {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => part.trim().replace(/[^a-zA-Z0-9._ -]/g, '-'))
+    .filter((part) => part && part !== '.' && part !== '..')
+    .join('/')
+    .replace(/\/+/g, '/')
+    .slice(0, 160)
+}
+
+function deliverableDisplayPath(file, folderPath = '') {
+  const folder = sanitizeDeliverableFolderPath(folderPath || file.webkitRelativePath?.split('/').slice(0, -1).join('/') || '')
+  return [folder, file.name].filter(Boolean).join('/')
+}
+
+function queueFile(role, file, extra = {}) {
+  const displayPath = extra.displayPath || (role === 'deliverable' ? deliverableDisplayPath(file, editorState.deliverableFolderPath) : (file.webkitRelativePath || file.name))
   return {
-    id: crypto.randomUUID(),
+    id: extra.id || crypto.randomUUID(),
     role,
     file,
     name: file.name,
+    displayPath,
+    folderPath: sanitizeDeliverableFolderPath(extra.folderPath || displayPath.split('/').slice(0, -1).join('/')),
     sizeBytes: Number(file.size || 0),
     contentType: file.type || 'application/octet-stream',
-    status: 'queued',
-    progress: 0,
-    storagePath: '',
-    error: ''
+    status: extra.status || 'queued',
+    progress: Number(extra.progress || 0),
+    storagePath: extra.storagePath || '',
+    description: String(extra.description || '').slice(0, 150),
+    category: role === 'deliverable' ? 'Deliverables' : '',
+    isDeliverable: role === 'deliverable',
+    isDownloadable: role === 'deliverable',
+    error: extra.error || ''
   }
 }
 
@@ -266,12 +290,6 @@ function isArchiveFile(file = null) {
 function validatePrimaryDeliverableSelection(files = [], draft = {}, hasExistingDeliverable = false) {
   const selected = Array.from(files || [])
   if (!selected.length) return { ok: false, message: 'No deliverable file selected.', level: 'error' }
-  if (selected.length > 1) {
-    return { ok: false, message: 'Only one primary deliverable is supported right now. Please upload a ZIP package.', level: 'error' }
-  }
-  if (hasExistingDeliverable) {
-    return { ok: false, message: 'Remove the existing deliverable before adding another.', level: 'error' }
-  }
   const file = selected[0]
   if (isSingleSampleProduct(draft)) {
     if (String(file.type || '').startsWith('audio/') || isArchiveFile(file)) return { ok: true, file, level: 'info', message: '' }
@@ -290,9 +308,6 @@ function validateDraftFiles(draft = editorState.draft, mediaFiles = editorState.
   const folderDeliverables = Array.from(mediaFiles?.folderDeliverables || [])
   const allDeliverables = [...deliverables, ...folderDeliverables]
 
-  if (allDeliverables.length > 1) {
-    errors.push('Only one primary deliverable is supported right now. Please upload a ZIP package.')
-  }
   if (!allDeliverables.length && !String(draft?.downloadPath || draft?.primaryDownloadPath || '').trim()) {
     warnings.push('No deliverable has been added yet.')
   }
@@ -348,16 +363,97 @@ function gatherFileEntries() {
         category,
         isPublicPreview,
         isDeliverable,
-        role: ''
+        role: isDeliverable ? 'deliverable' : ''
       })
     })
   }
   pushRows(editorState.mediaFiles.gallery, 'Listing Media', true, false)
   pushRows(editorState.mediaFiles.previewAudio, 'Preview Media', true, false)
   pushRows(editorState.mediaFiles.previewVideo, 'Preview Media', true, false)
-  pushRows(editorState.mediaFiles.deliverables, 'Deliverables', false, true)
-  pushRows(editorState.mediaFiles.folderDeliverables, 'Deliverables', false, true)
+  const queuedIds = new Set()
+  editorState.uploadQueue.forEach((item) => {
+    queuedIds.add(item.id)
+    rows.push({
+      ...item,
+      displayPath: item.displayPath || item.name,
+      kind: item.contentType || item.kind || 'file',
+      category: item.role === 'deliverable' ? 'Deliverables' : item.role === 'gallery' ? 'Listing Media' : 'Preview Media',
+      isPublicPreview: item.role !== 'deliverable',
+      isDeliverable: item.role === 'deliverable'
+    })
+  })
+  ;(editorState.draft?.deliverableFiles || []).forEach((item) => {
+    if (!queuedIds.has(item.id)) rows.push({ ...item, kind: item.contentType || item.kind || 'file', category: 'Deliverables', isDeliverable: true, role: 'deliverable', status: 'uploaded', progress: 100 })
+  })
   return rows
+}
+
+
+function deliverableMetadataFromQueueItem(item = {}) {
+  return {
+    id: item.id,
+    productId: editorState.draft?.id || '',
+    name: item.name,
+    displayPath: item.displayPath || item.name,
+    storagePath: item.storagePath || '',
+    sizeBytes: Number(item.sizeBytes || 0),
+    contentType: item.contentType || 'application/octet-stream',
+    extension: String(item.name || '').split('.').pop() || '',
+    type: item.contentType || 'file',
+    category: 'Deliverables',
+    role: 'deliverable',
+    isDeliverable: true,
+    isDownloadable: true,
+    canPreview: String(item.contentType || '').startsWith('audio/'),
+    description: String(item.description || '').slice(0, 150),
+    createdAt: item.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+}
+
+function syncDeliverableDraftMetadata() {
+  if (!editorState.draft) return
+  const queuedRows = editorState.uploadQueue.filter((item) => item.role === 'deliverable' && item.status === 'uploaded' && item.storagePath).map(deliverableMetadataFromQueueItem)
+  const queuedIds = new Set(queuedRows.map((row) => row.id))
+  const existingRows = Array.isArray(editorState.draft.deliverableFiles) ? editorState.draft.deliverableFiles.filter((row) => !queuedIds.has(row.id)) : []
+  const rows = [...existingRows, ...queuedRows]
+  updateDraftField('deliverableFiles', rows)
+  updateDraftField('downloadPath', rows[0]?.storagePath || '')
+  updateDraftField('primaryDownloadPath', rows[0]?.storagePath || '')
+  updateDraftField('primaryDownloadBytes', Number(rows[0]?.sizeBytes || 0))
+  updateDraftField('assetSummary', { ...(editorState.draft.assetSummary || {}), totalFiles: rows.length, totalBytes: rows.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0), downloadableCount: rows.length, previewableCount: rows.filter((row) => row.canPreview).length })
+}
+
+async function ensureDraftProductShell() {
+  if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) return editorState.draft.id
+  const shell = await createOrUpdateProductShell(editorState.draft, editorState.user)
+  updateDraftField('id', shell.productId)
+  return shell.productId
+}
+
+async function uploadQueueItemsNow(items = []) {
+  if (!editorState.user || !editorState.draft || !items.length) return
+  let productId = ''
+  try { productId = await ensureDraftProductShell() } catch { setStatus('Could not create draft before upload.', 'error'); renderEditor(); return }
+  items.forEach(async (initialItem) => {
+    const queueIndex = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id)
+    if (queueIndex < 0) return
+    try {
+      editorState.uploadQueue[queueIndex] = { ...editorState.uploadQueue[queueIndex], status: 'uploading', error: '' }
+      renderEditor()
+      const uploaded = await uploadProductFile({ productId, queueItem: editorState.uploadQueue[queueIndex], onProgress: (progress) => { const idx = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id); if (idx >= 0) editorState.uploadQueue[idx] = { ...editorState.uploadQueue[idx], progress, status: 'uploading' }; renderEditor() } })
+      const idx = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id)
+      if (idx >= 0) editorState.uploadQueue[idx] = { ...editorState.uploadQueue[idx], ...uploaded, status: 'uploaded', progress: 100 }
+      syncDeliverableDraftMetadata()
+      setStatus('Deliverable uploaded.', 'success')
+      renderEditor()
+    } catch (error) {
+      const idx = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id)
+      if (idx >= 0) editorState.uploadQueue[idx] = { ...editorState.uploadQueue[idx], status: 'failed', error: error?.message || 'Upload failed' }
+      setStatus('Deliverable upload failed. Remove it or try again.', 'error')
+      renderEditor()
+    }
+  })
 }
 
 function tagValuesFor(field) {
@@ -572,6 +668,7 @@ function syncPricingDraftFields(metrics = null) {
   const next = metrics || pricingMetricsFromState()
   updateDraftField('payoutTargetCents', next.sellerNetTargetCents)
   updateDraftField('priceCents', next.customerListingCents)
+  updateDraftField('price', centsToPriceInput(next.sellerNetTargetCents))
   updateDraftField('isFree', next.sellerNetTargetCents === 0)
   return next
 }
@@ -1005,20 +1102,22 @@ function renderMediaUploadPanel() {
             </div>
             <button type="button" class="file-viewer-add-btn" data-pick-file="deliverables">+ Add Deliverable</button>
           </div>
-          ${editorState.mediaFiles.folderDeliverables.length ? '<p class="file-viewer-warning">Folder structure preview is available, but this product currently supports one primary deliverable. Use a ZIP package for multi-file products.</p>' : ''}
+          <div class="deliverable-folder-row"><button type="button" class="file-viewer-add-btn" data-create-deliverable-folder>Create folder</button><span>Upload folder: ${escapeHtml(editorState.deliverableFolderPath || 'Root')}</span></div>
           <div class="file-tree">
             ${treeRows.length
               ? treeRows.map((row) => row.type === 'folder'
-                ? `<div class="file-tree-row is-folder"><div class="file-tree-indent" style="--depth:${row.depth}"></div><div>📁 ${escapeHtml(row.name)}</div></div>`
+                ? `<div class="file-tree-row is-folder"><div class="file-tree-indent" style="--depth:${row.depth}"></div><div>${escapeHtml(row.name)}</div></div>`
                 : `
                   <div class="file-tree-row is-file">
                     <div class="file-tree-indent" style="--depth:${row.depth}"></div>
                     <div><strong>${escapeHtml(row.entry.name)}</strong><div class="path">${escapeHtml(row.entry.displayPath)}</div></div>
                     <div>${escapeHtml(formatBytes(row.entry.sizeBytes))}</div>
-                    <div><span class="file-role-badge ${row.entry.isPublicPreview ? 'is-public' : 'is-private'}">${row.entry.isDeliverable ? 'Private Deliverable' : row.entry.isPublicPreview ? 'Public Preview' : 'Listing Media'}</span></div>
+                    <div><span class="file-role-badge ${row.entry.isPublicPreview ? 'is-public' : 'is-private'}">${row.entry.isDeliverable ? 'Deliverable' : row.entry.isPublicPreview ? 'Public Preview' : 'Listing Media'}</span><div class="upload-progress"><span style="width:${Number(row.entry.progress || (row.entry.status === 'uploaded' ? 100 : 0))}%"></span></div><small>${escapeHtml(row.entry.status || '')}</small></div>
                     <div class="file-row-actions">
-                      ${String(row.entry.kind || '').startsWith('audio/') ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-audio">Assign Audio Preview</button>` : ''}
-                      ${String(row.entry.kind || '').startsWith('video/') ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-video">Assign Video Preview</button>` : ''}
+                      ${row.entry.isDeliverable ? `<button type="button" data-edit-file-description="${escapeHtml(row.entry.id)}">${row.entry.description ? 'Edit description' : 'Add description'}</button>` : ''}
+                      ${row.entry.isDeliverable ? `<input class="file-description-input" maxlength="150" value="${escapeHtml(row.entry.description || '')}" data-file-description-input="${escapeHtml(row.entry.id)}" placeholder="Description (150 max)" />` : ''}
+                      ${String(row.entry.kind || '').startsWith('audio/') && !row.entry.isDeliverable ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-audio">Assign Audio Preview</button>` : ''}
+                      ${String(row.entry.kind || '').startsWith('video/') && !row.entry.isDeliverable ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-video">Assign Video Preview</button>` : ''}
                       <button type="button" data-remove-file="${fileEntries.findIndex((f) => f.id === row.entry.id)}">Remove</button>
                     </div>
                   </div>
@@ -1033,11 +1132,13 @@ function renderMediaUploadPanel() {
           <button type="button" class="media-upload-action-btn" data-pick-file="preview-audio">Upload Audio Preview</button>
           <button type="button" class="media-upload-action-btn" data-pick-file="preview-video">Upload Video Preview</button>
           <button type="button" class="media-upload-action-btn marketplace-preview-btn" data-open-marketplace-preview>Marketplace Preview</button>
+          <div class="cover-preview-block">${editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL ? `<img src="${escapeHtml(editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL)}" alt="Cover preview" /><button type="button" data-remove-cover>Remove cover</button>` : '<span>No cover selected</span>'}</div>
+          <div class="gallery-thumb-scroller">${(editorState.mediaPreview.gallery || []).map((url, index) => `<div class="gallery-thumb"><img src="${escapeHtml(url)}" alt="Gallery image ${index + 1}" /><button type="button" data-remove-gallery="${index}" aria-label="Remove gallery image">×</button></div>`).join('')}</div>
           <input class="hidden-file" type="file" accept="image/*" data-cover-input />
           <input class="hidden-file" type="file" accept="image/*" multiple data-gallery-input />
           <input class="hidden-file" type="file" accept="audio/*" multiple data-preview-audio-input />
           <input class="hidden-file" type="file" accept="video/*" multiple data-preview-video-input />
-          <input class="hidden-file" type="file" data-deliverables-input />
+          <input class="hidden-file" type="file" multiple data-deliverables-input />
         </aside>
       </div>
     </section>
@@ -1255,6 +1356,7 @@ function renderEditor() {
     descriptionEditor?.dispatchEvent(new Event('input'))
   })
   form?.querySelector('[data-rich-color]')?.addEventListener('input', (event) => {
+    document.execCommand('styleWithCSS', false, true)
     descriptionEditor?.focus()
     document.execCommand('foreColor', false, String(event.target.value || '#dbe9ff'))
     descriptionEditor?.dispatchEvent(new Event('input'))
@@ -1316,6 +1418,9 @@ function renderEditor() {
   pricingPriceInput?.addEventListener('input', () => {
     const targetCents = normalizePriceToCents(pricingPriceInput.value)
     updateDraftField('price', centsToPriceInput(targetCents))
+    updateDraftField('isFree', targetCents === 0)
+    const freeToggle = editorRoot.querySelector('[data-pricing-free-toggle]')
+    if (freeToggle) freeToggle.checked = targetCents === 0
     syncPricingDraftFields()
     refreshPricingDom()
   })
@@ -1329,6 +1434,7 @@ function renderEditor() {
 
   editorRoot.querySelector('[data-pricing-free-toggle]')?.addEventListener('change', (event) => {
     const checked = Boolean(event.target.checked)
+    updateDraftField('isFree', checked)
     if (checked) updateDraftField('price', '0.00')
     if (!checked && normalizePriceToCents(editorState.draft?.price || '') === 0) updateDraftField('price', '1.00')
     if (pricingPriceInput) pricingPriceInput.value = editorState.draft.price
@@ -1435,11 +1541,10 @@ function renderEditor() {
     renderEditor()
   })
   galleryInput?.addEventListener('change', () => {
-    editorState.mediaFiles.gallery = Array.from(galleryInput.files || [])
-    editorState.uploadQueue = [
-      ...editorState.uploadQueue.filter((item) => item.role !== 'gallery'),
-      ...editorState.mediaFiles.gallery.map((file) => queueFile('gallery', file))
-    ]
+    const added = Array.from(galleryInput.files || [])
+    editorState.mediaFiles.gallery = [...editorState.mediaFiles.gallery, ...added]
+    editorState.mediaPreview.gallery = [...(editorState.mediaPreview.gallery || []), ...added.map((file) => URL.createObjectURL(file))]
+    editorState.uploadQueue = [...editorState.uploadQueue, ...added.map((file) => queueFile('gallery', file))]
     setStatus('Product images selected and queued.', 'info')
     renderEditor()
   })
@@ -1462,21 +1567,26 @@ function renderEditor() {
     renderEditor()
   })
   deliverablesInput?.addEventListener('change', () => {
-    const validation = validatePrimaryDeliverableSelection(deliverablesInput.files || [], editorState.draft, Boolean(editorState.mediaFiles.deliverables.length))
-    if (!validation.ok) {
-      setStatus(validation.message, validation.level === 'warning' ? 'info' : 'error')
+    const selected = Array.from(deliverablesInput.files || [])
+    if (!selected.length) return
+    const existingPaths = new Set(editorState.uploadQueue.filter((item) => item.role === 'deliverable').map((item) => item.displayPath))
+    const queued = []
+    selected.forEach((file) => {
+      const item = queueFile('deliverable', file)
+      if (existingPaths.has(item.displayPath)) return
+      existingPaths.add(item.displayPath)
+      queued.push(item)
+    })
+    if (!queued.length) {
+      setStatus('Deliverable already exists at that folder path.', 'error')
       renderEditor()
       return
     }
-    editorState.mediaFiles.deliverables = [validation.file]
-    editorState.mediaFiles.folderDeliverables = []
-    if (validation.message) {
-      setStatus(validation.message, validation.level === 'warning' ? 'info' : 'success')
-    } else {
-      setStatus('Primary deliverable selected and queued.', 'info')
-    }
-    editorState.uploadQueue = [...editorState.uploadQueue.filter((item) => item.role !== 'deliverable'), queueFile('deliverable', validation.file)]
+    editorState.mediaFiles.deliverables = [...editorState.mediaFiles.deliverables, ...selected]
+    editorState.uploadQueue = [...editorState.uploadQueue, ...queued]
+    setStatus('Deliverables added. Upload started.', 'info')
     renderEditor()
+    uploadQueueItemsNow(queued)
   })
   editorRoot.querySelectorAll('[data-remove-file]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1492,10 +1602,50 @@ function renderEditor() {
       const key = map[target.category]
       if (!key) return
       editorState.mediaFiles[key] = (editorState.mediaFiles[key] || []).filter((row) => (row.webkitRelativePath || row.name) !== target.displayPath)
+      editorState.uploadQueue = editorState.uploadQueue.filter((row) => row.id !== target.id)
+      if (target.isDeliverable) syncDeliverableDraftMetadata()
       setStatus('File removed from draft.', 'info')
       renderEditor()
     })
   })
+  editorRoot.querySelector('[data-create-deliverable-folder]')?.addEventListener('click', () => {
+    const raw = window.prompt('Folder path for new deliverable uploads:', editorState.deliverableFolderPath || '') || ''
+    const folder = sanitizeDeliverableFolderPath(raw)
+    editorState.deliverableFolderPath = folder
+    setStatus(folder ? `Deliverable upload folder set to ${folder}.` : 'Deliverable upload folder set to Root.', 'info')
+    renderEditor()
+  })
+  editorRoot.querySelector('[data-remove-cover]')?.addEventListener('click', () => {
+    editorState.mediaFiles.cover = null
+    editorState.mediaPreview.cover = ''
+    editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.role !== 'cover' && item.role !== 'thumbnail')
+    updateDraftField('coverPath', '')
+    updateDraftField('thumbnailPath', '')
+    renderEditor()
+  })
+  editorRoot.querySelectorAll('[data-remove-gallery]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = Number(button.getAttribute('data-remove-gallery'))
+      editorState.mediaFiles.gallery = editorState.mediaFiles.gallery.filter((_, i) => i !== index)
+      editorState.mediaPreview.gallery = (editorState.mediaPreview.gallery || []).filter((_, i) => i !== index)
+      const galleryQueue = editorState.uploadQueue.filter((item) => item.role === 'gallery')
+      const removeId = galleryQueue[index]?.id
+      if (removeId) editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.id !== removeId)
+      renderEditor()
+    })
+  })
+  editorRoot.querySelectorAll('[data-file-description-input]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const id = input.getAttribute('data-file-description-input') || ''
+      const value = String(input.value || '').slice(0, 150)
+      editorState.uploadQueue = editorState.uploadQueue.map((item) => item.id === id ? { ...item, description: value } : item)
+      if (editorState.draft?.deliverableFiles) {
+        updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.map((item) => item.id === id ? { ...item, description: value, updatedAt: new Date().toISOString() } : item))
+      }
+      syncDeliverableDraftMetadata()
+    })
+  })
+
   editorRoot.querySelectorAll('[data-assign-role]').forEach((button) => {
     button.addEventListener('click', () => {
       const [indexRaw, role] = String(button.getAttribute('data-assign-role') || '').split(':')
@@ -1579,11 +1729,6 @@ function renderEditor() {
 
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
-    if ((editorState.mediaFiles.deliverables || []).length > 1) {
-      setStatus('Only one primary deliverable is supported right now. Please upload a ZIP package.', 'error')
-      renderEditor()
-      return
-    }
     const pricingMetrics = syncPricingDraftFields()
     if (pricingMetrics?.invalidConfig) {
       setStatus('Marketplace fee configuration is invalid.', 'error')
@@ -1625,23 +1770,26 @@ function renderEditor() {
       editorState.draft.id = productId
       updateDraftField('id', productId)
       submitStep = 'upload-files'
+      if (editorState.uploadQueue.some((item) => item.status === 'uploading')) {
+        setStatus('Wait for uploads to finish before publishing.', 'error')
+        renderEditor()
+        return
+      }
       const uploadedFiles = []
       for (let index = 0; index < editorState.uploadQueue.length; index += 1) {
         const item = editorState.uploadQueue[index]
+        if (item.status === 'uploaded' && item.storagePath) {
+          uploadedFiles.push(item)
+          continue
+        }
         submitStep = `upload-${item.role}`
         editorState.uploadQueue[index] = { ...item, status: 'uploading', error: '' }
         renderEditor()
-        const uploaded = await uploadProductFile({
-          productId,
-          queueItem: item,
-          onProgress: (progress) => {
-            editorState.uploadQueue[index] = { ...editorState.uploadQueue[index], progress, status: 'uploading' }
-            renderEditor()
-          }
-        })
+        const uploaded = await uploadProductFile({ productId, queueItem: item, onProgress: (progress) => { editorState.uploadQueue[index] = { ...editorState.uploadQueue[index], progress, status: 'uploading' }; renderEditor() } })
         editorState.uploadQueue[index] = { ...uploaded, status: 'uploaded', progress: 100 }
         uploadedFiles.push(uploaded)
       }
+      syncDeliverableDraftMetadata()
       submitStep = 'save-product-manifest'
       await saveProductManifest({ productId, draft: editorState.draft, uploadedFiles, user: editorState.user })
       if (desiredStatus === 'published') {
