@@ -286,7 +286,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-thumb-toolbar">
                 <button type="button" class="dashboard-nav-btn" data-media-prev aria-label="Previous media">◀</button>
                 <div class="dashboard-thumb-row">${thumbMarkup}</div>
-                <button type="button" class="dashboard-nav-btn" data-media-next aria-label="Next media">▶</button>
+                <button type="button" class="dashboard-nav-btn" data-media-next aria-label="Next media">${iconSvg('play')}</button>
               </div>
             ` : ''}
             ${(product.previewAudioURLs || []).length ? `
