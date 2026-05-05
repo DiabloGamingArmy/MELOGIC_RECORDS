@@ -1800,6 +1800,14 @@ function renderEditor() {
       renderEditor()
     })
   })
+  editorRoot.querySelectorAll('[data-deliverable-folder-path]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const path = sanitizeDeliverableFolderPath(button.getAttribute('data-deliverable-folder-path') || '')
+      editorState.currentDeliverableFolderPath = path
+      editorState.deliverableFolderPath = path
+      renderEditor()
+    })
+  })
   editorRoot.querySelector('[data-remove-cover]')?.addEventListener('click', () => {
     editorState.mediaFiles.cover = null
     editorState.mediaPreview.cover = ''
