@@ -530,7 +530,10 @@
 
 .product-file-browser {
   display: grid;
-  gap: 0.65rem;
+  grid-template-rows: auto auto 1fr auto;
+  min-height: 360px;
+  height: 100%;
+  gap: 0.5rem;
 }
 .product-file-browser-header {
   display: flex;
@@ -557,7 +560,13 @@
   flex-wrap: wrap;
   color: #b8caff;
   font-size: 0.82rem;
+  margin: 0;
+  padding: 0.65rem 0;
 }
+.product-file-browser-divider { border-top: 1px solid rgba(110, 135, 185, 0.28); }
+.product-file-browser-body { display:grid; grid-template-rows:auto 1fr; min-height:0; }
+.product-file-list-wrap { min-height:0; overflow-y:auto; }
+.product-file-footer { margin:0; color:#9fb2d8; font-size:.82rem; }
 .product-file-breadcrumbs button {
   border: 0;
   background: transparent;
@@ -581,10 +590,10 @@
 }
 .product-file-list {
   display: grid;
+  width: 100%;
   border: 1px solid rgba(110, 135, 185, 0.28);
   border-radius: 0.65rem;
-  overflow-y: auto;
-  max-height: 420px;
+  overflow: hidden;
   background: rgba(8, 13, 24, 0.78);
 }
 .product-file-row {
@@ -595,10 +604,10 @@
   background: rgba(13, 19, 33, 0.78);
   color: #dce8ff;
   display: grid;
-  grid-template-columns: 22px minmax(140px, 0.9fr) minmax(160px, 1.3fr) minmax(130px, auto);
+  grid-template-columns: auto minmax(0, 1.2fr) minmax(160px, 1fr) auto;
   gap: 0.65rem;
   align-items: center;
-  min-height: 44px;
+  min-height: 54px;
   padding: 0.55rem 0.7rem;
   text-align: left;
   cursor: pointer;
@@ -635,6 +644,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.product-file-current-folder{color:#b8caef;font-size:.82rem;}
 .product-file-meta {
   justify-self: end;
   display: inline-flex;
