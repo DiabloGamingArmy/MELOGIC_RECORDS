@@ -10,22 +10,11 @@ import { createProductReview, listProductReviews } from './data/productReviewSer
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
 import { renderSafeRichDescription } from './utils/richDescription'
+import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
 
 
-
-function iconSvg(name) {
-  const icons = {
-    thumbsUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.95 2.45l-1.1 5A2 2 0 0 1 18.73 19H7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L14 2l1 3.88Z"/></svg>',
-    thumbsDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.95-2.45l1.1-5A2 2 0 0 1 5.27 5H17a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L10 22l-1-3.88Z"/></svg>',
-    share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98"/><path d="m15.41 6.51-6.82 3.98"/></svg>',
-    bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21 12 16 5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
-    play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
-    pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
-  }
-  return icons[name] || ''
-}
 
 const state = {
   mediaItems: [],
@@ -115,39 +104,6 @@ function renderMainMedia() {
     : `<img src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
 
 
-
-  const audios = Array.from(app.querySelectorAll('[data-dashboard-audio]'))
-  const syncAudioUi = (audio, index) => {
-    const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
-    const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
-    const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
-    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
-    if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
-    if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
-    if (btn) { btn.classList.toggle('is-playing', !audio.paused); btn.setAttribute('aria-pressed', String(!audio.paused)); btn.setAttribute('aria-label', `${audio.paused ? 'Play' : 'Pause'} audio preview ${index + 1}`) }
-  }
-  audios.forEach((audio) => {
-    const index = Number(audio.getAttribute('data-dashboard-audio') || 0)
-    audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
-    audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
-    audio.addEventListener('ended', () => syncAudioUi(audio, index))
-  })
-  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
-    const index = Number(button.getAttribute('data-audio-index'))
-    const audio = app.querySelector(`[data-dashboard-audio="${index}"]`)
-    if (!(audio instanceof HTMLAudioElement)) return
-    audios.forEach((other) => { if (other !== audio) other.pause() })
-    if (audio.paused) await audio.play().catch((error) => { console.warn('[product] audio preview playback failed', { message: error?.message }) })
-    else audio.pause()
-    syncAudioUi(audio, index)
-  }))
-  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
-    const index = Number(range.getAttribute('data-audio-index'))
-    const audio = app.querySelector(`[data-dashboard-audio="${index}"]`)
-    if (!(audio instanceof HTMLAudioElement) || !Number.isFinite(audio.duration) || !audio.duration) return
-    audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
-    syncAudioUi(audio, index)
-  }))
 
   const ratingSlider = app.querySelector('[data-rating-slider]')
   const ratingFill = app.querySelector('[data-rating-fill]')
@@ -257,6 +213,24 @@ function creatorInitials(name) {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')
 }
 
+
+function renderAudioPlayIcon(isPlaying) { return isPlaying ? iconSvg('pause') : iconSvg('play') }
+function syncAudioUi(audio, index) {
+  const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
+  const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
+  const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+  if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
+  if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
+  if (btn) { btn.classList.toggle('is-playing', !audio.paused); btn.setAttribute('aria-pressed', String(!audio.paused)); btn.setAttribute('aria-label', `${audio.paused ? 'Play' : 'Pause'} audio preview ${index + 1}`); const icon = btn.querySelector('[data-audio-icon]'); if (icon) icon.innerHTML = renderAudioPlayIcon(!audio.paused) }
+}
+function bindAudioPreviewControls() {
+  const audios = Array.from(app.querySelectorAll('audio[data-dashboard-audio]'))
+  audios.forEach((audio) => { const index = Number(audio.getAttribute('data-dashboard-audio') || -1); if (!String(audio.getAttribute('src') || '').trim()) console.warn('[product] audio preview URL missing', { index }); audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index)); audio.addEventListener('timeupdate', () => syncAudioUi(audio, index)); audio.addEventListener('ended', () => syncAudioUi(audio, index)) })
+  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async (event) => { event.preventDefault(); event.stopPropagation(); const index = Number(button.getAttribute('data-audio-index') || -1); const audio = app.querySelector(`audio[data-dashboard-audio="${index}"]`); if (!(audio instanceof HTMLAudioElement)) { console.warn('[product] audio element not found for preview', { index }); return } audios.forEach((other) => { if (other !== audio) { other.pause(); syncAudioUi(other, Number(other.getAttribute('data-dashboard-audio') || -1)) } }); if (audio.paused) { try { await audio.play() } catch (error) { console.warn('[product] audio preview playback failed', { index, src: audio.currentSrc || audio.src || '', message: error?.message }); return } } else audio.pause(); syncAudioUi(audio, index) }))
+  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => { const index = Number(range.getAttribute('data-audio-index') || -1); const audio = app.querySelector(`audio[data-dashboard-audio="${index}"]`); if (!(audio instanceof HTMLAudioElement) || !Number.isFinite(audio.duration) || !audio.duration) return; audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration; syncAudioUi(audio, index) }))
+}
+
 function renderProduct(product, recommendations = [], ownerPreview = false, productFiles = [], ownsProduct = false) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
@@ -319,7 +293,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <section class="dashboard-audio-panel">
                 <h3>Audio previews</h3>
                 <div class="dashboard-audio-row" data-dashboard-audio-row>
-                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}" aria-label="Play audio preview ${index + 1}" aria-pressed="false"><span class="icon-play" aria-hidden="true">${iconSvg('play')}</span><span class="icon-pause" aria-hidden="true">${iconSvg('pause')}</span></button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
+                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}" aria-label="Play audio preview ${index + 1}" aria-pressed="false"><span data-audio-icon aria-hidden="true">${renderAudioPlayIcon(false)}</span></button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
                 </div>
               </section>
             ` : ''}
@@ -477,6 +451,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
   document.title = `Melogic | ${product.title}`
   renderMainMedia()
+  bindAudioPreviewControls()
   initShellChrome()
 
   app.querySelector('[data-add-dashboard-cart]')?.addEventListener('click', (event) => {
