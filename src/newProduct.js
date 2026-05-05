@@ -11,6 +11,7 @@ import {
   recalculateAcceptedContributors,
   removeProductContributorRequest,
   createOrUpdateProductShell,
+  deleteProductStorageFile,
   saveProductManifest,
   submitProductForReview,
   uploadProductFile
@@ -424,6 +425,34 @@ function remapDeliverablePath(oldPath, nextPath) {
   }
   editorState.currentDeliverableFolderPath = rewrite(editorState.currentDeliverableFolderPath || '')
   syncDeliverableDraftMetadata()
+}
+
+function removeFolderFromEditorState(folderPath = '') {
+  const target = sanitizeDeliverableFolderPath(folderPath)
+  if (!target) return []
+  const isInside = (path = '') => {
+    const normalized = sanitizeDeliverableFolderPath(path)
+    return normalized === target || normalized.startsWith(`${target}/`)
+  }
+  const removedFiles = []
+  editorState.deliverableFolders = (editorState.deliverableFolders || []).filter((path) => !isInside(path))
+  editorState.uploadQueue = editorState.uploadQueue.filter((item) => {
+    if (item.role !== 'deliverable') return true
+    const fileFolder = sanitizeDeliverableFolderPath(item.folderPath || item.displayPath?.split('/').slice(0, -1).join('/'))
+    if (isInside(fileFolder)) { removedFiles.push(item); return false }
+    return true
+  })
+  if (Array.isArray(editorState.draft?.deliverableFiles)) {
+    updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.filter((item) => {
+      const fileFolder = sanitizeDeliverableFolderPath(item.folderPath || item.displayPath?.split('/').slice(0, -1).join('/'))
+      if (isInside(fileFolder)) { removedFiles.push(item); return false }
+      return true
+    }))
+  }
+  if (isInside(editorState.currentDeliverableFolderPath || '')) editorState.currentDeliverableFolderPath = target.split('/').slice(0, -1).join('/')
+  editorState.deliverableFolderPath = editorState.currentDeliverableFolderPath || ''
+  syncDeliverableDraftMetadata()
+  return removedFiles
 }
 
 function gatherFileEntries() {
@@ -1730,7 +1759,7 @@ function renderEditor() {
     editorState.openDeliverableRowMenu = editorState.openDeliverableRowMenu === key ? '' : key
     renderEditor()
   }))
-  editorRoot.querySelectorAll('[data-folder-action]').forEach((button) => button.addEventListener('click', (event) => {
+  editorRoot.querySelectorAll('[data-folder-action]').forEach((button) => button.addEventListener('click', async (event) => {
     event.preventDefault()
     event.stopPropagation()
     const [action, pathRaw] = String(button.getAttribute('data-folder-action') || '').split(':')
@@ -1744,21 +1773,22 @@ function renderEditor() {
     }
     if (action === 'delete') {
       if (!window.confirm(`Delete folder ${path} and remove all nested files from this listing?`)) return
-      editorState.deliverableFolders = (editorState.deliverableFolders || []).filter((folder) => folder !== path && !folder.startsWith(`${path}/`))
-      editorState.uploadQueue = editorState.uploadQueue.filter((item) => !(item.role === 'deliverable' && (sanitizeDeliverableFolderPath(item.folderPath || '') === path || sanitizeDeliverableFolderPath(item.folderPath || '').startsWith(`${path}/`))))
-      if (Array.isArray(editorState.draft?.deliverableFiles)) {
-        updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.filter((item) => {
-          const folderPath = sanitizeDeliverableFolderPath(item.folderPath || '')
-          return !(folderPath === path || folderPath.startsWith(`${path}/`))
-        }))
+      const removedFiles = removeFolderFromEditorState(path)
+      const uploaded = removedFiles.filter((item) => item.storagePath)
+      for (const file of uploaded) {
+        const result = await deleteProductStorageFile(file.storagePath)
+        if (!result.ok && !result.objectNotFound) {
+          setStatus(`Could not delete some storage files in ${path}.`, 'error')
+          renderEditor()
+          return
+        }
       }
-      if ((editorState.currentDeliverableFolderPath || '').startsWith(path)) editorState.currentDeliverableFolderPath = path.split('/').slice(0, -1).join('/')
-      syncDeliverableDraftMetadata()
+      setStatus(`Deleted folder ${path}.`, 'info')
     }
     editorState.openDeliverableRowMenu = ''
     renderEditor()
   }))
-  editorRoot.querySelectorAll('[data-file-action]').forEach((button) => button.addEventListener('click', (event) => {
+  editorRoot.querySelectorAll('[data-file-action]').forEach((button) => button.addEventListener('click', async (event) => {
     event.preventDefault()
     event.stopPropagation()
     const [action, id] = String(button.getAttribute('data-file-action') || '').split(':')
@@ -1783,6 +1813,18 @@ function renderEditor() {
     }
     if (action === 'delete') {
       if (!window.confirm('Remove this file from the listing manifest?')) return
+      const target = gatherFileEntries().find((row) => row.id === id)
+      if (target?.status === 'uploading') {
+        setStatus('Wait for upload to finish before deleting this file.', 'error')
+        return
+      }
+      if (target?.storagePath) {
+        const result = await deleteProductStorageFile(target.storagePath)
+        if (!result.ok && !result.objectNotFound) {
+          setStatus('Failed to delete the uploaded storage file. Try again.', 'error')
+          return
+        }
+      }
       editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.id !== id)
       if (Array.isArray(editorState.draft?.deliverableFiles)) updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.filter((item) => item.id !== id))
       syncDeliverableDraftMetadata()
