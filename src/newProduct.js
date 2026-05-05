@@ -189,7 +189,7 @@ function readSectionHash() {
     window.location.hash = 'media-upload'
     return 'media-upload'
   }
-  return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'media-upload'
+  return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'product-info'
 }
 
 function slugify(value) {
@@ -1193,7 +1193,7 @@ function renderMediaUploadPanel() {
           <div class="editor-file-browser"><div class="editor-file-browser-header"><p>Files</p></div><div class="editor-file-browser-divider"></div><div class="editor-file-breadcrumbs"><button type="button" data-deliverable-folder-path="">Root</button>${folderSegments.map((segment, idx) => `<span>/</span><button type="button" data-deliverable-folder-path="${escapeHtml(folderSegments.slice(0, idx + 1).join('/'))}">${escapeHtml(segment)}</button>`).join('')}</div><div class="editor-file-list-wrap editor-file-browser-scroll"><div class="editor-file-list">
             ${treeRows.length
               ? `${currentFolderPath ? `<button type="button" class="editor-file-row is-back-row" data-deliverable-folder-path="${escapeHtml(parentFolderPath)}"><span>${iconSvg('arrowLeft')} Back</span><span class="editor-file-current-folder">${escapeHtml(folderSegments.at(-1) || 'Root')}</span><span>..</span></button>` : ''}${treeRows.map((row) => row.type === 'folder'
-                ? `<div class="editor-file-row is-folder"><button type="button" data-deliverable-folder-path="${escapeHtml(row.folder.path)}"><span>${iconSvg('folder')} ${escapeHtml(row.folder.name)}</span></button><span>Folder · ${row.folder.fileCount} files · ${row.folder.folderCount} folders</span><span>${escapeHtml(row.folder.path)}</span><div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="folder:${escapeHtml(row.folder.path)}" aria-label="Open folder actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `folder:${row.folder.path}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `folder:${row.folder.path}` ? 'is-open' : ''}" role="menu"><button type="button" data-folder-action="rename:${escapeHtml(row.folder.path)}">Rename</button><button type="button" data-folder-action="move:${escapeHtml(row.folder.path)}">Move</button><button type="button" data-folder-action="delete:${escapeHtml(row.folder.path)}">Delete</button></div></div></div>`
+                ? `<div class="editor-file-row is-folder" tabindex="0" role="button" data-deliverable-folder-path="${escapeHtml(row.folder.path)}"><span class="editor-file-row-icon">${iconSvg('folder')}</span><span class="editor-file-row-main">${escapeHtml(row.folder.name)}</span><span class="editor-file-row-meta">Folder · ${row.folder.fileCount} files · ${row.folder.folderCount} folders</span><div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="folder:${escapeHtml(row.folder.path)}" aria-label="Open folder actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `folder:${row.folder.path}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `folder:${row.folder.path}` ? 'is-open' : ''}" role="menu"><button type="button" data-folder-action="rename:${escapeHtml(row.folder.path)}">Rename</button><button type="button" data-folder-action="move:${escapeHtml(row.folder.path)}">Move</button><button type="button" data-folder-action="delete:${escapeHtml(row.folder.path)}">Delete</button></div></div></div>`
                 : `
                   <div class="editor-file-row is-file">
                     <div><strong>${escapeHtml(row.entry.name)}</strong><div class="path">${escapeHtml(row.entry.displayPath)}</div></div>
@@ -1206,6 +1206,7 @@ function renderMediaUploadPanel() {
                       ${String(row.entry.kind || '').startsWith('video/') && !row.entry.isDeliverable ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-video">Assign Video Preview</button>` : ''}
                       <button type="button" data-remove-file="${fileEntries.findIndex((f) => f.id === row.entry.id)}">Remove</button><div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="file:${escapeHtml(row.entry.id)}" aria-label="Open file actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'is-open' : ''}" role="menu"><button type="button" data-file-action="rename:${escapeHtml(row.entry.id)}">Rename</button><button type="button" data-file-action="move:${escapeHtml(row.entry.id)}">Move</button><button type="button" data-file-action="delete:${escapeHtml(row.entry.id)}">Delete</button></div></div>
                     </div>
+                    <div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="file:${escapeHtml(row.entry.id)}" aria-label="Open file actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'is-open' : ''}" role="menu"><button type="button" data-file-action="rename:${escapeHtml(row.entry.id)}">Rename</button><button type="button" data-file-action="move:${escapeHtml(row.entry.id)}">Move</button><button type="button" data-file-action="delete:${escapeHtml(row.entry.id)}">Delete</button></div></div>
                   </div>`).join('')}`
               : '<p class="file-viewer-empty">No product files added yet. Use + Add to attach your main deliverable.</p>'}
           </div></div></div>
@@ -1731,12 +1732,16 @@ function renderEditor() {
       renderEditor()
     }
   }, { once: true })
-  editorRoot.querySelectorAll('[data-row-menu-toggle]').forEach((button) => button.addEventListener('click', () => {
+  editorRoot.querySelectorAll('[data-row-menu-toggle]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
     const key = button.getAttribute('data-row-menu-toggle') || ''
     editorState.openDeliverableRowMenu = editorState.openDeliverableRowMenu === key ? '' : key
     renderEditor()
   }))
-  editorRoot.querySelectorAll('[data-folder-action]').forEach((button) => button.addEventListener('click', () => {
+  editorRoot.querySelectorAll('[data-folder-action]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
     const [action, pathRaw] = String(button.getAttribute('data-folder-action') || '').split(':')
     const path = sanitizeDeliverableFolderPath(pathRaw || '')
     if (!path) return
@@ -1762,7 +1767,9 @@ function renderEditor() {
     editorState.openDeliverableRowMenu = ''
     renderEditor()
   }))
-  editorRoot.querySelectorAll('[data-file-action]').forEach((button) => button.addEventListener('click', () => {
+  editorRoot.querySelectorAll('[data-file-action]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
     const [action, id] = String(button.getAttribute('data-file-action') || '').split(':')
     const updateFile = (mapper) => {
       editorState.uploadQueue = editorState.uploadQueue.map((item) => item.id === id ? mapper(item) : item)
@@ -1800,14 +1807,14 @@ function renderEditor() {
       renderEditor()
     })
   })
-  editorRoot.querySelectorAll('[data-deliverable-folder-path]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const path = sanitizeDeliverableFolderPath(button.getAttribute('data-deliverable-folder-path') || '')
-      editorState.currentDeliverableFolderPath = path
-      editorState.deliverableFolderPath = path
-      renderEditor()
-    })
-  })
+  editorRoot.querySelectorAll('.editor-file-row.is-folder[data-deliverable-folder-path]').forEach((row) => row.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    const path = sanitizeDeliverableFolderPath(row.getAttribute('data-deliverable-folder-path') || '')
+    editorState.currentDeliverableFolderPath = path
+    editorState.deliverableFolderPath = path
+    renderEditor()
+  }))
   editorRoot.querySelector('[data-remove-cover]')?.addEventListener('click', () => {
     editorState.mediaFiles.cover = null
     editorState.mediaPreview.cover = ''

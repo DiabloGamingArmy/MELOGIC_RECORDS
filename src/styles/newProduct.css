@@ -240,7 +240,7 @@
 .editor-file-breadcrumbs button{border:0;background:transparent;color:#9ec7ff;cursor:pointer;padding:0;}
 .editor-file-list-wrap { max-height:420px; overflow-y:auto; min-height:0; }
 .editor-file-list { display:grid; gap:.4rem; }
-.editor-file-row { display:grid; grid-template-columns:1.3fr auto 1fr 1.2fr; gap:.45rem; align-items:center; border: 1px solid rgba(100,130,200,.2); border-radius: 10px; padding: .45rem .55rem; }
+.editor-file-row { display:grid; grid-template-columns:auto minmax(0,1fr) minmax(180px,auto) auto; gap:.45rem; align-items:center; border: 1px solid rgba(100,130,200,.2); border-radius: 10px; padding: .45rem .55rem; }
 .editor-file-row.is-folder,.editor-file-row.is-back-row { grid-template-columns:1fr 1fr auto; background: rgba(16, 24, 45, .85); }
 .editor-file-current-folder{color:#b8caef;}
 .editor-file-actions{display:flex;gap:.55rem;align-items:center;margin-bottom:.55rem;color:#b8c8ef;font-size:.84rem;flex-wrap:wrap;}
@@ -252,7 +252,10 @@
 .editor-file-add-menu button{background:transparent;border:0;color:#dbe7ff;text-align:left;padding:.45rem .5rem;border-radius:8px;}
 .editor-file-add-menu button:hover{background:rgba(96,145,230,.16);}
 .editor-file-row{position:relative;}
-.editor-file-row.is-folder>button{all:unset;cursor:pointer;color:#dce8ff;display:flex;align-items:center;gap:.4rem;}
+.editor-file-row.is-folder{cursor:pointer;}
+.editor-file-row-icon svg{width:16px;height:16px;}
+.editor-file-row-main{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.editor-file-row-meta{color:#9fb2d8;white-space:nowrap;}
 .editor-file-row-actions{position:relative;justify-self:end;}
 .editor-file-menu-button{width:28px;height:28px;border-radius:8px;border:1px solid rgba(99,126,191,.4);background:rgba(21,29,55,.95);color:#d4dfff;display:grid;place-items:center;}
 .editor-file-menu-button svg{width:15px;height:15px;}
