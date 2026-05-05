@@ -14,7 +14,7 @@ import {
   writeBatch
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
-import { getDownloadURL, ref, uploadBytes, uploadBytesResumable } from 'firebase/storage'
+import { deleteObject, getDownloadURL, ref, uploadBytes, uploadBytesResumable } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
@@ -1482,6 +1482,18 @@ export async function uploadProductFile({ productId, queueItem, onProgress } = {
     }, reject, resolve)
   })
   return { ...queueItem, storagePath, progress: 100, status: 'uploaded' }
+}
+
+export async function deleteProductStorageFile(storagePath = '') {
+  const normalized = String(storagePath || '').trim()
+  if (!normalized || !storage) return { ok: false, skipped: true }
+  try {
+    await deleteObject(ref(storage, normalized))
+    return { ok: true, skipped: false }
+  } catch (error) {
+    if (error?.code === 'storage/object-not-found') return { ok: true, skipped: true, objectNotFound: true }
+    return { ok: false, skipped: false, error }
+  }
 }
 
 export async function saveProductManifest({ productId, draft = {}, uploadedFiles = [] } = {}) {
