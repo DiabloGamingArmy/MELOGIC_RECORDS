@@ -3,11 +3,31 @@ const { defineSecret } = require('firebase-functions/params')
 
 const RECAPTCHA_ENTERPRISE_API_KEY = defineSecret('RECAPTCHA_ENTERPRISE_API_KEY')
 
-const PROJECT_ID = process.env.GCLOUD_PROJECT || 'melogic-records'
-const SITE_KEY =
-  process.env.AUTH_RECAPTCHA_ENTERPRISE_SITE_KEY ||
-  process.env.RECAPTCHA_ENTERPRISE_SITE_KEY ||
-  '6LfCgsssAAAAADPv2fFgoS9Eyi9G4jkyicLSuUOv'
+const PROJECT_ID =
+  process.env.GOOGLE_CLOUD_PROJECT ||
+  process.env.GCLOUD_PROJECT ||
+  process.env.GCP_PROJECT ||
+  'melogic-records'
+// Backend SITE_KEY must match the frontend VITE_RECAPTCHA_ENTERPRISE_SITE_KEY used by
+// grecaptcha.enterprise.execute(); mismatches can trigger INVALID_ARGUMENT or invalid token assessments.
+const SITE_KEY = process.env.AUTH_RECAPTCHA_ENTERPRISE_SITE_KEY || process.env.RECAPTCHA_ENTERPRISE_SITE_KEY
+
+function maskKey(value) {
+  const key = String(value || '').trim()
+  if (!key) return 'missing'
+  if (key.length <= 8) return key
+  return `${key.slice(0, 4)}...${key.slice(-3)}`
+}
+
+function parseJsonBody(text) {
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch (_) {
+    return null
+  }
+}
+
 const THRESHOLDS = {
   LOGIN: 0.3,
   SIGNUP: 0.5,
@@ -31,6 +51,13 @@ exports.verifyRecaptchaEnterprise = onCall({ secrets: [RECAPTCHA_ENTERPRISE_API_
     throw new HttpsError('failed-precondition', 'Security verification failed. Please try again.')
   }
 
+  if (!SITE_KEY) {
+    if (inEmulator) {
+      return { ok: true, score: 0.9, action, emulatorBypass: true }
+    }
+    throw new HttpsError('failed-precondition', 'Security verification is not configured.')
+  }
+
   const endpoint = `https://recaptchaenterprise.googleapis.com/v1/projects/${PROJECT_ID}/assessments?key=${encodeURIComponent(apiKey)}`
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -44,14 +71,22 @@ exports.verifyRecaptchaEnterprise = onCall({ secrets: [RECAPTCHA_ENTERPRISE_API_
     })
   }).catch(() => null)
 
+  const responseBodyText = response ? await response.text().catch(() => '') : ''
+
   if (!response || !response.ok) {
+    const parsedBody = parseJsonBody(responseBodyText)
     console.warn('[verifyRecaptchaEnterprise] Assessment request failed.', {
-      status: response?.status ?? null
+      status: response?.status ?? null,
+      statusText: response?.statusText ?? null,
+      projectId: PROJECT_ID,
+      siteKeyHint: maskKey(SITE_KEY),
+      action,
+      responseBody: parsedBody || responseBodyText || null
     })
     throw new HttpsError('failed-precondition', 'Security verification failed. Please try again.')
   }
 
-  const data = await response.json().catch(() => null)
+  const data = parseJsonBody(responseBodyText)
   const validToken = Boolean(data?.tokenProperties?.valid)
   const responseAction = String(data?.tokenProperties?.action || '')
   const score = Number(data?.riskAnalysis?.score ?? 0)
@@ -63,7 +98,10 @@ exports.verifyRecaptchaEnterprise = onCall({ secrets: [RECAPTCHA_ENTERPRISE_API_
       responseAction,
       score,
       threshold: scoreThreshold,
-      validToken
+      validToken,
+      invalidReason: data?.tokenProperties?.invalidReason || null,
+      hostname: data?.tokenProperties?.hostname || null,
+      siteKeyHint: maskKey(SITE_KEY)
     })
     throw new HttpsError('failed-precondition', 'Security verification failed. Please try again.')
   }
