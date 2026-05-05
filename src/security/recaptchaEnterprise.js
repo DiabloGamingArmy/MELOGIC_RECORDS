@@ -143,9 +143,10 @@ function registerRecaptchaDiag(siteKey) {
 
 export async function executeRecaptchaAction(action = 'LOGIN') {
   const siteKey = getRecaptchaSiteKey()
+  const normalizedAction = String(action || '').trim().toUpperCase()
   registerRecaptchaDiag(siteKey)
   logDevDebug('Starting executeRecaptchaAction.', {
-    action,
+    action: normalizedAction,
     siteKeyHint: getSiteKeyHint(siteKey)
   })
 
@@ -170,7 +171,7 @@ export async function executeRecaptchaAction(action = 'LOGIN') {
 
     enterprise.ready(async () => {
       try {
-        const token = await enterprise.execute(siteKey, { action })
+        const token = await enterprise.execute(siteKey, { action: normalizedAction })
         if (!token) {
           reject(new Error('Security verification failed. Please try again.'))
           return
@@ -179,7 +180,7 @@ export async function executeRecaptchaAction(action = 'LOGIN') {
       } catch (error) {
         recaptchaLoadPromise = null
         logDevDebug('executeRecaptchaAction failed.', {
-          action,
+          action: normalizedAction,
           message: error?.message || 'unknown'
         })
         reject(error)
