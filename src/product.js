@@ -24,7 +24,10 @@ const state = {
   interaction: { reaction: null, saved: false },
   engagementCounts: { likeCount: 0, dislikeCount: 0, saveCount: 0 },
   engagementProductId: '',
-  reviews: []
+  reviews: [],
+  fileBrowserProductId: '',
+  fileBrowserPath: '',
+  fileBrowserMessage: ''
 }
 
 function escapeHtml(value) {
@@ -214,6 +217,176 @@ function creatorInitials(name) {
 }
 
 
+
+function formatBytes(size = 0) {
+  const bytes = Math.max(0, Number(size || 0))
+  if (!bytes) return '0 KB'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  const value = bytes / (1024 ** index)
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`
+}
+
+function normalizePackagePath(value = '') {
+  const raw = String(value || '').trim()
+  if (!raw || /^https?:\/\//i.test(raw)) return ''
+  const cleaned = raw.split('?')[0].replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
+  const marker = cleaned.match(/(?:deliverables|downloads|packages|package)\/(.+)$/i)
+  return (marker?.[1] || cleaned).split('/').filter(Boolean).join('/')
+}
+
+function getFilePathCandidates(file = {}) {
+  return [file.displayPath, file.path, file.storagePath, file.fullPath, file.name].map(normalizePackagePath).filter(Boolean)
+}
+
+function pathMatchesAny(candidate, knownPaths) {
+  return knownPaths.some((known) => candidate === known || candidate.endsWith(`/${known}`) || known.endsWith(`/${candidate}`))
+}
+
+function getKnownListingMediaPaths(product = {}) {
+  return [product.coverPath, product.thumbnailPath, product.primaryPreviewPath, product.previewAssignment?.hoverAudioPath, product.previewAssignment?.hoverVideoPath, ...(product.galleryPaths || []), ...(product.previewAudioPaths || []), ...(product.previewVideoPaths || [])].map(normalizePackagePath).filter(Boolean)
+}
+
+function getProductViewerDeliverableFiles(product = {}, productFiles = []) {
+  const knownListingPaths = getKnownListingMediaPaths(product)
+  const downloadPaths = [product.downloadPath, product.primaryDownloadPath].map(normalizePackagePath).filter(Boolean)
+  return Array.from(productFiles || []).filter((file) => {
+    const candidates = getFilePathCandidates(file)
+    const roleText = [file.role, file.category, file.type, file.kind, file.contentType, file.purpose].join(' ').toLowerCase()
+    const explicitDeliverable = file.isDeliverable === true || /\b(deliverable|deliverables|package|download)\b/.test(roleText)
+    const explicitListingMedia = file.isPublicPreview === true || /preview|cover|thumbnail|gallery|listing media|public preview|hover/.test(roleText)
+    if (candidates.some((candidate) => pathMatchesAny(candidate, knownListingPaths)) && !explicitDeliverable) return false
+    if (explicitListingMedia && !explicitDeliverable) return false
+    if (file.isDownloadable === false && !explicitDeliverable) return false
+    if (explicitDeliverable && file.isDownloadable !== false) return true
+    if (candidates.some((candidate) => pathMatchesAny(candidate, downloadPaths))) return true
+    return candidates.length > 0
+  })
+}
+
+function getViewerFilePath(file = {}) {
+  return getFilePathCandidates(file)[0] || normalizePackagePath(file.name) || 'Unnamed file'
+}
+
+function getFileExtension(path = '') {
+  const name = String(path || '').split('/').pop() || ''
+  const dotIndex = name.lastIndexOf('.')
+  return dotIndex > -1 ? name.slice(dotIndex + 1).toLowerCase() : ''
+}
+
+function inferFileDescription(file = {}, name = '') {
+  const explicit = file.description || file.note || file.summary || file.kind || file.contentType
+  if (explicit) return String(explicit)
+  const ext = getFileExtension(name)
+  if (['wav', 'aiff', 'aif', 'mp3', 'flac', 'ogg'].includes(ext)) return 'Audio file'
+  if (['mid', 'midi'].includes(ext)) return 'MIDI file'
+  if (['fxp', 'fxb', 'vital', 'serum', 'nmsv', 'adg'].includes(ext)) return 'Preset file'
+  if (['zip', 'rar', '7z'].includes(ext)) return 'Product archive'
+  if (['txt', 'md', 'pdf', 'rtf'].includes(ext)) return 'Documentation'
+  return 'Product file'
+}
+
+function iconForFile(name = '') {
+  const ext = getFileExtension(name)
+  if (['wav', 'aiff', 'aif', 'mp3', 'flac', 'ogg', 'mid', 'midi'].includes(ext)) return 'music'
+  if (['zip', 'rar', '7z'].includes(ext)) return 'package'
+  if (['txt', 'md', 'pdf', 'rtf'].includes(ext)) return 'fileText'
+  return 'file'
+}
+
+function createFileTree(files = []) {
+  const root = { name: '', path: '', folders: new Map(), files: [] }
+  files.forEach((file) => {
+    const path = getViewerFilePath(file)
+    const segments = path.split('/').filter(Boolean)
+    if (!segments.length) return
+    let current = root
+    segments.slice(0, -1).forEach((segment) => {
+      const nextPath = [current.path, segment].filter(Boolean).join('/')
+      if (!current.folders.has(segment)) current.folders.set(segment, { name: segment, path: nextPath, folders: new Map(), files: [] })
+      current = current.folders.get(segment)
+    })
+    current.files.push({ ...file, viewerName: segments.at(-1), viewerPath: path })
+  })
+  return root
+}
+
+function summarizeTreeNode(node) {
+  let fileCount = node.files.length
+  let folderCount = node.folders.size
+  let sizeBytes = node.files.reduce((sum, file) => sum + Number(file.sizeBytes || file.size || 0), 0)
+  node.folders.forEach((folder) => {
+    const summary = summarizeTreeNode(folder)
+    fileCount += summary.fileCount
+    folderCount += summary.folderCount
+    sizeBytes += summary.sizeBytes
+  })
+  return { fileCount, folderCount, sizeBytes }
+}
+
+function getTreeNode(root, path = '') {
+  return normalizePackagePath(path).split('/').filter(Boolean).reduce((node, segment) => node?.folders.get(segment), root) || null
+}
+
+function renderProductFileBrowser(product, productFiles, ownsProduct) {
+  const deliverableFiles = getProductViewerDeliverableFiles(product, productFiles)
+  const root = createFileTree(deliverableFiles)
+  let currentPath = normalizePackagePath(state.fileBrowserPath)
+  let currentNode = getTreeNode(root, currentPath)
+  if (!currentNode) {
+    currentPath = ''
+    state.fileBrowserPath = ''
+    currentNode = root
+  }
+  const rootSummary = summarizeTreeNode(root)
+  const currentSummary = summarizeTreeNode(currentNode)
+  const segments = currentPath.split('/').filter(Boolean)
+  const crumbs = [`<button type="button" data-file-browser-path="" aria-label="Open package root"><span class="product-file-crumb-icon">${iconSvg('home')}</span>Root</button>`, ...segments.map((segment, index) => {
+    const path = segments.slice(0, index + 1).join('/')
+    return `<span class="product-file-crumb-separator">${iconSvg('chevronRight')}</span><button type="button" data-file-browser-path="${escapeHtml(path)}">${escapeHtml(segment)}</button>`
+  })].join('')
+  const parentPath = segments.slice(0, -1).join('/')
+  const backRow = currentPath ? `<button type="button" class="product-file-row is-folder is-back" role="treeitem" data-file-browser-path="${escapeHtml(parentPath)}"><span class="product-file-icon">${iconSvg('arrowLeft')}</span><span class="product-file-name">Back</span><span class="product-file-description">Parent folder</span><span class="product-file-meta">..</span></button>` : ''
+  const folderRows = Array.from(currentNode.folders.values()).sort((a, b) => a.name.localeCompare(b.name)).map((folder) => {
+    const summary = summarizeTreeNode(folder)
+    return `<button type="button" class="product-file-row is-folder" role="treeitem" data-file-browser-path="${escapeHtml(folder.path)}"><span class="product-file-icon">${iconSvg('folder')}</span><span class="product-file-name">${escapeHtml(folder.name)}</span><span class="product-file-description">Folder · ${summary.fileCount} files · ${summary.folderCount} folders</span><span class="product-file-meta">${formatBytes(summary.sizeBytes)}</span></button>`
+  }).join('')
+  const fileRows = currentNode.files.slice().sort((a, b) => a.viewerName.localeCompare(b.viewerName)).map((file) => {
+    const description = inferFileDescription(file, file.viewerName)
+    const status = ownsProduct ? 'Included in download' : 'Locked manifest'
+    return `<button type="button" class="product-file-row is-file" role="treeitem" data-file-browser-file="${escapeHtml(file.viewerPath)}"><span class="product-file-icon">${iconSvg(iconForFile(file.viewerName))}</span><span class="product-file-name">${escapeHtml(file.viewerName)}</span><span class="product-file-description">${escapeHtml(description)}</span><span class="product-file-meta"><span class="product-file-status">${iconSvg(ownsProduct ? 'package' : 'lock')} ${escapeHtml(status)}</span><span>${formatBytes(file.sizeBytes || file.size || 0)}</span></span></button>`
+  }).join('')
+  const rows = `${backRow}${folderRows}${fileRows}` || '<div class="product-file-empty">No included files listed yet.</div>'
+  return `<div class="product-file-browser" data-file-browser-root><div class="product-file-browser-header"><div><h2>File Viewer</h2><p>Product package manifest. File contents stay locked.</p></div><div class="product-file-browser-summary">${rootSummary.fileCount} files · ${rootSummary.folderCount} folders · ${formatBytes(rootSummary.sizeBytes)}</div></div><div class="product-file-breadcrumbs" aria-label="File browser breadcrumbs">${crumbs}</div><div class="product-file-message ${state.fileBrowserMessage ? 'is-visible' : ''}" data-file-browser-message>${escapeHtml(state.fileBrowserMessage)}</div><div class="product-file-list" role="tree" aria-label="Product package files">${rows}</div>${currentPath ? `<p class="product-file-browser-summary">Viewing ${escapeHtml(currentPath)} · ${currentSummary.fileCount} files · ${currentSummary.folderCount} folders</p>` : ''}</div>`
+}
+
+function bindProductFileBrowser(product, productFiles, ownsProduct) {
+  const root = app.querySelector('[data-file-browser-root]')
+  if (!root) return
+  const renderIntoRoot = () => {
+    const next = document.createElement('div')
+    next.innerHTML = renderProductFileBrowser(product, productFiles, ownsProduct).trim()
+    root.replaceWith(next.firstElementChild)
+    bindProductFileBrowser(product, productFiles, ownsProduct)
+  }
+  root.addEventListener('click', (event) => {
+    const pathButton = event.target.closest('[data-file-browser-path]')
+    if (pathButton) {
+      event.preventDefault()
+      state.fileBrowserPath = pathButton.getAttribute('data-file-browser-path') || ''
+      state.fileBrowserMessage = ''
+      renderIntoRoot()
+      return
+    }
+    const fileButton = event.target.closest('[data-file-browser-file]')
+    if (fileButton) {
+      event.preventDefault()
+      state.fileBrowserMessage = 'File contents are available after checkout/download. This viewer only shows the package manifest.'
+      renderIntoRoot()
+    }
+  })
+}
+
 function renderAudioPlayIcon(isPlaying) { return isPlaying ? iconSvg('pause') : iconSvg('play') }
 function syncAudioUi(audio, index) {
   const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
@@ -246,6 +419,11 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
       saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0)
     }
     state.engagementProductId = product.id
+  }
+  if (state.fileBrowserProductId !== product.id) {
+    state.fileBrowserProductId = product.id
+    state.fileBrowserPath = ''
+    state.fileBrowserMessage = ''
   }
   const likeCount = state.engagementCounts.likeCount
   const dislikeCount = state.engagementCounts.dislikeCount
@@ -308,11 +486,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
               <div class="dashboard-details-split">
                 <article class="dashboard-section-card dashboard-file-tree-viewer">
-                  <h2>File Viewer</h2>
-                  <p>${ownsProduct ? 'Owned: download-ready file manifest.' : 'Preview manifest shown until product is owned.'}</p>
-                  <ul class="dashboard-file-list">
-                    ${productFiles.length ? productFiles.map((file) => `<li class="dashboard-file-item"><span class="file-icon">${iconSvg(String(file.type || '').includes('folder') ? 'folder' : 'file')}</span><span class="file-main"><strong>${escapeHtml(file.displayPath || file.name || 'Unnamed file')}</strong><small>${Math.max(0, Number(file.sizeBytes || 0) / 1024).toFixed(1)} KB</small></span><span class="file-state">${file.canPreview ? `${iconSvg('eye')} Preview` : `${iconSvg('lock')} Locked`} ${ownsProduct ? `· ${iconSvg('download')} Ready` : ''}</span></li>`).join('') : '<li class="dashboard-file-item-empty">No included files listed yet.</li>'}
-                  </ul>
+                  ${renderProductFileBrowser(product, productFiles, ownsProduct)}
                 </article>
 
                 <aside class="dashboard-metadata-panel">
@@ -389,7 +563,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <div class="dashboard-action-icons-row">
                   <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'like' ? 'is-active' : ''}" data-product-like aria-label="Like this product" title="Like" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em>${likeCount}</em></button>
                   <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'dislike' ? 'is-active' : ''}" data-product-dislike aria-label="Dislike this product" title="Dislike" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsDown')}</span><em>${dislikeCount}</em></button>
-                  <button type="button" class="dashboard-icon-action" data-product-share aria-label="Share this product" title="Share"><span class="icon">${iconSvg('share')}</span></button>
+                  <button type="button" class="dashboard-icon-action" data-product-share aria-label="Share this product" title="Share"><span class="icon">${iconSvg('share2')}</span></button>
                   <button type="button" class="dashboard-icon-action ${state.interaction.saved ? 'is-active' : ''}" data-product-save aria-label="Save this product" title="Save" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('bookmark')}</span><em>${state.engagementCounts.saveCount}</em></button>
                 </div>
                 
@@ -422,6 +596,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   document.title = `Melogic | ${product.title}`
   renderMainMedia()
   bindAudioPreviewControls()
+  bindProductFileBrowser(product, productFiles, ownsProduct)
   initShellChrome()
 
   app.querySelector('[data-add-dashboard-cart]')?.addEventListener('click', (event) => {
