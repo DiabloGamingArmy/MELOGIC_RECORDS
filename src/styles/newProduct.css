@@ -244,6 +244,22 @@
 .editor-file-row.is-folder,.editor-file-row.is-back-row { grid-template-columns:1fr 1fr auto; background: rgba(16, 24, 45, .85); }
 .editor-file-current-folder{color:#b8caef;}
 .editor-file-actions{display:flex;gap:.55rem;align-items:center;margin-bottom:.55rem;color:#b8c8ef;font-size:.84rem;flex-wrap:wrap;}
+.editor-file-toolbar{position:relative;}
+.editor-file-add-wrap{position:relative;}
+.editor-file-add-button{width:34px;height:34px;border-radius:9px;border:1px solid rgba(104,131,199,.5);background:rgba(18,27,50,.96);color:#f3f7ff;font-size:1.2rem;line-height:1;display:grid;place-items:center;}
+.editor-file-add-menu{position:absolute;right:0;top:40px;display:none;z-index:15;min-width:150px;border:1px solid rgba(101,128,194,.45);background:rgba(10,15,29,.98);border-radius:10px;padding:.3rem;}
+.editor-file-add-menu.is-open{display:grid;}
+.editor-file-add-menu button{background:transparent;border:0;color:#dbe7ff;text-align:left;padding:.45rem .5rem;border-radius:8px;}
+.editor-file-add-menu button:hover{background:rgba(96,145,230,.16);}
+.editor-file-row{position:relative;}
+.editor-file-row.is-folder>button{all:unset;cursor:pointer;color:#dce8ff;display:flex;align-items:center;gap:.4rem;}
+.editor-file-row-actions{position:relative;justify-self:end;}
+.editor-file-menu-button{width:28px;height:28px;border-radius:8px;border:1px solid rgba(99,126,191,.4);background:rgba(21,29,55,.95);color:#d4dfff;display:grid;place-items:center;}
+.editor-file-menu-button svg{width:15px;height:15px;}
+.editor-file-row-menu{position:absolute;right:0;top:32px;display:none;z-index:20;min-width:130px;border:1px solid rgba(101,128,194,.45);background:rgba(10,15,29,.98);border-radius:10px;padding:.25rem;}
+.editor-file-row-menu.is-open{display:grid;}
+.editor-file-row-menu button{background:transparent;border:0;color:#dbe7ff;text-align:left;padding:.42rem .48rem;border-radius:8px;}
+.editor-file-row-menu button:hover{background:rgba(96,145,230,.16);}
 .file-tree-row { display: grid; }
 .file-tree-indent { width: calc(var(--depth, 0) * 14px); height: 1px; }
 .file-tree-row .path { color: #8fa8da; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }

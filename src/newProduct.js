@@ -18,6 +18,7 @@ import {
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
+import { iconSvg } from './utils/icons'
 import { sanitizeRichDescription, escapeHtml as escapeRichHtml } from './utils/richDescription'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
@@ -74,6 +75,8 @@ let editorState = {
   deliverableFolderPath: '',
   currentDeliverableFolderPath: '',
   deliverableFolders: [],
+  deliverableAddMenuOpen: false,
+  openDeliverableRowMenu: '',
   contributorUI: {
     search: '',
     role: '',
@@ -393,6 +396,34 @@ function buildFileTreeRows(entries = []) {
     rows.push({ type: 'file', entry, id: entry.id, name: entry.name })
   })
   return rows.sort((a, b) => String((a.folder?.name || a.name || a.entry?.name || '')).localeCompare(String((b.folder?.name || b.name || b.entry?.name || ''))))
+}
+
+function remapDeliverablePath(oldPath, nextPath) {
+  const oldNorm = sanitizeDeliverableFolderPath(oldPath)
+  const nextNorm = sanitizeDeliverableFolderPath(nextPath)
+  if (!oldNorm) return sanitizeDeliverableFolderPath(nextNorm)
+  if (oldNorm === nextNorm) return oldNorm
+  const rewrite = (value) => {
+    const clean = sanitizeDeliverableFolderPath(value)
+    if (!clean || (clean !== oldNorm && !clean.startsWith(`${oldNorm}/`))) return clean
+    return sanitizeDeliverableFolderPath(clean.replace(oldNorm, nextNorm).replace(/^\/+/, ''))
+  }
+  editorState.deliverableFolders = (editorState.deliverableFolders || []).map((path) => rewrite(path)).filter(Boolean)
+  editorState.uploadQueue = editorState.uploadQueue.map((item) => {
+    if (item.role !== 'deliverable') return item
+    const folderPath = rewrite(item.folderPath || '')
+    const name = String(item.name || '').split('/').pop()
+    return { ...item, folderPath, displayPath: folderPath ? `${folderPath}/${name}` : name }
+  })
+  if (Array.isArray(editorState.draft?.deliverableFiles)) {
+    updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.map((item) => {
+      const folderPath = rewrite(item.folderPath || '')
+      const name = String(item.name || '').split('/').pop()
+      return { ...item, folderPath, displayPath: folderPath ? `${folderPath}/${name}` : name, updatedAt: new Date().toISOString() }
+    }))
+  }
+  editorState.currentDeliverableFolderPath = rewrite(editorState.currentDeliverableFolderPath || '')
+  syncDeliverableDraftMetadata()
 }
 
 function gatherFileEntries() {
@@ -1145,18 +1176,24 @@ function renderMediaUploadPanel() {
         </article>
 
         <article class="file-viewer-panel">
-          <div class="file-viewer-toolbar">
+          <div class="file-viewer-toolbar editor-file-toolbar">
             <div>
-              <h3>File Viewer</h3>
+              <h3>Deliverables</h3>
               <p>Total files: ${fileEntries.length} · Total size: ${formatBytes(totalBytes)} · Preview: ${previewCount} · Deliverables: ${deliverableCount}</p>
             </div>
-            <button type="button" class="file-viewer-add-btn" data-pick-file="deliverables">+ Add Deliverable</button>
+            <div class="editor-file-add-wrap">
+              <button type="button" class="editor-file-add-button" data-deliverable-add-menu-toggle aria-label="Add file or folder" aria-haspopup="menu" aria-expanded="${editorState.deliverableAddMenuOpen ? 'true' : 'false'}">+</button>
+              <div class="editor-file-add-menu ${editorState.deliverableAddMenuOpen ? 'is-open' : ''}" data-deliverable-menu role="menu">
+                <button type="button" data-deliverable-add-file role="menuitem">Add File</button>
+                <button type="button" data-deliverable-create-folder role="menuitem">Create Folder</button>
+              </div>
+            </div>
           </div>
-          <div class="editor-file-actions"><button type="button" class="file-viewer-add-btn" data-create-deliverable-folder>Create folder</button><button type="button" class="file-viewer-add-btn" data-pick-file="deliverables">Upload files to this folder</button><span>Current folder: ${escapeHtml(currentFolderPath || 'Root')}</span></div>
-          <div class="editor-file-browser"><div class="editor-file-browser-header"><p>Deliverable package browser</p></div><div class="editor-file-browser-divider"></div><div class="editor-file-breadcrumbs"><button type="button" data-deliverable-folder-path="">Root</button>${folderSegments.map((segment, idx) => `<span>/</span><button type="button" data-deliverable-folder-path="${escapeHtml(folderSegments.slice(0, idx + 1).join('/'))}">${escapeHtml(segment)}</button>`).join('')}</div><div class="editor-file-list-wrap"><div class="editor-file-list">
+          <div class="editor-file-actions"><span>Current folder: ${escapeHtml(currentFolderPath || 'Root')}</span></div>
+          <div class="editor-file-browser"><div class="editor-file-browser-header"><p>Files</p></div><div class="editor-file-browser-divider"></div><div class="editor-file-breadcrumbs"><button type="button" data-deliverable-folder-path="">Root</button>${folderSegments.map((segment, idx) => `<span>/</span><button type="button" data-deliverable-folder-path="${escapeHtml(folderSegments.slice(0, idx + 1).join('/'))}">${escapeHtml(segment)}</button>`).join('')}</div><div class="editor-file-list-wrap editor-file-browser-scroll"><div class="editor-file-list">
             ${treeRows.length
               ? `${currentFolderPath ? `<button type="button" class="editor-file-row is-back-row" data-deliverable-folder-path="${escapeHtml(parentFolderPath)}"><span>${iconSvg('arrowLeft')} Back</span><span class="editor-file-current-folder">${escapeHtml(folderSegments.at(-1) || 'Root')}</span><span>..</span></button>` : ''}${treeRows.map((row) => row.type === 'folder'
-                ? `<button type="button" class="editor-file-row is-folder" data-deliverable-folder-path="${escapeHtml(row.folder.path)}"><span>${iconSvg('folder')} ${escapeHtml(row.folder.name)}</span><span>Folder · ${row.folder.fileCount} files · ${row.folder.folderCount} folders</span><span>${escapeHtml(row.folder.path)}</span></button>`
+                ? `<div class="editor-file-row is-folder"><button type="button" data-deliverable-folder-path="${escapeHtml(row.folder.path)}"><span>${iconSvg('folder')} ${escapeHtml(row.folder.name)}</span></button><span>Folder · ${row.folder.fileCount} files · ${row.folder.folderCount} folders</span><span>${escapeHtml(row.folder.path)}</span><div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="folder:${escapeHtml(row.folder.path)}" aria-label="Open folder actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `folder:${row.folder.path}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `folder:${row.folder.path}` ? 'is-open' : ''}" role="menu"><button type="button" data-folder-action="rename:${escapeHtml(row.folder.path)}">Rename</button><button type="button" data-folder-action="move:${escapeHtml(row.folder.path)}">Move</button><button type="button" data-folder-action="delete:${escapeHtml(row.folder.path)}">Delete</button></div></div></div>`
                 : `
                   <div class="editor-file-row is-file">
                     <div><strong>${escapeHtml(row.entry.name)}</strong><div class="path">${escapeHtml(row.entry.displayPath)}</div></div>
@@ -1167,7 +1204,7 @@ function renderMediaUploadPanel() {
                       ${row.entry.isDeliverable ? `<input class="file-description-input" maxlength="150" value="${escapeHtml(row.entry.description || '')}" data-file-description-input="${escapeHtml(row.entry.id)}" placeholder="Description (150 max)" />` : ''}
                       ${String(row.entry.kind || '').startsWith('audio/') && !row.entry.isDeliverable ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-audio">Assign Audio Preview</button>` : ''}
                       ${String(row.entry.kind || '').startsWith('video/') && !row.entry.isDeliverable ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-video">Assign Video Preview</button>` : ''}
-                      <button type="button" data-remove-file="${fileEntries.findIndex((f) => f.id === row.entry.id)}">Remove</button>
+                      <button type="button" data-remove-file="${fileEntries.findIndex((f) => f.id === row.entry.id)}">Remove</button><div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="file:${escapeHtml(row.entry.id)}" aria-label="Open file actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'is-open' : ''}" role="menu"><button type="button" data-file-action="rename:${escapeHtml(row.entry.id)}">Rename</button><button type="button" data-file-action="move:${escapeHtml(row.entry.id)}">Move</button><button type="button" data-file-action="delete:${escapeHtml(row.entry.id)}">Delete</button></div></div>
                     </div>
                   </div>`).join('')}`
               : '<p class="file-viewer-empty">No product files added yet. Use + Add to attach your main deliverable.</p>'}
@@ -1431,6 +1468,12 @@ function renderEditor() {
   })
 
   form?.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && (editorState.deliverableAddMenuOpen || editorState.openDeliverableRowMenu)) {
+      editorState.deliverableAddMenuOpen = false
+      editorState.openDeliverableRowMenu = ''
+      renderEditor()
+      return
+    }
     const input = event.target
     if (!(input instanceof HTMLInputElement)) return
     const field = input.getAttribute('data-tag-input')
@@ -1579,6 +1622,28 @@ function renderEditor() {
   editorRoot.querySelector('[data-pick-file="preview-audio"]')?.addEventListener('click', () => previewAudioInput?.click())
   editorRoot.querySelector('[data-pick-file="preview-video"]')?.addEventListener('click', () => previewVideoInput?.click())
   editorRoot.querySelector('[data-pick-file="deliverables"]')?.addEventListener('click', () => deliverablesInput?.click())
+  editorRoot.querySelector('[data-deliverable-add-menu-toggle]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    editorState.deliverableAddMenuOpen = !editorState.deliverableAddMenuOpen
+    renderEditor()
+  })
+  editorRoot.querySelector('[data-deliverable-add-file]')?.addEventListener('click', () => {
+    editorState.deliverableAddMenuOpen = false
+    deliverablesInput?.click()
+  })
+  editorRoot.querySelector('[data-deliverable-create-folder]')?.addEventListener('click', () => {
+    editorState.deliverableAddMenuOpen = false
+    const base = sanitizeDeliverableFolderPath(editorState.currentDeliverableFolderPath || '')
+    const raw = window.prompt('New folder name or path:', '') || ''
+    const folderName = sanitizeDeliverableFolderPath(raw)
+    const folder = sanitizeDeliverableFolderPath(base ? `${base}/${folderName}` : folderName)
+    if (!folder) return
+    editorState.deliverableFolders = Array.from(new Set([...(editorState.deliverableFolders || []), folder]))
+    editorState.currentDeliverableFolderPath = folder
+    editorState.deliverableFolderPath = folder
+    setStatus(`Created folder ${folder}.`, 'info')
+    renderEditor()
+  })
   coverInput?.addEventListener('change', () => {
     const file = coverInput.files?.[0]
     if (!file) return
@@ -1656,17 +1721,84 @@ function renderEditor() {
       renderEditor()
     })
   })
-  editorRoot.querySelector('[data-create-deliverable-folder]')?.addEventListener('click', () => {
-    const base = sanitizeDeliverableFolderPath(editorState.currentDeliverableFolderPath || '')
-    const raw = window.prompt('New folder name or path:', '') || ''
-    const folderName = sanitizeDeliverableFolderPath(raw)
-    const folder = sanitizeDeliverableFolderPath(base ? `${base}/${folderName}` : folderName)
-    if (!folder) return
-    editorState.deliverableFolders = Array.from(new Set([...(editorState.deliverableFolders || []), folder]))
-    editorState.currentDeliverableFolderPath = folder
-    editorState.deliverableFolderPath = folder
-    setStatus(`Created folder ${folder}.`, 'info')
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-deliverable-menu]') && !event.target.closest('[data-deliverable-add-menu-toggle]') && editorState.deliverableAddMenuOpen) {
+      editorState.deliverableAddMenuOpen = false
+      renderEditor()
+    }
+    if (!event.target.closest('[data-row-menu-toggle]') && !event.target.closest('.editor-file-row-menu') && editorState.openDeliverableRowMenu) {
+      editorState.openDeliverableRowMenu = ''
+      renderEditor()
+    }
+  }, { once: true })
+  editorRoot.querySelectorAll('[data-row-menu-toggle]').forEach((button) => button.addEventListener('click', () => {
+    const key = button.getAttribute('data-row-menu-toggle') || ''
+    editorState.openDeliverableRowMenu = editorState.openDeliverableRowMenu === key ? '' : key
     renderEditor()
+  }))
+  editorRoot.querySelectorAll('[data-folder-action]').forEach((button) => button.addEventListener('click', () => {
+    const [action, pathRaw] = String(button.getAttribute('data-folder-action') || '').split(':')
+    const path = sanitizeDeliverableFolderPath(pathRaw || '')
+    if (!path) return
+    if (action === 'rename' || action === 'move') {
+      const next = sanitizeDeliverableFolderPath(window.prompt(`${action === 'rename' ? 'Rename folder to' : 'Move folder to path'}`, path.split('/').at(-1) || path) || '')
+      if (!next) return
+      const parent = action === 'rename' ? path.split('/').slice(0, -1).join('/') : ''
+      remapDeliverablePath(path, action === 'rename' ? sanitizeDeliverableFolderPath(parent ? `${parent}/${next}` : next) : next)
+    }
+    if (action === 'delete') {
+      if (!window.confirm(`Delete folder ${path} and remove all nested files from this listing?`)) return
+      editorState.deliverableFolders = (editorState.deliverableFolders || []).filter((folder) => folder !== path && !folder.startsWith(`${path}/`))
+      editorState.uploadQueue = editorState.uploadQueue.filter((item) => !(item.role === 'deliverable' && (sanitizeDeliverableFolderPath(item.folderPath || '') === path || sanitizeDeliverableFolderPath(item.folderPath || '').startsWith(`${path}/`))))
+      if (Array.isArray(editorState.draft?.deliverableFiles)) {
+        updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.filter((item) => {
+          const folderPath = sanitizeDeliverableFolderPath(item.folderPath || '')
+          return !(folderPath === path || folderPath.startsWith(`${path}/`))
+        }))
+      }
+      if ((editorState.currentDeliverableFolderPath || '').startsWith(path)) editorState.currentDeliverableFolderPath = path.split('/').slice(0, -1).join('/')
+      syncDeliverableDraftMetadata()
+    }
+    editorState.openDeliverableRowMenu = ''
+    renderEditor()
+  }))
+  editorRoot.querySelectorAll('[data-file-action]').forEach((button) => button.addEventListener('click', () => {
+    const [action, id] = String(button.getAttribute('data-file-action') || '').split(':')
+    const updateFile = (mapper) => {
+      editorState.uploadQueue = editorState.uploadQueue.map((item) => item.id === id ? mapper(item) : item)
+      if (Array.isArray(editorState.draft?.deliverableFiles)) updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.map((item) => item.id === id ? mapper(item) : item))
+      syncDeliverableDraftMetadata()
+    }
+    if (action === 'rename') {
+      const target = gatherFileEntries().find((row) => row.id === id)
+      if (!target) return
+      const nextName = String(window.prompt('Rename file', target.name || '') || '').trim()
+      if (!nextName) return
+      updateFile((item) => ({ ...item, name: nextName, displayPath: item.folderPath ? `${item.folderPath}/${nextName}` : nextName }))
+    }
+    if (action === 'move') {
+      const target = gatherFileEntries().find((row) => row.id === id)
+      if (!target) return
+      const nextFolder = sanitizeDeliverableFolderPath(window.prompt('Move file to folder path (empty for Root)', target.folderPath || '') || '')
+      updateFile((item) => ({ ...item, folderPath: nextFolder, displayPath: nextFolder ? `${nextFolder}/${item.name}` : item.name }))
+      if (nextFolder) editorState.deliverableFolders = Array.from(new Set([...(editorState.deliverableFolders || []), nextFolder]))
+    }
+    if (action === 'delete') {
+      if (!window.confirm('Remove this file from the listing manifest?')) return
+      editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.id !== id)
+      if (Array.isArray(editorState.draft?.deliverableFiles)) updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.filter((item) => item.id !== id))
+      syncDeliverableDraftMetadata()
+    }
+    editorState.openDeliverableRowMenu = ''
+    renderEditor()
+  }))
+  editorRoot.querySelectorAll('[data-deliverable-folder-path]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const path = sanitizeDeliverableFolderPath(button.getAttribute('data-deliverable-folder-path') || '')
+      editorState.currentDeliverableFolderPath = path
+      editorState.deliverableFolderPath = path
+      renderEditor()
+    })
   })
   editorRoot.querySelectorAll('[data-deliverable-folder-path]').forEach((button) => {
     button.addEventListener('click', () => {
