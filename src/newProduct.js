@@ -18,6 +18,7 @@ import {
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
+import { sanitizeRichDescription, escapeHtml as escapeRichHtml } from './utils/richDescription'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
 import { getAgreementMarkdown, getLatestMarketplaceSellerAgreement } from './data/legalAgreementService'
@@ -70,6 +71,7 @@ let editorState = {
     cover: '',
     gallery: []
   },
+  deliverableFolderPath: '',
   contributorUI: {
     search: '',
     role: '',
@@ -238,18 +240,64 @@ function formatBytes(size = 0) {
   return `${(kb / 1024).toFixed(2)} MB`
 }
 
-function queueFile(role, file) {
+function toPathArray(value) {
+  if (Array.isArray(value)) return value.map(String).map((v) => v.trim()).filter(Boolean)
+  return String(value || '').split(',').map((v) => v.trim()).filter(Boolean)
+}
+
+function toPathString(value) {
+  return toPathArray(value).join(', ')
+}
+
+function normalizeDraftPaths(draft = {}) {
   return {
-    id: crypto.randomUUID(),
+    ...draft,
+    previewAudioPaths: toPathArray(draft.previewAudioPaths),
+    previewVideoPaths: toPathArray(draft.previewVideoPaths),
+    galleryPaths: toPathArray(draft.galleryPaths),
+    coverPath: toPathString(draft.coverPath),
+    thumbnailPath: toPathString(draft.thumbnailPath),
+    downloadPath: toPathString(draft.downloadPath),
+    primaryDownloadPath: toPathString(draft.primaryDownloadPath),
+    deliverableFiles: Array.isArray(draft.deliverableFiles) ? draft.deliverableFiles : []
+  }
+}
+
+function sanitizeDeliverableFolderPath(value = '') {
+  return String(value || '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => part.trim().replace(/[^a-zA-Z0-9._ -]/g, '-'))
+    .filter((part) => part && part !== '.' && part !== '..')
+    .join('/')
+    .replace(/\/+/g, '/')
+    .slice(0, 160)
+}
+
+function deliverableDisplayPath(file, folderPath = '') {
+  const folder = sanitizeDeliverableFolderPath(folderPath || file.webkitRelativePath?.split('/').slice(0, -1).join('/') || '')
+  return [folder, file.name].filter(Boolean).join('/')
+}
+
+function queueFile(role, file, extra = {}) {
+  const displayPath = extra.displayPath || (role === 'deliverable' ? deliverableDisplayPath(file, editorState.deliverableFolderPath) : (file.webkitRelativePath || file.name))
+  return {
+    id: extra.id || crypto.randomUUID(),
     role,
     file,
     name: file.name,
+    displayPath,
+    folderPath: sanitizeDeliverableFolderPath(extra.folderPath || displayPath.split('/').slice(0, -1).join('/')),
     sizeBytes: Number(file.size || 0),
     contentType: file.type || 'application/octet-stream',
-    status: 'queued',
-    progress: 0,
-    storagePath: '',
-    error: ''
+    status: extra.status || 'queued',
+    progress: Number(extra.progress || 0),
+    storagePath: extra.storagePath || '',
+    description: String(extra.description || '').slice(0, 150),
+    category: role === 'deliverable' ? 'Deliverables' : '',
+    isDeliverable: role === 'deliverable',
+    isDownloadable: role === 'deliverable',
+    error: extra.error || ''
   }
 }
 
@@ -265,12 +313,6 @@ function isArchiveFile(file = null) {
 function validatePrimaryDeliverableSelection(files = [], draft = {}, hasExistingDeliverable = false) {
   const selected = Array.from(files || [])
   if (!selected.length) return { ok: false, message: 'No deliverable file selected.', level: 'error' }
-  if (selected.length > 1) {
-    return { ok: false, message: 'Only one primary deliverable is supported right now. Please upload a ZIP package.', level: 'error' }
-  }
-  if (hasExistingDeliverable) {
-    return { ok: false, message: 'Remove the existing deliverable before adding another.', level: 'error' }
-  }
   const file = selected[0]
   if (isSingleSampleProduct(draft)) {
     if (String(file.type || '').startsWith('audio/') || isArchiveFile(file)) return { ok: true, file, level: 'info', message: '' }
@@ -289,10 +331,7 @@ function validateDraftFiles(draft = editorState.draft, mediaFiles = editorState.
   const folderDeliverables = Array.from(mediaFiles?.folderDeliverables || [])
   const allDeliverables = [...deliverables, ...folderDeliverables]
 
-  if (allDeliverables.length > 1) {
-    errors.push('Only one primary deliverable is supported right now. Please upload a ZIP package.')
-  }
-  if (!allDeliverables.length && !String(draft?.downloadPath || draft?.primaryDownloadPath || '').trim()) {
+  if (!allDeliverables.length && !toPathArray(draft?.downloadPath || draft?.primaryDownloadPath).length) {
     warnings.push('No deliverable has been added yet.')
   }
 
@@ -347,16 +386,97 @@ function gatherFileEntries() {
         category,
         isPublicPreview,
         isDeliverable,
-        role: ''
+        role: isDeliverable ? 'deliverable' : ''
       })
     })
   }
   pushRows(editorState.mediaFiles.gallery, 'Listing Media', true, false)
   pushRows(editorState.mediaFiles.previewAudio, 'Preview Media', true, false)
   pushRows(editorState.mediaFiles.previewVideo, 'Preview Media', true, false)
-  pushRows(editorState.mediaFiles.deliverables, 'Deliverables', false, true)
-  pushRows(editorState.mediaFiles.folderDeliverables, 'Deliverables', false, true)
+  const queuedIds = new Set()
+  editorState.uploadQueue.forEach((item) => {
+    queuedIds.add(item.id)
+    rows.push({
+      ...item,
+      displayPath: item.displayPath || item.name,
+      kind: item.contentType || item.kind || 'file',
+      category: item.role === 'deliverable' ? 'Deliverables' : item.role === 'gallery' ? 'Listing Media' : 'Preview Media',
+      isPublicPreview: item.role !== 'deliverable',
+      isDeliverable: item.role === 'deliverable'
+    })
+  })
+  ;(editorState.draft?.deliverableFiles || []).forEach((item) => {
+    if (!queuedIds.has(item.id)) rows.push({ ...item, kind: item.contentType || item.kind || 'file', category: 'Deliverables', isDeliverable: true, role: 'deliverable', status: 'uploaded', progress: 100 })
+  })
   return rows
+}
+
+
+function deliverableMetadataFromQueueItem(item = {}) {
+  return {
+    id: item.id,
+    productId: editorState.draft?.id || '',
+    name: item.name,
+    displayPath: item.displayPath || item.name,
+    storagePath: item.storagePath || '',
+    sizeBytes: Number(item.sizeBytes || 0),
+    contentType: item.contentType || 'application/octet-stream',
+    extension: String(item.name || '').split('.').pop() || '',
+    type: item.contentType || 'file',
+    category: 'Deliverables',
+    role: 'deliverable',
+    isDeliverable: true,
+    isDownloadable: true,
+    canPreview: String(item.contentType || '').startsWith('audio/'),
+    description: String(item.description || '').slice(0, 150),
+    createdAt: item.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+}
+
+function syncDeliverableDraftMetadata() {
+  if (!editorState.draft) return
+  const queuedRows = editorState.uploadQueue.filter((item) => item.role === 'deliverable' && item.status === 'uploaded' && item.storagePath).map(deliverableMetadataFromQueueItem)
+  const queuedIds = new Set(queuedRows.map((row) => row.id))
+  const existingRows = Array.isArray(editorState.draft.deliverableFiles) ? editorState.draft.deliverableFiles.filter((row) => !queuedIds.has(row.id)) : []
+  const rows = [...existingRows, ...queuedRows]
+  updateDraftField('deliverableFiles', rows)
+  updateDraftField('downloadPath', rows[0]?.storagePath || '')
+  updateDraftField('primaryDownloadPath', rows[0]?.storagePath || '')
+  updateDraftField('primaryDownloadBytes', Number(rows[0]?.sizeBytes || 0))
+  updateDraftField('assetSummary', { ...(editorState.draft.assetSummary || {}), totalFiles: rows.length, totalBytes: rows.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0), downloadableCount: rows.length, previewableCount: rows.filter((row) => row.canPreview).length })
+}
+
+async function ensureDraftProductShell() {
+  if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) return editorState.draft.id
+  const shell = await createOrUpdateProductShell(editorState.draft, editorState.user)
+  updateDraftField('id', shell.productId)
+  return shell.productId
+}
+
+async function uploadQueueItemsNow(items = []) {
+  if (!editorState.user || !editorState.draft || !items.length) return
+  let productId = ''
+  try { productId = await ensureDraftProductShell() } catch { setStatus('Could not create draft before upload.', 'error'); renderEditor(); return }
+  items.forEach(async (initialItem) => {
+    const queueIndex = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id)
+    if (queueIndex < 0) return
+    try {
+      editorState.uploadQueue[queueIndex] = { ...editorState.uploadQueue[queueIndex], status: 'uploading', error: '' }
+      renderEditor()
+      const uploaded = await uploadProductFile({ productId, queueItem: editorState.uploadQueue[queueIndex], onProgress: (progress) => { const idx = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id); if (idx >= 0) editorState.uploadQueue[idx] = { ...editorState.uploadQueue[idx], progress, status: 'uploading' }; renderEditor() } })
+      const idx = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id)
+      if (idx >= 0) editorState.uploadQueue[idx] = { ...editorState.uploadQueue[idx], ...uploaded, status: 'uploaded', progress: 100 }
+      syncDeliverableDraftMetadata()
+      setStatus('Deliverable uploaded.', 'success')
+      renderEditor()
+    } catch (error) {
+      const idx = editorState.uploadQueue.findIndex((row) => row.id === initialItem.id)
+      if (idx >= 0) editorState.uploadQueue[idx] = { ...editorState.uploadQueue[idx], status: 'failed', error: error?.message || 'Upload failed' }
+      setStatus('Deliverable upload failed. Remove it or try again.', 'error')
+      renderEditor()
+    }
+  })
 }
 
 function tagValuesFor(field) {
@@ -571,6 +691,7 @@ function syncPricingDraftFields(metrics = null) {
   const next = metrics || pricingMetricsFromState()
   updateDraftField('payoutTargetCents', next.sellerNetTargetCents)
   updateDraftField('priceCents', next.customerListingCents)
+  updateDraftField('price', centsToPriceInput(next.sellerNetTargetCents))
   updateDraftField('isFree', next.sellerNetTargetCents === 0)
   return next
 }
@@ -780,7 +901,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   const thumbnailReady = Boolean(draft.thumbnailPath || draft.thumbnailURL || state.mediaFiles?.thumbnail || state.mediaPreview?.cover)
   const deliverablesCount = (state.mediaFiles?.deliverables?.length || 0) + (state.mediaFiles?.folderDeliverables?.length || 0)
   const hasDownload = Boolean(draft.downloadPath || deliverablesCount > 0)
-  const hasPreviewMedia = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || state.mediaFiles?.previewAudio?.length || state.mediaFiles?.previewVideo?.length)
+  const hasPreviewMedia = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || state.mediaFiles?.previewAudio?.length || state.mediaFiles?.previewVideo?.length)
   const previewDecision = hasPreviewMedia || Boolean(draft.previewMode === 'none')
   const pricingMetrics = pricingMetricsFromState()
   const pendingContributors = Number((draft.pendingContributorIds || []).length || 0)
@@ -853,7 +974,7 @@ function renderPublishPanel() {
   const fileEntries = gatherFileEntries()
   const deliverables = fileEntries.filter((item) => item.isDeliverable)
   const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
-  const previewAssigned = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
+  const previewAssigned = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
   const canSubmit = blockingIssues.length === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
 
   return `
@@ -956,7 +1077,7 @@ function renderProductInfoPanel() {
       <div class="product-info-field"><label>Release Date</label><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></div>
       <div class="product-info-field"><label>Usage License</label><select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
 
-      <div class="product-info-field is-wide"><label>Long Description</label><textarea name="description" rows="10">${escapeHtml(draft.description)}</textarea></div>
+      <div class="product-info-field is-wide"><label>Long Description</label><div class="rich-editor-toolbar" data-rich-toolbar><button type="button" data-rich-cmd="bold">B</button><button type="button" data-rich-cmd="italic">I</button><button type="button" data-rich-cmd="underline">U</button><button type="button" data-rich-cmd="insertUnorderedList">• List</button><button type="button" data-rich-cmd="insertOrderedList">1. List</button><button type="button" data-rich-align="justifyLeft">Left</button><button type="button" data-rich-align="justifyCenter">Center</button><button type="button" data-rich-align="justifyRight">Right</button><button type="button" data-rich-link>Link</button><button type="button" data-rich-cmd="insertHorizontalRule">HR</button><select data-rich-font><option value="">Font</option><option>Arial</option><option>Georgia</option><option>Verdana</option></select><select data-rich-size><option value="">Size</option><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option></select><input type="color" data-rich-color aria-label="Text color" /></div><div class="rich-description-editor" contenteditable="true" data-description-editor>${sanitizeRichDescription(draft.description || '')}</div><input type="hidden" name="description" value="${escapeHtml(draft.description)}" data-description-hidden /></div>
       <div class="product-info-side-stack">
         <div class="product-info-field"><label>Visibility</label><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></div>
         <div class="product-info-field"><label>Status</label><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="review_pending" ${draft.status === 'review_pending' ? 'selected' : ''}>Review pending</option><option value="needs_changes" ${draft.status === 'needs_changes' ? 'selected' : ''}>Needs changes</option><option value="rejected" ${draft.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></div>
@@ -991,7 +1112,7 @@ function renderMediaUploadPanel() {
               <p>${escapeHtml(draft.shortDescription || 'Short description preview appears here.')}</p>
               <p>${draft.isFree ? 'Free' : `${escapeHtml(draft.currency || 'USD')} ${centsToPriceInput(Number(draft.priceCents || 0))}`}</p>
               <p>${tagValuesFor('tags').slice(0, 3).join(' · ') || tagValuesFor('genres').slice(0, 2).join(' · ') || 'No tags yet'}</p>
-              <p>${(draft.previewAudioPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length ? 'Preview assigned' : 'No preview media assigned yet'}</p>
+              <p>${toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length ? 'Preview assigned' : 'No preview media assigned yet'}</p>
             </div>
           </article>
         </article>
@@ -1004,26 +1125,28 @@ function renderMediaUploadPanel() {
             </div>
             <button type="button" class="file-viewer-add-btn" data-pick-file="deliverables">+ Add Deliverable</button>
           </div>
-          ${editorState.mediaFiles.folderDeliverables.length ? '<p class="file-viewer-warning">Folder structure preview is available, but this product currently supports one primary deliverable. Use a ZIP package for multi-file products.</p>' : ''}
-          <div class="file-tree">
+          <div class="deliverable-folder-row"><button type="button" class="file-viewer-add-btn" data-create-deliverable-folder>Create folder</button><span>Upload folder: ${escapeHtml(editorState.deliverableFolderPath || 'Root')}</span></div>
+          <div class="editor-file-browser"><div class="editor-file-breadcrumbs"><span>Root</span>${editorState.deliverableFolderPath ? `<span>/ ${escapeHtml(editorState.deliverableFolderPath)}</span>` : ''}</div><div class="file-tree editor-file-browser-scroll">
             ${treeRows.length
               ? treeRows.map((row) => row.type === 'folder'
-                ? `<div class="file-tree-row is-folder"><div class="file-tree-indent" style="--depth:${row.depth}"></div><div>📁 ${escapeHtml(row.name)}</div></div>`
+                ? `<div class="file-tree-row is-folder"><div class="file-tree-indent" style="--depth:${row.depth}"></div><div>${escapeHtml(row.name)}</div></div>`
                 : `
-                  <div class="file-tree-row is-file">
+                  <div class="file-tree-row is-file editor-file-row">
                     <div class="file-tree-indent" style="--depth:${row.depth}"></div>
                     <div><strong>${escapeHtml(row.entry.name)}</strong><div class="path">${escapeHtml(row.entry.displayPath)}</div></div>
                     <div>${escapeHtml(formatBytes(row.entry.sizeBytes))}</div>
-                    <div><span class="file-role-badge ${row.entry.isPublicPreview ? 'is-public' : 'is-private'}">${row.entry.isDeliverable ? 'Private Deliverable' : row.entry.isPublicPreview ? 'Public Preview' : 'Listing Media'}</span></div>
+                    <div><span class="file-role-badge ${row.entry.isPublicPreview ? 'is-public' : 'is-private'}">${row.entry.isDeliverable ? 'Deliverable' : row.entry.isPublicPreview ? 'Public Preview' : 'Listing Media'}</span><div class="upload-progress"><span style="width:${Number(row.entry.progress || (row.entry.status === 'uploaded' ? 100 : 0))}%"></span></div><small>${escapeHtml(row.entry.status || '')}</small></div>
                     <div class="file-row-actions">
-                      ${String(row.entry.kind || '').startsWith('audio/') ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-audio">Assign Audio Preview</button>` : ''}
-                      ${String(row.entry.kind || '').startsWith('video/') ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-video">Assign Video Preview</button>` : ''}
+                      ${row.entry.isDeliverable ? `<button type="button" data-edit-file-description="${escapeHtml(row.entry.id)}">${row.entry.description ? 'Edit description' : 'Add description'}</button>` : ''}
+                      ${row.entry.isDeliverable ? `<input class="file-description-input" maxlength="150" value="${escapeHtml(row.entry.description || '')}" data-file-description-input="${escapeHtml(row.entry.id)}" placeholder="Description (150 max)" />` : ''}
+                      ${String(row.entry.kind || '').startsWith('audio/') && !row.entry.isDeliverable ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-audio">Assign Audio Preview</button>` : ''}
+                      ${String(row.entry.kind || '').startsWith('video/') && !row.entry.isDeliverable ? `<button type="button" data-assign-role="${fileEntries.findIndex((f) => f.id === row.entry.id)}:hover-video">Assign Video Preview</button>` : ''}
                       <button type="button" data-remove-file="${fileEntries.findIndex((f) => f.id === row.entry.id)}">Remove</button>
                     </div>
                   </div>
                 `).join('')
               : '<p class="file-viewer-empty">No product files added yet. Use + Add to attach your main deliverable.</p>'}
-          </div>
+          </div></div>
         </article>
 
         <aside class="media-upload-actions">
@@ -1032,11 +1155,13 @@ function renderMediaUploadPanel() {
           <button type="button" class="media-upload-action-btn" data-pick-file="preview-audio">Upload Audio Preview</button>
           <button type="button" class="media-upload-action-btn" data-pick-file="preview-video">Upload Video Preview</button>
           <button type="button" class="media-upload-action-btn marketplace-preview-btn" data-open-marketplace-preview>Marketplace Preview</button>
+          <div class="cover-preview-block">${editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL ? `<img src="${escapeHtml(editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL)}" alt="Cover preview" /><button type="button" data-remove-cover>Remove cover</button>` : '<span>No cover selected</span>'}</div>
+          <div class="gallery-thumb-scroller">${(editorState.mediaPreview.gallery || []).map((url, index) => `<div class="gallery-thumb"><img src="${escapeHtml(url)}" alt="Gallery image ${index + 1}" /><button type="button" data-remove-gallery="${index}" aria-label="Remove gallery image">×</button></div>`).join('')}</div>
           <input class="hidden-file" type="file" accept="image/*" data-cover-input />
           <input class="hidden-file" type="file" accept="image/*" multiple data-gallery-input />
           <input class="hidden-file" type="file" accept="audio/*" multiple data-preview-audio-input />
           <input class="hidden-file" type="file" accept="video/*" multiple data-preview-video-input />
-          <input class="hidden-file" type="file" data-deliverables-input />
+          <input class="hidden-file" type="file" multiple data-deliverables-input />
         </aside>
       </div>
     </section>
@@ -1208,6 +1333,58 @@ function renderEditor() {
 
   const form = editorRoot.querySelector('[data-product-form]')
 
+  const descriptionEditor = form?.querySelector('[data-description-editor]')
+  const descriptionHidden = form?.querySelector('[data-description-hidden]')
+  descriptionEditor?.addEventListener('input', () => {
+    const safe = sanitizeRichDescription(descriptionEditor.innerHTML || '')
+    if (descriptionHidden) descriptionHidden.value = safe
+    updateDraftField('description', safe)
+  })
+
+  form?.querySelectorAll('[data-rich-cmd]').forEach((button) => button.addEventListener('click', () => {
+    const cmd = button.getAttribute('data-rich-cmd')
+    if (!cmd) return
+    descriptionEditor?.focus()
+    document.execCommand(cmd, false)
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  }))
+  form?.querySelectorAll('[data-rich-align]').forEach((button) => button.addEventListener('click', () => {
+    const cmd = button.getAttribute('data-rich-align')
+    if (!cmd) return
+    descriptionEditor?.focus()
+    document.execCommand(cmd, false)
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  }))
+  form?.querySelector('[data-rich-link]')?.addEventListener('click', () => {
+    const href = window.prompt('Enter link URL (http, https, or mailto):', 'https://') || ''
+    if (!/^(https?:|mailto:)/i.test(href.trim())) return
+    descriptionEditor?.focus()
+    document.execCommand('createLink', false, href.trim())
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
+  form?.querySelector('[data-rich-font]')?.addEventListener('change', (event) => {
+    const value = String(event.target.value || '').trim()
+    if (!value) return
+    descriptionEditor?.focus()
+    document.execCommand('fontName', false, value)
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
+  form?.querySelector('[data-rich-size]')?.addEventListener('change', (event) => {
+    const value = String(event.target.value || '').trim()
+    if (!value) return
+    document.execCommand('styleWithCSS', false, true)
+    descriptionEditor?.focus()
+    document.execCommand('fontSize', false, '4')
+    descriptionEditor?.querySelectorAll('font[size="4"]').forEach((node) => { node.removeAttribute('size'); node.style.fontSize = value })
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
+  form?.querySelector('[data-rich-color]')?.addEventListener('input', (event) => {
+    document.execCommand('styleWithCSS', false, true)
+    descriptionEditor?.focus()
+    document.execCommand('foreColor', false, String(event.target.value || '#dbe9ff'))
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
+
   form?.addEventListener('input', (event) => {
     const target = event.target
     if (!target?.name) return
@@ -1264,6 +1441,9 @@ function renderEditor() {
   pricingPriceInput?.addEventListener('input', () => {
     const targetCents = normalizePriceToCents(pricingPriceInput.value)
     updateDraftField('price', centsToPriceInput(targetCents))
+    updateDraftField('isFree', targetCents === 0)
+    const freeToggle = editorRoot.querySelector('[data-pricing-free-toggle]')
+    if (freeToggle) freeToggle.checked = targetCents === 0
     syncPricingDraftFields()
     refreshPricingDom()
   })
@@ -1277,6 +1457,7 @@ function renderEditor() {
 
   editorRoot.querySelector('[data-pricing-free-toggle]')?.addEventListener('change', (event) => {
     const checked = Boolean(event.target.checked)
+    updateDraftField('isFree', checked)
     if (checked) updateDraftField('price', '0.00')
     if (!checked && normalizePriceToCents(editorState.draft?.price || '') === 0) updateDraftField('price', '1.00')
     if (pricingPriceInput) pricingPriceInput.value = editorState.draft.price
@@ -1383,11 +1564,10 @@ function renderEditor() {
     renderEditor()
   })
   galleryInput?.addEventListener('change', () => {
-    editorState.mediaFiles.gallery = Array.from(galleryInput.files || [])
-    editorState.uploadQueue = [
-      ...editorState.uploadQueue.filter((item) => item.role !== 'gallery'),
-      ...editorState.mediaFiles.gallery.map((file) => queueFile('gallery', file))
-    ]
+    const added = Array.from(galleryInput.files || [])
+    editorState.mediaFiles.gallery = [...editorState.mediaFiles.gallery, ...added]
+    editorState.mediaPreview.gallery = [...(editorState.mediaPreview.gallery || []), ...added.map((file) => URL.createObjectURL(file))]
+    editorState.uploadQueue = [...editorState.uploadQueue, ...added.map((file) => queueFile('gallery', file))]
     setStatus('Product images selected and queued.', 'info')
     renderEditor()
   })
@@ -1410,21 +1590,26 @@ function renderEditor() {
     renderEditor()
   })
   deliverablesInput?.addEventListener('change', () => {
-    const validation = validatePrimaryDeliverableSelection(deliverablesInput.files || [], editorState.draft, Boolean(editorState.mediaFiles.deliverables.length))
-    if (!validation.ok) {
-      setStatus(validation.message, validation.level === 'warning' ? 'info' : 'error')
+    const selected = Array.from(deliverablesInput.files || [])
+    if (!selected.length) return
+    const existingPaths = new Set(editorState.uploadQueue.filter((item) => item.role === 'deliverable').map((item) => item.displayPath))
+    const queued = []
+    selected.forEach((file) => {
+      const item = queueFile('deliverable', file)
+      if (existingPaths.has(item.displayPath)) return
+      existingPaths.add(item.displayPath)
+      queued.push(item)
+    })
+    if (!queued.length) {
+      setStatus('Deliverable already exists at that folder path.', 'error')
       renderEditor()
       return
     }
-    editorState.mediaFiles.deliverables = [validation.file]
-    editorState.mediaFiles.folderDeliverables = []
-    if (validation.message) {
-      setStatus(validation.message, validation.level === 'warning' ? 'info' : 'success')
-    } else {
-      setStatus('Primary deliverable selected and queued.', 'info')
-    }
-    editorState.uploadQueue = [...editorState.uploadQueue.filter((item) => item.role !== 'deliverable'), queueFile('deliverable', validation.file)]
+    editorState.mediaFiles.deliverables = [...editorState.mediaFiles.deliverables, ...selected]
+    editorState.uploadQueue = [...editorState.uploadQueue, ...queued]
+    setStatus('Deliverables added. Upload started.', 'info')
     renderEditor()
+    uploadQueueItemsNow(queued)
   })
   editorRoot.querySelectorAll('[data-remove-file]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1440,10 +1625,50 @@ function renderEditor() {
       const key = map[target.category]
       if (!key) return
       editorState.mediaFiles[key] = (editorState.mediaFiles[key] || []).filter((row) => (row.webkitRelativePath || row.name) !== target.displayPath)
+      editorState.uploadQueue = editorState.uploadQueue.filter((row) => row.id !== target.id)
+      if (target.isDeliverable) syncDeliverableDraftMetadata()
       setStatus('File removed from draft.', 'info')
       renderEditor()
     })
   })
+  editorRoot.querySelector('[data-create-deliverable-folder]')?.addEventListener('click', () => {
+    const raw = window.prompt('Folder path for new deliverable uploads:', editorState.deliverableFolderPath || '') || ''
+    const folder = sanitizeDeliverableFolderPath(raw)
+    editorState.deliverableFolderPath = folder
+    setStatus(folder ? `Deliverable upload folder set to ${folder}.` : 'Deliverable upload folder set to Root.', 'info')
+    renderEditor()
+  })
+  editorRoot.querySelector('[data-remove-cover]')?.addEventListener('click', () => {
+    editorState.mediaFiles.cover = null
+    editorState.mediaPreview.cover = ''
+    editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.role !== 'cover' && item.role !== 'thumbnail')
+    updateDraftField('coverPath', '')
+    updateDraftField('thumbnailPath', '')
+    renderEditor()
+  })
+  editorRoot.querySelectorAll('[data-remove-gallery]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = Number(button.getAttribute('data-remove-gallery'))
+      editorState.mediaFiles.gallery = editorState.mediaFiles.gallery.filter((_, i) => i !== index)
+      editorState.mediaPreview.gallery = (editorState.mediaPreview.gallery || []).filter((_, i) => i !== index)
+      const galleryQueue = editorState.uploadQueue.filter((item) => item.role === 'gallery')
+      const removeId = galleryQueue[index]?.id
+      if (removeId) editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.id !== removeId)
+      renderEditor()
+    })
+  })
+  editorRoot.querySelectorAll('[data-file-description-input]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const id = input.getAttribute('data-file-description-input') || ''
+      const value = String(input.value || '').slice(0, 150)
+      editorState.uploadQueue = editorState.uploadQueue.map((item) => item.id === id ? { ...item, description: value } : item)
+      if (editorState.draft?.deliverableFiles) {
+        updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.map((item) => item.id === id ? { ...item, description: value, updatedAt: new Date().toISOString() } : item))
+      }
+      syncDeliverableDraftMetadata()
+    })
+  })
+
   editorRoot.querySelectorAll('[data-assign-role]').forEach((button) => {
     button.addEventListener('click', () => {
       const [indexRaw, role] = String(button.getAttribute('data-assign-role') || '').split(':')
@@ -1527,11 +1752,6 @@ function renderEditor() {
 
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
-    if ((editorState.mediaFiles.deliverables || []).length > 1) {
-      setStatus('Only one primary deliverable is supported right now. Please upload a ZIP package.', 'error')
-      renderEditor()
-      return
-    }
     const pricingMetrics = syncPricingDraftFields()
     if (pricingMetrics?.invalidConfig) {
       setStatus('Marketplace fee configuration is invalid.', 'error')
@@ -1573,23 +1793,26 @@ function renderEditor() {
       editorState.draft.id = productId
       updateDraftField('id', productId)
       submitStep = 'upload-files'
+      if (editorState.uploadQueue.some((item) => item.status === 'uploading')) {
+        setStatus('Wait for uploads to finish before publishing.', 'error')
+        renderEditor()
+        return
+      }
       const uploadedFiles = []
       for (let index = 0; index < editorState.uploadQueue.length; index += 1) {
         const item = editorState.uploadQueue[index]
+        if (item.status === 'uploaded' && item.storagePath) {
+          uploadedFiles.push(item)
+          continue
+        }
         submitStep = `upload-${item.role}`
         editorState.uploadQueue[index] = { ...item, status: 'uploading', error: '' }
         renderEditor()
-        const uploaded = await uploadProductFile({
-          productId,
-          queueItem: item,
-          onProgress: (progress) => {
-            editorState.uploadQueue[index] = { ...editorState.uploadQueue[index], progress, status: 'uploading' }
-            renderEditor()
-          }
-        })
+        const uploaded = await uploadProductFile({ productId, queueItem: item, onProgress: (progress) => { editorState.uploadQueue[index] = { ...editorState.uploadQueue[index], progress, status: 'uploading' }; renderEditor() } })
         editorState.uploadQueue[index] = { ...uploaded, status: 'uploaded', progress: 100 }
         uploadedFiles.push(uploaded)
       }
+      syncDeliverableDraftMetadata()
       submitStep = 'save-product-manifest'
       await saveProductManifest({ productId, draft: editorState.draft, uploadedFiles, user: editorState.user })
       if (desiredStatus === 'published') {
@@ -1650,14 +1873,20 @@ async function initPage() {
   editorState.agreement.error = ''
 
   if (editorState.requestedProductId) {
-    const existingProduct = await getProductById(editorState.requestedProductId)
-    if (!existingProduct || existingProduct.artistId !== user.uid) {
-      editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Listing access denied</h2><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`
+    try {
+      const existingProduct = await getProductById(editorState.requestedProductId)
+      if (!existingProduct || existingProduct.artistId !== user.uid) {
+        editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Listing access denied</h2><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`
+        return
+      }
+      editorState.draft = normalizeDraftPaths(applyCreatorIdentity({ ...createEmptyProductDraft(user, editorState.creatorProfile), ...existingProduct, id: existingProduct.id }, user, editorState.creatorProfile))
+    } catch (error) {
+      console.warn('[newProduct] failed to load editable product', { productId: editorState.requestedProductId, message: error?.message })
+      editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Couldn’t load listing</h2><p>${escapeHtml(error?.message || 'Unknown error')}</p><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`
       return
     }
-    editorState.draft = applyCreatorIdentity({ ...createEmptyProductDraft(user, editorState.creatorProfile), ...existingProduct, id: existingProduct.id }, user, editorState.creatorProfile)
   } else {
-    editorState.draft = applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile)
+    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile))
   }
 
   if (!editorState.draft.currency) {
