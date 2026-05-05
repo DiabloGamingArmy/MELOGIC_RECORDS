@@ -7,7 +7,7 @@ if (!admin.apps.length) {
 const { createOrGetDm } = require('./src/messages/createOrGetDm')
 const { createGroupThread } = require('./src/messages/createGroupThread')
 const { repairMyInboxThreads, syncInboxMirrorsOnThreadWrite } = require('./src/messages/inboxMirrors')
-const { requestProductReview } = require('./src/products/requestProductReview')
+const { requestProductReview, processProductReviewJob } = require('./src/products/requestProductReview')
 const { setProductReaction, setProductSaved } = require('./src/products/productEngagement')
 const { provisionUserAccount } = require('./src/users/provisionUserAccount')
 const { verifyRecaptchaEnterprise } = require('./src/security/verifyRecaptchaEnterprise')
@@ -17,6 +17,7 @@ exports.createGroupThread = createGroupThread
 exports.repairMyInboxThreads = repairMyInboxThreads
 exports.syncInboxMirrorsOnThreadWrite = syncInboxMirrorsOnThreadWrite
 exports.requestProductReview = requestProductReview
+exports.processProductReviewJob = processProductReviewJob
 exports.provisionUserAccount = provisionUserAccount
 exports.verifyRecaptchaEnterprise = verifyRecaptchaEnterprise
 

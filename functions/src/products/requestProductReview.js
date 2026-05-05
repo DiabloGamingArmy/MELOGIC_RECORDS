@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
+const { onDocumentCreated } = require('firebase-functions/v2/firestore')
 const { defineSecret, defineString } = require('firebase-functions/params')
 const admin = require('firebase-admin')
 
@@ -140,6 +141,61 @@ ${JSON.stringify(moderationInput)}`
   }
 }
 
+async function processReviewJob(jobId, job = {}) {
+  const db = admin.firestore()
+  const productId = String(job.productId || '').trim()
+  if (!productId) throw new Error('Missing productId in job')
+  const productRef = db.collection('products').doc(productId)
+  const productSnap = await productRef.get()
+  if (!productSnap.exists) throw new Error('Product not found')
+  const product = productSnap.data() || {}
+  const model = productModerationModel.value() || 'gemini-1.5-flash'
+  const apiKey = geminiApiKey.value()
+  const ruleResult = runRuleBasedModeration(product)
+  const aiResult = await moderateProductWithAI(product, { model, apiKey })
+  const autoApprove = autoApproveProducts.value() === 'true'
+  const allowRuleBasedAutoApprove = autoApproveRuleBasedOnly.value() === 'true'
+  let finalStatus = 'review_pending'
+  let moderationStatus = 'pending'
+  if (!ruleResult.approved || aiResult.suggestedAction === 'needs_changes' || aiResult.suggestedAction === 'reject') {
+    finalStatus = 'needs_changes'; moderationStatus = 'rejected'
+  } else if (autoApprove && aiResult.aiSucceeded === true && aiResult.suggestedAction === 'approve') {
+    finalStatus = 'published'; moderationStatus = 'approved'
+  } else if (autoApprove && allowRuleBasedAutoApprove && ruleResult.approved) {
+    finalStatus = 'published'; moderationStatus = 'approved'
+  }
+  const summary = finalStatus === 'published' && !aiResult.aiSucceeded
+    ? 'AI moderation was unavailable, but rule-based moderation passed and fallback auto-approval published the product.'
+    : (aiResult.summary || (finalStatus === 'review_pending' ? 'Product remains pending review.' : 'Automated moderation passed.'))
+  await productRef.set({
+    status: finalStatus,
+    visibility: finalStatus === 'published' ? 'public' : (product.visibility === 'public' ? 'unlisted' : (product.visibility || 'private')),
+    moderationStatus,
+    moderationReasons: [...(ruleResult.reasons || []), ...(aiResult.reasons || [])],
+    moderationSummary: summary,
+    moderationRiskLevel: aiResult.riskLevel || 'unknown',
+    moderationAIConfigured: Boolean(aiResult.aiConfigured),
+    moderationAIAttempted: Boolean(aiResult.aiAttempted),
+    moderationAISucceeded: Boolean(aiResult.aiSucceeded),
+    moderationAIEnabled: Boolean(aiResult.aiEnabled),
+    moderationAIModel: model || '',
+    moderationAIError: aiResult.error || '',
+    moderationAICompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+    reviewJobStatus: finalStatus === 'review_pending' ? 'completed' : 'completed',
+    reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
+    reviewedBy: 'system',
+    publishedAt: finalStatus === 'published' ? admin.firestore.FieldValue.serverTimestamp() : null,
+    releasedAt: finalStatus === 'published' ? (product.releasedAt || admin.firestore.FieldValue.serverTimestamp()) : (product.releasedAt || null),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+  await db.collection('productReviewJobs').doc(jobId).set({
+    status: 'completed',
+    completedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    resultStatus: finalStatus
+  }, { merge: true })
+}
+
 exports.requestProductReview = onCall(
   {
     secrets: [geminiApiKey],
@@ -172,139 +228,42 @@ exports.requestProductReview = onCall(
   }
   const normalizedPriceCents = Math.max(0, Math.round(priceCents))
 
+  const existingJob = await db.collection('productReviewJobs').where('productId', '==', productId).where('status', 'in', ['queued', 'running']).limit(1).get()
+  if (!existingJob.empty) {
+    return { status: 'review_pending', reviewJobStatus: existingJob.docs[0].data().status, productId, jobId: existingJob.docs[0].id }
+  }
   await productRef.set({
     status: 'review_pending',
-    moderationStatus: 'pending',
-    reviewedAt: null,
-    reviewedBy: null,
+    visibility: product.visibility === 'public' ? 'unlisted' : (product.visibility || 'private'),
+    moderationStatus: 'queued',
+    reviewRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+    reviewRequestedBy: uid,
+    reviewJobStatus: 'queued',
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   }, { merge: true })
-
-  const ruleResult = runRuleBasedModeration(product)
-  const model = productModerationModel.value() || 'gemini-1.5-flash'
-  const apiKey = geminiApiKey.value()
-
-  await productRef.set({
-    moderationAIConfigured: Boolean(apiKey && model),
-    moderationAIModel: model || '',
-    moderationAIConfigCheckedAt: admin.firestore.FieldValue.serverTimestamp()
-  }, { merge: true })
-
-  console.info('[requestProductReview] moderation config', {
+  const jobRef = await db.collection('productReviewJobs').add({
     productId,
-    hasApiKey: Boolean(apiKey),
-    model: model || '',
-    aiConfigured: Boolean(apiKey && model)
-  })
-
-  const aiResult = await moderateProductWithAI(product, { model, apiKey })
-
-  console.info('[requestProductReview] AI moderation result', {
-    productId,
-    aiConfigured: Boolean(aiResult.aiConfigured),
-    aiAttempted: Boolean(aiResult.aiAttempted),
-    aiSucceeded: Boolean(aiResult.aiSucceeded),
-    riskLevel: aiResult.riskLevel || 'unknown',
-    suggestedAction: aiResult.suggestedAction || 'review_pending',
-    error: aiResult.error || ''
-  })
-
-  const autoApprove = autoApproveProducts.value() === 'true'
-  const allowRuleBasedAutoApprove = autoApproveRuleBasedOnly.value() === 'true'
-
-  let finalStatus = 'review_pending'
-  let moderationStatus = 'pending'
-  let reasons = [...(ruleResult.reasons || []), ...(aiResult.reasons || [])]
-
-  if (!ruleResult.approved) {
-    finalStatus = 'needs_changes'
-    moderationStatus = 'rejected'
-  } else if (aiResult.suggestedAction === 'needs_changes' || aiResult.suggestedAction === 'reject') {
-    finalStatus = 'needs_changes'
-    moderationStatus = 'rejected'
-  } else if (autoApprove && aiResult.aiSucceeded === true && aiResult.suggestedAction === 'approve') {
-    finalStatus = 'published'
-    moderationStatus = 'approved'
-  } else if (autoApprove && allowRuleBasedAutoApprove && ruleResult.approved) {
-    // TESTING ONLY: unsafe in production because it can publish when AI moderation fails/unavailable.
-    finalStatus = 'published'
-    moderationStatus = 'approved'
-  }
-
-  const nextVisibility = finalStatus === 'published' ? 'public' : (product.visibility === 'public' ? 'unlisted' : (product.visibility || 'private'))
-
-
-  const releasedAtValue = finalStatus === 'published'
-    ? (product.releasedAt || admin.firestore.FieldValue.serverTimestamp())
-    : (product.releasedAt || null)
-  const featuredValue = finalStatus === 'published' ? (product.featured === true) : false
-  const listingCounts = {
-    likeCount: Number(product.likeCount || 0),
-    saveCount: Number(product.saveCount || 0),
-    downloadCount: Number(product.downloadCount || 0),
-    commentCount: Number(product.commentCount || 0),
-    shareCount: Number(product.shareCount || 0),
-    followCount: Number(product.followCount || 0),
-    counts: {
-      likes: Number(product.counts?.likes || 0),
-      dislikes: Number(product.counts?.dislikes || 0),
-      saves: Number(product.counts?.saves || 0),
-      shares: Number(product.counts?.shares || 0),
-      comments: Number(product.counts?.comments || 0),
-      downloads: Number(product.counts?.downloads || 0),
-      follows: Number(product.counts?.follows || 0)
-    }
-  }
-
-  await productRef.set({
-    status: finalStatus,
-    visibility: nextVisibility,
-    featured: featuredValue,
-    releasedAt: releasedAtValue,
-    moderationStatus,
-    moderationReasons: reasons,
-    moderationSummary: aiResult.summary || (reasons.length ? 'Automated moderation flagged content.' : 'Automated moderation passed.'),
-    moderationRiskLevel: aiResult.riskLevel || 'unknown',
-    moderationAIConfigured: Boolean(aiResult.aiConfigured),
-    moderationAIAttempted: Boolean(aiResult.aiAttempted),
-    moderationAISucceeded: Boolean(aiResult.aiSucceeded),
-    moderationAIEnabled: Boolean(aiResult.aiEnabled),
-    moderationAIModel: model || '',
-    moderationAIError: aiResult.error || '',
-    moderationAICompletedAt: admin.firestore.FieldValue.serverTimestamp(),
-    ...listingCounts,
-    priceCents: normalizedPriceCents,
-    isFree: normalizedPriceCents === 0,
-    currency: String(product.currency || 'USD').trim().toUpperCase() || 'USD',
-    reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
-    reviewedBy: 'system',
-    publishedAt: finalStatus === 'published' ? admin.firestore.FieldValue.serverTimestamp() : null,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-  }, { merge: true })
-
-  await db.collection('users').doc(uid).collection('systemNotifications').add({
-    type: 'product_release',
-    title: finalStatus === 'published' ? 'Product published' : finalStatus === 'needs_changes' ? 'Product needs changes' : 'Product submitted for review',
-    body: finalStatus === 'published'
-      ? `${product.title || 'Your product'} is now live.`
-      : finalStatus === 'needs_changes'
-        ? `${product.title || 'Your product'} needs changes before publishing.`
-        : `${product.title || 'Your product'} is under review.`,
-    productId,
-    productTitle: product.title || '',
-    status: finalStatus,
-    severity: finalStatus === 'published' ? 'success' : finalStatus === 'needs_changes' ? 'warning' : 'info',
-    actionHref: `/new-product.html?id=${productId}`,
+    artistId: product.artistId || uid,
+    status: 'queued',
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    readAt: null
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    attempts: 0,
+    source: 'creator-submit',
+    requestedBy: uid
   })
+  return { status: 'review_pending', reviewJobStatus: 'queued', productId, jobId: jobRef.id }
+})
 
-  return {
-    status: finalStatus,
-    aiEnabled: Boolean(aiResult.aiEnabled),
-    aiConfigured: Boolean(aiResult.aiConfigured),
-    aiSucceeded: Boolean(aiResult.aiSucceeded),
-    summary: aiResult.summary || '',
-    reasons: Array.isArray(aiResult.reasons) ? aiResult.reasons : []
+exports.processProductReviewJob = onDocumentCreated({ document: 'productReviewJobs/{jobId}', secrets: [geminiApiKey], timeoutSeconds: 180, memory: '512MiB' }, async (event) => {
+  const jobId = event.params.jobId
+  const job = event.data?.data() || {}
+  const db = admin.firestore()
+  await db.collection('productReviewJobs').doc(jobId).set({ status: 'running', updatedAt: admin.firestore.FieldValue.serverTimestamp(), attempts: Number(job.attempts || 0) + 1 }, { merge: true })
+  await db.collection('products').doc(String(job.productId || '')).set({ moderationStatus: 'running', reviewJobStatus: 'running', updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+  try {
+    await processReviewJob(jobId, job)
+  } catch (error) {
+    await db.collection('productReviewJobs').doc(jobId).set({ status: 'failed', error: error?.message || 'job-failed', updatedAt: admin.firestore.FieldValue.serverTimestamp(), completedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+    await db.collection('products').doc(String(job.productId || '')).set({ reviewJobStatus: 'failed', moderationStatus: 'pending', updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
   }
 })
