@@ -1591,11 +1591,17 @@ export async function submitProductForReview({ productId } = {}) {
 export async function requestProductReview(productId = '') {
   if (!functions || !productId) throw new Error('Missing product id for review request.')
   try {
+    console.info('[productService] submitting product for review', { productId })
     const callable = httpsCallable(functions, 'requestProductReview')
-    const saveStep = 'request-product-review-callable'
     const result = await callable({ productId })
+    console.info('[productService] product review result', result?.data || null)
     return result?.data || { status: 'review_pending', aiEnabled: false }
   } catch (error) {
+    console.warn('[productService] product review failed', {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details
+    })
     const code = String(error?.code || '')
     if (code.includes('not-found') || code.includes('unavailable') || code.includes('internal')) {
       throw new Error('Review service is currently unavailable. Please try again shortly.')
