@@ -583,7 +583,8 @@
   display: grid;
   border: 1px solid rgba(110, 135, 185, 0.28);
   border-radius: 0.65rem;
-  overflow: hidden;
+  overflow-y: auto;
+  max-height: 420px;
   background: rgba(8, 13, 24, 0.78);
 }
 .product-file-row {

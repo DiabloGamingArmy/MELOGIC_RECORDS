@@ -240,6 +240,29 @@ function formatBytes(size = 0) {
   return `${(kb / 1024).toFixed(2)} MB`
 }
 
+function toPathArray(value) {
+  if (Array.isArray(value)) return value.map(String).map((v) => v.trim()).filter(Boolean)
+  return String(value || '').split(',').map((v) => v.trim()).filter(Boolean)
+}
+
+function toPathString(value) {
+  return toPathArray(value).join(', ')
+}
+
+function normalizeDraftPaths(draft = {}) {
+  return {
+    ...draft,
+    previewAudioPaths: toPathArray(draft.previewAudioPaths),
+    previewVideoPaths: toPathArray(draft.previewVideoPaths),
+    galleryPaths: toPathArray(draft.galleryPaths),
+    coverPath: toPathString(draft.coverPath),
+    thumbnailPath: toPathString(draft.thumbnailPath),
+    downloadPath: toPathString(draft.downloadPath),
+    primaryDownloadPath: toPathString(draft.primaryDownloadPath),
+    deliverableFiles: Array.isArray(draft.deliverableFiles) ? draft.deliverableFiles : []
+  }
+}
+
 function sanitizeDeliverableFolderPath(value = '') {
   return String(value || '')
     .replace(/\\/g, '/')
@@ -308,7 +331,7 @@ function validateDraftFiles(draft = editorState.draft, mediaFiles = editorState.
   const folderDeliverables = Array.from(mediaFiles?.folderDeliverables || [])
   const allDeliverables = [...deliverables, ...folderDeliverables]
 
-  if (!allDeliverables.length && !String(draft?.downloadPath || draft?.primaryDownloadPath || '').trim()) {
+  if (!allDeliverables.length && !toPathArray(draft?.downloadPath || draft?.primaryDownloadPath).length) {
     warnings.push('No deliverable has been added yet.')
   }
 
@@ -878,7 +901,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   const thumbnailReady = Boolean(draft.thumbnailPath || draft.thumbnailURL || state.mediaFiles?.thumbnail || state.mediaPreview?.cover)
   const deliverablesCount = (state.mediaFiles?.deliverables?.length || 0) + (state.mediaFiles?.folderDeliverables?.length || 0)
   const hasDownload = Boolean(draft.downloadPath || deliverablesCount > 0)
-  const hasPreviewMedia = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || state.mediaFiles?.previewAudio?.length || state.mediaFiles?.previewVideo?.length)
+  const hasPreviewMedia = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || state.mediaFiles?.previewAudio?.length || state.mediaFiles?.previewVideo?.length)
   const previewDecision = hasPreviewMedia || Boolean(draft.previewMode === 'none')
   const pricingMetrics = pricingMetricsFromState()
   const pendingContributors = Number((draft.pendingContributorIds || []).length || 0)
@@ -951,7 +974,7 @@ function renderPublishPanel() {
   const fileEntries = gatherFileEntries()
   const deliverables = fileEntries.filter((item) => item.isDeliverable)
   const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
-  const previewAssigned = Boolean((draft.previewAudioPaths || '').trim() || (draft.previewVideoPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
+  const previewAssigned = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
   const canSubmit = blockingIssues.length === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
 
   return `
@@ -1089,7 +1112,7 @@ function renderMediaUploadPanel() {
               <p>${escapeHtml(draft.shortDescription || 'Short description preview appears here.')}</p>
               <p>${draft.isFree ? 'Free' : `${escapeHtml(draft.currency || 'USD')} ${centsToPriceInput(Number(draft.priceCents || 0))}`}</p>
               <p>${tagValuesFor('tags').slice(0, 3).join(' · ') || tagValuesFor('genres').slice(0, 2).join(' · ') || 'No tags yet'}</p>
-              <p>${(draft.previewAudioPaths || '').trim() || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length ? 'Preview assigned' : 'No preview media assigned yet'}</p>
+              <p>${toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length ? 'Preview assigned' : 'No preview media assigned yet'}</p>
             </div>
           </article>
         </article>
@@ -1103,12 +1126,12 @@ function renderMediaUploadPanel() {
             <button type="button" class="file-viewer-add-btn" data-pick-file="deliverables">+ Add Deliverable</button>
           </div>
           <div class="deliverable-folder-row"><button type="button" class="file-viewer-add-btn" data-create-deliverable-folder>Create folder</button><span>Upload folder: ${escapeHtml(editorState.deliverableFolderPath || 'Root')}</span></div>
-          <div class="file-tree">
+          <div class="editor-file-browser"><div class="editor-file-breadcrumbs"><span>Root</span>${editorState.deliverableFolderPath ? `<span>/ ${escapeHtml(editorState.deliverableFolderPath)}</span>` : ''}</div><div class="file-tree editor-file-browser-scroll">
             ${treeRows.length
               ? treeRows.map((row) => row.type === 'folder'
                 ? `<div class="file-tree-row is-folder"><div class="file-tree-indent" style="--depth:${row.depth}"></div><div>${escapeHtml(row.name)}</div></div>`
                 : `
-                  <div class="file-tree-row is-file">
+                  <div class="file-tree-row is-file editor-file-row">
                     <div class="file-tree-indent" style="--depth:${row.depth}"></div>
                     <div><strong>${escapeHtml(row.entry.name)}</strong><div class="path">${escapeHtml(row.entry.displayPath)}</div></div>
                     <div>${escapeHtml(formatBytes(row.entry.sizeBytes))}</div>
@@ -1123,7 +1146,7 @@ function renderMediaUploadPanel() {
                   </div>
                 `).join('')
               : '<p class="file-viewer-empty">No product files added yet. Use + Add to attach your main deliverable.</p>'}
-          </div>
+          </div></div>
         </article>
 
         <aside class="media-upload-actions">
@@ -1850,14 +1873,20 @@ async function initPage() {
   editorState.agreement.error = ''
 
   if (editorState.requestedProductId) {
-    const existingProduct = await getProductById(editorState.requestedProductId)
-    if (!existingProduct || existingProduct.artistId !== user.uid) {
-      editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Listing access denied</h2><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`
+    try {
+      const existingProduct = await getProductById(editorState.requestedProductId)
+      if (!existingProduct || existingProduct.artistId !== user.uid) {
+        editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Listing access denied</h2><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`
+        return
+      }
+      editorState.draft = normalizeDraftPaths(applyCreatorIdentity({ ...createEmptyProductDraft(user, editorState.creatorProfile), ...existingProduct, id: existingProduct.id }, user, editorState.creatorProfile))
+    } catch (error) {
+      console.warn('[newProduct] failed to load editable product', { productId: editorState.requestedProductId, message: error?.message })
+      editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Couldn’t load listing</h2><p>${escapeHtml(error?.message || 'Unknown error')}</p><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`
       return
     }
-    editorState.draft = applyCreatorIdentity({ ...createEmptyProductDraft(user, editorState.creatorProfile), ...existingProduct, id: existingProduct.id }, user, editorState.creatorProfile)
   } else {
-    editorState.draft = applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile)
+    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile))
   }
 
   if (!editorState.draft.currency) {

@@ -558,7 +558,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
               <div class="dashboard-action-stack">
-                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${product.isFree ? 'Add to Library' : 'Add to Cart'}</button>
+                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Add to Cart</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
                 <div class="dashboard-action-icons-row">
                   <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'like' ? 'is-active' : ''}" data-product-like aria-label="Like this product" title="Like" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em>${likeCount}</em></button>

@@ -233,6 +233,10 @@
 .file-viewer-toolbar p { color: #9cb2e2; font-size: .85rem; }
 .file-viewer-add-btn { border: 1px solid rgba(104,131,199,.4); background: linear-gradient(90deg, rgba(55,198,239,.22), rgba(124,95,250,.22)); color: #f3f7ff; border-radius: 9px; min-height: 36px; padding: 0 .7rem; white-space: nowrap; }
 .file-tree { display: grid; gap: .45rem; max-height: 540px; overflow: auto; }
+.editor-file-browser { display:grid; gap:.5rem; }
+.editor-file-browser-scroll { max-height:420px; overflow-y:auto; }
+.editor-file-row { display:grid; }
+.editor-file-breadcrumbs { display:flex; flex-wrap:wrap; gap:.35rem; color:#a9bde8; font-size:.8rem; }
 .file-tree-row { display: grid; grid-template-columns: auto 1.5fr auto auto 1.2fr; gap: .45rem; align-items: center; border: 1px solid rgba(100,130,200,.2); border-radius: 10px; padding: .45rem .55rem; }
 .file-tree-row.is-folder { grid-template-columns: auto 1fr; background: rgba(16, 24, 45, .85); }
 .file-tree-indent { width: calc(var(--depth, 0) * 14px); height: 1px; }
