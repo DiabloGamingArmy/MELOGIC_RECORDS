@@ -4,11 +4,12 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
-import { claimFreeProduct, userOwnsProduct } from './data/entitlementService'
+import { userOwnsProduct } from './data/entitlementService'
 import { getUserProductEngagementState, setProductReaction, setProductSaved } from './data/productEngagementService'
 import { createProductReview, listProductReviews } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
+import { renderSafeRichDescription } from './utils/richDescription'
 
 const app = document.querySelector('#app')
 
@@ -109,7 +110,7 @@ function renderMainMedia() {
     const duration = Number.isFinite(audio.duration) ? audio.duration : 0
     if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
     if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
-    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
+    if (btn) { btn.classList.toggle('is-playing', !audio.paused); btn.setAttribute('aria-pressed', String(!audio.paused)); btn.setAttribute('aria-label', `${audio.paused ? 'Play' : 'Pause'} audio preview ${index + 1}`) }
   }
   audios.forEach((audio, index) => {
     audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
@@ -121,7 +122,7 @@ function renderMainMedia() {
     const audio = audios[index]
     if (!audio) return
     audios.forEach((other, i) => { if (i !== index) other.pause() })
-    if (audio.paused) await audio.play().catch(() => {})
+    if (audio.paused) await audio.play().catch((error) => { console.warn('[product] audio preview playback failed', { message: error?.message || 'unknown' }) })
     else audio.pause()
     syncAudioUi(audio, index)
   }))
@@ -302,7 +303,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <section class="dashboard-audio-panel">
                 <h3>Audio previews</h3>
                 <div class="dashboard-audio-row" data-dashboard-audio-row>
-                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}">Play</button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
+                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}" aria-label="Play audio preview ${index + 1}" aria-pressed="false"><span class="icon-play" aria-hidden="true">▶</span><span class="icon-pause" aria-hidden="true">❚❚</span></button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
                 </div>
               </section>
             ` : ''}
@@ -311,14 +312,14 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
           <section class="dashboard-main-sections panel-surface">
             <article class="dashboard-section-card dashboard-section-about">
               <h2>About this product</h2>
-              <p>${escapeHtml(product.description || product.shortDescription || 'No full description has been provided yet.')}</p>
+              <div class="dashboard-rich-description">${renderSafeRichDescription(product.description || product.shortDescription || '')}</div>
             </article>
             <article class="dashboard-section-card">
-              <h2>What’s included</h2>
+              <h2>File Viewer</h2>
               <p>${escapeHtml((product.categories || []).join(', ') || 'Details were not provided.')}</p>
             </article>
             <article class="dashboard-section-card">
-              <h2>File browser</h2>
+              <h2>Compatibility</h2>
               <p>${ownsProduct ? 'Owned: private downloads available when backend signed URLs are implemented.' : 'Preview manifest only until product is owned.'}</p>
               <ul>
                 ${productFiles.length
@@ -425,16 +426,13 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-action-stack">
                 <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${product.isFree ? 'Add to Library' : 'Add to Cart'}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
-                <div class="dashboard-action-row">
-                  <button type="button" class="button button-muted" data-product-like aria-label="Like this product" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Like ${likeCount}</button>
-                  <button type="button" class="button button-muted" data-product-dislike aria-label="Dislike this product" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Dislike ${dislikeCount}</button>
+                <div class="dashboard-action-icons-row">
+                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'like' ? 'is-active' : ''}" data-product-like aria-label="Like this product" title="Like" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span>👍</span><em>${likeCount}</em></button>
+                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'dislike' ? 'is-active' : ''}" data-product-dislike aria-label="Dislike this product" title="Dislike" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span>👎</span><em>${dislikeCount}</em></button>
+                  <button type="button" class="dashboard-icon-action" data-product-share aria-label="Share this product" title="Share"><span>↗</span></button>
+                  <button type="button" class="dashboard-icon-action ${state.interaction.saved ? 'is-active' : ''}" data-product-save aria-label="Save this product" title="Save" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span>🔖</span><em>${state.engagementCounts.saveCount}</em></button>
                 </div>
-                <div class="dashboard-action-row">
-                  <button type="button" class="button button-muted" data-product-save aria-label="Save this product" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${state.interaction.saved ? 'Saved' : 'Save'} ${state.engagementCounts.saveCount}</button>
-                  <button type="button" class="button button-muted" data-product-share aria-label="Share this product">Share</button>
-                </div>
-                ${product.isFree ? `<button type="button" class="button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-claim-free-product ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Claim Free Product</button>` : ''}
-                ${(product.previewAudioURLs || []).length ? `<button type="button" class="button button-muted" data-play-dashboard-preview>Preview</button>` : ''}
+                
               </div>
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
@@ -478,31 +476,6 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     }
     document.querySelector('[data-cart-trigger]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
   })
-
-  app.querySelector('[data-play-dashboard-preview]')?.addEventListener('click', () => {
-    const firstAudio = app.querySelector('[data-dashboard-audio]')
-    if (!(firstAudio instanceof HTMLAudioElement)) return
-    firstAudio.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    firstAudio.play().catch((error) => {
-      console.warn('[product] preview playback failed', error?.message || error)
-    })
-  })
-
-  app.querySelector('[data-claim-free-product]')?.addEventListener('click', async (event) => {
-    if (state.isDraftPreview) return
-    if (!state.currentUser?.uid || !product?.id) return
-    const button = event.currentTarget
-    if (!(button instanceof HTMLButtonElement)) return
-    button.disabled = true
-    try {
-      await claimFreeProduct(state.currentUser.uid, product.id)
-      button.textContent = 'Claimed'
-    } catch {
-      button.disabled = false
-      button.textContent = 'Claim failed'
-    }
-  })
-
 
   const showActionMessage = (message) => {
     const note = app.querySelector('.dashboard-mini-note')
@@ -617,7 +590,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const duration = Number.isFinite(audio.duration) ? audio.duration : 0
     if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
     if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
-    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
+    if (btn) { btn.classList.toggle('is-playing', !audio.paused); btn.setAttribute('aria-pressed', String(!audio.paused)); btn.setAttribute('aria-label', `${audio.paused ? 'Play' : 'Pause'} audio preview ${index + 1}`) }
   }
   audios.forEach((audio, index) => {
     audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
@@ -629,7 +602,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const audio = audios[index]
     if (!audio) return
     audios.forEach((other, i) => { if (i !== index) other.pause() })
-    if (audio.paused) await audio.play().catch(() => {})
+    if (audio.paused) await audio.play().catch((error) => { console.warn('[product] audio preview playback failed', { message: error?.message || 'unknown' }) })
     else audio.pause()
     syncAudioUi(audio, index)
   }))
