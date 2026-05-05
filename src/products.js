@@ -354,22 +354,18 @@ function bindProductActions(visibleProducts = []) {
     const product = visibleProducts.find((entry) => entry.id === productId)
     if (!product) return
     const hasAssignedAudio = Boolean(product.previewAssignment?.hoverAudioURL || product.previewAudioURLs?.[0] || product.primaryPreviewURL)
-    const hasAssignedVideo = Boolean(product.previewAssignment?.hoverVideoURL)
+    const hasAssignedVideo = Boolean(product.previewVideoURLs?.[0] || product.previewAssignment?.hoverVideoURL)
     const canHoverPreview = Boolean(product.previewAssignment?.hoverEnabled && (hasAssignedAudio || hasAssignedVideo))
     if (!canHoverPreview) return
     card.addEventListener('pointerenter', () => {
       clearTimeout(previewController.hoverTimer)
       card.classList.add('preview-arming')
-      previewController.hoverTimer = setTimeout(() => {
-        startPreview(product, card, false)
-      }, Number(product.previewAssignment?.hoverDelayMs || 500))
+      startPreview(product, card, false)
     })
     card.addEventListener('pointerleave', () => stopPreview(card))
     card.addEventListener('focusin', () => {
       clearTimeout(previewController.hoverTimer)
-      previewController.hoverTimer = setTimeout(() => {
-        startPreview(product, card, false)
-      }, Number(product.previewAssignment?.hoverDelayMs || 500))
+      startPreview(product, card, false)
     })
     card.addEventListener('focusout', () => stopPreview(card))
   })
@@ -397,7 +393,7 @@ function getAssignedAudio(product) {
 }
 
 function getAssignedVideo(product) {
-  return product?.previewAssignment?.hoverVideoURL || ''
+  return product?.previewVideoURLs?.[0] || product?.previewAssignment?.hoverVideoURL || ''
 }
 
 async function startPreview(product, card, explicitClick = false) {
@@ -409,6 +405,7 @@ async function startPreview(product, card, explicitClick = false) {
   const shouldAudio = mode === 'audio' || mode === 'video-audio'
   previewController.activeProductId = product.id
 
+  const playPromises = []
   if (shouldVideo && videoSrc) {
     const cover = card?.querySelector('[data-product-cover]')
     if (cover) {
@@ -421,7 +418,7 @@ async function startPreview(product, card, explicitClick = false) {
       video.autoplay = true
       cover.appendChild(video)
       previewController.activeVideoCard = card
-      video.play().catch(() => {})
+      playPromises.push(video.play().catch(() => {}))
     }
   }
 
@@ -429,14 +426,16 @@ async function startPreview(product, card, explicitClick = false) {
     if (!previewController.activeAudio) previewController.activeAudio = new Audio()
     previewController.activeAudio.src = audioSrc
     try {
-      await previewController.activeAudio.play()
+      playPromises.push(previewController.activeAudio.play())
       card?.querySelector('.preview-btn')?.replaceChildren(document.createTextNode('⏸ Preview'))
-    } catch {
+    } catch (error) {
+      if (import.meta.env.DEV) console.warn('[products] hover audio autoplay blocked', error?.message)
       if (explicitClick) {
         // user click still may fail on browser policy edge cases
       }
     }
   }
+  await Promise.allSettled(playPromises)
 }
 
 function togglePreview(product, card, button) {

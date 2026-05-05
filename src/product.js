@@ -4,13 +4,17 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
-import { claimFreeProduct, userOwnsProduct } from './data/entitlementService'
+import { userOwnsProduct } from './data/entitlementService'
 import { getUserProductEngagementState, setProductReaction, setProductSaved } from './data/productEngagementService'
 import { createProductReview, listProductReviews } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
+import { renderSafeRichDescription } from './utils/richDescription'
+import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
+
+
 
 const state = {
   mediaItems: [],
@@ -20,7 +24,10 @@ const state = {
   interaction: { reaction: null, saved: false },
   engagementCounts: { likeCount: 0, dislikeCount: 0, saveCount: 0 },
   engagementProductId: '',
-  reviews: []
+  reviews: [],
+  fileBrowserProductId: '',
+  fileBrowserPath: '',
+  fileBrowserMessage: ''
 }
 
 function escapeHtml(value) {
@@ -100,38 +107,6 @@ function renderMainMedia() {
     : `<img src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
 
 
-
-  const audios = Array.from(app.querySelectorAll('[data-dashboard-audio]'))
-  const syncAudioUi = (audio, index) => {
-    const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
-    const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
-    const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
-    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
-    if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
-    if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
-    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
-  }
-  audios.forEach((audio, index) => {
-    audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
-    audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
-    audio.addEventListener('ended', () => syncAudioUi(audio, index))
-  })
-  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
-    const index = Number(button.getAttribute('data-audio-index'))
-    const audio = audios[index]
-    if (!audio) return
-    audios.forEach((other, i) => { if (i !== index) other.pause() })
-    if (audio.paused) await audio.play().catch(() => {})
-    else audio.pause()
-    syncAudioUi(audio, index)
-  }))
-  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
-    const index = Number(range.getAttribute('data-audio-index'))
-    const audio = audios[index]
-    if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return
-    audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
-    syncAudioUi(audio, index)
-  }))
 
   const ratingSlider = app.querySelector('[data-rating-slider]')
   const ratingFill = app.querySelector('[data-rating-fill]')
@@ -241,6 +216,194 @@ function creatorInitials(name) {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')
 }
 
+
+
+function formatBytes(size = 0) {
+  const bytes = Math.max(0, Number(size || 0))
+  if (!bytes) return '0 KB'
+  const units = ['B', 'KB', 'MB', 'GB']
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
+  const value = bytes / (1024 ** index)
+  return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`
+}
+
+function normalizePackagePath(value = '') {
+  const raw = String(value || '').trim()
+  if (!raw || /^https?:\/\//i.test(raw)) return ''
+  const cleaned = raw.split('?')[0].replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
+  const marker = cleaned.match(/(?:deliverables|downloads|packages|package)\/(.+)$/i)
+  return (marker?.[1] || cleaned).split('/').filter(Boolean).join('/')
+}
+
+function getFilePathCandidates(file = {}) {
+  return [file.displayPath, file.path, file.storagePath, file.fullPath, file.name].map(normalizePackagePath).filter(Boolean)
+}
+
+function pathMatchesAny(candidate, knownPaths) {
+  return knownPaths.some((known) => candidate === known || candidate.endsWith(`/${known}`) || known.endsWith(`/${candidate}`))
+}
+
+function getKnownListingMediaPaths(product = {}) {
+  return [product.coverPath, product.thumbnailPath, product.primaryPreviewPath, product.previewAssignment?.hoverAudioPath, product.previewAssignment?.hoverVideoPath, ...(product.galleryPaths || []), ...(product.previewAudioPaths || []), ...(product.previewVideoPaths || [])].map(normalizePackagePath).filter(Boolean)
+}
+
+function getProductViewerDeliverableFiles(product = {}, productFiles = []) {
+  const knownListingPaths = getKnownListingMediaPaths(product)
+  const downloadPaths = [product.downloadPath, product.primaryDownloadPath].map(normalizePackagePath).filter(Boolean)
+  return Array.from(productFiles || []).filter((file) => {
+    const candidates = getFilePathCandidates(file)
+    const roleText = [file.role, file.category, file.type, file.kind, file.contentType, file.purpose].join(' ').toLowerCase()
+    const explicitDeliverable = file.isDeliverable === true || /\b(deliverable|deliverables|package|download)\b/.test(roleText)
+    const explicitListingMedia = file.isPublicPreview === true || /preview|cover|thumbnail|gallery|listing media|public preview|hover/.test(roleText)
+    if (candidates.some((candidate) => pathMatchesAny(candidate, knownListingPaths)) && !explicitDeliverable) return false
+    if (explicitListingMedia && !explicitDeliverable) return false
+    if (file.isDownloadable === false && !explicitDeliverable) return false
+    if (explicitDeliverable && file.isDownloadable !== false) return true
+    if (candidates.some((candidate) => pathMatchesAny(candidate, downloadPaths))) return true
+    return candidates.length > 0
+  })
+}
+
+function getViewerFilePath(file = {}) {
+  return getFilePathCandidates(file)[0] || normalizePackagePath(file.name) || 'Unnamed file'
+}
+
+function getFileExtension(path = '') {
+  const name = String(path || '').split('/').pop() || ''
+  const dotIndex = name.lastIndexOf('.')
+  return dotIndex > -1 ? name.slice(dotIndex + 1).toLowerCase() : ''
+}
+
+function inferFileDescription(file = {}, name = '') {
+  const explicit = file.description || file.note || file.summary || file.kind || file.contentType
+  if (explicit) return String(explicit)
+  const ext = getFileExtension(name)
+  if (['wav', 'aiff', 'aif', 'mp3', 'flac', 'ogg'].includes(ext)) return 'Audio file'
+  if (['mid', 'midi'].includes(ext)) return 'MIDI file'
+  if (['fxp', 'fxb', 'vital', 'serum', 'nmsv', 'adg'].includes(ext)) return 'Preset file'
+  if (['zip', 'rar', '7z'].includes(ext)) return 'Product archive'
+  if (['txt', 'md', 'pdf', 'rtf'].includes(ext)) return 'Documentation'
+  return 'Product file'
+}
+
+function iconForFile(name = '') {
+  const ext = getFileExtension(name)
+  if (['wav', 'aiff', 'aif', 'mp3', 'flac', 'ogg', 'mid', 'midi'].includes(ext)) return 'music'
+  if (['zip', 'rar', '7z'].includes(ext)) return 'package'
+  if (['txt', 'md', 'pdf', 'rtf'].includes(ext)) return 'fileText'
+  return 'file'
+}
+
+function createFileTree(files = []) {
+  const root = { name: '', path: '', folders: new Map(), files: [] }
+  files.forEach((file) => {
+    const path = getViewerFilePath(file)
+    const segments = path.split('/').filter(Boolean)
+    if (!segments.length) return
+    let current = root
+    segments.slice(0, -1).forEach((segment) => {
+      const nextPath = [current.path, segment].filter(Boolean).join('/')
+      if (!current.folders.has(segment)) current.folders.set(segment, { name: segment, path: nextPath, folders: new Map(), files: [] })
+      current = current.folders.get(segment)
+    })
+    current.files.push({ ...file, viewerName: segments.at(-1), viewerPath: path })
+  })
+  return root
+}
+
+function summarizeTreeNode(node) {
+  let fileCount = node.files.length
+  let folderCount = node.folders.size
+  let sizeBytes = node.files.reduce((sum, file) => sum + Number(file.sizeBytes || file.size || 0), 0)
+  node.folders.forEach((folder) => {
+    const summary = summarizeTreeNode(folder)
+    fileCount += summary.fileCount
+    folderCount += summary.folderCount
+    sizeBytes += summary.sizeBytes
+  })
+  return { fileCount, folderCount, sizeBytes }
+}
+
+function getTreeNode(root, path = '') {
+  return normalizePackagePath(path).split('/').filter(Boolean).reduce((node, segment) => node?.folders.get(segment), root) || null
+}
+
+function renderProductFileBrowser(product, productFiles, ownsProduct) {
+  const deliverableFiles = getProductViewerDeliverableFiles(product, productFiles)
+  const root = createFileTree(deliverableFiles)
+  let currentPath = normalizePackagePath(state.fileBrowserPath)
+  let currentNode = getTreeNode(root, currentPath)
+  if (!currentNode) {
+    currentPath = ''
+    state.fileBrowserPath = ''
+    currentNode = root
+  }
+  const rootSummary = summarizeTreeNode(root)
+  const currentSummary = summarizeTreeNode(currentNode)
+  const segments = currentPath.split('/').filter(Boolean)
+  const crumbs = [`<button type="button" data-file-browser-path="" aria-label="Open package root"><span class="product-file-crumb-icon">${iconSvg('home')}</span>Root</button>`, ...segments.map((segment, index) => {
+    const path = segments.slice(0, index + 1).join('/')
+    return `<span class="product-file-crumb-separator">${iconSvg('chevronRight')}</span><button type="button" data-file-browser-path="${escapeHtml(path)}">${escapeHtml(segment)}</button>`
+  })].join('')
+  const parentPath = segments.slice(0, -1).join('/')
+  const backRow = currentPath ? `<button type="button" class="product-file-row is-folder is-back" role="treeitem" data-file-browser-path="${escapeHtml(parentPath)}"><span class="product-file-icon">${iconSvg('arrowLeft')}</span><span class="product-file-name">Back</span><span class="product-file-description">Parent folder</span><span class="product-file-meta">..</span></button>` : ''
+  const folderRows = Array.from(currentNode.folders.values()).sort((a, b) => a.name.localeCompare(b.name)).map((folder) => {
+    const summary = summarizeTreeNode(folder)
+    return `<button type="button" class="product-file-row is-folder" role="treeitem" data-file-browser-path="${escapeHtml(folder.path)}"><span class="product-file-icon">${iconSvg('folder')}</span><span class="product-file-name">${escapeHtml(folder.name)}</span><span class="product-file-description">Folder · ${summary.fileCount} files · ${summary.folderCount} folders</span><span class="product-file-meta">${formatBytes(summary.sizeBytes)}</span></button>`
+  }).join('')
+  const fileRows = currentNode.files.slice().sort((a, b) => a.viewerName.localeCompare(b.viewerName)).map((file) => {
+    const description = inferFileDescription(file, file.viewerName)
+    const status = ownsProduct ? 'Included in download' : 'Locked manifest'
+    return `<button type="button" class="product-file-row is-file" role="treeitem" data-file-browser-file="${escapeHtml(file.viewerPath)}"><span class="product-file-icon">${iconSvg(iconForFile(file.viewerName))}</span><span class="product-file-name">${escapeHtml(file.viewerName)}</span><span class="product-file-description">${escapeHtml(description)}</span><span class="product-file-meta"><span class="product-file-status">${iconSvg(ownsProduct ? 'package' : 'lock')} ${escapeHtml(status)}</span><span>${formatBytes(file.sizeBytes || file.size || 0)}</span></span></button>`
+  }).join('')
+  const rows = `${backRow}${folderRows}${fileRows}` || '<div class="product-file-empty">No included files listed yet.</div>'
+  return `<div class="product-file-browser" data-file-browser-root><div class="product-file-browser-header"><div><h2>File Viewer</h2><p>Product package manifest. File contents stay locked.</p></div><div class="product-file-browser-summary">${rootSummary.fileCount} files · ${rootSummary.folderCount} folders · ${formatBytes(rootSummary.sizeBytes)}</div></div><div class="product-file-breadcrumbs" aria-label="File browser breadcrumbs">${crumbs}</div><div class="product-file-message ${state.fileBrowserMessage ? 'is-visible' : ''}" data-file-browser-message>${escapeHtml(state.fileBrowserMessage)}</div><div class="product-file-list" role="tree" aria-label="Product package files">${rows}</div>${currentPath ? `<p class="product-file-browser-summary">Viewing ${escapeHtml(currentPath)} · ${currentSummary.fileCount} files · ${currentSummary.folderCount} folders</p>` : ''}</div>`
+}
+
+function bindProductFileBrowser(product, productFiles, ownsProduct) {
+  const root = app.querySelector('[data-file-browser-root]')
+  if (!root) return
+  const renderIntoRoot = () => {
+    const next = document.createElement('div')
+    next.innerHTML = renderProductFileBrowser(product, productFiles, ownsProduct).trim()
+    root.replaceWith(next.firstElementChild)
+    bindProductFileBrowser(product, productFiles, ownsProduct)
+  }
+  root.addEventListener('click', (event) => {
+    const pathButton = event.target.closest('[data-file-browser-path]')
+    if (pathButton) {
+      event.preventDefault()
+      state.fileBrowserPath = pathButton.getAttribute('data-file-browser-path') || ''
+      state.fileBrowserMessage = ''
+      renderIntoRoot()
+      return
+    }
+    const fileButton = event.target.closest('[data-file-browser-file]')
+    if (fileButton) {
+      event.preventDefault()
+      state.fileBrowserMessage = 'File contents are available after checkout/download. This viewer only shows the package manifest.'
+      renderIntoRoot()
+    }
+  })
+}
+
+function renderAudioPlayIcon(isPlaying) { return isPlaying ? iconSvg('pause') : iconSvg('play') }
+function syncAudioUi(audio, index) {
+  const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
+  const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
+  const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
+  const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+  if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
+  if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
+  if (btn) { btn.classList.toggle('is-playing', !audio.paused); btn.setAttribute('aria-pressed', String(!audio.paused)); btn.setAttribute('aria-label', `${audio.paused ? 'Play' : 'Pause'} audio preview ${index + 1}`); const icon = btn.querySelector('[data-audio-icon]'); if (icon) icon.innerHTML = renderAudioPlayIcon(!audio.paused) }
+}
+function bindAudioPreviewControls() {
+  const audios = Array.from(app.querySelectorAll('audio[data-dashboard-audio]'))
+  audios.forEach((audio) => { const index = Number(audio.getAttribute('data-dashboard-audio') || -1); if (!String(audio.getAttribute('src') || '').trim()) console.warn('[product] audio preview URL missing', { index }); audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index)); audio.addEventListener('timeupdate', () => syncAudioUi(audio, index)); audio.addEventListener('ended', () => syncAudioUi(audio, index)) })
+  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async (event) => { event.preventDefault(); event.stopPropagation(); const index = Number(button.getAttribute('data-audio-index') || -1); const audio = app.querySelector(`audio[data-dashboard-audio="${index}"]`); if (!(audio instanceof HTMLAudioElement)) { console.warn('[product] audio element not found for preview', { index }); return } audios.forEach((other) => { if (other !== audio) { other.pause(); syncAudioUi(other, Number(other.getAttribute('data-dashboard-audio') || -1)) } }); if (audio.paused) { try { await audio.play() } catch (error) { console.warn('[product] audio preview playback failed', { index, src: audio.currentSrc || audio.src || '', message: error?.message }); return } } else audio.pause(); syncAudioUi(audio, index) }))
+  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => { const index = Number(range.getAttribute('data-audio-index') || -1); const audio = app.querySelector(`audio[data-dashboard-audio="${index}"]`); if (!(audio instanceof HTMLAudioElement) || !Number.isFinite(audio.duration) || !audio.duration) return; audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration; syncAudioUi(audio, index) }))
+}
+
 function renderProduct(product, recommendations = [], ownerPreview = false, productFiles = [], ownsProduct = false) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
@@ -257,10 +420,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     }
     state.engagementProductId = product.id
   }
+  if (state.fileBrowserProductId !== product.id) {
+    state.fileBrowserProductId = product.id
+    state.fileBrowserPath = ''
+    state.fileBrowserMessage = ''
+  }
   const likeCount = state.engagementCounts.likeCount
   const dislikeCount = state.engagementCounts.dislikeCount
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
-  const artistHandle = product.artistUsername ? `@${product.artistUsername}` : '@creator'
+  const handleRaw = product.artistUsername || product.creatorUsername || product.username || product.artistHandle || product.creator?.username || product.artist?.username || ''
+  const artistHandle = String(handleRaw || '').trim() ? `@${String(handleRaw).replace(/^@+/, '')}` : ''
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
   const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
 
@@ -302,84 +471,50 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <section class="dashboard-audio-panel">
                 <h3>Audio previews</h3>
                 <div class="dashboard-audio-row" data-dashboard-audio-row>
-                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}">Play</button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
+                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}" aria-label="Play audio preview ${index + 1}" aria-pressed="false"><span data-audio-icon aria-hidden="true">${renderAudioPlayIcon(false)}</span></button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
                 </div>
               </section>
             ` : ''}
           </section>
 
           <section class="dashboard-main-sections panel-surface">
-            <article class="dashboard-section-card dashboard-section-about">
-              <h2>About this product</h2>
-              <p>${escapeHtml(product.description || product.shortDescription || 'No full description has been provided yet.')}</p>
-            </article>
-            <article class="dashboard-section-card">
-              <h2>What’s included</h2>
-              <p>${escapeHtml((product.categories || []).join(', ') || 'Details were not provided.')}</p>
-            </article>
-            <article class="dashboard-section-card">
-              <h2>File browser</h2>
-              <p>${ownsProduct ? 'Owned: private downloads available when backend signed URLs are implemented.' : 'Preview manifest only until product is owned.'}</p>
-              <ul>
-                ${productFiles.length
-                  ? productFiles.map((file) => `<li>${escapeHtml(file.displayPath || file.name)} · ${Math.max(0, Number(file.sizeBytes || 0) / 1024).toFixed(1)} KB ${file.canPreview ? '· previewable' : ''}</li>`).join('')
-                  : '<li>No included files listed yet.</li>'}
-              </ul>
-            </article>
-            <article class="dashboard-section-card">
-              <h2>Compatibility</h2>
-              <p>${escapeHtml((product.dawCompatibility || []).join(', ') || 'Compatibility details are based on creator-provided metadata.')}</p>
-            </article>
-            <article class="dashboard-section-card">
-              <h2>License / usage</h2>
-              <p>${product.licensePath ? 'License included.' : 'License details were not uploaded yet.'}</p>
-            </article>
-            <article class="dashboard-section-card">
-              <h2>Creator notes</h2>
-              <p>${escapeHtml(product.shortDescription || 'Creator notes will appear here when provided.')}</p>
-            </article>
-            <article class="dashboard-section-card">
-              <h2>Tags</h2>
-              <div class="dashboard-tag-row">
-                ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
+            <div class="dashboard-content-parent">
+              <article class="dashboard-section-card dashboard-about-section">
+                <h2>About this product</h2>
+                <div class="dashboard-rich-description">${renderSafeRichDescription(product.description || product.shortDescription || '')}</div>
+              </article>
+
+              <div class="dashboard-details-split">
+                <article class="dashboard-section-card dashboard-file-tree-viewer">
+                  ${renderProductFileBrowser(product, productFiles, ownsProduct)}
+                </article>
+
+                <aside class="dashboard-metadata-panel">
+                  <div class="dashboard-metadata-stack">
+                    <article class="dashboard-section-card dashboard-metadata-card">
+                      <h2>Compatibility</h2>
+                      <p>${escapeHtml((product.dawCompatibility || []).join(', ') || (product.formatKeys || []).join(', ') || 'Compatibility details are based on creator-provided metadata.')}</p>
+                    </article>
+                    <article class="dashboard-section-card dashboard-metadata-card"><h2>License / Usage</h2><p>${product.licensePath ? 'License included.' : 'License details were not uploaded yet.'}</p></article>
+                    <article class="dashboard-section-card dashboard-metadata-card"><h2>Creator Notes</h2><p>${escapeHtml(product.shortDescription || 'Creator notes will appear here when provided.')}</p></article>
+                    <article class="dashboard-section-card dashboard-metadata-card"><h2>Tags</h2><div class="dashboard-tag-row">${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}</div></article>
+                    <article class="dashboard-section-card dashboard-metadata-card"><h2>Stats</h2><p>${likeCount} likes · ${dislikeCount} dislikes · Saves ${state.engagementCounts.saveCount} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p></article>
+                  </div>
+                </aside>
               </div>
-            </article>
-            <article class="dashboard-section-card">
-              <h2>Stats</h2>
-              <p>👍 ${likeCount} · 👎 ${dislikeCount} · Saves ${product.saveCount ?? product.counts?.saves ?? 0} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
-            </article>
-            <article class="dashboard-section-card dashboard-section-recommendations">
-              <div class="dashboard-section-heading-row">
-                <h2>Recommended products</h2>
-                <a href="${ROUTES.products}">Browse all</a>
-              </div>
-              ${recommendations.length
-                ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>`
-                : '<p>No recommendations yet.</p>'}
-            </article>
-            <article class="dashboard-section-card dashboard-section-reviews">
-              <h2>Reviews (${product.reviewCount ?? product.commentCount ?? state.reviews.length})</h2>
-              <p class="dashboard-review-rating">${product.averageRating ? `Average rating ${Number(product.averageRating).toFixed(1)} / 5` : 'No ratings yet.'}</p>
-              ${state.currentUser?.uid ? `
-                <form class="dashboard-review-composer" data-review-form>
-                  <label for="review-body">Write a review</label>
-                  <div class="dashboard-rating-control" data-rating-control><div>${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div>
-                  <textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea>
-                  <button class="button button-accent" type="submit">Submit review</button>
-                </form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
-              <div class="dashboard-review-list">
-                ${state.reviews.length ? state.reviews.map((review) => `
-                  <article class="dashboard-review-card">
-                    <div class="dashboard-creator-block">
-                      ${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}
-                      <div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div>
-                    </div>
-                    <p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p>
-                    <p>${escapeHtml(review.body || '')}</p>
-                    <p class="dashboard-mini-note">Like · Reply</p>
-                  </article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}
-              </div>
-            </article>
+
+              <article class="dashboard-section-card dashboard-reviews-section">
+                <h2>Reviews (${product.reviewCount ?? product.commentCount ?? state.reviews.length})</h2>
+                <p class="dashboard-review-rating">${product.averageRating ? `Average rating ${Number(product.averageRating).toFixed(1)} / 5` : 'No ratings yet.'}</p>
+                ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><div>${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><button class="button button-accent" type="submit">Submit review</button></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
+                <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-creator-block">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p></article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}</div>
+              </article>
+
+              <article class="dashboard-section-card dashboard-recommendations-section">
+                <div class="dashboard-section-heading-row"><h2>Recommended products</h2><a href="${ROUTES.products}">Browse all</a></div>
+                ${recommendations.length ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>` : '<p>No recommendations yet.</p>'}
+              </article>
+            </div>
           </section>
 
           <aside class="dashboard-lower-sidebar">
@@ -404,7 +539,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-tag-row">
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
               </div>
-              <p class="dashboard-engagement">👍 ${likeCount} · 👎 ${dislikeCount}</p>
+              <p class="dashboard-engagement">${likeCount} likes · ${dislikeCount} dislikes</p>
               ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
 
               <div class="dashboard-creator-block">
@@ -413,7 +548,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(creatorInitials(artistDisplayName))}</span>`}
                 <div>
                   <p class="dashboard-creator-name">${escapeHtml(artistDisplayName)}</p>
-                  <p class="dashboard-creator-handle">${escapeHtml(artistHandle)}</p>
+                  ${artistHandle ? `<p class="dashboard-creator-handle">${escapeHtml(artistHandle)}</p>` : `<p class="dashboard-creator-handle dashboard-mini-note">Creator profile</p>`}
                 </div>
                 <a class="button button-muted" href="${creatorHref}">View Creator</a>
               </div>
@@ -423,18 +558,15 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
               <div class="dashboard-action-stack">
-                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${product.isFree ? 'Add to Library' : 'Add to Cart'}</button>
+                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Add to Cart</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
-                <div class="dashboard-action-row">
-                  <button type="button" class="button button-muted" data-product-like aria-label="Like this product" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Like ${likeCount}</button>
-                  <button type="button" class="button button-muted" data-product-dislike aria-label="Dislike this product" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Dislike ${dislikeCount}</button>
+                <div class="dashboard-action-icons-row">
+                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'like' ? 'is-active' : ''}" data-product-like aria-label="Like this product" title="Like" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em>${likeCount}</em></button>
+                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'dislike' ? 'is-active' : ''}" data-product-dislike aria-label="Dislike this product" title="Dislike" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsDown')}</span><em>${dislikeCount}</em></button>
+                  <button type="button" class="dashboard-icon-action" data-product-share aria-label="Share this product" title="Share"><span class="icon">${iconSvg('share2')}</span></button>
+                  <button type="button" class="dashboard-icon-action ${state.interaction.saved ? 'is-active' : ''}" data-product-save aria-label="Save this product" title="Save" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('bookmark')}</span><em>${state.engagementCounts.saveCount}</em></button>
                 </div>
-                <div class="dashboard-action-row">
-                  <button type="button" class="button button-muted" data-product-save aria-label="Save this product" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${state.interaction.saved ? 'Saved' : 'Save'} ${state.engagementCounts.saveCount}</button>
-                  <button type="button" class="button button-muted" data-product-share aria-label="Share this product">Share</button>
-                </div>
-                ${product.isFree ? `<button type="button" class="button button-muted ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-claim-free-product ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Claim Free Product</button>` : ''}
-                ${(product.previewAudioURLs || []).length ? `<button type="button" class="button button-muted" data-play-dashboard-preview>Preview</button>` : ''}
+                
               </div>
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
@@ -450,7 +582,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
             <article class="panel-surface dashboard-side-card">
               <h3>Community activity</h3>
-              <p>👍 ${likeCount} · 👎 ${dislikeCount}</p>
+              <p>${likeCount} likes · ${dislikeCount} dislikes</p>
               <p>Saves: ${state.engagementCounts.saveCount}</p>
               <p>Downloads: ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
               <p>Comments: ${product.commentCount ?? product.counts?.comments ?? 0}</p>
@@ -463,6 +595,8 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
   document.title = `Melogic | ${product.title}`
   renderMainMedia()
+  bindAudioPreviewControls()
+  bindProductFileBrowser(product, productFiles, ownsProduct)
   initShellChrome()
 
   app.querySelector('[data-add-dashboard-cart]')?.addEventListener('click', (event) => {
@@ -478,31 +612,6 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     }
     document.querySelector('[data-cart-trigger]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
   })
-
-  app.querySelector('[data-play-dashboard-preview]')?.addEventListener('click', () => {
-    const firstAudio = app.querySelector('[data-dashboard-audio]')
-    if (!(firstAudio instanceof HTMLAudioElement)) return
-    firstAudio.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-    firstAudio.play().catch((error) => {
-      console.warn('[product] preview playback failed', error?.message || error)
-    })
-  })
-
-  app.querySelector('[data-claim-free-product]')?.addEventListener('click', async (event) => {
-    if (state.isDraftPreview) return
-    if (!state.currentUser?.uid || !product?.id) return
-    const button = event.currentTarget
-    if (!(button instanceof HTMLButtonElement)) return
-    button.disabled = true
-    try {
-      await claimFreeProduct(state.currentUser.uid, product.id)
-      button.textContent = 'Claimed'
-    } catch {
-      button.disabled = false
-      button.textContent = 'Claim failed'
-    }
-  })
-
 
   const showActionMessage = (message) => {
     const note = app.querySelector('.dashboard-mini-note')
@@ -609,37 +718,6 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   })
 
 
-  const audios = Array.from(app.querySelectorAll('[data-dashboard-audio]'))
-  const syncAudioUi = (audio, index) => {
-    const range = app.querySelector(`[data-audio-range][data-audio-index="${index}"]`)
-    const time = app.querySelector(`[data-audio-time][data-audio-index="${index}"]`)
-    const btn = app.querySelector(`[data-audio-play][data-audio-index="${index}"]`)
-    const duration = Number.isFinite(audio.duration) ? audio.duration : 0
-    if (range) range.value = String(duration ? Math.round((audio.currentTime / duration) * 1000) : 0)
-    if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
-    if (btn) btn.textContent = audio.paused ? 'Play' : 'Pause'
-  }
-  audios.forEach((audio, index) => {
-    audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
-    audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
-    audio.addEventListener('ended', () => syncAudioUi(audio, index))
-  })
-  app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
-    const index = Number(button.getAttribute('data-audio-index'))
-    const audio = audios[index]
-    if (!audio) return
-    audios.forEach((other, i) => { if (i !== index) other.pause() })
-    if (audio.paused) await audio.play().catch(() => {})
-    else audio.pause()
-    syncAudioUi(audio, index)
-  }))
-  app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
-    const index = Number(range.getAttribute('data-audio-index'))
-    const audio = audios[index]
-    if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return
-    audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
-    syncAudioUi(audio, index)
-  }))
 
   const ratingSlider = app.querySelector('[data-rating-slider]')
   const ratingFill = app.querySelector('[data-rating-fill]')
