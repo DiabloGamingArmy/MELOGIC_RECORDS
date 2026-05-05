@@ -13,6 +13,20 @@ import { renderSafeRichDescription } from './utils/richDescription'
 
 const app = document.querySelector('#app')
 
+
+
+function iconSvg(name) {
+  const icons = {
+    thumbsUp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.95 2.45l-1.1 5A2 2 0 0 1 18.73 19H7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L14 2l1 3.88Z"/></svg>',
+    thumbsDown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.95-2.45l1.1-5A2 2 0 0 1 5.27 5H17a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L10 22l-1-3.88Z"/></svg>',
+    share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98"/><path d="m15.41 6.51-6.82 3.98"/></svg>',
+    bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21 12 16 5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 3 20 12 6 21 6 3"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>'
+  }
+  return icons[name] || ''
+}
+
 const state = {
   mediaItems: [],
   selectedMediaIndex: 0,
@@ -112,24 +126,25 @@ function renderMainMedia() {
     if (time) time.textContent = `${formatAudioTime(audio.currentTime)} / ${formatAudioTime(duration)}`
     if (btn) { btn.classList.toggle('is-playing', !audio.paused); btn.setAttribute('aria-pressed', String(!audio.paused)); btn.setAttribute('aria-label', `${audio.paused ? 'Play' : 'Pause'} audio preview ${index + 1}`) }
   }
-  audios.forEach((audio, index) => {
+  audios.forEach((audio) => {
+    const index = Number(audio.getAttribute('data-dashboard-audio') || 0)
     audio.addEventListener('loadedmetadata', () => syncAudioUi(audio, index))
     audio.addEventListener('timeupdate', () => syncAudioUi(audio, index))
     audio.addEventListener('ended', () => syncAudioUi(audio, index))
   })
   app.querySelectorAll('[data-audio-play]').forEach((button) => button.addEventListener('click', async () => {
     const index = Number(button.getAttribute('data-audio-index'))
-    const audio = audios[index]
-    if (!audio) return
-    audios.forEach((other, i) => { if (i !== index) other.pause() })
-    if (audio.paused) await audio.play().catch((error) => { console.warn('[product] audio preview playback failed', { message: error?.message || 'unknown' }) })
+    const audio = app.querySelector(`[data-dashboard-audio="${index}"]`)
+    if (!(audio instanceof HTMLAudioElement)) return
+    audios.forEach((other) => { if (other !== audio) other.pause() })
+    if (audio.paused) await audio.play().catch((error) => { console.warn('[product] audio preview playback failed', { message: error?.message }) })
     else audio.pause()
     syncAudioUi(audio, index)
   }))
   app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => {
     const index = Number(range.getAttribute('data-audio-index'))
-    const audio = audios[index]
-    if (!audio || !Number.isFinite(audio.duration) || !audio.duration) return
+    const audio = app.querySelector(`[data-dashboard-audio="${index}"]`)
+    if (!(audio instanceof HTMLAudioElement) || !Number.isFinite(audio.duration) || !audio.duration) return
     audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration
     syncAudioUi(audio, index)
   }))
@@ -261,7 +276,8 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const likeCount = state.engagementCounts.likeCount
   const dislikeCount = state.engagementCounts.dislikeCount
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
-  const artistHandle = product.artistUsername ? `@${product.artistUsername}` : '@creator'
+  const handleRaw = product.artistUsername || product.creatorUsername || product.username || product.artistHandle || product.creator?.username || product.artist?.username || ''
+  const artistHandle = String(handleRaw || '').trim() ? `@${String(handleRaw).replace(/^@+/, '')}` : ''
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
   const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
 
@@ -296,14 +312,14 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-thumb-toolbar">
                 <button type="button" class="dashboard-nav-btn" data-media-prev aria-label="Previous media">◀</button>
                 <div class="dashboard-thumb-row">${thumbMarkup}</div>
-                <button type="button" class="dashboard-nav-btn" data-media-next aria-label="Next media">▶</button>
+                <button type="button" class="dashboard-nav-btn" data-media-next aria-label="Next media">${iconSvg('play')}</button>
               </div>
             ` : ''}
             ${(product.previewAudioURLs || []).length ? `
               <section class="dashboard-audio-panel">
                 <h3>Audio previews</h3>
                 <div class="dashboard-audio-row" data-dashboard-audio-row>
-                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}" aria-label="Play audio preview ${index + 1}" aria-pressed="false"><span class="icon-play" aria-hidden="true">▶</span><span class="icon-pause" aria-hidden="true">❚❚</span></button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
+                  ${product.previewAudioURLs.map((url, index) => `<div class="dashboard-audio-card" data-audio-card><button type="button" class="dashboard-audio-play" data-audio-play data-audio-index="${index}" aria-label="Play audio preview ${index + 1}" aria-pressed="false"><span class="icon-play" aria-hidden="true">${iconSvg('play')}</span><span class="icon-pause" aria-hidden="true">${iconSvg('pause')}</span></button><div class="dashboard-audio-meta"><p>Audio preview ${index + 1}</p><span data-audio-time data-audio-index="${index}">0:00 / 0:00</span><input class="dashboard-audio-range" type="range" min="0" max="1000" value="0" data-audio-range data-audio-index="${index}" aria-label="Audio preview ${index + 1} progress"></div><audio src="${escapeHtml(url)}" preload="metadata" data-dashboard-audio="${index}"></audio></div>`).join('')}
                 </div>
               </section>
             ` : ''}
@@ -347,7 +363,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
             </article>
             <article class="dashboard-section-card">
               <h2>Stats</h2>
-              <p>👍 ${likeCount} · 👎 ${dislikeCount} · Saves ${product.saveCount ?? product.counts?.saves ?? 0} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
+              <p>${likeCount} likes · ${dislikeCount} dislikes · Saves ${product.saveCount ?? product.counts?.saves ?? 0} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
             </article>
             <article class="dashboard-section-card dashboard-section-recommendations">
               <div class="dashboard-section-heading-row">
@@ -405,7 +421,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-tag-row">
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
               </div>
-              <p class="dashboard-engagement">👍 ${likeCount} · 👎 ${dislikeCount}</p>
+              <p class="dashboard-engagement">${likeCount} likes · ${dislikeCount} dislikes</p>
               ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
 
               <div class="dashboard-creator-block">
@@ -414,7 +430,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(creatorInitials(artistDisplayName))}</span>`}
                 <div>
                   <p class="dashboard-creator-name">${escapeHtml(artistDisplayName)}</p>
-                  <p class="dashboard-creator-handle">${escapeHtml(artistHandle)}</p>
+                  ${artistHandle ? `<p class="dashboard-creator-handle">${escapeHtml(artistHandle)}</p>` : `<p class="dashboard-creator-handle dashboard-mini-note">Creator profile</p>`}
                 </div>
                 <a class="button button-muted" href="${creatorHref}">View Creator</a>
               </div>
@@ -427,10 +443,10 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>${product.isFree ? 'Add to Library' : 'Add to Cart'}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
                 <div class="dashboard-action-icons-row">
-                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'like' ? 'is-active' : ''}" data-product-like aria-label="Like this product" title="Like" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span>👍</span><em>${likeCount}</em></button>
-                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'dislike' ? 'is-active' : ''}" data-product-dislike aria-label="Dislike this product" title="Dislike" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span>👎</span><em>${dislikeCount}</em></button>
-                  <button type="button" class="dashboard-icon-action" data-product-share aria-label="Share this product" title="Share"><span>↗</span></button>
-                  <button type="button" class="dashboard-icon-action ${state.interaction.saved ? 'is-active' : ''}" data-product-save aria-label="Save this product" title="Save" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span>🔖</span><em>${state.engagementCounts.saveCount}</em></button>
+                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'like' ? 'is-active' : ''}" data-product-like aria-label="Like this product" title="Like" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em>${likeCount}</em></button>
+                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'dislike' ? 'is-active' : ''}" data-product-dislike aria-label="Dislike this product" title="Dislike" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsDown')}</span><em>${dislikeCount}</em></button>
+                  <button type="button" class="dashboard-icon-action" data-product-share aria-label="Share this product" title="Share"><span class="icon">${iconSvg('share')}</span></button>
+                  <button type="button" class="dashboard-icon-action ${state.interaction.saved ? 'is-active' : ''}" data-product-save aria-label="Save this product" title="Save" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('bookmark')}</span><em>${state.engagementCounts.saveCount}</em></button>
                 </div>
                 
               </div>
@@ -448,7 +464,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
             <article class="panel-surface dashboard-side-card">
               <h3>Community activity</h3>
-              <p>👍 ${likeCount} · 👎 ${dislikeCount}</p>
+              <p>${likeCount} likes · ${dislikeCount} dislikes</p>
               <p>Saves: ${state.engagementCounts.saveCount}</p>
               <p>Downloads: ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
               <p>Comments: ${product.commentCount ?? product.counts?.comments ?? 0}</p>
