@@ -1986,6 +1986,12 @@ function renderEditor() {
     renderEditor()
     let submitStep = 'starting'
     try {
+      const pendingContributors = (editorState.contributorUI.rows || []).filter((row) => row.status === 'pending').length
+      if (desiredStatus === 'published' && pendingContributors > 0) {
+        setStatus('Pending contributor approvals must be resolved before publishing.', 'error')
+        renderEditor()
+        return
+      }
       const deliverableValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
       if (!deliverableValidation.ok) {
         setStatus(deliverableValidation.errors[0], 'error')
@@ -2029,12 +2035,24 @@ function renderEditor() {
         submitStep = 'submit-for-review'
         const reviewResult = await submitProductForReview({ productId })
         editorState.reviewResult = reviewResult || null
-        updateDraftField('status', reviewResult?.status || 'review_pending')
-        if (reviewResult?.status === 'published') setStatus('Product approved and published.', 'success')
-        else if (reviewResult?.status === 'needs_changes') setStatus(`Product needs changes. ${reviewResult?.summary || (reviewResult?.reasons || []).join(' ')}`.trim(), 'error')
-        else if (reviewResult?.aiConfigured === true && reviewResult?.aiSucceeded === false) setStatus('Submitted for review. AI configured but failed; rule-based fallback used.', 'success')
-        else if (reviewResult?.aiConfigured === false) setStatus('Submitted for review. AI not configured; rule-based fallback used.', 'success')
-        else setStatus('Product submitted for review.', 'success')
+        const latest = await getProductById(productId).catch(() => null)
+        if (latest) editorState.draft = { ...editorState.draft, ...latest, id: productId }
+        const resolvedStatus = latest?.status || reviewResult?.status || 'review_pending'
+        updateDraftField('status', resolvedStatus)
+        updateDraftField('visibility', latest?.visibility || editorState.draft.visibility || 'private')
+        if (resolvedStatus === 'published') setStatus('Product published. It is now public.', 'success')
+        else if (resolvedStatus === 'needs_changes') setStatus('Product needs changes before publishing.', 'error')
+        else setStatus('Product submitted for review. It will not appear publicly until approved.', 'info')
+        console.info('[new-product] review final state', {
+          status: latest?.status || reviewResult?.status || '',
+          visibility: latest?.visibility || '',
+          moderationStatus: latest?.moderationStatus || reviewResult?.moderationStatus || '',
+          moderationSummary: latest?.moderationSummary || reviewResult?.summary || '',
+          moderationAIConfigured: latest?.moderationAIConfigured ?? reviewResult?.aiConfigured ?? null,
+          moderationAIAttempted: latest?.moderationAIAttempted ?? reviewResult?.aiAttempted ?? null,
+          moderationAISucceeded: latest?.moderationAISucceeded ?? reviewResult?.aiSucceeded ?? null,
+          moderationAIError: latest?.moderationAIError || reviewResult?.error || ''
+        })
       }
       if (desiredStatus !== 'published') setStatus('Draft saved.', 'success')
       renderEditor()
