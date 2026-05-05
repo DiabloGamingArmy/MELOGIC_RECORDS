@@ -248,9 +248,14 @@ function getKnownListingMediaPaths(product = {}) {
 }
 
 function getProductViewerDeliverableFiles(product = {}, productFiles = []) {
+  const mergedFiles = [...(Array.isArray(productFiles) ? productFiles : []), ...(Array.isArray(product?.deliverableFiles) ? product.deliverableFiles : [])]
+  const seen = new Set()
   const knownListingPaths = getKnownListingMediaPaths(product)
   const downloadPaths = [product.downloadPath, product.primaryDownloadPath].map(normalizePackagePath).filter(Boolean)
-  return Array.from(productFiles || []).filter((file) => {
+  return Array.from(mergedFiles || []).filter((file) => {
+    const key = String(file.id || file.storagePath || file.displayPath || file.path || file.name || '')
+    if (key && seen.has(key)) return false
+    if (key) seen.add(key)
     const candidates = getFilePathCandidates(file)
     const roleText = [file.role, file.category, file.type, file.kind, file.contentType, file.purpose].join(' ').toLowerCase()
     const explicitDeliverable = file.isDeliverable === true || /\b(deliverable|deliverables|package|download)\b/.test(roleText)
@@ -260,7 +265,7 @@ function getProductViewerDeliverableFiles(product = {}, productFiles = []) {
     if (file.isDownloadable === false && !explicitDeliverable) return false
     if (explicitDeliverable && file.isDownloadable !== false) return true
     if (candidates.some((candidate) => pathMatchesAny(candidate, downloadPaths))) return true
-    return candidates.length > 0
+    return explicitDeliverable && candidates.length > 0
   })
 }
 
