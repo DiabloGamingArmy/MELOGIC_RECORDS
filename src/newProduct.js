@@ -1840,6 +1840,14 @@ function renderEditor() {
       renderEditor()
     })
   })
+  editorRoot.querySelectorAll('.editor-file-row.is-folder[data-deliverable-folder-path]').forEach((row) => row.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    event.preventDefault()
+    const path = sanitizeDeliverableFolderPath(row.getAttribute('data-deliverable-folder-path') || '')
+    editorState.currentDeliverableFolderPath = path
+    editorState.deliverableFolderPath = path
+    renderEditor()
+  }))
   editorRoot.querySelector('[data-remove-cover]')?.addEventListener('click', () => {
     editorState.mediaFiles.cover = null
     editorState.mediaPreview.cover = ''
