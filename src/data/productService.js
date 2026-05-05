@@ -14,7 +14,7 @@ import {
   writeBatch
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
-import { getDownloadURL, ref, uploadBytes, uploadBytesResumable } from 'firebase/storage'
+import { deleteObject, getDownloadURL, ref, uploadBytes, uploadBytesResumable } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
@@ -1484,6 +1484,18 @@ export async function uploadProductFile({ productId, queueItem, onProgress } = {
   return { ...queueItem, storagePath, progress: 100, status: 'uploaded' }
 }
 
+export async function deleteProductStorageFile(storagePath = '') {
+  const normalized = String(storagePath || '').trim()
+  if (!normalized || !storage) return { ok: false, skipped: true }
+  try {
+    await deleteObject(ref(storage, normalized))
+    return { ok: true, skipped: false }
+  } catch (error) {
+    if (error?.code === 'storage/object-not-found') return { ok: true, skipped: true, objectNotFound: true }
+    return { ok: false, skipped: false, error }
+  }
+}
+
 export async function saveProductManifest({ productId, draft = {}, uploadedFiles = [] } = {}) {
   if (!db || !productId) throw new Error('Missing productId.')
   const byRole = (role) => uploadedFiles.filter((item) => item.role === role)
@@ -1579,11 +1591,17 @@ export async function submitProductForReview({ productId } = {}) {
 export async function requestProductReview(productId = '') {
   if (!functions || !productId) throw new Error('Missing product id for review request.')
   try {
+    console.info('[productService] submitting product for review', { productId })
     const callable = httpsCallable(functions, 'requestProductReview')
-    const saveStep = 'request-product-review-callable'
     const result = await callable({ productId })
+    console.info('[productService] product review result', result?.data || null)
     return result?.data || { status: 'review_pending', aiEnabled: false }
   } catch (error) {
+    console.warn('[productService] product review failed', {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details
+    })
     const code = String(error?.code || '')
     if (code.includes('not-found') || code.includes('unavailable') || code.includes('internal')) {
       throw new Error('Review service is currently unavailable. Please try again shortly.')
