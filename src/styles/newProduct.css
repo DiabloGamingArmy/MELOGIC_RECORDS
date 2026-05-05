@@ -233,12 +233,18 @@
 .file-viewer-toolbar p { color: #9cb2e2; font-size: .85rem; }
 .file-viewer-add-btn { border: 1px solid rgba(104,131,199,.4); background: linear-gradient(90deg, rgba(55,198,239,.22), rgba(124,95,250,.22)); color: #f3f7ff; border-radius: 9px; min-height: 36px; padding: 0 .7rem; white-space: nowrap; }
 .file-tree { display: grid; gap: .45rem; max-height: 540px; overflow: auto; }
-.editor-file-browser { display:grid; gap:.5rem; }
-.editor-file-browser-scroll { max-height:420px; overflow-y:auto; }
-.editor-file-row { display:grid; }
+.editor-file-browser { display:grid; grid-template-rows:auto auto auto 1fr; gap:.45rem; min-height:360px; }
+.editor-file-browser-header p{margin:0;color:#a9bde8;font-size:.82rem;}
+.editor-file-browser-divider{border-top:1px solid rgba(100,130,200,.25);}
 .editor-file-breadcrumbs { display:flex; flex-wrap:wrap; gap:.35rem; color:#a9bde8; font-size:.8rem; }
-.file-tree-row { display: grid; grid-template-columns: auto 1.5fr auto auto 1.2fr; gap: .45rem; align-items: center; border: 1px solid rgba(100,130,200,.2); border-radius: 10px; padding: .45rem .55rem; }
-.file-tree-row.is-folder { grid-template-columns: auto 1fr; background: rgba(16, 24, 45, .85); }
+.editor-file-breadcrumbs button{border:0;background:transparent;color:#9ec7ff;cursor:pointer;padding:0;}
+.editor-file-list-wrap { max-height:420px; overflow-y:auto; min-height:0; }
+.editor-file-list { display:grid; gap:.4rem; }
+.editor-file-row { display:grid; grid-template-columns:1.3fr auto 1fr 1.2fr; gap:.45rem; align-items:center; border: 1px solid rgba(100,130,200,.2); border-radius: 10px; padding: .45rem .55rem; }
+.editor-file-row.is-folder,.editor-file-row.is-back-row { grid-template-columns:1fr 1fr auto; background: rgba(16, 24, 45, .85); }
+.editor-file-current-folder{color:#b8caef;}
+.editor-file-actions{display:flex;gap:.55rem;align-items:center;margin-bottom:.55rem;color:#b8c8ef;font-size:.84rem;flex-wrap:wrap;}
+.file-tree-row { display: grid; }
 .file-tree-indent { width: calc(var(--depth, 0) * 14px); height: 1px; }
 .file-tree-row .path { color: #8fa8da; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
 .file-role-badge { display: inline-flex; padding: .16rem .45rem; border-radius: 999px; font-size: .72rem; }
@@ -373,7 +379,6 @@
 .rich-editor-toolbar button,.rich-editor-toolbar select,.rich-editor-toolbar input[type='color']{min-height:34px;border-radius:8px;border:1px solid rgba(102,129,201,.35);background:rgba(13,18,33,.95);color:#e8efff;padding:.2rem .45rem}
 .rich-description-editor{min-height:240px;border:1px solid rgba(102,129,201,.35);border-radius:12px;background:rgba(13,18,33,.95);padding:.65rem .75rem;color:#e8efff;overflow:auto}
 .rich-description-editor:focus{outline:none;border-color:#6bcaf9;box-shadow:0 0 0 2px rgba(54,181,240,.2)}
-.deliverable-folder-row { display:flex; gap:.55rem; align-items:center; margin-bottom:.55rem; color:#b8c8ef; font-size:.84rem; }
 .upload-progress { height: 7px; border-radius:999px; background:rgba(44,58,96,.9); overflow:hidden; margin-top:.28rem; min-width:72px; }
 .upload-progress span { display:block; height:100%; background:linear-gradient(90deg,#2bc6e8,#6e6df7,#aa2de4); }
 .file-description-input { min-height:32px; border-radius:8px; border:1px solid rgba(102,129,201,.35); background:rgba(13,18,33,.95); color:#e8efff; padding:.25rem .45rem; max-width:190px; }
