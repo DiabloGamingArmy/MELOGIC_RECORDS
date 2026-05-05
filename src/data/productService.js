@@ -55,6 +55,11 @@ function normalizeKey(value) {
     .replace(/\s+/g, '-')
 }
 
+function toPathArray(value) {
+  if (Array.isArray(value)) return value.map(String).map((v) => v.trim()).filter(Boolean)
+  return String(value || '').split(',').map((v) => v.trim()).filter(Boolean)
+}
+
 const PRODUCT_KIND_CONFIG = {
   'single-sample': { previewMode: 'hover-audio', distributionMode: 'single-file' },
   'sample-pack': { previewMode: 'demo-audio', distributionMode: 'folder-manifest' },
@@ -247,9 +252,9 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     thumbnailPath: media.thumbnailPath || rawProduct.thumbnailPath || '',
     thumbnailURL: media.thumbnailURL || '',
     coverURL: media.coverURL || '',
-    galleryPaths: rawProduct.galleryPaths || [],
-    previewAudioPaths: rawProduct.previewAudioPaths || [],
-    previewVideoPaths: rawProduct.previewVideoPaths || [],
+    galleryPaths: toPathArray(rawProduct.galleryPaths),
+    previewAudioPaths: toPathArray(rawProduct.previewAudioPaths),
+    previewVideoPaths: toPathArray(rawProduct.previewVideoPaths),
     previewAudioURLs: media.previewAudioURLs || [],
     primaryPreviewURL: media.primaryPreviewURL || '',
     galleryURLs: media.galleryURLs || [],
@@ -624,9 +629,9 @@ export function buildProductPayload(input = {}, user = null) {
   const contributorNames = Array.isArray(input.contributorNames) ? input.contributorNames : parseCsv(input.contributorNames)
   const creator = getCreatorIdentity(user, input)
   const kindSettings = resolveKindSettings(input.productType, input.productKind, input.previewMode, input.distributionMode)
-  const previewAudioPaths = Array.isArray(input.previewAudioPaths) ? input.previewAudioPaths : parseCsv(input.previewAudioPaths)
-  const previewVideoPaths = Array.isArray(input.previewVideoPaths) ? input.previewVideoPaths : parseCsv(input.previewVideoPaths)
-  const galleryPaths = Array.isArray(input.galleryPaths) ? input.galleryPaths : parseCsv(input.galleryPaths)
+  const previewAudioPaths = toPathArray(input.previewAudioPaths)
+  const previewVideoPaths = toPathArray(input.previewVideoPaths)
+  const galleryPaths = toPathArray(input.galleryPaths)
   const primaryPreviewPath = input.primaryPreviewPath || previewAudioPaths[0] || previewVideoPaths[0] || ''
   const primaryPreviewType = input.primaryPreviewType || (primaryPreviewPath ? (previewAudioPaths.includes(primaryPreviewPath) ? 'audio' : 'video') : '')
   const deliverableRows = Array.isArray(input.deliverableFiles) ? input.deliverableFiles : []
