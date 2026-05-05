@@ -369,3 +369,15 @@
 .rich-editor-toolbar button,.rich-editor-toolbar select,.rich-editor-toolbar input[type='color']{min-height:34px;border-radius:8px;border:1px solid rgba(102,129,201,.35);background:rgba(13,18,33,.95);color:#e8efff;padding:.2rem .45rem}
 .rich-description-editor{min-height:240px;border:1px solid rgba(102,129,201,.35);border-radius:12px;background:rgba(13,18,33,.95);padding:.65rem .75rem;color:#e8efff;overflow:auto}
 .rich-description-editor:focus{outline:none;border-color:#6bcaf9;box-shadow:0 0 0 2px rgba(54,181,240,.2)}
+.deliverable-folder-row { display:flex; gap:.55rem; align-items:center; margin-bottom:.55rem; color:#b8c8ef; font-size:.84rem; }
+.upload-progress { height: 7px; border-radius:999px; background:rgba(44,58,96,.9); overflow:hidden; margin-top:.28rem; min-width:72px; }
+.upload-progress span { display:block; height:100%; background:linear-gradient(90deg,#2bc6e8,#6e6df7,#aa2de4); }
+.file-description-input { min-height:32px; border-radius:8px; border:1px solid rgba(102,129,201,.35); background:rgba(13,18,33,.95); color:#e8efff; padding:.25rem .45rem; max-width:190px; }
+.cover-preview-block { border:1px solid rgba(99,128,197,.28); border-radius:12px; background:rgba(10,15,29,.82); padding:.45rem; display:grid; gap:.4rem; color:#9cb2e2; }
+.cover-preview-block img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; }
+.cover-preview-block button, .gallery-thumb button { border:1px solid rgba(232,89,116,.45); background:rgba(92,29,44,.55); color:#ffdce4; border-radius:8px; min-height:28px; }
+.gallery-thumb-scroller { display:flex; gap:.45rem; overflow-x:auto; padding:.35rem 0; }
+.gallery-thumb { position:relative; flex:0 0 72px; width:72px; height:72px; border-radius:9px; overflow:hidden; border:1px solid rgba(99,128,197,.28); background:rgba(10,15,29,.82); }
+.gallery-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+.gallery-thumb button { position:absolute; top:4px; right:4px; width:24px; height:24px; min-height:0; padding:0; opacity:0; }
+.gallery-thumb:hover button, .gallery-thumb:focus-within button { opacity:1; }

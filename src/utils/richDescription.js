@@ -18,7 +18,12 @@ function cleanStyle(value = '') {
       if (key === 'text-align' && !['left', 'center', 'right'].includes(val)) return ''
       if (key === 'font-size' && !/^(12|14|16|18|20|24)px$/.test(val)) return ''
       if (key === 'font-family' && !/^(Arial|Georgia|Verdana|Tahoma|"Times New Roman")$/i.test(val)) return ''
-      if (key === 'color' && !/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(val)) return ''
+      if (key === 'color') {
+        const safeNamedColors = new Set(['black', 'white', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'cyan', 'magenta'])
+        const isHex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(val)
+        const isRgb = /^rgba?\(\s*(25[0-5]|2[0-4]\d|1?\d?\d)\s*,\s*(25[0-5]|2[0-4]\d|1?\d?\d)\s*,\s*(25[0-5]|2[0-4]\d|1?\d?\d)(\s*,\s*(0|1|0?\.\d+))?\s*\)$/i.test(val)
+        if (!isHex && !isRgb && !safeNamedColors.has(val.toLowerCase())) return ''
+      }
       return `${key}:${val}`
     })
     .filter(Boolean)
