@@ -18,6 +18,7 @@ import {
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
+import { sanitizeRichDescription, escapeHtml as escapeRichHtml } from './utils/richDescription'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
 import { getAgreementMarkdown, getLatestMarketplaceSellerAgreement } from './data/legalAgreementService'
@@ -956,7 +957,7 @@ function renderProductInfoPanel() {
       <div class="product-info-field"><label>Release Date</label><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></div>
       <div class="product-info-field"><label>Usage License</label><select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
 
-      <div class="product-info-field is-wide"><label>Long Description</label><textarea name="description" rows="10">${escapeHtml(draft.description)}</textarea></div>
+      <div class="product-info-field is-wide"><label>Long Description</label><div class="rich-editor-toolbar" data-rich-toolbar><button type="button" data-rich-cmd="bold">B</button><button type="button" data-rich-cmd="italic">I</button><button type="button" data-rich-cmd="underline">U</button><button type="button" data-rich-cmd="insertUnorderedList">• List</button><button type="button" data-rich-cmd="insertOrderedList">1. List</button><button type="button" data-rich-align="justifyLeft">Left</button><button type="button" data-rich-align="justifyCenter">Center</button><button type="button" data-rich-align="justifyRight">Right</button><button type="button" data-rich-link>Link</button><button type="button" data-rich-cmd="insertHorizontalRule">HR</button><select data-rich-font><option value="">Font</option><option>Arial</option><option>Georgia</option><option>Verdana</option></select><select data-rich-size><option value="">Size</option><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option></select><input type="color" data-rich-color aria-label="Text color" /></div><div class="rich-description-editor" contenteditable="true" data-description-editor>${sanitizeRichDescription(draft.description || '')}</div><input type="hidden" name="description" value="${escapeHtml(draft.description)}" data-description-hidden /></div>
       <div class="product-info-side-stack">
         <div class="product-info-field"><label>Visibility</label><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></div>
         <div class="product-info-field"><label>Status</label><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="review_pending" ${draft.status === 'review_pending' ? 'selected' : ''}>Review pending</option><option value="needs_changes" ${draft.status === 'needs_changes' ? 'selected' : ''}>Needs changes</option><option value="rejected" ${draft.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></div>
@@ -1207,6 +1208,57 @@ function renderEditor() {
   })
 
   const form = editorRoot.querySelector('[data-product-form]')
+
+  const descriptionEditor = form?.querySelector('[data-description-editor]')
+  const descriptionHidden = form?.querySelector('[data-description-hidden]')
+  descriptionEditor?.addEventListener('input', () => {
+    const safe = sanitizeRichDescription(descriptionEditor.innerHTML || '')
+    if (descriptionHidden) descriptionHidden.value = safe
+    updateDraftField('description', safe)
+  })
+
+  form?.querySelectorAll('[data-rich-cmd]').forEach((button) => button.addEventListener('click', () => {
+    const cmd = button.getAttribute('data-rich-cmd')
+    if (!cmd) return
+    descriptionEditor?.focus()
+    document.execCommand(cmd, false)
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  }))
+  form?.querySelectorAll('[data-rich-align]').forEach((button) => button.addEventListener('click', () => {
+    const cmd = button.getAttribute('data-rich-align')
+    if (!cmd) return
+    descriptionEditor?.focus()
+    document.execCommand(cmd, false)
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  }))
+  form?.querySelector('[data-rich-link]')?.addEventListener('click', () => {
+    const href = window.prompt('Enter link URL (http, https, or mailto):', 'https://') || ''
+    if (!/^(https?:|mailto:)/i.test(href.trim())) return
+    descriptionEditor?.focus()
+    document.execCommand('createLink', false, href.trim())
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
+  form?.querySelector('[data-rich-font]')?.addEventListener('change', (event) => {
+    const value = String(event.target.value || '').trim()
+    if (!value) return
+    descriptionEditor?.focus()
+    document.execCommand('fontName', false, value)
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
+  form?.querySelector('[data-rich-size]')?.addEventListener('change', (event) => {
+    const value = String(event.target.value || '').trim()
+    if (!value) return
+    document.execCommand('styleWithCSS', false, true)
+    descriptionEditor?.focus()
+    document.execCommand('fontSize', false, '4')
+    descriptionEditor?.querySelectorAll('font[size="4"]').forEach((node) => { node.removeAttribute('size'); node.style.fontSize = value })
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
+  form?.querySelector('[data-rich-color]')?.addEventListener('input', (event) => {
+    descriptionEditor?.focus()
+    document.execCommand('foreColor', false, String(event.target.value || '#dbe9ff'))
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  })
 
   form?.addEventListener('input', (event) => {
     const target = event.target
