@@ -95,11 +95,12 @@ function productCardMarkup(product) {
     ? `<img src="${escapeHtml(product.thumbnailURL || product.coverURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`
     : '<div class="product-cover-fallback" aria-hidden="true"></div>'
 
-  const hasHoverPreview = product.previewAssignment?.hoverEnabled && product.previewAssignment?.cardPreviewMode !== 'none'
+  const hasHoverPreview = Boolean((product.previewVideoURLs?.[0] || product.previewAssignment?.hoverVideoURL || product.previewAudioURLs?.[0] || product.previewAssignment?.hoverAudioURL || product.primaryPreviewURL))
   return `
     <article class="product-card product-card-link" role="listitem" data-open-product data-product-id="${escapeHtml(product.id)}" tabindex="0" aria-label="Open ${escapeHtml(product.title)} details">
       <div class="product-cover" data-product-cover>
         ${mediaMarkup}
+        <video class="product-preview-video" data-preview-video-el playsinline loop></video>
         <div class="product-preview-overlay" data-preview-overlay>${hasHoverPreview ? 'Preview on hover' : ''}</div>
       </div>
       <div class="product-content">
@@ -377,10 +378,8 @@ function stopPreview(card = null) {
     previewController.activeAudio.pause()
     previewController.activeAudio.currentTime = 0
   }
-  if (previewController.activeVideoCard) {
-    const node = previewController.activeVideoCard.querySelector('[data-preview-video-el]')
-    if (node) node.remove()
-  }
+  if (previewController.activeVideoCard) previewController.activeVideoCard.classList.remove('is-preview-playing')
+  app.querySelectorAll('.product-preview-video').forEach((video) => { video.pause(); video.removeAttribute('src'); video.load() })
   previewController.activeProductId = ''
   previewController.activeVideoCard = null
   app.querySelectorAll('.preview-btn').forEach((btn) => { btn.textContent = '▶ Preview' })
@@ -400,24 +399,21 @@ async function startPreview(product, card, explicitClick = false) {
   stopPreview()
   const audioSrc = getAssignedAudio(product)
   const videoSrc = getAssignedVideo(product)
-  const mode = product?.previewAssignment?.cardPreviewMode || 'none'
-  const shouldVideo = mode === 'video' || mode === 'video-audio'
-  const shouldAudio = mode === 'audio' || mode === 'video-audio'
+  const shouldVideo = Boolean(videoSrc)
+  const shouldAudio = Boolean(audioSrc)
   previewController.activeProductId = product.id
 
   const playPromises = []
   if (shouldVideo && videoSrc) {
-    const cover = card?.querySelector('[data-product-cover]')
-    if (cover) {
-      const video = document.createElement('video')
-      video.setAttribute('data-preview-video-el', 'true')
+    const video = card?.querySelector('[data-preview-video-el]')
+    if (video) {
       video.src = videoSrc
       video.muted = true
       video.loop = true
       video.playsInline = true
       video.autoplay = true
-      cover.appendChild(video)
       previewController.activeVideoCard = card
+      card.classList.add('is-preview-playing')
       playPromises.push(video.play().catch(() => {}))
     }
   }
