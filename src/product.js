@@ -216,6 +216,36 @@ function creatorInitials(name) {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')
 }
 
+function buildContributorRows(product = {}) {
+  const rows = []
+  const seen = new Set()
+  const ownerUid = String(product.artistId || '').trim()
+  const ownerName = String(product.artistDisplayName || product.artistName || 'Creator').trim()
+  const ownerUsername = String(product.artistUsername || '').replace(/^@+/, '').trim()
+  const ownerAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
+  const ownerProfilePath = product.artistProfilePath || (ownerUid ? `profiles/${ownerUid}` : '')
+  const addRow = (row = {}, isOwner = false) => {
+    const uidKey = String(row.uid || '').trim().toLowerCase()
+    const nameKey = String(row.displayName || '').trim().toLowerCase()
+    const dedupe = uidKey || nameKey
+    if (!dedupe || seen.has(dedupe)) return
+    seen.add(dedupe)
+    rows.push({ ...row, isOwner })
+  }
+  addRow({ uid: ownerUid, displayName: ownerName, username: ownerUsername, avatarURL: ownerAvatar, role: 'Distributor', profilePath: ownerProfilePath }, true)
+  ;(Array.isArray(product.contributors) ? product.contributors : []).forEach((entry) => {
+    addRow({ uid: entry.uid || '', displayName: entry.displayName || entry.username || 'Contributor', username: entry.username || '', avatarURL: entry.avatarURL || '', role: entry.role || 'Contributor', profilePath: entry.profilePath || '' })
+  })
+  const legacyNames = Array.isArray(product.contributorNames) ? product.contributorNames : String(product.contributorNames || '').split(',').map((v) => v.trim()).filter(Boolean)
+  const legacyIds = Array.isArray(product.contributorIds) ? product.contributorIds : String(product.contributorIds || '').split(',').map((v) => v.trim()).filter(Boolean)
+  const legacyRoles = Array.isArray(product.contributorRoles) ? product.contributorRoles : String(product.contributorRoles || '').split(',').map((v) => v.trim()).filter(Boolean)
+  legacyNames.forEach((name, index) => addRow({ uid: legacyIds[index] || '', displayName: name, username: '', avatarURL: '', role: legacyRoles[index] || 'Contributor', profilePath: legacyIds[index] ? `profiles/${legacyIds[index]}` : '' }))
+  ;(Array.isArray(product.acceptedContributors) ? product.acceptedContributors : []).forEach((entry) => {
+    addRow({ uid: entry.uid || entry.id || '', displayName: entry.displayName || entry.name || 'Contributor', username: entry.username || '', avatarURL: entry.avatarURL || entry.photoURL || '', role: entry.role || 'Contributor', profilePath: entry.profilePath || '' })
+  })
+  return rows
+}
+
 
 
 function formatBytes(size = 0) {
@@ -438,6 +468,14 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const artistHandle = String(handleRaw || '').trim() ? `@${String(handleRaw).replace(/^@+/, '')}` : ''
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
   const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
+  const moderationLabel = (() => {
+    if (String(product.status || '').toLowerCase() === 'needs_changes') return 'Needs Changes'
+    if (String(product.status || '').toLowerCase() === 'review_pending') return 'Pending Review'
+    if (String(product.moderationStatus || '').toLowerCase() === 'approved') return 'Approved'
+    if (String(product.status || '').toLowerCase() === 'published' && String(product.visibility || '').toLowerCase() === 'public') return 'Approved/Public'
+    return product.moderationStatus || 'Pending'
+  })()
+  const contributorRows = buildContributorRows(product)
 
   const thumbMarkup = mediaItems.map((item, index) => `
     <button type="button" class="dashboard-thumb" data-media-index="${index}" aria-label="Show media ${index + 1}" aria-pressed="${index === 0 ? 'true' : 'false'}">
@@ -461,7 +499,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <h3>${ownerPreview ? 'Private owner preview' : 'Manage this product'}</h3>
                 <p>Status: ${escapeHtml(product.status || 'draft')} · Visibility: ${escapeHtml(product.visibility || 'private')}</p>
                 <p>Created: ${escapeHtml(formatReleaseDate(product.createdAt))} · Updated: ${escapeHtml(formatReleaseDate(product.updatedAt || product.createdAt))}</p>
-                <p>Moderation: ${escapeHtml(product.moderationStatus || 'pending')}</p>
+                <p>Moderation: ${escapeHtml(moderationLabel)}</p>
                 <a class="button button-muted" href="${ROUTES.newProduct}?id=${encodeURIComponent(product.id)}">Edit listing</a>
               </article>
             ` : ''}
@@ -509,19 +547,22 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 </aside>
               </div>
 
-              <article class="dashboard-section-card dashboard-reviews-section">
-                <h2>Reviews (${product.reviewCount ?? product.commentCount ?? state.reviews.length})</h2>
-                <p class="dashboard-review-rating">${product.averageRating ? `Average rating ${Number(product.averageRating).toFixed(1)} / 5` : 'No ratings yet.'}</p>
-                ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><div>${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><button class="button button-accent" type="submit">Submit review</button></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
-                <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-creator-block">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p></article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}</div>
-              </article>
-
-              <article class="dashboard-section-card dashboard-recommendations-section">
-                <div class="dashboard-section-heading-row"><h2>Recommended products</h2><a href="${ROUTES.products}">Browse all</a></div>
-                ${recommendations.length ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>` : '<p>No recommendations yet.</p>'}
-              </article>
+              
             </div>
           </section>
+          <div class="dashboard-full-width-divider"></div>
+              <article class="dashboard-section-card dashboard-recommendations-section dashboard-recommendations-fullwidth">
+                <div class="dashboard-lower-section-header"><h2>Recommended products</h2><a href="${ROUTES.products}">Browse all</a></div>
+                ${recommendations.length ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>` : '<p>No recommendations yet.</p>'}
+              </article>
+              <article class="dashboard-section-card dashboard-reviews-section dashboard-reviews-fullwidth">
+                <div class="dashboard-lower-section-header">
+                  <div><h2>Reviews</h2><p class="dashboard-mini-note">${product.averageRating ? `${Number(product.averageRating).toFixed(1)} average · ${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews` : 'No ratings yet'}</p></div>
+                  <span class="dashboard-review-count-badge">${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews</span>
+                </div>
+                ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><div class="dashboard-rating-stars-wrap">${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><div class="dashboard-review-submit-row"><button class="button button-accent" type="submit">Submit review</button></div></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
+                <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-creator-block">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p></article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}</div>
+              </article>
 
           <aside class="dashboard-lower-sidebar">
             <article class="panel-surface dashboard-overview">
@@ -530,7 +571,6 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h2>${escapeHtml(product.title)}</h2>
               <p class="dashboard-short-description">${escapeHtml(product.shortDescription || product.description || 'No description has been shared yet.')}</p>
               <div class="dashboard-top-badges">
-                <span class="dashboard-pill">${escapeHtml(typeLabel)}</span>
                 ${(product.genres || []).slice(0, 3).map((genre) => `<span class="dashboard-pill">${escapeHtml(genre)}</span>`).join('')}
               </div>
               <dl class="dashboard-overview-grid">
@@ -577,6 +617,18 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <p class="dashboard-mini-note">Instant digital download</p>
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
               <p class="dashboard-mini-note">Created by ${escapeHtml(product.artistName)}</p>
+            </article>
+
+            <article class="panel-surface dashboard-side-card">
+              <h3>Contributors</h3>
+              <div class="dashboard-contributor-list">
+                ${contributorRows.map((row) => {
+                  const name = row.displayName || 'Contributor'
+                  const handle = row.username ? `@${String(row.username).replace(/^@+/, '')}` : ''
+                  const route = row.profilePath || (row.uid ? publicProfileRoute({ uid: row.uid }) : '')
+                  return `<div class="dashboard-contributor-row"><div class="dashboard-creator-block">${row.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(row.avatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(creatorInitials(name))}</span>`}<div><p class="dashboard-creator-name">${escapeHtml(name)}</p><p class="dashboard-mini-note">${escapeHtml(row.role || 'Contributor')}${handle ? ` · ${escapeHtml(handle)}` : ''}</p></div>${route ? `<a class="button button-muted" href="/${escapeHtml(String(route).replace(/^\/+/, ''))}">View</a>` : ''}</div></div>`
+                }).join('')}
+              </div>
             </article>
 
             <article class="panel-surface dashboard-side-card">
