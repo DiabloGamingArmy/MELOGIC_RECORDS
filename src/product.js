@@ -32,6 +32,8 @@ const state = {
   ,reviewReplies: {}
   ,openReplyComposerFor: ''
   ,replyDrafts: {}
+  ,reviewActionErrors: {}
+  ,replyLoadErrors: {}
 }
 
 function escapeHtml(value) {
@@ -566,7 +568,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   <span class="dashboard-review-count-badge">${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews</span>
                 </div>
                 ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><div class="dashboard-rating-stars-wrap">${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><div class="dashboard-review-submit-row"><button class="button button-accent" type="submit">Submit review</button></div></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
-                <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-review-header">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p><div class="dashboard-review-actions"><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'like' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:like">👍 ${Number(review.likeCount || 0)}</button><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'dislike' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:dislike">👎 ${Number(review.dislikeCount || 0)}</button><button type="button" class="dashboard-review-action" data-toggle-replies="${escapeHtml(review.id)}">Reply (${Number(review.replyCount || 0)})</button></div>${state.openReplyComposerFor === review.id ? `<form class="dashboard-review-reply-composer" data-review-reply-form="${escapeHtml(review.id)}"><textarea maxlength="1200" placeholder="Write a reply...">${escapeHtml(state.replyDrafts[review.id] || '')}</textarea><div class="dashboard-review-reply-submit-row"><button type="submit" class="button button-muted">Post reply</button></div></form>` : ''}<div class="dashboard-review-replies">${(state.reviewReplies[review.id] || []).map((reply) => `<article class="dashboard-review-reply"><p class="dashboard-mini-note">${escapeHtml(reply.displayName || 'User')} · ${escapeHtml(formatReviewTime(reply.createdAt))}</p><p>${escapeHtml(reply.body || '')}</p></article>`).join('')}</div></article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}</div>
+                <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-review-header">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p><div class="dashboard-review-actions"><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'like' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:like">👍 ${Math.max(0, Number(review.likeCount || 0))}</button><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'dislike' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:dislike">👎 ${Math.max(0, Number(review.dislikeCount || 0))}</button><button type="button" class="dashboard-review-action" data-toggle-replies="${escapeHtml(review.id)}">Reply (${Number(review.replyCount || 0)})</button></div>${state.reviewActionErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.reviewActionErrors[review.id])}</p>` : ''}${state.openReplyComposerFor === review.id ? `<form class="dashboard-review-reply-composer" data-review-reply-form="${escapeHtml(review.id)}"><textarea maxlength="1200" placeholder="Write a reply...">${escapeHtml(state.replyDrafts[review.id] || '')}</textarea><div class="dashboard-review-reply-submit-row"><button type="submit" class="button button-muted">Post reply</button></div></form>` : ''}${state.replyLoadErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.replyLoadErrors[review.id])}</p>` : ''}<div class="dashboard-review-replies">${(state.reviewReplies[review.id] || []).map((reply) => `<article class="dashboard-review-reply"><p class="dashboard-mini-note">${escapeHtml(reply.displayName || 'User')} · ${escapeHtml(formatReviewTime(reply.createdAt))}</p><p>${escapeHtml(reply.body || '')}</p></article>`).join('')}</div></article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}</div>
               </article>
 
           <aside class="dashboard-lower-sidebar">
@@ -782,12 +784,15 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const next = current === reaction ? null : reaction
     try {
       await setProductReviewReaction(product.id, reviewId, state.currentUser, next)
+      state.reviewActionErrors[reviewId] = ''
       state.reviews = await listProductReviews(product.id, { limitCount: 20 })
       state.reviewReactions = await getReviewReactionStates(product.id, state.reviews.map((item) => item.id), state.currentUser)
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     } catch (error) {
       console.warn('[product] review reaction failed', { code: error?.code, message: error?.message })
+      state.reviewActionErrors[reviewId] = 'Could not update reaction.'
       showActionMessage('Could not update review reaction.')
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     }
   }))
   app.querySelectorAll('[data-toggle-replies]').forEach((button) => button.addEventListener('click', async () => {
@@ -796,8 +801,10 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     if (state.openReplyComposerFor && !state.reviewReplies[reviewId]?.length) {
       try {
         state.reviewReplies[reviewId] = await listProductReviewReplies(product.id, reviewId, { limitCount: 10 })
+        state.replyLoadErrors[reviewId] = ''
       } catch (error) {
         console.warn('[product] list replies failed', { code: error?.code, message: error?.message })
+        state.replyLoadErrors[reviewId] = 'Could not load replies.'
         showActionMessage('Could not load replies.')
       }
     }
@@ -811,7 +818,13 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     try {
       await createProductReviewReply(product.id, reviewId, state.currentUser, {}, { body })
       state.replyDrafts[reviewId] = ''
-      state.reviewReplies[reviewId] = await listProductReviewReplies(product.id, reviewId, { limitCount: 10 })
+      try {
+        state.reviewReplies[reviewId] = await listProductReviewReplies(product.id, reviewId, { limitCount: 10 })
+        state.replyLoadErrors[reviewId] = ''
+      } catch (listError) {
+        console.warn('[product] list replies failed', { code: listError?.code, message: listError?.message })
+        state.replyLoadErrors[reviewId] = 'Could not load replies.'
+      }
       state.reviews = await listProductReviews(product.id, { limitCount: 20 })
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     } catch (error) {

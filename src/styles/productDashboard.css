@@ -514,6 +514,7 @@
 .dashboard-review-reply-composer{display:grid;gap:.45rem;margin-top:.45rem}
 .dashboard-review-reply-composer textarea{min-height:72px;background:rgba(12,20,34,.85);color:#dbe9ff;border:1px solid rgba(120,150,205,.35);border-radius:.55rem;padding:.5rem}
 .dashboard-review-reply-submit-row{display:flex;justify-content:flex-end}
+.dashboard-review-inline-error{font-size:.74rem;color:#ffb4c1;margin:.25rem 0}
 .dashboard-audio-card audio { display:none; }
 .dashboard-rating-control { display:grid; gap:.3rem; margin:.3rem 0; }
 .dashboard-rating-stars { position:relative; display:inline-block; letter-spacing:2px; font-size:1rem; line-height:1; }
