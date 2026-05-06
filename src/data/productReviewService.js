@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore'
+import { addDoc, collection, doc, getDoc, getDocs, increment, limit, orderBy, query, runTransaction, serverTimestamp, updateDoc, where } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 
 function normalizeReview(id, raw = {}) {
@@ -50,4 +50,51 @@ export async function deleteProductReview(productId, reviewId, user) {
   const snap = await getDoc(ref)
   if (!snap.exists() || snap.data()?.uid !== user?.uid) throw new Error('forbidden')
   await updateDoc(ref, { deleted: true, body: '', updatedAt: serverTimestamp() })
+}
+
+export async function getReviewReactionStates(productId, reviewIds = [], user = null) {
+  if (!productId || !user?.uid || !reviewIds.length) return {}
+  const entries = await Promise.all(reviewIds.map(async (reviewId) => {
+    const snap = await getDoc(doc(db, 'products', productId, 'reviews', reviewId, 'reactions', user.uid))
+    return [reviewId, snap.exists() ? snap.data()?.reaction || null : null]
+  }))
+  return Object.fromEntries(entries)
+}
+
+export async function setProductReviewReaction(productId, reviewId, user, reaction = null) {
+  if (!user?.uid) throw new Error('auth-required')
+  if (!productId || !reviewId) throw new Error('review-required')
+  const next = reaction === 'like' || reaction === 'dislike' ? reaction : null
+  const reviewRef = doc(db, 'products', productId, 'reviews', reviewId)
+  const reactionRef = doc(db, 'products', productId, 'reviews', reviewId, 'reactions', user.uid)
+  return runTransaction(db, async (tx) => {
+    const [reviewSnap, reactionSnap] = await Promise.all([tx.get(reviewRef), tx.get(reactionRef)])
+    if (!reviewSnap.exists()) throw new Error('review-not-found')
+    const prev = reactionSnap.exists() ? reactionSnap.data()?.reaction || null : null
+    if (prev === next) return prev
+    const likeDelta = (prev === 'like' ? -1 : 0) + (next === 'like' ? 1 : 0)
+    const dislikeDelta = (prev === 'dislike' ? -1 : 0) + (next === 'dislike' ? 1 : 0)
+    tx.update(reviewRef, { likeCount: increment(likeDelta), dislikeCount: increment(dislikeDelta), updatedAt: serverTimestamp() })
+    if (!next) tx.delete(reactionRef)
+    else tx.set(reactionRef, { uid: user.uid, reaction: next, createdAt: reactionSnap.exists() ? reactionSnap.data()?.createdAt || serverTimestamp() : serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })
+    return next
+  })
+}
+
+export async function listProductReviewReplies(productId, reviewId, { limitCount = 10 } = {}) {
+  if (!productId || !reviewId) return []
+  const q = query(collection(db, 'products', productId, 'reviews', reviewId, 'replies'), where('deleted', '==', false), orderBy('createdAt', 'asc'), limit(limitCount))
+  const snap = await getDocs(q)
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+}
+
+export async function createProductReviewReply(productId, reviewId, user, profile = {}, { body = '' } = {}) {
+  if (!user?.uid) throw new Error('auth-required')
+  const trimmed = String(body || '').trim()
+  if (!trimmed) throw new Error('reply-body-required')
+  const reviewRef = doc(db, 'products', productId, 'reviews', reviewId)
+  const payload = { productId, reviewId, uid: user.uid, displayName: profile.displayName || user.displayName || 'User', username: profile.username || '', avatarURL: profile.avatarURL || user.photoURL || '', body: trimmed, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), edited: false, deleted: false }
+  const replyRef = await addDoc(collection(db, 'products', productId, 'reviews', reviewId, 'replies'), payload)
+  await Promise.all([updateDoc(replyRef, { id: replyRef.id }), updateDoc(reviewRef, { replyCount: increment(1), updatedAt: serverTimestamp() })])
+  return { id: replyRef.id, ...payload }
 }
