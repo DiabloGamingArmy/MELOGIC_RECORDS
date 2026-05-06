@@ -841,6 +841,31 @@ service cloud.firestore {
       && (!('rating' in request.resource.data) || (request.resource.data.rating is number && request.resource.data.rating >= 0.5 && request.resource.data.rating <= 5));
 
     allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
+
+    match /reactions/{reactionId} {
+      allow read: if true;
+      allow create, update: if signedIn()
+        && reactionId == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.reaction in ['like', 'dislike'];
+      allow delete: if signedIn()
+        && reactionId == request.auth.uid
+        && resource.data.uid == request.auth.uid;
+    }
+
+    match /replies/{replyId} {
+      allow read: if (get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+        && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public')
+        || signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 1200;
+
+      allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
   }
 
   match /reactions/{reactionId} {
