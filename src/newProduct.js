@@ -101,7 +101,8 @@ let editorState = {
   creatorProfile: null,
   draft: null,
   restoreDraftPrompt: false,
-  requestedProductId: (new URLSearchParams(window.location.search).get('id') || (window.location.pathname.startsWith('/products/edit/') ? window.location.pathname.split('/products/edit/')[1]?.split('/')[0] : '') || '')
+  requestedProductId: (new URLSearchParams(window.location.search).get('id') || (window.location.pathname.startsWith('/products/edit/') ? window.location.pathname.split('/products/edit/')[1]?.split('/')[0] : '') || ''),
+  requestedMode: new URLSearchParams(window.location.search).get('mode') || (window.location.pathname.startsWith('/products/edit') ? 'edit' : 'new')
 }
 
 function getCreatorIdentity(user = null, profile = null, draft = {}) {
@@ -2134,6 +2135,7 @@ async function initPage() {
 
   if (editorState.requestedProductId) {
     try {
+      console.info('[new-product] loading edit listing', { productId: editorState.requestedProductId, mode: editorState.requestedMode, pathname: window.location.pathname })
       const existingProduct = await getProductById(editorState.requestedProductId)
       if (!existingProduct || existingProduct.artistId !== user.uid) {
         editorRoot.innerHTML = `<article class="product-editor-card signed-out"><h2>Listing access denied</h2><a class="button button-accent" href="${ROUTES.products}">Back to Products</a></article>`

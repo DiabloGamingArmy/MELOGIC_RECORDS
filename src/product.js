@@ -54,10 +54,12 @@ function normalizeKey(value) {
 function parseProductIdFromLocation() {
   const pathname = String(window.location.pathname || '')
   const params = new URLSearchParams(window.location.search)
+  const reservedProductRoutes = new Set(['new', 'edit'])
 
   if (pathname.startsWith('/products/')) {
     const rawSegment = pathname.slice('/products/'.length).split('/')[0]
     const decodedSegment = decodeURIComponent(rawSegment || '').trim()
+    if (reservedProductRoutes.has(decodedSegment.toLowerCase())) return ''
     if (decodedSegment) {
       const markerIndex = decodedSegment.lastIndexOf('--')
       if (markerIndex >= 0) {
@@ -514,7 +516,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <p>Status: ${escapeHtml(product.status || 'draft')} · Visibility: ${escapeHtml(product.visibility || 'private')}</p>
                 <p>Created: ${escapeHtml(formatReleaseDate(product.createdAt))} · Updated: ${escapeHtml(formatReleaseDate(product.updatedAt || product.createdAt))}</p>
                 <p>Moderation: ${escapeHtml(moderationLabel)}</p>
-                <a class="button button-muted" href="${ROUTES.editProduct}?id=${encodeURIComponent(product.id)}">Edit listing</a>
+                <a class="button button-muted" href="${ROUTES.newProduct}?id=${encodeURIComponent(product.id)}&mode=edit">Edit listing</a>
               </article>
             ` : ''}
             <div class="dashboard-main-media" data-dashboard-main-media></div>
