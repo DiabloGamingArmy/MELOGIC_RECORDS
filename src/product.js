@@ -514,7 +514,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <p>Status: ${escapeHtml(product.status || 'draft')} · Visibility: ${escapeHtml(product.visibility || 'private')}</p>
                 <p>Created: ${escapeHtml(formatReleaseDate(product.createdAt))} · Updated: ${escapeHtml(formatReleaseDate(product.updatedAt || product.createdAt))}</p>
                 <p>Moderation: ${escapeHtml(moderationLabel)}</p>
-                <a class="button button-muted" href="${ROUTES.newProduct}?id=${encodeURIComponent(product.id)}">Edit listing</a>
+                <a class="button button-muted" href="${ROUTES.editProduct}?id=${encodeURIComponent(product.id)}">Edit listing</a>
               </article>
             ` : ''}
             <div class="dashboard-main-media" data-dashboard-main-media></div>
@@ -640,7 +640,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   const name = row.displayName || 'Contributor'
                   const handle = row.username ? `@${String(row.username).replace(/^@+/, '')}` : ''
                   const route = row.profilePath || (row.uid ? publicProfileRoute({ uid: row.uid }) : '')
-                  return `<div class="dashboard-contributor-row"><div class="dashboard-contributor-row-inner">${row.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(row.avatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(creatorInitials(name))}</span>`}<div><p class="dashboard-creator-name">${escapeHtml(name)}</p><p class="dashboard-mini-note">${escapeHtml(row.role || 'Contributor')}${handle ? ` · ${escapeHtml(handle)}` : ''}</p></div>${route ? `<a class="button button-muted" href="/${escapeHtml(String(route).replace(/^\/+/, ''))}">View</a>` : ''}</div></div>`
+                  return `<div class="dashboard-contributor-row"><div class="dashboard-contributor-row-inner">${row.avatarURL ? `<img class="dashboard-contributor-avatar" src="${escapeHtml(row.avatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(creatorInitials(name))}</span>`}<div class="dashboard-contributor-meta"><p class="dashboard-contributor-name">${escapeHtml(name)}</p><p class="dashboard-contributor-role">${escapeHtml(row.role || 'Contributor')}${handle ? ` · ${escapeHtml(handle)}` : ''}</p></div>${route ? `<a class="button button-muted dashboard-contributor-action" href="/${escapeHtml(String(route).replace(/^\/+/, ''))}">View</a>` : ''}</div></div>`
                 }).join('')}
               </div>
             </article>

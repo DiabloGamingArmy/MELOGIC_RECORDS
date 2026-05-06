@@ -101,7 +101,7 @@ let editorState = {
   creatorProfile: null,
   draft: null,
   restoreDraftPrompt: false,
-  requestedProductId: new URLSearchParams(window.location.search).get('id') || ''
+  requestedProductId: (new URLSearchParams(window.location.search).get('id') || (window.location.pathname.startsWith('/products/edit/') ? window.location.pathname.split('/products/edit/')[1]?.split('/')[0] : '') || '')
 }
 
 function getCreatorIdentity(user = null, profile = null, draft = {}) {
@@ -1072,7 +1072,7 @@ function renderPublishPanel() {
   const deliverables = fileEntries.filter((item) => item.isDeliverable)
   const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
   const previewAssigned = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
-  const canSubmit = blockingIssues.length === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
+  const canSubmit = blockingIssues.length === 0 && (isEditMode || (draft.status !== 'review_pending' && draft.status !== 'published'))
 
   return `
     <section class="publish-workspace">
@@ -1135,7 +1135,7 @@ function renderPublishPanel() {
           </div>
           ${canSubmit ? '' : '<p class="pricing-warning">Resolve blocked items before submitting.</p>'}
           ${(draft.status === 'review_pending') ? '<p class="agreement-accepted-status">Product is awaiting review.</p>' : ''}
-          ${(draft.status === 'published') ? '<p class="agreement-accepted-status">Product is already published.</p>' : ''}
+          ${(draft.status === 'published') ? '<p class="dashboard-mini-note">Product is already published.</p>' : ''}
         </aside>
       </div>
       ${editorState.publishConfirmOpen ? `
@@ -1156,6 +1156,8 @@ function renderPublishPanel() {
 
 function renderProductInfoPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const isEditMode = Boolean(editorState.requestedProductId || (draft.id && !isPlaceholderProductId(draft.id)))
+  const releaseDisplay = draft.releasedAt ? formattedEditDate(draft.releasedAt) : (isEditMode ? (draft.publishedAt ? formattedEditDate(draft.publishedAt) : 'Not set') : 'Set automatically on publish')
   return `
     <section class="product-info-grid">
       <div class="product-info-field"><label>Product Title</label><input name="title" value="${escapeHtml(draft.title)}" /></div>
@@ -1171,13 +1173,13 @@ function renderProductInfoPanel() {
       ${tagEditorMarkup('genres', 'Genres', 'Press Enter to add genres')}
 
       <div class="product-info-field"><label>Short Description</label><input name="shortDescription" value="${escapeHtml(draft.shortDescription)}" /></div>
-      <div class="product-info-field"><label>Release Date</label><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></div>
+      <div class="product-info-field"><label>Release Date</label><div class="product-info-readonly">${escapeHtml(releaseDisplay)}</div></div>
       <div class="product-info-field"><label>Usage License</label><select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
 
       <div class="product-info-field is-wide"><label>Long Description</label><div class="rich-editor-toolbar" data-rich-toolbar><button type="button" data-rich-cmd="bold">B</button><button type="button" data-rich-cmd="italic">I</button><button type="button" data-rich-cmd="underline">U</button><button type="button" data-rich-cmd="insertUnorderedList">• List</button><button type="button" data-rich-cmd="insertOrderedList">1. List</button><button type="button" data-rich-align="justifyLeft">Left</button><button type="button" data-rich-align="justifyCenter">Center</button><button type="button" data-rich-align="justifyRight">Right</button><button type="button" data-rich-link>Link</button><button type="button" data-rich-cmd="insertHorizontalRule">HR</button><select data-rich-font><option value="">Font</option><option>Arial</option><option>Georgia</option><option>Verdana</option></select><select data-rich-size><option value="">Size</option><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option></select><input type="color" data-rich-color aria-label="Text color" /></div><div class="rich-description-editor" contenteditable="true" data-description-editor>${sanitizeRichDescription(draft.description || '')}</div><input type="hidden" name="description" value="${escapeHtml(draft.description)}" data-description-hidden /></div>
       <div class="product-info-side-stack">
-        <div class="product-info-field"><label>Visibility</label><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></div>
-        <div class="product-info-field"><label>Status</label><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="review_pending" ${draft.status === 'review_pending' ? 'selected' : ''}>Review pending</option><option value="needs_changes" ${draft.status === 'needs_changes' ? 'selected' : ''}>Needs changes</option><option value="rejected" ${draft.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></div>
+        <div class="product-info-field"><label>Visibility</label><div class="product-info-readonly">${escapeHtml(isEditMode ? (draft.visibility || 'private') : 'Private until approved/published')}</div></div>
+        <div class="product-info-field"><label>Status</label><div class="product-info-readonly">${escapeHtml(isEditMode ? (draft.status || 'draft') : 'Draft')}</div></div>
         <div class="product-info-field"><label>Edit Date</label><input type="date" value="${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}" readonly /></div>
       </div>
     </section>
