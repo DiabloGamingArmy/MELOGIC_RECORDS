@@ -515,6 +515,14 @@
 .dashboard-review-reply-composer textarea{min-height:72px;background:rgba(12,20,34,.85);color:#dbe9ff;border:1px solid rgba(120,150,205,.35);border-radius:.55rem;padding:.5rem}
 .dashboard-review-reply-submit-row{display:flex;justify-content:flex-end}
 .dashboard-review-inline-error{font-size:.74rem;color:#ffb4c1;margin:.25rem 0}
+.dashboard-ratings-panel{margin-top:.35rem}
+.dashboard-ratings-divider{border-top:1px solid rgba(120,145,210,.25);margin:.2rem 0 .45rem}
+.dashboard-ratings-heading{margin:0 0 .35rem;font-size:.78rem;letter-spacing:.04em;color:#b8c8e8;text-transform:uppercase}
+.dashboard-rating-summary{display:flex;align-items:center;gap:.5rem}
+.dashboard-rating-average-stars .dashboard-rating-stars{font-size:.95rem}
+.dashboard-rating-average-value{font-size:.82rem;color:#dce8ff}
+.dashboard-rating-review-label{margin:.2rem 0 0;font-size:.76rem;color:#9fb4da}
+.dashboard-rating-review-count{margin:.1rem 0 .45rem;font-size:.75rem;color:#c6d8fb}
 .dashboard-audio-card audio { display:none; }
 .dashboard-rating-control { display:grid; gap:.3rem; margin:.3rem 0; }
 .dashboard-rating-stars { position:relative; display:inline-block; letter-spacing:2px; font-size:1rem; line-height:1; }

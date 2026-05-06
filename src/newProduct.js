@@ -1062,6 +1062,7 @@ function calculateLaunchReadiness(checks = []) {
 
 function renderPublishPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const isEditMode = Boolean(editorState.requestedProductId || (draft.id && !isPlaceholderProductId(draft.id)))
   const checks = buildPublishChecklist(draft, editorState, editorState.agreement.config || {})
   const readiness = calculateLaunchReadiness(checks)
   const blockingIssues = getBlockingPublishIssues(checks)
@@ -1106,7 +1107,7 @@ function renderPublishPanel() {
         </article>
 
         <aside class="publish-submit-panel">
-          <h3>Submit for Review</h3>
+          <h3>${isEditMode ? 'Submit Edits' : 'Submit for Review'}</h3>
           <p>Current status: <strong>${escapeHtml(draft.status || 'draft')}</strong></p>
           <p>Last updated: ${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}</p>
           <p>Latest agreement: <strong>${escapeHtml(agreementLatest)}</strong></p>
@@ -1130,7 +1131,7 @@ function renderPublishPanel() {
             <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
             <button type="button" class="button button-muted" data-open-marketplace-preview>Marketplace Preview</button>
             <button type="button" class="button button-muted" data-publish-fix="media-upload">Back to Media & Upload</button>
-            <button type="button" class="button button-accent" data-open-submit-confirm ${canSubmit ? '' : 'disabled'}>${draft.status === 'needs_changes' ? 'Resubmit Changes' : 'Submit for Review'}</button>
+            <button type="button" class="button button-accent" data-open-submit-confirm ${canSubmit ? '' : 'disabled'}>${isEditMode ? 'Submit Edits' : (draft.status === 'needs_changes' ? 'Resubmit Changes' : 'Submit for Review')}</button>
           </div>
           ${canSubmit ? '' : '<p class="pricing-warning">Resolve blocked items before submitting.</p>'}
           ${(draft.status === 'review_pending') ? '<p class="agreement-accepted-status">Product is awaiting review.</p>' : ''}
@@ -1144,7 +1145,7 @@ function renderPublishPanel() {
             <p>Your product will be reviewed before becoming visible in the marketplace. You can continue editing drafts, but published changes may require approval.</p>
             <div class="publish-action-row">
               <button type="button" class="button button-muted" data-close-submit-confirm>Cancel</button>
-              <button type="button" class="button button-accent" data-confirm-submit-review>Submit for Review</button>
+              <button type="button" class="button button-accent" data-confirm-submit-review>${isEditMode ? 'Submit Edits' : 'Submit for Review'}</button>
             </div>
           </div>
         </div>
