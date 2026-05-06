@@ -469,6 +469,9 @@
 .dashboard-owner-header-card p{margin:.15rem 0;font-size:.78rem;line-height:1.25;color:#b8c8e8}
 .dashboard-full-width-divider,.dashboard-reviews-fullwidth,.dashboard-recommendations-fullwidth{grid-column:1 / -1}
 .dashboard-full-width-divider{border-top:1px solid rgba(118,128,214,.28);margin:.15rem 0 .4rem}
+.dashboard-recommendations-fullwidth,.dashboard-reviews-fullwidth{background:transparent;border-color:transparent;box-shadow:none;border-radius:0;padding:.35rem 0 0}
+.dashboard-lower-section-header{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:.75rem}
+.dashboard-review-count-badge{font-size:.75rem;padding:.22rem .5rem;border-radius:999px;background:rgba(68,88,130,.35);border:1px solid rgba(133,155,218,.3);color:#d5e2fb;white-space:nowrap}
 .dashboard-contributor-list{display:grid;gap:.5rem}
 .dashboard-contributor-row .dashboard-creator-block{justify-content:space-between}
 
@@ -479,8 +482,8 @@
 .dashboard-action-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.45rem; }
 .dashboard-section-recommendations { grid-column: 1 / -1; }
 .dashboard-section-heading-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
-.dashboard-review-composer { display: grid; gap: 0.45rem; margin: 0.55rem 0; }
-.dashboard-review-composer textarea { min-height: 88px; resize: vertical; }
+.dashboard-review-composer { display:grid; gap:.6rem; margin-top:.9rem; padding:.85rem; border:1px solid rgba(126,160,219,.18); border-radius:.85rem; background:rgba(8,13,24,.55); }
+.dashboard-review-composer textarea { min-height: 110px; resize: vertical; }
 .dashboard-review-list { display: grid; gap: 0.55rem; }
 .dashboard-review-card { border: 1px solid rgba(126, 160, 219, 0.24); border-radius: 0.7rem; padding: 0.6rem; background: rgba(12, 18, 31, 0.75); }
 .dashboard-review-rating { color: #f7d58b; font-size: 0.86rem; }
@@ -495,6 +498,13 @@
 .dashboard-audio-meta p { margin:0; font-size:.82rem; }
 .dashboard-audio-meta span { font-size:.75rem; color:#b8c8e8; }
 .dashboard-audio-range, .dashboard-rating-slider { width:100%; accent-color:#6bb8ff; }
+.dashboard-rating-control{max-width:420px}
+.dashboard-rating-stars-wrap{font-size:1.15rem}
+.dashboard-rating-slider{max-width:420px;-webkit-appearance:none;appearance:none;height:8px;border-radius:999px;background:linear-gradient(90deg,rgba(100,170,255,.75),rgba(111,116,247,.75));border:1px solid rgba(126,160,219,.35)}
+.dashboard-rating-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:18px;height:18px;border-radius:50%;background:#f3f7ff;border:2px solid #6aa8ff;box-shadow:0 2px 8px rgba(8,14,28,.45)}
+.dashboard-rating-slider::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:#f3f7ff;border:2px solid #6aa8ff;box-shadow:0 2px 8px rgba(8,14,28,.45)}
+.dashboard-review-submit-row{display:flex;justify-content:flex-end}
+.dashboard-review-submit-row .button{max-width:260px;width:100%}
 .dashboard-audio-card audio { display:none; }
 .dashboard-rating-control { display:grid; gap:.3rem; margin:.3rem 0; }
 .dashboard-rating-stars { position:relative; display:inline-block; letter-spacing:2px; font-size:1rem; line-height:1; }
@@ -503,7 +513,7 @@
 .dashboard-rating-value { font-size:.78rem; color:#c5d7f4; }
 .dashboard-review-composer textarea, .dashboard-review-composer input { background:rgba(12,20,34,.85); color:#dbe9ff; border:1px solid rgba(120,150,205,.35); border-radius:.55rem; padding:.55rem; }
 .dashboard-review-card { box-shadow: inset 0 1px 0 rgba(190,220,255,.04); }
-.dashboard-review-empty { border:1px dashed rgba(126,160,219,.34); border-radius:.65rem; padding:.65rem; color:#bbcae6; background:rgba(12,18,32,.55); }
+.dashboard-review-empty { border:1px dashed rgba(126,160,219,.26); border-radius:.65rem; padding:.6rem .7rem; color:#bbcae6; background:rgba(12,18,32,.28); font-size:.86rem; }
 .dashboard-audio-play{width:42px;height:42px;border-radius:999px;border:1px solid rgba(110,150,220,.45);background:rgba(15,24,42,.9);color:#dce8ff;display:grid;place-items:center}
 .dashboard-audio-play .icon-pause{display:none}.dashboard-audio-play.is-playing .icon-play{display:none}.dashboard-audio-play.is-playing .icon-pause{display:block}
 .dashboard-action-icons-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.5rem;width:100%}
@@ -525,7 +535,8 @@
 .dashboard-metadata-stack{display:grid;grid-template-columns:1fr;gap:.65rem;height:100%}
 .dashboard-metadata-card{align-content:start}
 .dashboard-reviews-section .dashboard-review-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-height:520px;overflow-y:auto}
-.dashboard-recommendations-section .dashboard-recommend-carousel{display:flex;overflow-x:auto;flex-wrap:nowrap}
+.dashboard-recommendations-section{margin-bottom:.35rem}
+.dashboard-recommendations-section .dashboard-recommend-carousel{display:flex;overflow-x:auto;flex-wrap:nowrap;padding-bottom:.2rem}
 .dashboard-file-list{display:grid;gap:.45rem;padding:0;margin:0;list-style:none}
 .dashboard-file-item{display:grid;grid-template-columns:auto 1fr auto;gap:.5rem;align-items:center;padding:.45rem .5rem;border:1px solid rgba(110,140,200,.25);border-radius:.55rem;background:rgba(10,16,30,.6)}
 .dashboard-file-item .file-icon svg{width:16px;height:16px}
@@ -534,7 +545,7 @@
 .dashboard-audio-play,.dashboard-audio-card{pointer-events:auto}
 .dashboard-audio-play svg{pointer-events:none}
 @media (max-width:980px){.dashboard-main-sections{min-height:auto;padding:.75rem}}
-@media (max-width:860px){.dashboard-details-split{grid-template-columns:1fr;height:auto}.dashboard-content-parent{height:auto}.dashboard-file-tree-viewer,.dashboard-metadata-panel{height:auto}.dashboard-reviews-section .dashboard-review-list{grid-template-columns:1fr}}
+@media (max-width:860px){.dashboard-details-split{grid-template-columns:1fr;height:auto}.dashboard-content-parent{height:auto}.dashboard-file-tree-viewer,.dashboard-metadata-panel{height:auto}.dashboard-reviews-section .dashboard-review-list{grid-template-columns:1fr}.dashboard-review-submit-row .button{max-width:none}}
 
 .product-file-browser {
   display: grid;
