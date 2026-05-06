@@ -948,6 +948,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /Reports/marketplace/products/reviews/items/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterUid == request.auth.uid;
+      allow read: if signedIn() && resource.data.reporterUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
     match /threads/{threadId} {
       allow get, list: if isThreadParticipantResource();
 

@@ -103,3 +103,46 @@ export async function createProductReviewReply(productId, reviewId, user, profil
   await Promise.all([updateDoc(replyRef, { id: replyRef.id }), updateDoc(reviewRef, { replyCount: increment(1), updatedAt: serverTimestamp() })])
   return { id: replyRef.id, ...payload }
 }
+
+export async function deleteProductReviewReply(productId, reviewId, replyId, user) {
+  if (!user?.uid) throw new Error('auth-required')
+  const replyRef = doc(db, 'products', productId, 'reviews', reviewId, 'replies', replyId)
+  const reviewRef = doc(db, 'products', productId, 'reviews', reviewId)
+  const snap = await getDoc(replyRef)
+  if (!snap.exists() || snap.data()?.uid !== user.uid) throw new Error('forbidden')
+  await Promise.all([
+    updateDoc(replyRef, { deleted: true, body: '', updatedAt: serverTimestamp() }),
+    updateDoc(reviewRef, { replyCount: increment(-1), updatedAt: serverTimestamp() })
+  ])
+}
+
+export async function createMarketplaceReviewReport({ product = {}, review = {}, reply = null, reporter = null, reason = '', contextType = 'review' } = {}) {
+  if (!reporter?.uid) throw new Error('auth-required')
+  const payload = {
+    reportType: contextType === 'reply' ? 'marketplace_product_review_reply' : 'marketplace_product_review',
+    contextType: contextType === 'reply' ? 'reply' : 'review',
+    productId: product.id || '',
+    productTitle: product.title || '',
+    productSlug: product.slug || '',
+    reviewId: review.id || '',
+    replyId: reply?.id || '',
+    reportedUserId: reply?.uid || review.uid || '',
+    reportedDisplayName: reply?.displayName || review.displayName || '',
+    reportedUsername: reply?.username || review.username || '',
+    reportedAvatarURL: reply?.avatarURL || review.avatarURL || '',
+    reviewRating: Number(review.rating || 0) || null,
+    reviewBody: review.body || '',
+    replyBody: reply?.body || '',
+    reviewCreatedAt: review.createdAt || null,
+    replyCreatedAt: reply?.createdAt || null,
+    reporterUid: reporter.uid,
+    reporterDisplayName: reporter.displayName || 'User',
+    reporterUsername: reporter.username || '',
+    reporterAvatarURL: reporter.photoURL || '',
+    reason: String(reason || '').trim() || 'No reason provided',
+    status: 'open',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }
+  await addDoc(collection(db, 'Reports', 'marketplace', 'products', 'reviews', 'items'), payload)
+}
