@@ -758,32 +758,49 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
   app.querySelector('[data-review-form]')?.addEventListener('submit', async (event) => {
     event.preventDefault()
-    if (!state.currentUser?.uid) return
+    if (!state.currentUser?.uid) return showActionMessage('Sign in to review this product.')
     const form = event.currentTarget
     const data = new FormData(form)
     const body = String(data.get('body') || '').trim()
     const rawRating = Number(data.get('rating') || 0)
     const rating = rawRating > 0 ? rawRating : null
-    if (!body) return
-    await createProductReview(product.id, state.currentUser, {}, { body, rating })
-    state.reviews = await listProductReviews(product.id, { limitCount: 20 })
-    state.reviewReactions = await getReviewReactionStates(product.id, state.reviews.map((item) => item.id), state.currentUser)
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    if (!body) return showActionMessage('Write a review before submitting.')
+    try {
+      await createProductReview(product.id, state.currentUser, {}, { body, rating })
+      state.reviews = await listProductReviews(product.id, { limitCount: 20 })
+      state.reviewReactions = await getReviewReactionStates(product.id, state.reviews.map((item) => item.id), state.currentUser)
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    } catch (error) {
+      console.warn('[product] create review failed', { code: error?.code, message: error?.message })
+      showActionMessage(error?.code === 'permission-denied' ? 'You do not have permission to post a review right now.' : 'Could not submit review.')
+    }
   })
   app.querySelectorAll('[data-review-react]').forEach((button) => button.addEventListener('click', async () => {
     if (!state.currentUser?.uid) return showActionMessage('Sign in to react to reviews.')
     const [reviewId, reaction] = String(button.getAttribute('data-review-react') || '').split(':')
     const current = state.reviewReactions[reviewId] || null
     const next = current === reaction ? null : reaction
-    await setProductReviewReaction(product.id, reviewId, state.currentUser, next)
-    state.reviews = await listProductReviews(product.id, { limitCount: 20 })
-    state.reviewReactions = await getReviewReactionStates(product.id, state.reviews.map((item) => item.id), state.currentUser)
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try {
+      await setProductReviewReaction(product.id, reviewId, state.currentUser, next)
+      state.reviews = await listProductReviews(product.id, { limitCount: 20 })
+      state.reviewReactions = await getReviewReactionStates(product.id, state.reviews.map((item) => item.id), state.currentUser)
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    } catch (error) {
+      console.warn('[product] review reaction failed', { code: error?.code, message: error?.message })
+      showActionMessage('Could not update review reaction.')
+    }
   }))
   app.querySelectorAll('[data-toggle-replies]').forEach((button) => button.addEventListener('click', async () => {
     const reviewId = String(button.getAttribute('data-toggle-replies') || '')
     state.openReplyComposerFor = state.openReplyComposerFor === reviewId ? '' : reviewId
-    if (state.openReplyComposerFor && !state.reviewReplies[reviewId]?.length) state.reviewReplies[reviewId] = await listProductReviewReplies(product.id, reviewId, { limitCount: 10 })
+    if (state.openReplyComposerFor && !state.reviewReplies[reviewId]?.length) {
+      try {
+        state.reviewReplies[reviewId] = await listProductReviewReplies(product.id, reviewId, { limitCount: 10 })
+      } catch (error) {
+        console.warn('[product] list replies failed', { code: error?.code, message: error?.message })
+        showActionMessage('Could not load replies.')
+      }
+    }
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
   }))
   app.querySelectorAll('[data-review-reply-form]').forEach((form) => form.addEventListener('submit', async (event) => {
@@ -791,11 +808,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     if (!state.currentUser?.uid) return showActionMessage('Sign in to reply.')
     const reviewId = form.getAttribute('data-review-reply-form') || ''
     const body = form.querySelector('textarea')?.value || ''
-    await createProductReviewReply(product.id, reviewId, state.currentUser, {}, { body })
-    state.replyDrafts[reviewId] = ''
-    state.reviewReplies[reviewId] = await listProductReviewReplies(product.id, reviewId, { limitCount: 10 })
-    state.reviews = await listProductReviews(product.id, { limitCount: 20 })
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try {
+      await createProductReviewReply(product.id, reviewId, state.currentUser, {}, { body })
+      state.replyDrafts[reviewId] = ''
+      state.reviewReplies[reviewId] = await listProductReviewReplies(product.id, reviewId, { limitCount: 10 })
+      state.reviews = await listProductReviews(product.id, { limitCount: 20 })
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    } catch (error) {
+      console.warn('[product] create reply failed', { code: error?.code, message: error?.message })
+      showActionMessage('Could not post reply.')
+    }
   }))
 
 
