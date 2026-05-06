@@ -202,6 +202,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const genres = rawProduct.genres || []
   const tags = rawProduct.tags || []
   const contributorNames = rawProduct.contributorNames || []
+  const contributors = Array.isArray(rawProduct.contributors) ? rawProduct.contributors : []
   const contributorCount = Number(rawProduct.contributorCount ?? rawProduct.contributorIds?.length ?? contributorNames.length ?? 0)
   const likeCount = Number(rawProduct.likeCount ?? counts.likes ?? 0)
   const saveCount = Number(rawProduct.saveCount ?? counts.saves ?? 0)
@@ -244,6 +245,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     artistPhotoURL: rawProduct.artistPhotoURL || rawProduct.artistAvatarURL || '',
     contributorIds: rawProduct.contributorIds || [],
     contributorNames,
+    contributors,
     contributorCount,
     sellerAgreement: rawProduct.sellerAgreement && typeof rawProduct.sellerAgreement === 'object' ? rawProduct.sellerAgreement : null,
     sellerAgreementAccepted: Boolean(rawProduct.sellerAgreementAccepted),
@@ -764,7 +766,7 @@ const FIRESTORE_PRODUCT_CLIENT_ALLOWED_KEYS = new Set([
   'title', 'shortDescription', 'description', 'version', 'usageLicense', 'productType', 'productKind', 'previewMode', 'distributionMode',
   'categories', 'genres', 'tags', 'categoryKeys', 'genreKeys', 'tagKeys', 'searchKeywords',
   'artistId', 'artistName', 'artistDisplayName', 'artistUsername', 'artistProfilePath', 'artistAvatarURL', 'artistPhotoURL', 'artistNameLower', 'artistUsernameLower',
-  'contributorIds', 'contributorNames', 'contributorCount', 'pendingContributorIds', 'contributorRequestCount', 'sellerAgreement', 'sellerAgreementAccepted', 'sellerAgreementVersion',
+  'contributorIds', 'contributorNames', 'contributors', 'contributorCount', 'pendingContributorIds', 'contributorRequestCount', 'sellerAgreement', 'sellerAgreementAccepted', 'sellerAgreementVersion',
   'coverPath', 'thumbnailPath', 'coverURL', 'thumbnailURL', 'galleryPaths', 'previewAudioPaths', 'previewVideoPaths', 'downloadPath', 'deliverableFiles', 'licensePath', 'assetSummary',
   'primaryPreviewPath', 'primaryPreviewType', 'primaryPreviewDuration', 'primaryDownloadPath', 'primaryDownloadBytes', 'previewAssignment',
   'priceCents', 'payoutTargetCents', 'currency', 'isFree', 'saleEnabled', 'storefrontVisible',
