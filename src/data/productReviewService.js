@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, increment, limit, orderBy, query, runTransaction, serverTimestamp, updateDoc, where } from 'firebase/firestore'
+import { addDoc, collection, doc, getDoc, getDocs, increment, limit, orderBy, query, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 
 function normalizeReview(id, raw = {}) {
@@ -55,8 +55,13 @@ export async function deleteProductReview(productId, reviewId, user) {
 export async function getReviewReactionStates(productId, reviewIds = [], user = null) {
   if (!productId || !user?.uid || !reviewIds.length) return {}
   const entries = await Promise.all(reviewIds.map(async (reviewId) => {
-    const snap = await getDoc(doc(db, 'products', productId, 'reviews', reviewId, 'reactions', user.uid))
-    return [reviewId, snap.exists() ? snap.data()?.reaction || null : null]
+    try {
+      const snap = await getDoc(doc(db, 'products', productId, 'reviews', reviewId, 'reactions', user.uid))
+      return [reviewId, snap.exists() ? snap.data()?.reaction || null : null]
+    } catch (error) {
+      console.warn('[productReviewService] reaction read skipped', { reviewId, code: error?.code, message: error?.message })
+      return [reviewId, null]
+    }
   }))
   return Object.fromEntries(entries)
 }
@@ -83,9 +88,9 @@ export async function setProductReviewReaction(productId, reviewId, user, reacti
 
 export async function listProductReviewReplies(productId, reviewId, { limitCount = 10 } = {}) {
   if (!productId || !reviewId) return []
-  const q = query(collection(db, 'products', productId, 'reviews', reviewId, 'replies'), where('deleted', '==', false), orderBy('createdAt', 'asc'), limit(limitCount))
+  const q = query(collection(db, 'products', productId, 'reviews', reviewId, 'replies'), orderBy('createdAt', 'asc'), limit(limitCount))
   const snap = await getDocs(q)
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((reply) => reply.deleted !== true)
 }
 
 export async function createProductReviewReply(productId, reviewId, user, profile = {}, { body = '' } = {}) {

@@ -840,17 +840,19 @@ service cloud.firestore {
       && request.resource.data.body.size() <= 5000
       && (!('rating' in request.resource.data) || (request.resource.data.rating is number && request.resource.data.rating >= 0.5 && request.resource.data.rating <= 5));
 
-    allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
+    allow update: if signedIn() && (
+      resource.data.uid == request.auth.uid
+      || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount', 'dislikeCount', 'replyCount', 'updatedAt'])
+    );
+    allow delete: if signedIn() && resource.data.uid == request.auth.uid;
 
     match /reactions/{reactionId} {
-      allow read: if true;
+      allow read: if signedIn() && request.auth.uid == reactionId;
       allow create, update: if signedIn()
-        && reactionId == request.auth.uid
+        && request.auth.uid == reactionId
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.reaction in ['like', 'dislike'];
-      allow delete: if signedIn()
-        && reactionId == request.auth.uid
-        && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && request.auth.uid == reactionId;
     }
 
     match /replies/{replyId} {
@@ -862,7 +864,8 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.body is string
         && request.resource.data.body.size() > 0
-        && request.resource.data.body.size() <= 1200;
+        && request.resource.data.body.size() <= 1200
+        && (!('deleted' in request.resource.data) || request.resource.data.deleted == false);
 
       allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
