@@ -463,6 +463,12 @@
   margin-bottom: 0.9rem;
   background: rgba(13, 17, 30, 0.75);
 }
+.dashboard-owner-header-card h3{margin:.15rem 0 .35rem;font-size:1rem;line-height:1.2}
+.dashboard-owner-header-card p{margin:.15rem 0;font-size:.78rem;line-height:1.25;color:#b8c8e8}
+.dashboard-full-width-divider,.dashboard-reviews-fullwidth,.dashboard-recommendations-fullwidth{grid-column:1 / -1}
+.dashboard-full-width-divider{border-top:1px solid rgba(118,128,214,.28);margin:.15rem 0 .4rem}
+.dashboard-contributor-list{display:grid;gap:.5rem}
+.dashboard-contributor-row .dashboard-creator-block{justify-content:space-between}
 
 .draft-preview-banner { padding: .65rem .85rem; border: 1px solid rgba(111, 179, 244, .45); color: #b8e3ff; background: rgba(23, 45, 77, .5); margin-bottom: .8rem; }
 .preview-mode-disabled { opacity: .55; cursor: not-allowed; }
