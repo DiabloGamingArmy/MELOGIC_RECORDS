@@ -474,6 +474,12 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const artistHandle = String(handleRaw || '').trim() ? `@${String(handleRaw).replace(/^@+/, '')}` : ''
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
   const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
+  const ratedReviews = (state.reviews || []).map((review) => Number(review.rating)).filter((rating) => Number.isFinite(rating) && rating >= 1 && rating <= 5)
+  const fallbackAvg = ratedReviews.length ? (ratedReviews.reduce((sum, value) => sum + value, 0) / ratedReviews.length) : 0
+  const aggregateAvg = Number(product.averageRating ?? product.ratingAverage ?? 0)
+  const averageRating = Number.isFinite(aggregateAvg) && aggregateAvg > 0 ? aggregateAvg : fallbackAvg
+  const aggregateCount = Number(product.ratingCount ?? product.reviewCount ?? ratedReviews.length)
+  const ratingCount = Number.isFinite(aggregateCount) && aggregateCount > 0 ? aggregateCount : ratedReviews.length
   const moderationLabel = (() => {
     if (String(product.status || '').toLowerCase() === 'needs_changes') return 'Needs Changes'
     if (String(product.status || '').toLowerCase() === 'review_pending') return 'Pending Review'
@@ -592,7 +598,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-tag-row">
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
               </div>
-              <p class="dashboard-engagement">${likeCount} likes · ${dislikeCount} dislikes</p>
+              <section class="dashboard-ratings-panel">
+                <div class="dashboard-ratings-divider"></div>
+                <p class="dashboard-ratings-heading">Ratings</p>
+                <div class="dashboard-rating-summary">
+                  <span class="dashboard-rating-average-stars">${renderRatingStars(averageRating || 0)}</span>
+                  <span class="dashboard-rating-average-value">${ratingCount ? `${Number(averageRating).toFixed(averageRating % 1 ? 1 : 0)} / 5` : 'No ratings yet'}</span>
+                </div>
+                <p class="dashboard-rating-review-label">Purchased User Reviews</p>
+                <p class="dashboard-rating-review-count">${ratingCount ? `${ratingCount} reviews` : 'No ratings yet'}</p>
+              </section>
               ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
 
             </article>
