@@ -100,7 +100,8 @@ let editorState = {
   reviewResult: null,
   creatorProfile: null,
   draft: null,
-  requestedProductId: new URLSearchParams(window.location.search).get('id') || ''
+  restoreDraftPrompt: false,
+  requestedProductId: (new URLSearchParams(window.location.search).get('id') || (window.location.pathname.startsWith('/products/edit/') ? window.location.pathname.split('/products/edit/')[1]?.split('/')[0] : '') || '')
 }
 
 function getCreatorIdentity(user = null, profile = null, draft = {}) {
@@ -228,6 +229,19 @@ function loadDraftState(user) {
   } catch {
     return empty
   }
+}
+
+function ensureLocalContributorRow() {
+  if (!editorState.user) return
+  const uid = editorState.user.uid
+  const draft = editorState.draft || {}
+  const displayName = draft.artistDisplayName || draft.artistName || editorState.user.displayName || 'Creator'
+  const username = draft.artistUsername || ''
+  const avatarURL = draft.artistAvatarURL || draft.artistPhotoURL || editorState.user.photoURL || ''
+  const existingIndex = editorState.contributorUI.rows.findIndex((row) => row.uid === uid)
+  const ownerRow = { uid, displayName, username, avatarURL, role: editorState.contributorUI.rows[existingIndex]?.role || 'Creator', status: 'accepted', decision: 'accepted', lockedOwner: true, profilePath: draft.artistProfilePath || `profiles/${uid}` }
+  if (existingIndex >= 0) editorState.contributorUI.rows[existingIndex] = { ...editorState.contributorUI.rows[existingIndex], ...ownerRow }
+  else editorState.contributorUI.rows = [ownerRow, ...editorState.contributorUI.rows]
 }
 
 function setStatus(message, state = 'info') {
@@ -1048,6 +1062,7 @@ function calculateLaunchReadiness(checks = []) {
 
 function renderPublishPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const isEditMode = Boolean(editorState.requestedProductId || (draft.id && !isPlaceholderProductId(draft.id)))
   const checks = buildPublishChecklist(draft, editorState, editorState.agreement.config || {})
   const readiness = calculateLaunchReadiness(checks)
   const blockingIssues = getBlockingPublishIssues(checks)
@@ -1057,7 +1072,7 @@ function renderPublishPanel() {
   const deliverables = fileEntries.filter((item) => item.isDeliverable)
   const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
   const previewAssigned = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
-  const canSubmit = blockingIssues.length === 0 && draft.status !== 'review_pending' && draft.status !== 'published'
+  const canSubmit = blockingIssues.length === 0 && (isEditMode || (draft.status !== 'review_pending' && draft.status !== 'published'))
 
   return `
     <section class="publish-workspace">
@@ -1092,7 +1107,7 @@ function renderPublishPanel() {
         </article>
 
         <aside class="publish-submit-panel">
-          <h3>Submit for Review</h3>
+          <h3>${isEditMode ? 'Submit Edits' : 'Submit for Review'}</h3>
           <p>Current status: <strong>${escapeHtml(draft.status || 'draft')}</strong></p>
           <p>Last updated: ${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}</p>
           <p>Latest agreement: <strong>${escapeHtml(agreementLatest)}</strong></p>
@@ -1116,11 +1131,11 @@ function renderPublishPanel() {
             <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
             <button type="button" class="button button-muted" data-open-marketplace-preview>Marketplace Preview</button>
             <button type="button" class="button button-muted" data-publish-fix="media-upload">Back to Media & Upload</button>
-            <button type="button" class="button button-accent" data-open-submit-confirm ${canSubmit ? '' : 'disabled'}>${draft.status === 'needs_changes' ? 'Resubmit Changes' : 'Submit for Review'}</button>
+            <button type="button" class="button button-accent" data-open-submit-confirm ${canSubmit ? '' : 'disabled'}>${isEditMode ? 'Submit Edits' : (draft.status === 'needs_changes' ? 'Resubmit Changes' : 'Submit for Review')}</button>
           </div>
           ${canSubmit ? '' : '<p class="pricing-warning">Resolve blocked items before submitting.</p>'}
           ${(draft.status === 'review_pending') ? '<p class="agreement-accepted-status">Product is awaiting review.</p>' : ''}
-          ${(draft.status === 'published') ? '<p class="agreement-accepted-status">Product is already published.</p>' : ''}
+          ${(draft.status === 'published') ? '<p class="dashboard-mini-note">Product is already published.</p>' : ''}
         </aside>
       </div>
       ${editorState.publishConfirmOpen ? `
@@ -1130,7 +1145,7 @@ function renderPublishPanel() {
             <p>Your product will be reviewed before becoming visible in the marketplace. You can continue editing drafts, but published changes may require approval.</p>
             <div class="publish-action-row">
               <button type="button" class="button button-muted" data-close-submit-confirm>Cancel</button>
-              <button type="button" class="button button-accent" data-confirm-submit-review>Submit for Review</button>
+              <button type="button" class="button button-accent" data-confirm-submit-review>${isEditMode ? 'Submit Edits' : 'Submit for Review'}</button>
             </div>
           </div>
         </div>
@@ -1141,6 +1156,8 @@ function renderPublishPanel() {
 
 function renderProductInfoPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const isEditMode = Boolean(editorState.requestedProductId || (draft.id && !isPlaceholderProductId(draft.id)))
+  const releaseDisplay = draft.releasedAt ? formattedEditDate(draft.releasedAt) : (isEditMode ? (draft.publishedAt ? formattedEditDate(draft.publishedAt) : 'Not set') : 'Set automatically on publish')
   return `
     <section class="product-info-grid">
       <div class="product-info-field"><label>Product Title</label><input name="title" value="${escapeHtml(draft.title)}" /></div>
@@ -1156,13 +1173,13 @@ function renderProductInfoPanel() {
       ${tagEditorMarkup('genres', 'Genres', 'Press Enter to add genres')}
 
       <div class="product-info-field"><label>Short Description</label><input name="shortDescription" value="${escapeHtml(draft.shortDescription)}" /></div>
-      <div class="product-info-field"><label>Release Date</label><input type="date" name="releasedAt" value="${escapeHtml(draft.releasedAt)}" /></div>
+      <div class="product-info-field"><label>Release Date</label><div class="product-info-readonly">${escapeHtml(releaseDisplay)}</div></div>
       <div class="product-info-field"><label>Usage License</label><select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
 
       <div class="product-info-field is-wide"><label>Long Description</label><div class="rich-editor-toolbar" data-rich-toolbar><button type="button" data-rich-cmd="bold">B</button><button type="button" data-rich-cmd="italic">I</button><button type="button" data-rich-cmd="underline">U</button><button type="button" data-rich-cmd="insertUnorderedList">• List</button><button type="button" data-rich-cmd="insertOrderedList">1. List</button><button type="button" data-rich-align="justifyLeft">Left</button><button type="button" data-rich-align="justifyCenter">Center</button><button type="button" data-rich-align="justifyRight">Right</button><button type="button" data-rich-link>Link</button><button type="button" data-rich-cmd="insertHorizontalRule">HR</button><select data-rich-font><option value="">Font</option><option>Arial</option><option>Georgia</option><option>Verdana</option></select><select data-rich-size><option value="">Size</option><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option></select><input type="color" data-rich-color aria-label="Text color" /></div><div class="rich-description-editor" contenteditable="true" data-description-editor>${sanitizeRichDescription(draft.description || '')}</div><input type="hidden" name="description" value="${escapeHtml(draft.description)}" data-description-hidden /></div>
       <div class="product-info-side-stack">
-        <div class="product-info-field"><label>Visibility</label><select name="visibility"><option value="public" ${draft.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${draft.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${draft.visibility === 'private' ? 'selected' : ''}>Private</option></select></div>
-        <div class="product-info-field"><label>Status</label><select name="status"><option value="draft" ${draft.status === 'draft' ? 'selected' : ''}>Draft</option><option value="review_pending" ${draft.status === 'review_pending' ? 'selected' : ''}>Review pending</option><option value="needs_changes" ${draft.status === 'needs_changes' ? 'selected' : ''}>Needs changes</option><option value="rejected" ${draft.status === 'rejected' ? 'selected' : ''}>Rejected</option><option value="archived" ${draft.status === 'archived' ? 'selected' : ''}>Archived</option></select></div>
+        <div class="product-info-field"><label>Visibility</label><div class="product-info-readonly">${escapeHtml(isEditMode ? (draft.visibility || 'private') : 'Private until approved/published')}</div></div>
+        <div class="product-info-field"><label>Status</label><div class="product-info-readonly">${escapeHtml(isEditMode ? (draft.status || 'draft') : 'Draft')}</div></div>
         <div class="product-info-field"><label>Edit Date</label><input type="date" value="${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}" readonly /></div>
       </div>
     </section>
@@ -1268,14 +1285,17 @@ function hydrateLegacyContributors() {
       legacy: !ids[index]
     }))
   }
+  ensureLocalContributorRow()
 }
 
 function recalcContributorSummaryFromRows() {
+  ensureLocalContributorRow()
   const accepted = editorState.contributorUI.rows.filter((row) => row.status === 'accepted')
   const pending = editorState.contributorUI.rows.filter((row) => row.status === 'pending')
   updateDraftField('contributorIds', accepted.filter((row) => row.uid && !row.legacy).map((row) => row.uid).join(', '))
   updateDraftField('contributorNames', accepted.map((row) => row.displayName).join(', '))
   updateDraftField('contributorCount', accepted.length)
+  updateDraftField('contributors', accepted.map((row) => ({ uid: row.uid || '', displayName: row.displayName || '', username: row.username || '', role: row.role || '', avatarURL: row.avatarURL || '', profilePath: row.profilePath || '', status: row.status || 'accepted', lockedOwner: Boolean(row.lockedOwner) })))
   updateDraftField('pendingContributorIds', pending.map((row) => row.uid).filter(Boolean))
   updateDraftField('contributorRequestCount', editorState.contributorUI.rows.length)
 }
@@ -1319,7 +1339,7 @@ function renderContributorsPanel() {
               <div class=\"contributor-actions\">
                 <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:accepted\">Accept</button>
                 <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:denied\">Deny</button>
-                <button type=\"button\" data-contributor-remove=\"${escapeHtml(row.uid)}\">Remove</button>
+                ${row.lockedOwner ? '' : `<button type=\"button\" data-contributor-remove=\"${escapeHtml(row.uid)}\">Remove</button>`}
               </div>
             </article>
           `).join('') : '<p class=\"contributor-empty-state\">No contributing artists added yet.</p>'}
@@ -1338,6 +1358,7 @@ function renderEditor() {
 
   editorRoot.innerHTML = `
     <div class="marketplace-editor-page">
+      ${editorState.restoreDraftPrompt ? '<div class="draft-restore-toast" data-draft-restore-toast><span>Restore your previous draft?</span><div><button type="button" data-restore-draft>Restore Draft</button><button type="button" data-dismiss-restore-draft>Dismiss</button></div></div>' : ''}
       <header class="marketplace-editor-header">
         <p class="marketplace-editor-header-kicker">NEW MARKETPLACE ITEM</p>
         <p class="marketplace-editor-header-copy">Configure product metadata, media, pricing, and publish state for the Melogic marketplace.</p>
@@ -1415,6 +1436,17 @@ function renderEditor() {
   })
 
   const form = editorRoot.querySelector('[data-product-form]')
+  editorRoot.querySelector('[data-restore-draft]')?.addEventListener('click', () => {
+    if (!editorState.user) return
+    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(loadDraftState(editorState.user), editorState.user, editorState.creatorProfile))
+    editorState.restoreDraftPrompt = false
+    renderEditor()
+  })
+  editorRoot.querySelector('[data-dismiss-restore-draft]')?.addEventListener('click', () => {
+    editorState.restoreDraftPrompt = false
+    renderEditor()
+  })
+  if (editorState.restoreDraftPrompt) window.setTimeout(() => { editorState.restoreDraftPrompt = false; renderEditor() }, 10000)
 
   const descriptionEditor = form?.querySelector('[data-description-editor]')
   const descriptionHidden = form?.querySelector('[data-description-hidden]')
@@ -2114,7 +2146,13 @@ async function initPage() {
       return
     }
   } else {
-    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile))
+    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(createEmptyProductDraft(user, editorState.creatorProfile), user, editorState.creatorProfile))
+  }
+  if (!editorState.requestedProductId) {
+    try {
+      const raw = sessionStorage.getItem(getDraftStorageKey(user))
+      editorState.restoreDraftPrompt = Boolean(raw)
+    } catch {}
   }
 
   if (!editorState.draft.currency) {
