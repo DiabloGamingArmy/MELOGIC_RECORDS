@@ -9,6 +9,7 @@ export const ROUTES = {
   inbox: '/inbox',
   editProfile: '/profile/edit',
   newProduct: '/products/new',
+  editProduct: '/products/edit',
   productDashboard: '/products/dashboard',
   community: '/community',
   live: '/live',
