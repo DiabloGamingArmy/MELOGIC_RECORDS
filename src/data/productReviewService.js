@@ -7,9 +7,9 @@ function normalizeReview(id, raw = {}) {
 
 export async function listProductReviews(productId, { limitCount = 20 } = {}) {
   if (!productId) return []
-  const q = query(collection(db, 'products', productId, 'reviews'), where('deleted', '==', false), orderBy('createdAt', 'desc'), limit(limitCount))
+  const q = query(collection(db, 'products', productId, 'reviews'), orderBy('createdAt', 'desc'), limit(limitCount))
   const snap = await getDocs(q)
-  return snap.docs.map((d) => normalizeReview(d.id, d.data()))
+  return snap.docs.map((d) => normalizeReview(d.id, d.data())).filter((review) => review.deleted !== true)
 }
 
 export async function createProductReview(productId, user, profile = {}, { rating = null, body = '' } = {}) {
