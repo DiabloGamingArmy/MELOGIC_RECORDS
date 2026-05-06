@@ -100,6 +100,7 @@ let editorState = {
   reviewResult: null,
   creatorProfile: null,
   draft: null,
+  restoreDraftPrompt: false,
   requestedProductId: new URLSearchParams(window.location.search).get('id') || ''
 }
 
@@ -228,6 +229,19 @@ function loadDraftState(user) {
   } catch {
     return empty
   }
+}
+
+function ensureLocalContributorRow() {
+  if (!editorState.user) return
+  const uid = editorState.user.uid
+  const draft = editorState.draft || {}
+  const displayName = draft.artistDisplayName || draft.artistName || editorState.user.displayName || 'Creator'
+  const username = draft.artistUsername || ''
+  const avatarURL = draft.artistAvatarURL || draft.artistPhotoURL || editorState.user.photoURL || ''
+  const existingIndex = editorState.contributorUI.rows.findIndex((row) => row.uid === uid)
+  const ownerRow = { uid, displayName, username, avatarURL, role: editorState.contributorUI.rows[existingIndex]?.role || 'Creator', status: 'accepted', decision: 'accepted', lockedOwner: true, profilePath: draft.artistProfilePath || `profiles/${uid}` }
+  if (existingIndex >= 0) editorState.contributorUI.rows[existingIndex] = { ...editorState.contributorUI.rows[existingIndex], ...ownerRow }
+  else editorState.contributorUI.rows = [ownerRow, ...editorState.contributorUI.rows]
 }
 
 function setStatus(message, state = 'info') {
@@ -1268,14 +1282,17 @@ function hydrateLegacyContributors() {
       legacy: !ids[index]
     }))
   }
+  ensureLocalContributorRow()
 }
 
 function recalcContributorSummaryFromRows() {
+  ensureLocalContributorRow()
   const accepted = editorState.contributorUI.rows.filter((row) => row.status === 'accepted')
   const pending = editorState.contributorUI.rows.filter((row) => row.status === 'pending')
   updateDraftField('contributorIds', accepted.filter((row) => row.uid && !row.legacy).map((row) => row.uid).join(', '))
   updateDraftField('contributorNames', accepted.map((row) => row.displayName).join(', '))
   updateDraftField('contributorCount', accepted.length)
+  updateDraftField('contributors', accepted.map((row) => ({ uid: row.uid || '', displayName: row.displayName || '', username: row.username || '', role: row.role || '', avatarURL: row.avatarURL || '', profilePath: row.profilePath || '', status: row.status || 'accepted', lockedOwner: Boolean(row.lockedOwner) })))
   updateDraftField('pendingContributorIds', pending.map((row) => row.uid).filter(Boolean))
   updateDraftField('contributorRequestCount', editorState.contributorUI.rows.length)
 }
@@ -1319,7 +1336,7 @@ function renderContributorsPanel() {
               <div class=\"contributor-actions\">
                 <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:accepted\">Accept</button>
                 <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:denied\">Deny</button>
-                <button type=\"button\" data-contributor-remove=\"${escapeHtml(row.uid)}\">Remove</button>
+                ${row.lockedOwner ? '' : `<button type=\"button\" data-contributor-remove=\"${escapeHtml(row.uid)}\">Remove</button>`}
               </div>
             </article>
           `).join('') : '<p class=\"contributor-empty-state\">No contributing artists added yet.</p>'}
@@ -1338,6 +1355,7 @@ function renderEditor() {
 
   editorRoot.innerHTML = `
     <div class="marketplace-editor-page">
+      ${editorState.restoreDraftPrompt ? '<div class="draft-restore-toast" data-draft-restore-toast><span>Restore your previous draft?</span><div><button type="button" data-restore-draft>Restore Draft</button><button type="button" data-dismiss-restore-draft>Dismiss</button></div></div>' : ''}
       <header class="marketplace-editor-header">
         <p class="marketplace-editor-header-kicker">NEW MARKETPLACE ITEM</p>
         <p class="marketplace-editor-header-copy">Configure product metadata, media, pricing, and publish state for the Melogic marketplace.</p>
@@ -1415,6 +1433,17 @@ function renderEditor() {
   })
 
   const form = editorRoot.querySelector('[data-product-form]')
+  editorRoot.querySelector('[data-restore-draft]')?.addEventListener('click', () => {
+    if (!editorState.user) return
+    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(loadDraftState(editorState.user), editorState.user, editorState.creatorProfile))
+    editorState.restoreDraftPrompt = false
+    renderEditor()
+  })
+  editorRoot.querySelector('[data-dismiss-restore-draft]')?.addEventListener('click', () => {
+    editorState.restoreDraftPrompt = false
+    renderEditor()
+  })
+  if (editorState.restoreDraftPrompt) window.setTimeout(() => { editorState.restoreDraftPrompt = false; renderEditor() }, 10000)
 
   const descriptionEditor = form?.querySelector('[data-description-editor]')
   const descriptionHidden = form?.querySelector('[data-description-hidden]')
@@ -2114,7 +2143,13 @@ async function initPage() {
       return
     }
   } else {
-    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(loadDraftState(user), user, editorState.creatorProfile))
+    editorState.draft = normalizeDraftPaths(applyCreatorIdentity(createEmptyProductDraft(user, editorState.creatorProfile), user, editorState.creatorProfile))
+  }
+  if (!editorState.requestedProductId) {
+    try {
+      const raw = sessionStorage.getItem(getDraftStorageKey(user))
+      editorState.restoreDraftPrompt = Boolean(raw)
+    } catch {}
   }
 
   if (!editorState.draft.currency) {
