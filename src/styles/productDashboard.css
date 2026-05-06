@@ -515,6 +515,21 @@
 .dashboard-review-reply-composer textarea{min-height:72px;background:rgba(12,20,34,.85);color:#dbe9ff;border:1px solid rgba(120,150,205,.35);border-radius:.55rem;padding:.5rem}
 .dashboard-review-reply-submit-row{display:flex;justify-content:flex-end}
 .dashboard-review-inline-error{font-size:.74rem;color:#ffb4c1;margin:.25rem 0}
+.dashboard-review-action svg,.dashboard-icon-action svg{width:18px;height:18px;stroke-linecap:round;stroke-linejoin:round}
+.dashboard-review-action{display:inline-flex;align-items:center;gap:.35rem}
+.dashboard-review-action em{font-style:normal}
+.dashboard-review-menu-wrap{margin-left:auto;position:relative}
+.dashboard-review-menu-button{border:1px solid rgba(120,150,210,.28);background:rgba(10,16,29,.55);color:#dce8ff;border-radius:.45rem;padding:.2rem;display:grid;place-items:center}
+.dashboard-review-menu{position:absolute;right:0;top:110%;min-width:140px;background:rgba(11,17,31,.96);border:1px solid rgba(120,150,210,.3);border-radius:.55rem;padding:.25rem;z-index:8}
+.dashboard-review-menu-item{width:100%;display:flex;align-items:center;gap:.35rem;border:0;background:transparent;color:#dce8ff;padding:.35rem .45rem;border-radius:.4rem}
+.dashboard-review-menu-item:hover{background:rgba(120,150,210,.16)}
+.dashboard-review-menu-item.danger{color:#ffb4c1}.dashboard-review-menu-item.warning{color:#ffd9a3}
+.dashboard-review-reply-card{border:1px solid rgba(103,130,190,.24);background:rgba(10,16,29,.5);border-radius:.55rem;padding:.45rem}
+.dashboard-review-reply-avatar{width:30px;height:30px;border-radius:50%;object-fit:cover}
+.dashboard-review-reply-header{display:flex;align-items:center;gap:.45rem}
+.dashboard-review-reply-name{margin:0;font-size:.78rem;font-weight:600}
+.dashboard-review-reply-time{margin:0;font-size:.7rem;color:#adc1e6}
+.dashboard-review-reply-body{margin:.35rem 0 0;font-size:.8rem}
 .dashboard-ratings-panel{margin-top:.35rem}
 .dashboard-ratings-divider{border-top:1px solid rgba(120,145,210,.25);margin:.2rem 0 .45rem}
 .dashboard-ratings-heading{margin:0 0 .35rem;font-size:.78rem;letter-spacing:.04em;color:#b8c8e8;text-transform:uppercase}
