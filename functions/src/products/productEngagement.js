@@ -38,7 +38,8 @@ exports.setProductReaction = onCall(async (request) => {
         likeCount: admin.firestore.FieldValue.increment(likeDelta),
         dislikeCount: admin.firestore.FieldValue.increment(dislikeDelta),
         'counts.likes': admin.firestore.FieldValue.increment(likeDelta),
-        'counts.dislikes': admin.firestore.FieldValue.increment(dislikeDelta)
+        'counts.dislikes': admin.firestore.FieldValue.increment(dislikeDelta),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true })
     }
     return { reaction: normalized, likeDelta, dislikeDelta }
