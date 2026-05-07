@@ -1,0 +1,5 @@
+Date: 2026-05-05 (UTC)
+Repository: DiabloGamingArmy/MELOGIC_RECORDS
+Issue: PR creation is still failing after GitHub connect/reconnect attempts.
+Latest status: Failure persists ("Still fails...").
+Action taken: Updated troubleshooting note and committed on branch codex/product-viewer-polish for follow-up.
