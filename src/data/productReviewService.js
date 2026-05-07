@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, updateDoc, where } from 'firebase/firestore'
+import { addDoc, collection, doc, getDoc, getDocs, increment, limit, orderBy, query, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 
 function normalizeReview(id, raw = {}) {
@@ -7,9 +7,9 @@ function normalizeReview(id, raw = {}) {
 
 export async function listProductReviews(productId, { limitCount = 20 } = {}) {
   if (!productId) return []
-  const q = query(collection(db, 'products', productId, 'reviews'), where('deleted', '==', false), orderBy('createdAt', 'desc'), limit(limitCount))
+  const q = query(collection(db, 'products', productId, 'reviews'), orderBy('createdAt', 'desc'), limit(limitCount))
   const snap = await getDocs(q)
-  return snap.docs.map((d) => normalizeReview(d.id, d.data()))
+  return snap.docs.map((d) => normalizeReview(d.id, d.data())).filter((review) => review.deleted !== true)
 }
 
 export async function createProductReview(productId, user, profile = {}, { rating = null, body = '' } = {}) {
@@ -50,4 +50,99 @@ export async function deleteProductReview(productId, reviewId, user) {
   const snap = await getDoc(ref)
   if (!snap.exists() || snap.data()?.uid !== user?.uid) throw new Error('forbidden')
   await updateDoc(ref, { deleted: true, body: '', updatedAt: serverTimestamp() })
+}
+
+export async function getReviewReactionStates(productId, reviewIds = [], user = null) {
+  if (!productId || !user?.uid || !reviewIds.length) return {}
+  const entries = await Promise.all(reviewIds.map(async (reviewId) => {
+    try {
+      const snap = await getDoc(doc(db, 'products', productId, 'reviews', reviewId, 'reactions', user.uid))
+      return [reviewId, snap.exists() ? snap.data()?.reaction || null : null]
+    } catch (error) {
+      console.warn('[productReviewService] reaction read skipped', { reviewId, code: error?.code, message: error?.message })
+      return [reviewId, null]
+    }
+  }))
+  return Object.fromEntries(entries)
+}
+
+export async function setProductReviewReaction(productId, reviewId, user, reaction = null) {
+  if (!user?.uid) throw new Error('auth-required')
+  if (!productId || !reviewId) throw new Error('review-required')
+  const next = reaction === 'like' || reaction === 'dislike' ? reaction : null
+  const reviewRef = doc(db, 'products', productId, 'reviews', reviewId)
+  const reactionRef = doc(db, 'products', productId, 'reviews', reviewId, 'reactions', user.uid)
+  return runTransaction(db, async (tx) => {
+    const [reviewSnap, reactionSnap] = await Promise.all([tx.get(reviewRef), tx.get(reactionRef)])
+    if (!reviewSnap.exists()) throw new Error('review-not-found')
+    const prev = reactionSnap.exists() ? reactionSnap.data()?.reaction || null : null
+    if (prev === next) return prev
+    const likeDelta = (prev === 'like' ? -1 : 0) + (next === 'like' ? 1 : 0)
+    const dislikeDelta = (prev === 'dislike' ? -1 : 0) + (next === 'dislike' ? 1 : 0)
+    tx.update(reviewRef, { likeCount: increment(likeDelta), dislikeCount: increment(dislikeDelta), updatedAt: serverTimestamp() })
+    if (!next) tx.delete(reactionRef)
+    else tx.set(reactionRef, { uid: user.uid, reaction: next, createdAt: reactionSnap.exists() ? reactionSnap.data()?.createdAt || serverTimestamp() : serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true })
+    return next
+  })
+}
+
+export async function listProductReviewReplies(productId, reviewId, { limitCount = 10 } = {}) {
+  if (!productId || !reviewId) return []
+  const q = query(collection(db, 'products', productId, 'reviews', reviewId, 'replies'), orderBy('createdAt', 'asc'), limit(limitCount))
+  const snap = await getDocs(q)
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((reply) => reply.deleted !== true)
+}
+
+export async function createProductReviewReply(productId, reviewId, user, profile = {}, { body = '' } = {}) {
+  if (!user?.uid) throw new Error('auth-required')
+  const trimmed = String(body || '').trim()
+  if (!trimmed) throw new Error('reply-body-required')
+  const reviewRef = doc(db, 'products', productId, 'reviews', reviewId)
+  const payload = { productId, reviewId, uid: user.uid, displayName: profile.displayName || user.displayName || 'User', username: profile.username || '', avatarURL: profile.avatarURL || user.photoURL || '', body: trimmed, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), edited: false, deleted: false }
+  const replyRef = await addDoc(collection(db, 'products', productId, 'reviews', reviewId, 'replies'), payload)
+  await Promise.all([updateDoc(replyRef, { id: replyRef.id }), updateDoc(reviewRef, { replyCount: increment(1), updatedAt: serverTimestamp() })])
+  return { id: replyRef.id, ...payload }
+}
+
+export async function deleteProductReviewReply(productId, reviewId, replyId, user) {
+  if (!user?.uid) throw new Error('auth-required')
+  const replyRef = doc(db, 'products', productId, 'reviews', reviewId, 'replies', replyId)
+  const reviewRef = doc(db, 'products', productId, 'reviews', reviewId)
+  const snap = await getDoc(replyRef)
+  if (!snap.exists() || snap.data()?.uid !== user.uid) throw new Error('forbidden')
+  await Promise.all([
+    updateDoc(replyRef, { deleted: true, body: '', updatedAt: serverTimestamp() }),
+    updateDoc(reviewRef, { replyCount: increment(-1), updatedAt: serverTimestamp() })
+  ])
+}
+
+export async function createMarketplaceReviewReport({ product = {}, review = {}, reply = null, reporter = null, reason = '', contextType = 'review' } = {}) {
+  if (!reporter?.uid) throw new Error('auth-required')
+  const payload = {
+    reportType: contextType === 'reply' ? 'marketplace_product_review_reply' : 'marketplace_product_review',
+    contextType: contextType === 'reply' ? 'reply' : 'review',
+    productId: product.id || '',
+    productTitle: product.title || '',
+    productSlug: product.slug || '',
+    reviewId: review.id || '',
+    replyId: reply?.id || '',
+    reportedUserId: reply?.uid || review.uid || '',
+    reportedDisplayName: reply?.displayName || review.displayName || '',
+    reportedUsername: reply?.username || review.username || '',
+    reportedAvatarURL: reply?.avatarURL || review.avatarURL || '',
+    reviewRating: Number(review.rating || 0) || null,
+    reviewBody: review.body || '',
+    replyBody: reply?.body || '',
+    reviewCreatedAt: review.createdAt || null,
+    replyCreatedAt: reply?.createdAt || null,
+    reporterUid: reporter.uid,
+    reporterDisplayName: reporter.displayName || 'User',
+    reporterUsername: reporter.username || '',
+    reporterAvatarURL: reporter.photoURL || '',
+    reason: String(reason || '').trim() || 'No reason provided',
+    status: 'open',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }
+  await addDoc(collection(db, 'Reports', 'marketplace', 'products', 'reviews', 'items'), payload)
 }

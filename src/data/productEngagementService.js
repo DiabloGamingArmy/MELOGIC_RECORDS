@@ -1,4 +1,4 @@
-import { doc, getDoc } from 'firebase/firestore'
+import { collection, doc, getCountFromServer, getDoc, query, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
@@ -27,4 +27,17 @@ export async function setProductReaction(productId, nextReaction) {
 export async function setProductSaved(productId, shouldSave) {
   const response = await callSetProductSaved({ productId, saved: Boolean(shouldSave) })
   return response?.data || { saved: Boolean(shouldSave), saveDelta: 0 }
+}
+
+export async function getProductReactionSummary(productId) {
+  if (!productId) return { likeCount: 0, dislikeCount: 0 }
+  const reactionsRef = collection(db, 'products', productId, 'reactions')
+  const [likeSnap, dislikeSnap] = await Promise.all([
+    getCountFromServer(query(reactionsRef, where('reaction', '==', 'like'))),
+    getCountFromServer(query(reactionsRef, where('reaction', '==', 'dislike')))
+  ])
+  return {
+    likeCount: Number(likeSnap.data()?.count || 0),
+    dislikeCount: Number(dislikeSnap.data()?.count || 0)
+  }
 }
