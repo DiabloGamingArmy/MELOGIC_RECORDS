@@ -450,6 +450,91 @@ function bindAudioPreviewControls() {
   app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => { const index = Number(range.getAttribute('data-audio-index') || -1); const audio = app.querySelector(`audio[data-dashboard-audio="${index}"]`); if (!(audio instanceof HTMLAudioElement) || !Number.isFinite(audio.duration) || !audio.duration) return; audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration; syncAudioUi(audio, index) }))
 }
 
+
+let productEngagementBound = false
+let activeProductEngagementContext = null
+
+function syncProductEngagementUi() {
+  const engagement = state.productEngagement || {}
+  const likeCount = Math.max(0, Number(engagement.likeCount || 0))
+  const dislikeCount = Math.max(0, Number(engagement.dislikeCount || 0))
+  const saveCount = Math.max(0, Number(engagement.saveCount || 0))
+  const reaction = engagement.reaction === 'like' || engagement.reaction === 'dislike' ? engagement.reaction : null
+  const saved = Boolean(engagement.saved)
+  const ratio = getLikeRatio(likeCount, dislikeCount)
+
+  const likeBtn = app.querySelector('[data-product-reaction="like"]')
+  const dislikeBtn = app.querySelector('[data-product-reaction="dislike"]')
+  const saveBtn = app.querySelector('[data-product-save]')
+  likeBtn?.classList.toggle('is-active', reaction === 'like')
+  dislikeBtn?.classList.toggle('is-active', reaction === 'dislike')
+  saveBtn?.classList.toggle('is-active', saved)
+  likeBtn?.setAttribute('aria-pressed', String(reaction === 'like'))
+  dislikeBtn?.setAttribute('aria-pressed', String(reaction === 'dislike'))
+  saveBtn?.setAttribute('aria-pressed', String(saved))
+
+  app.querySelectorAll('[data-product-like-count]').forEach((el) => { el.textContent = String(likeCount) })
+  app.querySelectorAll('[data-product-dislike-count]').forEach((el) => { el.textContent = String(dislikeCount) })
+  app.querySelectorAll('[data-product-save-count]').forEach((el) => { el.textContent = String(saveCount) })
+  app.querySelectorAll('[data-product-like-bar]').forEach((el) => { el.style.width = `${ratio.likePercent}%` })
+  app.querySelectorAll('[data-product-dislike-bar]').forEach((el) => { el.style.width = `${ratio.dislikePercent}%` })
+}
+
+function bindProductEngagementHandlers(context) {
+  activeProductEngagementContext = context
+  if (productEngagementBound) return
+  productEngagementBound = true
+  app.addEventListener('click', async (event) => {
+    const ctx = activeProductEngagementContext
+    if (!ctx) return
+    const reactionButton = event.target.closest('[data-product-reaction]')
+    const saveButton = event.target.closest('[data-product-save]')
+    if (!reactionButton && !saveButton) return
+    if (ctx.product?.id !== state.productEngagement.productId || state.isDraftPreview) return
+    if (!ctx.requireAuth()) return
+
+    const previous = { ...state.productEngagement }
+    try {
+      if (reactionButton) {
+        const action = String(reactionButton.getAttribute('data-product-reaction') || '')
+        const prevReaction = state.productEngagement.reaction
+        const nextReaction = prevReaction === action ? null : action
+        const likeDelta = (nextReaction === 'like' ? 1 : 0) - (prevReaction === 'like' ? 1 : 0)
+        const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (prevReaction === 'dislike' ? 1 : 0)
+        state.productEngagement.reaction = nextReaction
+        state.productEngagement.likeCount = Math.max(0, state.productEngagement.likeCount + likeDelta)
+        state.productEngagement.dislikeCount = Math.max(0, state.productEngagement.dislikeCount + dislikeDelta)
+        console.info('[product] engagement click', { productId: ctx.product.id, action, previousReaction: prevReaction, nextReaction })
+        syncProductEngagementUi()
+        const result = await setProductEngagement(ctx.product.id, { reaction: nextReaction, updateReaction: true })
+        state.productEngagement = { ...state.productEngagement, ...result, productId: ctx.product.id, loading: false, error: '' }
+      } else if (saveButton) {
+        const nextSaved = !state.productEngagement.saved
+        state.productEngagement.saved = nextSaved
+        state.productEngagement.saveCount = Math.max(0, state.productEngagement.saveCount + (nextSaved ? 1 : -1))
+        console.info('[product] engagement click', { productId: ctx.product.id, action: 'save', previousReaction: state.productEngagement.reaction, nextReaction: state.productEngagement.reaction })
+        syncProductEngagementUi()
+        const result = await setProductEngagement(ctx.product.id, { saved: nextSaved, updateSaved: true })
+        state.productEngagement = { ...state.productEngagement, ...result, productId: ctx.product.id, loading: false, error: '' }
+      }
+      console.info('[product] engagement server result', {
+        productId: ctx.product.id,
+        reaction: state.productEngagement.reaction,
+        saved: state.productEngagement.saved,
+        likeCount: state.productEngagement.likeCount,
+        dislikeCount: state.productEngagement.dislikeCount,
+        saveCount: state.productEngagement.saveCount
+      })
+      syncProductEngagementUi()
+    } catch (error) {
+      state.productEngagement = previous
+      syncProductEngagementUi()
+      ctx.showActionMessage('Could not update engagement')
+      console.warn('[product] engagement update failed', { code: error?.code, message: error?.message, details: error?.details })
+    }
+  })
+}
+
 function renderProduct(product, recommendations = [], ownerPreview = false, productFiles = [], ownsProduct = false) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
@@ -459,12 +544,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const typeLabel = product.productType || 'Product'
   const creatorHref = product.artistId ? publicProfileRoute({ uid: product.artistId }) : ROUTES.profilePublic
   if (state.productEngagement.productId !== product.id) {
-    state.engagementCounts = {
+    state.productEngagement = {
+      productId: product.id,
+      reaction: null,
+      saved: false,
       likeCount: getProductLikeCount(product),
       dislikeCount: getProductDislikeCount(product),
-      saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0)
+      saveCount: Number(product.counts?.saves ?? product.saveCount ?? 0),
+      loading: false,
+      error: ''
     }
-    state.productEngagement.productId = product.id
   }
   if (state.fileBrowserProductId !== product.id) {
     state.fileBrowserProductId = product.id
@@ -612,7 +701,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <p class="dashboard-rating-review-label">Purchased User Reviews</p>
                 <p class="dashboard-rating-review-count">${ratingCount ? `${ratingCount} reviews` : 'No ratings yet'}</p>
               </section>
-              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
+              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" data-product-like-bar style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" data-product-dislike-bar style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
 
             </article>
 
@@ -698,93 +787,8 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     return false
   }
 
-  app.querySelector('[data-product-reaction="like"]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const prev = state.productEngagement.reaction
-    const previousCounts = { ...state.engagementCounts }
-    const next = prev === 'like' ? null : 'like'
-    const likeDelta = (next === 'like' ? 1 : 0) - (prev === 'like' ? 1 : 0)
-    const dislikeDelta = (next === 'dislike' ? 1 : 0) - (prev === 'dislike' ? 1 : 0)
-    state.productEngagement.reaction = next
-    state.productEngagement.likeCount = Math.max(0, state.productEngagement.likeCount + likeDelta)
-    state.productEngagement.dislikeCount = Math.max(0, state.productEngagement.dislikeCount + dislikeDelta)
-    console.info('[product] engagement click', { productId: product.id, previousReaction: prev, nextReaction: next, optimisticLikeCount: state.productEngagement.likeCount, optimisticDislikeCount: state.productEngagement.dislikeCount })
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try {
-      const result = await setProductEngagement(product.id, { reaction: next, updateReaction: true, updateSaved: false })
-      state.productEngagement.reaction = result?.reaction ?? next
-      state.productEngagement.likeCount = Math.max(0, Number(result.likeCount || state.productEngagement.likeCount || 0))
-      state.productEngagement.dislikeCount = Math.max(0, Number(result.dislikeCount || state.productEngagement.dislikeCount || 0))
-      state.productEngagement.saveCount = Math.max(0, Number(result.saveCount ?? state.productEngagement.saveCount))
-      console.info('[product] engagement server result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    } catch (error) {
-      state.productEngagement.reaction = prev
-      state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', {
-        code: error?.code,
-        message: error?.message,
-        details: error?.details
-      })
-      showActionMessage('Could not update reaction')
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    }
-  })
-
-  app.querySelector('[data-product-reaction="dislike"]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const prev = state.productEngagement.reaction
-    const previousCounts = { ...state.engagementCounts }
-    const next = prev === 'dislike' ? null : 'dislike'
-    const likeDelta = (next === 'like' ? 1 : 0) - (prev === 'like' ? 1 : 0)
-    const dislikeDelta = (next === 'dislike' ? 1 : 0) - (prev === 'dislike' ? 1 : 0)
-    state.productEngagement.reaction = next
-    state.productEngagement.likeCount = Math.max(0, state.productEngagement.likeCount + likeDelta)
-    state.productEngagement.dislikeCount = Math.max(0, state.productEngagement.dislikeCount + dislikeDelta)
-    console.info('[product] engagement click', { productId: product.id, previousReaction: prev, nextReaction: next, optimisticLikeCount: state.productEngagement.likeCount, optimisticDislikeCount: state.productEngagement.dislikeCount })
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try {
-      const result = await setProductEngagement(product.id, { reaction: next, updateReaction: true, updateSaved: false })
-      state.productEngagement.reaction = result?.reaction ?? next
-      state.productEngagement.likeCount = Math.max(0, Number(result.likeCount || state.productEngagement.likeCount || 0))
-      state.productEngagement.dislikeCount = Math.max(0, Number(result.dislikeCount || state.productEngagement.dislikeCount || 0))
-      state.productEngagement.saveCount = Math.max(0, Number(result.saveCount ?? state.productEngagement.saveCount))
-      console.info('[product] engagement server result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    } catch (error) {
-      state.productEngagement.reaction = prev
-      state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', {
-        code: error?.code,
-        message: error?.message,
-        details: error?.details
-      })
-      showActionMessage('Could not update reaction')
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    }
-  })
-
-  app.querySelector('[data-product-save]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const previousSaved = state.productEngagement.saved
-    const previousCounts = { ...state.engagementCounts }
-    const next = !previousSaved
-    state.productEngagement.saved = next
-    state.productEngagement.saveCount = Math.max(0, state.productEngagement.saveCount + (next ? 1 : -1))
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    showActionMessage(next ? 'Saved' : 'Removed from saved')
-    try { await setProductEngagement(product.id, { saved: next, updateSaved: true, updateReaction: false }) } catch (error) {
-      state.productEngagement.saved = previousSaved
-      state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', {
-        code: error?.code,
-        message: error?.message,
-        details: error?.details
-      })
-      showActionMessage('Could not update save state')
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    }
-  })
+  bindProductEngagementHandlers({ product, requireAuth, showActionMessage })
+  syncProductEngagementUi()
 
   app.querySelector('[data-product-share]')?.addEventListener('click', async () => {
     const shareData = { title: product.title, text: product.shortDescription || 'Check this product', url: window.location.href }
@@ -945,15 +949,26 @@ async function init() {
     const reviews = await safe('reviews', [], () => listProductReviews(product.id, { limitCount: 20 }))
     const engagementState = await safe('engagement-state', { reaction: null, saved: false, likeCount: getProductLikeCount(product), dislikeCount: getProductDislikeCount(product), saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0) }, () => getProductEngagementState(product.id, state.currentUser?.uid))
     const reviewReactions = await safe('review-reactions', {}, () => getReviewReactionStates(product.id, (reviews || []).map((item) => item.id), state.currentUser))
-    const engagement = await safe('engagement', { reaction: null, saved: false }, () => state.currentUser?.uid
-      ? getUserProductEngagementState(product.id, state.currentUser.uid)
-      : Promise.resolve({ reaction: null, saved: false }))
     state.reviews = reviews
     state.reviewReactions = reviewReactions
-    state.productEngagement.likeCount = Math.max(0, Number(reactionSummary.likeCount || 0))
-    state.productEngagement.dislikeCount = Math.max(0, Number(reactionSummary.dislikeCount || 0))
-    console.info('[product] reaction summary loaded', { productId: product.id, likeCount: state.productEngagement.likeCount, dislikeCount: state.productEngagement.dislikeCount })
-    state.interaction = engagement
+    state.productEngagement = {
+      productId: product.id,
+      reaction: engagementState.reaction,
+      saved: engagementState.saved,
+      likeCount: Math.max(0, Number(engagementState.likeCount || 0)),
+      dislikeCount: Math.max(0, Number(engagementState.dislikeCount || 0)),
+      saveCount: Math.max(0, Number(engagementState.saveCount || 0)),
+      loading: false,
+      error: ''
+    }
+    console.info('[product] engagement state loaded', {
+      productId: product.id,
+      reaction: state.productEngagement.reaction,
+      saved: state.productEngagement.saved,
+      likeCount: state.productEngagement.likeCount,
+      dislikeCount: state.productEngagement.dislikeCount,
+      saveCount: state.productEngagement.saveCount
+    })
     renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
   } catch (error) {
     console.error('[product] failed to load product page', {
