@@ -5,7 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
 import { userOwnsProduct } from './data/entitlementService'
-import { getUserProductEngagementState, setProductReaction, setProductSaved } from './data/productEngagementService'
+import { getProductReactionSummary, getUserProductEngagementState, setProductReaction, setProductSaved } from './data/productEngagementService'
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
@@ -710,10 +710,14 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     state.interaction.reaction = next
     state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + likeDelta)
     state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + dislikeDelta)
+    console.info('[product] reaction changed', { productId: product.id, previousReaction: prev, nextReaction: next, optimisticLikeCount: state.engagementCounts.likeCount, optimisticDislikeCount: state.engagementCounts.dislikeCount })
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     try {
       const result = await setProductReaction(product.id, next)
       state.interaction.reaction = result?.reaction ?? next
+      const summary = await getProductReactionSummary(product.id)
+      state.engagementCounts.likeCount = Math.max(0, Number(summary.likeCount || 0))
+      state.engagementCounts.dislikeCount = Math.max(0, Number(summary.dislikeCount || 0))
       console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     } catch (error) {
@@ -739,10 +743,14 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     state.interaction.reaction = next
     state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + likeDelta)
     state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + dislikeDelta)
+    console.info('[product] reaction changed', { productId: product.id, previousReaction: prev, nextReaction: next, optimisticLikeCount: state.engagementCounts.likeCount, optimisticDislikeCount: state.engagementCounts.dislikeCount })
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     try {
       const result = await setProductReaction(product.id, next)
       state.interaction.reaction = result?.reaction ?? next
+      const summary = await getProductReactionSummary(product.id)
+      state.engagementCounts.likeCount = Math.max(0, Number(summary.likeCount || 0))
+      state.engagementCounts.dislikeCount = Math.max(0, Number(summary.dislikeCount || 0))
       console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     } catch (error) {
@@ -937,12 +945,16 @@ async function init() {
     const productFiles = await safe('files', [], () => listProductFiles(product.id))
     const ownsProduct = await safe('ownership', false, () => userOwnsProduct(state.currentUser?.uid || '', product.id))
     const reviews = await safe('reviews', [], () => listProductReviews(product.id, { limitCount: 20 }))
+    const reactionSummary = await safe('reaction-summary', { likeCount: getProductLikeCount(product), dislikeCount: getProductDislikeCount(product) }, () => getProductReactionSummary(product.id))
     const reviewReactions = await safe('review-reactions', {}, () => getReviewReactionStates(product.id, (reviews || []).map((item) => item.id), state.currentUser))
     const engagement = await safe('engagement', { reaction: null, saved: false }, () => state.currentUser?.uid
       ? getUserProductEngagementState(product.id, state.currentUser.uid)
       : Promise.resolve({ reaction: null, saved: false }))
     state.reviews = reviews
     state.reviewReactions = reviewReactions
+    state.engagementCounts.likeCount = Math.max(0, Number(reactionSummary.likeCount || 0))
+    state.engagementCounts.dislikeCount = Math.max(0, Number(reactionSummary.dislikeCount || 0))
+    console.info('[product] reaction summary loaded', { productId: product.id, likeCount: state.engagementCounts.likeCount, dislikeCount: state.engagementCounts.dislikeCount })
     state.interaction = engagement
     renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
   } catch (error) {
