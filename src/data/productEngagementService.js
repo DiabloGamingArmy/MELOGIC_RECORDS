@@ -10,7 +10,7 @@ const callSetProductSaved = httpsCallable(functions, 'setProductSaved')
 function safeCount(value) { return Math.max(0, Number(value || 0)) }
 
 export async function getProductEngagementState(productId, uid) {
-  if (!productId) return { reaction: null, saved: false, likeCount: 0, dislikeCount: 0, saveCount: 0 }
+  if (!productId) return { productId: '', reaction: null, saved: false, likeCount: 0, dislikeCount: 0, saveCount: 0 }
   const summaryRef = doc(db, 'productEngagement', productId)
   const userRef = uid ? doc(db, 'productEngagement', productId, 'users', uid) : null
   const [summarySnap, userSnap] = await Promise.all([getDoc(summaryRef), userRef ? getDoc(userRef) : Promise.resolve(null)])
@@ -19,6 +19,7 @@ export async function getProductEngagementState(productId, uid) {
     const summary = summarySnap.data() || {}
     const userData = userSnap?.exists() ? (userSnap.data() || {}) : {}
     return {
+      productId,
       reaction: userData.reaction === 'like' || userData.reaction === 'dislike' ? userData.reaction : null,
       saved: Boolean(userData.saved),
       likeCount: safeCount(summary.likeCount),
@@ -36,6 +37,7 @@ export async function getProductEngagementState(productId, uid) {
     : [null, null]
   const product = productSnap.exists() ? (productSnap.data() || {}) : {}
   return {
+    productId,
     reaction: reactionSnap?.exists() ? (reactionSnap.data()?.reaction || null) : null,
     saved: Boolean(savedSnap?.exists()),
     likeCount: safeCount(product.likeCount ?? product.counts?.likes),
