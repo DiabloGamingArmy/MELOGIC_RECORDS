@@ -197,6 +197,13 @@ export async function resolveProductMedia(product) {
 }
 
 export function normalizeProduct(productId, rawProduct = {}, media = {}) {
+  const normalizeCount = (...values) => {
+    for (const value of values) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return Math.max(0, parsed)
+    }
+    return 0
+  }
   const counts = rawProduct.counts || {}
   const categories = rawProduct.categories || []
   const genres = rawProduct.genres || []
@@ -204,10 +211,11 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const contributorNames = rawProduct.contributorNames || []
   const contributors = Array.isArray(rawProduct.contributors) ? rawProduct.contributors : []
   const contributorCount = Number(rawProduct.contributorCount ?? rawProduct.contributorIds?.length ?? contributorNames.length ?? 0)
-  const likeCount = Number(rawProduct.likeCount ?? counts.likes ?? 0)
-  const saveCount = Number(rawProduct.saveCount ?? counts.saves ?? 0)
-  const downloadCount = Number(rawProduct.downloadCount ?? counts.downloads ?? 0)
-  const commentCount = Number(rawProduct.commentCount ?? counts.comments ?? 0)
+  const likeCount = normalizeCount(counts.likes, rawProduct.likeCount)
+  const dislikeCount = normalizeCount(counts.dislikes, rawProduct.dislikeCount)
+  const saveCount = normalizeCount(counts.saves, rawProduct.saveCount)
+  const downloadCount = normalizeCount(counts.downloads, rawProduct.downloadCount)
+  const commentCount = normalizeCount(counts.comments, rawProduct.commentCount)
   const categoryKeys = Array.isArray(rawProduct.categoryKeys) && rawProduct.categoryKeys.length ? rawProduct.categoryKeys : categories.map(normalizeKey).filter(Boolean)
   const genreKeys = Array.isArray(rawProduct.genreKeys) && rawProduct.genreKeys.length ? rawProduct.genreKeys : genres.map(normalizeKey).filter(Boolean)
   const tagKeys = Array.isArray(rawProduct.tagKeys) && rawProduct.tagKeys.length ? rawProduct.tagKeys : tags.map(normalizeKey).filter(Boolean)
@@ -282,6 +290,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     isFree: Boolean(rawProduct.isFree),
     priceLabel: toPriceLabel(rawProduct),
     likeCount,
+    dislikeCount,
     saveCount,
     downloadCount,
     commentCount,
@@ -294,15 +303,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     artistNameLower: String(rawProduct.artistNameLower || rawProduct.artistName || '').toLowerCase(),
     artistUsernameLower: String(rawProduct.artistUsernameLower || rawProduct.artistUsername || '').toLowerCase(),
     searchKeywords,
-    counts: {
-      likes: Number(counts.likes || 0),
-      dislikes: Number(counts.dislikes || 0),
-      saves: Number(counts.saves || 0),
-      shares: Number(counts.shares || 0),
-      comments: Number(counts.comments || 0),
-      downloads: Number(counts.downloads || 0),
-      follows: Number(counts.follows || 0)
-    },
+    counts: { likes: likeCount, dislikes: dislikeCount, saves: saveCount, shares: normalizeCount(counts.shares, rawProduct.shareCount), comments: commentCount, downloads: downloadCount, follows: normalizeCount(counts.follows, rawProduct.followCount) },
     featured: Boolean(rawProduct.featured),
     moderationStatus: String(rawProduct.moderationStatus || ''),
     moderationSummary: String(rawProduct.moderationSummary || ''),
