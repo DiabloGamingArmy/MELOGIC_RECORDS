@@ -705,12 +705,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const prev = state.interaction.reaction
     const previousCounts = { ...state.engagementCounts }
     const next = prev === 'like' ? null : 'like'
+    const likeDelta = (next === 'like' ? 1 : 0) - (prev === 'like' ? 1 : 0)
+    const dislikeDelta = (next === 'dislike' ? 1 : 0) - (prev === 'dislike' ? 1 : 0)
+    state.interaction.reaction = next
+    state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + likeDelta)
+    state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + dislikeDelta)
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     try {
       const result = await setProductReaction(product.id, next)
       state.interaction.reaction = result?.reaction ?? next
-      state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + Number(result?.likeDelta || 0))
-      state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + Number(result?.dislikeDelta || 0))
-      console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, nextReaction: next, result })
+      console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     } catch (error) {
       state.interaction.reaction = prev
@@ -730,12 +734,16 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const prev = state.interaction.reaction
     const previousCounts = { ...state.engagementCounts }
     const next = prev === 'dislike' ? null : 'dislike'
+    const likeDelta = (next === 'like' ? 1 : 0) - (prev === 'like' ? 1 : 0)
+    const dislikeDelta = (next === 'dislike' ? 1 : 0) - (prev === 'dislike' ? 1 : 0)
+    state.interaction.reaction = next
+    state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + likeDelta)
+    state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + dislikeDelta)
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     try {
       const result = await setProductReaction(product.id, next)
       state.interaction.reaction = result?.reaction ?? next
-      state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + Number(result?.likeDelta || 0))
-      state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + Number(result?.dislikeDelta || 0))
-      console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, nextReaction: next, result })
+      console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     } catch (error) {
       state.interaction.reaction = prev
