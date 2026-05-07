@@ -490,7 +490,14 @@ function bindProductEngagementHandlers(context) {
     const reactionButton = event.target.closest('[data-product-reaction]')
     const saveButton = event.target.closest('[data-product-save]')
     if (!reactionButton && !saveButton) return
-    if (ctx.product?.id !== state.productEngagement.productId || state.isDraftPreview) return
+    if (ctx.product?.id !== state.productEngagement.productId || state.isDraftPreview) {
+      console.warn('[product] engagement click ignored', {
+        contextProductId: ctx.product?.id || '',
+        stateProductId: state.productEngagement.productId || '',
+        isDraftPreview: state.isDraftPreview
+      })
+      return
+    }
     if (!ctx.requireAuth()) return
 
     const previous = { ...state.productEngagement }
@@ -952,6 +959,8 @@ async function init() {
     state.reviews = reviews
     state.reviewReactions = reviewReactions
     state.productEngagement = {
+      ...state.productEngagement,
+      ...engagementState,
       productId: product.id,
       reaction: engagementState.reaction,
       saved: engagementState.saved,
@@ -970,6 +979,7 @@ async function init() {
       saveCount: state.productEngagement.saveCount
     })
     renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
+    syncProductEngagementUi()
   } catch (error) {
     console.error('[product] failed to load product page', {
       message: error?.message,
