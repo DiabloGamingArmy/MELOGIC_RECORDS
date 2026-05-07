@@ -92,6 +92,9 @@
 .product-status.is-success { background: rgba(30, 140, 88, 0.3); border: 1px solid rgba(90, 215, 154, 0.5); }
 .product-status.is-error { background: rgba(154, 52, 71, 0.26); border: 1px solid rgba(232, 89, 116, 0.52); }
 .product-status.is-info { background: rgba(43, 102, 164, 0.28); border: 1px solid rgba(107, 176, 244, 0.45); }
+.product-info-readonly{padding:.58rem .62rem;border:1px solid rgba(113,140,198,.35);border-radius:10px;background:rgba(15,24,40,.55);color:#d7e5ff;font-size:.86rem}
+.listing-preview-card-cover,.cover-preview-block{position:relative;overflow:hidden;aspect-ratio:16/10;background:rgba(10,15,28,.75)}
+.listing-preview-card-cover img,.cover-preview-block img{position:absolute;inset:0;width:100%;height:100%;max-width:100%;display:block;object-fit:cover;object-position:center;flex:0 0 auto}
 
 .product-info-grid {
   display: grid;
