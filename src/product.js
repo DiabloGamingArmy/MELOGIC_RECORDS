@@ -453,6 +453,10 @@ function bindAudioPreviewControls() {
 
 let productEngagementBound = false
 let activeProductEngagementContext = null
+let reactionMutationSeq = 0
+let saveMutationSeq = 0
+let reactionDebounceTimer = null
+const REACTION_DEBOUNCE_MS = 160
 
 function syncProductEngagementUi() {
   const engagement = state.productEngagement || {}
@@ -461,6 +465,7 @@ function syncProductEngagementUi() {
   const saveCount = Math.max(0, Number(engagement.saveCount || 0))
   const reaction = engagement.reaction === 'like' || engagement.reaction === 'dislike' ? engagement.reaction : null
   const saved = Boolean(engagement.saved)
+  const total = likeCount + dislikeCount
   const ratio = getLikeRatio(likeCount, dislikeCount)
 
   const likeBtn = app.querySelector('[data-product-reaction="like"]')
@@ -478,12 +483,35 @@ function syncProductEngagementUi() {
   app.querySelectorAll('[data-product-save-count]').forEach((el) => { el.textContent = String(saveCount) })
   app.querySelectorAll('[data-product-like-bar]').forEach((el) => { el.style.width = `${ratio.likePercent}%` })
   app.querySelectorAll('[data-product-dislike-bar]').forEach((el) => { el.style.width = `${ratio.dislikePercent}%` })
+  app.querySelectorAll('[data-product-sentiment-meter]').forEach((el) => { el.classList.toggle('is-empty', total === 0) })
 }
 
 function bindProductEngagementHandlers(context) {
   activeProductEngagementContext = context
   if (productEngagementBound) return
   productEngagementBound = true
+
+  const flushReactionUpdate = async (ctx, seq, previous) => {
+    const latestReaction = state.productEngagement.reaction
+    console.info('[product] engagement reaction write scheduled', { productId: ctx.product.id, reaction: latestReaction, seq })
+    try {
+      const result = await setProductEngagement(ctx.product.id, { reaction: latestReaction, updateReaction: true })
+      if (seq !== reactionMutationSeq) {
+        console.info('[product] ignored stale server result', { productId: ctx.product.id, action: 'reaction', seq, latestSeq: reactionMutationSeq })
+        return
+      }
+      state.productEngagement = { ...state.productEngagement, ...result, productId: ctx.product.id, loading: false, error: '' }
+      console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'reaction', reaction: state.productEngagement.reaction, likeCount: state.productEngagement.likeCount, dislikeCount: state.productEngagement.dislikeCount })
+      syncProductEngagementUi()
+    } catch (error) {
+      if (seq !== reactionMutationSeq) return
+      state.productEngagement = previous
+      syncProductEngagementUi()
+      ctx.showActionMessage('Could not update engagement')
+      console.warn('[product] engagement update failed', { action: 'reaction', code: error?.code, message: error?.message, details: error?.details })
+    }
+  }
+
   app.addEventListener('click', async (event) => {
     const ctx = activeProductEngagementContext
     if (!ctx) return
@@ -491,53 +519,57 @@ function bindProductEngagementHandlers(context) {
     const saveButton = event.target.closest('[data-product-save]')
     if (!reactionButton && !saveButton) return
     if (ctx.product?.id !== state.productEngagement.productId || state.isDraftPreview) {
-      console.warn('[product] engagement click ignored', {
-        contextProductId: ctx.product?.id || '',
-        stateProductId: state.productEngagement.productId || '',
-        isDraftPreview: state.isDraftPreview
-      })
+      console.warn('[product] engagement click ignored', { contextProductId: ctx.product?.id || '', stateProductId: state.productEngagement.productId || '', isDraftPreview: state.isDraftPreview })
       return
     }
     if (!ctx.requireAuth()) return
 
-    const previous = { ...state.productEngagement }
-    try {
-      if (reactionButton) {
-        const action = String(reactionButton.getAttribute('data-product-reaction') || '')
-        const prevReaction = state.productEngagement.reaction
-        const nextReaction = prevReaction === action ? null : action
-        const likeDelta = (nextReaction === 'like' ? 1 : 0) - (prevReaction === 'like' ? 1 : 0)
-        const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (prevReaction === 'dislike' ? 1 : 0)
-        state.productEngagement.reaction = nextReaction
-        state.productEngagement.likeCount = Math.max(0, state.productEngagement.likeCount + likeDelta)
-        state.productEngagement.dislikeCount = Math.max(0, state.productEngagement.dislikeCount + dislikeDelta)
-        console.info('[product] engagement click', { productId: ctx.product.id, action, previousReaction: prevReaction, nextReaction })
-        syncProductEngagementUi()
-        const result = await setProductEngagement(ctx.product.id, { reaction: nextReaction, updateReaction: true })
-        state.productEngagement = { ...state.productEngagement, ...result, productId: ctx.product.id, loading: false, error: '' }
-      } else if (saveButton) {
-        const nextSaved = !state.productEngagement.saved
-        state.productEngagement.saved = nextSaved
-        state.productEngagement.saveCount = Math.max(0, state.productEngagement.saveCount + (nextSaved ? 1 : -1))
-        console.info('[product] engagement click', { productId: ctx.product.id, action: 'save', previousReaction: state.productEngagement.reaction, nextReaction: state.productEngagement.reaction })
-        syncProductEngagementUi()
+    if (reactionButton) {
+      const previous = { ...state.productEngagement }
+      const action = String(reactionButton.getAttribute('data-product-reaction') || '')
+      const prevReaction = state.productEngagement.reaction
+      const nextReaction = prevReaction === action ? null : action
+      const likeDelta = (nextReaction === 'like' ? 1 : 0) - (prevReaction === 'like' ? 1 : 0)
+      const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (prevReaction === 'dislike' ? 1 : 0)
+      state.productEngagement.reaction = nextReaction
+      state.productEngagement.likeCount = Math.max(0, state.productEngagement.likeCount + likeDelta)
+      state.productEngagement.dislikeCount = Math.max(0, state.productEngagement.dislikeCount + dislikeDelta)
+      console.info('[product] optimistic reaction', { productId: ctx.product.id, action, previousReaction: prevReaction, nextReaction })
+      syncProductEngagementUi()
+
+      const seq = ++reactionMutationSeq
+      if (reactionDebounceTimer) clearTimeout(reactionDebounceTimer)
+      reactionDebounceTimer = setTimeout(() => {
+        reactionDebounceTimer = null
+        void flushReactionUpdate(ctx, seq, previous)
+      }, REACTION_DEBOUNCE_MS)
+      return
+    }
+
+    if (saveButton) {
+      const previous = { ...state.productEngagement }
+      const seq = ++saveMutationSeq
+      const nextSaved = !state.productEngagement.saved
+      state.productEngagement.saved = nextSaved
+      state.productEngagement.saveCount = Math.max(0, state.productEngagement.saveCount + (nextSaved ? 1 : -1))
+      console.info('[product] optimistic save', { productId: ctx.product.id, saved: nextSaved, seq })
+      syncProductEngagementUi()
+      try {
         const result = await setProductEngagement(ctx.product.id, { saved: nextSaved, updateSaved: true })
+        if (seq !== saveMutationSeq) {
+          console.info('[product] ignored stale server result', { productId: ctx.product.id, action: 'save', seq, latestSeq: saveMutationSeq })
+          return
+        }
         state.productEngagement = { ...state.productEngagement, ...result, productId: ctx.product.id, loading: false, error: '' }
+        console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'save', saved: state.productEngagement.saved, saveCount: state.productEngagement.saveCount })
+        syncProductEngagementUi()
+      } catch (error) {
+        if (seq !== saveMutationSeq) return
+        state.productEngagement = previous
+        syncProductEngagementUi()
+        ctx.showActionMessage('Could not update engagement')
+        console.warn('[product] engagement update failed', { action: 'save', code: error?.code, message: error?.message, details: error?.details })
       }
-      console.info('[product] engagement server result', {
-        productId: ctx.product.id,
-        reaction: state.productEngagement.reaction,
-        saved: state.productEngagement.saved,
-        likeCount: state.productEngagement.likeCount,
-        dislikeCount: state.productEngagement.dislikeCount,
-        saveCount: state.productEngagement.saveCount
-      })
-      syncProductEngagementUi()
-    } catch (error) {
-      state.productEngagement = previous
-      syncProductEngagementUi()
-      ctx.showActionMessage('Could not update engagement')
-      console.warn('[product] engagement update failed', { code: error?.code, message: error?.message, details: error?.details })
     }
   })
 }
@@ -708,7 +740,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <p class="dashboard-rating-review-label">Purchased User Reviews</p>
                 <p class="dashboard-rating-review-count">${ratingCount ? `${ratingCount} reviews` : 'No ratings yet'}</p>
               </section>
-              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" data-product-like-bar style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" data-product-dislike-bar style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
+              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" data-product-sentiment-meter aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" data-product-like-bar style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" data-product-dislike-bar style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
 
             </article>
 
