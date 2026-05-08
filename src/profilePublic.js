@@ -32,6 +32,8 @@ const profileRoot = document.querySelector('[data-public-profile-root]')
 const BADGE_CONFIG = {
   moderator: { label: 'Moderator', fileName: 'moderatorBadge.png', className: 'public-role-badge-icon' },
   founder: { label: 'Founder', fileName: 'founderBadge.png', className: 'public-role-badge-icon' },
+  beta: { label: 'Beta Tester', fileName: 'betaBadge.png', className: 'public-role-badge-icon' },
+  pro: { label: 'Melogic Pro', fileName: 'proBadge.png', className: 'public-role-badge-icon' },
   verified: { label: 'Verified', fileName: 'verifiedBadge.png', className: 'public-verified-badge-icon' }
 }
 
@@ -311,7 +313,7 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   const featuredSection = renderFeaturedSection(profile, displayName)
   const roles = getProfileRoles(profile)
   const hasVerified = roles.includes('verified')
-  const profileBadgeKeys = ['founder', 'moderator'].filter((key) => roles.includes(key))
+  const profileBadgeKeys = ['founder', 'moderator', 'beta', 'pro'].filter((key) => roles.includes(key))
 
   const isSignedIn = Boolean(currentUser?.uid)
   const isSelfPreview = Boolean(previewMode && currentUser?.uid === uid)
