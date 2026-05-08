@@ -78,10 +78,12 @@ function formatReleaseDate(value) {
 }
 
 function buildMediaItems(product) {
+  const galleryItems = (product.galleryURLs || []).map((url, index) => ({ type: 'image', url, label: `${product.title} gallery ${index + 1}`, source: 'gallery' }))
   const leadImage = product.coverURL || product.thumbnailURL || ''
+  const leadItem = leadImage ? [{ type: 'image', url: leadImage, label: `${product.title} cover`, source: product.coverURL ? 'cover' : 'thumbnail' }] : []
   const media = [
-    ...(leadImage ? [{ type: 'image', url: leadImage, label: `${product.title} cover`, source: product.coverURL ? 'cover' : 'thumbnail' }] : []),
-    ...(product.galleryURLs || []).map((url, index) => ({ type: 'image', url, label: `${product.title} gallery ${index + 1}`, source: 'gallery' })),
+    ...galleryItems,
+    ...leadItem,
     ...(product.previewVideoURLs || []).map((url, index) => ({ type: 'video', url, label: `${product.title} video ${index + 1}`, source: 'previewVideo' }))
   ]
 
@@ -120,29 +122,53 @@ function renderMainMedia() {
 
   mainMediaRoot.innerHTML = selected.type === 'video'
     ? `
-      <div class="dashboard-main-media-fit-frame" data-dashboard-main-media-fit-frame>
-        <video
-          class="dashboard-main-media-fit-item"
-          data-dashboard-main-media-item
-          src="${escapeHtml(selected.url)}"
-          controls
-          preload="metadata"
-          aria-label="${escapeHtml(selected.label)}"
-        ></video>
+      <div class="dashboard-main-media-viewport" data-dashboard-main-media-viewport>
+        <div class="dashboard-main-media-fit-frame" data-dashboard-main-media-fit-frame>
+          <video
+            class="dashboard-main-media-fit-item"
+            data-dashboard-main-media-item
+            src="${escapeHtml(selected.url)}"
+            controls
+            preload="metadata"
+            aria-label="${escapeHtml(selected.label)}"
+          ></video>
+        </div>
       </div>
     `
     : `
-      <div class="dashboard-main-media-fit-frame" data-dashboard-main-media-fit-frame>
-        <img
-          class="dashboard-main-media-fit-item"
-          data-dashboard-main-media-item
-          src="${escapeHtml(selected.url)}"
-          alt="${escapeHtml(selected.label)}"
-          loading="eager"
-        />
+      <div class="dashboard-main-media-viewport" data-dashboard-main-media-viewport>
+        <div class="dashboard-main-media-fit-frame" data-dashboard-main-media-fit-frame>
+          <img
+            class="dashboard-main-media-fit-item"
+            data-dashboard-main-media-item
+            src="${escapeHtml(selected.url)}"
+            alt="${escapeHtml(selected.label)}"
+            loading="eager"
+          />
+        </div>
       </div>
     `
 
+  window.requestAnimationFrame(() => {
+    const viewport = mainMediaRoot.querySelector('[data-dashboard-main-media-viewport]')
+    const frame = mainMediaRoot.querySelector('[data-dashboard-main-media-fit-frame]')
+    const item = mainMediaRoot.querySelector('[data-dashboard-main-media-item]')
+    console.info('[product] main media layout debug', {
+      source: selected.source || 'unknown',
+      url: selected.url,
+      rootRect: mainMediaRoot.getBoundingClientRect?.(),
+      viewportRect: viewport?.getBoundingClientRect?.(),
+      frameRect: frame?.getBoundingClientRect?.(),
+      itemRect: item?.getBoundingClientRect?.(),
+      objectFit: item ? window.getComputedStyle(item).objectFit : '',
+      width: item ? window.getComputedStyle(item).width : '',
+      height: item ? window.getComputedStyle(item).height : '',
+      maxWidth: item ? window.getComputedStyle(item).maxWidth : '',
+      maxHeight: item ? window.getComputedStyle(item).maxHeight : '',
+      naturalWidth: item instanceof HTMLImageElement ? item.naturalWidth : null,
+      naturalHeight: item instanceof HTMLImageElement ? item.naturalHeight : null
+    })
+  })
 
 
   bindInteractiveRatingControl()
