@@ -5,7 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
 import { userOwnsProduct } from './data/entitlementService'
-import { getProductReactionSummary, getUserProductEngagementState, setProductReaction, setProductSaved } from './data/productEngagementService'
+import { getProductEngagementState, setProductEngagement } from './data/productEngagementService'
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
@@ -21,9 +21,7 @@ const state = {
   selectedMediaIndex: 0,
   currentUser: null,
   isDraftPreview: false,
-  interaction: { reaction: null, saved: false },
-  engagementCounts: { likeCount: 0, dislikeCount: 0, saveCount: 0 },
-  engagementProductId: '',
+  productEngagement: { productId: '', reaction: null, saved: false, likeCount: 0, dislikeCount: 0, saveCount: 0, loading: false, error: '' },
   reviews: [],
   fileBrowserProductId: '',
   fileBrowserPath: '',
@@ -118,14 +116,7 @@ function renderMainMedia() {
 
 
 
-  const ratingSlider = app.querySelector('[data-rating-slider]')
-  const ratingFill = app.querySelector('[data-rating-fill]')
-  const ratingValue = app.querySelector('[data-rating-value]')
-  ratingSlider?.addEventListener('input', () => {
-    const val = Number(ratingSlider.value || 0)
-    if (ratingFill) ratingFill.style.width = `${Math.max(0, Math.min(100, (val / 5) * 100))}%`
-    if (ratingValue) ratingValue.textContent = `${val % 1 ? val.toFixed(1) : val.toFixed(0)} / 5`
-  })
+  bindInteractiveRatingControl()
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     const index = Number(button.getAttribute('data-media-index'))
     button.classList.toggle('is-active', index === state.selectedMediaIndex)
@@ -452,6 +443,150 @@ function bindAudioPreviewControls() {
   app.querySelectorAll('[data-audio-range]').forEach((range) => range.addEventListener('input', () => { const index = Number(range.getAttribute('data-audio-index') || -1); const audio = app.querySelector(`audio[data-dashboard-audio="${index}"]`); if (!(audio instanceof HTMLAudioElement) || !Number.isFinite(audio.duration) || !audio.duration) return; audio.currentTime = (Number(range.value || 0) / 1000) * audio.duration; syncAudioUi(audio, index) }))
 }
 
+
+let productEngagementBound = false
+let activeProductEngagementContext = null
+let reactionMutationSeq = 0
+let saveMutationSeq = 0
+let reactionDebounceTimer = null
+const REACTION_DEBOUNCE_MS = 160
+
+function syncProductEngagementUi() {
+  const engagement = state.productEngagement || {}
+  const likeCount = Math.max(0, Number(engagement.likeCount || 0))
+  const dislikeCount = Math.max(0, Number(engagement.dislikeCount || 0))
+  const saveCount = Math.max(0, Number(engagement.saveCount || 0))
+  const reaction = engagement.reaction === 'like' || engagement.reaction === 'dislike' ? engagement.reaction : null
+  const saved = Boolean(engagement.saved)
+  const total = likeCount + dislikeCount
+  const ratio = getLikeRatio(likeCount, dislikeCount)
+
+  const likeBtn = app.querySelector('[data-product-reaction="like"]')
+  const dislikeBtn = app.querySelector('[data-product-reaction="dislike"]')
+  const saveBtn = app.querySelector('[data-product-save]')
+  likeBtn?.classList.toggle('is-active', reaction === 'like')
+  dislikeBtn?.classList.toggle('is-active', reaction === 'dislike')
+  saveBtn?.classList.toggle('is-active', saved)
+  likeBtn?.setAttribute('aria-pressed', String(reaction === 'like'))
+  dislikeBtn?.setAttribute('aria-pressed', String(reaction === 'dislike'))
+  saveBtn?.setAttribute('aria-pressed', String(saved))
+
+  app.querySelectorAll('[data-product-like-count]').forEach((el) => { el.textContent = String(likeCount) })
+  app.querySelectorAll('[data-product-dislike-count]').forEach((el) => { el.textContent = String(dislikeCount) })
+  app.querySelectorAll('[data-product-save-count]').forEach((el) => { el.textContent = String(saveCount) })
+  app.querySelectorAll('[data-product-like-bar]').forEach((el) => { el.style.width = `${ratio.likePercent}%` })
+  app.querySelectorAll('[data-product-dislike-bar]').forEach((el) => { el.style.width = `${ratio.dislikePercent}%` })
+  app.querySelectorAll('[data-product-sentiment-meter]').forEach((el) => { el.classList.toggle('is-empty', total === 0) })
+}
+
+function bindProductEngagementHandlers(context) {
+  activeProductEngagementContext = context
+  if (productEngagementBound) return
+  productEngagementBound = true
+
+  const flushReactionUpdate = async (ctx, seq, previous) => {
+    const latestReaction = state.productEngagement.reaction
+    console.info('[product] engagement reaction write scheduled', { productId: ctx.product.id, reaction: latestReaction, seq })
+    try {
+      const result = await setProductEngagement(ctx.product.id, { reaction: latestReaction, updateReaction: true, updateSaved: false })
+      if (seq !== reactionMutationSeq) {
+        console.info('[product] ignored stale server result', { productId: ctx.product.id, action: 'reaction', seq, latestSeq: reactionMutationSeq })
+        return
+      }
+      state.productEngagement = {
+        ...state.productEngagement,
+        productId: ctx.product.id,
+        reaction: result?.reaction === 'like' || result?.reaction === 'dislike' ? result.reaction : null,
+        likeCount: Math.max(0, Number(result?.likeCount ?? state.productEngagement.likeCount ?? 0)),
+        dislikeCount: Math.max(0, Number(result?.dislikeCount ?? state.productEngagement.dislikeCount ?? 0)),
+        saved: state.productEngagement.saved,
+        saveCount: state.productEngagement.saveCount,
+        loading: false,
+        error: ''
+      }
+      console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'reaction', reaction: state.productEngagement.reaction, likeCount: state.productEngagement.likeCount, dislikeCount: state.productEngagement.dislikeCount })
+      syncProductEngagementUi()
+    } catch (error) {
+      if (seq !== reactionMutationSeq) return
+      state.productEngagement = previous
+      syncProductEngagementUi()
+      ctx.showActionMessage('Could not update engagement')
+      console.warn('[product] engagement update failed', { action: 'reaction', code: error?.code, message: error?.message, details: error?.details })
+    }
+  }
+
+  app.addEventListener('click', async (event) => {
+    const ctx = activeProductEngagementContext
+    if (!ctx) return
+    const reactionButton = event.target.closest('[data-product-reaction]')
+    const saveButton = event.target.closest('[data-product-save]')
+    if (!reactionButton && !saveButton) return
+    if (ctx.product?.id !== state.productEngagement.productId || state.isDraftPreview) {
+      console.warn('[product] engagement click ignored', { contextProductId: ctx.product?.id || '', stateProductId: state.productEngagement.productId || '', isDraftPreview: state.isDraftPreview })
+      return
+    }
+    if (!ctx.requireAuth()) return
+
+    if (reactionButton) {
+      const previous = { ...state.productEngagement }
+      const action = String(reactionButton.getAttribute('data-product-reaction') || '')
+      const prevReaction = state.productEngagement.reaction
+      const nextReaction = prevReaction === action ? null : action
+      const likeDelta = (nextReaction === 'like' ? 1 : 0) - (prevReaction === 'like' ? 1 : 0)
+      const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (prevReaction === 'dislike' ? 1 : 0)
+      state.productEngagement.reaction = nextReaction
+      state.productEngagement.likeCount = Math.max(0, state.productEngagement.likeCount + likeDelta)
+      state.productEngagement.dislikeCount = Math.max(0, state.productEngagement.dislikeCount + dislikeDelta)
+      console.info('[product] optimistic reaction', { productId: ctx.product.id, action, previousReaction: prevReaction, nextReaction })
+      syncProductEngagementUi()
+
+      const seq = ++reactionMutationSeq
+      if (reactionDebounceTimer) clearTimeout(reactionDebounceTimer)
+      reactionDebounceTimer = setTimeout(() => {
+        reactionDebounceTimer = null
+        void flushReactionUpdate(ctx, seq, previous)
+      }, REACTION_DEBOUNCE_MS)
+      return
+    }
+
+    if (saveButton) {
+      const previous = { ...state.productEngagement }
+      const seq = ++saveMutationSeq
+      const nextSaved = !state.productEngagement.saved
+      state.productEngagement.saved = nextSaved
+      state.productEngagement.saveCount = Math.max(0, state.productEngagement.saveCount + (nextSaved ? 1 : -1))
+      console.info('[product] optimistic save', { productId: ctx.product.id, saved: nextSaved, seq })
+      syncProductEngagementUi()
+      try {
+        const result = await setProductEngagement(ctx.product.id, { saved: nextSaved, updateSaved: true, updateReaction: false })
+        if (seq !== saveMutationSeq) {
+          console.info('[product] ignored stale server result', { productId: ctx.product.id, action: 'save', seq, latestSeq: saveMutationSeq })
+          return
+        }
+        state.productEngagement = {
+        ...state.productEngagement,
+        productId: ctx.product.id,
+        reaction: result?.reaction === 'like' || result?.reaction === 'dislike' ? result.reaction : null,
+        likeCount: Math.max(0, Number(result?.likeCount ?? state.productEngagement.likeCount ?? 0)),
+        dislikeCount: Math.max(0, Number(result?.dislikeCount ?? state.productEngagement.dislikeCount ?? 0)),
+        saved: state.productEngagement.saved,
+        saveCount: state.productEngagement.saveCount,
+        loading: false,
+        error: ''
+      }
+        console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'save', saved: state.productEngagement.saved, saveCount: state.productEngagement.saveCount })
+        syncProductEngagementUi()
+      } catch (error) {
+        if (seq !== saveMutationSeq) return
+        state.productEngagement = previous
+        syncProductEngagementUi()
+        ctx.showActionMessage('Could not update engagement')
+        console.warn('[product] engagement update failed', { action: 'save', code: error?.code, message: error?.message, details: error?.details })
+      }
+    }
+  })
+}
+
 function renderProduct(product, recommendations = [], ownerPreview = false, productFiles = [], ownsProduct = false) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
@@ -460,21 +595,25 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const listingThumbnailURL = product.thumbnailURL || product.coverURL || ''
   const typeLabel = product.productType || 'Product'
   const creatorHref = product.artistId ? publicProfileRoute({ uid: product.artistId }) : ROUTES.profilePublic
-  if (state.engagementProductId !== product.id) {
-    state.engagementCounts = {
+  if (state.productEngagement.productId !== product.id) {
+    state.productEngagement = {
+      productId: product.id,
+      reaction: null,
+      saved: false,
       likeCount: getProductLikeCount(product),
       dislikeCount: getProductDislikeCount(product),
-      saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0)
+      saveCount: Number(product.counts?.saves ?? product.saveCount ?? 0),
+      loading: false,
+      error: ''
     }
-    state.engagementProductId = product.id
   }
   if (state.fileBrowserProductId !== product.id) {
     state.fileBrowserProductId = product.id
     state.fileBrowserPath = ''
     state.fileBrowserMessage = ''
   }
-  const likeCount = state.engagementCounts.likeCount
-  const dislikeCount = state.engagementCounts.dislikeCount
+  const likeCount = state.productEngagement.likeCount
+  const dislikeCount = state.productEngagement.dislikeCount
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
   const handleRaw = product.artistUsername || product.creatorUsername || product.username || product.artistHandle || product.creator?.username || product.artist?.username || ''
   const artistHandle = String(handleRaw || '').trim() ? `@${String(handleRaw).replace(/^@+/, '')}` : ''
@@ -560,7 +699,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>License / Usage</h2><p>${product.licensePath ? 'License included.' : 'License details were not uploaded yet.'}</p></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Creator Notes</h2><p>${escapeHtml(product.shortDescription || 'Creator notes will appear here when provided.')}</p></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Tags</h2><div class="dashboard-tag-row">${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}</div></article>
-                    <article class="dashboard-section-card dashboard-metadata-card"><h2>Stats</h2><p>${Math.max(0, likeCount)} likes · ${Math.max(0, dislikeCount)} dislikes · Saves ${state.engagementCounts.saveCount} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p></article>
+                    <article class="dashboard-section-card dashboard-metadata-card"><h2>Stats</h2><p>${Math.max(0, likeCount)} likes · ${Math.max(0, dislikeCount)} dislikes · Saves ${state.productEngagement.saveCount} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p></article>
                   </div>
                 </aside>
               </div>
@@ -579,7 +718,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   <div><h2>Reviews</h2><p class="dashboard-mini-note">${product.averageRating ? `${Number(product.averageRating).toFixed(1)} average · ${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews` : 'No ratings yet'}</p></div>
                   <span class="dashboard-review-count-badge">${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews</span>
                 </div>
-                ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><div class="dashboard-rating-stars-wrap">${renderRatingStars(0).replace('style="width:0%"','data-rating-fill style="width:0%"')}</div><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><div class="dashboard-review-submit-row"><button class="button button-accent" type="submit">Submit review</button></div></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
+                ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><button type="button" class="dashboard-rating-stars-wrap dashboard-rating-interactive" data-rating-interactive aria-label="Set rating out of 5 stars"><span class="dashboard-rating-stars" aria-hidden="true"><span class="dashboard-rating-stars-empty">★★★★★</span><span class="dashboard-rating-stars-fill" data-rating-fill style="width:0%">★★★★★</span></span></button><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider is-visually-hidden" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><div class="dashboard-review-submit-row"><button class="button button-accent" type="submit">Submit review</button></div></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
                 <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-review-header"><div class="dashboard-review-author">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div class="dashboard-review-author-meta"><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Review options" class="dashboard-review-menu-button" data-toggle-review-menu="${escapeHtml(review.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReviewMenuId === review.id ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${review.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-review-menu-action="${escapeHtml(review.id)}:${review.uid === state.currentUser?.uid ? 'delete' : 'report'}">${review.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p><div class="dashboard-review-actions"><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'like' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:like"><span class="icon">${iconSvg('thumbsUp')}</span> <em>${Math.max(0, Number(review.likeCount || 0))}</em></button><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'dislike' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:dislike"><span class="icon">${iconSvg('thumbsDown')}</span> <em>${Math.max(0, Number(review.dislikeCount || 0))}</em></button><button type="button" class="dashboard-review-action" data-toggle-replies="${escapeHtml(review.id)}"><span class="icon">${iconSvg('messageCircleReply')}</span> <em>${Number(review.replyCount || 0)}</em></button></div>${state.reviewActionErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.reviewActionErrors[review.id])}</p>` : ''}${state.openReplyComposerFor === review.id ? `<form class="dashboard-review-reply-composer" data-review-reply-form="${escapeHtml(review.id)}"><textarea class="dashboard-review-reply-textarea" maxlength="1200" placeholder="Write a reply...">${escapeHtml(state.replyDrafts[review.id] || '')}</textarea><div class="dashboard-review-reply-submit-row"><button type="submit" class="button button-muted">Post reply</button></div></form>` : ''}${state.replyLoadErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.replyLoadErrors[review.id])}</p>` : ''}<div class="dashboard-review-replies">${(state.reviewReplies[review.id] || []).map((reply) => `<article class="dashboard-review-reply-card"><div class="dashboard-review-reply-header"><div class="dashboard-review-reply-author">${reply.avatarURL ? `<img class="dashboard-review-reply-avatar" src="${escapeHtml(reply.avatarURL)}" alt="${escapeHtml(reply.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(reply.displayName || 'User'))}</span>`}<div><p class="dashboard-review-reply-name">${escapeHtml(reply.displayName || 'User')}</p><p class="dashboard-review-reply-time">${escapeHtml(formatReviewTime(reply.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Reply options" class="dashboard-review-menu-button" data-toggle-reply-menu="${escapeHtml(review.id)}:${escapeHtml(reply.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReplyMenuKey === `${review.id}:${reply.id}` ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${reply.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-reply-menu-action="${escapeHtml(review.id)}:${escapeHtml(reply.id)}:${reply.uid === state.currentUser?.uid ? 'delete' : 'report'}">${reply.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-reply-body">${escapeHtml(reply.body || '')}</p></article>`).join('')}</div></article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}</div>
               </article>
 
@@ -614,7 +753,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <p class="dashboard-rating-review-label">Purchased User Reviews</p>
                 <p class="dashboard-rating-review-count">${ratingCount ? `${ratingCount} reviews` : 'No ratings yet'}</p>
               </section>
-              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
+              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" data-product-sentiment-meter aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" data-product-like-bar style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" data-product-dislike-bar style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span><span data-product-like-count>${likeCount}</span> likes</span><span><span data-product-dislike-count>${dislikeCount}</span> dislikes</span></div></div>` })()}
 
             </article>
 
@@ -625,10 +764,10 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Add to Cart</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
                 <div class="dashboard-action-icons-row">
-                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'like' ? 'is-active' : ''}" data-product-like aria-label="Like this product" title="Like" aria-pressed="${state.interaction.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em>${Math.max(0, likeCount)}</em></button>
-                  <button type="button" class="dashboard-icon-action ${state.interaction.reaction === 'dislike' ? 'is-active' : ''}" data-product-dislike aria-label="Dislike this product" title="Dislike" aria-pressed="${state.interaction.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsDown')}</span><em>${Math.max(0, dislikeCount)}</em></button>
+                  <button type="button" class="dashboard-icon-action ${state.productEngagement.reaction === 'like' ? 'is-active' : ''}" data-product-reaction="like" aria-label="Like this product" title="Like" aria-pressed="${state.productEngagement.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em data-product-like-count>${Math.max(0, likeCount)}</em></button>
+                  <button type="button" class="dashboard-icon-action ${state.productEngagement.reaction === 'dislike' ? 'is-active' : ''}" data-product-reaction="dislike" aria-label="Dislike this product" title="Dislike" aria-pressed="${state.productEngagement.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsDown')}</span><em data-product-dislike-count>${Math.max(0, dislikeCount)}</em></button>
                   <button type="button" class="dashboard-icon-action" data-product-share aria-label="Share this product" title="Share"><span class="icon">${iconSvg('share2')}</span></button>
-                  <button type="button" class="dashboard-icon-action ${state.interaction.saved ? 'is-active' : ''}" data-product-save aria-label="Save this product" title="Save" aria-pressed="${state.interaction.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('bookmark')}</span><em>${state.engagementCounts.saveCount}</em></button>
+                  <button type="button" class="dashboard-icon-action ${state.productEngagement.saved ? 'is-active' : ''}" data-product-save aria-label="Save this product" title="Save" aria-pressed="${state.productEngagement.saved}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('bookmark')}</span><em data-product-save-count>${state.productEngagement.saveCount}</em></button>
                 </div>
                 
               </div>
@@ -659,7 +798,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
             <article class="panel-surface dashboard-side-card">
               <h3>Community activity</h3>
               <p>${Math.max(0, likeCount)} likes · ${Math.max(0, dislikeCount)} dislikes</p>
-              <p>Saves: ${state.engagementCounts.saveCount}</p>
+              <p>Saves: ${state.productEngagement.saveCount}</p>
               <p>Downloads: ${product.downloadCount ?? product.counts?.downloads ?? 0}</p>
               <p>Comments: ${product.commentCount ?? product.counts?.comments ?? 0}</p>
             </article>
@@ -700,93 +839,8 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     return false
   }
 
-  app.querySelector('[data-product-like]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const prev = state.interaction.reaction
-    const previousCounts = { ...state.engagementCounts }
-    const next = prev === 'like' ? null : 'like'
-    const likeDelta = (next === 'like' ? 1 : 0) - (prev === 'like' ? 1 : 0)
-    const dislikeDelta = (next === 'dislike' ? 1 : 0) - (prev === 'dislike' ? 1 : 0)
-    state.interaction.reaction = next
-    state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + likeDelta)
-    state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + dislikeDelta)
-    console.info('[product] reaction changed', { productId: product.id, previousReaction: prev, nextReaction: next, optimisticLikeCount: state.engagementCounts.likeCount, optimisticDislikeCount: state.engagementCounts.dislikeCount })
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try {
-      const result = await setProductReaction(product.id, next)
-      state.interaction.reaction = result?.reaction ?? next
-      const summary = await getProductReactionSummary(product.id)
-      state.engagementCounts.likeCount = Math.max(0, Number(summary.likeCount || 0))
-      state.engagementCounts.dislikeCount = Math.max(0, Number(summary.dislikeCount || 0))
-      console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    } catch (error) {
-      state.interaction.reaction = prev
-      state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', {
-        code: error?.code,
-        message: error?.message,
-        details: error?.details
-      })
-      showActionMessage('Could not update reaction')
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    }
-  })
-
-  app.querySelector('[data-product-dislike]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const prev = state.interaction.reaction
-    const previousCounts = { ...state.engagementCounts }
-    const next = prev === 'dislike' ? null : 'dislike'
-    const likeDelta = (next === 'like' ? 1 : 0) - (prev === 'like' ? 1 : 0)
-    const dislikeDelta = (next === 'dislike' ? 1 : 0) - (prev === 'dislike' ? 1 : 0)
-    state.interaction.reaction = next
-    state.engagementCounts.likeCount = Math.max(0, state.engagementCounts.likeCount + likeDelta)
-    state.engagementCounts.dislikeCount = Math.max(0, state.engagementCounts.dislikeCount + dislikeDelta)
-    console.info('[product] reaction changed', { productId: product.id, previousReaction: prev, nextReaction: next, optimisticLikeCount: state.engagementCounts.likeCount, optimisticDislikeCount: state.engagementCounts.dislikeCount })
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    try {
-      const result = await setProductReaction(product.id, next)
-      state.interaction.reaction = result?.reaction ?? next
-      const summary = await getProductReactionSummary(product.id)
-      state.engagementCounts.likeCount = Math.max(0, Number(summary.likeCount || 0))
-      state.engagementCounts.dislikeCount = Math.max(0, Number(summary.dislikeCount || 0))
-      console.info('[product] product reaction result', { productId: product.id, previousReaction: prev, requestedReaction: next, result })
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    } catch (error) {
-      state.interaction.reaction = prev
-      state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', {
-        code: error?.code,
-        message: error?.message,
-        details: error?.details
-      })
-      showActionMessage('Could not update reaction')
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    }
-  })
-
-  app.querySelector('[data-product-save]')?.addEventListener('click', async () => {
-    if (state.isDraftPreview || !requireAuth()) return
-    const previousSaved = state.interaction.saved
-    const previousCounts = { ...state.engagementCounts }
-    const next = !previousSaved
-    state.interaction.saved = next
-    state.engagementCounts.saveCount = Math.max(0, state.engagementCounts.saveCount + (next ? 1 : -1))
-    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    showActionMessage(next ? 'Saved' : 'Removed from saved')
-    try { await setProductSaved(product.id, next) } catch (error) {
-      state.interaction.saved = previousSaved
-      state.engagementCounts = previousCounts
-      console.warn('[product] engagement update failed', {
-        code: error?.code,
-        message: error?.message,
-        details: error?.details
-      })
-      showActionMessage('Could not update save state')
-      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
-    }
-  })
+  bindProductEngagementHandlers({ product, requireAuth, showActionMessage })
+  syncProductEngagementUi()
 
   app.querySelector('[data-product-share]')?.addEventListener('click', async () => {
     const shareData = { title: product.title, text: product.shortDescription || 'Check this product', url: window.location.href }
@@ -878,14 +932,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
 
 
-  const ratingSlider = app.querySelector('[data-rating-slider]')
-  const ratingFill = app.querySelector('[data-rating-fill]')
-  const ratingValue = app.querySelector('[data-rating-value]')
-  ratingSlider?.addEventListener('input', () => {
-    const val = Number(ratingSlider.value || 0)
-    if (ratingFill) ratingFill.style.width = `${Math.max(0, Math.min(100, (val / 5) * 100))}%`
-    if (ratingValue) ratingValue.textContent = `${val % 1 ? val.toFixed(1) : val.toFixed(0)} / 5`
-  })
+  bindInteractiveRatingControl()
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     button.addEventListener('click', () => {
       state.selectedMediaIndex = Number(button.getAttribute('data-media-index')) || 0
@@ -945,18 +992,32 @@ async function init() {
     const productFiles = await safe('files', [], () => listProductFiles(product.id))
     const ownsProduct = await safe('ownership', false, () => userOwnsProduct(state.currentUser?.uid || '', product.id))
     const reviews = await safe('reviews', [], () => listProductReviews(product.id, { limitCount: 20 }))
-    const reactionSummary = await safe('reaction-summary', { likeCount: getProductLikeCount(product), dislikeCount: getProductDislikeCount(product) }, () => getProductReactionSummary(product.id))
+    const engagementState = await safe('engagement-state', { reaction: null, saved: false, likeCount: getProductLikeCount(product), dislikeCount: getProductDislikeCount(product), saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0) }, () => getProductEngagementState(product.id, state.currentUser?.uid))
     const reviewReactions = await safe('review-reactions', {}, () => getReviewReactionStates(product.id, (reviews || []).map((item) => item.id), state.currentUser))
-    const engagement = await safe('engagement', { reaction: null, saved: false }, () => state.currentUser?.uid
-      ? getUserProductEngagementState(product.id, state.currentUser.uid)
-      : Promise.resolve({ reaction: null, saved: false }))
     state.reviews = reviews
     state.reviewReactions = reviewReactions
-    state.engagementCounts.likeCount = Math.max(0, Number(reactionSummary.likeCount || 0))
-    state.engagementCounts.dislikeCount = Math.max(0, Number(reactionSummary.dislikeCount || 0))
-    console.info('[product] reaction summary loaded', { productId: product.id, likeCount: state.engagementCounts.likeCount, dislikeCount: state.engagementCounts.dislikeCount })
-    state.interaction = engagement
+    state.productEngagement = {
+      ...state.productEngagement,
+      ...engagementState,
+      productId: product.id,
+      reaction: engagementState.reaction,
+      saved: engagementState.saved,
+      likeCount: Math.max(0, Number(engagementState.likeCount || 0)),
+      dislikeCount: Math.max(0, Number(engagementState.dislikeCount || 0)),
+      saveCount: Math.max(0, Number(engagementState.saveCount || 0)),
+      loading: false,
+      error: ''
+    }
+    console.info('[product] engagement state loaded', {
+      productId: product.id,
+      reaction: state.productEngagement.reaction,
+      saved: state.productEngagement.saved,
+      likeCount: state.productEngagement.likeCount,
+      dislikeCount: state.productEngagement.dislikeCount,
+      saveCount: state.productEngagement.saveCount
+    })
     renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
+    syncProductEngagementUi()
   } catch (error) {
     console.error('[product] failed to load product page', {
       message: error?.message,
