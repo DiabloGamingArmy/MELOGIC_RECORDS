@@ -1,0 +1,6 @@
+Product detail + marketplace visual polish notes
+
+- Marketplace listing/card media now consistently fills preview frames (cover + centered) for cover images/videos.
+- Product detail main viewer/gallery media keeps contain scaling so full images remain visible without cropping.
+- Product detail lower sections were compacted: reduced forced vertical stretch and tightened spacing around Recommended products and Reviews.
+- Review composer rating input now uses interactive stars (click + drag + keyboard), with hidden range value retained for submit compatibility.
