@@ -1,12 +1,14 @@
 import './styles/base.css'
 import './styles/profilePublic.css'
 import { collection, getDocs, limit, query, where } from 'firebase/firestore'
+import { getDownloadURL, ref } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { addToCart } from './data/cartService'
 import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
+import { storage } from './firebase/storage'
 import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath, productRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
@@ -25,6 +27,15 @@ const logoReadyPromise = initShellChrome()
 createCriticalAssetPreloader({ logoReadyPromise })
 
 const profileRoot = document.querySelector('[data-public-profile-root]')
+
+
+const BADGE_CONFIG = {
+  moderator: { label: 'Moderator', fileName: 'moderatorBadge.png', className: 'public-role-badge-icon' },
+  founder: { label: 'Founder', fileName: 'founderBadge.png', className: 'public-role-badge-icon' },
+  beta: { label: 'Beta Tester', fileName: 'betaBadge.png', className: 'public-role-badge-icon' },
+  pro: { label: 'Melogic Pro', fileName: 'proBadge.png', className: 'public-role-badge-icon' },
+  verified: { label: 'Verified', fileName: 'verifiedBadge.png', className: 'public-verified-badge-icon' }
+}
 
 const CATEGORY_CONFIG = [
   { key: 'products', label: 'Products', defaultCount: 0 },
@@ -49,7 +60,8 @@ const uiState = {
   previewMode: false,
   productsByUid: new Map(),
   parallaxBound: false,
-  marqueeTicker: null
+  marqueeTicker: null,
+  badgeUrls: {}
 }
 
 function escapeHtml(value) {
@@ -63,6 +75,42 @@ function escapeHtml(value) {
 
 function isReducedMotion() {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+
+function getProfileRoles(profile = {}) {
+  const values = [
+    ...(Array.isArray(profile.roles) ? profile.roles : []),
+    ...(Array.isArray(profile.publicRoles) ? profile.publicRoles : []),
+    ...(Array.isArray(profile.badges) ? profile.badges : []),
+    ...(Array.isArray(profile.publicBadges) ? profile.publicBadges : [])
+  ]
+
+  return Array.from(new Set(values.map((value) => String(value || '').toLowerCase().trim()).filter(Boolean)))
+}
+
+async function loadBadgeAssetUrls() {
+  if (!storage) return {}
+
+  const entries = await Promise.all(Object.entries(BADGE_CONFIG).map(async ([key, config]) => {
+    try {
+      const url = await getDownloadURL(ref(storage, `assets/badges/${config.fileName}`))
+      return [key, url]
+    } catch (error) {
+      console.warn('[profilePublic] badge asset failed to load', { key, fileName: config.fileName, code: error?.code, message: error?.message })
+      return [key, '']
+    }
+  }))
+
+  return Object.fromEntries(entries)
+}
+
+function badgeIconMarkup(key, extraClass = '') {
+  const config = BADGE_CONFIG[key]
+  const url = uiState.badgeUrls?.[key]
+  if (!config || !url) return ''
+  const classes = [config.className, extraClass].filter(Boolean).join(' ')
+  return `<img class="${escapeHtml(classes)}" src="${escapeHtml(url)}" alt="${escapeHtml(config.label)} badge" title="${escapeHtml(config.label)}" loading="lazy" />`
 }
 
 function getStats(profile = {}) {
@@ -115,6 +163,7 @@ function renderNotFound() {
   `
 }
 
+// TODO: Add verified badge in additional username surfaces once role hydration is included in those payloads.
 function productCardMarkup(product, displayName) {
   const title = product.title || 'Untitled product'
   const art = product.thumbnailURL || product.coverURL || ''
@@ -262,6 +311,9 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   const stats = getStats(profile)
   const isLongName = displayName.length > 16
   const featuredSection = renderFeaturedSection(profile, displayName)
+  const roles = getProfileRoles(profile)
+  const hasVerified = roles.includes('verified')
+  const profileBadgeKeys = ['founder', 'moderator', 'beta', 'pro'].filter((key) => roles.includes(key))
 
   const isSignedIn = Boolean(currentUser?.uid)
   const isSelfPreview = Boolean(previewMode && currentUser?.uid === uid)
@@ -289,9 +341,9 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
           ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" />` : '<div class="public-avatar public-avatar-fallback">MR</div>'}
           <div class="public-hero-copy ${isLongName ? 'is-marquee-name' : ''}">
             <div class="public-name-mask"><h1 class="public-name-track">${escapeHtml(displayName)}</h1></div>
-            <p class="public-handle">@${escapeHtml(username)}</p>
+            <p class="public-handle"><span>@${escapeHtml(username)}</span>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</p>
             <p class="public-role">${escapeHtml(roleLabel)}</p>
-            <p class="public-badge-placeholder">Tiny badge icons go here</p>
+            <div class="public-badge-row" aria-label="Profile badges">${profileBadgeKeys.map((key) => badgeIconMarkup(key)).join('') || '<span class="public-badge-empty">No badges yet</span>'}</div>
             <div class="public-actions">${actionsMarkup}</div>
           </div>
         </div>
@@ -394,6 +446,7 @@ async function initPublicProfile() {
   if (!profile) return renderNotFound()
 
   await loadPublicProductsForArtist(uid)
+  uiState.badgeUrls = await loadBadgeAssetUrls()
 
   uiState.profile = profile
   uiState.currentUser = currentUser
