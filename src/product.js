@@ -78,11 +78,11 @@ function formatReleaseDate(value) {
 }
 
 function buildMediaItems(product) {
-  const leadImage = [product.coverURL, product.thumbnailURL].find(Boolean) || ''
+  const leadImage = product.coverURL || product.thumbnailURL || ''
   const media = [
-    ...(leadImage ? [{ type: 'image', url: leadImage, label: `${product.title} cover` }] : []),
-    ...(product.galleryURLs || []).map((url, index) => ({ type: 'image', url, label: `${product.title} gallery ${index + 1}` })),
-    ...(product.previewVideoURLs || []).map((url, index) => ({ type: 'video', url, label: `${product.title} video ${index + 1}` }))
+    ...(leadImage ? [{ type: 'image', url: leadImage, label: `${product.title} cover`, source: product.coverURL ? 'cover' : 'thumbnail' }] : []),
+    ...(product.galleryURLs || []).map((url, index) => ({ type: 'image', url, label: `${product.title} gallery ${index + 1}`, source: 'gallery' })),
+    ...(product.previewVideoURLs || []).map((url, index) => ({ type: 'video', url, label: `${product.title} video ${index + 1}`, source: 'previewVideo' }))
   ]
 
   const seen = new Set()
@@ -109,6 +109,14 @@ function renderMainMedia() {
     `
     return
   }
+  console.info('[product] main media selected', {
+    selectedMediaIndex: state.selectedMediaIndex,
+    type: selected.type,
+    source: selected.source || 'unknown',
+    url: selected.url,
+    label: selected.label,
+    mediaItems: state.mediaItems
+  })
 
   mainMediaRoot.innerHTML = selected.type === 'video'
     ? `
