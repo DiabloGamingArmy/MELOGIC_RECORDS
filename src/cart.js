@@ -3,7 +3,8 @@ import './styles/cart.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
-import { getCartItems, removeFromCart, subscribeToCart } from './data/cartService'
+import { clearCart, getCartItems, removeFromCart, subscribeToCart } from './data/cartService'
+import { createCheckoutSession } from './data/checkoutService'
 import { ROUTES, authRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
@@ -27,6 +28,61 @@ function getSubtotal(items) {
   return items.reduce((sum, item) => sum + Number(item.priceCents || 0), 0)
 }
 
+function getCheckoutStatus() {
+  const params = new URLSearchParams(window.location.search)
+  return params.get('checkout')
+}
+
+function checkoutMessageHtml() {
+  const status = getCheckoutStatus()
+  if (status === 'success') {
+    return '<p class="cart-checkout-message cart-checkout-success">Payment complete. Your products are being added to your library.</p>'
+  }
+  if (status === 'cancelled') {
+    return '<p class="cart-checkout-message cart-checkout-cancelled">Checkout was cancelled. Your cart is still here.</p>'
+  }
+  return ''
+}
+
+function setSummaryError(message) {
+  const node = app.querySelector('[data-cart-checkout-message]')
+  if (!node) return
+  node.textContent = message || ''
+}
+
+async function handleCheckoutClick(checkoutButton) {
+  if (!activeUser) {
+    window.location.assign(authRoute({ redirect: ROUTES.cart }))
+    return
+  }
+
+  const cartItems = getCartItems()
+  const productIds = cartItems.map((item) => String(item.id || '')).filter(Boolean)
+  if (!productIds.length) {
+    setSummaryError('Your cart is empty.')
+    return
+  }
+
+  const defaultLabel = activeUser ? 'Checkout' : 'Sign in to Checkout'
+  checkoutButton.disabled = true
+  checkoutButton.textContent = 'Redirecting...'
+  setSummaryError('')
+
+  try {
+    const result = await createCheckoutSession(productIds)
+    if (!result?.url) {
+      throw new Error('Missing checkout URL from server response.')
+    }
+    window.location.assign(result.url)
+  } catch (error) {
+    const fallback = 'Could not start checkout. Please try again.'
+    const message = error?.message || fallback
+    setSummaryError(message)
+    checkoutButton.disabled = false
+    checkoutButton.textContent = defaultLabel
+  }
+}
+
 function renderCart(items = []) {
   const list = app.querySelector('[data-cart-items]')
   const summary = app.querySelector('[data-cart-summary]')
@@ -42,6 +98,8 @@ function renderCart(items = []) {
     `
     summary.innerHTML = `
       <h3>Order summary</h3>
+      ${checkoutMessageHtml()}
+      <p data-cart-checkout-message></p>
       <p>No items yet.</p>
       <a class="button button-muted" href="${ROUTES.products}">Continue Shopping</a>
     `
@@ -67,6 +125,8 @@ function renderCart(items = []) {
   const subtotal = getSubtotal(items)
   summary.innerHTML = `
     <h3>Order summary</h3>
+    ${checkoutMessageHtml()}
+    <p data-cart-checkout-message></p>
     <div class="cart-summary-line">
       <span>Items</span>
       <span>${items.length}</span>
@@ -86,13 +146,7 @@ function renderCart(items = []) {
   })
 
   const checkoutButton = summary.querySelector('[data-checkout-trigger]')
-  checkoutButton?.addEventListener('click', () => {
-    if (!activeUser) {
-      window.location.assign(authRoute({ redirect: ROUTES.cart }))
-      return
-    }
-    window.alert('Checkout is coming soon.')
-  })
+  checkoutButton?.addEventListener('click', () => handleCheckoutClick(checkoutButton))
 }
 
 app.innerHTML = `
@@ -116,6 +170,10 @@ app.innerHTML = `
 `
 
 initShellChrome()
+if (getCheckoutStatus() === 'success') {
+  clearCart()
+}
+
 waitForInitialAuthState().then((user) => {
   activeUser = user || null
   renderCart(getCartItems())
