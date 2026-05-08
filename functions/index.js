@@ -11,6 +11,8 @@ const { requestProductReview, processProductReviewJob } = require('./src/product
 const { setProductEngagement, setProductReaction, setProductSaved } = require('./src/products/productEngagement')
 const { provisionUserAccount } = require('./src/users/provisionUserAccount')
 const { verifyRecaptchaEnterprise } = require('./src/security/verifyRecaptchaEnterprise')
+const { createCheckoutSession } = require('./src/payments/createCheckoutSession')
+const { stripeWebhook } = require('./src/payments/stripeWebhook')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -25,3 +27,6 @@ exports.setProductReaction = setProductReaction
 exports.setProductSaved = setProductSaved
 
 exports.setProductEngagement = setProductEngagement
+
+exports.createCheckoutSession = createCheckoutSession
+exports.stripeWebhook = stripeWebhook

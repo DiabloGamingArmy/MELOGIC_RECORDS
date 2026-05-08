@@ -724,7 +724,8 @@ service cloud.firestore {
       allow read, write: if isOwner(uid);
 
       match /entitlements/{productId} {
-        allow read, write: if isOwner(uid);
+        allow read: if isOwner(uid);
+        allow create, update, delete: if false;
       }
 
       match /savedProducts/{productId} {
