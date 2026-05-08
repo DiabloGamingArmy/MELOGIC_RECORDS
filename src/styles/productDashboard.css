@@ -798,3 +798,30 @@
 .dashboard-full-width-divider{margin:.3rem 0;}
 .dashboard-lower-section-divider{margin:.2rem 0;}
 .dashboard-reviews-section{margin-top:.15rem;}
+
+.dashboard-main-media,
+[data-dashboard-main-media] {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  min-height: 340px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 15, 26, 0.9);
+}
+
+.dashboard-main-media > img,
+.dashboard-main-media > video,
+.dashboard-main-media [data-dashboard-main-media-item],
+[data-dashboard-main-media] > img,
+[data-dashboard-main-media] > video,
+[data-dashboard-main-media] [data-dashboard-main-media-item] {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  object-position: center center !important;
+  display: block !important;
+  flex: none !important;
+}

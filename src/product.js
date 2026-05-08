@@ -111,8 +111,8 @@ function renderMainMedia() {
   }
 
   mainMediaRoot.innerHTML = selected.type === 'video'
-    ? `<video src="${escapeHtml(selected.url)}" controls preload="metadata" aria-label="${escapeHtml(selected.label)}"></video>`
-    : `<img src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
+    ? `<video class="dashboard-main-media-fit" data-dashboard-main-media-item src="${escapeHtml(selected.url)}" controls preload="metadata" aria-label="${escapeHtml(selected.label)}"></video>`
+    : `<img class="dashboard-main-media-fit" data-dashboard-main-media-item src="${escapeHtml(selected.url)}" alt="${escapeHtml(selected.label)}" loading="eager" />`
 
 
 
