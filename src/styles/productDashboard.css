@@ -93,26 +93,25 @@
 .dashboard-lower-sidebar { grid-area: sidebar; display: grid; gap: 0.7rem; align-content: start; }
 
 .dashboard-main-media {
-  border-radius: 0.75rem;
-  overflow: hidden;
-  border: 1px solid rgba(132, 154, 198, 0.24);
-  min-height: 340px;
+  width: 100%;
   aspect-ratio: 16 / 10;
-  background: rgba(10, 15, 26, 0.9);
-  position: relative;
+  min-height: 340px;
+  max-height: none;
   display: grid;
   place-items: center;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(132, 154, 198, 0.24);
+  background: rgba(10, 15, 26, 0.9);
+  position: relative;
 }
 
 .dashboard-main-media img,
 .dashboard-main-media video {
   width: 100%;
   height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
+  object-fit: contain !important;
   object-position: center;
-  flex: 0 0 auto;
   display: block;
 }
 .dashboard-thumb{position:relative;overflow:hidden;aspect-ratio:16/10}
@@ -318,14 +317,16 @@
 }
 
 .dashboard-recommend-carousel .dashboard-recommend-card {
-  min-width: 240px;
-  flex: 0 0 240px;
+  min-width: 260px;
+  flex: 0 0 260px;
 }
 
 .dashboard-recommend-card {
   display: grid;
   gap: 0.5rem;
-  grid-template-columns: 110px 1fr;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 116px;
   border: 1px solid rgba(125, 146, 187, 0.24);
   border-radius: 0.75rem;
   padding: 0.45rem;
@@ -343,7 +344,7 @@
 .dashboard-recommend-thumb {
   border-radius: 0.55rem;
   overflow: hidden;
-  min-height: 64px;
+  min-height: 100%;
   background: rgba(17, 29, 47, 0.9);
 }
 
@@ -356,23 +357,37 @@
 
 .dashboard-recommend-fallback { height: 100%; }
 
+.dashboard-recommend-body {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  align-content: start;
+  gap: 0.2rem;
+}
+
 .dashboard-recommend-body h4 {
   margin: 0;
   font-size: 0.84rem;
-  line-height: 1.35;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .dashboard-recommend-creator {
   margin: 0.22rem 0 0;
   color: #adc0e8;
   font-size: 0.76rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .dashboard-recommend-meta {
-  margin-top: 0.34rem;
+  margin-top: 0;
+  align-self: end;
   display: flex;
-  justify-content: space-between;
-  gap: 0.35rem;
+  justify-content: flex-start;
+  gap: 0.65rem;
+  flex-wrap: wrap;
   color: #cbdbfa;
   font-size: 0.74rem;
 }
@@ -586,8 +601,10 @@
 .dashboard-icon-action[disabled]{opacity:.55;cursor:not-allowed}
 .dashboard-content-parent{display:grid;grid-template-columns:1fr;grid-template-rows:auto auto;gap:.65rem;min-height:0}
 .dashboard-about-section,.dashboard-reviews-section,.dashboard-recommendations-section{width:100%}
-.dashboard-details-split{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);gap:.65rem;align-items:start;min-height:0}
-.dashboard-file-tree-viewer,.dashboard-metadata-panel{min-height:0;height:auto}
+.dashboard-details-split{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);gap:.65rem;align-items:stretch;min-height:0}
+.dashboard-file-tree-viewer,.dashboard-metadata-panel{min-height:0}
+.dashboard-file-tree-viewer{height:100%;min-height:100%;display:grid}
+.dashboard-file-tree-viewer .product-file-browser{height:100%;min-height:100%}
 .dashboard-metadata-stack{display:grid;grid-template-columns:1fr;gap:.65rem;height:100%}
 .dashboard-metadata-card{align-content:start}
 .dashboard-reviews-section .dashboard-review-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));max-height:520px;overflow-y:auto}
@@ -605,8 +622,8 @@
 
 .product-file-browser {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  min-height: 360px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-height: 100%;
   height: 100%;
   gap: 0.5rem;
 }
@@ -639,7 +656,7 @@
   padding: 0.65rem 0;
 }
 .product-file-browser-divider { border-top: 1px solid rgba(110, 135, 185, 0.28); }
-.product-file-browser-body { display:grid; grid-template-rows:auto 1fr; min-height:0; }
+.product-file-browser-body { display:grid; grid-template-rows:auto minmax(0, 1fr); min-height:0; }
 .product-file-list-wrap { min-height:0; overflow-y:auto; }
 .product-file-footer { margin:0; color:#9fb2d8; font-size:.82rem; }
 .product-file-breadcrumbs button {
@@ -666,6 +683,7 @@
 .product-file-list {
   display: grid;
   width: 100%;
+  min-height: 0;
   border: 1px solid rgba(110, 135, 185, 0.28);
   border-radius: 0.65rem;
   overflow: hidden;

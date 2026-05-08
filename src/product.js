@@ -399,6 +399,60 @@ function renderProductFileBrowser(product, productFiles, ownsProduct) {
   return `<div class="product-file-browser" data-file-browser-root><div class="product-file-browser-header"><div><h2>File Viewer</h2><p>Product package manifest. File contents stay locked.</p></div><div class="product-file-browser-summary">${rootSummary.fileCount} files · ${rootSummary.folderCount} folders · ${formatBytes(rootSummary.sizeBytes)}</div></div><div class="product-file-browser-divider"></div><div class="product-file-browser-body"><div class="product-file-breadcrumbs" aria-label="File browser breadcrumbs">${crumbs}</div><div class="product-file-list-wrap"><div class="product-file-message ${state.fileBrowserMessage ? 'is-visible' : ''}" data-file-browser-message>${escapeHtml(state.fileBrowserMessage)}</div><div class="product-file-list" role="tree" aria-label="Product package files">${rows}</div></div></div><p class="product-file-footer">Viewing ${escapeHtml(currentPath || 'Root')} · ${currentSummary.fileCount} files · ${currentSummary.folderCount} folders</p></div>`
 }
 
+
+function bindInteractiveRatingControl() {
+  const root = app.querySelector('[data-rating-stars-control]')
+  if (!root) return
+  if (root.dataset.ratingBound === 'true') return
+  root.dataset.ratingBound = 'true'
+
+  const input = app.querySelector('[data-rating-slider]')
+  const fill = app.querySelector('[data-rating-fill]')
+  const valueLabel = app.querySelector('[data-rating-value]')
+
+  const setRating = (rating) => {
+    const safeRating = Math.max(0, Math.min(5, Math.round(Number(rating || 0) * 2) / 2))
+    if (input) input.value = String(safeRating)
+    if (fill) fill.style.width = `${(safeRating / 5) * 100}%`
+    if (valueLabel) valueLabel.textContent = `${safeRating % 1 ? safeRating.toFixed(1) : safeRating.toFixed(0)} / 5`
+  }
+
+  const ratingFromPointer = (event) => {
+    const rect = root.getBoundingClientRect()
+    if (!rect.width) return 0
+    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
+    return (x / rect.width) * 5
+  }
+
+  let dragging = false
+
+  root.addEventListener('pointerdown', (event) => {
+    dragging = true
+    root.setPointerCapture?.(event.pointerId)
+    setRating(ratingFromPointer(event))
+  })
+
+  root.addEventListener('pointermove', (event) => {
+    if (!dragging) return
+    setRating(ratingFromPointer(event))
+  })
+
+  root.addEventListener('pointerup', (event) => {
+    dragging = false
+    root.releasePointerCapture?.(event.pointerId)
+  })
+
+  root.addEventListener('pointercancel', () => {
+    dragging = false
+  })
+
+  root.addEventListener('click', (event) => {
+    setRating(ratingFromPointer(event))
+  })
+
+  setRating(input?.value || 0)
+}
+
 function bindProductFileBrowser(product, productFiles, ownsProduct) {
   const root = app.querySelector('[data-file-browser-root]')
   if (!root) return
