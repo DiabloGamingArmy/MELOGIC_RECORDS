@@ -504,11 +504,11 @@
 .dashboard-review-list { display: grid; gap: 0.55rem; }
 .dashboard-review-card { border: 1px solid rgba(126, 160, 219, 0.24); border-radius: 0.7rem; padding: 0.6rem; background: rgba(12, 18, 31, 0.75); }
 .dashboard-review-rating { color: #f7d58b; font-size: 0.86rem; }
-.dashboard-sentiment-meter { margin-top: 0.5rem; display: grid; gap: 0.3rem; }
+.dashboard-sentiment-meter { margin-top: 0.5rem; display: grid; gap: 0.3rem; opacity:1; transition: opacity 140ms ease, filter 140ms ease; }
 .dashboard-sentiment-meter-track { display: flex; height: 8px; border-radius: 999px; overflow: hidden; background: rgba(90,108,136,.25); }
 .dashboard-sentiment-like { background: linear-gradient(90deg, rgba(76,217,137,.65), rgba(53,166,106,.75)); }
 .dashboard-sentiment-dislike { background: linear-gradient(90deg, rgba(255,93,116,.6), rgba(207,68,92,.75)); }
-.dashboard-sentiment-meter.is-empty .dashboard-sentiment-like, .dashboard-sentiment-meter.is-empty .dashboard-sentiment-dislike { opacity:.35; }
+.dashboard-sentiment-meter.is-empty { opacity:.6; }
 .dashboard-sentiment-labels { display:flex; justify-content:space-between; font-size:.75rem; color:#b5c6e6; }
 .dashboard-audio-card { display:grid; grid-template-columns:auto 1fr; gap:.65rem; align-items:center; padding:.55rem; border:1px solid rgba(126,160,219,.24); border-radius:.7rem; background:rgba(11,18,33,.72); }
 .dashboard-audio-play { border:1px solid rgba(126,160,219,.35); border-radius:.55rem; background:rgba(24,38,63,.9); color:#d8e9ff; padding:.4rem .65rem; }
