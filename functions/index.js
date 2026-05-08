@@ -8,7 +8,7 @@ const { createOrGetDm } = require('./src/messages/createOrGetDm')
 const { createGroupThread } = require('./src/messages/createGroupThread')
 const { repairMyInboxThreads, syncInboxMirrorsOnThreadWrite } = require('./src/messages/inboxMirrors')
 const { requestProductReview, processProductReviewJob } = require('./src/products/requestProductReview')
-const { setProductReaction, setProductSaved } = require('./src/products/productEngagement')
+const { setProductEngagement, setProductReaction, setProductSaved } = require('./src/products/productEngagement')
 const { provisionUserAccount } = require('./src/users/provisionUserAccount')
 const { verifyRecaptchaEnterprise } = require('./src/security/verifyRecaptchaEnterprise')
 
@@ -23,3 +23,5 @@ exports.verifyRecaptchaEnterprise = verifyRecaptchaEnterprise
 
 exports.setProductReaction = setProductReaction
 exports.setProductSaved = setProductSaved
+
+exports.setProductEngagement = setProductEngagement
