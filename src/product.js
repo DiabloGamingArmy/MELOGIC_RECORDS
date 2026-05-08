@@ -495,19 +495,22 @@ function bindProductEngagementHandlers(context) {
     const latestReaction = state.productEngagement.reaction
     console.info('[product] engagement reaction write scheduled', { productId: ctx.product.id, reaction: latestReaction, seq })
     try {
-      const result = await setProductEngagement(ctx.product.id, { reaction: latestReaction, updateReaction: true })
+      const result = await setProductEngagement(ctx.product.id, { reaction: latestReaction, updateReaction: true, updateSaved: false })
       if (seq !== reactionMutationSeq) {
         console.info('[product] ignored stale server result', { productId: ctx.product.id, action: 'reaction', seq, latestSeq: reactionMutationSeq })
         return
       }
       state.productEngagement = {
-          ...state.productEngagement,
-          saved: Boolean(result?.saved),
-          saveCount: Math.max(0, Number(result?.saveCount ?? state.productEngagement.saveCount ?? 0)),
-          productId: ctx.product.id,
-          loading: false,
-          error: ''
-        }
+        ...state.productEngagement,
+        productId: ctx.product.id,
+        reaction: result?.reaction === 'like' || result?.reaction === 'dislike' ? result.reaction : null,
+        likeCount: Math.max(0, Number(result?.likeCount ?? state.productEngagement.likeCount ?? 0)),
+        dislikeCount: Math.max(0, Number(result?.dislikeCount ?? state.productEngagement.dislikeCount ?? 0)),
+        saved: state.productEngagement.saved,
+        saveCount: state.productEngagement.saveCount,
+        loading: false,
+        error: ''
+      }
       console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'reaction', reaction: state.productEngagement.reaction, likeCount: state.productEngagement.likeCount, dislikeCount: state.productEngagement.dislikeCount })
       syncProductEngagementUi()
     } catch (error) {
@@ -568,13 +571,16 @@ function bindProductEngagementHandlers(context) {
           return
         }
         state.productEngagement = {
-          ...state.productEngagement,
-          saved: Boolean(result?.saved),
-          saveCount: Math.max(0, Number(result?.saveCount ?? state.productEngagement.saveCount ?? 0)),
-          productId: ctx.product.id,
-          loading: false,
-          error: ''
-        }
+        ...state.productEngagement,
+        productId: ctx.product.id,
+        reaction: result?.reaction === 'like' || result?.reaction === 'dislike' ? result.reaction : null,
+        likeCount: Math.max(0, Number(result?.likeCount ?? state.productEngagement.likeCount ?? 0)),
+        dislikeCount: Math.max(0, Number(result?.dislikeCount ?? state.productEngagement.dislikeCount ?? 0)),
+        saved: state.productEngagement.saved,
+        saveCount: state.productEngagement.saveCount,
+        loading: false,
+        error: ''
+      }
         console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'save', saved: state.productEngagement.saved, saveCount: state.productEngagement.saveCount })
         syncProductEngagementUi()
       } catch (error) {
