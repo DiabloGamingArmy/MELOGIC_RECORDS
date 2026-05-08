@@ -500,7 +500,14 @@ function bindProductEngagementHandlers(context) {
         console.info('[product] ignored stale server result', { productId: ctx.product.id, action: 'reaction', seq, latestSeq: reactionMutationSeq })
         return
       }
-      state.productEngagement = { ...state.productEngagement, ...result, productId: ctx.product.id, loading: false, error: '' }
+      state.productEngagement = {
+          ...state.productEngagement,
+          saved: Boolean(result?.saved),
+          saveCount: Math.max(0, Number(result?.saveCount ?? state.productEngagement.saveCount ?? 0)),
+          productId: ctx.product.id,
+          loading: false,
+          error: ''
+        }
       console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'reaction', reaction: state.productEngagement.reaction, likeCount: state.productEngagement.likeCount, dislikeCount: state.productEngagement.dislikeCount })
       syncProductEngagementUi()
     } catch (error) {
@@ -555,12 +562,19 @@ function bindProductEngagementHandlers(context) {
       console.info('[product] optimistic save', { productId: ctx.product.id, saved: nextSaved, seq })
       syncProductEngagementUi()
       try {
-        const result = await setProductEngagement(ctx.product.id, { saved: nextSaved, updateSaved: true })
+        const result = await setProductEngagement(ctx.product.id, { saved: nextSaved, updateSaved: true, updateReaction: false })
         if (seq !== saveMutationSeq) {
           console.info('[product] ignored stale server result', { productId: ctx.product.id, action: 'save', seq, latestSeq: saveMutationSeq })
           return
         }
-        state.productEngagement = { ...state.productEngagement, ...result, productId: ctx.product.id, loading: false, error: '' }
+        state.productEngagement = {
+          ...state.productEngagement,
+          saved: Boolean(result?.saved),
+          saveCount: Math.max(0, Number(result?.saveCount ?? state.productEngagement.saveCount ?? 0)),
+          productId: ctx.product.id,
+          loading: false,
+          error: ''
+        }
         console.info('[product] applied latest server result', { productId: ctx.product.id, action: 'save', saved: state.productEngagement.saved, saveCount: state.productEngagement.saveCount })
         syncProductEngagementUi()
       } catch (error) {
@@ -740,7 +754,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <p class="dashboard-rating-review-label">Purchased User Reviews</p>
                 <p class="dashboard-rating-review-count">${ratingCount ? `${ratingCount} reviews` : 'No ratings yet'}</p>
               </section>
-              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" data-product-sentiment-meter aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" data-product-like-bar style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" data-product-dislike-bar style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span>${likeCount} likes</span><span>${dislikeCount} dislikes</span></div></div>` })()}
+              ${(() => { const ratio = getLikeRatio(likeCount, dislikeCount); return `<div class="dashboard-sentiment-meter ${ratio.total ? "" : "is-empty"}" data-product-sentiment-meter aria-label="Like dislike ratio"><div class="dashboard-sentiment-meter-track"><span class="dashboard-sentiment-like" data-product-like-bar style="width:${ratio.likePercent}%"></span><span class="dashboard-sentiment-dislike" data-product-dislike-bar style="width:${ratio.dislikePercent}%"></span></div><div class="dashboard-sentiment-labels"><span><span data-product-like-count>${likeCount}</span> likes</span><span><span data-product-dislike-count>${dislikeCount}</span> dislikes</span></div></div>` })()}
 
             </article>
 
