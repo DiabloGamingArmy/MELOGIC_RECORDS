@@ -108,3 +108,26 @@ body.is-studio-editor main{padding-top:0}
 .studio-logic-display-row--meta{margin-top:4px;font-size:12px;color:#b7c7e8}
 .studio-playhead{position:absolute;left:40px;top:0;bottom:0;width:2px;background:#fff3}
 .studio-effects-panel{background:#151925;border-top:1px solid #2d3550;padding:10px;display:grid;gap:10px}.studio-effects-panel input{background:#0d1220;border:1px solid #2f3a56;color:#fff;border-radius:8px;padding:8px}.studio-effects-panel .chip{display:inline-block;padding:4px 8px;border:1px solid #44517a;border-radius:999px;margin:0 4px 4px 0;font-size:12px}.studio-effects-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}.studio-effects-grid article{background:#1f2534;border:1px solid #36415f;border-radius:10px;padding:8px;display:grid;gap:8px}
+
+
+body.is-studio-editor #app{min-height:100vh;height:100vh;overflow:hidden}
+.studio-editor-page{grid-template-rows:42px 64px minmax(0,1fr) 32px;margin:0;padding:0;--studio-track-height:58px}
+.studio-editor-page.is-fullscreen{height:100vh;margin-top:0}
+.studio-editor-page.has-site-nav{height:calc(100vh - var(--nav-offset,64px));margin-top:var(--nav-offset,64px)}
+.studio-editor-nav-panel{z-index:250;width:220px;padding:12px;border-radius:12px;border:1px solid rgba(130,150,210,.38);background:rgba(17,21,33,.98);box-shadow:0 18px 48px rgba(0,0,0,.42);display:grid;gap:8px}
+.studio-editor-nav-panel[hidden]{display:none !important}
+.studio-effects-panel[hidden]{display:none !important}
+.studio-editor-workspace,.studio-arrangement,.studio-arrangement-grid{min-height:0;overflow:hidden}
+.studio-arrangement-grid{overflow:auto}
+.studio-editor-footer{height:32px;min-height:32px;display:flex;align-items:center}
+.studio-track-row{grid-template-columns:6px 18px minmax(72px,1fr) repeat(4,26px) 64px 30px 28px;gap:6px;height:var(--studio-track-height);min-height:var(--studio-track-height)}
+.studio-track-stack{position:relative}
+.studio-track-control{width:24px;height:24px;display:inline-grid;place-items:center;border-radius:7px;border:1px solid rgba(140,156,205,.25);background:rgba(255,255,255,.035);color:#dfe6fb}
+.studio-track-control svg{width:14px;height:14px;stroke-width:2.35}
+.studio-track-volume{width:64px}
+.studio-pan-knob{width:24px;height:24px;border-radius:50%;position:relative;border:1px solid rgba(140,156,205,.35);background:radial-gradient(circle at center,rgba(255,255,255,.12),rgba(255,255,255,.03))}
+.studio-pan-knob::after{content:'';position:absolute;width:2px;height:8px;top:4px;left:50%;transform:translateX(-50%) rotate(25deg);background:rgba(225,235,255,.8);border-radius:999px}
+.studio-automation-lane{height:44px;border:1px solid rgba(140,156,205,.22);border-radius:8px;margin:-2px 0 8px 0;padding:10px;font-size:12px;color:#bcc8e8;background:rgba(255,255,255,.02)}
+.studio-track-menu{position:absolute;right:6px;top:calc(100% + 4px);z-index:70;display:grid;gap:4px;background:#141a28;border:1px solid rgba(140,156,205,.3);border-radius:8px;padding:6px;min-width:160px}
+.studio-track-menu button{text-align:left;background:transparent;border:0;color:#e6ecff;padding:5px 8px;border-radius:6px}
+.studio-track-menu button:disabled{opacity:.45}
