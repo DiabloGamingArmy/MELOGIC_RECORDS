@@ -17,7 +17,8 @@ export const ROUTES = {
   faq: '/faq',
   support: '/support',
   studio: '/studio',
-  studioProject: '/studio/project'
+  studioProject: '/studio/project',
+  distribution: '/distribution'
 }
 
 const LEGACY_ROUTE_MAP = {
@@ -39,7 +40,8 @@ const LEGACY_ROUTE_MAP = {
   '/faq.html': ROUTES.faq,
   '/support.html': ROUTES.support,
   '/studio.html': ROUTES.studio,
-  '/studio-project.html': ROUTES.studioProject
+  '/studio-project.html': ROUTES.studioProject,
+  '/distribution.html': ROUTES.distribution
 }
 
 function asRelativePath(path = '') {

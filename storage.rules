@@ -45,6 +45,24 @@ service firebase.storage {
         && request.resource.contentType.matches('application/pdf');
     }
 
+    function isStudioProjectOwner(projectId) {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/studioProjects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+
+    function isStudioProjectCollaborator(projectId) {
+      return signedIn()
+        && request.auth.uid in firestore.get(/databases/(default)/documents/studioProjects/$(projectId)).data.collaboratorIds;
+    }
+
+    function canReadStudioProject(projectId) {
+      return isStudioProjectOwner(projectId) || isStudioProjectCollaborator(projectId);
+    }
+
+    function canWriteStudioProject(projectId) {
+      return isStudioProjectOwner(projectId);
+    }
+
     // Public brand/site assets (logos, hero videos, etc.) used across unauthenticated pages.
     match /assets/{allPaths=**} {
       allow read: if true;
@@ -103,6 +121,48 @@ service firebase.storage {
     }
 
     match /products/{productId}/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+
+    match /studioProjects/{projectId}/audio/{fileName} {
+      allow read: if canReadStudioProject(projectId);
+      allow write: if canWriteStudioProject(projectId)
+        && isAudioUpload(250 * 1024 * 1024);
+    }
+
+    match /studioProjects/{projectId}/images/{fileName} {
+      allow read: if canReadStudioProject(projectId);
+      allow write: if canWriteStudioProject(projectId)
+        && isImageUpload(25 * 1024 * 1024);
+    }
+
+    match /studioProjects/{projectId}/stems/{fileName} {
+      allow read: if canReadStudioProject(projectId);
+      allow write: if canWriteStudioProject(projectId)
+        && isAudioUpload(500 * 1024 * 1024);
+    }
+
+    match /studioProjects/{projectId}/exports/{fileName} {
+      allow read: if canReadStudioProject(projectId);
+      allow write: if canWriteStudioProject(projectId)
+        && request.resource != null
+        && request.resource.size <= 1024 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('audio/.*')
+          || request.resource.contentType.matches('application/zip')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
+    }
+
+    match /studioProjects/{projectId}/attachments/{fileName} {
+      allow read: if canReadStudioProject(projectId);
+      allow write: if canWriteStudioProject(projectId)
+        && request.resource != null
+        && request.resource.size <= 512 * 1024 * 1024;
+    }
+
+    match /studioProjects/{projectId}/{allPaths=**} {
       allow read, write: if false;
     }
 
