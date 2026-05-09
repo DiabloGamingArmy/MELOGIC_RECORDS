@@ -50,3 +50,19 @@
 @media (max-width:900px){.studio-page{height:auto;min-height:calc(100vh - 64px);overflow:auto}.studio-shell{height:auto;grid-template-columns:1fr;padding:20px 14px}.studio-brand-underline{width:100%}.studio-sidebar-nav{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.studio-sidebar-link{font-size:22px}.studio-top-actions{justify-content:flex-start;flex-wrap:wrap}.studio-action-button{min-width:220px}.studio-main{gap:10px}.studio-explore-row{display:flex;overflow:auto;padding-bottom:4px}.studio-explore-card{min-width:300px}.studio-projects-panel{height:320px;min-height:320px;border-radius:26px}}
 
 .studio-projects-empty{border:1px dashed rgba(140,146,170,.28);border-radius:14px;padding:22px 18px;color:#aeb5c8;background:rgba(255,255,255,.01);max-width:520px}.studio-projects-empty-title{margin:0 0 8px;color:#edf1ff;font-size:16px}.studio-projects-empty p{margin:0;font-size:14px;line-height:1.45}
+
+.studio-recents-empty{margin:0 0 8px;color:#a9b1c6;font-size:15px}
+.studio-demos-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.studio-demo-tile{background:rgba(255,255,255,.03);border:1px solid rgba(140,146,170,.24);border-radius:12px;padding:16px;min-height:80px}
+.studio-action-button,.studio-sidebar-link,.studio-explore-card,.studio-toolbar-icon,.studio-folder-button,.studio-demo-tile{transition:transform .2s ease,box-shadow .2s ease,background .2s ease,border-color .2s ease,color .2s ease}
+.studio-action-button:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(55,18,94,.35)}
+.studio-sidebar-link:hover{color:#eef2ff;text-shadow:0 0 10px rgba(95,128,255,.95)}
+.studio-explore-card:hover,.studio-demo-tile:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(6,10,20,.45)}
+.studio-toolbar-icon:hover,.studio-folder-button:hover{transform:translateY(-1px)}
+.studio-action-new{background:linear-gradient(135deg,rgba(63,218,151,.9),rgba(119,72,255,.9));box-shadow:0 0 0 1px rgba(255,255,255,.08) inset}
+.studio-action-collab{background:linear-gradient(135deg,rgba(63,218,151,.85),rgba(255,150,72,.9));box-shadow:0 0 0 1px rgba(255,255,255,.08) inset}
+.studio-modal{animation:studioFade .2s ease}
+.studio-modal-panel{animation:studioRise .2s ease}
+@keyframes studioFade{from{opacity:0}to{opacity:1}}
+@keyframes studioRise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){*{transition-duration:.01ms !important;animation-duration:.01ms !important}}

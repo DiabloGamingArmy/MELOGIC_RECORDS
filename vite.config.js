@@ -14,6 +14,8 @@ export default defineConfig({
         support: resolve(__dirname, 'support.html'),
         studio: resolve(__dirname, 'studio.html'),
         studioProject: resolve(__dirname, 'studio-project.html'),
+        studioDemos: resolve(__dirname, 'studio-demos.html'),
+        studioTutorials: resolve(__dirname, 'studio-tutorials.html'),
         distribution: resolve(__dirname, 'distribution.html'),
         cart: resolve(__dirname, 'cart.html'),
         productDashboard: resolve(__dirname, 'product-dashboard.html'),
