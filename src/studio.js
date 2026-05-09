@@ -36,7 +36,7 @@ function render() {
     <section class="studio-shell">
       <aside class="studio-sidebar">
         <div class="studio-brand">
-          <span class="studio-brand-mark">${icon('music')}</span>
+          <span class="studio-brand-mark">${icon('audio')}</span>
           <span class="studio-brand-text">STUDIO</span>
         </div>
         <div class="studio-brand-underline"></div>
@@ -55,7 +55,7 @@ function render() {
         </div>
 
         <div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div>
-        <div class="studio-explore-row">${exploreItems.map((item) => `<article class="studio-explore-card"><div class="studio-cover-placeholder"></div><div><h3>${item.title}</h3><p>${item.artist}</p><p>${item.year}</p></div></article>`).join('')}</div>
+        <div class="studio-explore-row">${exploreItems.map((item) => `<article class="studio-explore-card"><div class="studio-cover-placeholder"></div><div class="studio-explore-copy"><h3 class="studio-explore-title">${item.title}</h3><p>${item.artist}</p><p>${item.year}</p></div></article>`).join('')}</div>
 
         <div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>
         <article class="studio-recent-card">
