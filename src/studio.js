@@ -36,7 +36,7 @@ function render() {
     <section class="studio-shell">
       <aside class="studio-sidebar">
         <div class="studio-brand">
-          <span class="studio-brand-mark">${icon('audio')}</span>
+          <span class="studio-brand-mark"><img src="/src/assets/brand/melogic-logo-mark-white-transparent.png" alt="" loading="eager" decoding="async" /></span>
           <span class="studio-brand-text">STUDIO</span>
         </div>
         <div class="studio-brand-underline"></div>
@@ -74,7 +74,7 @@ function render() {
             <button class="studio-toolbar-icon" type="button" aria-label="Filters">${icon('sliders')}</button>
             <button class="studio-toolbar-icon" type="button" aria-label="More">${icon('more')}</button>
           </header>
-          <div class="studio-projects-body"></div>
+          <div class="studio-projects-body"><div class="studio-projects-empty"><p class="studio-projects-empty-title">No project files yet.</p><p>Create a project, folder, or import sounds to start building.</p></div></div>
         </section>
       </section>
     </section>
