@@ -131,6 +131,16 @@
         "source": "/distribution.html",
         "destination": "/distribution",
         "type": 301
+      },
+      {
+        "source": "/studio-demos.html",
+        "destination": "/studio/demos",
+        "type": 301
+      },
+      {
+        "source": "/studio-tutorials.html",
+        "destination": "/studio/tutorials",
+        "type": 301
       }
     ],
     "rewrites": [
@@ -213,6 +223,14 @@
       {
         "source": "/studio",
         "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/demos",
+        "destination": "/studio-demos.html"
+      },
+      {
+        "source": "/studio/tutorials",
+        "destination": "/studio-tutorials.html"
       },
       {
         "source": "/studio/**",
