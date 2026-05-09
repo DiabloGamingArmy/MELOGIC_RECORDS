@@ -75,7 +75,7 @@
 body.is-studio-editor{overflow:hidden}
 body.is-studio-editor #app{min-height:100vh;height:100vh;overflow:hidden}
 body.is-studio-editor main{padding-top:0}
-.studio-editor-page{--studio-ruler-height:32px;--studio-track-height:88px;--studio-track-gap:0px;--studio-track-stride:var(--studio-track-height);height:100vh;min-height:0;width:100vw;overflow:hidden;background:#11131a;color:#dfe6fb;display:grid;grid-template-rows:42px 64px minmax(0,1fr) 32px;margin:0;padding:0}
+ .studio-editor-page{position:relative;--studio-ruler-height:32px;--studio-track-height:88px;--studio-track-gap:0px;--studio-track-stride:var(--studio-track-height);height:100vh;min-height:0;width:100vw;overflow:hidden;background:#11131a;color:#dfe6fb;display:grid;grid-template-rows:42px 64px minmax(0,1fr) 32px;margin:0;padding:0}
 .studio-editor-page.has-site-nav{height:calc(100vh - var(--nav-offset,64px));margin-top:var(--nav-offset,64px)}
 .studio-editor-page.is-fullscreen{height:100vh;margin-top:0}
 .studio-editor-state{place-items:center;text-align:center}
@@ -205,7 +205,7 @@ body.is-studio-editor main{padding-top:0}
 .studio-editor-workspace{position:relative;z-index:1}
 .studio-timeline-ruler{z-index:2}
 [data-tooltip]{position:relative}
-[data-tooltip]:hover::after{z-index:9999;pointer-events:none}
+[data-tooltip]:hover::after{content:attr(data-tooltip);position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);white-space:nowrap;padding:5px 8px;border-radius:7px;background:#111521;border:1px solid rgba(140,156,205,.35);color:#fff;font-size:12px;z-index:9999;pointer-events:none}
 .studio-tool-button[data-tooltip]::after,.studio-track-control[data-tooltip]::after,.studio-track-more[data-tooltip]::after,.studio-track-pan[data-tooltip]::after,.studio-display-icon-button[data-tooltip]::after{z-index:9999}
 .studio-playhead{left:var(--playhead-x,40px);top:0;bottom:0;width:2px;background:rgba(220,232,255,.35);z-index:6;pointer-events:none}
 .studio-playhead::before{top:2px;left:50%;transform:translateX(-50%);border-left:7px solid transparent;border-right:7px solid transparent;border-top:10px solid rgba(220,232,255,.92)}
@@ -219,3 +219,6 @@ body.is-studio-editor main{padding-top:0}
 .studio-bottom-panel-body{padding:18px;overflow:auto}
 @keyframes studioBottomPanelIn{from{transform:translateY(16px);opacity:0}to{transform:translateY(0);opacity:1}}
 .studio-tool-group--utilities .studio-tool-button svg{width:17px;height:17px;stroke-width:2}
+
+.studio-bottom-panel-close{width:28px;height:28px;border-radius:8px;border:1px solid rgba(140,156,205,.32);background:rgba(255,255,255,.04);color:#e8ecff;display:grid;place-items:center}
+.studio-bottom-panel-close svg{width:16px;height:16px;stroke-width:2}
