@@ -12,6 +12,8 @@ export default defineConfig({
         forms: resolve(__dirname, 'forms.html'),
         faq: resolve(__dirname, 'faq.html'),
         support: resolve(__dirname, 'support.html'),
+        studio: resolve(__dirname, 'studio.html'),
+        studioProject: resolve(__dirname, 'studio-project.html'),
         cart: resolve(__dirname, 'cart.html'),
         productDashboard: resolve(__dirname, 'product-dashboard.html'),
         auth: resolve(__dirname, 'auth.html'),
