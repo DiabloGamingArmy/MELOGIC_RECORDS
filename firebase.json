@@ -116,6 +116,31 @@
         "source": "/support.html",
         "destination": "/support",
         "type": 301
+      },
+      {
+        "source": "/studio.html",
+        "destination": "/studio",
+        "type": 301
+      },
+      {
+        "source": "/studio-project.html",
+        "destination": "/studio",
+        "type": 301
+      },
+      {
+        "source": "/distribution.html",
+        "destination": "/distribution",
+        "type": 301
+      },
+      {
+        "source": "/studio-demos.html",
+        "destination": "/studio/demos",
+        "type": 301
+      },
+      {
+        "source": "/studio-tutorials.html",
+        "destination": "/studio/tutorials",
+        "type": 301
       }
     ],
     "rewrites": [
@@ -194,6 +219,26 @@
       {
         "source": "/support",
         "destination": "/support.html"
+      },
+      {
+        "source": "/studio",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/demos",
+        "destination": "/studio-demos.html"
+      },
+      {
+        "source": "/studio/tutorials",
+        "destination": "/studio-tutorials.html"
+      },
+      {
+        "source": "/studio/**",
+        "destination": "/studio-project.html"
+      },
+      {
+        "source": "/distribution",
+        "destination": "/distribution.html"
       }
     ]
   },
