@@ -4,7 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { ROUTES, authRoute, studioProjectRoute } from './utils/routes'
-import { createStudioProject, listMyStudioProjects, listSharedStudioProjects, sortProjectsByActivity, touchStudioProject } from './data/studioProjectService'
+import { createStudioProject, listAccessibleStudioProjects, listIndexedStudioProjects, sortProjectsByActivity, touchStudioProject } from './data/studioProjectService'
 import { studioSidebar } from './components/studioShell'
 import { initStudioBrandLogo } from './components/studioBrandLogo'
 
@@ -19,7 +19,7 @@ const exploreItems = [
 ]
 
 const app = document.querySelector('#app')
-const state = { user: null, creating: false, createError: '', projects: [], sharedProjects: [], recentProjects: [], loadingProjects: false, projectsError: '' }
+const state = { user: null, creating: false, createError: '', projects: [], recentProjects: [], loadingProjects: false, projectsError: '' }
 const fmtDate = (p) => (p.lastOpenedAt?.toDate?.() || p.updatedAt?.toDate?.() || p.createdAt?.toDate?.() || new Date()).toLocaleDateString()
 const icon = (name) => {
   const c = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
@@ -45,14 +45,26 @@ function renderShell() {
 async function loadStudioProjects() {
   if (!state.user?.uid) return
   state.loadingProjects = true; renderShell()
-  try {
-    const [owned, shared] = await Promise.all([listMyStudioProjects(state.user.uid), listSharedStudioProjects(state.user.uid)])
-    state.sharedProjects = shared
-    const merged = new Map(); [...owned, ...shared].forEach((p) => p?.id && merged.set(p.id, p))
-    state.projects = [...merged.values()].sort(sortProjectsByActivity)
-    state.recentProjects = state.projects.slice(0, 6)
+  const [indexedResult, accessibleResult] = await Promise.allSettled([
+    listIndexedStudioProjects(state.user.uid),
+    listAccessibleStudioProjects(state.user.uid)
+  ])
+  const projects = []
+  if (indexedResult.status === 'fulfilled') projects.push(...indexedResult.value)
+  else console.error('[studio] indexed project query failed', indexedResult.reason)
+  if (accessibleResult.status === 'fulfilled') projects.push(...accessibleResult.value)
+  else console.error('[studio] accessible project query failed', accessibleResult.reason)
+  const merged = new Map(); projects.forEach((project) => project?.id && merged.set(project.id, project))
+  const deduped = [...merged.values()].sort(sortProjectsByActivity)
+  if (deduped.length || indexedResult.status === 'fulfilled' || accessibleResult.status === 'fulfilled') {
+    state.projects = deduped
+    state.recentProjects = deduped.slice(0, 6)
     state.projectsError = ''
-  } catch (error) { console.error('[studio]', error); state.projectsError = 'Could not load Studio projects.' }
+  } else {
+    state.projects = []
+    state.recentProjects = []
+    state.projectsError = 'Could not load Studio projects.'
+  }
   state.loadingProjects = false; renderShell()
 }
 
