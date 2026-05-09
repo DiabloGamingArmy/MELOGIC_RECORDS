@@ -720,6 +720,66 @@ service cloud.firestore {
 
 
 
+
+    function isStudioOwnerResource() {
+      return signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    function isStudioCollaboratorResource() {
+      return signedIn()
+        && resource.data.collaboratorIds is list
+        && request.auth.uid in resource.data.collaboratorIds;
+    }
+
+    function studioTypeValid(value) {
+      return value in ['song', 'beat', 'vocal', 'podcast', 'blank'];
+    }
+
+    function studioProjectCreateIsValid() {
+      return signedIn()
+        && request.resource.data.keys().hasOnly([
+          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version'
+        ])
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.collaboratorIds is list
+        && request.resource.data.collaboratorIds.size() == 0
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.version == 1
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.bpm is number
+        && request.resource.data.bpm >= 40
+        && request.resource.data.bpm <= 240
+        && request.resource.data.key is string
+        && request.resource.data.key.size() >= 1
+        && request.resource.data.key.size() <= 40
+        && request.resource.data.type is string
+        && studioTypeValid(request.resource.data.type);
+    }
+
+    function studioProjectUpdateIsValid() {
+      return signedIn()
+        && request.resource.data.keys().hasOnly([
+          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version'
+        ])
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.collaboratorIds == resource.data.collaboratorIds
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.version == 1
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.bpm is number
+        && request.resource.data.bpm >= 40
+        && request.resource.data.bpm <= 240
+        && request.resource.data.key is string
+        && request.resource.data.key.size() >= 1
+        && request.resource.data.key.size() <= 40
+        && request.resource.data.type is string
+        && studioTypeValid(request.resource.data.type);
+    }
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
@@ -1123,6 +1183,15 @@ service cloud.firestore {
             && request.auth.uid == uid;
         }
       }
+    }
+
+
+    match /studioProjects/{projectId} {
+      allow get: if isStudioOwnerResource() || isStudioCollaboratorResource();
+      allow list: if isStudioOwnerResource() || isStudioCollaboratorResource();
+      allow create: if studioProjectCreateIsValid();
+      allow update: if isStudioOwnerResource() && studioProjectUpdateIsValid();
+      allow delete: if isStudioOwnerResource();
     }
 
     match /productModeration/{moderationId} {
