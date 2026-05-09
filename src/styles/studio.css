@@ -148,3 +148,27 @@ body.is-studio-editor #app{min-height:100vh;height:100vh;overflow:hidden}
 .studio-automation-lane button{height:24px;border-radius:6px;border:1px solid rgba(140,156,205,.22);background:rgba(255,255,255,.035);color:#dfe6fb;font-size:11px}
 .studio-track-menu{position:absolute;right:6px;top:calc(100% + 4px);z-index:80;display:grid;gap:4px;min-width:170px;padding:6px;border-radius:9px;border:1px solid rgba(140,156,205,.3);background:#141a28;box-shadow:0 18px 40px rgba(0,0,0,.38)}
 .studio-track-menu[hidden]{display:none !important}
+
+.studio-editor-page{--studio-ruler-height:32px;--studio-track-height:68px;--studio-track-gap:6px;--studio-track-stride:calc(var(--studio-track-height) + var(--studio-track-gap))}
+.studio-track-panel{width:280px;min-width:280px;overflow-x:hidden;overflow-y:auto;padding:8px;padding-top:var(--studio-ruler-height);background:#171a22}
+.studio-track-card{position:relative;min-height:var(--studio-track-height);height:var(--studio-track-height);display:grid;grid-template-columns:6px 42px minmax(0,1fr);align-items:center;gap:8px;padding:8px 8px 8px 0;margin:0 0 var(--studio-track-gap);border-radius:10px;background:#22242c;border:1px solid transparent;color:#eef3ff;cursor:pointer;overflow:visible;max-width:100%;box-sizing:border-box}
+.studio-track-card.is-selected{border-color:rgba(92,171,255,.95);box-shadow:inset 3px 0 0 rgba(92,171,255,.95);background:#242837}
+.studio-track-accent{width:5px;height:38px;border-radius:999px;justify-self:center}
+.studio-track-icon{width:38px;height:38px;border-radius:999px;display:grid;place-items:center;border:0;background:rgba(255,255,255,.075);color:#eef3ff}
+.studio-track-icon svg{width:20px;height:20px;stroke-width:2.35}
+.studio-track-card-main{min-width:0;display:grid;gap:5px}
+.studio-track-card-top{display:grid;grid-template-columns:minmax(0,1fr) 22px;align-items:center;gap:6px}
+.studio-track-name{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:13px;line-height:1.1}
+.studio-track-more{width:22px;height:22px;display:grid;place-items:center;border:0;background:transparent;color:#dfe6fb;border-radius:6px}
+.studio-track-card-controls{display:grid;grid-template-columns:22px 22px 22px 22px minmax(50px,1fr) 26px;align-items:center;gap:5px}
+.studio-track-control{width:22px;height:22px;display:grid;place-items:center;border-radius:7px;border:0;background:rgba(255,255,255,.055);color:#dfe6fb;padding:0}
+.studio-track-control svg,.studio-track-more svg{width:13px;height:13px;stroke-width:2.35}
+.studio-track-volume{width:100%;min-width:48px;accent-color:#7f67ff}
+.studio-track-pan{width:24px;height:24px;border-radius:999px;position:relative;border:1px solid rgba(140,156,205,.35);background:radial-gradient(circle at center, rgba(255,255,255,.14), rgba(255,255,255,.035));padding:0}
+.studio-track-pan::after{content:'';position:absolute;width:2px;height:8px;top:4px;left:50%;transform:translateX(-50%) rotate(20deg);background:rgba(225,235,255,.85);border-radius:999px}
+.studio-track-menu{position:absolute;right:8px;top:calc(100% + 4px);z-index:80;display:grid;gap:4px;min-width:170px;padding:6px;border-radius:9px;border:1px solid rgba(140,156,205,.3);background:#141a28;box-shadow:0 18px 40px rgba(0,0,0,.38)}
+.studio-track-menu[hidden]{display:none !important}
+.studio-automation-lane{min-height:40px;margin:-2px 0 var(--studio-track-gap);padding:8px;border-radius:8px;border:1px solid rgba(140,156,205,.22);background:rgba(255,255,255,.025);display:flex;align-items:center;gap:6px;overflow:hidden}
+.studio-arrangement{display:grid;grid-template-rows:var(--studio-ruler-height) 1fr}
+.studio-timeline-ruler{height:var(--studio-ruler-height)}
+.studio-arrangement-grid{background-image:repeating-linear-gradient(to bottom,transparent 0,transparent calc(var(--studio-track-height) - 1px),rgba(255,255,255,.07) calc(var(--studio-track-height) - 1px),rgba(255,255,255,.07) var(--studio-track-height),transparent var(--studio-track-height),transparent var(--studio-track-stride)),repeating-linear-gradient(to right,rgba(255,255,255,.055) 0 1px,transparent 1px 96px)}
