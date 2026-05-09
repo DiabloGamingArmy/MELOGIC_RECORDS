@@ -15,7 +15,9 @@ export const ROUTES = {
   live: '/live',
   forms: '/forms',
   faq: '/faq',
-  support: '/support'
+  support: '/support',
+  studio: '/studio',
+  studioProject: '/studio/project'
 }
 
 const LEGACY_ROUTE_MAP = {
@@ -35,7 +37,9 @@ const LEGACY_ROUTE_MAP = {
   '/live.html': ROUTES.live,
   '/forms.html': ROUTES.forms,
   '/faq.html': ROUTES.faq,
-  '/support.html': ROUTES.support
+  '/support.html': ROUTES.support,
+  '/studio.html': ROUTES.studio,
+  '/studio-project.html': ROUTES.studioProject
 }
 
 function asRelativePath(path = '') {
@@ -98,6 +102,11 @@ export function productRoute(productOrId = '') {
   }
 
   return `/products/${encodeURIComponent(String(productOrId || '').trim())}`
+}
+
+
+export function studioProjectRoute(projectId = '') {
+  return `/studio/${encodeURIComponent(String(projectId || '').trim())}`
 }
 
 export function getCurrentPath() {
