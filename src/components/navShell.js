@@ -5,6 +5,7 @@ export function navShell(options = {}) {
   const isProducts = currentPage === 'products'
   const isProfile = currentPage === 'profile'
   const isInbox = currentPage === 'inbox'
+  const isStudio = currentPage === 'studio'
 
   return `
     <header class="nav-shell">
@@ -19,6 +20,7 @@ export function navShell(options = {}) {
         <nav class="main-nav" aria-label="Primary">
           <a href="${ROUTES.home}" ${isHome ? 'aria-current="page"' : ''}>Home</a>
           <a href="${ROUTES.products}" ${isProducts ? 'aria-current="page"' : ''}>Products</a>
+          <a href="${ROUTES.studio}" ${isStudio ? 'aria-current="page"' : ''}>Studio</a>
           <a href="${ROUTES.community}">Community</a>
           <a href="${ROUTES.live}">Live</a>
           <a href="${ROUTES.forms}">Forms</a>
