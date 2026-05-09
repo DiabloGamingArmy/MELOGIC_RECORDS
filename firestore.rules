@@ -797,6 +797,20 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /studioProjectIndex/{projectId} {
+        allow read: if isOwner(uid);
+
+        allow create, update: if isOwner(uid)
+          && request.resource.data.projectId == projectId
+          && request.resource.data.ownerId == request.auth.uid
+          && request.resource.data.role in ['owner', 'collaborator']
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 1
+          && request.resource.data.title.size() <= 120;
+
+        allow delete: if isOwner(uid);
+      }
+
       match /agreementAcceptances/{agreementKey} {
         allow read, write: if isOwner(uid);
       }
