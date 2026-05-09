@@ -4,7 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { ROUTES, authRoute, studioProjectRoute } from './utils/routes'
-import { createStudioProject, listMyStudioProjects, listSharedStudioProjects, sortProjectsByActivity, touchStudioProject } from './data/studioProjectService'
+import { createStudioProject, listAccessibleStudioProjects, listIndexedStudioProjects, sortProjectsByActivity, touchStudioProject } from './data/studioProjectService'
 import { studioSidebar } from './components/studioShell'
 import { initStudioBrandLogo } from './components/studioBrandLogo'
 
@@ -19,7 +19,7 @@ const exploreItems = [
 ]
 
 const app = document.querySelector('#app')
-const state = { user: null, creating: false, createError: '', projects: [], sharedProjects: [], recentProjects: [], loadingProjects: false, projectsError: '' }
+const state = { user: null, creating: false, createError: '', projects: [], recentProjects: [], loadingProjects: false, projectsError: '' }
 const fmtDate = (p) => (p.lastOpenedAt?.toDate?.() || p.updatedAt?.toDate?.() || p.createdAt?.toDate?.() || new Date()).toLocaleDateString()
 const icon = (name) => {
   const c = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
@@ -38,21 +38,33 @@ function renderProjectArea() {
 }
 
 function renderShell() {
-  app.innerHTML = `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active: 'projects' })}<section class="studio-main"><div class="studio-top-actions"><a class="studio-action-button" data-action="new-project" data-new-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studio })}">NEW PROJECT <span>${icon('plus')}</span></a><a class="studio-action-button" data-action="start-collab" href="${state.user ? '#' : authRoute({ redirect: ROUTES.studio })}">START COLLAB <span>${icon('user')}</span></a></div><div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div><div class="studio-explore-row">${exploreItems.map((item) => `<article class="studio-explore-card"><div class="studio-cover-placeholder"></div><div class="studio-explore-copy"><h3 class="studio-explore-title">${item.title}</h3><p>${item.artist}</p><p>${item.year}</p></div></article>`).join('')}</div><div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>${renderRecent()}<div class="studio-section-heading"><h2>PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div><section class="studio-projects-panel"><header class="studio-projects-toolbar"><button class="studio-folder-button" type="button">NEW FOLDER</button></header><div class="studio-projects-body">${renderProjectArea()}</div></section><div data-studio-modal-root></div></section></section></main>`
+  app.innerHTML = `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active: 'projects' })}<section class="studio-main"><div class="studio-top-actions"><a class="studio-action-button" data-action="new-project" data-new-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studio })}">NEW PROJECT <span>${icon('plus')}</span></a><a class="studio-action-button" data-action="start-collab" href="${state.user ? '#' : authRoute({ redirect: ROUTES.studio })}">START COLLAB <span>${icon('user')}</span></a></div><div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div><div class="studio-explore-row">${exploreItems.map((item) => `<article class="studio-explore-card"><div class="studio-cover-placeholder"></div><div class="studio-explore-copy"><h3 class="studio-explore-title">${item.title}</h3><p>${item.artist}</p><p>${item.year}</p></div></article>`).join('')}</div><div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>${renderRecent()}<div class="studio-section-heading"><h2>PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div><section class="studio-projects-panel"><header class="studio-projects-toolbar"><button class="studio-folder-button" type="button">NEW FOLDER</button><button class="studio-toolbar-icon" type="button" aria-label="Search projects" data-tooltip="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Filter projects" data-tooltip="Filters"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 10h4"/><path d="M18 16h4"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Project options" data-tooltip="More"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button></header><div class="studio-projects-body">${renderProjectArea()}</div></section><div data-studio-modal-root></div></section></section></main>`
   initShellChrome(); initStudioBrandLogo(); bind()
 }
 
 async function loadStudioProjects() {
   if (!state.user?.uid) return
   state.loadingProjects = true; renderShell()
-  try {
-    const [owned, shared] = await Promise.all([listMyStudioProjects(state.user.uid), listSharedStudioProjects(state.user.uid)])
-    state.sharedProjects = shared
-    const merged = new Map(); [...owned, ...shared].forEach((p) => p?.id && merged.set(p.id, p))
-    state.projects = [...merged.values()].sort(sortProjectsByActivity)
-    state.recentProjects = state.projects.slice(0, 6)
+  const [indexedResult, accessibleResult] = await Promise.allSettled([
+    listIndexedStudioProjects(state.user.uid),
+    listAccessibleStudioProjects(state.user.uid)
+  ])
+  const projects = []
+  if (indexedResult.status === 'fulfilled') projects.push(...indexedResult.value)
+  else console.error('[studio] indexed project query failed', indexedResult.reason)
+  if (accessibleResult.status === 'fulfilled') projects.push(...accessibleResult.value)
+  else console.error('[studio] accessible project query failed', accessibleResult.reason)
+  const merged = new Map(); projects.forEach((project) => project?.id && merged.set(project.id, project))
+  const deduped = [...merged.values()].sort(sortProjectsByActivity)
+  if (deduped.length || indexedResult.status === 'fulfilled' || accessibleResult.status === 'fulfilled') {
+    state.projects = deduped
+    state.recentProjects = deduped.slice(0, 6)
     state.projectsError = ''
-  } catch (error) { console.error('[studio]', error); state.projectsError = 'Could not load Studio projects.' }
+  } else {
+    state.projects = []
+    state.recentProjects = []
+    state.projectsError = 'Could not load Studio projects.'
+  }
   state.loadingProjects = false; renderShell()
 }
 
