@@ -116,6 +116,16 @@
         "source": "/support.html",
         "destination": "/support",
         "type": 301
+      },
+      {
+        "source": "/studio.html",
+        "destination": "/studio",
+        "type": 301
+      },
+      {
+        "source": "/studio-project.html",
+        "destination": "/studio",
+        "type": 301
       }
     ],
     "rewrites": [
@@ -194,6 +204,14 @@
       {
         "source": "/support",
         "destination": "/support.html"
+      },
+      {
+        "source": "/studio",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/**",
+        "destination": "/studio-project.html"
       }
     ]
   },
