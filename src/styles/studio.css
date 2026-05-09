@@ -1,0 +1,16 @@
+.studio-page{min-height:100vh;background:radial-gradient(circle at top,#141c30,#080b16 55%);padding:2rem;color:#e9f7ff}
+.studio-hero,.studio-library,.studio-editor-shell{max-width:1150px;margin:0 auto 1.2rem;background:rgba(16,24,38,.65);border:1px solid rgba(102,222,255,.35);border-radius:16px;padding:1.2rem;backdrop-filter:blur(8px)}
+.studio-tabs{display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:.8rem}
+.studio-search{width:100%;max-width:360px;margin-bottom:1rem}
+.studio-project-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem}
+.studio-project-card{border:1px solid rgba(165,119,255,.45);padding:1rem;border-radius:14px;background:rgba(17,20,36,.8)}
+.studio-project-card .thumb{height:88px;border-radius:10px;background:linear-gradient(135deg,rgba(0,217,255,.25),rgba(145,70,255,.25));margin-bottom:.7rem}
+.studio-modal{position:fixed;inset:0;background:rgba(5,8,16,.7);display:grid;place-items:center;padding:1rem}
+.studio-modal-panel{width:min(520px,100%);background:#11192b;border:1px solid rgba(0,217,255,.45);border-radius:14px;padding:1rem;display:grid;gap:.7rem}
+.studio-modal-panel label{display:grid;gap:.35rem}
+.studio-editor-top{display:flex;justify-content:space-between;gap:1rem;align-items:center}
+.studio-transport{display:flex;gap:.6rem;margin:1rem 0}
+.studio-editor-grid{display:grid;grid-template-columns:220px 1fr 260px;gap:1rem}
+.studio-track-list,.studio-side-panel{background:rgba(10,14,28,.85);padding:1rem;border-radius:10px;border:1px solid rgba(102,222,255,.25)}
+.studio-timeline{min-height:340px;border:1px dashed rgba(165,119,255,.55);border-radius:10px;background-image:linear-gradient(to right,rgba(102,222,255,.12) 1px,transparent 1px),linear-gradient(to bottom,rgba(102,222,255,.08) 1px,transparent 1px);background-size:40px 40px}
+@media(max-width:980px){.studio-editor-grid{grid-template-columns:1fr}}
