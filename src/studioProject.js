@@ -122,9 +122,27 @@ function setEditorMenuOpen(open) {
 
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)) }
 function beatWidth() { return timelineState.pixelsPerBar / timelineState.beatsPerBar }
+function timelineStartX() { return timelineState.preStartPixels || 0 }
+function timelineEndX() { return (timelineState.preStartPixels || 0) + timelineState.bars * timelineState.pixelsPerBar }
+function timelineContentWidth() { return timelineEndX() + beatWidth() }
+function cycleMinWidth() { return Math.max(8, beatWidth() / 2) }
+function clampTimelineSystems() {
+  const start = timelineStartX()
+  const end = timelineEndX()
+  timelineState.playheadX = clamp(timelineState.playheadX, start, end)
+  if (cycleRange) {
+    let s = clamp(Math.min(cycleRange.startX, cycleRange.endX), start, end)
+    let e = clamp(Math.max(cycleRange.startX, cycleRange.endX), start, end)
+    if (e - s < cycleMinWidth()) {
+      e = clamp(s + cycleMinWidth(), start + cycleMinWidth(), end)
+      if (e - s < cycleMinWidth()) s = clamp(e - cycleMinWidth(), start, end - cycleMinWidth())
+    }
+    cycleRange = { startX: s, endX: e }
+  }
+}
 function ensureDefaultCycleRange(){ if(cycleRange) return; const start = timelineState.preStartPixels || 0; cycleRange = { startX:start, endX:start + timelineState.pixelsPerBar } }
 function snapXToBeat(x) { return isSnapEnabled ? Math.round(x / beatWidth()) * beatWidth() : x }
-function maxTimelineX() { return timelineState.preStartPixels + (timelineState.bars * timelineState.pixelsPerBar) }
+function maxTimelineX() { return timelineEndX() }
 function setPlayhead(x) { timelineState.playheadX = clamp(x, timelineState.preStartPixels, maxTimelineX()); app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`); updateTransportDisplay() }
 function pixelsPerSecond() { const bpm = Number(projectState?.bpm || 140); const bps = bpm / 60; const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
 function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; btn.classList.toggle('is-active', isPlaying); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
