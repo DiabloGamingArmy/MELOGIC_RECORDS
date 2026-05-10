@@ -738,7 +738,7 @@ service cloud.firestore {
     function studioProjectCreateIsValid() {
       return signedIn()
         && request.resource.data.keys().hasOnly([
-          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version'
+          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version','editorState'
         ])
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.collaboratorIds is list
@@ -755,13 +755,14 @@ service cloud.firestore {
         && request.resource.data.key.size() >= 1
         && request.resource.data.key.size() <= 40
         && request.resource.data.type is string
-        && studioTypeValid(request.resource.data.type);
+        && studioTypeValid(request.resource.data.type)
+        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
     }
 
     function studioProjectUpdateIsValid() {
       return signedIn()
         && request.resource.data.keys().hasOnly([
-          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version'
+          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version','editorState'
         ])
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.createdAt == resource.data.createdAt
@@ -778,7 +779,8 @@ service cloud.firestore {
         && request.resource.data.key.size() >= 1
         && request.resource.data.key.size() <= 40
         && request.resource.data.type is string
-        && studioTypeValid(request.resource.data.type);
+        && studioTypeValid(request.resource.data.type)
+        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
     }
     match /users/{uid} {
       allow read, write: if isOwner(uid);
