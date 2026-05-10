@@ -78,6 +78,7 @@ body.is-studio-editor main{padding-top:0}
 .studio-editor-page{position:relative;--studio-ruler-height:32px;--studio-track-height:96px;height:100vh;min-height:0;width:100vw;overflow:hidden;background:#11131a;color:#dfe6fb;display:grid;grid-template-rows:42px 64px minmax(0,1fr) 32px;margin:0;padding:0;user-select:none;-webkit-user-select:none}
 .studio-editor-page.has-site-nav{height:calc(100vh - var(--nav-offset,64px));margin-top:var(--nav-offset,64px)}
 .studio-editor-page.is-fullscreen{height:100vh;margin-top:0}
+.studio-editor-page.has-left-panel{--studio-left-panel-width:280px}
 .studio-editor-state{place-items:center;text-align:center}
 .studio-editor-appbar{position:relative;z-index:2000;overflow:visible}
 .studio-editor-transport{position:relative;z-index:1000;overflow:visible}
