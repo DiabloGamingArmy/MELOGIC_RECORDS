@@ -13,7 +13,7 @@ const sanitizeTitle = (value) => String(value || '').trim().slice(0, 120) || 'Un
 const sanitizeKey = (value) => String(value || '').trim().slice(0, 40) || 'C minor'
 const sanitizeType = (value) => (STUDIO_TYPES.includes(value) ? value : 'song')
 
-export function normalizeStudioProject(projectId, raw = {}) { return { id: String(projectId || '').trim(), title: sanitizeTitle(raw.title), ownerId: String(raw.ownerId || '').trim(), collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds.filter(Boolean) : [], bpm: clampBpm(raw.bpm), key: sanitizeKey(raw.key), type: sanitizeType(raw.type), visibility: 'private', createdAt: raw.createdAt || null, updatedAt: raw.updatedAt || null, lastOpenedAt: raw.lastOpenedAt || null, version: 1, tracks: Array.isArray(raw.tracks) ? raw.tracks : [], timeline: raw.timeline && typeof raw.timeline === 'object' ? raw.timeline : { bars: 32, snap: 'bar' }, mixer: raw.mixer && typeof raw.mixer === 'object' ? raw.mixer : { masterVolume: 0 }, collaboration: raw.collaboration && typeof raw.collaboration === 'object' ? raw.collaboration : { activeUsers: [] } } }
+export function normalizeStudioProject(projectId, raw = {}) { return { id: String(projectId || '').trim(), title: sanitizeTitle(raw.title), ownerId: String(raw.ownerId || '').trim(), collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds.filter(Boolean) : [], bpm: clampBpm(raw.bpm), key: sanitizeKey(raw.key), type: sanitizeType(raw.type), visibility: 'private', createdAt: raw.createdAt || null, updatedAt: raw.updatedAt || null, lastOpenedAt: raw.lastOpenedAt || null, version: 1, tracks: Array.isArray(raw.tracks) ? raw.tracks : [], timeline: raw.timeline && typeof raw.timeline === 'object' ? raw.timeline : { bars: 32, snap: 'bar' }, mixer: raw.mixer && typeof raw.mixer === 'object' ? raw.mixer : { masterVolume: 0 }, collaboration: raw.collaboration && typeof raw.collaboration === 'object' ? raw.collaboration : { activeUsers: [] }, editorState: raw.editorState && typeof raw.editorState === 'object' ? raw.editorState : null } }
 
 export async function listMyStudioProjects(uid) {
   const id = String(uid || '').trim(); if (!id) { console.warn('[studioProjectService] owned query skipped, missing uid'); return [] }
@@ -47,3 +47,5 @@ export async function createStudioProject(user, input = {}) {
   return { id: ref.id, ...normalizeStudioProject(ref.id, payload) }
 }
 export async function touchStudioProject(projectId) { const id = String(projectId || '').trim(); if (!id) return; await updateDoc(doc(db, 'studioProjects', id), { updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() }) }
+
+export async function saveStudioProjectEditorState(projectId, editorState) { const id = String(projectId || '').trim(); if (!id || !editorState || typeof editorState !== 'object') return; await updateDoc(doc(db, 'studioProjects', id), { editorState, updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() }) }
