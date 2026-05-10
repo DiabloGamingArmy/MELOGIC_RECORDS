@@ -196,11 +196,9 @@ body.is-studio-editor main{padding-top:0}
 .studio-cycle-range-handle{width:8px;cursor:ew-resize;background:rgba(32,216,255,.35)}
 
 body.is-studio-dragging{user-select:none;-webkit-user-select:none}
-.studio-timeline-extent-handle{position:absolute;top:29px;width:12px;height:16px;border:1px solid rgba(152,143,215,.55);background:rgba(96,85,160,.45);border-radius:5px;padding:0;cursor:ew-resize;z-index:9}
-.studio-timeline-extent-handle--left{left:2px}
-.studio-timeline-extent-handle--right{right:2px}
-
 .studio-cycle-guide{position:absolute;top:0;bottom:0;width:2px;background:rgba(32,216,255,.35);pointer-events:none;z-index:5}
 .studio-cycle-guide.is-enabled{background:rgba(32,216,255,.75);box-shadow:0 0 10px rgba(32,216,255,.45)}
 
 .studio-tool-button--cycle.is-active{background:rgba(32,216,255,.24);border-color:rgba(32,216,255,.75);color:#fff;box-shadow:0 0 0 1px rgba(32,216,255,.25),0 8px 18px rgba(8,141,170,.28)}
+
+.studio-footer-save-status{margin-left:auto;color:#d2daf3}
