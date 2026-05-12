@@ -240,3 +240,15 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-piano-key.is-pressed{box-shadow:inset 0 0 0 2px #59d0ff,inset 0 -20px 30px rgba(105,70,220,.25)}
 .studio-editor-footer{z-index:410;position:relative}
 @media (max-width:1200px){.studio-instrument-toolbar{grid-template-columns:1fr;align-items:start}.studio-bottom-panel{max-height:46vh}}
+.studio-instrument-panel .studio-bottom-panel-body{min-width:0;overflow-x:hidden}
+.studio-virtual-keyboard{height:220px;overflow:hidden;border-radius:0}
+.studio-virtual-keyboard-whites{height:100%;grid-template-columns:repeat(22,minmax(0,1fr));min-width:0}
+.studio-piano-key--white{height:100%;padding:6px 2px 8px;border-right:1px solid #b3b8c5}
+.studio-piano-key--black{width:clamp(22px,2.4vw,34px);height:62%;top:0;z-index:4}
+.studio-piano-key span{font-size:38px;line-height:.9;padding-left:4px}
+.studio-piano-key small{font-size:12px}
+.studio-right-rail-divider{height:1px;background:rgba(120,140,200,.35);margin:6px 4px}
+.studio-right-rail-subtools{display:grid;gap:6px;padding:0 2px 8px}
+.studio-right-rail-subtool{width:40px;min-height:34px;writing-mode:vertical-rl;text-orientation:mixed;border-radius:8px;border:1px solid #38425f;background:#1c2232;color:#8c96b2;font-size:11px}
+.studio-right-rail-subtool[disabled]{opacity:.45;cursor:not-allowed}
+.studio-right-rail-subtool.is-enabled{opacity:1;color:#cfe7ff;border-color:#5670a2}
