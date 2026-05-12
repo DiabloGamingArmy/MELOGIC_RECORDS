@@ -152,6 +152,9 @@ body.is-studio-editor main{padding-top:0}
 .studio-ruler-playhead::before{content:"";position:absolute;top:24px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:10px solid rgba(220,232,255,.92);filter:drop-shadow(0 0 6px rgba(120,165,255,.45))}
 .studio-grid-playhead{position:absolute;left:var(--playhead-x,0px);top:0;bottom:0;width:2px;background:rgba(220,232,255,.35);z-index:6;pointer-events:none}
 .studio-grid-line--beat{width:1px;background:rgba(255,255,255,.08)}
+.studio-negative-zone{position:absolute;left:0;top:0;bottom:0;pointer-events:none;z-index:1}
+.studio-negative-zone--ruler{background:rgba(4,7,14,.32)}
+.studio-negative-zone--grid{background:rgba(3,6,12,.3)}
 .studio-arrangement-grid::-webkit-scrollbar{height:10px;width:10px}
 .studio-arrangement-grid::-webkit-scrollbar-track{background:transparent}
 .studio-arrangement-grid::-webkit-scrollbar-thumb{background:rgba(92,101,128,.75);border-radius:999px;border:2px solid rgba(17,19,26,1)}
