@@ -6,6 +6,7 @@ import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute } from './utils/routes'
 import { getStudioProject, touchStudioProject, saveStudioProjectEditorState } from './data/studioProjectService'
 import { StudioAudioEngine } from './studio/audio/StudioAudioEngine.js'
+import { normalizeStudioProjectModel } from './studio/model/studioProjectModel.js'
 
 const app = document.querySelector('#app')
 const reserved = new Set(['demos', 'tutorials', 'project', 'distribution'])
@@ -45,6 +46,7 @@ let isEditorLoaded = false
 let saveStatus = 'Saved'
 
 const timelineState = { bars: 20, beatsPerBar: 4, positiveBeats: 80, pixelsPerBar: 120, preStartPixels: 0, playheadX: 0, trackHeight: 96, selectionBox: null, isSelecting: false, isDraggingPlayhead: false }
+// Future canonical source: beat-based regions from studioProjectModel; UI still renders existing DOM grid for now.
 const timelineRegions = []
 
 const tracks = [
@@ -64,6 +66,8 @@ const tracks = [
     outputLevel: 0
   }
 ]
+
+const studioProjectModel = normalizeStudioProjectModel({ tracks, regions: timelineRegions })
 
 const projectIdFromPath = () => decodeURIComponent((window.location.pathname.split('/')[2] || '').trim())
 const icon = (name) => ({ mute:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m11 5-5 4H3v6h3l5 4z"/><path d="m23 9-6 6"/><path d="m17 9 6 6"/></svg>', solo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M5 14h3v6H5z"/><path d="M16 14h3v6h-3z"/></svg>', record:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/></svg>', automation:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 17 16 7"/></svg>', more:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>' }[name] || '')
