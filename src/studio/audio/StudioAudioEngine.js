@@ -6,6 +6,7 @@ export class StudioAudioEngine {
     this.audioContext = null
     this.workletNode = null
     this.isWorkletLoaded = false
+    // Vite resolves this URL for both dev and production builds, including hashed asset output.
     this.workletModuleUrl = new URL('./worklets/melogic-audio-processor.js', import.meta.url)
     this.state = {
       isReady: false,
