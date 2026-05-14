@@ -252,3 +252,47 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-right-rail-subtool{width:40px;min-height:34px;writing-mode:vertical-rl;text-orientation:mixed;border-radius:8px;border:1px solid #38425f;background:#1c2232;color:#8c96b2;font-size:11px}
 .studio-right-rail-subtool[disabled]{opacity:.45;cursor:not-allowed}
 .studio-right-rail-subtool.is-enabled{opacity:1;color:#cfe7ff;border-color:#5670a2}
+
+/* Instrument panel polish */
+.studio-bottom-panel{right:63px}
+.studio-instrument-panel .studio-bottom-panel-body{padding:10px 8px 8px 12px}
+.studio-instrument-toolbar{display:grid;grid-template-columns:minmax(170px,220px) minmax(260px,auto) minmax(420px,1fr) minmax(280px,340px);gap:12px;align-items:start}
+.studio-instrument-controls{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+.studio-instrument-octave{display:grid;gap:4px;justify-items:center}
+.studio-instrument-octave-label{font-size:11px;color:#9fb0d8}
+.studio-instrument-octave-controls{display:flex;align-items:center;gap:6px}
+.studio-instrument-octave-controls button{min-width:30px;padding:6px 0}
+.studio-instrument-knob-bank{display:grid;grid-template-columns:repeat(4,minmax(62px,1fr));gap:8px}
+.studio-instrument-knob{display:grid;gap:4px;justify-items:center;color:#b8c6e6;font-size:11px}
+.studio-instrument-knob-dial{--knob-angle:0deg;position:relative;width:48px;height:48px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#3a4666,#1a2236 65%);border:1px solid rgba(120,145,210,.42);box-shadow:inset 0 1px 8px rgba(0,0,0,.6)}
+.studio-instrument-knob-dial::after{content:'';position:absolute;left:50%;top:50%;width:2px;height:15px;background:#8ee3ff;border-radius:2px;transform:translate(-50%,-100%) rotate(var(--knob-angle));transform-origin:50% 100%}
+.studio-instrument-knob-dial input{position:absolute;inset:0;opacity:0;cursor:ns-resize}
+.studio-instrument-knob-value{font-variant-numeric:tabular-nums;color:#8dd7ff}
+.studio-virtual-keyboard{height:230px;border-radius:4px;overflow:hidden}
+.studio-virtual-keyboard-whites{grid-template-columns:repeat(22,minmax(0,1fr));min-width:0;height:100%}
+.studio-piano-key--white{position:relative;height:100%;padding:8px 6px;border-right:1px solid #a9afbf;background:linear-gradient(180deg,#f2f5fb,#cbd2df);color:#4c5367;display:flex;flex-direction:column;justify-content:space-between}
+.studio-piano-key--white span{font-size:46px;line-height:1;color:#2f3a52;opacity:.9}
+.studio-piano-key--white small{font-size:14px;opacity:.8}
+.studio-piano-key--black{width:58%;top:0;height:62%;border-radius:0 0 8px 8px;background:linear-gradient(180deg,#2f374f,#161d2d);color:#dbe2f2}
+.studio-piano-key.is-pressed.studio-piano-key--white{background:linear-gradient(180deg,#eaf7ff,#cddfff);box-shadow:inset 0 0 0 2px rgba(94,194,255,.45)}
+.studio-piano-key.is-pressed.studio-piano-key--black{background:linear-gradient(180deg,#3f2f78,#1c2f5d);box-shadow:0 0 0 1px rgba(122,126,255,.5)}
+@media (max-width:1200px){.studio-instrument-toolbar{grid-template-columns:1fr;align-items:start}.studio-bottom-panel{max-height:46vh}}
+
+/* Regression fix: compact instrument panel */
+.studio-instrument-panel .studio-bottom-panel-body{display:grid;grid-template-rows:auto 1px minmax(0,1fr);gap:6px;padding:8px 10px 8px 12px;overflow:hidden}
+.studio-instrument-toolbar{display:grid;grid-template-columns:minmax(460px,1fr) auto;align-items:center;gap:12px}
+.studio-instrument-left{display:flex;align-items:flex-end;gap:10px;min-width:0}
+.studio-instrument-selector{width:min(220px,30%)}
+.studio-instrument-controls{display:flex;align-items:flex-end;gap:8px;flex-wrap:nowrap}
+.studio-instrument-knob-bank{display:flex;gap:10px;align-items:flex-start;justify-content:flex-end}
+.studio-instrument-knob{min-width:60px}
+.studio-instrument-knob-dial{width:44px;height:44px}
+.studio-instrument-divider{margin:0}
+.studio-virtual-keyboard{height:100%;min-height:0;overflow:hidden;border-radius:4px}
+.studio-virtual-keyboard-whites{height:100%;width:100%;min-width:0;grid-template-columns:repeat(22,minmax(0,1fr))}
+.studio-virtual-keyboard-blacks{position:absolute;inset:0;z-index:5;pointer-events:none}
+.studio-piano-key--white{height:100%;padding:6px 2px 8px}
+.studio-piano-key--white span{font-size:18px;line-height:1;padding-left:2px}
+.studio-piano-key--white small{font-size:10px}
+.studio-piano-key--black{width:60%;height:62%;border-radius:0 0 6px 6px;top:0;transform:translateX(-50%);z-index:6;pointer-events:auto}
+@media (max-width:1200px){.studio-instrument-toolbar{grid-template-columns:1fr}.studio-instrument-left{flex-wrap:wrap}.studio-instrument-controls{flex-wrap:wrap}}
