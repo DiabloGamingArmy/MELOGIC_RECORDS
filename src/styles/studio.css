@@ -296,3 +296,17 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-piano-key--white small{font-size:10px}
 .studio-piano-key--black{width:60%;height:62%;border-radius:0 0 6px 6px;top:0;transform:translateX(-50%);z-index:6;pointer-events:auto}
 @media (max-width:1200px){.studio-instrument-toolbar{grid-template-columns:1fr}.studio-instrument-left{flex-wrap:wrap}.studio-instrument-controls{flex-wrap:wrap}}
+
+/* Keyboard structural repair */
+.studio-instrument-panel{overflow:hidden}
+.studio-instrument-panel .studio-bottom-panel-body{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.studio-virtual-keyboard{position:relative;flex:1 1 auto;min-height:180px;max-height:260px;height:auto;overflow:hidden;background:linear-gradient(180deg,#f4f6fb,#d7dde9);border-radius:6px}
+.studio-piano-white-keys{display:grid;grid-template-columns:repeat(22,minmax(0,1fr));height:100%;width:100%}
+.studio-piano-black-keys{position:absolute;inset:0;height:100%;pointer-events:none;z-index:2}
+.studio-piano-key--white{height:100%;background:linear-gradient(180deg,#f7f9fe,#d4dbe8 72%,#c6cedc);border-right:1px solid #adb6c7;padding:8px 2px 8px;justify-content:space-between}
+.studio-piano-key--white span{font-size:18px;line-height:1;color:#404b64;align-self:flex-start}
+.studio-piano-key--white small{font-size:11px;color:#5b6477;align-self:center}
+.studio-piano-key--black{position:absolute;top:0;height:62%;width:60%;transform:translateX(-50%);pointer-events:auto;z-index:3;background:linear-gradient(180deg,#38435f,#151d2f);border:1px solid #485577;border-top:0;border-radius:0 0 7px 7px;color:#d9e2f4;display:flex;justify-content:center;align-items:flex-end;padding-bottom:12px}
+.studio-piano-key--black small{margin:0;font-size:11px;color:#c8d4ee;opacity:.9}
+.studio-piano-key--white.is-pressed{background:linear-gradient(180deg,#eef8ff,#c9ddfb);box-shadow:inset 0 0 0 2px rgba(97,205,255,.4)}
+.studio-piano-key--black.is-pressed{background:linear-gradient(180deg,#4a3b85,#202d53);box-shadow:0 0 0 1px rgba(115,146,255,.6),0 0 10px rgba(115,146,255,.45)}
