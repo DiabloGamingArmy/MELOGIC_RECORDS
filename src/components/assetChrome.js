@@ -1,7 +1,10 @@
 import { getStorageAssetUrl } from '../firebase/storageAssets'
 import { signOutUser, subscribeToAuthState, waitForInitialAuthState } from '../firebase/auth'
 import { getCartItems, removeFromCart, subscribeToCart } from '../data/cartService'
+import { getAccessGateConfig } from '../firebase/firestore'
 import { ROUTES, authRoute } from '../utils/routes'
+
+const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
 
 function escapeHtml(value) {
   return String(value || '')
@@ -62,7 +65,91 @@ export async function initNavBrandLogo() {
   return false
 }
 
-export function initShellChrome() {
+function readAccessGateGrant() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ACCESS_GATE_STORAGE_KEY) || 'null')
+    if (!parsed || parsed.granted !== true || !Number.isFinite(Number(parsed.keyVersion))) return null
+    return { granted: true, keyVersion: Number(parsed.keyVersion), grantedAt: Number(parsed.grantedAt || 0) }
+  } catch {
+    localStorage.removeItem(ACCESS_GATE_STORAGE_KEY)
+    return null
+  }
+}
+
+function writeAccessGateGrant(keyVersion = 1) {
+  localStorage.setItem(ACCESS_GATE_STORAGE_KEY, JSON.stringify({ granted: true, keyVersion, grantedAt: Date.now() }))
+}
+
+function normalizePath(path) {
+  const value = String(path || '/').trim()
+  if (!value.startsWith('/')) return `/${value}`
+  return value
+}
+
+async function sha256Hex(input) {
+  const bytes = new TextEncoder().encode(String(input || ''))
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function verifyAccessKey(input, config) {
+  const typed = String(input || '').trim()
+  if (!typed) return false
+  // Plaintext keyValue is temporary beta gating only; prefer keyHash and move server-side later.
+  if (config.keyHash) return (await sha256Hex(typed)) === config.keyHash
+  return typed === config.keyValue
+}
+
+async function initAccessGate() {
+  const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  let config = null
+  let loadFailed = false
+  try {
+    config = await getAccessGateConfig()
+  } catch {
+    loadFailed = true
+    config = { isKeyRequired: !isLocalhost, keyVersion: 1, title: 'Private Beta', message: 'Unable to load access requirements. Retry to continue.', supportEmail: '', brandName: 'Melogic Records', keyValue: '', keyHash: '', allowedPublicPaths: [] }
+  }
+  const currentPath = normalizePath(window.location.pathname)
+  if (Array.isArray(config.allowedPublicPaths) && config.allowedPublicPaths.map(normalizePath).includes(currentPath)) return
+  if (!config.isKeyRequired) return
+  const grant = readAccessGateGrant()
+  if (grant?.granted && Number(grant.keyVersion) === Number(config.keyVersion || 1)) return
+
+  await new Promise((resolve) => {
+    const gate = document.createElement('div')
+    gate.className = 'access-gate'
+    gate.innerHTML = `<div class="access-gate-card"><p class="access-gate-brand">${escapeHtml(config.brandName || 'Melogic Records')}</p><h1 class="access-gate-title">${escapeHtml(config.title || 'Private Beta')}</h1><p class="access-gate-message">${escapeHtml(config.message || 'Enter your access key to continue.')}</p><form data-access-gate-form><input class="access-gate-input" data-access-gate-input type="password" autocomplete="off" placeholder="Access key" required /><button class="access-gate-button" data-access-gate-submit type="submit">${loadFailed ? 'Retry' : 'Continue'}</button><p class="access-gate-error" data-access-gate-error>${loadFailed ? 'Access settings failed to load.' : ''}</p>${config.supportEmail ? `<p class="access-gate-support">Need help? <a href="mailto:${escapeHtml(config.supportEmail)}">${escapeHtml(config.supportEmail)}</a></p>` : ''}</form></div>`
+    document.body.append(gate)
+    const form = gate.querySelector('[data-access-gate-form]')
+    const input = gate.querySelector('[data-access-gate-input]')
+    const submit = gate.querySelector('[data-access-gate-submit]')
+    const error = gate.querySelector('[data-access-gate-error]')
+    input?.focus()
+    form?.addEventListener('submit', async (event) => {
+      event.preventDefault()
+      if (loadFailed) { window.location.reload(); return }
+      submit.disabled = true
+      submit.textContent = 'Checking…'
+      error.textContent = ''
+      const ok = await verifyAccessKey(input.value, config)
+      if (ok) {
+        writeAccessGateGrant(Number(config.keyVersion || 1))
+        gate.remove()
+        resolve()
+        return
+      }
+      submit.disabled = false
+      submit.textContent = 'Continue'
+      error.textContent = 'Invalid access key.'
+      input.focus()
+      input.select()
+    })
+  })
+}
+
+export async function initShellChrome() {
+  await initAccessGate()
   syncNavOffset()
   window.addEventListener('resize', syncNavOffset, { passive: true })
   initNavAuthState()
