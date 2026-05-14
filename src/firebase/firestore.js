@@ -5,6 +5,97 @@ let hasWarnedProfileRead = false
 
 export const db = getFirestore(app)
 
+const ACCESS_GATE_FALLBACK_CONFIG = {
+  isKeyRequired: false,
+  keyValue: '',
+  keyHash: '',
+  keyVersion: 1,
+  title: 'Private Beta',
+  message: 'Enter your access key to continue.',
+  supportEmail: '',
+  allowedPublicPaths: [],
+  brandName: 'Melogic Records'
+}
+const BANNER_ALERT_FALLBACK_CONFIG = {
+  bannerType: 1,
+  bannerContent: ['', ''],
+  bannerIcon: 1,
+  bannerColor: '#20d8ff',
+  bannerActive: false,
+  bannerVersion: 1,
+  bannerDismissible: true,
+  bannerButtonText: '',
+  bannerButtonUrl: '',
+  bannerStartsAt: null,
+  bannerExpiresAt: null,
+  bannerAllowedPaths: [],
+  bannerBlockedPaths: [],
+  bannerAudience: 'all',
+  bannerPriority: 1
+}
+
+function isValidHexColor(value) {
+  return /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(String(value || '').trim())
+}
+
+export function normalizeAccessGateConfig(raw = {}) {
+  const keyVersion = Number.isFinite(Number(raw?.keyVersion)) ? Math.max(1, Math.round(Number(raw.keyVersion))) : 1
+  return {
+    ...ACCESS_GATE_FALLBACK_CONFIG,
+    isKeyRequired: Boolean(raw?.isKeyRequired),
+    keyValue: String(raw?.keyValue || ''),
+    keyHash: String(raw?.keyHash || '').trim().toLowerCase(),
+    keyVersion,
+    title: String(raw?.title || ACCESS_GATE_FALLBACK_CONFIG.title),
+    message: String(raw?.message || ACCESS_GATE_FALLBACK_CONFIG.message),
+    supportEmail: String(raw?.supportEmail || ''),
+    allowedPublicPaths: Array.isArray(raw?.allowedPublicPaths) ? raw.allowedPublicPaths.map((x) => String(x || '').trim()).filter(Boolean) : [],
+    brandName: String(raw?.brandName || ACCESS_GATE_FALLBACK_CONFIG.brandName),
+    bypassUntil: raw?.bypassUntil || null,
+    updatedAt: raw?.updatedAt || null
+  }
+}
+
+export async function getAccessGateConfig() {
+  if (!db) return normalizeAccessGateConfig()
+  const snap = await getDoc(doc(db, 'operations', 'keyRequiredInfo'))
+  if (!snap.exists()) return normalizeAccessGateConfig()
+  return normalizeAccessGateConfig(snap.data())
+}
+
+export function normalizeBannerAlertConfig(raw = {}) {
+  const content = Array.isArray(raw?.bannerContent) ? raw.bannerContent : []
+  const bannerType = Number(raw?.bannerType) === 2 ? 2 : 1
+  const bannerIcon = Number.isFinite(Number(raw?.bannerIcon)) ? Math.max(1, Math.round(Number(raw.bannerIcon))) : 1
+  const bannerVersion = Number.isFinite(Number(raw?.bannerVersion)) ? Math.max(1, Math.round(Number(raw.bannerVersion))) : 1
+  const bannerAudience = ['all', 'signedIn', 'signedOut'].includes(raw?.bannerAudience) ? raw.bannerAudience : 'all'
+  return {
+    ...BANNER_ALERT_FALLBACK_CONFIG,
+    bannerType,
+    bannerContent: [String(content[0] || ''), String(content[1] || '')],
+    bannerIcon,
+    bannerColor: isValidHexColor(raw?.bannerColor) ? String(raw.bannerColor) : BANNER_ALERT_FALLBACK_CONFIG.bannerColor,
+    bannerActive: Boolean(raw?.bannerActive),
+    bannerVersion,
+    bannerDismissible: raw?.bannerDismissible !== false,
+    bannerButtonText: String(raw?.bannerButtonText || ''),
+    bannerButtonUrl: String(raw?.bannerButtonUrl || ''),
+    bannerStartsAt: raw?.bannerStartsAt || null,
+    bannerExpiresAt: raw?.bannerExpiresAt || null,
+    bannerAllowedPaths: Array.isArray(raw?.bannerAllowedPaths) ? raw.bannerAllowedPaths.map((x) => String(x || '').trim()).filter(Boolean) : [],
+    bannerBlockedPaths: Array.isArray(raw?.bannerBlockedPaths) ? raw.bannerBlockedPaths.map((x) => String(x || '').trim()).filter(Boolean) : [],
+    bannerAudience,
+    bannerPriority: Number.isFinite(Number(raw?.bannerPriority)) ? Math.max(1, Math.round(Number(raw.bannerPriority))) : 1
+  }
+}
+
+export async function getBannerAlertConfig() {
+  if (!db) return normalizeBannerAlertConfig()
+  const snap = await getDoc(doc(db, 'operations', 'bannerAlerts'))
+  if (!snap.exists()) return normalizeBannerAlertConfig()
+  return normalizeBannerAlertConfig(snap.data())
+}
+
 function defaultSocials() {
   return {
     instagram: '',

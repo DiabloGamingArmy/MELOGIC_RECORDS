@@ -1210,6 +1210,15 @@ service cloud.firestore {
       allow delete: if isStudioOwnerResource();
     }
 
+    match /operations/keyRequiredInfo {
+      allow read: if true;
+      allow write: if false;
+    }
+    match /operations/bannerAlerts {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /productModeration/{moderationId} {
       allow read, write: if false;
     }
