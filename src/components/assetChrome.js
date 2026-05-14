@@ -1,10 +1,11 @@
 import { getStorageAssetUrl } from '../firebase/storageAssets'
 import { signOutUser, subscribeToAuthState, waitForInitialAuthState } from '../firebase/auth'
 import { getCartItems, removeFromCart, subscribeToCart } from '../data/cartService'
-import { getAccessGateConfig } from '../firebase/firestore'
+import { getAccessGateConfig, getBannerAlertConfig } from '../firebase/firestore'
 import { ROUTES, authRoute } from '../utils/routes'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
+const BANNER_ALERT_STORAGE_KEY = 'melogic_banner_alert'
 
 function escapeHtml(value) {
   return String(value || '')
@@ -150,11 +151,82 @@ async function initAccessGate() {
 
 export async function initShellChrome() {
   await initAccessGate()
+  await initBannerAlerts()
   syncNavOffset()
   window.addEventListener('resize', syncNavOffset, { passive: true })
   initNavAuthState()
   initCartDrawer()
   return initNavBrandLogo()
+}
+
+function hexToRgb(hex) {
+  const raw = String(hex || '').replace('#', '').trim()
+  const safe = raw.length === 3 ? raw.split('').map((x) => x + x).join('') : raw
+  const value = Number.parseInt(safe, 16)
+  if (!Number.isFinite(value) || safe.length !== 6) return { r: 32, g: 216, b: 255 }
+  return { r: (value >> 16) & 255, g: (value >> 8) & 255, b: value & 255 }
+}
+
+function readBannerDismissState() {
+  try { return JSON.parse(localStorage.getItem(BANNER_ALERT_STORAGE_KEY) || 'null') } catch { localStorage.removeItem(BANNER_ALERT_STORAGE_KEY); return null }
+}
+
+function writeBannerDismissState(version) {
+  localStorage.setItem(BANNER_ALERT_STORAGE_KEY, JSON.stringify({ dismissed: true, bannerVersion: Number(version || 1), dismissedAt: Date.now() }))
+}
+
+function resolveBannerIcon(iconType) {
+  const icons = {
+    1: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 10v6"/><path d="M12 7h.01"/></svg>',
+    2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>',
+    3: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3 2 21h20L12 3z"/><path d="M12 9v5"/><path d="M12 17h.01"/></svg>',
+    4: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/></svg>',
+    5: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14.7 6.3a4 4 0 1 0 3 3l3.3 3.3-2 2-3.3-3.3a4 4 0 0 0-3-3z"/><path d="m2 22 8-8"/></svg>'
+  }
+  return icons[iconType] || icons[1]
+}
+
+function matchesPathRule(rule, currentPath) {
+  const normalized = normalizePath(rule)
+  if (normalized.endsWith('/**')) return currentPath.startsWith(normalized.slice(0, -3))
+  return normalized === currentPath
+}
+
+async function initBannerAlerts() {
+  try {
+    const config = await getBannerAlertConfig()
+    if (!config.bannerActive) return
+    const currentPath = normalizePath(window.location.pathname)
+    if (config.bannerBlockedPaths.some((x) => matchesPathRule(x, currentPath))) return
+    if (config.bannerAllowedPaths.length && !config.bannerAllowedPaths.some((x) => matchesPathRule(x, currentPath))) return
+    const now = Date.now()
+    const startsAt = config.bannerStartsAt?.toMillis?.() || Date.parse(config.bannerStartsAt || '')
+    const expiresAt = config.bannerExpiresAt?.toMillis?.() || Date.parse(config.bannerExpiresAt || '')
+    if (Number.isFinite(startsAt) && now < startsAt) return
+    if (Number.isFinite(expiresAt) && now > expiresAt) return
+    const user = await waitForInitialAuthState().catch(() => null)
+    if (config.bannerAudience === 'signedIn' && !user) return
+    if (config.bannerAudience === 'signedOut' && user) return
+    const dismissed = readBannerDismissState()
+    if (dismissed?.dismissed && Number(dismissed.bannerVersion) === Number(config.bannerVersion)) return
+
+    const { r, g, b } = hexToRgb(config.bannerColor)
+    const el = document.createElement('section')
+    el.className = `banner-alert ${config.bannerType === 2 ? 'banner-alert--fullscreen' : 'banner-alert--bottom'}`
+    el.style.setProperty('--banner-color', config.bannerColor)
+    el.style.setProperty('--banner-color-soft', `rgba(${r}, ${g}, ${b}, 0.18)`)
+    el.style.setProperty('--banner-color-glow', `rgba(${r}, ${g}, ${b}, 0.42)`)
+    const title = config.bannerContent[0]
+    const message = config.bannerContent[1]
+    el.innerHTML = `${config.bannerType === 2 ? '<div class="banner-alert-backdrop"></div>' : ''}<div class="${config.bannerType === 2 ? 'banner-alert-modal' : 'banner-alert-card'}"><div class="banner-alert-icon">${resolveBannerIcon(config.bannerIcon)}</div><div class="banner-alert-content">${title ? `<strong class="banner-alert-title">${escapeHtml(title)}</strong>` : ''}<p class="banner-alert-message">${escapeHtml(message)}</p>${config.bannerButtonText && config.bannerButtonUrl ? `<a class="banner-alert-action" href="${escapeHtml(config.bannerButtonUrl)}">${escapeHtml(config.bannerButtonText)}</a>` : ''}</div>${config.bannerDismissible ? '<button class="banner-alert-close" type="button" aria-label="Dismiss banner">×</button>' : ''}</div>`
+    document.body.append(el)
+    el.querySelector('.banner-alert-close')?.addEventListener('click', () => {
+      writeBannerDismissState(config.bannerVersion)
+      el.remove()
+    })
+  } catch {
+    // Fail open for announcement system.
+  }
 }
 
 function updateCartBadges(count) {
