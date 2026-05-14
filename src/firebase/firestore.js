@@ -5,6 +5,43 @@ let hasWarnedProfileRead = false
 
 export const db = getFirestore(app)
 
+const ACCESS_GATE_FALLBACK_CONFIG = {
+  isKeyRequired: false,
+  keyValue: '',
+  keyHash: '',
+  keyVersion: 1,
+  title: 'Private Beta',
+  message: 'Enter your access key to continue.',
+  supportEmail: '',
+  allowedPublicPaths: [],
+  brandName: 'Melogic Records'
+}
+
+export function normalizeAccessGateConfig(raw = {}) {
+  const keyVersion = Number.isFinite(Number(raw?.keyVersion)) ? Math.max(1, Math.round(Number(raw.keyVersion))) : 1
+  return {
+    ...ACCESS_GATE_FALLBACK_CONFIG,
+    isKeyRequired: Boolean(raw?.isKeyRequired),
+    keyValue: String(raw?.keyValue || ''),
+    keyHash: String(raw?.keyHash || '').trim().toLowerCase(),
+    keyVersion,
+    title: String(raw?.title || ACCESS_GATE_FALLBACK_CONFIG.title),
+    message: String(raw?.message || ACCESS_GATE_FALLBACK_CONFIG.message),
+    supportEmail: String(raw?.supportEmail || ''),
+    allowedPublicPaths: Array.isArray(raw?.allowedPublicPaths) ? raw.allowedPublicPaths.map((x) => String(x || '').trim()).filter(Boolean) : [],
+    brandName: String(raw?.brandName || ACCESS_GATE_FALLBACK_CONFIG.brandName),
+    bypassUntil: raw?.bypassUntil || null,
+    updatedAt: raw?.updatedAt || null
+  }
+}
+
+export async function getAccessGateConfig() {
+  if (!db) return normalizeAccessGateConfig()
+  const snap = await getDoc(doc(db, 'operations', 'keyRequiredInfo'))
+  if (!snap.exists()) return normalizeAccessGateConfig()
+  return normalizeAccessGateConfig(snap.data())
+}
+
 function defaultSocials() {
   return {
     instagram: '',
