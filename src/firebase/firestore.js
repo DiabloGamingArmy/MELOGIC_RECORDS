@@ -16,6 +16,27 @@ const ACCESS_GATE_FALLBACK_CONFIG = {
   allowedPublicPaths: [],
   brandName: 'Melogic Records'
 }
+const BANNER_ALERT_FALLBACK_CONFIG = {
+  bannerType: 1,
+  bannerContent: ['', ''],
+  bannerIcon: 1,
+  bannerColor: '#20d8ff',
+  bannerActive: false,
+  bannerVersion: 1,
+  bannerDismissible: true,
+  bannerButtonText: '',
+  bannerButtonUrl: '',
+  bannerStartsAt: null,
+  bannerExpiresAt: null,
+  bannerAllowedPaths: [],
+  bannerBlockedPaths: [],
+  bannerAudience: 'all',
+  bannerPriority: 1
+}
+
+function isValidHexColor(value) {
+  return /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(String(value || '').trim())
+}
 
 export function normalizeAccessGateConfig(raw = {}) {
   const keyVersion = Number.isFinite(Number(raw?.keyVersion)) ? Math.max(1, Math.round(Number(raw.keyVersion))) : 1
@@ -40,6 +61,39 @@ export async function getAccessGateConfig() {
   const snap = await getDoc(doc(db, 'operations', 'keyRequiredInfo'))
   if (!snap.exists()) return normalizeAccessGateConfig()
   return normalizeAccessGateConfig(snap.data())
+}
+
+export function normalizeBannerAlertConfig(raw = {}) {
+  const content = Array.isArray(raw?.bannerContent) ? raw.bannerContent : []
+  const bannerType = Number(raw?.bannerType) === 2 ? 2 : 1
+  const bannerIcon = Number.isFinite(Number(raw?.bannerIcon)) ? Math.max(1, Math.round(Number(raw.bannerIcon))) : 1
+  const bannerVersion = Number.isFinite(Number(raw?.bannerVersion)) ? Math.max(1, Math.round(Number(raw.bannerVersion))) : 1
+  const bannerAudience = ['all', 'signedIn', 'signedOut'].includes(raw?.bannerAudience) ? raw.bannerAudience : 'all'
+  return {
+    ...BANNER_ALERT_FALLBACK_CONFIG,
+    bannerType,
+    bannerContent: [String(content[0] || ''), String(content[1] || '')],
+    bannerIcon,
+    bannerColor: isValidHexColor(raw?.bannerColor) ? String(raw.bannerColor) : BANNER_ALERT_FALLBACK_CONFIG.bannerColor,
+    bannerActive: Boolean(raw?.bannerActive),
+    bannerVersion,
+    bannerDismissible: raw?.bannerDismissible !== false,
+    bannerButtonText: String(raw?.bannerButtonText || ''),
+    bannerButtonUrl: String(raw?.bannerButtonUrl || ''),
+    bannerStartsAt: raw?.bannerStartsAt || null,
+    bannerExpiresAt: raw?.bannerExpiresAt || null,
+    bannerAllowedPaths: Array.isArray(raw?.bannerAllowedPaths) ? raw.bannerAllowedPaths.map((x) => String(x || '').trim()).filter(Boolean) : [],
+    bannerBlockedPaths: Array.isArray(raw?.bannerBlockedPaths) ? raw.bannerBlockedPaths.map((x) => String(x || '').trim()).filter(Boolean) : [],
+    bannerAudience,
+    bannerPriority: Number.isFinite(Number(raw?.bannerPriority)) ? Math.max(1, Math.round(Number(raw.bannerPriority))) : 1
+  }
+}
+
+export async function getBannerAlertConfig() {
+  if (!db) return normalizeBannerAlertConfig()
+  const snap = await getDoc(doc(db, 'operations', 'bannerAlerts'))
+  if (!snap.exists()) return normalizeBannerAlertConfig()
+  return normalizeBannerAlertConfig(snap.data())
 }
 
 function defaultSocials() {
