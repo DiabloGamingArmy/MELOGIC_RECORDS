@@ -25,7 +25,21 @@ let instrumentMasterGain = null
 let instrumentPanNode = null
 let instrumentVolume = 0.35
 let instrumentPan = 0
+let instrumentTreble = 0.5
+let instrumentReverb = 0.3
 let instrumentOctaveOffset = 0
+let instrumentMacroView = 'knobs'
+let macroPadPosition = { x: 0.5, y: 0.5 }
+let instrumentMacros = [
+  { id: 'macro-1', label: 'Tone', value: 0.5 },
+  { id: 'macro-2', label: 'Motion', value: 0.5 },
+  { id: 'macro-3', label: 'Attack', value: 0.25 },
+  { id: 'macro-4', label: 'Release', value: 0.35 },
+  { id: 'macro-5', label: 'Drive', value: 0.2 },
+  { id: 'macro-6', label: 'Width', value: 0.65 },
+  { id: 'macro-7', label: 'Filter', value: 0.55 },
+  { id: 'macro-8', label: 'Texture', value: 0.4 }
+]
 let isSustainEnabled = false
 let isAutoChordsEnabled = false
 let selectedInstrumentName = 'Grand Piano'
