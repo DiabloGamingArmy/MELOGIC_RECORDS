@@ -349,6 +349,24 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-preset-row-tags{display:flex;gap:5px;flex-wrap:nowrap;min-width:0}
 .studio-preset-row-tags em{font-style:normal;font-size:10px;color:#8dd7ff;background:rgba(96,219,255,.08);border:1px solid rgba(96,219,255,.16);border-radius:999px;padding:1px 6px;white-space:nowrap}
 .studio-preset-row button{justify-self:end;border:1px solid rgba(96,219,255,.34);border-radius:7px;background:rgba(96,219,255,.10);color:#e9f8ff;padding:4px 9px;font-size:11px}
+.studio-arp-page{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:10px}
+.studio-arp-controls{display:grid;grid-template-columns:auto repeat(6,minmax(110px,1fr));gap:8px;align-items:end}
+.studio-arp-controls label{display:grid;gap:4px;font-size:11px;color:#9fb0d8}
+.studio-arp-controls select,.studio-arp-controls input{height:30px;border-radius:8px;border:1px solid #3f4a68;background:#1f2638;color:#e9ecff;padding:0 8px}
+.studio-arp-toggle{height:30px;border-radius:8px;border:1px solid #3f4a68;background:#1f2638;color:#e9ecff;padding:0 10px}
+.studio-arp-toggle.is-active{border-color:rgba(96,219,255,.8);background:rgba(96,219,255,.12)}
+.studio-arp-stepper{display:flex;align-items:center;gap:6px}.studio-arp-stepper button{width:26px;height:26px}
+.studio-arp-main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr minmax(220px,280px);gap:10px}
+.studio-arp-steps{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:6px;align-items:stretch}
+.studio-arp-step{min-height:170px;border:1px solid rgba(130,150,210,.28);border-radius:8px;background:rgba(255,255,255,.03);display:grid;grid-template-rows:auto 1fr auto;padding:6px 4px;color:#cdd7f2}
+.studio-arp-step.is-active{border-color:rgba(96,219,255,.65);background:rgba(96,219,255,.08)}
+.studio-arp-step em{align-self:end;background:linear-gradient(180deg,rgba(96,219,255,.9),rgba(96,219,255,.45));border-radius:3px}
+.studio-arp-step small{font-size:10px;color:#9fb0d8}
+.studio-arp-presets{border:1px solid rgba(130,150,210,.25);border-radius:10px;background:rgba(255,255,255,.02);display:grid;grid-template-rows:auto 1fr;min-height:0}
+.studio-arp-presets header{display:grid;gap:8px;padding:10px;border-bottom:1px solid rgba(130,150,210,.2)}
+.studio-arp-presets header>div{display:flex;gap:6px;flex-wrap:wrap}
+.studio-arp-presets>div{overflow:auto;display:grid;gap:4px;padding:8px}
+.studio-arp-presets>div button{text-align:left;border:1px solid rgba(130,150,210,.24);background:rgba(255,255,255,.03);color:#d7e4ff;border-radius:7px;padding:6px 8px}
 
 /* Instrument panel sizing final override */
 .studio-bottom-panel{bottom:32px;z-index:600}
