@@ -347,3 +347,16 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-preset-tags{display:flex;gap:6px;flex-wrap:wrap}
 .studio-preset-tags span{font-size:10px;color:#8dd7ff;background:rgba(96,219,255,.08);border:1px solid rgba(96,219,255,.18);border-radius:999px;padding:2px 6px}
 .studio-preset-card button{justify-self:start;border:1px solid rgba(96,219,255,.34);border-radius:8px;background:rgba(96,219,255,.10);color:#e9f8ff;padding:6px 10px}
+
+/* Instrument panel sizing final override */
+.studio-bottom-panel{bottom:32px;z-index:600}
+.studio-editor-footer{z-index:410}
+.studio-bottom-panel.studio-instrument-panel{bottom:32px;height:min(62vh,540px);max-height:calc(100vh - 150px);overflow:hidden}
+.studio-instrument-panel .studio-bottom-panel-body{box-sizing:border-box;height:100%;min-height:0;display:flex;flex-direction:column;gap:6px;padding:8px 10px 10px 12px;overflow:hidden}
+.studio-instrument-content{flex:1 1 auto;min-height:0;display:flex;width:100%;overflow:hidden;margin-bottom:0;height:auto}
+.studio-instrument-content .studio-virtual-keyboard,
+.studio-instrument-content .studio-chord-keyboard,
+.studio-instrument-content .studio-presets-page,
+.studio-instrument-content .studio-instrument-subpage-placeholder{flex:1 1 auto;width:100%;height:100%;min-height:0;max-height:none}
+.studio-instrument-content .studio-virtual-keyboard{min-height:0;max-height:none}
+.studio-virtual-keyboard{max-height:none}
