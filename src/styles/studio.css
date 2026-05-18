@@ -162,12 +162,15 @@ body.is-studio-editor main{padding-top:0}
 .studio-selection-box{position:absolute;border:1px solid rgba(120,165,255,.85);background:rgba(120,165,255,.14);pointer-events:none;z-index:4}
 .studio-selection-box[hidden]{display:none !important}
 .studio-right-rail{z-index:350;width:56px;min-width:56px;max-width:56px;border-left:1px solid #2a3042;background:#141822;display:grid;align-content:start;gap:8px;padding:8px;box-sizing:border-box}.studio-right-rail button{width:40px;min-height:48px;writing-mode:vertical-rl;text-orientation:mixed;background:#222838;border:1px solid #39405a;color:#e8edff;border-radius:8px;padding:6px 4px}
-.studio-bottom-panel{position:absolute;left:0;right:0;bottom:32px;height:50vh;z-index:300;background:rgba(20,24,34,.98);border-top:1px solid rgba(130,150,210,.35);box-shadow:0 -24px 70px rgba(0,0,0,.42);display:grid;grid-template-rows:44px 1fr;animation:studioBottomPanelIn .18s ease}
+.studio-bottom-panel{position:absolute;left:0;right:0;bottom:32px;height:50vh;z-index:300;background:rgba(20,24,34,.98);border-top:1px solid rgba(130,150,210,.35);box-shadow:0 -24px 70px rgba(0,0,0,.42);display:grid;grid-template-rows:44px 1fr}
 .studio-bottom-panel-header{display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid rgba(130,150,210,.22)}
 .studio-bottom-panel-body{padding:18px;overflow:auto}
 .studio-bottom-panel-close{width:28px;height:28px;border-radius:8px;border:1px solid rgba(140,156,205,.32);background:rgba(255,255,255,.04);color:#e8ecff;display:grid;place-items:center}
 .studio-bottom-panel-close svg{width:16px;height:16px;stroke-width:2}
 @keyframes studioBottomPanelIn{from{transform:translateY(16px);opacity:0}to{transform:translateY(0);opacity:1}}
+.studio-bottom-panel.is-bottom-panel-entering{animation:studioBottomPanelIn .16s ease}
+.studio-bottom-panel.is-bottom-panel-exiting{animation:studioBottomPanelOut .14s ease forwards}
+@keyframes studioBottomPanelOut{from{transform:translateY(0);opacity:1}to{transform:translateY(12px);opacity:0}}
 .studio-effects-panel[hidden]{display:none !important}
 .studio-editor-footer{height:32px;min-height:32px;display:flex;gap:12px;align-items:center;padding:0 10px;background:#171a23;border-top:1px solid #2a2f3f;font-size:12px;color:#afb8d0}
 .studio-tooltip-layer{position:fixed;z-index:2147483647;pointer-events:none;padding:5px 8px;border-radius:7px;background:#111521;border:1px solid rgba(140,156,205,.35);color:#fff;font-size:12px;white-space:nowrap;box-shadow:0 10px 30px rgba(0,0,0,.35)}
@@ -300,14 +303,81 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 /* Keyboard structural repair */
 .studio-instrument-panel{display:flex;flex-direction:column;overflow:hidden}
 .studio-instrument-panel .studio-bottom-panel-body{display:flex;flex-direction:column;min-height:0;overflow:hidden}
-.studio-virtual-keyboard{--black-key-width:60%;position:relative;flex:1 1 auto;min-height:180px;max-height:260px;height:auto;overflow:hidden;background:linear-gradient(180deg,#f8faff,#d8dfeb);border:1px solid #aeb8ca;border-radius:6px;box-shadow:inset 0 1px 0 rgba(255,255,255,.75)}
-.studio-piano-white-keys{display:grid;grid-template-columns:repeat(22,minmax(0,1fr));height:100%;width:100%}
-.studio-piano-black-keys{position:absolute;inset:0;height:100%;pointer-events:none;z-index:2}
+.studio-virtual-keyboard{--white-key-count:1;position:relative;flex:1 1 auto;min-height:180px;max-height:260px;height:auto;overflow:hidden;background:linear-gradient(180deg,#f8faff,#d8dfeb);border:1px solid #aeb8ca;border-radius:6px;box-shadow:inset 0 1px 0 rgba(255,255,255,.75)}
+.studio-piano-white-keys{display:grid;grid-template-columns:repeat(var(--white-key-count),minmax(0,1fr));height:100%;width:100%}
+.studio-piano-black-keys{position:absolute;inset:0;pointer-events:none;z-index:2}
 .studio-piano-key{position:relative;border:none;cursor:pointer;transition:background .12s ease,box-shadow .12s ease}
 .studio-piano-key--white{height:100%;display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;padding:8px 4px 10px;background:linear-gradient(180deg,#fdfefe 0%,#e5eaf2 68%,#d4dbe8 100%);border-right:1px solid #aeb6c7;color:#414c63;box-shadow:inset 0 1px 0 rgba(255,255,255,.82)}
 .studio-piano-key--white span{font-size:14px;line-height:1;color:#3d4960;opacity:.95}
 .studio-piano-key--white small{font-size:11px;color:#5f687d;align-self:center}
-.studio-piano-key--black{position:absolute;top:0;height:62%;width:var(--black-key-width);transform:translateX(-50%);pointer-events:auto;z-index:3;display:flex;justify-content:center;align-items:flex-end;padding-bottom:12px;background:linear-gradient(180deg,#3c4968 0%,#1a2335 78%);border:1px solid #4e5d80;border-top:0;border-radius:0 0 8px 8px;color:#e0e8fb;box-shadow:0 3px 7px rgba(0,0,0,.35)}
+.studio-piano-key--black{position:absolute;top:0;height:62%;width:calc((100% / var(--white-key-count)) * 0.62);transform:translateX(-50%);pointer-events:auto;z-index:3;display:flex;justify-content:center;align-items:flex-end;padding-bottom:12px;background:linear-gradient(180deg,#3c4968 0%,#1a2335 78%);border:1px solid #4e5d80;border-top:0;border-radius:0 0 8px 8px;color:#e0e8fb;box-shadow:0 3px 7px rgba(0,0,0,.35)}
 .studio-piano-key--black small{margin:0;font-size:10px;color:#d4def4;background:rgba(24,31,47,.5);padding:1px 4px;border-radius:999px}
 .studio-piano-key--white.is-pressed{background:linear-gradient(180deg,#eef9ff,#cce0fb);box-shadow:inset 0 0 0 2px rgba(97,205,255,.42)}
 .studio-piano-key--black.is-pressed{background:linear-gradient(180deg,#5b4aa5,#233969);box-shadow:0 0 0 1px rgba(129,153,255,.65),0 0 12px rgba(119,136,255,.48)}
+.studio-virtual-keyboard-whites,.studio-virtual-keyboard-blacks{display:contents}
+.studio-instrument-panel .studio-bottom-panel-body{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.studio-instrument-content{flex:1 1 auto;min-height:0;display:flex;margin-bottom:-40px;height:calc(100% + 40px)}
+.studio-instrument-content .studio-virtual-keyboard,.studio-instrument-content .studio-chord-keyboard,.studio-instrument-content .studio-presets-page{flex:1 1 auto;width:100%;height:100%;min-height:0}
+.studio-instrument-content .studio-virtual-keyboard{min-height:320px;max-height:none}
+.studio-bottom-panel.studio-instrument-panel{height:min(60vh,500px);max-height:60vh}
+.studio-instrument-subpage-placeholder{flex:1 1 auto;min-height:220px;width:100%;display:grid;place-content:center;gap:8px;text-align:center;border:1px dashed rgba(130,150,210,.32);border-radius:10px;background:rgba(255,255,255,.025);color:#cdd7f2}
+.studio-instrument-subpage-placeholder h3{margin:0;color:#f4f7ff}
+.studio-instrument-subpage-placeholder p{margin:0;color:#9fabca}
+.studio-right-rail-subtool.is-active{color:#fff;border-color:rgba(96,219,255,.85);background:linear-gradient(180deg,rgba(63,86,130,.75),rgba(27,37,58,.95));box-shadow:0 0 0 1px rgba(96,219,255,.18),0 0 12px rgba(96,219,255,.12)}
+.studio-chord-keyboard{flex:1 1 auto;min-height:280px;width:100%;display:grid;grid-template-columns:repeat(12,minmax(92px,1fr));gap:6px;overflow-x:auto}
+.studio-chord-key{position:relative;min-width:92px;height:100%;min-height:280px;display:grid;grid-template-rows:auto auto 1fr;align-content:stretch;padding:12px 8px 10px;border:1px solid #aeb6c7;border-radius:8px;background:linear-gradient(to bottom,transparent calc(16.666% - .5px),rgba(80,90,112,.32) calc(16.666% - .5px),rgba(80,90,112,.32) calc(16.666% + .5px),transparent calc(16.666% + .5px),transparent calc(33.333% - .5px),rgba(80,90,112,.32) calc(33.333% - .5px),rgba(80,90,112,.32) calc(33.333% + .5px),transparent calc(33.333% + .5px),transparent calc(50% - .5px),rgba(80,90,112,.32) calc(50% - .5px),rgba(80,90,112,.32) calc(50% + .5px),transparent calc(50% + .5px),transparent calc(66.666% - .5px),rgba(80,90,112,.32) calc(66.666% - .5px),rgba(80,90,112,.32) calc(66.666% + .5px),transparent calc(66.666% + .5px),transparent calc(83.333% - .5px),rgba(80,90,112,.32) calc(83.333% - .5px),rgba(80,90,112,.32) calc(83.333% + .5px),transparent calc(83.333% + .5px)),linear-gradient(180deg,#fdfefe 0%,#e5eaf2 68%,#d4dbe8 100%);color:#414c63;box-shadow:inset 0 1px 0 rgba(255,255,255,.82)}
+.studio-chord-key strong{font-size:18px;color:#2f3a52}
+.studio-chord-key-quality{font-size:11px;color:#5f687d}
+.studio-chord-key-octaves{align-self:stretch;display:grid;grid-template-rows:repeat(6,1fr);grid-template-columns:1fr;gap:0;font-size:9px;color:#6a7286;text-align:right;align-items:center}
+.studio-presets-page{flex:1 1 auto;min-height:0;width:100%;display:flex;flex-direction:column;gap:12px;padding:4px 4px 40px;overflow:hidden}
+.studio-presets-header{display:flex;justify-content:space-between;align-items:end;gap:16px}
+.studio-presets-header h3{margin:0;color:#f4f7ff}
+.studio-presets-header p{margin:4px 0 0;color:#9fabca}
+.studio-presets-search{display:grid;gap:4px;min-width:240px;color:#9fb0d8;font-size:11px}
+.studio-presets-search input{height:34px;border-radius:9px;border:1px solid #3f4a68;background:#1f2638;color:#e9ecff;padding:0 10px}
+.studio-presets-categories{display:flex;gap:8px;flex-wrap:wrap}
+.studio-presets-category{border-radius:999px;border:1px solid rgba(130,150,210,.32);background:rgba(255,255,255,.035);color:#cdd7f2;padding:6px 10px}
+.studio-presets-category.is-active{border-color:rgba(96,219,255,.8);color:#fff;background:rgba(96,219,255,.12)}
+.studio-presets-list{flex:1 1 auto;min-height:0;overflow:hidden;border:1px solid rgba(130,150,210,.25);border-radius:10px;background:rgba(255,255,255,.025);display:flex;flex-direction:column}
+.studio-presets-list-header,.studio-preset-row{display:grid;grid-template-columns:minmax(150px,1.1fr) 110px minmax(220px,1.6fr) minmax(160px,1fr) 74px;align-items:center;gap:10px}
+.studio-presets-list-header{min-height:32px;padding:0 10px;border-bottom:1px solid rgba(130,150,210,.24);background:rgba(255,255,255,.045);color:#9fb0d8;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.studio-presets-list-body{flex:1 1 auto;min-height:0;overflow:auto}
+.studio-preset-row{min-height:34px;padding:0 10px;border-bottom:1px solid rgba(130,150,210,.12);color:#cdd7f2;font-size:12px}
+.studio-preset-row:hover{background:rgba(96,219,255,.06)}
+.studio-preset-row strong{color:#f4f7ff;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.studio-preset-row span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.studio-preset-row-tags{display:flex;gap:5px;flex-wrap:nowrap;min-width:0}
+.studio-preset-row-tags em{font-style:normal;font-size:10px;color:#8dd7ff;background:rgba(96,219,255,.08);border:1px solid rgba(96,219,255,.16);border-radius:999px;padding:1px 6px;white-space:nowrap}
+.studio-preset-row button{justify-self:end;border:1px solid rgba(96,219,255,.34);border-radius:7px;background:rgba(96,219,255,.10);color:#e9f8ff;padding:4px 9px;font-size:11px}
+.studio-arp-page{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:10px}
+.studio-arp-controls{display:grid;grid-template-columns:auto repeat(6,minmax(110px,1fr));gap:8px;align-items:end}
+.studio-arp-controls label{display:grid;gap:4px;font-size:11px;color:#9fb0d8}
+.studio-arp-controls select,.studio-arp-controls input{height:30px;border-radius:8px;border:1px solid #3f4a68;background:#1f2638;color:#e9ecff;padding:0 8px}
+.studio-arp-toggle{height:30px;border-radius:8px;border:1px solid #3f4a68;background:#1f2638;color:#e9ecff;padding:0 10px}
+.studio-arp-toggle.is-active{border-color:rgba(96,219,255,.8);background:rgba(96,219,255,.12)}
+.studio-arp-stepper{display:flex;align-items:center;gap:6px}.studio-arp-stepper button{width:26px;height:26px}
+.studio-arp-main{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr minmax(220px,280px);gap:10px}
+.studio-arp-steps{display:grid;grid-template-columns:repeat(16,minmax(0,1fr));gap:6px;align-items:stretch}
+.studio-arp-step{min-height:170px;border:1px solid rgba(130,150,210,.28);border-radius:8px;background:rgba(255,255,255,.03);display:grid;grid-template-rows:auto 1fr auto;padding:6px 4px;color:#cdd7f2}
+.studio-arp-step.is-active{border-color:rgba(96,219,255,.65);background:rgba(96,219,255,.08)}
+.studio-arp-step em{align-self:end;background:linear-gradient(180deg,rgba(96,219,255,.9),rgba(96,219,255,.45));border-radius:3px}
+.studio-arp-step small{font-size:10px;color:#9fb0d8}
+.studio-arp-presets{border:1px solid rgba(130,150,210,.25);border-radius:10px;background:rgba(255,255,255,.02);display:grid;grid-template-rows:auto 1fr;min-height:0}
+.studio-arp-presets header{display:grid;gap:8px;padding:10px;border-bottom:1px solid rgba(130,150,210,.2)}
+.studio-arp-presets header>div{display:flex;gap:6px;flex-wrap:wrap}
+.studio-arp-presets>div{overflow:auto;display:grid;gap:4px;padding:8px}
+.studio-arp-presets>div button{text-align:left;border:1px solid rgba(130,150,210,.24);background:rgba(255,255,255,.03);color:#d7e4ff;border-radius:7px;padding:6px 8px}
+
+/* Instrument panel sizing final override */
+.studio-bottom-panel{bottom:32px;z-index:600}
+.studio-bottom-panel{right:53px}
+.studio-editor-footer{z-index:410}
+.studio-bottom-panel.studio-instrument-panel{right:53px;bottom:32px;height:min(62vh,540px);max-height:calc(100vh - 150px);overflow:hidden}
+.studio-instrument-panel .studio-bottom-panel-body{box-sizing:border-box;height:100%;min-height:0;display:flex;flex-direction:column;gap:6px;padding:8px 10px 10px 12px;overflow:hidden}
+.studio-instrument-content{flex:1 1 auto;min-height:0;display:flex;width:100%;overflow:hidden;margin-bottom:0;height:auto}
+.studio-instrument-content .studio-virtual-keyboard,
+.studio-instrument-content .studio-chord-keyboard,
+.studio-instrument-content .studio-presets-page,
+.studio-instrument-content .studio-instrument-subpage-placeholder{flex:1 1 auto;width:100%;height:100%;min-height:0;max-height:none}
+.studio-instrument-content .studio-virtual-keyboard{min-height:0;max-height:none}
+.studio-virtual-keyboard{max-height:none}
