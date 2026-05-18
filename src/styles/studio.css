@@ -316,8 +316,9 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-piano-key--black.is-pressed{background:linear-gradient(180deg,#5b4aa5,#233969);box-shadow:0 0 0 1px rgba(129,153,255,.65),0 0 12px rgba(119,136,255,.48)}
 .studio-virtual-keyboard-whites,.studio-virtual-keyboard-blacks{display:contents}
 .studio-instrument-panel .studio-bottom-panel-body{display:flex;flex-direction:column;min-height:0;overflow:hidden}
-.studio-instrument-content{flex:1 1 auto;min-height:0;display:flex}
-.studio-instrument-content .studio-virtual-keyboard{flex:1 1 auto;width:100%;min-height:280px;max-height:none;height:100%}
+.studio-instrument-content{flex:1 1 auto;min-height:0;display:flex;margin-bottom:-40px;height:calc(100% + 40px)}
+.studio-instrument-content .studio-virtual-keyboard,.studio-instrument-content .studio-chord-keyboard,.studio-instrument-content .studio-presets-page{flex:1 1 auto;width:100%;height:100%;min-height:0}
+.studio-instrument-content .studio-virtual-keyboard{min-height:320px;max-height:none}
 .studio-bottom-panel.studio-instrument-panel{height:min(60vh,500px);max-height:60vh}
 .studio-instrument-subpage-placeholder{flex:1 1 auto;min-height:220px;width:100%;display:grid;place-content:center;gap:8px;text-align:center;border:1px dashed rgba(130,150,210,.32);border-radius:10px;background:rgba(255,255,255,.025);color:#cdd7f2}
 .studio-instrument-subpage-placeholder h3{margin:0;color:#f4f7ff}
@@ -328,3 +329,21 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-chord-key strong{font-size:18px;color:#2f3a52}
 .studio-chord-key-quality{font-size:11px;color:#5f687d}
 .studio-chord-key-octaves{align-self:end;display:grid;grid-template-columns:repeat(6,1fr);gap:0;font-size:9px;color:#6a7286;text-align:center}
+.studio-presets-page{flex:1 1 auto;min-height:0;width:100%;display:flex;flex-direction:column;gap:12px;padding:4px 4px 40px;overflow:hidden}
+.studio-presets-header{display:flex;justify-content:space-between;align-items:end;gap:16px}
+.studio-presets-header h3{margin:0;color:#f4f7ff}
+.studio-presets-header p{margin:4px 0 0;color:#9fabca}
+.studio-presets-search{display:grid;gap:4px;min-width:240px;color:#9fb0d8;font-size:11px}
+.studio-presets-search input{height:34px;border-radius:9px;border:1px solid #3f4a68;background:#1f2638;color:#e9ecff;padding:0 10px}
+.studio-presets-categories{display:flex;gap:8px;flex-wrap:wrap}
+.studio-presets-category{border-radius:999px;border:1px solid rgba(130,150,210,.32);background:rgba(255,255,255,.035);color:#cdd7f2;padding:6px 10px}
+.studio-presets-category.is-active{border-color:rgba(96,219,255,.8);color:#fff;background:rgba(96,219,255,.12)}
+.studio-presets-grid{flex:1 1 auto;min-height:0;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;padding-right:4px}
+.studio-preset-card{min-height:132px;display:grid;gap:8px;align-content:start;border:1px solid rgba(130,150,210,.25);border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));padding:12px}
+.studio-preset-card-topline{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.studio-preset-card-topline strong{color:#f4f7ff}
+.studio-preset-card-topline span,.studio-preset-card p{color:#9fabca}
+.studio-preset-card p{margin:0;font-size:12px;line-height:1.35}
+.studio-preset-tags{display:flex;gap:6px;flex-wrap:wrap}
+.studio-preset-tags span{font-size:10px;color:#8dd7ff;background:rgba(96,219,255,.08);border:1px solid rgba(96,219,255,.18);border-radius:999px;padding:2px 6px}
+.studio-preset-card button{justify-self:start;border:1px solid rgba(96,219,255,.34);border-radius:8px;background:rgba(96,219,255,.10);color:#e9f8ff;padding:6px 10px}
