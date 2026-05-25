@@ -69,6 +69,20 @@ body::-webkit-scrollbar-thumb {
   border: 2px solid rgba(3, 5, 10, 0.95);
 }
 
+html::-webkit-scrollbar {
+  width: 12px;
+}
+
+html::-webkit-scrollbar-track {
+  background: rgba(3, 5, 10, 0.95);
+}
+
+html::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(96, 121, 176, 0.72), rgba(66, 90, 143, 0.72));
+  border-radius: 999px;
+  border: 2px solid rgba(3, 5, 10, 0.95);
+}
+
 .page-preloader {
   position: fixed;
   inset: 0;
