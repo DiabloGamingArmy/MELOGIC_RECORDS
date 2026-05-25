@@ -4,6 +4,7 @@ import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 import { addToCart } from './data/cartService'
 import { listHomepageReleaseProducts } from './data/productService'
 import { ROUTES, productRoute } from './utils/routes'
@@ -46,6 +47,68 @@ function buildReleaseCard(product) {
   `
 }
 
+const homeFeaturePanels = [
+  {
+    key: 'studio',
+    eyebrow: 'Melogic Studio',
+    title: 'A web-based DAW built for creation, collaboration, and release.',
+    body: 'Build tracks, use marketplace add-ons, collaborate with the community, then move toward exports and distribution without breaking the creative flow.',
+    imagePath: 'assets/site/home/featured/studio.png',
+    alt: 'Melogic Studio web-based DAW preview'
+  },
+  {
+    key: 'marketplace',
+    eyebrow: 'Marketplace',
+    title: 'Create and sell digital goods without thinking small.',
+    body: 'Sell anything from single audio samples to full sample packs, presets, wavetables, VST modules, and team-built production tools.',
+    imagePath: 'assets/site/home/featured/marketplace.png',
+    alt: 'Melogic marketplace digital goods preview'
+  },
+  {
+    key: 'community',
+    eyebrow: 'Community',
+    title: 'Find the people who can help finish the next big hit.',
+    body: 'Connect with musicians, artists, producers, friends, and collaborators through a music-first network built around actual creation.',
+    imagePath: 'assets/site/home/featured/community.png',
+    alt: 'Melogic community collaboration preview'
+  },
+  {
+    key: 'livestreams',
+    eyebrow: 'Livestreams',
+    title: 'Let people watch the record come alive in real time.',
+    body: 'Stream sessions, share ideas, and let fans or collaborators see the creative process as it happens — like watching the Mona Lisa being painted.',
+    imagePath: 'assets/site/home/featured/livestreams.png',
+    alt: 'Melogic livestream creation preview'
+  }
+]
+
+function renderHomeFeaturePanel(feature, index) {
+  const reverseClass = index % 2 === 1 ? ' home-feature-panel--reverse' : ''
+  return `
+    <article class="home-feature-panel${reverseClass}" data-home-feature data-feature-key="${escapeHtml(feature.key)}">
+      <div class="home-feature-copy">
+        <p class="eyebrow">${escapeHtml(feature.eyebrow)}</p>
+        <h3>${escapeHtml(feature.title)}</h3>
+        <p>${escapeHtml(feature.body)}</p>
+        <div class="feature-chip-row" aria-hidden="true">
+          <span class="feature-chip">Live Sessions</span>
+          <span class="feature-chip">Creator Ops</span>
+          <span class="feature-chip">Release Ready</span>
+        </div>
+      </div>
+      <div class="home-feature-media">
+        <div class="home-feature-frame" data-feature-frame="${escapeHtml(feature.key)}">
+          <img class="home-feature-image" data-home-feature-image="${escapeHtml(feature.key)}" alt="${escapeHtml(feature.alt)}" loading="lazy" hidden />
+          <div class="home-feature-placeholder" aria-hidden="true">
+            <span class="feature-meter"></span>
+            <span class="feature-waveform"></span>
+          </div>
+        </div>
+      </div>
+    </article>
+  `
+}
+
 app.innerHTML = `
   ${renderPagePreloaderMarkup()}
 
@@ -70,8 +133,8 @@ app.innerHTML = `
         <div class="hero-copy">
           <h1>From Marketplace to Masterpiece...</h1>
           <p>
-            Melogic Records builds tools, sample libraries, and artist infrastructure for producers
-            pushing electronic music, melodic bass, and metalcore into the same future.
+            Melogic Records builds tools, sample libraries, creator infrastructure, and collaborative
+            spaces for artists across every genre shaping the next era of music.
           </p>
           <div class="hero-actions">
             <a class="button button-accent" href="${ROUTES.products}">Explore the Catalog</a>
@@ -107,113 +170,45 @@ app.innerHTML = `
           </div>
         </section>
 
-        <section class="section" id="mission">
-          <div class="section-inner mission-grid">
-            <div>
-              <p class="eyebrow">Our perspective</p>
-              <h2>Built as a label. Engineered like a platform.</h2>
-              <p>
-                Melogic is designed around a simple idea: the best producer communities should not stop at
-                downloads. They should create tools, develop artists, move releases, and give momentum to
-                sounds that deserve a bigger stage.
-              </p>
+        <section class="section ecosystem-showcase" id="mission">
+          <div class="section-inner ecosystem-intro">
+            <div class="ecosystem-intro-grid">
+              <div>
+                <p class="eyebrow">Our perspective</p>
+                <h2>One ecosystem for making, selling, sharing, and releasing music.</h2>
+                <p>
+                  Melogic is not just a label and not just a marketplace. It is creator infrastructure:
+                  tools, collaboration, commerce, and momentum designed to keep the music moving.
+                </p>
+              </div>
+              <div class="ecosystem-kicker-row" aria-hidden="true">
+                <span class="feature-chip">Studio-First</span>
+                <span class="feature-chip">Creator Economy</span>
+                <span class="feature-chip">Community-Led</span>
+              </div>
             </div>
-            <article class="side-note">
-              <p class="eyebrow">Current focus</p>
-              <p>Catalog-ready tools, creator identity, and discovery systems that translate community response into real release opportunities.</p>
-            </article>
+          </div>
+
+          <div class="section-inner ecosystem-map">
+            <div class="ecosystem-map-orbit" aria-hidden="true">
+              <span class="ecosystem-map-node">Studio</span>
+              <span class="ecosystem-map-node">Market</span>
+              <span class="ecosystem-map-node">Community</span>
+              <span class="ecosystem-map-node">Live</span>
+            </div>
+          </div>
+
+          <div class="section-inner home-feature-stack">
+            ${homeFeaturePanels.map((feature, index) => renderHomeFeaturePanel(feature, index)).join('')}
           </div>
         </section>
 
-        <section class="section" id="vision">
-          <div class="section-inner">
-            <div class="section-head">
-              <p class="eyebrow">Core pillars</p>
-              <h2>Three systems powering the Melogic ecosystem.</h2>
-            </div>
-            <div class="pillars">
-              <article>
-                <h3>Sound Tools</h3>
-                <p>Sample packs, presets, and production assets built for modern heavy and melodic workflows.</p>
-              </article>
-              <article>
-                <h3>Producer Network</h3>
-                <p>A social layer where feedback, previews, and identity help producers grow with intent.</p>
-              </article>
-              <article>
-                <h3>Label Pipeline</h3>
-                <p>Discovery infrastructure that helps standout creators move toward real release support.</p>
-              </article>
-            </div>
-          </div>
-        </section>
-
-        <section class="section" id="community">
-          <div class="section-inner community-grid">
-            <div>
-              <p class="eyebrow">Artist development</p>
-              <h2>Community feedback that can become label momentum.</h2>
-              <p>
-                Likes, comments, previews, and creator profiles are not decorations. They become signals:
-                what producers are building, what listeners respond to, and what releases may deserve real support.
-              </p>
-            </div>
-            <blockquote class="quote-card" id="live">
-              "This drop sounds release-ready. The arrangement finally matches the emotion."
-              <cite>— Community note from an early Melogic preview thread</cite>
-            </blockquote>
-          </div>
-        </section>
-
-        <section class="section" id="pipeline">
-          <div class="section-inner">
-            <div class="section-head">
-              <p class="eyebrow">Pathway</p>
-              <h2>From sound pack to signed release.</h2>
-            </div>
-            <div class="flow-steps">
-              <article>
-                <h3>Create</h3>
-                <p>Producers build with Melogic tools and original libraries.</p>
-              </article>
-              <article>
-                <h3>Share</h3>
-                <p>Work gains feedback through previews, comments, and creator identity.</p>
-              </article>
-              <article>
-                <h3>Release</h3>
-                <p>Standout artists can move into label support, marketing, and distribution.</p>
-              </article>
-            </div>
-          </div>
-        </section>
-
-        <section class="section utility-links" id="forms">
-          <div class="section-inner utility-grid">
-            <article>
-              <p class="eyebrow">Forms</p>
-              <h3>Submission + contact routes</h3>
-              <p>Drop demos, creator details, and tool proposals through Melogic intake forms.</p>
-            </article>
-            <article id="faq">
-              <p class="eyebrow">FAQ</p>
-              <h3>Quick answers for creators</h3>
-              <p>Find policy details for usage rights, release opportunities, and platform rollouts.</p>
-            </article>
-            <article id="support">
-              <p class="eyebrow">Support</p>
-              <h3>Help for account + catalog access</h3>
-              <p>Need a hand with downloads or profiles? Reach support and get routed fast.</p>
-            </article>
-          </div>
-        </section>
-
-        <section class="section closing">
+        <section class="section closing ecosystem-closing">
           <div class="section-inner closing-inner">
-            <h2>Build the sound. Find the artists. Move the culture.</h2>
+            <h2>Build the sound. Share the process. Move the culture.</h2>
             <div class="hero-actions">
-              <a class="button button-accent" href="#explore">Enter Melogic</a>
-              <a class="button button-muted" href="#products">View Catalog</a>
+              <a class="button button-accent" href="#products">Explore the Catalog</a>
+              <a class="button button-muted" href="${ROUTES.studio || '#studio'}">Enter Melogic Studio</a>
             </div>
           </div>
         </section>
@@ -221,7 +216,6 @@ app.innerHTML = `
     </div>
   </main>
 `
-
 
 async function initHeroBackgroundVideo() {
   const heroVideo = document.querySelector('#hero-bg-video')
@@ -355,6 +349,48 @@ async function initHomeReleaseProducts() {
   }
 }
 
+async function initHomeFeatureImages() {
+  const featureEntries = await Promise.all(
+    homeFeaturePanels.map(async (feature) => {
+      const url = await getStorageAssetUrl(feature.imagePath, { warnOnFail: false })
+      return { ...feature, url }
+    })
+  )
+
+  featureEntries.forEach((feature) => {
+    if (!feature.url) return
+    const img = document.querySelector(`[data-home-feature-image="${feature.key}"]`)
+    const frame = document.querySelector(`[data-feature-frame="${feature.key}"]`)
+    if (!img) return
+    img.src = feature.url
+    img.hidden = false
+    img.addEventListener('load', () => {
+      img.dataset.loaded = 'true'
+      frame?.classList.add('has-image')
+    }, { once: true })
+  })
+}
+
+function initHomeFeatureReveals() {
+  const targets = document.querySelectorAll('[data-home-feature], .ecosystem-intro, .ecosystem-map, .ecosystem-closing')
+  if (!targets.length) return
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) {
+    targets.forEach((target) => target.classList.add('is-visible'))
+    return
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return
+      entry.target.classList.add('is-visible')
+      observer.unobserve(entry.target)
+    })
+  }, { threshold: 0.18 })
+
+  targets.forEach((target) => observer.observe(target))
+}
+
 function initLowerBackground() {
   const canvas = document.querySelector('#lower-network-canvas')
   const hero = document.querySelector('.hero')
@@ -455,4 +491,6 @@ const heroReadyPromise = initHeroBackgroundVideo()
 createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
 initCarousel()
 initHomeReleaseProducts()
+initHomeFeatureImages()
+initHomeFeatureReveals()
 initLowerBackground()
