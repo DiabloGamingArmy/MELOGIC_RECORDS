@@ -83,9 +83,14 @@ const homeFeaturePanels = [
 ]
 
 function renderHomeFeaturePanel(feature, index) {
-  const reverseClass = index % 2 === 1 ? ' home-feature-panel--reverse' : ''
+  const directionClass = index % 2 === 1 ? ' home-feature-panel--image-left' : ' home-feature-panel--image-right'
   return `
-    <article class="home-feature-panel${reverseClass}" data-home-feature data-feature-key="${escapeHtml(feature.key)}">
+    <article class="home-feature-panel${directionClass}" data-home-feature data-feature-key="${escapeHtml(feature.key)}">
+      <img class="home-feature-image" data-home-feature-image="${escapeHtml(feature.key)}" alt="${escapeHtml(feature.alt)}" loading="lazy" hidden />
+      <div class="home-feature-placeholder" aria-hidden="true">
+        <span class="feature-meter"></span>
+        <span class="feature-waveform"></span>
+      </div>
       <div class="home-feature-copy">
         <p class="eyebrow">${escapeHtml(feature.eyebrow)}</p>
         <h3>${escapeHtml(feature.title)}</h3>
@@ -94,15 +99,6 @@ function renderHomeFeaturePanel(feature, index) {
           <span class="feature-chip">Live Sessions</span>
           <span class="feature-chip">Creator Ops</span>
           <span class="feature-chip">Release Ready</span>
-        </div>
-      </div>
-      <div class="home-feature-media">
-        <div class="home-feature-frame" data-feature-frame="${escapeHtml(feature.key)}">
-          <img class="home-feature-image" data-home-feature-image="${escapeHtml(feature.key)}" alt="${escapeHtml(feature.alt)}" loading="lazy" hidden />
-          <div class="home-feature-placeholder" aria-hidden="true">
-            <span class="feature-meter"></span>
-            <span class="feature-waveform"></span>
-          </div>
         </div>
       </div>
     </article>
@@ -360,13 +356,11 @@ async function initHomeFeatureImages() {
   featureEntries.forEach((feature) => {
     if (!feature.url) return
     const img = document.querySelector(`[data-home-feature-image="${feature.key}"]`)
-    const frame = document.querySelector(`[data-feature-frame="${feature.key}"]`)
     if (!img) return
     img.src = feature.url
     img.hidden = false
     img.addEventListener('load', () => {
       img.dataset.loaded = 'true'
-      frame?.classList.add('has-image')
     }, { once: true })
   })
 }
