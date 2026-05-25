@@ -19,18 +19,54 @@
 }
 
 html {
+  min-height: 100%;
   scroll-behavior: smooth;
   overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-color: rgba(80, 103, 150, 0.65) rgba(3, 5, 10, 0.95);
   scrollbar-width: thin;
 }
 
 body {
   margin: 0;
+  min-height: 100%;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   color: var(--text);
   background: var(--bg);
   overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#app {
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+body,
+#app,
+main,
+.lower-page-layer,
+.lower-page-content,
+.ecosystem-showcase,
+.home-feature-stack {
+  overflow-y: visible;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  width: 12px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track {
+  background: rgba(3, 5, 10, 0.95);
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(96, 121, 176, 0.72), rgba(66, 90, 143, 0.72));
+  border-radius: 999px;
+  border: 2px solid rgba(3, 5, 10, 0.95);
 }
 
 html::-webkit-scrollbar {
@@ -968,9 +1004,9 @@ body.has-cart-drawer-open .nav-shell {
 }
 
 .home-feature-stack {
-  margin-top: 1rem;
+  margin-top: clamp(2rem, 4vw, 3.5rem);
   display: grid;
-  gap: 1rem;
+  gap: clamp(2.25rem, 5vw, 4.5rem);
   position: relative;
 }
 
@@ -1018,15 +1054,27 @@ body.has-cart-drawer-open .nav-shell {
 
 .home-feature-panel::after {
   z-index: 2;
-  background: linear-gradient(180deg, rgba(5, 7, 13, 0.22), rgba(5, 7, 13, 0.6));
+  background:
+    radial-gradient(circle at var(--feature-glow-x, 75%) 50%, rgba(103, 147, 236, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(5, 7, 13, 0.08), rgba(5, 7, 13, 0.28));
+}
+
+.home-feature-panel--image-right {
+  --feature-glow-x: 82%;
+}
+
+.home-feature-panel--image-left {
+  --feature-glow-x: 18%;
 }
 
 .home-feature-panel--image-right::before {
-  background: linear-gradient(90deg, rgba(3, 5, 10, 0.96) 0%, rgba(3, 5, 10, 0.88) 34%, rgba(3, 5, 10, 0.28) 68%, rgba(3, 5, 10, 0.1) 100%);
+  background:
+    linear-gradient(90deg, rgba(3, 5, 10, 0.98) 0%, rgba(3, 5, 10, 0.92) 26%, rgba(3, 5, 10, 0.58) 48%, rgba(3, 5, 10, 0.18) 72%, rgba(3, 5, 10, 0.02) 100%);
 }
 
 .home-feature-panel--image-left::before {
-  background: linear-gradient(90deg, rgba(3, 5, 10, 0.1) 0%, rgba(3, 5, 10, 0.28) 32%, rgba(3, 5, 10, 0.88) 66%, rgba(3, 5, 10, 0.96) 100%);
+  background:
+    linear-gradient(90deg, rgba(3, 5, 10, 0.02) 0%, rgba(3, 5, 10, 0.18) 28%, rgba(3, 5, 10, 0.58) 52%, rgba(3, 5, 10, 0.92) 74%, rgba(3, 5, 10, 0.98) 100%);
 }
 
 .home-feature-panel h3 {
@@ -1062,7 +1110,8 @@ body.has-cart-drawer-open .nav-shell {
 }
 
 .home-feature-image[data-loaded='true'] {
-  opacity: 0.62;
+  opacity: 0.82;
+  filter: brightness(1.12) contrast(1.05) saturate(1.05);
   transform: scale(1);
 }
 
@@ -1234,7 +1283,18 @@ body.has-cart-drawer-open .nav-shell {
   }
 
   .home-feature-panel::before {
-    background: linear-gradient(180deg, rgba(3, 5, 10, 0.42) 0%, rgba(3, 5, 10, 0.94) 72%);
+    background: linear-gradient(180deg, rgba(3, 5, 10, 0.3) 0%, rgba(3, 5, 10, 0.94) 72%);
+  }
+
+  .home-feature-panel::after {
+    background:
+      radial-gradient(circle at 50% 20%, rgba(103, 147, 236, 0.08), transparent 52%),
+      linear-gradient(180deg, rgba(5, 7, 13, 0.12), rgba(5, 7, 13, 0.48));
+  }
+
+  .home-feature-image[data-loaded='true'] {
+    opacity: 0.7;
+    filter: brightness(0.94) contrast(1.04) saturate(1.03);
   }
 
   .home-feature-copy {
