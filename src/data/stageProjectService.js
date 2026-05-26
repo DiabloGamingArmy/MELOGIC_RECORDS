@@ -20,6 +20,7 @@ export function normalizeStageProject(projectId, raw = {}) {
     collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds.filter(Boolean) : [],
     visibility: raw.visibility || 'private',
     type: raw.type || 'stage-plan',
+    stageType: String(raw.stageType || '').trim() || 'Blank Stage',
     stage: raw.stage && typeof raw.stage === 'object' ? raw.stage : { width: 32, depth: 20, height: 4, unit: 'ft' },
     objects: Array.isArray(raw.objects) ? raw.objects : [],
     notes: String(raw.notes || ''),
@@ -87,12 +88,14 @@ export async function getStageProject(projectId) {
 export async function createStageProject(user, input = {}) {
   if (!user?.uid) throw new Error('A signed-in user is required.')
   const title = String(input.title || '').trim().slice(0, 120) || 'Untitled Stage Plan'
+  const stageType = String(input.stageType || '').trim() || 'Blank Stage'
   const payload = {
     title,
     ownerId: user.uid,
     collaboratorIds: [],
     visibility: 'private',
     type: 'stage-plan',
+    stageType,
     stage: { width: 32, depth: 20, height: 4, unit: 'ft' },
     objects: [],
     notes: '',
@@ -108,6 +111,7 @@ export async function createStageProject(user, input = {}) {
     ownerId: user.uid,
     visibility: 'private',
     type: 'stage-plan',
+    stageType,
     updatedAt: serverTimestamp(),
     lastOpenedAt: serverTimestamp(),
     createdAt: serverTimestamp()

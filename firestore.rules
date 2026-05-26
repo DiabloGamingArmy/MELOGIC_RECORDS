@@ -782,6 +782,103 @@ service cloud.firestore {
         && studioTypeValid(request.resource.data.type)
         && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
     }
+
+    function isStageOwnerResource() {
+      return signedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    function isStageCollaboratorResource() {
+      return signedIn()
+        && resource.data.collaboratorIds is list
+        && request.auth.uid in resource.data.collaboratorIds;
+    }
+
+    function stageTypeValid(value) {
+      return value in [
+        'Blank Stage',
+        'Small Club',
+        'Festival',
+        'Worship/Church',
+        'Livestream Room',
+        'School Auditorium'
+      ];
+    }
+
+    function stageUnitValid(value) {
+      return value in ['ft', 'm'];
+    }
+
+    function stageProjectCreateIsValid() {
+      return signedIn()
+        && request.resource.data.keys().hasOnly([
+          'title','ownerId','collaboratorIds','visibility','type','stageType','stage','objects','notes','version','createdAt','updatedAt','lastOpenedAt','editorState'
+        ])
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.collaboratorIds is list
+        && request.resource.data.collaboratorIds.size() == 0
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.type == 'stage-plan'
+        && request.resource.data.version == 1
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.stageType is string
+        && stageTypeValid(request.resource.data.stageType)
+        && request.resource.data.stage is map
+        && request.resource.data.stage.keys().hasOnly(['width', 'depth', 'height', 'unit'])
+        && request.resource.data.stage.width is number
+        && request.resource.data.stage.width > 0
+        && request.resource.data.stage.width <= 1000
+        && request.resource.data.stage.depth is number
+        && request.resource.data.stage.depth > 0
+        && request.resource.data.stage.depth <= 1000
+        && request.resource.data.stage.height is number
+        && request.resource.data.stage.height >= 0
+        && request.resource.data.stage.height <= 100
+        && request.resource.data.stage.unit is string
+        && stageUnitValid(request.resource.data.stage.unit)
+        && request.resource.data.objects is list
+        && request.resource.data.objects.size() <= 500
+        && request.resource.data.notes is string
+        && request.resource.data.notes.size() <= 20000
+        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
+    }
+
+    function stageProjectUpdateIsValid() {
+      return signedIn()
+        && request.resource.data.keys().hasOnly([
+          'title','ownerId','collaboratorIds','visibility','type','stageType','stage','objects','notes','version','createdAt','updatedAt','lastOpenedAt','editorState'
+        ])
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.collaboratorIds == resource.data.collaboratorIds
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.type == 'stage-plan'
+        && request.resource.data.version == 1
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.stageType is string
+        && stageTypeValid(request.resource.data.stageType)
+        && request.resource.data.stage is map
+        && request.resource.data.stage.keys().hasOnly(['width', 'depth', 'height', 'unit'])
+        && request.resource.data.stage.width is number
+        && request.resource.data.stage.width > 0
+        && request.resource.data.stage.width <= 1000
+        && request.resource.data.stage.depth is number
+        && request.resource.data.stage.depth > 0
+        && request.resource.data.stage.depth <= 1000
+        && request.resource.data.stage.height is number
+        && request.resource.data.stage.height >= 0
+        && request.resource.data.stage.height <= 100
+        && request.resource.data.stage.unit is string
+        && stageUnitValid(request.resource.data.stage.unit)
+        && request.resource.data.objects is list
+        && request.resource.data.objects.size() <= 500
+        && request.resource.data.notes is string
+        && request.resource.data.notes.size() <= 20000
+        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
+    }
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
@@ -810,6 +907,24 @@ service cloud.firestore {
           && request.resource.data.title.size() >= 1
           && request.resource.data.title.size() <= 120;
 
+        allow delete: if isOwner(uid);
+      }
+
+      match /stageProjectIndex/{projectId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly([
+            'projectId','title','ownerId','visibility','type','stageType','updatedAt','lastOpenedAt','createdAt'
+          ])
+          && request.resource.data.projectId == projectId
+          && request.resource.data.ownerId == request.auth.uid
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 1
+          && request.resource.data.title.size() <= 120
+          && request.resource.data.visibility == 'private'
+          && request.resource.data.type == 'stage-plan'
+          && request.resource.data.stageType is string
+          && stageTypeValid(request.resource.data.stageType);
         allow delete: if isOwner(uid);
       }
 
@@ -1208,6 +1323,14 @@ service cloud.firestore {
       allow create: if studioProjectCreateIsValid();
       allow update: if isStudioOwnerResource() && studioProjectUpdateIsValid();
       allow delete: if isStudioOwnerResource();
+    }
+
+    match /stageProjects/{projectId} {
+      allow get: if isStageOwnerResource() || isStageCollaboratorResource();
+      allow list: if signedIn();
+      allow create: if stageProjectCreateIsValid();
+      allow update: if isStageOwnerResource() && stageProjectUpdateIsValid();
+      allow delete: if isStageOwnerResource();
     }
 
     match /operations/keyRequiredInfo {
