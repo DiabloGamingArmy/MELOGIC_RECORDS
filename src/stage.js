@@ -2,8 +2,16 @@ import './styles/base.css'
 import './styles/stage.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
+import { STAGE_ASSET_CATEGORIES, STAGE_PLACEHOLDER_ASSETS } from './data/stageAssetService'
 
 const app = document.querySelector('#app')
+
+const toolSections = ['Overview', 'Stage Builder', 'Asset Library', 'Lighting', 'Rigging', 'Camera', 'Exports']
+
+const categoryRows = STAGE_ASSET_CATEGORIES.map((category) => `<li>${category.label}</li>`).join('')
+const placeholderAssetRows = STAGE_PLACEHOLDER_ASSETS.slice(0, 6)
+  .map((asset) => `<li><span>${asset.name}</span><small>${asset.category}</small></li>`)
+  .join('')
 
 app.innerHTML = `
   ${navShell({ currentPage: 'stage' })}
@@ -17,27 +25,14 @@ app.innerHTML = `
         </header>
 
         <nav class="stage-tool-nav" aria-label="Stage sections">
-          <button type="button" class="stage-tool-link is-active" aria-current="page">Overview</button>
-          <button type="button" class="stage-tool-link">Stage Builder</button>
-          <button type="button" class="stage-tool-link">Asset Library</button>
-          <button type="button" class="stage-tool-link">Lighting</button>
-          <button type="button" class="stage-tool-link">Rigging</button>
-          <button type="button" class="stage-tool-link">Camera</button>
-          <button type="button" class="stage-tool-link">Exports</button>
+          ${toolSections.map((label, index) => `<button type="button" class="stage-tool-link ${index === 0 ? 'is-active' : ''}" ${index === 0 ? 'aria-current="page"' : ''}>${label}</button>`).join('')}
         </nav>
 
         <section class="stage-library" aria-label="Asset library preview">
           <h2>Library Sets</h2>
-          <ul>
-            <li>Stages</li>
-            <li>Audio</li>
-            <li>Lighting</li>
-            <li>Rigging</li>
-            <li>Video</li>
-            <li>Backline</li>
-            <li>Performers</li>
-            <li>Venue</li>
-          </ul>
+          <ul>${categoryRows}</ul>
+          <h3>Starter Assets</h3>
+          <ul class="stage-library-assets">${placeholderAssetRows}</ul>
         </section>
       </aside>
 
@@ -65,19 +60,19 @@ app.innerHTML = `
               <div class="stage-viewport-grid" aria-hidden="true"></div>
               <div class="stage-perspective-lines" aria-hidden="true"></div>
 
-              <div class="stage-deck">Stage Deck</div>
-              <div class="stage-riser">Drum Riser</div>
-              <div class="stage-truss">Truss A</div>
-              <div class="stage-speaker stage-speaker-left">L Main</div>
-              <div class="stage-speaker stage-speaker-right">R Main</div>
-              <div class="stage-camera">Camera 1</div>
-              <div class="stage-light stage-light-a">L1</div>
-              <div class="stage-light stage-light-b">L2</div>
-              <div class="stage-light stage-light-c">L3</div>
+              <div class="stage-deck" aria-hidden="true">Stage Deck</div>
+              <div class="stage-riser" aria-hidden="true">Drum Riser</div>
+              <div class="stage-truss" aria-hidden="true">Truss A</div>
+              <div class="stage-speaker stage-speaker-left" aria-hidden="true">L Main</div>
+              <div class="stage-speaker stage-speaker-right" aria-hidden="true">R Main</div>
+              <div class="stage-camera" aria-hidden="true">Camera 1</div>
+              <div class="stage-light stage-light-a" aria-hidden="true">L1</div>
+              <div class="stage-light stage-light-b" aria-hidden="true">L2</div>
+              <div class="stage-light stage-light-c" aria-hidden="true">L3</div>
 
-              <span class="stage-label stage-label-upstage">Upstage</span>
-              <span class="stage-label stage-label-downstage">Downstage</span>
-              <span class="stage-label stage-label-foh">FOH</span>
+              <span class="stage-label stage-label-upstage" aria-hidden="true">Upstage</span>
+              <span class="stage-label stage-label-downstage" aria-hidden="true">Downstage</span>
+              <span class="stage-label stage-label-foh" aria-hidden="true">FOH</span>
             </div>
           </section>
 
@@ -109,4 +104,6 @@ app.innerHTML = `
   </main>
 `
 
+// TODO: Future: replace CSS viewport mock with a real 3D renderer.
+// TODO: Future: create/save stage projects and export PDF/PNG stage plots.
 initShellChrome()

@@ -13,6 +13,10 @@
 .stage-library h2{margin:0 0 8px;font-size:14px;color:#c6d1ec;letter-spacing:.04em;text-transform:uppercase}
 .stage-library ul{margin:0;padding:0;list-style:none;display:grid;gap:6px}
 .stage-library li{padding:9px 10px;border:1px solid rgba(132,148,187,.28);border-radius:8px;background:var(--stage-panel-soft);color:var(--stage-muted);font-size:13px}
+.stage-library h3{margin:12px 0 8px;font-size:12px;color:#9cb0df;letter-spacing:.06em;text-transform:uppercase}
+.stage-library-assets li{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.stage-library-assets small{text-transform:capitalize;color:#8ca1d2;font-size:11px}
+
 .stage-main{display:grid;grid-template-rows:auto 1fr auto;padding:12px;gap:12px;min-width:0}
 .stage-topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--stage-line);border-radius:10px;background:#121827}
 .stage-plan-meta{display:flex;align-items:center;gap:10px;min-width:0}.stage-plan-meta h2{margin:0;font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
