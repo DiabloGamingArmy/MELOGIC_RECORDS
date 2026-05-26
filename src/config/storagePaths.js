@@ -10,6 +10,13 @@ export const STORAGE_PATHS = {
   productManifest: (productId) => `products/${productId}/metadata/manifest.json`,
   threadMessageAttachment: (threadId, messageId, filename) => `threads/${threadId}/messages/${messageId}/attachments/${filename}`,
   threadAvatar: (threadId, filename = 'avatar.webp') => `threads/${threadId}/avatar/${filename}`,
+  stageProjectRoot: (projectId) => `stage/projects/${projectId}`,
+  stageProjectAssetsRoot: (projectId) => `stage/projects/${projectId}/assets`,
+  stageProjectThumbnailsRoot: (projectId) => `stage/projects/${projectId}/thumbnails`,
+  stageProjectSnapshotsRoot: (projectId) => `stage/projects/${projectId}/snapshots`,
+  stageProjectExportsRoot: (projectId) => `stage/projects/${projectId}/exports`,
+  stageAssetPackRoot: (packId) => `stage/asset-packs/${packId}`,
+  stageTemplateRoot: (templateId) => `stage/templates/${templateId}`,
   productRoleFile: (productId, role, fileId, safeName) => {
     const name = safeName || 'file.bin'
     if (role === 'cover') return `products/${productId}/cover/${name}`
