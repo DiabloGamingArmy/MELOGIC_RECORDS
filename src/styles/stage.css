@@ -55,3 +55,19 @@
 .stage-library-item h4{margin:0 0 6px;font-size:14px}
 .stage-library-item p{margin:0;color:#9fb0d9;font-size:12px;text-transform:capitalize}
 .stage-inspector-grid a{color:#9bc7ff}
+.stage-dashboard-page .stage-dashboard-main{align-content:start}
+.stage-panel{border:1px solid var(--stage-line);border-radius:12px;background:var(--stage-panel-soft);padding:12px}
+.stage-panel h3{margin:0 0 8px}.stage-panel p{margin:0 0 10px;color:var(--stage-muted)}
+.stage-template-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.stage-template-row article{padding:10px;border:1px solid rgba(127,143,181,.32);border-radius:8px;background:#192132}
+.stage-project-grid,.stage-recent-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}
+.stage-project-card,.stage-recent-card{border:1px solid rgba(127,143,181,.32);background:#192132;color:#eef3ff;padding:10px;border-radius:8px;text-align:left;cursor:pointer}
+.stage-project-card span,.stage-recent-card span{display:block;color:#9fb0d9}
+.stage-empty{color:var(--stage-muted);margin:0 0 10px}
+.stage-action-link,.stage-back{display:inline-flex;align-items:center;min-height:36px;padding:0 11px;border:1px solid rgba(129,145,184,.45);border-radius:9px;background:#1b2334;color:#c6d5fb;text-decoration:none}
+.stage-loading{max-width:900px;margin:0 auto;border:1px solid var(--stage-line);background:var(--stage-panel);border-radius:12px;padding:30px;display:grid;gap:12px}
+.stage-modal{position:fixed;inset:0;background:rgba(5,8,14,.72);display:grid;place-items:center;padding:16px;z-index:1200}
+.stage-modal-panel{width:min(520px,100%);background:var(--stage-panel);border:1px solid var(--stage-line);border-radius:12px;padding:18px;display:grid;gap:10px}
+.stage-modal-panel input,.stage-modal-panel select{width:100%;margin-top:6px;background:#101624;border:1px solid var(--stage-line);border-radius:8px;color:#fff;padding:10px}
+.stage-modal-actions{display:flex;justify-content:flex-end;gap:8px}
+@media (max-width:900px){.stage-template-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
