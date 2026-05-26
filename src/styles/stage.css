@@ -55,3 +55,46 @@
 .stage-library-item h4{margin:0 0 6px;font-size:14px}
 .stage-library-item p{margin:0;color:#9fb0d9;font-size:12px;text-transform:capitalize}
 .stage-inspector-grid a{color:#9bc7ff}
+
+.stage-dashboard-page{min-height:calc(100vh - 64px);background:radial-gradient(circle at 95% 10%,rgba(70,80,192,.16),transparent 40%),#0a0d15;color:#eaf0ff;padding:20px;overflow-x:hidden}
+.stage-dashboard-shell{max-width:1500px;margin:0 auto;display:grid;grid-template-columns:250px minmax(0,1fr);gap:12px}
+.stage-dashboard-sidebar,.stage-dashboard-main{background:#141a28;border:1px solid rgba(130,146,190,.32);border-radius:12px}
+.stage-dashboard-sidebar{padding:14px;align-self:start}
+.stage-dashboard-sidebar h1{margin:8px 0 0;font-size:30px;letter-spacing:.06em}
+.stage-dashboard-nav{display:grid;gap:6px;margin-top:14px}
+.stage-dashboard-nav-item{height:34px;text-align:left;border:1px solid transparent;border-radius:8px;background:transparent;color:#cfd8f3;padding:0 10px;font:600 13px/1 inherit}
+.stage-dashboard-nav-item.is-active{background:rgba(123,104,255,.2);border-color:rgba(123,104,255,.55);color:#fff}
+.stage-dashboard-main{padding:12px;display:grid;gap:14px;min-width:0}
+.stage-dashboard-actions{display:flex;gap:8px;flex-wrap:wrap}
+.stage-action-button{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 12px;border:1px solid rgba(49,201,255,.38);border-radius:10px;background:#162032;color:#dff4ff;text-decoration:none;font-size:13px;font-weight:600}
+.stage-action-button.is-disabled{opacity:.72;cursor:not-allowed;border-color:rgba(137,150,187,.4);color:#9fb0d8}
+.stage-dashboard-hero{border:1px solid rgba(130,146,190,.3);border-radius:10px;padding:12px;background:#101624}
+.stage-dashboard-hero h2{margin:0 0 6px;font-size:24px}
+.stage-dashboard-hero p{margin:0;color:#aebbdc;line-height:1.45}
+.stage-section-heading{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center}
+.stage-section-heading h3{margin:0;font-size:15px;letter-spacing:.05em;text-transform:uppercase}
+.stage-section-heading span{height:2px;background:linear-gradient(90deg,rgba(123,104,255,.8),rgba(49,201,255,.4),transparent)}
+.stage-template-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.stage-template-card{border:1px solid rgba(130,146,190,.3);border-radius:10px;padding:10px;background:#171e2f}
+.stage-template-card h4{margin:0 0 4px;font-size:14px}
+.stage-template-card p{margin:0;color:#a8b6da;font-size:12px}
+.stage-projects-panel{border:1px solid rgba(130,146,190,.3);border-radius:10px;padding:10px;background:#111827}
+.stage-project-grid,.stage-recents-list{display:grid;gap:8px}
+.stage-project-row{width:100%;border:1px solid rgba(130,146,190,.32);border-radius:8px;background:#182033;color:#fff;text-align:left;padding:10px;cursor:pointer}
+.stage-project-row span{display:block;color:#9fb0d8;font-size:12px;margin-top:3px}
+.stage-recents-empty{margin:0;color:#a8b6da}
+.stage-projects-empty{display:grid;gap:10px;color:#a8b6da}
+.stage-signin-button{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border:1px solid rgba(123,104,255,.65);border-radius:8px;text-decoration:none;color:#f1f4ff;background:rgba(123,104,255,.2);width:max-content}
+
+.stage-modal{position:fixed;inset:0;background:rgba(5,8,14,.75);display:grid;place-items:center;z-index:1000;padding:16px}
+.stage-modal-panel{width:min(520px,calc(100vw - 28px));background:#141b2a;border:1px solid rgba(123,104,255,.6);border-radius:12px;padding:18px;display:grid;gap:12px}
+.stage-modal-field{display:grid;gap:7px}
+.stage-modal-field label{font-weight:600}
+.stage-modal-field input,.stage-modal-field select{height:40px;border:1px solid rgba(130,146,190,.45);border-radius:8px;background:#0f1523;color:#fff;padding:0 10px;font:inherit}
+.stage-modal-actions{display:flex;justify-content:flex-end;gap:8px}
+.stage-form-error{margin:0;color:#ff9aa9}
+.stage-back-link{display:inline-flex;align-items:center;min-height:34px;padding:0 10px;border:1px solid rgba(130,146,190,.45);border-radius:8px;color:#dce6ff;text-decoration:none;background:#1b2436}
+.stage-editor-state{min-height:calc(100vh - 120px);display:grid;place-content:center;gap:10px;text-align:center}
+
+@media (max-width:980px){.stage-dashboard-shell{grid-template-columns:1fr}.stage-template-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.stage-dashboard-page{padding:14px}.stage-template-row{grid-template-columns:1fr}}
