@@ -26,6 +26,7 @@ export const STORAGE_PATHS = {
   stageAssetDraftRoot: (adminId, draftAssetId) => `admin/stage/staging/${adminId}/${draftAssetId}`,
   stageProjectExport: (userId, projectId, filename = 'stage-plot.pdf') => `stage-projects/${userId}/${projectId}/exports/${filename}`,
   stageProjectSnapshot: (userId, projectId, filename = 'snapshot.webp') => `stage-projects/${userId}/${projectId}/snapshots/${filename}`,
+  stageProjectAttachment: (userId, projectId, filename) => `stage-projects/${userId}/${projectId}/attachments/${filename}`,
   stageCustomAssetRoot: (userId, assetId, version = 1) => `users/${userId}/stage/custom-assets/${assetId}/v${version}`,
   productRoleFile: (productId, role, fileId, safeName) => {
     const name = safeName || 'file.bin'
