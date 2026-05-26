@@ -123,6 +123,11 @@
         "type": 301
       },
       {
+        "source": "/stage.html",
+        "destination": "/stage",
+        "type": 301
+      },
+      {
         "source": "/studio-project.html",
         "destination": "/studio",
         "type": 301
@@ -223,6 +228,14 @@
       {
         "source": "/studio",
         "destination": "/studio.html"
+      },
+      {
+        "source": "/stage",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/stage/**",
+        "destination": "/stage.html"
       },
       {
         "source": "/studio/demos",

@@ -12,7 +12,12 @@ export const FIRESTORE_COLLECTIONS = {
   profiles: 'profiles',
   follows: 'follows',
   followsArtists: 'artists',
-  studioProjects: 'studioProjects'
+  studioProjects: 'studioProjects',
+  stageAssets: 'stageAssets',
+  stageAssetDrafts: 'stageAssetDrafts',
+  stageAssetPacks: 'stageAssetPacks',
+  stageTemplates: 'stageTemplates',
+  stageProjects: 'stageProjects'
 }
 
 export function getProductCollectionPath(productId, subcollection) {
