@@ -17,7 +17,9 @@ export const ROUTES = {
   faq: '/faq',
   support: '/support',
   studio: '/studio',
+  stage: '/stage',
   studioProject: '/studio/project',
+  stageProject: '/stage/project',
   studioDemos: '/studio/demos',
   studioTutorials: '/studio/tutorials',
   distribution: '/distribution'
@@ -42,6 +44,7 @@ const LEGACY_ROUTE_MAP = {
   '/faq.html': ROUTES.faq,
   '/support.html': ROUTES.support,
   '/studio.html': ROUTES.studio,
+  '/stage.html': ROUTES.stage,
   '/studio-project.html': ROUTES.studioProject,
   '/studio-demos.html': ROUTES.studioDemos,
   '/studio-tutorials.html': ROUTES.studioTutorials,
