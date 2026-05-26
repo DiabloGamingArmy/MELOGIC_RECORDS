@@ -1,7 +1,49 @@
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STORAGE_PATHS } from '../config/storagePaths'
 
-export const STAGE_ASSET_CATEGORIES = ['Stages', 'Audio', 'Lighting', 'Rigging', 'Video', 'Backline', 'Performers', 'Venue']
+export const STAGE_ASSET_CATEGORIES = [
+  { key: 'stages', label: 'Stages' },
+  { key: 'audio', label: 'Audio' },
+  { key: 'lighting', label: 'Lighting' },
+  { key: 'rigging', label: 'Rigging' },
+  { key: 'video', label: 'Video' },
+  { key: 'backline', label: 'Backline' },
+  { key: 'performers', label: 'Performers' },
+  { key: 'venue', label: 'Venue' }
+]
+
+export const STAGE_PLACEHOLDER_ASSETS = [
+  { id: 'club-stage-32x20', name: 'Club Stage 32x20', category: 'stages', type: 'deck' },
+  { id: 'drum-kit-standard', name: 'Drum Kit Standard', category: 'backline', type: 'instrument' },
+  { id: 'moving-head-basic', name: 'Moving Head Basic', category: 'lighting', type: 'fixture' },
+  { id: 'truss-10ft-box', name: 'Truss 10ft Box', category: 'rigging', type: 'truss' },
+  { id: 'camera-tripod', name: 'Camera Tripod', category: 'video', type: 'camera' },
+  { id: 'pa-speaker-stack', name: 'PA Speaker Stack', category: 'audio', type: 'speaker' },
+  { id: 'barricade-8ft', name: 'Barricade 8ft', category: 'venue', type: 'barrier' },
+  { id: 'vocalist-marker', name: 'Vocalist Marker', category: 'performers', type: 'marker' }
+]
+
+export function normalizeStageAsset(assetId, raw = {}) {
+  return {
+    id: assetId,
+    slug: raw.slug || assetId,
+    name: raw.name || 'Untitled Stage Asset',
+    category: raw.category || 'venue',
+    type: raw.type || 'generic',
+    status: raw.status || 'draft',
+    version: Number(raw.version || 1),
+    latestVersion: Number(raw.latestVersion || raw.version || 1),
+    modelPath: raw.modelPath || '',
+    thumbnailPath: raw.thumbnailPath || '',
+    previewPath: raw.previewPath || '',
+    manifestPath: raw.manifestPath || '',
+    tags: Array.isArray(raw.tags) ? raw.tags : [],
+    dimensions: raw.dimensions || null,
+    createdBy: raw.createdBy || '',
+    createdAt: raw.createdAt || null,
+    updatedAt: raw.updatedAt || null
+  }
+}
 
 export function getStageAssetCollectionNames() {
   return {
@@ -23,28 +65,11 @@ export function getStageAssetStorageRoots(projectId = '') {
   }
 }
 
-export async function listStageAssetCategories() {
-  return [...STAGE_ASSET_CATEGORIES]
-}
-
-export async function listFeaturedStageTemplates() {
-  return [
-    { id: 'festival-a', name: 'Festival Main A', tags: ['Outdoor', 'Large format'], status: 'preview' },
-    { id: 'club-b', name: 'Club Standard B', tags: ['Indoor', 'Compact'], status: 'preview' },
-    { id: 'broadcast-c', name: 'Broadcast Set C', tags: ['TV', 'Multicam'], status: 'preview' }
-  ]
-}
-
-export async function getStageProjectScaffold(projectId = '') {
-  const id = String(projectId || '').trim() || 'draft-stage-project'
-  return {
-    id,
-    title: 'Untitled Stage Plan',
-    units: 'ft',
-    snap: 'grid-2ft',
-    viewportMode: 'audience',
-    selectedObject: 'stageDeck',
-    status: 'foundation-preview',
-    storage: getStageAssetStorageRoots(id)
+// TODO: Future: load published stage assets from Firestore when Stage library backend is available.
+export async function listPublishedStageAssets() {
+  try {
+    return STAGE_PLACEHOLDER_ASSETS.map((asset) => normalizeStageAsset(asset.id, { ...asset, status: 'published' }))
+  } catch {
+    return []
   }
 }
