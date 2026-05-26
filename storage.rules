@@ -63,6 +63,41 @@ service firebase.storage {
       return isStudioProjectOwner(projectId);
     }
 
+    function isStageProjectOwner(projectId) {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/stageProjects/$(projectId)).data.ownerId == request.auth.uid;
+    }
+
+    function isStageProjectCollaborator(projectId) {
+      return signedIn()
+        && request.auth.uid in firestore.get(/databases/(default)/documents/stageProjects/$(projectId)).data.collaboratorIds;
+    }
+
+    function canReadStageProject(projectId) {
+      return isStageProjectOwner(projectId) || isStageProjectCollaborator(projectId);
+    }
+
+    function canWriteStageProject(projectId) {
+      return isStageProjectOwner(projectId);
+    }
+
+    function isJsonUpload(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && request.resource.contentType.matches('application/json');
+    }
+
+    function isModelUpload(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && (
+          request.resource.contentType.matches('model/.*')
+          || request.resource.contentType.matches('application/octet-stream')
+          || request.resource.contentType.matches('application/gltf-binary')
+          || request.resource.contentType.matches('model/gltf-binary')
+        );
+    }
+
     // Public brand/site assets (logos, hero videos, etc.) used across unauthenticated pages.
     match /assets/{allPaths=**} {
       allow read: if true;
@@ -72,6 +107,19 @@ service firebase.storage {
     match /legal/agreements/{allPaths=**} {
       allow read: if signedIn();
       allow write: if false;
+    }
+
+    match /users/{uid}/stage/custom-assets/{assetId}/{version}/{fileName} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn()
+        && request.auth.uid == uid
+        && request.resource != null
+        && request.resource.size <= 100 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('image/.*')
+          || isJsonUpload(100 * 1024 * 1024)
+          || isModelUpload(100 * 1024 * 1024)
+        );
     }
 
     // User-owned profile media uploads (avatar/banner).
@@ -163,6 +211,42 @@ service firebase.storage {
     }
 
     match /studioProjects/{projectId}/{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    match /stage-projects/{userId}/{projectId}/exports/{fileName} {
+      allow read: if canReadStageProject(projectId);
+      allow write: if signedIn()
+        && request.auth.uid == userId
+        && canWriteStageProject(projectId)
+        && request.resource != null
+        && request.resource.size <= 250 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('application/pdf')
+          || request.resource.contentType.matches('image/.*')
+          || request.resource.contentType.matches('application/zip')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
+    }
+
+    match /stage-projects/{userId}/{projectId}/snapshots/{fileName} {
+      allow read: if canReadStageProject(projectId);
+      allow write: if signedIn()
+        && request.auth.uid == userId
+        && canWriteStageProject(projectId)
+        && isImageUpload(25 * 1024 * 1024);
+    }
+
+    match /stage-projects/{userId}/{projectId}/attachments/{fileName} {
+      allow read: if canReadStageProject(projectId);
+      allow write: if signedIn()
+        && request.auth.uid == userId
+        && canWriteStageProject(projectId)
+        && request.resource != null
+        && request.resource.size <= 250 * 1024 * 1024;
+    }
+
+    match /stage-projects/{userId}/{projectId}/{allPaths=**} {
       allow read, write: if false;
     }
 

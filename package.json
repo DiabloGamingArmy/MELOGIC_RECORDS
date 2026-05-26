@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@stripe/stripe-js": "^9.3.0",
-    "firebase": "^12.12.1"
+    "firebase": "^12.12.1",
+    "three": "^0.181.0"
   }
 }
