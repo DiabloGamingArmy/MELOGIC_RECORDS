@@ -118,6 +118,10 @@ export function studioProjectRoute(projectId = '') {
   return `/studio/${encodeURIComponent(String(projectId || '').trim())}`
 }
 
+export function stageProjectRoute(projectId = '') {
+  return `/stage/${encodeURIComponent(String(projectId || '').trim())}`
+}
+
 export function getCurrentPath() {
   return cleanRedirectTarget(`${window.location.pathname}${window.location.search}${window.location.hash}`, ROUTES.home)
 }

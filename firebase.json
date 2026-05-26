@@ -234,6 +234,10 @@
         "destination": "/stage.html"
       },
       {
+        "source": "/stage/**",
+        "destination": "/stage.html"
+      },
+      {
         "source": "/studio/demos",
         "destination": "/studio-demos.html"
       },
