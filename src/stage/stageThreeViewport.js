@@ -55,37 +55,54 @@ export function mountStageThreeViewport(container, options = {}) {
     controls.maxDistance = 70
     controls.maxPolarAngle = Math.PI * 0.48
     const formatNum = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : 'n/a'
+    let currentViewMode = options.viewportMode || 'perspective3d'
+    const setOrthoBounds = (orthoCamera, size, aspect) => {
+      orthoCamera.left = -size * aspect
+      orthoCamera.right = size * aspect
+      orthoCamera.top = size
+      orthoCamera.bottom = -size
+    }
+    const setPlanningControls = (isPlanningView) => {
+      controls.enableRotate = !isPlanningView
+      controls.enablePan = true
+      controls.enableZoom = true
+      controls.mouseButtons.LEFT = isPlanningView ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
+      controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY
+      controls.mouseButtons.RIGHT = THREE.MOUSE.PAN
+      controls.touches.ONE = isPlanningView ? THREE.TOUCH.PAN : THREE.TOUCH.ROTATE
+      controls.touches.TWO = THREE.TOUCH.DOLLY_PAN
+    }
     const setViewMode = (mode = 'perspective3d') => {
+      currentViewMode = mode
       const w = Math.max(container.clientWidth || 1, 1)
       const h = Math.max(container.clientHeight || 1, 1)
       const aspect = w / h
-      const orthoSize = 24
+      const orthoSize = mode === 'front' || mode === 'side' ? 20 : 24
       if (mode === 'perspective3d') {
         camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 300)
         camera.position.set(22, 15, 24)
-        controls.enableRotate = true
+        camera.up.set(0, 1, 0)
+        setPlanningControls(false)
+        controls.minPolarAngle = 0
+        controls.maxPolarAngle = Math.PI * 0.48
       } else {
-        camera = new THREE.OrthographicCamera(-orthoSize * aspect, orthoSize * aspect, orthoSize, -orthoSize, 0.1, 300)
-        controls.enableRotate = false
-        controls.minPolarAngle = Math.PI / 2
-        controls.maxPolarAngle = Math.PI / 2
-        if (mode === 'top2d') camera.position.set(0, 58, 0.001)
-        else if (mode === 'front') camera.position.set(0, 12, 62)
-        else if (mode === 'side') camera.position.set(62, 12, 0)
+        camera = new THREE.OrthographicCamera()
+        setOrthoBounds(camera, orthoSize, aspect)
+        setPlanningControls(true)
+        controls.minPolarAngle = 0
+        controls.maxPolarAngle = Math.PI
+        camera.up.set(0, 1, 0)
+        if (mode === 'top2d') {
+          camera.position.set(0, 64, 0.001)
+          camera.up.set(0, 0, -1)
+        } else if (mode === 'front') camera.position.set(0, 12, 64)
+        else if (mode === 'side') camera.position.set(64, 12, 0)
         else camera.position.set(36, 30, 36)
-      }
-      if (mode === 'perspective3d') {
-        controls.minPolarAngle = 0
-        controls.maxPolarAngle = Math.PI * 0.48
-      }
-      if (mode === 'perspective3d') {
-        controls.minPolarAngle = 0
-        controls.maxPolarAngle = Math.PI * 0.48
       }
       camera.lookAt(0, 1.5, 0)
       controls.object = camera
       controls.target.set(0, 1.5, 0)
-      if (camera.isOrthographicCamera) camera.zoom = mode === 'top2d' ? 1.08 : 1
+      if (camera.isOrthographicCamera) camera.zoom = mode === 'top2d' ? 1.12 : mode === 'isometric' ? 1.05 : 1
       controls.update()
       camera.updateProjectionMatrix()
       renderer.render(scene, camera)
@@ -192,8 +209,20 @@ export function mountStageThreeViewport(container, options = {}) {
       if (notify && changed) options.onSelectObject?.(selectedKey)
     }
 
-    const transforms = options.objectTransforms || {}
-    Object.entries(transforms).forEach(([k, t]) => objects[k]?.position.set(t.x ?? objects[k].position.x, t.y ?? objects[k].position.y, t.z ?? objects[k].position.z))
+    const applyObjectTransforms = (transforms = {}) => {
+      Object.entries(transforms).forEach(([k, t]) => {
+        const obj = objects[k]
+        if (!obj || !t) return
+        obj.position.set(t.x ?? obj.position.x, t.y ?? obj.position.y, t.z ?? obj.position.z)
+        if (Number.isFinite(t.rotY)) obj.rotation.y = THREE.MathUtils.degToRad(t.rotY)
+      })
+      if (objects[selectedKey]) {
+        gizmo.position.copy(objects[selectedKey].position)
+        boxHelper?.update()
+        selectedLabel?.position.set(objects[selectedKey].position.x, objects[selectedKey].position.y + 1.8, objects[selectedKey].position.z)
+      }
+    }
+    applyObjectTransforms(options.objectTransforms || {})
 
     const onPointerDown = (event) => {
       const rect = renderer.domElement.getBoundingClientRect(); pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1; pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
@@ -242,10 +271,7 @@ export function mountStageThreeViewport(container, options = {}) {
       }
       statusOverlay.hidden = !diagnosticsEnabled
       if (camera.isPerspectiveCamera) camera.aspect = w / h
-      if (camera.isOrthographicCamera) {
-        const s = 22; const a = w / h
-        camera.left = -s * a; camera.right = s * a; camera.top = s; camera.bottom = -s
-      }
+      if (camera.isOrthographicCamera) setOrthoBounds(camera, currentViewMode === 'front' || currentViewMode === 'side' ? 20 : 24, w / h)
       camera.updateProjectionMatrix()
       renderer.setSize(w, h, false)
       renderer.render(scene, camera)
@@ -275,6 +301,7 @@ export function mountStageThreeViewport(container, options = {}) {
       if (typeof nextOptions.showGrid === 'boolean') gridHelper.visible = nextOptions.showGrid
       if (typeof nextOptions.showBeams === 'boolean') beams.visible = nextOptions.showBeams
       if (typeof nextOptions.showLabels === 'boolean') labelSprites.forEach((sprite) => { sprite.visible = nextOptions.showLabels })
+      if (nextOptions.objectTransforms) applyObjectTransforms(nextOptions.objectTransforms)
       if (typeof nextOptions.selectedObjectKey === 'string') setSelectedKey(nextOptions.selectedObjectKey, { notify: false })
       renderer.render(scene, camera)
       writeStatus('Updated viewport options')
