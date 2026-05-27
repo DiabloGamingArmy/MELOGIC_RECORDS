@@ -160,3 +160,21 @@
 .stage-editor-mini-panels{display:grid;gap:8px}.stage-editor-mini-panels article{border:1px solid rgba(122,138,178,.26);border-radius:6px;background:#171f31;padding:8px}.stage-editor-mini-panels h5{margin:0 0 6px}.stage-editor-mini-panels div{height:64px;border:1px dashed rgba(122,138,178,.35);border-radius:6px}
 @media (max-width:1100px){.stage-editor-body{grid-template-columns:46px 250px minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto auto}.stage-editor-right{grid-column:2/4;grid-row:2}.stage-editor-bottom{grid-column:2/4;grid-row:3}.stage-object-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:800px){.stage-editor-body{grid-template-columns:1fr;grid-template-rows:auto}.stage-editor-rail,.stage-editor-library,.stage-editor-workspace,.stage-editor-right,.stage-editor-bottom{grid-column:1;grid-row:auto}.stage-editor-rail{display:flex;overflow:auto}.stage-editor-bottom-grid{grid-template-columns:1fr}}
+
+.stage-editor-app{min-height:100vh;padding-top:var(--nav-offset,4.25rem);padding-inline:10px;padding-bottom:10px;overflow:hidden}
+.stage-editor-menubar{height:48px;padding:6px 10px}
+.stage-editor-body{height:calc(100vh - var(--nav-offset,4.25rem) - 48px - 16px);min-height:680px;grid-template-columns:48px 260px minmax(0,1fr) 286px;grid-template-rows:minmax(430px,1fr) clamp(170px,22vh,220px);overflow:hidden}
+.stage-editor-library,.stage-editor-right,.stage-editor-bottom{min-height:0;overflow:auto}
+.stage-editor-workspace{min-width:0;min-height:0;overflow:hidden}
+.stage-editor-canvas{height:100%;min-height:430px}
+.stage-three-viewport{position:absolute;inset:0;z-index:3}
+.stage-three-viewport canvas{display:block;width:100%;height:100%}
+.stage-three-hint{position:absolute;left:10px;bottom:10px;z-index:4;font-size:11px;padding:4px 8px;border:1px solid rgba(126,143,180,.4);background:rgba(10,15,27,.82);color:#b8c7e8}
+.stage-three-error-panel{position:absolute;inset:0;display:grid;place-content:center;gap:8px;text-align:center;background:rgba(10,14,24,.92);color:#d8e5ff}
+.stage-three-viewport.is-three-error{outline:1px solid rgba(255,132,132,.45)}
+.stage-editor-right{padding:6px;gap:6px}
+.stage-config-panel,.stage-ai-panel{padding:7px}
+.stage-config-panel h3,.stage-ai-panel h3{font-size:14px;margin-bottom:6px}
+.stage-config-panel p{font-size:12px;line-height:1.35}
+.stage-object-tile{min-height:56px}
+.stage-editor-table-panel th,.stage-editor-table-panel td{padding:4px 5px;font-size:11px}
