@@ -370,3 +370,19 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-editor-tab-actions .is-active-view{border-color:var(--stage-accent)!important;background:var(--stage-accent-soft)!important;color:#d9ffff!important}
 .stage-transform-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}.stage-transform-grid label{display:grid;gap:2px;font-size:10px}.stage-transform-grid input,.stage-transform-grid textarea{height:24px;background:#0d1016;border:1px solid var(--stage-border);color:var(--stage-text);font-size:11px}.stage-transform-grid textarea{height:42px}
 .stage-export-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:100}.stage-export-sheet{width:min(900px,90vw);max-height:90vh;overflow:auto;background:var(--stage-panel-2);border:1px solid var(--stage-border-strong);padding:12px}.stage-export-drawing{height:220px;border:1px solid var(--stage-border);margin:8px 0;background:linear-gradient(transparent 23px,rgba(255,255,255,.04) 24px),linear-gradient(90deg,transparent 23px,rgba(255,255,255,.04) 24px)}.stage-export-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+/* Stage interaction wiring pass */
+.stage-viewport-overlay{position:absolute;inset:0;z-index:6;pointer-events:none}
+.stage-viewport-tools,.stage-viewport-view-modes{pointer-events:auto;display:flex;align-items:center;gap:6px;background:rgba(8,12,20,.76);border:1px solid rgba(93,115,152,.45);padding:6px 8px;border-radius:6px}
+.stage-viewport-tools{position:absolute;top:10px;left:10px}
+.stage-viewport-view-modes{position:absolute;top:10px;right:10px}
+.stage-viewport-tools span,.stage-viewport-view-modes span{font-size:10px;letter-spacing:.08em;color:rgba(230,240,255,.8)}
+.stage-viewport-tools button,.stage-viewport-view-modes button{height:24px;padding:0 8px;background:#172034;border:1px solid rgba(106,126,160,.45);color:#d6e5ff;border-radius:4px}
+.stage-viewport-tools button.is-active,.stage-viewport-view-modes button.is-active-view{border-color:var(--stage-accent);background:rgba(34,184,181,.18);color:#e7ffff}
+
+.stage-editor-bottom{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.stage-editor-mode-tabs{flex:0 0 auto}
+.stage-editor-bottom [data-stage-mode-root]{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.stage-editor-mode-content{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;padding-top:0}
+.stage-editor-table-panel{display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;overflow:hidden}
+.stage-editor-table-panel table{flex:1 1 auto;min-height:0;overflow:auto;display:block}
