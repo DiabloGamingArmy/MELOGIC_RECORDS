@@ -386,3 +386,28 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-editor-mode-content{flex:1 1 auto;min-height:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;padding-top:0}
 .stage-editor-table-panel{display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;overflow:hidden}
 .stage-editor-table-panel table{flex:1 1 auto;min-height:0;overflow:auto;display:block}
+
+/* Repair pass: inspector tabs, bottom split, scrollbars */
+.stage-editor-library,.stage-inspector-body,.stage-data-body,.stage-bottom-primary,.stage-editor-table-panel{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.22) rgba(255,255,255,.04)}
+.stage-editor-library::-webkit-scrollbar,.stage-inspector-body::-webkit-scrollbar,.stage-data-body::-webkit-scrollbar,.stage-bottom-primary::-webkit-scrollbar,.stage-editor-table-panel::-webkit-scrollbar{width:8px;height:8px}
+.stage-editor-library::-webkit-scrollbar-track,.stage-inspector-body::-webkit-scrollbar-track,.stage-data-body::-webkit-scrollbar-track,.stage-bottom-primary::-webkit-scrollbar-track,.stage-editor-table-panel::-webkit-scrollbar-track{background:rgba(255,255,255,.04)}
+.stage-editor-library::-webkit-scrollbar-thumb,.stage-inspector-body::-webkit-scrollbar-thumb,.stage-data-body::-webkit-scrollbar-thumb,.stage-bottom-primary::-webkit-scrollbar-thumb,.stage-editor-table-panel::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:999px}
+.stage-editor-library::-webkit-scrollbar-thumb:hover,.stage-inspector-body::-webkit-scrollbar-thumb:hover,.stage-data-body::-webkit-scrollbar-thumb:hover,.stage-bottom-primary::-webkit-scrollbar-thumb:hover,.stage-editor-table-panel::-webkit-scrollbar-thumb:hover{background:rgba(34,184,181,.38)}
+
+.stage-inspector-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;flex:0 0 auto}
+.stage-inspector-tabs button{height:26px;background:#141c2e;border:1px solid rgba(106,126,160,.45);color:#cfe0ff;font-size:11px}
+.stage-inspector-tabs button.is-active{border-color:var(--stage-accent);background:rgba(34,184,181,.18);color:#e7ffff}
+.stage-editor-right{display:flex;flex-direction:column;overflow:hidden}
+.stage-inspector-body{flex:1 1 auto;min-height:0;overflow:auto;padding-top:6px}
+
+.stage-editor-bottom{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.stage-editor-mode-tabs{flex:0 0 auto}
+.stage-editor-bottom [data-stage-mode-root]{flex:1 1 auto;min-height:0;overflow:hidden}
+.stage-bottom-split{display:grid;grid-template-columns:minmax(0,1.2fr) 6px minmax(0,1fr);height:100%;min-height:0}
+.stage-bottom-primary{grid-column:1;min-height:0;overflow:auto;padding-right:6px}
+.stage-bottom-secondary{grid-column:3;min-height:0;overflow:hidden;border-left:1px solid rgba(106,126,160,.35);padding-left:8px;display:flex;flex-direction:column}
+.stage-data-tabs{display:flex;gap:4px;flex-wrap:wrap;padding-bottom:6px;flex:0 0 auto}
+.stage-data-tabs button{height:24px;padding:0 8px;background:#172034;border:1px solid rgba(106,126,160,.45);color:#d6e5ff;font-size:11px}
+.stage-data-tabs button.is-active{border-color:var(--stage-accent);background:rgba(34,184,181,.18);color:#e7ffff}
+.stage-data-body{flex:1 1 auto;min-height:0;overflow:auto;background:#0f1624;border:1px solid rgba(106,126,160,.3);padding:8px}
+.stage-data-list,.stage-data-cards{margin:0;padding-left:16px;display:grid;gap:6px;font-size:12px}
