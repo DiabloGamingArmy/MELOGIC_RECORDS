@@ -166,7 +166,23 @@ export function mountStageThreeViewport(container, options = {}) {
       event.preventDefault(); obj.position[axis[0]] += step * axis[1]; gizmo.position.copy(obj.position); boxHelper?.update(); selectedLabel?.position.set(obj.position.x, obj.position.y + 1.8, obj.position.z)
       options.onTransformObject?.(selectedKey, { x: obj.position.x, y: obj.position.y, z: obj.position.z })
     }
-    const onResize = () => { const w = Math.max(container.clientWidth, 10); const h = Math.max(container.clientHeight, 10); camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h, false) }
+    const statusOverlay = document.createElement('div')
+    statusOverlay.className = 'stage-three-runtime-status'
+    statusOverlay.hidden = true
+    container.appendChild(statusOverlay)
+    const onResize = () => {
+      const w = container.clientWidth || 0
+      const h = container.clientHeight || 0
+      if (w < 2 || h < 2) {
+        statusOverlay.hidden = false
+        statusOverlay.textContent = `Viewport size is ${w}x${h}`
+        return
+      }
+      statusOverlay.hidden = true
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+      renderer.setSize(w, h, false)
+    }
     const ro = new ResizeObserver(onResize); ro.observe(container)
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
