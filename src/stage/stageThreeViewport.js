@@ -58,7 +58,7 @@ export function mountStageThreeViewport(container, options = {}) {
       const w = Math.max(container.clientWidth || 1, 1)
       const h = Math.max(container.clientHeight || 1, 1)
       const aspect = w / h
-      const orthoSize = 22
+      const orthoSize = 26
       if (mode === 'perspective3d') {
         camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 300)
         camera.position.set(22, 15, 24)
@@ -68,10 +68,14 @@ export function mountStageThreeViewport(container, options = {}) {
         controls.enableRotate = false
         controls.minPolarAngle = Math.PI / 2
         controls.maxPolarAngle = Math.PI / 2
-        if (mode === 'top2d') camera.position.set(0, 45, 0.01)
-        else if (mode === 'front') camera.position.set(0, 10, 45)
-        else if (mode === 'side') camera.position.set(45, 10, 0)
-        else camera.position.set(28, 24, 28)
+        if (mode === 'top2d') camera.position.set(0, 56, 0.001)
+        else if (mode === 'front') camera.position.set(0, 11, 58)
+        else if (mode === 'side') camera.position.set(58, 11, 0)
+        else camera.position.set(34, 30, 34)
+      }
+      if (mode === 'perspective3d') {
+        controls.minPolarAngle = 0
+        controls.maxPolarAngle = Math.PI * 0.48
       }
       if (mode === 'perspective3d') {
         controls.minPolarAngle = 0
@@ -91,7 +95,9 @@ export function mountStageThreeViewport(container, options = {}) {
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), new THREE.MeshStandardMaterial({ color: '#050912', roughness: 0.95, metalness: 0.05 }))
     floor.rotation.x = -Math.PI / 2
     scene.add(floor)
-    scene.add(new THREE.GridHelper(120, 96, '#243956', '#14233a'))
+    const gridHelper = new THREE.GridHelper(120, 96, '#243956', '#14233a')
+    gridHelper.visible = options.showGrid !== false
+    scene.add(gridHelper)
 
     const pickables = []
     const objects = {}
@@ -129,14 +135,15 @@ export function mountStageThreeViewport(container, options = {}) {
     line([[0, 1.1, -12], [0, 1.1, -30]], '#6b8aff')
     line([[16, 1.2, 6], [24, 1.6, 10], [28, 1.6, 20]], '#d468ff')
 
-    ;[
+    const labelSprites = [
       ["32' x 24' Stage Deck", [-14, 2.8, 14], '#6bdcff'],
       ['Downstage Centerline', [0, 2.6, 20], '#61d7ff'],
       ['DSC', [-17, 2.5, 12], '#ffb16d'], ['USC', [1, 2.4, -11.5], '#ffb16d'],
       ['US Left', [-8, 2.2, -8], '#ffb16d'], ['Stage Left', [-20, 1.8, 18], '#ffb16d'],
       ['Stage Right', [20, 1.8, 18], '#ffb16d'], ['FOH', [0, 2.3, 31], '#6bdcff'],
       ['Ground supported trusses', [11, 9.8, -8], '#ffb16d']
-    ].forEach(([t, p, c]) => scene.add(makeLabel(t, p, c)))
+    ].map(([t, p, c]) => makeLabel(t, p, c))
+    labelSprites.forEach((sprite) => { sprite.visible = options.showLabels !== false; scene.add(sprite) })
 
     const beams = new THREE.Group()
     ;[
@@ -150,6 +157,7 @@ export function mountStageThreeViewport(container, options = {}) {
       cone.rotateX(Math.PI / 2)
       beams.add(cone)
     })
+    beams.visible = options.showBeams !== false
     scene.add(beams)
 
     const gizmo = new THREE.Group(); scene.add(gizmo)
