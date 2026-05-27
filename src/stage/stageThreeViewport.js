@@ -214,7 +214,7 @@ export function mountStageThreeViewport(container, options = {}) {
     if (options.projectLoadStatus === 'fallback' || options.projectLoadStatus === 'error') {
       const warning = document.createElement('div')
       warning.className = 'stage-three-load-warning'
-      warning.textContent = 'Project data failed to load. Rendering fallback stage.'
+      warning.textContent = 'Project data failed to load. Editing fallback stage.'
       container.appendChild(warning)
     }
     const writeStatus = (message = '') => {
@@ -262,7 +262,18 @@ export function mountStageThreeViewport(container, options = {}) {
     let loggedFirstRender = false
     const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); if (!loggedFirstRender) { loggedFirstRender = true; console.info('[stageThreeViewport] first render complete'); writeStatus() } }
     animate()
-    return () => {
+
+    const update = (nextOptions = {}) => {
+      if (nextOptions.viewportMode) setViewMode(nextOptions.viewportMode)
+      if (typeof nextOptions.showGrid === 'boolean') gridHelper.visible = nextOptions.showGrid
+      if (typeof nextOptions.showBeams === 'boolean') beams.visible = nextOptions.showBeams
+      if (typeof nextOptions.showLabels === 'boolean') labelSprites.forEach((sprite) => { sprite.visible = nextOptions.showLabels })
+      if (typeof nextOptions.selectedObjectKey === 'string') setSelectedKey(nextOptions.selectedObjectKey, { notify: false })
+      renderer.render(scene, camera)
+      writeStatus('Updated viewport options')
+    }
+
+    const dispose = () => {
       if (disposed) return
       disposed = true
       cancelAnimationFrame(raf)
@@ -275,6 +286,8 @@ export function mountStageThreeViewport(container, options = {}) {
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement)
       console.info('[stageThreeViewport] disposed')
     }
+
+    return { dispose, update }
   } catch (error) {
     console.error('[stageThreeViewport] mount failed', error)
     container.classList.add('is-three-error')
