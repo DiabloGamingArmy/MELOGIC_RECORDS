@@ -43,7 +43,7 @@ export function mountStageThreeViewport(container, options = {}) {
     let camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300)
     camera.position.set(22, 15, 24)
     camera.lookAt(0, 1.5, 0)
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     container.appendChild(renderer.domElement)
     console.info('[stageThreeViewport] renderer initialized')
@@ -66,10 +66,16 @@ export function mountStageThreeViewport(container, options = {}) {
       } else {
         camera = new THREE.OrthographicCamera(-orthoSize * aspect, orthoSize * aspect, orthoSize, -orthoSize, 0.1, 300)
         controls.enableRotate = false
+        controls.minPolarAngle = Math.PI / 2
+        controls.maxPolarAngle = Math.PI / 2
         if (mode === 'top2d') camera.position.set(0, 45, 0.01)
         else if (mode === 'front') camera.position.set(0, 10, 45)
         else if (mode === 'side') camera.position.set(45, 10, 0)
         else camera.position.set(28, 24, 28)
+      }
+      if (mode === 'perspective3d') {
+        controls.minPolarAngle = 0
+        controls.maxPolarAngle = Math.PI * 0.48
       }
       camera.lookAt(0, 1.5, 0)
       controls.object = camera
@@ -194,25 +200,32 @@ export function mountStageThreeViewport(container, options = {}) {
     }
     const statusOverlay = document.createElement('div')
     statusOverlay.className = 'stage-three-runtime-status'
-    statusOverlay.hidden = !SHOW_VIEWPORT_DIAGNOSTICS
+    const diagnosticsEnabled = SHOW_VIEWPORT_DIAGNOSTICS || !!options.showDiagnostics
+    statusOverlay.hidden = !diagnosticsEnabled
     container.appendChild(statusOverlay)
+    if (options.projectLoadStatus === 'fallback' || options.projectLoadStatus === 'error') {
+      const warning = document.createElement('div')
+      warning.className = 'stage-three-load-warning'
+      warning.textContent = 'Project data failed to load. Rendering fallback stage.'
+      container.appendChild(warning)
+    }
     const writeStatus = (message = '') => {
       const canvas = renderer.domElement
       const buf = renderer.getDrawingBufferSize(new THREE.Vector2())
       const projectState = options.project ? 'loaded' : 'fallback'
       const base = `Viewport ${container.clientWidth}x${container.clientHeight} | Canvas ${canvas?.clientWidth || 0}x${canvas?.clientHeight || 0} | Buffer ${buf.x}x${buf.y} | Scene ${scene.children.length} | Objects ${Object.keys(objects).length} | Project ${projectState} | Camera ${camera.aspect.toFixed(2)} @ ${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}`
-      if (!SHOW_VIEWPORT_DIAGNOSTICS) return
+      if (!diagnosticsEnabled) return
       statusOverlay.textContent = message ? `${base} | ${message}` : `${base} | Render loop: running`
     }
     const onResize = () => {
       const w = container.clientWidth || 0
       const h = container.clientHeight || 0
       if (w < 2 || h < 2) {
-        statusOverlay.hidden = !SHOW_VIEWPORT_DIAGNOSTICS
+        statusOverlay.hidden = !diagnosticsEnabled
         writeStatus(`Viewport size is ${w}x${h}`)
         return
       }
-      statusOverlay.hidden = !SHOW_VIEWPORT_DIAGNOSTICS
+      statusOverlay.hidden = !diagnosticsEnabled
       if (camera.isPerspectiveCamera) camera.aspect = w / h
       if (camera.isOrthographicCamera) {
         const s = 22; const a = w / h
