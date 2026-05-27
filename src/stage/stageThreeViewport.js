@@ -54,11 +54,12 @@ export function mountStageThreeViewport(container, options = {}) {
     controls.minDistance = 12
     controls.maxDistance = 70
     controls.maxPolarAngle = Math.PI * 0.48
+    const formatNum = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : 'n/a'
     const setViewMode = (mode = 'perspective3d') => {
       const w = Math.max(container.clientWidth || 1, 1)
       const h = Math.max(container.clientHeight || 1, 1)
       const aspect = w / h
-      const orthoSize = 26
+      const orthoSize = 24
       if (mode === 'perspective3d') {
         camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 300)
         camera.position.set(22, 15, 24)
@@ -68,10 +69,10 @@ export function mountStageThreeViewport(container, options = {}) {
         controls.enableRotate = false
         controls.minPolarAngle = Math.PI / 2
         controls.maxPolarAngle = Math.PI / 2
-        if (mode === 'top2d') camera.position.set(0, 56, 0.001)
-        else if (mode === 'front') camera.position.set(0, 11, 58)
-        else if (mode === 'side') camera.position.set(58, 11, 0)
-        else camera.position.set(34, 30, 34)
+        if (mode === 'top2d') camera.position.set(0, 58, 0.001)
+        else if (mode === 'front') camera.position.set(0, 12, 62)
+        else if (mode === 'side') camera.position.set(62, 12, 0)
+        else camera.position.set(36, 30, 36)
       }
       if (mode === 'perspective3d') {
         controls.minPolarAngle = 0
@@ -84,7 +85,10 @@ export function mountStageThreeViewport(container, options = {}) {
       camera.lookAt(0, 1.5, 0)
       controls.object = camera
       controls.target.set(0, 1.5, 0)
+      if (camera.isOrthographicCamera) camera.zoom = mode === 'top2d' ? 1.08 : 1
       controls.update()
+      camera.updateProjectionMatrix()
+      renderer.render(scene, camera)
     }
     setViewMode(options.viewportMode || 'perspective3d')
 
@@ -221,7 +225,10 @@ export function mountStageThreeViewport(container, options = {}) {
       const canvas = renderer.domElement
       const buf = renderer.getDrawingBufferSize(new THREE.Vector2())
       const projectState = options.project ? 'loaded' : 'fallback'
-      const base = `Viewport ${container.clientWidth}x${container.clientHeight} | Canvas ${canvas?.clientWidth || 0}x${canvas?.clientHeight || 0} | Buffer ${buf.x}x${buf.y} | Scene ${scene.children.length} | Objects ${Object.keys(objects).length} | Project ${projectState} | Camera ${camera.aspect.toFixed(2)} @ ${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}`
+      const camDetails = camera?.isPerspectiveCamera
+        ? `Perspective aspect ${formatNum(camera.aspect)}`
+        : `Ortho l/r/t/b ${formatNum(camera.left)}/${formatNum(camera.right)}/${formatNum(camera.top)}/${formatNum(camera.bottom)} z ${formatNum(camera.zoom)}`
+      const base = `Viewport ${container.clientWidth}x${container.clientHeight} | Canvas ${canvas?.clientWidth || 0}x${canvas?.clientHeight || 0} | Buffer ${buf.x}x${buf.y} | Scene ${scene.children.length} | Objects ${Object.keys(objects).length} | Project ${projectState} | ${camDetails} @ ${formatNum(camera.position.x, 1)},${formatNum(camera.position.y, 1)},${formatNum(camera.position.z, 1)}`
       if (!diagnosticsEnabled) return
       statusOverlay.textContent = message ? `${base} | ${message}` : `${base} | Render loop: running`
     }
