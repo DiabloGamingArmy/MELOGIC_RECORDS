@@ -343,10 +343,11 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-editor-viewport{display:block !important;height:100% !important;min-height:0;min-width:0}
 .stage-editor-right{grid-column:6;grid-row:1;min-width:0}
 .stage-editor-bottom{grid-column:2/7;grid-row:2;display:grid;grid-template-rows:auto minmax(0,1fr)}
-.stage-editor-mode-content{overflow:auto}
-.stage-editor-bottom [data-stage-mode-root]{min-height:0;display:flex;flex-direction:column;justify-content:flex-start}
-.stage-editor-mode-content{padding-top:0 !important;display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch}
-.stage-editor-table-panel{margin-top:0 !important;display:flex;flex-direction:column;justify-content:flex-start}
+.stage-editor-bottom [data-stage-mode-root]{min-height:0;display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;overflow:hidden}
+.stage-editor-mode-content{padding-top:0 !important;margin:0 !important;display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;min-height:0;height:100%;overflow:auto}
+.stage-editor-table-panel{margin-top:0 !important;display:flex;flex-direction:column;justify-content:flex-start;align-items:stretch;min-height:0;height:100%}
+.stage-editor-table-panel h4{margin:0 0 6px}
+.stage-editor-table-panel table{margin:0;table-layout:fixed}
 .stage-three-runtime-status{position:absolute;left:8px;top:8px;z-index:8;padding:4px 8px;font-size:10px;border:1px solid rgba(255,160,120,.5);background:rgba(25,10,6,.88);color:#ffd0b9}
 .stage-editor-library-tools{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:6px}
 .stage-object-grid{grid-template-columns:repeat(auto-fit,minmax(58px,1fr))}

@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 const FORCE_STAGE_VIEWPORT_SMOKE_TEST = false
+const SHOW_VIEWPORT_DIAGNOSTICS = Boolean(import.meta?.env?.DEV)
 
 const DEFAULT_STAGE_OBJECTS = [
   { key: 'stage-deck', label: 'Stage Deck', type: 'Base Stage', position: [0, 0.5, 0], size: [32, 1, 24], selectable: true },
@@ -170,24 +171,25 @@ export function mountStageThreeViewport(container, options = {}) {
     }
     const statusOverlay = document.createElement('div')
     statusOverlay.className = 'stage-three-runtime-status'
-    statusOverlay.hidden = false
+    statusOverlay.hidden = !SHOW_VIEWPORT_DIAGNOSTICS
     container.appendChild(statusOverlay)
     const writeStatus = (message = '') => {
       const canvas = renderer.domElement
       const buf = renderer.getDrawingBufferSize(new THREE.Vector2())
       const projectState = options.project ? 'loaded' : 'fallback'
       const base = `Viewport ${container.clientWidth}x${container.clientHeight} | Canvas ${canvas?.clientWidth || 0}x${canvas?.clientHeight || 0} | Buffer ${buf.x}x${buf.y} | Scene ${scene.children.length} | Objects ${Object.keys(objects).length} | Project ${projectState} | Camera ${camera.aspect.toFixed(2)} @ ${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}`
+      if (!SHOW_VIEWPORT_DIAGNOSTICS) return
       statusOverlay.textContent = message ? `${base} | ${message}` : `${base} | Render loop: running`
     }
     const onResize = () => {
       const w = container.clientWidth || 0
       const h = container.clientHeight || 0
       if (w < 2 || h < 2) {
-        statusOverlay.hidden = false
+        statusOverlay.hidden = !SHOW_VIEWPORT_DIAGNOSTICS
         writeStatus(`Viewport size is ${w}x${h}`)
         return
       }
-      statusOverlay.hidden = false
+      statusOverlay.hidden = !SHOW_VIEWPORT_DIAGNOSTICS
       camera.aspect = w / h
       camera.updateProjectionMatrix()
       renderer.setSize(w, h, false)
