@@ -261,3 +261,20 @@
 .stage-base-stage-thumb span{position:absolute;font-size:10px;color:#a7bedf}
 .stage-editor-bottom{padding:4px}
 .stage-editor-right{padding:4px;gap:4px}
+
+.stage-editor-bottom{overflow:hidden}
+.stage-editor-mode-content{min-height:0;overflow:auto;padding-top:6px;height:100%}
+.stage-editor-mode-panel,.stage-editor-table-panel{height:100%;min-height:0}
+.stage-editor-table-panel{overflow:auto}
+.stage-editor-mini-panels{display:none}
+.stage-base-stage-grid{grid-template-columns:1fr;gap:6px}
+.stage-base-stage-card{grid-template-columns:72px 1fr;min-height:64px}
+.stage-base-stage-card > span:last-child{font-size:13px;line-height:1.2;white-space:normal;overflow-wrap:anywhere}
+.stage-base-stage-thumb.has-stage-icon span{display:none}
+.stage-object-icon-frame.has-stage-icon .stage-object-fallback-icon{display:none}
+.stage-rail-icon{position:relative;display:grid;place-items:center}
+.stage-rail-icon img{max-width:14px;max-height:14px;display:block}
+.stage-rail-icon .stage-rail-fallback{display:block}
+.stage-rail-icon.has-stage-icon .stage-rail-fallback{display:none}
+.stage-object-icon-frame img{max-width:24px;max-height:24px}
+.stage-object-icon-frame.has-stage-icon .stage-object-fallback-icon{display:none}

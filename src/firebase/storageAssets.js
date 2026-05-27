@@ -1,41 +1,21 @@
-import { ref, getDownloadURL } from 'firebase/storage'
-import { storage } from './storage.js'
+import { getDownloadURL, getStorage, ref } from 'firebase/storage'
+import { app } from './firebaseConfig'
 
-const resolvedAssetCache = new Map()
-const pendingAssetCache = new Map()
-let hasWarnedNoStorage = false
+const storage = getStorage(app)
+const urlCache = new Map()
 
-export async function getStorageAssetUrl(path, options = {}) {
-  if (!path || !storage) {
-    if (!hasWarnedNoStorage && options.warnOnFail !== false) {
-      hasWarnedNoStorage = true
-      console.warn('[storageAssets] Storage unavailable; asset URLs cannot be resolved.')
-    }
-    return null
-  }
+export async function getPublicStorageUrl(path) {
+  const key = String(path || '').trim()
+  if (!key) return ''
+  if (urlCache.has(key)) return urlCache.get(key)
 
-  if (resolvedAssetCache.has(path)) {
-    return resolvedAssetCache.get(path)
-  }
+  const promise = getDownloadURL(ref(storage, key)).catch((error) => {
+    console.warn('[storageAssets] Could not load public asset', { path: key, code: error?.code })
+    return ''
+  })
 
-  if (pendingAssetCache.has(path)) {
-    return pendingAssetCache.get(path)
-  }
-
-  const pending = getDownloadURL(ref(storage, path))
-    .then((url) => {
-      resolvedAssetCache.set(path, url)
-      pendingAssetCache.delete(path)
-      return url
-    })
-    .catch((error) => {
-      pendingAssetCache.delete(path)
-      if (options.warnOnFail !== false) {
-        console.warn(`[storageAssets] Failed to resolve asset: ${path}`, error?.message || error)
-      }
-      return null
-    })
-
-  pendingAssetCache.set(path, pending)
-  return pending
+  urlCache.set(key, promise)
+  return promise
 }
+
+export const getStorageAssetUrl = getPublicStorageUrl
