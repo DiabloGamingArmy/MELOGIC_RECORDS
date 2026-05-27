@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+const FORCE_STAGE_VIEWPORT_SMOKE_TEST = false
 
 const DEFAULT_STAGE_OBJECTS = [
   { key: 'stage-deck', label: 'Stage Deck', type: 'Base Stage', position: [0, 0.5, 0], size: [32, 1, 24], selectable: true },
@@ -44,6 +45,7 @@ export function mountStageThreeViewport(container, options = {}) {
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     container.appendChild(renderer.domElement)
+    console.info('[stageThreeViewport] renderer initialized')
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
@@ -166,16 +168,49 @@ export function mountStageThreeViewport(container, options = {}) {
       event.preventDefault(); obj.position[axis[0]] += step * axis[1]; gizmo.position.copy(obj.position); boxHelper?.update(); selectedLabel?.position.set(obj.position.x, obj.position.y + 1.8, obj.position.z)
       options.onTransformObject?.(selectedKey, { x: obj.position.x, y: obj.position.y, z: obj.position.z })
     }
-    const onResize = () => { const w = Math.max(container.clientWidth, 10); const h = Math.max(container.clientHeight, 10); camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h, false) }
+    const statusOverlay = document.createElement('div')
+    statusOverlay.className = 'stage-three-runtime-status'
+    statusOverlay.hidden = false
+    container.appendChild(statusOverlay)
+    const writeStatus = (message = '') => {
+      const canvas = renderer.domElement
+      const buf = renderer.getDrawingBufferSize(new THREE.Vector2())
+      const projectState = options.project ? 'loaded' : 'fallback'
+      const base = `Viewport ${container.clientWidth}x${container.clientHeight} | Canvas ${canvas?.clientWidth || 0}x${canvas?.clientHeight || 0} | Buffer ${buf.x}x${buf.y} | Scene ${scene.children.length} | Objects ${Object.keys(objects).length} | Project ${projectState} | Camera ${camera.aspect.toFixed(2)} @ ${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}`
+      statusOverlay.textContent = message ? `${base} | ${message}` : `${base} | Render loop: running`
+    }
+    const onResize = () => {
+      const w = container.clientWidth || 0
+      const h = container.clientHeight || 0
+      if (w < 2 || h < 2) {
+        statusOverlay.hidden = false
+        writeStatus(`Viewport size is ${w}x${h}`)
+        return
+      }
+      statusOverlay.hidden = false
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+      renderer.setSize(w, h, false)
+      renderer.render(scene, camera)
+      writeStatus()
+    }
     const ro = new ResizeObserver(onResize); ro.observe(container)
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
     container.addEventListener('keydown', onKeyDown)
     container.addEventListener('pointerdown', () => container.focus())
-    setSelectedKey(options.selectedObjectKey || selectedKey, { notify: false }); onResize(); console.info('[stageThreeViewport] mounted', { projectId: options.project?.id, selectedObjectKey: selectedKey })
+    if (FORCE_STAGE_VIEWPORT_SMOKE_TEST) {
+      scene.clear()
+      scene.add(new THREE.AmbientLight('#ffffff', 0.9))
+      const dl = new THREE.DirectionalLight('#ffffff', 0.8); dl.position.set(8, 12, 6); scene.add(dl)
+      const box = new THREE.Mesh(new THREE.BoxGeometry(6, 1, 4), new THREE.MeshStandardMaterial({ color: '#4c5c73' })); box.position.y = 0.5; scene.add(box)
+      scene.add(new THREE.GridHelper(40, 40, '#2f3d54', '#1b2230'))
+    }
+    setSelectedKey(options.selectedObjectKey || selectedKey, { notify: false }); requestAnimationFrame(onResize); console.info('[stageThreeViewport] mounted', { projectId: options.project?.id, selectedObjectKey: selectedKey, sceneChildren: scene.children.length })
     let raf = 0
     let disposed = false
-    const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera) }
+    let loggedFirstRender = false
+    const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); if (!loggedFirstRender) { loggedFirstRender = true; console.info('[stageThreeViewport] first render complete'); writeStatus() } }
     animate()
     return () => {
       if (disposed) return
