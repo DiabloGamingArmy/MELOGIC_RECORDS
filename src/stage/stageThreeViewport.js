@@ -54,11 +54,12 @@ export function mountStageThreeViewport(container, options = {}) {
     controls.minDistance = 12
     controls.maxDistance = 70
     controls.maxPolarAngle = Math.PI * 0.48
+    const formatNum = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : 'n/a'
     const setViewMode = (mode = 'perspective3d') => {
       const w = Math.max(container.clientWidth || 1, 1)
       const h = Math.max(container.clientHeight || 1, 1)
       const aspect = w / h
-      const orthoSize = 26
+      const orthoSize = 24
       if (mode === 'perspective3d') {
         camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 300)
         camera.position.set(22, 15, 24)
@@ -68,10 +69,10 @@ export function mountStageThreeViewport(container, options = {}) {
         controls.enableRotate = false
         controls.minPolarAngle = Math.PI / 2
         controls.maxPolarAngle = Math.PI / 2
-        if (mode === 'top2d') camera.position.set(0, 56, 0.001)
-        else if (mode === 'front') camera.position.set(0, 11, 58)
-        else if (mode === 'side') camera.position.set(58, 11, 0)
-        else camera.position.set(34, 30, 34)
+        if (mode === 'top2d') camera.position.set(0, 58, 0.001)
+        else if (mode === 'front') camera.position.set(0, 12, 62)
+        else if (mode === 'side') camera.position.set(62, 12, 0)
+        else camera.position.set(36, 30, 36)
       }
       if (mode === 'perspective3d') {
         controls.minPolarAngle = 0
@@ -84,7 +85,10 @@ export function mountStageThreeViewport(container, options = {}) {
       camera.lookAt(0, 1.5, 0)
       controls.object = camera
       controls.target.set(0, 1.5, 0)
+      if (camera.isOrthographicCamera) camera.zoom = mode === 'top2d' ? 1.08 : 1
       controls.update()
+      camera.updateProjectionMatrix()
+      renderer.render(scene, camera)
     }
     setViewMode(options.viewportMode || 'perspective3d')
 
@@ -214,14 +218,17 @@ export function mountStageThreeViewport(container, options = {}) {
     if (options.projectLoadStatus === 'fallback' || options.projectLoadStatus === 'error') {
       const warning = document.createElement('div')
       warning.className = 'stage-three-load-warning'
-      warning.textContent = 'Project data failed to load. Rendering fallback stage.'
+      warning.textContent = 'Project data failed to load. Editing fallback stage.'
       container.appendChild(warning)
     }
     const writeStatus = (message = '') => {
       const canvas = renderer.domElement
       const buf = renderer.getDrawingBufferSize(new THREE.Vector2())
       const projectState = options.project ? 'loaded' : 'fallback'
-      const base = `Viewport ${container.clientWidth}x${container.clientHeight} | Canvas ${canvas?.clientWidth || 0}x${canvas?.clientHeight || 0} | Buffer ${buf.x}x${buf.y} | Scene ${scene.children.length} | Objects ${Object.keys(objects).length} | Project ${projectState} | Camera ${camera.aspect.toFixed(2)} @ ${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}`
+      const camDetails = camera?.isPerspectiveCamera
+        ? `Perspective aspect ${formatNum(camera.aspect)}`
+        : `Ortho l/r/t/b ${formatNum(camera.left)}/${formatNum(camera.right)}/${formatNum(camera.top)}/${formatNum(camera.bottom)} z ${formatNum(camera.zoom)}`
+      const base = `Viewport ${container.clientWidth}x${container.clientHeight} | Canvas ${canvas?.clientWidth || 0}x${canvas?.clientHeight || 0} | Buffer ${buf.x}x${buf.y} | Scene ${scene.children.length} | Objects ${Object.keys(objects).length} | Project ${projectState} | ${camDetails} @ ${formatNum(camera.position.x, 1)},${formatNum(camera.position.y, 1)},${formatNum(camera.position.z, 1)}`
       if (!diagnosticsEnabled) return
       statusOverlay.textContent = message ? `${base} | ${message}` : `${base} | Render loop: running`
     }
@@ -262,7 +269,18 @@ export function mountStageThreeViewport(container, options = {}) {
     let loggedFirstRender = false
     const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); if (!loggedFirstRender) { loggedFirstRender = true; console.info('[stageThreeViewport] first render complete'); writeStatus() } }
     animate()
-    return () => {
+
+    const update = (nextOptions = {}) => {
+      if (nextOptions.viewportMode) setViewMode(nextOptions.viewportMode)
+      if (typeof nextOptions.showGrid === 'boolean') gridHelper.visible = nextOptions.showGrid
+      if (typeof nextOptions.showBeams === 'boolean') beams.visible = nextOptions.showBeams
+      if (typeof nextOptions.showLabels === 'boolean') labelSprites.forEach((sprite) => { sprite.visible = nextOptions.showLabels })
+      if (typeof nextOptions.selectedObjectKey === 'string') setSelectedKey(nextOptions.selectedObjectKey, { notify: false })
+      renderer.render(scene, camera)
+      writeStatus('Updated viewport options')
+    }
+
+    const dispose = () => {
       if (disposed) return
       disposed = true
       cancelAnimationFrame(raf)
@@ -275,6 +293,8 @@ export function mountStageThreeViewport(container, options = {}) {
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement)
       console.info('[stageThreeViewport] disposed')
     }
+
+    return { dispose, update }
   } catch (error) {
     console.error('[stageThreeViewport] mount failed', error)
     container.classList.add('is-three-error')
