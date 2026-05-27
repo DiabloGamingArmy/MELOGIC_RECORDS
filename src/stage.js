@@ -60,8 +60,8 @@ const editorMockObjects = [
   { key: 'camera-1', label: 'Camera 1', type: 'Video', details: { angle: 'Wide', location: 'FOH' } }
 ]
 
-const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', projectLoadStatus: 'loading', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeRailSection: 'object', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {}, snapEnabled: true, snapInterval: 1, measureMode: false, gridEnabled: true, beamPreviewEnabled: true, showStageLabels: true, showExportPreview: false, showStageGlobalHeader: false, stageAppMenuOpen: false, showViewportDiagnostics: false, viewportMode: localStorage.getItem('stageViewportMode') || 'perspective3d', paneSizes: { library: Number(localStorage.getItem('stagePaneLibrary')) || 236, right: Number(localStorage.getItem('stagePaneRight')) || 286, bottom: Number(localStorage.getItem('stagePaneBottom')) || 190 } }
-let cleanupStageViewport = null
+const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', projectLoadStatus: 'loading', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeRailSection: 'home', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {}, snapEnabled: true, snapInterval: 1, measureMode: false, gridEnabled: true, beamPreviewEnabled: true, showStageLabels: true, showExportPreview: false, showStageGlobalHeader: false, stageAppMenuOpen: false, showViewportDiagnostics: false, viewportMode: localStorage.getItem('stageViewportMode') || 'perspective3d', paneSizes: { library: Number(localStorage.getItem('stagePaneLibrary')) || 236, right: Number(localStorage.getItem('stagePaneRight')) || 286, bottom: Number(localStorage.getItem('stagePaneBottom')) || 190 } }
+let stageViewportController = null
 let stageEditorMounted = false
 let stageIconHydrationPromise = null
 let stageEditorEventsBound = false
@@ -160,12 +160,12 @@ function renderEditor() { /* unchanged behavior */
 }
 
 function initStageEditorViewport() {
-  cleanupStageViewport?.()
-  cleanupStageViewport = null
+  stageViewportController?.dispose?.()
+  stageViewportController = null
   if (!state.projectId || state.editorLoading || state.editorError) return
   const container = app.querySelector('[data-stage-three-viewport]')
   if (!container) return
-  cleanupStageViewport = mountStageThreeViewport(container, {
+  stageViewportController = mountStageThreeViewport(container, {
     project: state.editorProject,
     projectLoadStatus: state.projectLoadStatus,
     showDiagnostics: state.showViewportDiagnostics,
@@ -178,7 +178,7 @@ function initStageEditorViewport() {
     , showBeams: state.beamPreviewEnabled
     , showLabels: state.showStageLabels
   })
-  if (cleanupStageViewport) stageViewportMountedForProjectId = state.projectId
+  if (stageViewportController) stageViewportMountedForProjectId = state.projectId
 }
 
 
@@ -246,9 +246,9 @@ function updateEditorProjectHeader() {
 
 function ensureStageViewportMounted() {
   if (!state.projectId || state.editorLoading || state.editorError || !state.editorProject) return
-  if (cleanupStageViewport && stageViewportMountedForProjectId === state.projectId) return
-  cleanupStageViewport?.()
-  cleanupStageViewport = null
+  if (stageViewportController && stageViewportMountedForProjectId === state.projectId) return
+  stageViewportController?.dispose?.()
+  stageViewportController = null
   initStageEditorViewport()
   stageViewportMountedForProjectId = state.projectId
 }
@@ -261,7 +261,7 @@ function hydrateStageIconsOnce() {
 
 function renderApp() {
   if (!state.projectId) {
-    cleanupStageViewport?.(); cleanupStageViewport = null; stageEditorMounted = false; stageIconHydrationPromise = null; stageViewportMountedForProjectId = ''
+    stageViewportController?.dispose?.(); stageViewportController = null; stageEditorMounted = false; stageIconHydrationPromise = null; stageViewportMountedForProjectId = ''
     app.innerHTML = `${navShell({ currentPage: 'stage' })}${renderDashboard()}`
     initShellChrome(); bindDashboardEvents(); return
   }
@@ -303,11 +303,11 @@ function bindStageEditorEventsOnce() {
     const lib = e.target.closest('[data-library-category]')
     if (lib) { state.activeLibraryCategory = lib.dataset.libraryCategory || 'band-backline'; state.selectedEditorObject = lib.dataset.selectObject || state.selectedEditorObject; updateLibraryActiveState(); updateStageInspectorSelection(); return }
     const rail = e.target.closest('[data-rail-section]')
-    if (rail) { state.activeRailSection = rail.dataset.railSection || 'object'; renderApp(); return }
+    if (rail) { state.activeRailSection = rail.dataset.railSection || 'home'; renderApp(); return }
     const vm = e.target.closest('[data-view-mode]')
-    if (vm) { state.viewportMode = vm.dataset.viewMode || 'perspective3d'; localStorage.setItem('stageViewportMode', state.viewportMode); cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); renderApp(); return }
-    const grid = e.target.closest('[data-toggle-grid]'); if (grid) { state.gridEnabled = !state.gridEnabled; cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); renderApp(); return }
-    const beam = e.target.closest('[data-toggle-beam]'); if (beam) { state.beamPreviewEnabled = !state.beamPreviewEnabled; cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); renderApp(); return }
+    if (vm) { state.viewportMode = vm.dataset.viewMode || 'perspective3d'; localStorage.setItem('stageViewportMode', state.viewportMode); stageViewportController?.update?.({ viewportMode: state.viewportMode }); renderApp(); return }
+    const grid = e.target.closest('[data-toggle-grid]'); if (grid) { state.gridEnabled = !state.gridEnabled; stageViewportController?.update?.({ showGrid: state.gridEnabled }); renderApp(); return }
+    const beam = e.target.closest('[data-toggle-beam]'); if (beam) { state.beamPreviewEnabled = !state.beamPreviewEnabled; stageViewportController?.update?.({ showBeams: state.beamPreviewEnabled }); renderApp(); return }
     const openExport = e.target.closest('[data-open-export]'); if (openExport) { state.showExportPreview = true; renderApp(); return }
     const closeExport = e.target.closest('[data-close-export]'); if (closeExport) { state.showExportPreview = false; renderApp(); return }
     const snap = e.target.closest('[data-toggle-snap]'); if (snap) { state.snapEnabled = !state.snapEnabled; renderApp(); return }
@@ -323,7 +323,7 @@ function bindStageEditorEventsOnce() {
   })
   app.addEventListener('change', (e) => {
     const diag = e.target.closest('[data-toggle-viewport-diagnostics]')
-    if (diag) { state.showViewportDiagnostics = !!diag.checked; cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); return }
+    if (diag) { state.showViewportDiagnostics = !!diag.checked; stageViewportController?.dispose?.(); stageViewportController = null; ensureStageViewportMounted(); return }
     const toggle = e.target.closest('[data-toggle-main-header]')
     if (!toggle) return
     state.showStageGlobalHeader = !!toggle.checked
@@ -361,7 +361,7 @@ function bindStageEditorEventsOnce() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.stageAppMenuOpen) { state.stageAppMenuOpen = false; updateStageAppMenu() } })
 }
 async function loadDashboardProjects() { if (!state.user?.uid || state.projectId) return; state.loadingProjects = true; state.projectsError = ''; renderApp(); try { const projects = await listAccessibleStageProjects(state.user.uid); const sorted = [...projects].sort(sortStageProjectsByActivity); state.projects = sorted; state.recentProjects = sorted.slice(0, 6) } catch { state.projects = []; state.recentProjects = []; state.projectsError = 'load-failed' } finally { state.loadingProjects = false; renderApp() } }
-async function loadEditorProject() { if (!state.projectId) return; state.editorLoading = true; state.editorError = ''; state.projectLoadStatus = 'loading'; renderApp(); try { const project = await getStageProject(state.projectId); if (!project) { state.editorError = 'not-found'; state.projectLoadStatus = 'error' } else { state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name }); state.projectLoadStatus = 'loaded' } } catch { state.editorProject = null; state.projectLoadStatus = 'fallback'; console.warn('[stage] Firestore project load failed. Stage editor shell remains available with default viewport objects.') } finally { state.editorLoading = false; renderApp() } }
+async function loadEditorProject() { if (!state.projectId) return; state.editorLoading = true; state.editorError = ''; state.projectLoadStatus = 'loading'; renderApp(); try { const project = await getStageProject(state.projectId); if (!project) { state.editorError = 'not-found'; state.projectLoadStatus = 'error' } else { state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name }); state.projectLoadStatus = 'loaded' } } catch { state.editorProject = normalizeStagePlan({ id: state.projectId, title: 'Fallback Stage Plan', stageType: 'Blank Stage', version: 1 }); state.projectLoadStatus = 'fallback'; console.warn('[stage] Firestore project load failed. Stage editor shell remains available with default viewport objects.') } finally { state.editorLoading = false; renderApp() } }
 
 state.projectId = getCurrentStageProjectId()
 waitForInitialAuthState().then(async (user) => { state.user = user; renderApp(); if (state.projectId) await loadEditorProject(); else await loadDashboardProjects() })
