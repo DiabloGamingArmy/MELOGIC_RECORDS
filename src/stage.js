@@ -4,6 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { ROUTES, authRoute, stageProjectRoute } from './utils/routes'
+import { STORAGE_PATHS } from './config/storagePaths'
 import { createStageProject, getStageProject, listAccessibleStageProjects, sortStageProjectsByActivity, touchStageProject } from './data/stageProjectService'
 import { mountStageThreeViewport } from './stage/stageThreeViewport'
 
@@ -16,18 +17,36 @@ const templateCards = [
   { key: 'worship-stage', title: 'Worship Stage', subtitle: 'Quick-start layout', type: 'Worship/Church', icon: 'worship' },
   { key: 'livestream-room', title: 'Livestream Room', subtitle: 'Quick-start layout', type: 'Livestream Room', icon: 'livestream' }
 ]
-const editorRailItems = ['Home', 'Object', 'Scene', 'Lighting', 'Rigging', 'Audio', 'Video', 'Venue', 'Settings', 'Help']
-const editorLibraryCategories = [
-  { key: 'band-backline', label: 'Band / Backline', icon: '✦', select: 'drum-riser' },
-  { key: 'lighting', label: 'Lighting', icon: '◉', select: 'moving-head' },
-  { key: 'rigging', label: 'Rigging', icon: '⛓', select: 'truss-a' },
-  { key: 'audio', label: 'Audio', icon: '◌', select: 'speaker-left' },
-  { key: 'video', label: 'Video', icon: '▻', select: 'camera-1' },
-  { key: 'venue', label: 'Venue', icon: '▦', select: 'stage-deck' },
-  { key: 'patching', label: 'Patching', icon: '⌁', select: 'stage-deck' },
-  { key: 'cases', label: 'Cases', icon: '▣', select: 'stage-deck' }
+const stageIconPath = (group, name) => STORAGE_PATHS.stageProdIcon(group, name)
+const editorRailItems = [
+  { key: 'home', label: 'Home', icon: stageIconPath('rail', 'home') },
+  { key: 'object', label: 'Object', icon: stageIconPath('rail', 'object') },
+  { key: 'scene', label: 'Scene', icon: stageIconPath('rail', 'scene') },
+  { key: 'lighting', label: 'Lighting', icon: stageIconPath('rail', 'lighting') },
+  { key: 'rigging', label: 'Rigging', icon: stageIconPath('rail', 'rigging') },
+  { key: 'audio', label: 'Audio', icon: stageIconPath('rail', 'audio') },
+  { key: 'video', label: 'Video', icon: stageIconPath('rail', 'video') },
+  { key: 'venue', label: 'Venue', icon: stageIconPath('rail', 'venue') },
+  { key: 'settings', label: 'Settings', icon: stageIconPath('rail', 'settings') },
+  { key: 'help', label: 'Help', icon: stageIconPath('rail', 'help') }
 ]
-const baseStageTypes = ['Small Club', 'Festival', 'Church', 'School Auditorium', 'Custom']
+const editorLibraryCategories = [
+  { key: 'band-backline', label: 'Band / Backline', icon: '✦', iconPath: stageIconPath('library', 'band-backline'), select: 'drum-riser' },
+  { key: 'lighting', label: 'Lighting', icon: '◉', iconPath: stageIconPath('library', 'lighting'), select: 'moving-head' },
+  { key: 'rigging', label: 'Rigging', icon: '⛓', iconPath: stageIconPath('library', 'rigging'), select: 'truss-a' },
+  { key: 'audio', label: 'Audio', icon: '◌', iconPath: stageIconPath('library', 'audio'), select: 'speaker-left' },
+  { key: 'video', label: 'Video', icon: '▻', iconPath: stageIconPath('library', 'video'), select: 'camera-1' },
+  { key: 'venue', label: 'Venue', icon: '▦', iconPath: stageIconPath('library', 'venue'), select: 'stage-deck' },
+  { key: 'patching', label: 'Patching', icon: '⌁', iconPath: stageIconPath('library', 'patching'), select: 'stage-deck' },
+  { key: 'cases', label: 'Cases', icon: '▣', iconPath: stageIconPath('library', 'cases'), select: 'stage-deck' }
+]
+const baseStageTypes = [
+  { key: 'small-club', label: 'Small Club', icon: stageIconPath('base-stages', 'small-club') },
+  { key: 'festival', label: 'Festival', icon: stageIconPath('base-stages', 'festival') },
+  { key: 'church', label: 'Church', icon: stageIconPath('base-stages', 'church') },
+  { key: 'school-auditorium', label: 'School Auditorium', icon: stageIconPath('base-stages', 'school-auditorium') },
+  { key: 'custom', label: 'Custom', icon: stageIconPath('base-stages', 'custom') }
+]
 const editorModes = [
   { key: 'builder', label: '3D Builder' }, { key: 'stage-plot', label: '2D Stage Plot' }, { key: 'input-list', label: 'Input List' }, { key: 'lighting-plot', label: 'Lighting Plot' }, { key: 'rigging-plan', label: 'Rigging Plan' }
 ]
@@ -39,7 +58,7 @@ const editorMockObjects = [
   { key: 'camera-1', label: 'Camera 1', type: 'Video', details: { angle: 'Wide', location: 'FOH' } }
 ]
 
-const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {} }
+const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {}, showStageGlobalHeader: true, stageAppMenuOpen: false }
 let cleanupStageViewport = null
 
 const getCurrentStageProjectId = () => (window.location.pathname || '').startsWith('/stage/') ? decodeURIComponent((window.location.pathname || '').replace('/stage/', '').split('/')[0] || '').trim() : ''
@@ -112,7 +131,7 @@ function renderEditor() { /* unchanged behavior */
       : state.activeEditorMode === 'lighting-plot' ? '<section class="stage-editor-mode-panel"><h4>Lighting Plot Schematic</h4><div class="stage-mode-large lighting"></div></section>'
         : state.activeEditorMode === 'rigging-plan' ? '<section class="stage-editor-mode-panel"><h4>Rigging Plan</h4><ul><li>Ground support verified</li><li>Point load check pending</li><li>Qualified personnel assigned</li></ul></section>'
           : '<div class="stage-editor-bottom-grid"><section class="stage-editor-table-panel"><h4>Auto-Generated Input List</h4><table><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Notes</th></tr></thead><tbody><tr><td>✓</td><td>1</td><td>Kick In</td><td>Beta 91A</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>2</td><td>Kick Out</td><td>Beta 52</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>3</td><td>Snare Top</td><td>SM57</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>8</td><td>Bass DI</td><td>DI</td><td>N/A</td><td>USC</td></tr><tr><td>✓</td><td>12</td><td>Lead Voc</td><td>Wireless</td><td>N/A</td><td>DSC</td></tr><tr><td>✓</td><td>21</td><td>Playback L</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr><tr><td>✓</td><td>22</td><td>Playback R</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr></tbody></table></section><section class="stage-editor-mini-panels"><article><h5>2D Stage Plot Mode</h5><div aria-hidden="true"></div></article><article><h5>Lighting Plot Schematic</h5><div aria-hidden="true"></div></article></section></div>'
-  return `<main class="stage-editor-app"><section class="stage-editor-menubar"><div class="stage-editor-menu-left"><strong>MELOGIC STAGE</strong><button type="button">File</button><button type="button">Edit</button><button type="button">View</button><button type="button">Share</button></div><div class="stage-editor-project-title"><h2>Project: ${title}</h2><p>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><button type="button" aria-disabled="true">Share ▾</button><button type="button" aria-disabled="true">?</button><button type="button" aria-disabled="true">⋯</button><button type="button" class="is-send" aria-disabled="true">Send Stage Plan</button></div></section><section class="stage-editor-body"><nav class="stage-editor-rail" aria-label="Editor tools">${editorRailItems.map((item, i) => `<button type="button" class="${i === 1 ? 'is-active' : ''}">${item}</button>`).join('')}<a class="stage-back-link" href="${ROUTES.stage}">Exit</a></nav><aside class="stage-editor-library"><header><h3>OBJECT LIBRARY</h3></header><div class="stage-editor-library-tools"><input aria-label="Search object library" placeholder="Search" /><button type="button" class="stage-library-filter" aria-disabled="true" title="Filters">•</button></div><label class="stage-editor-check"><input type="checkbox" /> Drag and drop categories</label><h4>BAND / BACKLINE</h4><div class="stage-object-grid">${editorLibraryCategories.map((c) => `<button class="stage-object-tile ${state.activeLibraryCategory === c.key ? 'is-active' : ''}" data-library-category="${c.key}" data-select-object="${c.select}" type="button"><span class="stage-object-icon">${c.icon}</span><small>${c.label}</small></button>`).join('')}</div><h4>BASE STAGE TYPES</h4><div class="stage-base-stage-grid">${baseStageTypes.map((s) => `<button class="stage-base-stage-card" type="button" aria-disabled="true">${s}</button>`).join('')}</div></aside><section class="stage-editor-workspace"><div class="stage-editor-viewport"><header class="stage-editor-viewport-toolbar"><span>${state.editorProject?.stageType || 'Blank Stage'}</span><button type="button" class="is-beam" aria-pressed="true">Beam Preview</button><button type="button" aria-disabled="true">Grid</button><button type="button" aria-disabled="true">Snap</button></header><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-three-hud-label">Blank Stage</div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section><aside class="stage-editor-right"><section class="stage-config-panel"><h3>Fixture Configuration</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section><section class="stage-ai-panel"><h3>AI Assistant</h3><textarea aria-label="AI prompt" placeholder="Build me a 24x16 stage for a 5-piece metalcore band with tracks and lighting."></textarea><button type="button" aria-disabled="true">Generate</button></section><section class="stage-config-panel"><h3>Rigging Notes</h3><p>Qualified personnel approved for hangs.</p></section><section class="stage-config-panel"><h3>Project Info</h3><p>${title}</p><p>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: Foundation Preview</p></section></aside><section class="stage-editor-bottom"><div class="stage-editor-mode-tabs">${editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')}</div>${modeBody}</section></section></main>`
+  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}">`<section class="stage-editor-menubar"><div class="stage-editor-menu-left"><button class="stage-editor-app-menu" type="button" data-stage-app-menu aria-label="Stage app menu">☰</button><button type="button" data-icon-path="${stageIconPath('app', 'file')}">File</button><button type="button" data-icon-path="${stageIconPath('app', 'edit')}">Edit</button><button type="button" data-icon-path="${stageIconPath('app', 'view')}">View</button><button type="button" data-icon-path="${stageIconPath('app', 'share')}">Share</button>${state.stageAppMenuOpen ? `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><label><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}/> Show main header</label><a href="${ROUTES.stage}">Stage Projects</a><a href="/">Dashboard</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button></div>` : ''}</div><div class="stage-editor-project-title"><h2>Project: ${title}</h2><p>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><button type="button" aria-disabled="true">Share ▾</button><button type="button" aria-disabled="true">?</button><button type="button" aria-disabled="true">⋯</button><button type="button" class="is-send" aria-disabled="true">Send Stage Plan</button></div></section><section class="stage-editor-body"><nav class="stage-editor-rail" aria-label="Editor tools">${editorRailItems.map((item, i) => `<button type="button" class="${i === 1 ? 'is-active' : ''}" data-icon-path="${item.icon}"><span class="stage-rail-icon">◈</span><small>${item.label}</small></button>`).join('')}<a class="stage-back-link" href="${ROUTES.stage}" data-icon-path="${stageIconPath('rail', 'exit')}"><span class="stage-rail-icon">↩</span><small>Exit</small></a></nav><aside class="stage-editor-library"><header><h3>OBJECT LIBRARY</h3></header><div class="stage-editor-library-tools"><input aria-label="Search object library" placeholder="Search" /><button type="button" class="stage-library-filter" aria-disabled="true" title="Filters">•</button></div><label class="stage-editor-check"><input type="checkbox" /> Drag and drop categories</label><h4>BAND / BACKLINE</h4><div class="stage-object-grid">${editorLibraryCategories.map((c) => `<button class="stage-object-tile ${state.activeLibraryCategory === c.key ? 'is-active' : ''}" data-library-category="${c.key}" data-select-object="${c.select}" type="button"><span class="stage-object-icon-frame"><img src="${c.iconPath}" alt="" loading="lazy" onerror="this.style.display='none'" /><span class="stage-object-fallback-icon">${c.icon}</span></span><small>${c.label}</small></button>`).join('')}</div><h4>BASE STAGE TYPES</h4><div class="stage-base-stage-grid">${baseStageTypes.map((stage) => `<button class="stage-base-stage-card" type="button" aria-disabled="true"><span class="stage-base-stage-thumb"><img src="${stage.icon}" alt="" loading="lazy" onerror="this.style.display='none'" /><span>${stage.label.slice(0,2).toUpperCase()}</span></span><span>${stage.label}</span></button>`).join('')}</div></aside><section class="stage-editor-workspace"><div class="stage-editor-viewport"><header class="stage-editor-viewport-toolbar"><span>${state.editorProject?.stageType || 'Blank Stage'}</span><button type="button" class="is-beam" aria-pressed="true">Beam Preview</button><button type="button" aria-disabled="true">Grid</button><button type="button" aria-disabled="true">Snap</button></header><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-three-hud-label">Blank Stage</div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section><aside class="stage-editor-right"><section class="stage-config-panel"><h3>Fixture Configuration</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section><section class="stage-ai-panel"><h3>AI Assistant</h3><textarea aria-label="AI prompt" placeholder="Build me a 24x16 stage for a 5-piece metalcore band with tracks and lighting."></textarea><button type="button" aria-disabled="true">Generate</button></section><section class="stage-config-panel"><h3>Rigging Notes</h3><p>Qualified personnel approved for hangs.</p></section><section class="stage-config-panel"><h3>Project Info</h3><p>${title}</p><p>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: Foundation Preview</p></section></aside><section class="stage-editor-bottom"><div class="stage-editor-mode-tabs">${editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')}</div>${modeBody}</section></section></main>`
 }
 
 function initStageEditorViewport() {
@@ -130,7 +149,7 @@ function initStageEditorViewport() {
   })
 }
 
-function renderApp() { app.innerHTML = `${navShell({ currentPage: 'stage' })}${state.projectId ? renderEditor() : renderDashboard()}`; initShellChrome(); bindEvents(); if (state.projectId) initStageEditorViewport(); else { cleanupStageViewport?.(); cleanupStageViewport = null } }
+function renderApp() { const shell = state.projectId && !state.showStageGlobalHeader ? '' : navShell({ currentPage: 'stage' }); app.innerHTML = `${shell}${state.projectId ? renderEditor() : renderDashboard()}`; initShellChrome(); bindEvents(); if (state.projectId) initStageEditorViewport(); else { cleanupStageViewport?.(); cleanupStageViewport = null } }
 function closeModal() { app.querySelector('[data-stage-modal-root]')?.replaceChildren(); document.removeEventListener('keydown', onModalEscape) }
 function onModalEscape(e) { if (e.key === 'Escape') closeModal() }
 function renderCreateModal(loading = false, selectedStageType = 'Blank Stage') {
@@ -149,6 +168,11 @@ function bindEvents() {
   app.querySelectorAll('[data-open-project]').forEach((el) => el.addEventListener('click', () => openProject(el.dataset.openProject || '')))
   app.querySelector('[data-retry-stage-projects]')?.addEventListener('click', () => loadDashboardProjects())
   app.querySelectorAll('[data-editor-mode]').forEach((el) => el.addEventListener('click', () => { state.activeEditorMode = el.dataset.editorMode || 'builder'; renderApp() }))
+  app.querySelector('[data-stage-app-menu]')?.addEventListener('click', (e) => { e.stopPropagation(); state.stageAppMenuOpen = !state.stageAppMenuOpen; renderApp() })
+  app.querySelector('[data-toggle-main-header]')?.addEventListener('change', (e) => { state.showStageGlobalHeader = !!e.currentTarget.checked; state.stageAppMenuOpen = false; renderApp() })
+  app.querySelector('[data-stage-app-menu-panel]')?.addEventListener('click', (e) => e.stopPropagation())
+  document.addEventListener('click', () => { if (!state.stageAppMenuOpen) return; state.stageAppMenuOpen = false; renderApp() }, { once: true })
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.stageAppMenuOpen) { state.stageAppMenuOpen = false; renderApp() } }, { once: true })
   app.querySelectorAll('[data-library-category]').forEach((el) => el.addEventListener('click', () => { state.activeLibraryCategory = el.dataset.libraryCategory || 'band-backline'; const target = el.dataset.selectObject; if (target) state.selectedEditorObject = target; renderApp() }))
   app.querySelectorAll('[data-editor-object]').forEach((el) => el.addEventListener('click', () => { state.selectedEditorObject = el.dataset.editorObject || 'stage-deck'; renderApp() }))
 }
