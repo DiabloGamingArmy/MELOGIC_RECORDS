@@ -8,6 +8,7 @@ import { STORAGE_PATHS } from './config/storagePaths'
 import { getPublicStorageUrl } from './firebase/storageAssets'
 import { createStageProject, getStageProject, listAccessibleStageProjects, sortStageProjectsByActivity, touchStageProject } from './data/stageProjectService'
 import { mountStageThreeViewport } from './stage/stageThreeViewport'
+import { normalizeStagePlan } from './stage/stagePlanModel'
 
 const app = document.querySelector('#app')
 const sidebarItems = ['My Projects', 'Templates', 'Asset Library', 'Shared With Me', 'Exports', 'Learn']
@@ -59,7 +60,7 @@ const editorMockObjects = [
   { key: 'camera-1', label: 'Camera 1', type: 'Video', details: { angle: 'Wide', location: 'FOH' } }
 ]
 
-const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {}, showStageGlobalHeader: true, stageAppMenuOpen: false }
+const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeRailSection: 'object', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {}, snapEnabled: true, snapInterval: 1, measureMode: false, showExportPreview: false, showStageGlobalHeader: false, stageAppMenuOpen: false, viewportMode: localStorage.getItem('stageViewportMode') || 'perspective3d', paneSizes: { library: Number(localStorage.getItem('stagePaneLibrary')) || 236, right: Number(localStorage.getItem('stagePaneRight')) || 286, bottom: Number(localStorage.getItem('stagePaneBottom')) || 190 } }
 let cleanupStageViewport = null
 let stageEditorMounted = false
 let stageIconHydrationPromise = null
@@ -113,12 +114,30 @@ function renderDashboard() {
 
 
 function selectedEditorObject() { return editorMockObjects.find((o) => o.key === state.selectedEditorObject) || editorMockObjects[0] }
+function renderLeftPanel(title, body) { return `<aside class="stage-editor-library"><header><h3>${title}</h3><button type="button" aria-label="Close panel" aria-disabled="true">×</button></header>${body}</aside>` }
+function renderLeftPanelBySection(title, stamp) {
+  if (state.activeRailSection === 'object') return renderLeftPanel('OBJECT LIBRARY', `<div class="stage-editor-library-tools"><input aria-label="Search object library" placeholder="Search" /><button type="button" class="stage-library-filter" aria-disabled="true" title="Filters">⌕</button></div><label class="stage-editor-check"><input type="checkbox" /> Drag and drop categories</label><h4>BAND / BACKLINE</h4><div class="stage-object-grid">${editorLibraryCategories.map((c) => `<button class="stage-object-tile ${state.activeLibraryCategory === c.key ? 'is-active' : ''}" data-library-category="${c.key}" data-select-object="${c.select}" type="button"><span class="stage-object-icon-frame" data-stage-icon-path="${c.iconPath}"><img alt="" loading="lazy" hidden /><span class="stage-object-fallback-icon">${c.icon}</span></span><small>${c.label}</small></button>`).join('')}</div><h4>BASE STAGE TYPES</h4><div class="stage-base-stage-grid">${baseStageTypes.map((stage) => `<button class="stage-base-stage-card" type="button" aria-disabled="true"><span class="stage-base-stage-thumb" data-stage-icon-path="${stage.icon}"><img alt="" loading="lazy" hidden /><span>${stage.label.slice(0,2).toUpperCase()}</span></span><span>${stage.label}</span></button>`).join('')}</div>`)
+  const base = `<section class="stage-config-panel"><h3>${state.activeRailSection.toUpperCase()}</h3><p>Project: ${title}</p><p>Date/Version: ${stamp} | v${state.editorProject?.version || 1}</p><p>Stage Type: ${state.editorProject?.stageType || 'Blank Stage'}</p><p>Status: Foundation Preview</p></section>`
+  const map = {
+    home: `${base}<section class="stage-config-panel"><h3>Quick Actions</h3><p>New Stage • Open Project • Duplicate • Export • Share</p></section>`,
+    scene: `${base}<section class="stage-config-panel"><h3>Stage Dimensions</h3><p>Width 32ft • Depth 24ft • Height 4ft</p><p>Grid size / snap / labels controls placeholder.</p></section>`,
+    lighting: `${base}<section class="stage-config-panel"><h3>Lighting</h3><p>Fixture library / DMX / patch summary placeholder.</p></section>`,
+    rigging: `${base}<section class="stage-config-panel"><h3>Rigging</h3><p>Truss/points/load notes.</p><p>Qualified personnel required for rigging/hangs.</p></section>`,
+    audio: `${base}<section class="stage-config-panel"><h3>Audio Plan</h3><p>Input list, monitor/speaker notes, patch notes placeholder.</p></section>`,
+    video: `${base}<section class="stage-config-panel"><h3>Video Plan</h3><p>Screens, projectors, cameras, LED wall placeholders.</p></section>`,
+    venue: `${base}<section class="stage-config-panel"><h3>Venue</h3><p>FOH, power/loading notes, audience area placeholder.</p></section>`,
+    settings: `${base}<section class="stage-config-panel"><h3>Settings</h3><p>Units, default snap/view, diagnostics toggle, autosave placeholder.</p></section>`,
+    help: `${base}<section class="stage-config-panel"><h3>Help</h3><p>Orbit / Pan / Zoom / Nudge / Drag-drop / Resize panes.</p></section>`
+  }
+  return renderLeftPanel(state.activeRailSection.toUpperCase(), map[state.activeRailSection] || base)
+}
 function selectedEditorObjectMarkup() {
   const selected = selectedEditorObject()
+  const t = state.editorObjectTransforms[selected.key] || {}
   const rows = [['Selected', selected.label], ['Type', selected.type], ...Object.entries(selected.details || {})]
   const fixtureRows = selected.key === 'moving-head' ? [['DMX Address', '60IUUI'], ['Mode', '24ch'], ['Color', 'Cyan'], ['Beam Angle', '15-45°']] : []
   const cameraRows = selected.key === 'camera-1' ? [['Target', 'Downstage Center']] : []
-  return `<div class="stage-readout-grid">${[...rows, ...fixtureRows, ...cameraRows].map(([k,v])=>`<div><span>${String(k).toUpperCase()}</span><strong>${v}</strong></div>`).join('')}</div>${selected.key === 'moving-head' ? '<input type="range" disabled />' : ''}`
+  return `<div class="stage-readout-grid">${[...rows, ...fixtureRows, ...cameraRows].map(([k,v])=>`<div><span>${String(k).toUpperCase()}</span><strong>${v}</strong></div>`).join('')}</div><div class="stage-transform-grid"><label>X<input data-transform-field="x" type="number" step="0.1" value="${t.x ?? 0}"></label><label>Y<input data-transform-field="y" type="number" step="0.1" value="${t.y ?? 0}"></label><label>Z<input data-transform-field="z" type="number" step="0.1" value="${t.z ?? 0}"></label><label>W<input data-transform-field="width" type="number" step="0.1" value="0"></label><label>D<input data-transform-field="depth" type="number" step="0.1" value="0"></label><label>H<input data-transform-field="height" type="number" step="0.1" value="0"></label><label>Rot<input data-transform-field="rotY" type="number" step="1" value="0"></label><label>Label<input data-transform-field="label" type="text" value="${selected.label}"></label><label><input data-transform-field="locked" type="checkbox"> Lock</label><label><input data-transform-field="visible" type="checkbox" checked> Visible</label><label>Notes<textarea data-transform-field="notes"></textarea></label></div>${selected.key === 'moving-head' ? '<input type="range" disabled />' : ''}`
 }
 function updateStageInspectorSelection() {
   const target = app.querySelector('[data-stage-selected-readout]')
@@ -137,7 +156,7 @@ function renderEditor() { /* unchanged behavior */
       : state.activeEditorMode === 'lighting-plot' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>Lighting Plot Schematic</h4><div class="stage-mode-large lighting"></div></section></section>'
         : state.activeEditorMode === 'rigging-plan' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>Rigging Plan</h4><ul><li>Ground support verified</li><li>Point load check pending</li><li>Qualified personnel assigned</li></ul></section></section>'
           : `<section class="stage-editor-mode-content"><section class="stage-editor-table-panel"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
-  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" data-stage-editor-app><section class="stage-editor-menubar"><div class="stage-editor-menu-left"><button class="stage-editor-app-menu" type="button" data-stage-app-menu aria-label="Stage app menu">☰</button><button type="button" data-icon-path="${stageIconPath('app', 'file')}">File</button><button type="button" data-icon-path="${stageIconPath('app', 'edit')}">Edit</button><button type="button" data-icon-path="${stageIconPath('app', 'view')}">View</button><button type="button" data-icon-path="${stageIconPath('app', 'share')}">Share</button></div><div class="stage-editor-project-title"><h2 data-stage-project-title>Project: ${title}</h2><p data-stage-project-version>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><button type="button" aria-disabled="true">Share ▾</button><button type="button" aria-disabled="true">?</button><button type="button" aria-disabled="true">⋯</button><button type="button" class="is-send" aria-disabled="true">Send Stage Plan</button></div></section><section class="stage-editor-body"><nav class="stage-editor-rail" aria-label="Editor tools">${editorRailItems.map((item, i) => `<button type="button" class="${i === 1 ? 'is-active' : ''}"><span class="stage-rail-icon" data-stage-icon-path="${item.icon}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">◈</span></span><small>${item.label}</small></button>`).join('')}<a class="stage-back-link" href="${ROUTES.stage}"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Exit</small></a></nav><aside class="stage-editor-library"><header><h3>OBJECT LIBRARY</h3></header><div class="stage-editor-library-tools"><input aria-label="Search object library" placeholder="Search" /><button type="button" class="stage-library-filter" aria-disabled="true" title="Filters">•</button></div><label class="stage-editor-check"><input type="checkbox" /> Drag and drop categories</label><h4>BAND / BACKLINE</h4><div class="stage-object-grid">${editorLibraryCategories.map((c) => `<button class="stage-object-tile ${state.activeLibraryCategory === c.key ? 'is-active' : ''}" data-library-category="${c.key}" data-select-object="${c.select}" type="button"><span class="stage-object-icon-frame" data-stage-icon-path="${c.iconPath}"><img alt="" loading="lazy" hidden /><span class="stage-object-fallback-icon">${c.icon}</span></span><small>${c.label}</small></button>`).join('')}</div><h4>BASE STAGE TYPES</h4><div class="stage-base-stage-grid">${baseStageTypes.map((stage) => `<button class="stage-base-stage-card" type="button" aria-disabled="true"><span class="stage-base-stage-thumb" data-stage-icon-path="${stage.icon}"><img alt="" loading="lazy" hidden /><span>${stage.label.slice(0,2).toUpperCase()}</span></span><span>${stage.label}</span></button>`).join('')}</div></aside><section class="stage-editor-workspace"><div class="stage-editor-viewport"><header class="stage-editor-viewport-toolbar"><span data-stage-type-label>${state.editorProject?.stageType || 'Blank Stage'}</span><button type="button" class="is-beam" aria-pressed="true">Beam Preview</button><button type="button" aria-disabled="true">Grid</button><button type="button" aria-disabled="true">Snap</button></header><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-three-hud-label">Blank Stage</div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section><aside class="stage-editor-right"><section class="stage-config-panel"><h3>Fixture Configuration</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section><section class="stage-ai-panel"><h3>AI Assistant</h3><textarea aria-label="AI prompt" placeholder="Build me a 24x16 stage for a 5-piece metalcore band with tracks and lighting."></textarea><button type="button" aria-disabled="true">Generate</button></section><section class="stage-config-panel"><h3>Rigging Notes</h3><p>Qualified personnel approved for hangs.</p></section><section class="stage-config-panel"><h3>Project Info</h3><p data-stage-project-info-title>${title}</p><p data-stage-project-info-type>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: Foundation Preview</p></section></aside><section class="stage-editor-bottom"><div class="stage-editor-mode-tabs">${editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')}</div><div data-stage-mode-root>${modeBody}</div></section></section></main>`
+  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" style="--stage-lib-w:${state.paneSizes.library}px;--stage-right-w:${state.paneSizes.right}px;--stage-bottom-h:${state.paneSizes.bottom}px" data-stage-editor-app><section class="stage-editor-menubar"><div class="stage-editor-menu-left"><button class="stage-editor-app-menu" type="button" data-stage-app-menu aria-label="Stage app menu">☰</button><button type="button" data-icon-path="${stageIconPath('app', 'file')}">File</button><button type="button" data-icon-path="${stageIconPath('app', 'edit')}">Edit</button><button type="button" data-icon-path="${stageIconPath('app', 'view')}">View</button><button type="button" data-icon-path="${stageIconPath('app', 'share')}">Share</button></div><div class="stage-editor-project-title"><h2 data-stage-project-title>Project: ${title}</h2><p data-stage-project-version>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><button type="button" aria-disabled="true">Share ▾</button><button type="button" aria-disabled="true">⚙</button><button type="button" aria-disabled="true">⋯</button><button type="button" class="is-send" data-open-export type="button">Send Stage Plan</button></div></section><section class="stage-editor-tabbar"><div class="stage-editor-project-tab">${state.editorProject?.stageType || 'Festival Stage'} <span>×</span></div><div class="stage-editor-tab-actions"><button type="button" class="is-beam" aria-pressed="true">Beam Preview</button><button type="button" aria-disabled="true">Grid</button><button type="button" data-toggle-snap="${state.snapEnabled?'on':'off'}">Snap ${state.snapEnabled?'On':'Off'}</button><button type="button" data-toggle-measure="${state.measureMode?'on':'off'}">Measure</button>${[['perspective3d','3D'],['top2d','Top'],['front','Front'],['side','Side'],['isometric','Iso']].map(([k,l])=>`<button type="button" class="${state.viewportMode===k?'is-active-view':''}" data-view-mode="${k}">${l}</button>`).join('')}</div></section><section class="stage-editor-body"><nav class="stage-editor-rail" aria-label="Editor tools">${editorRailItems.map((item) => `<button type="button" class="${state.activeRailSection === item.key ? 'is-active' : ''}" data-rail-section="${item.key}" title="${item.label}"><span class="stage-rail-icon" data-stage-icon-path="${item.icon}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">◈</span></span><small>${item.label}</small></button>`).join('')}<a class="stage-back-link" href="${ROUTES.stage}"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Exit</small></a></nav>${renderLeftPanelBySection(title, stamp)}<div class="stage-resize-handle is-library" data-resize="library"></div><section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-three-hud-label">Blank Stage</div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section><div class="stage-resize-handle is-right" data-resize="right"></div><aside class="stage-editor-right"><section class="stage-config-panel"><h3>Fixture Configuration</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section><section class="stage-ai-panel"><h3>AI Assistant</h3><textarea aria-label="AI prompt" placeholder="Build me a 24x16 stage for a 5-piece metalcore band with tracks and lighting."></textarea><button type="button" aria-disabled="true">Generate</button></section><section class="stage-config-panel"><h3>Rigging Notes</h3><p>Qualified personnel approved for hangs.</p></section><section class="stage-config-panel"><h3>Project Info</h3><p data-stage-project-info-title>${title}</p><p data-stage-project-info-type>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: Foundation Preview</p></section></aside><section class="stage-editor-bottom"><div class="stage-resize-handle is-bottom" data-resize="bottom"></div><div class="stage-editor-mode-tabs">${editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')}</div><div data-stage-mode-root>${modeBody}</div></section></section>${state.showExportPreview?`<div class="stage-export-modal"><div class="stage-export-sheet"><h3>Stage Plan Preview</h3><p>${title} • ${stamp}</p><div class="stage-export-drawing">Stage Plot Sheet Preview (vector foundation)</div><div class="stage-export-inputs"><h4>Input List Sheet</h4><p>Channel • Source • Mic/DI • Stand • Notes</p></div><div class="stage-export-actions"><button disabled title="PDF export coming soon; use SVG/JSON for now.">Export PDF</button><button>Export PNG</button><button>Export SVG</button><button>Export JSON</button><button>Copy Share Link</button><button data-close-export>Close</button></div></div></div>`:''}</main>`
 }
 
 function initStageEditorViewport() {
@@ -151,7 +170,8 @@ function initStageEditorViewport() {
     selectedObjectKey: state.selectedEditorObject,
     objectTransforms: state.editorObjectTransforms,
     onSelectObject: (key) => { if (state.selectedEditorObject === key) return; state.selectedEditorObject = key; updateStageInspectorSelection() },
-    onTransformObject: (key, transform) => { state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: transform } }
+    onTransformObject: (key, transform) => { state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: transform } },
+    viewportMode: state.viewportMode
   })
   if (cleanupStageViewport) stageViewportMountedForProjectId = state.projectId
 }
@@ -181,7 +201,7 @@ function updateStageAppMenu() {
   const existing = left.querySelector('[data-stage-app-menu-panel]')
   existing?.remove()
   if (!state.stageAppMenuOpen) return
-  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><label><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}/> Show main header</label><a href="${ROUTES.stage}">Stage Projects</a><a href="/">Dashboard</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button></div>`)
+  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.stage}">Stage Projects</a><a href="/">Dashboard</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button></div>`)
 }
 function updateEditorModeUI() {
   app.querySelectorAll('[data-editor-mode]').forEach((el) => {
@@ -277,6 +297,22 @@ function bindStageEditorEventsOnce() {
     if (!menuPanel && state.stageAppMenuOpen) { state.stageAppMenuOpen = false; updateStageAppMenu() }
     const lib = e.target.closest('[data-library-category]')
     if (lib) { state.activeLibraryCategory = lib.dataset.libraryCategory || 'band-backline'; state.selectedEditorObject = lib.dataset.selectObject || state.selectedEditorObject; updateLibraryActiveState(); updateStageInspectorSelection(); return }
+    const rail = e.target.closest('[data-rail-section]')
+    if (rail) { state.activeRailSection = rail.dataset.railSection || 'object'; renderApp(); return }
+    const vm = e.target.closest('[data-view-mode]')
+    if (vm) { state.viewportMode = vm.dataset.viewMode || 'perspective3d'; localStorage.setItem('stageViewportMode', state.viewportMode); cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); renderApp(); return }
+    const openExport = e.target.closest('[data-open-export]'); if (openExport) { state.showExportPreview = true; renderApp(); return }
+    const closeExport = e.target.closest('[data-close-export]'); if (closeExport) { state.showExportPreview = false; renderApp(); return }
+    const snap = e.target.closest('[data-toggle-snap]'); if (snap) { state.snapEnabled = !state.snapEnabled; renderApp(); return }
+    const measure = e.target.closest('[data-toggle-measure]'); if (measure) { state.measureMode = !state.measureMode; renderApp(); return }
+  })
+  app.addEventListener('input', (e) => {
+    const f = e.target.closest('[data-transform-field]')
+    if (!f) return
+    const key = state.selectedEditorObject
+    const existing = state.editorObjectTransforms[key] || {}
+    const v = f.type === 'number' ? Number(f.value) : f.type === 'checkbox' ? !!f.checked : f.value
+    state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [f.dataset.transformField]: v } }
   })
   app.addEventListener('change', (e) => {
     const toggle = e.target.closest('[data-toggle-main-header]')
@@ -287,10 +323,36 @@ function bindStageEditorEventsOnce() {
     if (header) header.hidden = !state.showStageGlobalHeader
     if (editor) editor.classList.toggle('is-header-hidden', !state.showStageGlobalHeader)
   })
+  app.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest('[data-resize]')
+    if (!handle) return
+    const editor = app.querySelector('[data-stage-editor-app]')
+    if (!editor) return
+    const type = handle.dataset.resize
+    const startX = e.clientX; const startY = e.clientY
+    const start = { ...state.paneSizes }
+    const maxBottom = () => Math.round((editor.clientHeight || window.innerHeight) * 0.45)
+    const onMove = (evt) => {
+      if (type === 'library') state.paneSizes.library = Math.min(360, Math.max(180, start.library + (evt.clientX - startX)))
+      if (type === 'right') state.paneSizes.right = Math.min(420, Math.max(240, start.right - (evt.clientX - startX)))
+      if (type === 'bottom') state.paneSizes.bottom = Math.min(maxBottom(), Math.max(120, start.bottom - (evt.clientY - startY)))
+      editor.style.setProperty('--stage-lib-w', `${state.paneSizes.library}px`)
+      editor.style.setProperty('--stage-right-w', `${state.paneSizes.right}px`)
+      editor.style.setProperty('--stage-bottom-h', `${state.paneSizes.bottom}px`)
+    }
+    const onUp = () => {
+      localStorage.setItem('stagePaneLibrary', String(state.paneSizes.library))
+      localStorage.setItem('stagePaneRight', String(state.paneSizes.right))
+      localStorage.setItem('stagePaneBottom', String(state.paneSizes.bottom))
+      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  })
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.stageAppMenuOpen) { state.stageAppMenuOpen = false; updateStageAppMenu() } })
 }
 async function loadDashboardProjects() { if (!state.user?.uid || state.projectId) return; state.loadingProjects = true; state.projectsError = ''; renderApp(); try { const projects = await listAccessibleStageProjects(state.user.uid); const sorted = [...projects].sort(sortStageProjectsByActivity); state.projects = sorted; state.recentProjects = sorted.slice(0, 6) } catch { state.projects = []; state.recentProjects = []; state.projectsError = 'load-failed' } finally { state.loadingProjects = false; renderApp() } }
-async function loadEditorProject() { if (!state.projectId) return; state.editorLoading = true; state.editorError = ''; renderApp(); try { const project = await getStageProject(state.projectId); if (!project) state.editorError = 'not-found'; else state.editorProject = project } catch { state.editorError = 'fetch-failed' } finally { state.editorLoading = false; renderApp() } }
+async function loadEditorProject() { if (!state.projectId) return; state.editorLoading = true; state.editorError = ''; renderApp(); try { const project = await getStageProject(state.projectId); if (!project) state.editorError = 'not-found'; else state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name }) } catch { state.editorError = 'fetch-failed'; console.warn('[stage] Firestore project load failed. Stage editor shell remains available with default viewport objects.') } finally { state.editorLoading = false; renderApp() } }
 
 state.projectId = getCurrentStageProjectId()
 waitForInitialAuthState().then(async (user) => { state.user = user; renderApp(); if (state.projectId) await loadEditorProject(); else await loadDashboardProjects() })
