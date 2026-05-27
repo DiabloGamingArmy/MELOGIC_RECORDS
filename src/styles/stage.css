@@ -278,3 +278,13 @@
 .stage-rail-icon.has-stage-icon .stage-rail-fallback{display:none}
 .stage-object-icon-frame img{max-width:24px;max-height:24px}
 .stage-object-icon-frame.has-stage-icon .stage-object-fallback-icon{display:none}
+
+.stage-editor-menubar{border-bottom:1px solid rgba(88,112,150,.45)}
+.stage-editor-body{overflow:hidden;border-top:1px solid rgba(63,85,123,.45)}
+.stage-editor-library,.stage-editor-workspace,.stage-editor-right{border-left:0}
+.stage-editor-workspace{padding:0}
+.stage-editor-viewport-toolbar{padding:6px 8px;border-bottom:1px solid rgba(84,108,146,.35)}
+.stage-editor-right .stage-config-panel,.stage-editor-right .stage-ai-panel{border-radius:2px}
+.stage-editor-bottom{border-top:1px solid rgba(82,106,145,.45);background:#0c1527}
+.stage-editor-mode-tabs{border-bottom:1px solid rgba(84,108,146,.35);padding-bottom:4px;margin-bottom:4px}
+.stage-editor-library{scrollbar-gutter:stable both-edges}
