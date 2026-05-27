@@ -77,6 +77,10 @@ export function mountStageThreeViewport(container, options = {}) {
         controls.minPolarAngle = 0
         controls.maxPolarAngle = Math.PI * 0.48
       }
+      if (mode === 'perspective3d') {
+        controls.minPolarAngle = 0
+        controls.maxPolarAngle = Math.PI * 0.48
+      }
       camera.lookAt(0, 1.5, 0)
       controls.object = camera
       controls.target.set(0, 1.5, 0)
