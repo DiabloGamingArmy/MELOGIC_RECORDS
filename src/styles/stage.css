@@ -357,3 +357,4 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-editor-app-menu-panel{border:1px solid var(--stage-border-strong);background:var(--stage-panel-2);border-radius:6px;box-shadow:0 10px 24px rgba(0,0,0,.35)}
 .stage-editor-app-menu-panel a,.stage-editor-app-menu-panel button{border:0 !important;background:transparent !important;border-left:2px solid transparent !important}
 .stage-editor-app-menu-panel a:hover,.stage-editor-app-menu-panel button:hover{background:var(--stage-accent-soft) !important;border-left-color:var(--stage-accent) !important}
+.stage-editor-tab-actions .is-active-view{border-color:var(--stage-accent)!important;background:var(--stage-accent-soft)!important;color:#d9ffff!important}
