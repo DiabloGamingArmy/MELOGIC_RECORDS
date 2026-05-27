@@ -60,8 +60,8 @@ const editorMockObjects = [
   { key: 'camera-1', label: 'Camera 1', type: 'Video', details: { angle: 'Wide', location: 'FOH' } }
 ]
 
-const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', projectLoadStatus: 'loading', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeRailSection: 'object', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {}, snapEnabled: true, snapInterval: 1, measureMode: false, gridEnabled: true, beamPreviewEnabled: true, showStageLabels: true, showExportPreview: false, showStageGlobalHeader: false, stageAppMenuOpen: false, showViewportDiagnostics: false, viewportMode: localStorage.getItem('stageViewportMode') || 'perspective3d', paneSizes: { library: Number(localStorage.getItem('stagePaneLibrary')) || 236, right: Number(localStorage.getItem('stagePaneRight')) || 286, bottom: Number(localStorage.getItem('stagePaneBottom')) || 190 } }
-let cleanupStageViewport = null
+const state = { user: null, loadingProjects: false, projectsError: '', projects: [], recentProjects: [], projectId: '', editorLoading: false, editorError: '', projectLoadStatus: 'loading', editorProject: null, createError: '', selectedStageType: 'Blank Stage', activeEditorMode: 'builder', activeRailSection: 'home', activeLibraryCategory: 'band-backline', selectedEditorObject: 'stage-deck', editorObjectTransforms: {}, snapEnabled: true, snapInterval: 1, measureModeEnabled: false, gridEnabled: true, beamPreviewEnabled: true, showStageLabels: true, showExportPreview: false, showStageGlobalHeader: false, stageAppMenuOpen: false, showViewportDiagnostics: false, viewportMode: localStorage.getItem('stageViewportMode') || 'perspective3d', activeInspectorTab: 'properties', activeDataTab: 'schema', paneSizes: { library: Number(localStorage.getItem('stagePaneLibrary')) || 236, right: Number(localStorage.getItem('stagePaneRight')) || 286, bottom: Number(localStorage.getItem('stagePaneBottom')) || 190 } }
+let stageViewportController = null
 let stageEditorMounted = false
 let stageIconHydrationPromise = null
 let stageEditorEventsBound = false
@@ -144,6 +144,34 @@ function updateStageInspectorSelection() {
   if (target) target.innerHTML = selectedEditorObjectMarkup()
 }
 
+
+function renderInspectorTabs(title, stamp) {
+  const tabs = [['properties','Properties'],['ai','AI Assist'],['rig','Rig Notes'],['project','Project Info']]
+  const active = state.activeInspectorTab
+  const body = active === 'properties'
+    ? `<section class="stage-config-panel"><h3>Properties</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section>`
+    : active === 'ai'
+      ? '<section class="stage-ai-panel"><h3>AI Assistant</h3><p>Prompt-based stage assistant placeholder.</p><textarea aria-label="AI prompt" placeholder="Build me a 24x16 stage for a 5-piece metalcore band with tracks and lighting."></textarea><button type="button" aria-disabled="true">Generate</button></section>'
+      : active === 'rig'
+        ? '<section class="stage-config-panel"><h3>Rigging Notes</h3><p>Qualified personnel required for rigging/hangs.</p><textarea aria-label="Rigging notes" placeholder="Rigging notes"></textarea><ul><li>Add Truss (placeholder)</li><li>Add Rigging Point (placeholder)</li></ul></section>'
+        : `<section class="stage-config-panel"><h3>Project Info</h3><p data-stage-project-info-title>${title}</p><p data-stage-project-info-type>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: ${state.projectLoadStatus}</p><p>Project ID: ${state.projectId}</p></section>`
+  return `<aside class="stage-editor-right"><div class="stage-inspector-tabs">${tabs.map(([k,l])=>`<button type="button" data-inspector-tab="${k}" class="${state.activeInspectorTab===k?'is-active':''}">${l}</button>`).join('')}</div><div class="stage-inspector-body">${body}</div></aside>`
+}
+
+function renderDataPane() {
+  const tabs = [['schema','Schema'],['signal','Signal Flow'],['patch','Patch Graph'],['object','Object Graph'],['export','Export Data']]
+  const body = state.activeDataTab === 'schema'
+    ? `<ul class="stage-data-list"><li>Stage dimensions: 32x24x4 ft</li><li>Object count: ${editorMockObjects.length}</li><li>Fixture count: 3</li><li>Audio inputs: 22</li><li>Rigging points: 2</li><li>View mode: ${state.viewportMode}</li><li>Grid: ${state.gridEnabled ? 'On' : 'Off'} • Snap: ${state.snapEnabled ? 'On' : 'Off'}</li></ul>`
+    : state.activeDataTab === 'signal'
+      ? '<div class="stage-data-cards"><p>Source → Mic/DI → Channel → Console</p><p>Kick In → Beta 91A → Ch1 → FOH</p><p>Lead Voc → Wireless → Ch12 → FOH</p></div>'
+      : state.activeDataTab === 'patch'
+        ? '<div class="stage-data-cards"><p>DMX U1: 001-096 (placeholder)</p><p>Audio patch: Channels 1-22 (placeholder)</p></div>'
+        : state.activeDataTab === 'object'
+          ? `<div class="stage-data-cards"><p>Selected: ${selectedEditorObject().label}</p><p>Linked input: placeholder</p><p>Linked fixture: placeholder</p></div>`
+          : '<ul class="stage-data-list"><li>✓ Stage dimensions set</li><li>✓ Labels enabled</li><li>✓ Input list generated</li><li>• Rigging notes present</li><li>• Project info complete</li></ul>'
+  return `<section class="stage-bottom-secondary"><div class="stage-data-tabs">${tabs.map(([k,l])=>`<button type="button" data-data-tab="${k}" class="${state.activeDataTab===k?'is-active':''}">${l}</button>`).join('')}</div><div class="stage-data-body">${body}</div></section>`
+}
+
 function renderEditor() { /* unchanged behavior */
   if (state.editorLoading) return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>Opening stage plan...</h2><p>Loading project workspace.</p><a href="${ROUTES.stage}" class="stage-back-link">Back to Stage Projects</a></section></main>`
   if (state.editorError === 'not-found') return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>Stage plan not found.</h2><a href="${ROUTES.stage}" class="stage-back-link">Back to Stage Projects</a></section></main>`
@@ -151,21 +179,21 @@ function renderEditor() { /* unchanged behavior */
   const title = state.editorProject?.title || 'Untitled Stage Plan'
   const stamp = (projectDate(state.editorProject) || new Date()).toLocaleDateString()
   const inputListTable = '<table><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Notes</th></tr></thead><tbody><tr><td>✓</td><td>1</td><td>Kick In</td><td>Beta 91A</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>2</td><td>Kick Out</td><td>Beta 52</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>3</td><td>Snare Top</td><td>SM57</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>8</td><td>Bass DI</td><td>DI</td><td>N/A</td><td>USC</td></tr><tr><td>✓</td><td>12</td><td>Lead Voc</td><td>Wireless</td><td>N/A</td><td>DSC</td></tr><tr><td>✓</td><td>21</td><td>Playback L</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr><tr><td>✓</td><td>22</td><td>Playback R</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr></tbody></table>'
-  const modeBody = state.activeEditorMode === 'stage-plot' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>2D Stage Plot</h4><div class="stage-mode-large"></div></section></section>'
-    : state.activeEditorMode === 'input-list' ? `<section class="stage-editor-mode-content"><section class="stage-editor-table-panel is-large"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
-      : state.activeEditorMode === 'lighting-plot' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>Lighting Plot Schematic</h4><div class="stage-mode-large lighting"></div></section></section>'
-        : state.activeEditorMode === 'rigging-plan' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>Rigging Plan</h4><ul><li>Ground support verified</li><li>Point load check pending</li><li>Qualified personnel assigned</li></ul></section></section>'
-          : `<section class="stage-editor-mode-content"><section class="stage-editor-table-panel"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
-  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" style="--stage-lib-w:${state.paneSizes.library}px;--stage-right-w:${state.paneSizes.right}px;--stage-bottom-h:${state.paneSizes.bottom}px" data-stage-editor-app><section class="stage-editor-menubar"><div class="stage-editor-menu-left"><button class="stage-editor-app-menu" type="button" data-stage-app-menu aria-label="Stage app menu">☰</button><button type="button" data-icon-path="${stageIconPath('app', 'file')}">File</button><button type="button" data-icon-path="${stageIconPath('app', 'edit')}">Edit</button><button type="button" data-icon-path="${stageIconPath('app', 'view')}">View</button><button type="button" data-icon-path="${stageIconPath('app', 'share')}">Share</button></div><div class="stage-editor-project-title"><h2 data-stage-project-title>Project: ${title}</h2><p data-stage-project-version>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><button type="button" aria-disabled="true">Share ▾</button><button type="button" aria-disabled="true">⚙</button><button type="button" aria-disabled="true">⋯</button><button type="button" class="is-send" data-open-export type="button">Send Stage Plan</button></div></section><section class="stage-editor-tabbar"><div class="stage-editor-project-tab">${state.editorProject?.stageType || 'Festival Stage'} <span>×</span></div><div class="stage-editor-tab-actions"></div></section><section class="stage-editor-body"><nav class="stage-editor-rail" aria-label="Editor tools">${editorRailItems.map((item) => `<button type="button" class="${state.activeRailSection === item.key ? 'is-active' : ''}" data-rail-section="${item.key}" title="${item.label}"><span class="stage-rail-icon" data-stage-icon-path="${item.icon}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">◈</span></span><small>${item.label}</small></button>`).join('')}<a class="stage-back-link" href="${ROUTES.stage}"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Exit</small></a></nav>${renderLeftPanelBySection(title, stamp)}<div class="stage-resize-handle is-library" data-resize="library"></div><section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam Preview</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-measure class="${state.measureMode ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${[['perspective3d','3D'],['top2d','Top'],['front','Front'],['side','Side'],['isometric','Iso']].map(([k,l])=>`<button type="button" class="${state.viewportMode===k?'is-active-view':''}" data-view-mode="${k}">${l}</button>`).join('')}</div></div><div class="stage-three-hud-label">Blank Stage</div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section><div class="stage-resize-handle is-right" data-resize="right"></div><aside class="stage-editor-right"><section class="stage-config-panel"><h3>Fixture Configuration</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section><section class="stage-ai-panel"><h3>AI Assistant</h3><textarea aria-label="AI prompt" placeholder="Build me a 24x16 stage for a 5-piece metalcore band with tracks and lighting."></textarea><button type="button" aria-disabled="true">Generate</button></section><section class="stage-config-panel"><h3>Rigging Notes</h3><p>Qualified personnel approved for hangs.</p></section><section class="stage-config-panel"><h3>Project Info</h3><p data-stage-project-info-title>${title}</p><p data-stage-project-info-type>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: ${state.projectLoadStatus}</p></section></aside><section class="stage-editor-bottom"><div class="stage-resize-handle is-bottom" data-resize="bottom"></div><div class="stage-editor-mode-tabs">${editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')}</div><div data-stage-mode-root>${modeBody}</div></section></section>${state.showExportPreview?`<div class="stage-export-modal"><div class="stage-export-sheet"><h3>Stage Plan Preview</h3><p>${title} • ${stamp}</p><div class="stage-export-drawing">Stage Plot Sheet Preview (vector foundation)</div><div class="stage-export-inputs"><h4>Input List Sheet</h4><p>Channel • Source • Mic/DI • Stand • Notes</p></div><div class="stage-export-actions"><button disabled title="PDF export coming soon; use SVG/JSON for now.">Export PDF</button><button>Export PNG</button><button>Export SVG</button><button>Export JSON</button><button>Copy Share Link</button><button data-close-export>Close</button></div></div></div>`:''}</main>`
+  const modeBody = state.activeEditorMode === 'stage-plot' ? '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>2D Stage Plot</h4><div class="stage-mode-large"></div></section></section>'
+    : state.activeEditorMode === 'input-list' ? `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-large"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
+      : state.activeEditorMode === 'lighting-plot' ? '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Lighting Plot Schematic</h4><div class="stage-mode-large lighting"></div></section></section>'
+        : state.activeEditorMode === 'rigging-plan' ? '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Rigging Plan</h4><ul><li>Ground support verified</li><li>Point load check pending</li><li>Qualified personnel assigned</li></ul></section></section>'
+          : `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
+  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" style="--stage-lib-w:${state.paneSizes.library}px;--stage-right-w:${state.paneSizes.right}px;--stage-bottom-h:${state.paneSizes.bottom}px" data-stage-editor-app><section class="stage-editor-menubar"><div class="stage-editor-menu-left"><button class="stage-editor-app-menu" type="button" data-stage-app-menu aria-label="Stage app menu">☰</button><button type="button" data-icon-path="${stageIconPath('app', 'file')}">File</button><button type="button" data-icon-path="${stageIconPath('app', 'edit')}">Edit</button><button type="button" data-icon-path="${stageIconPath('app', 'view')}">View</button><button type="button" data-icon-path="${stageIconPath('app', 'share')}">Share</button></div><div class="stage-editor-project-title"><h2 data-stage-project-title>Project: ${title}</h2><p data-stage-project-version>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><button type="button" aria-disabled="true">Share ▾</button><button type="button" aria-disabled="true">⚙</button><button type="button" aria-disabled="true">⋯</button><button type="button" class="is-send" data-open-export type="button">Send Stage Plan</button></div></section><section class="stage-editor-tabbar"><div class="stage-editor-project-tab">${state.editorProject?.stageType || 'Festival Stage'} <span>×</span></div><div class="stage-editor-tab-actions"></div></section><section class="stage-editor-body"><nav class="stage-editor-rail" aria-label="Editor tools">${editorRailItems.map((item) => `<button type="button" class="${state.activeRailSection === item.key ? 'is-active' : ''}" data-rail-section="${item.key}" title="${item.label}"><span class="stage-rail-icon" data-stage-icon-path="${item.icon}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">◈</span></span><small>${item.label}</small></button>`).join('')}<a class="stage-back-link" href="${ROUTES.stage}"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Exit</small></a></nav>${renderLeftPanelBySection(title, stamp)}<div class="stage-resize-handle is-library" data-resize="library"></div><section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam Preview</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-measure class="${state.measureModeEnabled ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${[['perspective3d','3D'],['top2d','Top'],['front','Front'],['side','Side'],['isometric','Iso']].map(([k,l])=>`<button type="button" class="${state.viewportMode===k?'is-active-view':''}" data-view-mode="${k}">${l}</button>`).join('')}</div></div><div class="stage-three-hud-label">Blank Stage</div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section><div class="stage-resize-handle is-right" data-resize="right"></div>${renderInspectorTabs(title, stamp)}<section class="stage-editor-bottom"><div class="stage-resize-handle is-bottom" data-resize="bottom"></div><div class="stage-editor-mode-tabs">${editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')}</div><div data-stage-mode-root><div class="stage-bottom-split">${modeBody}${renderDataPane()}</div></div></section></section>${state.showExportPreview?`<div class="stage-export-modal"><div class="stage-export-sheet"><h3>Stage Plan Preview</h3><p>${title} • ${stamp}</p><div class="stage-export-drawing">Stage Plot Sheet Preview (vector foundation)</div><div class="stage-export-inputs"><h4>Input List Sheet</h4><p>Channel • Source • Mic/DI • Stand • Notes</p></div><div class="stage-export-actions"><button disabled title="PDF export coming soon; use SVG/JSON for now.">Export PDF</button><button>Export PNG</button><button>Export SVG</button><button>Export JSON</button><button>Copy Share Link</button><button data-close-export>Close</button></div></div></div>`:''}</main>`
 }
 
 function initStageEditorViewport() {
-  cleanupStageViewport?.()
-  cleanupStageViewport = null
+  stageViewportController?.dispose?.()
+  stageViewportController = null
   if (!state.projectId || state.editorLoading || state.editorError) return
   const container = app.querySelector('[data-stage-three-viewport]')
   if (!container) return
-  cleanupStageViewport = mountStageThreeViewport(container, {
+  stageViewportController = mountStageThreeViewport(container, {
     project: state.editorProject,
     projectLoadStatus: state.projectLoadStatus,
     showDiagnostics: state.showViewportDiagnostics,
@@ -178,7 +206,7 @@ function initStageEditorViewport() {
     , showBeams: state.beamPreviewEnabled
     , showLabels: state.showStageLabels
   })
-  if (cleanupStageViewport) stageViewportMountedForProjectId = state.projectId
+  if (stageViewportController) stageViewportMountedForProjectId = state.projectId
 }
 
 
@@ -217,11 +245,11 @@ function updateEditorModeUI() {
   const root = app.querySelector('[data-stage-mode-root]')
   if (!root) return
   const inputListTable = '<table><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Notes</th></tr></thead><tbody><tr><td>✓</td><td>1</td><td>Kick In</td><td>Beta 91A</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>2</td><td>Kick Out</td><td>Beta 52</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>3</td><td>Snare Top</td><td>SM57</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>8</td><td>Bass DI</td><td>DI</td><td>N/A</td><td>USC</td></tr><tr><td>✓</td><td>12</td><td>Lead Voc</td><td>Wireless</td><td>N/A</td><td>DSC</td></tr><tr><td>✓</td><td>21</td><td>Playback L</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr><tr><td>✓</td><td>22</td><td>Playback R</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr></tbody></table>'
-  root.innerHTML = state.activeEditorMode === 'stage-plot' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>2D Stage Plot</h4><div class="stage-mode-large"></div></section></section>'
-    : state.activeEditorMode === 'input-list' ? `<section class="stage-editor-mode-content"><section class="stage-editor-table-panel is-large"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
-      : state.activeEditorMode === 'lighting-plot' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>Lighting Plot Schematic</h4><div class="stage-mode-large lighting"></div></section></section>'
-        : state.activeEditorMode === 'rigging-plan' ? '<section class="stage-editor-mode-content"><section class="stage-editor-mode-panel"><h4>Rigging Plan</h4><ul><li>Ground support verified</li><li>Point load check pending</li><li>Qualified personnel assigned</li></ul></section></section>'
-          : `<section class="stage-editor-mode-content"><section class="stage-editor-table-panel"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
+  root.innerHTML = state.activeEditorMode === 'stage-plot' ? '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>2D Stage Plot</h4><div class="stage-mode-large"></div></section></section>'
+    : state.activeEditorMode === 'input-list' ? `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-large"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
+      : state.activeEditorMode === 'lighting-plot' ? '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Lighting Plot Schematic</h4><div class="stage-mode-large lighting"></div></section></section>'
+        : state.activeEditorMode === 'rigging-plan' ? '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Rigging Plan</h4><ul><li>Ground support verified</li><li>Point load check pending</li><li>Qualified personnel assigned</li></ul></section></section>'
+          : `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel"><h4>Auto-Generated Input List</h4>${inputListTable}</section></section>`
 }
 function updateLibraryActiveState() {
   app.querySelectorAll('[data-library-category]').forEach((el) => el.classList.toggle('is-active', (el.dataset.libraryCategory || '') === state.activeLibraryCategory))
@@ -246,9 +274,9 @@ function updateEditorProjectHeader() {
 
 function ensureStageViewportMounted() {
   if (!state.projectId || state.editorLoading || state.editorError || !state.editorProject) return
-  if (cleanupStageViewport && stageViewportMountedForProjectId === state.projectId) return
-  cleanupStageViewport?.()
-  cleanupStageViewport = null
+  if (stageViewportController && stageViewportMountedForProjectId === state.projectId) return
+  stageViewportController?.dispose?.()
+  stageViewportController = null
   initStageEditorViewport()
   stageViewportMountedForProjectId = state.projectId
 }
@@ -261,7 +289,7 @@ function hydrateStageIconsOnce() {
 
 function renderApp() {
   if (!state.projectId) {
-    cleanupStageViewport?.(); cleanupStageViewport = null; stageEditorMounted = false; stageIconHydrationPromise = null; stageViewportMountedForProjectId = ''
+    stageViewportController?.dispose?.(); stageViewportController = null; stageEditorMounted = false; stageIconHydrationPromise = null; stageViewportMountedForProjectId = ''
     app.innerHTML = `${navShell({ currentPage: 'stage' })}${renderDashboard()}`
     initShellChrome(); bindDashboardEvents(); return
   }
@@ -303,15 +331,17 @@ function bindStageEditorEventsOnce() {
     const lib = e.target.closest('[data-library-category]')
     if (lib) { state.activeLibraryCategory = lib.dataset.libraryCategory || 'band-backline'; state.selectedEditorObject = lib.dataset.selectObject || state.selectedEditorObject; updateLibraryActiveState(); updateStageInspectorSelection(); return }
     const rail = e.target.closest('[data-rail-section]')
-    if (rail) { state.activeRailSection = rail.dataset.railSection || 'object'; renderApp(); return }
+    if (rail) { state.activeRailSection = rail.dataset.railSection || 'home'; renderApp(); return }
     const vm = e.target.closest('[data-view-mode]')
-    if (vm) { state.viewportMode = vm.dataset.viewMode || 'perspective3d'; localStorage.setItem('stageViewportMode', state.viewportMode); cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); renderApp(); return }
-    const grid = e.target.closest('[data-toggle-grid]'); if (grid) { state.gridEnabled = !state.gridEnabled; cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); renderApp(); return }
-    const beam = e.target.closest('[data-toggle-beam]'); if (beam) { state.beamPreviewEnabled = !state.beamPreviewEnabled; cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); renderApp(); return }
+    if (vm) { state.viewportMode = vm.dataset.viewMode || 'perspective3d'; localStorage.setItem('stageViewportMode', state.viewportMode); stageViewportController?.update?.({ viewportMode: state.viewportMode }); renderApp(); return }
+    const grid = e.target.closest('[data-toggle-grid]'); if (grid) { state.gridEnabled = !state.gridEnabled; stageViewportController?.update?.({ showGrid: state.gridEnabled }); renderApp(); return }
+    const beam = e.target.closest('[data-toggle-beam]'); if (beam) { state.beamPreviewEnabled = !state.beamPreviewEnabled; stageViewportController?.update?.({ showBeams: state.beamPreviewEnabled }); renderApp(); return }
     const openExport = e.target.closest('[data-open-export]'); if (openExport) { state.showExportPreview = true; renderApp(); return }
     const closeExport = e.target.closest('[data-close-export]'); if (closeExport) { state.showExportPreview = false; renderApp(); return }
     const snap = e.target.closest('[data-toggle-snap]'); if (snap) { state.snapEnabled = !state.snapEnabled; renderApp(); return }
-    const measure = e.target.closest('[data-toggle-measure]'); if (measure) { state.measureMode = !state.measureMode; renderApp(); return }
+    const measure = e.target.closest('[data-toggle-measure]'); if (measure) { state.measureModeEnabled = !state.measureModeEnabled; renderApp(); return }
+    const inspectorTab = e.target.closest('[data-inspector-tab]'); if (inspectorTab) { state.activeInspectorTab = inspectorTab.dataset.inspectorTab || 'properties'; renderApp(); return }
+    const dataTab = e.target.closest('[data-data-tab]'); if (dataTab) { state.activeDataTab = dataTab.dataset.dataTab || 'schema'; updateEditorModeUI(); return }
   })
   app.addEventListener('input', (e) => {
     const f = e.target.closest('[data-transform-field]')
@@ -323,7 +353,7 @@ function bindStageEditorEventsOnce() {
   })
   app.addEventListener('change', (e) => {
     const diag = e.target.closest('[data-toggle-viewport-diagnostics]')
-    if (diag) { state.showViewportDiagnostics = !!diag.checked; cleanupStageViewport?.(); cleanupStageViewport = null; ensureStageViewportMounted(); return }
+    if (diag) { state.showViewportDiagnostics = !!diag.checked; stageViewportController?.dispose?.(); stageViewportController = null; ensureStageViewportMounted(); return }
     const toggle = e.target.closest('[data-toggle-main-header]')
     if (!toggle) return
     state.showStageGlobalHeader = !!toggle.checked
@@ -361,7 +391,7 @@ function bindStageEditorEventsOnce() {
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.stageAppMenuOpen) { state.stageAppMenuOpen = false; updateStageAppMenu() } })
 }
 async function loadDashboardProjects() { if (!state.user?.uid || state.projectId) return; state.loadingProjects = true; state.projectsError = ''; renderApp(); try { const projects = await listAccessibleStageProjects(state.user.uid); const sorted = [...projects].sort(sortStageProjectsByActivity); state.projects = sorted; state.recentProjects = sorted.slice(0, 6) } catch { state.projects = []; state.recentProjects = []; state.projectsError = 'load-failed' } finally { state.loadingProjects = false; renderApp() } }
-async function loadEditorProject() { if (!state.projectId) return; state.editorLoading = true; state.editorError = ''; state.projectLoadStatus = 'loading'; renderApp(); try { const project = await getStageProject(state.projectId); if (!project) { state.editorError = 'not-found'; state.projectLoadStatus = 'error' } else { state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name }); state.projectLoadStatus = 'loaded' } } catch { state.editorProject = null; state.projectLoadStatus = 'fallback'; console.warn('[stage] Firestore project load failed. Stage editor shell remains available with default viewport objects.') } finally { state.editorLoading = false; renderApp() } }
+async function loadEditorProject() { if (!state.projectId) return; state.editorLoading = true; state.editorError = ''; state.projectLoadStatus = 'loading'; renderApp(); try { const project = await getStageProject(state.projectId); if (!project) { state.editorError = 'not-found'; state.projectLoadStatus = 'error' } else { state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name }); state.projectLoadStatus = 'loaded' } } catch { state.editorProject = normalizeStagePlan({ id: state.projectId, title: 'Fallback Stage Plan', stageType: 'Blank Stage', version: 1 }); state.projectLoadStatus = 'fallback'; console.warn('[stage] Firestore project load failed. Stage editor shell remains available with default viewport objects.') } finally { state.editorLoading = false; renderApp() } }
 
 state.projectId = getCurrentStageProjectId()
 waitForInitialAuthState().then(async (user) => { state.user = user; renderApp(); if (state.projectId) await loadEditorProject(); else await loadDashboardProjects() })
