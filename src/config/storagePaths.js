@@ -17,6 +17,7 @@ export const STORAGE_PATHS = {
   stageProjectExportsRoot: (projectId) => `stage/projects/${projectId}/exports`,
   stageAssetPackRoot: (packId) => `stage/asset-packs/${packId}`,
   stageTemplateRoot: (templateId) => `stage/templates/${templateId}`,
+  stageProdIcon: (group, name, ext = 'png') => `assets/site/prod-icons/stage/${group}/${name}.${ext}`,
 
   stageAssetRoot: (category, assetSlug, version = 1) => `assets/stage/library/${category}/${assetSlug}/v${version}`,
   stageAssetModel: (category, assetSlug, version = 1) => `assets/stage/library/${category}/${assetSlug}/v${version}/model.glb`,
