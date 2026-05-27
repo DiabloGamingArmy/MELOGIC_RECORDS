@@ -138,8 +138,14 @@ export function mountStageThreeViewport(container, options = {}) {
       gizmo.visible = true
       gizmo.position.copy(target.position)
       boxHelper?.removeFromParent(); boxHelper = new THREE.BoxHelper(target, '#5ce9ff'); scene.add(boxHelper)
-      selectedLabel?.removeFromParent(); selectedLabel = makeLabel(target.userData.objectKey, [target.position.x, target.position.y + 1.8, target.position.z], '#6bdcff'); scene.add(selectedLabel)
-      options.onSelectObject?.(selectedKey)
+      try { selectedLabel?.removeFromParent(); selectedLabel = makeLabel(target.userData.objectKey, [target.position.x, target.position.y + 1.8, target.position.z], '#6bdcff'); scene.add(selectedLabel) } catch (e) { console.warn('[stageThreeViewport] label render skipped', e) }
+    }
+    const setSelectedKey = (nextKey, { notify = false } = {}) => {
+      if (!nextKey || !objects[nextKey]) return
+      const changed = selectedKey !== nextKey
+      selectedKey = nextKey
+      syncSelection()
+      if (notify && changed) options.onSelectObject?.(selectedKey)
     }
 
     const transforms = options.objectTransforms || {}
@@ -150,8 +156,7 @@ export function mountStageThreeViewport(container, options = {}) {
       raycaster.setFromCamera(pointer, camera)
       const hit = raycaster.intersectObjects(pickables, true).find((h) => h.object?.userData?.objectKey || h.object?.parent?.userData?.objectKey)
       if (!hit) return
-      selectedKey = hit.object.userData.objectKey || hit.object.parent.userData.objectKey
-      syncSelection()
+      setSelectedKey(hit.object.userData.objectKey || hit.object.parent.userData.objectKey, { notify: true })
     }
     const onKeyDown = (event) => {
       const obj = objects[selectedKey]; if (!obj) return
@@ -167,15 +172,28 @@ export function mountStageThreeViewport(container, options = {}) {
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
     container.addEventListener('keydown', onKeyDown)
     container.addEventListener('pointerdown', () => container.focus())
-    syncSelection(); onResize()
+    setSelectedKey(options.selectedObjectKey || selectedKey, { notify: false }); onResize(); console.info('[stageThreeViewport] mounted', { projectId: options.project?.id, selectedObjectKey: selectedKey })
     let raf = 0
-    const animate = () => { raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera) }
+    let disposed = false
+    const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera) }
     animate()
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); renderer.domElement.removeEventListener('pointerdown', onPointerDown); container.removeEventListener('keydown', onKeyDown); controls.dispose(); renderer.dispose(); scene.clear(); container.innerHTML = '' }
+    return () => {
+      if (disposed) return
+      disposed = true
+      cancelAnimationFrame(raf)
+      ro.disconnect()
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      container.removeEventListener('keydown', onKeyDown)
+      controls.dispose()
+      scene.traverse((obj) => { if (obj.geometry?.dispose) obj.geometry.dispose(); const mat = obj.material; if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.()); else mat?.dispose?.(); if (obj.material?.map?.dispose) obj.material.map.dispose() })
+      renderer.dispose()
+      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement)
+      console.info('[stageThreeViewport] disposed')
+    }
   } catch (error) {
     console.error('[stageThreeViewport] mount failed', error)
     container.classList.add('is-three-error')
-    container.innerHTML = '<div class="stage-three-error-panel"><p>3D viewport could not initialize.</p><p>Check browser WebGL support.</p></div>'
+    container.innerHTML = '<div class="stage-three-error-panel"><p class="stage-three-error-code">RENDER STATUS: ERROR</p><p>3D viewport could not initialize.</p><p>Rendering error. Refresh the page or check console details.</p></div>'
     return () => {}
   }
 }
