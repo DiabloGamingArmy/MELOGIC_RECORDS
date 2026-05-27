@@ -40,7 +40,7 @@ export function mountStageThreeViewport(container, options = {}) {
     const scene = new THREE.Scene()
     scene.background = new THREE.Color('#070c16')
     scene.fog = new THREE.Fog('#070c16', 38, 120)
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300)
+    let camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300)
     camera.position.set(22, 15, 24)
     camera.lookAt(0, 1.5, 0)
     const renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -54,6 +54,29 @@ export function mountStageThreeViewport(container, options = {}) {
     controls.minDistance = 12
     controls.maxDistance = 70
     controls.maxPolarAngle = Math.PI * 0.48
+    const setViewMode = (mode = 'perspective3d') => {
+      const w = Math.max(container.clientWidth || 1, 1)
+      const h = Math.max(container.clientHeight || 1, 1)
+      const aspect = w / h
+      const orthoSize = 22
+      if (mode === 'perspective3d') {
+        camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 300)
+        camera.position.set(22, 15, 24)
+        controls.enableRotate = true
+      } else {
+        camera = new THREE.OrthographicCamera(-orthoSize * aspect, orthoSize * aspect, orthoSize, -orthoSize, 0.1, 300)
+        controls.enableRotate = false
+        if (mode === 'top2d') camera.position.set(0, 45, 0.01)
+        else if (mode === 'front') camera.position.set(0, 10, 45)
+        else if (mode === 'side') camera.position.set(45, 10, 0)
+        else camera.position.set(28, 24, 28)
+      }
+      camera.lookAt(0, 1.5, 0)
+      controls.object = camera
+      controls.target.set(0, 1.5, 0)
+      controls.update()
+    }
+    setViewMode(options.viewportMode || 'perspective3d')
 
     scene.add(new THREE.AmbientLight('#90a8d4', 0.72))
     const key = new THREE.DirectionalLight('#d8e9ff', 1.25); key.position.set(14, 24, 9); scene.add(key)
@@ -190,7 +213,11 @@ export function mountStageThreeViewport(container, options = {}) {
         return
       }
       statusOverlay.hidden = !SHOW_VIEWPORT_DIAGNOSTICS
-      camera.aspect = w / h
+      if (camera.isPerspectiveCamera) camera.aspect = w / h
+      if (camera.isOrthographicCamera) {
+        const s = 22; const a = w / h
+        camera.left = -s * a; camera.right = s * a; camera.top = s; camera.bottom = -s
+      }
       camera.updateProjectionMatrix()
       renderer.setSize(w, h, false)
       renderer.render(scene, camera)
