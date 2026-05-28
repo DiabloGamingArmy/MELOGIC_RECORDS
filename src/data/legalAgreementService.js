@@ -1,5 +1,5 @@
 import { doc, getDoc } from 'firebase/firestore'
-import { getDownloadURL, listAll, ref } from 'firebase/storage'
+import { getBytes, getDownloadURL, listAll, ref } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { storage } from '../firebase/storage'
 
@@ -54,10 +54,22 @@ export async function getMarketplaceSellerAgreementConfig() {
 
 export async function getAgreementMarkdown(storagePath = '') {
   if (!storage || !storagePath) {
-    throw new Error('Agreement file could not be downloaded. Firebase Storage CORS may not be configured for this domain.')
+    throw new Error('Seller agreement file is missing.')
+  }
+  const agreementRef = ref(storage, storagePath)
+  try {
+    const bytes = await getBytes(agreementRef, 1024 * 1024)
+    return new TextDecoder('utf-8').decode(bytes)
+  } catch (bytesError) {
+    const code = String(bytesError?.code || '').toLowerCase()
+    if (code.includes('object-not-found')) {
+      devWarn('[legalAgreementService] Agreement markdown object missing.', storagePath)
+      throw new Error('Seller agreement file is missing.')
+    }
+    devWarn('[legalAgreementService] SDK agreement download failed; trying download URL fallback.', bytesError?.code || bytesError?.message || bytesError)
   }
   try {
-    const downloadUrl = await getDownloadURL(ref(storage, storagePath))
+    const downloadUrl = await getDownloadURL(agreementRef)
     const response = await fetch(downloadUrl)
     if (!response.ok) throw new Error(`agreement-download-failed:${response.status}`)
     return response.text()

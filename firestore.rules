@@ -116,7 +116,31 @@ service cloud.firestore {
       let attachments = request.resource.data.attachments;
       let hasBody = body is string && body.size() > 0;
       let hasAttachments = attachments is list && attachments.size() > 0;
-      return hasBody || hasAttachments;
+      return request.resource.data.keys().hasOnly([
+          'senderId',
+          'body',
+          'type',
+          'attachments',
+          'createdAt',
+          'updatedAt',
+          'deleted',
+          'edited',
+          'replyTo',
+          'clientMessageId'
+        ])
+        && request.resource.data.body is string
+        && request.resource.data.body.size() <= 1200
+        && request.resource.data.type in ['text', 'image', 'video', 'audio', 'file', 'attachment']
+        && request.resource.data.attachments is list
+        && request.resource.data.attachments.size() <= 10
+        && request.resource.data.deleted == false
+        && request.resource.data.edited == false
+        && (!('replyTo' in request.resource.data) || request.resource.data.replyTo is map)
+        && (!('clientMessageId' in request.resource.data) || (
+          request.resource.data.clientMessageId is string
+          && request.resource.data.clientMessageId.size() <= 80
+        ))
+        && (hasBody || hasAttachments);
     }
 
     function dmAllowsMessageCreate(threadId) {

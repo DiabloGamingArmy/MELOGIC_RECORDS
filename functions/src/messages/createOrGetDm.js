@@ -1,5 +1,5 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
-const { getFirestore } = require('firebase-admin/firestore')
+const { FieldValue, getFirestore } = require('firebase-admin/firestore')
 const {
   assertString,
   buildInboxSummaryPayload,
@@ -39,8 +39,22 @@ exports.createOrGetDm = onCall(async (request) => {
       const existingDoc = existingSnap.docs[0]
       const existingThread = existingDoc.data() || {}
       const existingParticipantIds = Array.from(new Set(
-        (Array.isArray(existingThread.participantIds) ? existingThread.participantIds : participantIds).filter(Boolean)
+        [
+          ...(Array.isArray(existingThread.participantIds) ? existingThread.participantIds : []),
+          ...participantIds
+        ].filter(Boolean)
       ))
+      const repairedThread = {
+        ...existingThread,
+        participantIds: existingParticipantIds,
+        participantCount: existingParticipantIds.length,
+        createdBy: existingThread.createdBy || callerUid,
+        type: 'dm',
+        dmKey,
+        status: existingThread.status || 'active',
+        updatedAt: FieldValue.serverTimestamp()
+      }
+      transaction.set(existingDoc.ref, repairedThread, { merge: true })
 
       existingParticipantIds.forEach((uid) => {
         const participantRef = db.collection('threads').doc(existingDoc.id).collection('participants').doc(uid)
@@ -48,7 +62,7 @@ exports.createOrGetDm = onCall(async (request) => {
           participantRef,
           buildParticipantPayload({
             uid,
-            role: uid === existingThread.createdBy ? 'owner' : 'member'
+            role: uid === repairedThread.createdBy ? 'owner' : 'member'
           }),
           { merge: true }
         )
@@ -57,7 +71,7 @@ exports.createOrGetDm = onCall(async (request) => {
           summaryRef,
           buildInboxSummaryPayload({
             threadId: existingDoc.id,
-            thread: existingThread,
+            thread: repairedThread,
             recipientUid: uid
           }),
           { merge: true }

@@ -45,6 +45,7 @@ function buildParticipantPayload({ uid, role = 'member' }) {
     uid,
     role,
     joinedAt: FieldValue.serverTimestamp(),
+    lastDeliveredAt: null,
     lastReadAt: null,
     muted: false,
     archived: false
