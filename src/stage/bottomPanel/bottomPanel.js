@@ -1,4 +1,4 @@
-import { currentStageDimensions, editorMockObjects, selectedEditorObject, stageEntities, state, viewportModeLabel } from '../app/stageState'
+import { currentStageDimensions, editorMockObjects, exportReadiness, selectedEditorObject, stageEntities, stageWarnings, state, viewportModeLabel } from '../app/stageState'
 
 function renderInputListTable() {
   const rows = Array.isArray(state.editorProject?.audioInputs) && state.editorProject.audioInputs.length
@@ -20,32 +20,54 @@ function renderEntityTable() {
   return `<table class="stage-entity-table"><thead><tr><th>Entity</th><th>Kind</th><th>Category</th><th>Location</th><th>Size / Patch</th><th>Status</th></tr></thead><tbody>${rows.map((row) => `<tr data-select-object="${row.id || ''}"><td><strong>${row.name || 'Untitled'}</strong><small>${row.id || ''}</small></td><td>${row.kind || 'Object'}</td><td>${row.category || 'stage'}</td><td>${row.location || 'not placed'}</td><td>${row.size || 'n/a'}</td><td><span class="stage-entity-status">${row.status || 'active'}</span></td></tr>`).join('')}</tbody></table>`
 }
 
+function renderLightingTable() {
+  const rows = state.editorProject?.fixtures || []
+  return `<table class="stage-input-table"><thead><tr><th>Fixture</th><th>Type</th><th>U</th><th>Address</th><th>Mode</th><th>Position</th><th>Target</th><th>Notes</th></tr></thead><tbody>${rows.map((fixture) => `<tr data-select-object="${fixture.linkedObjectId || fixture.id}"><td>${fixture.name || fixture.id}</td><td>${fixture.type || ''}</td><td>${fixture.universe || 1}</td><td>${fixture.address || ''}</td><td>${fixture.mode || ''}</td><td>${fixture.trussAssignment || fixture.positionName || ''}</td><td>${typeof fixture.target === 'string' ? fixture.target : 'Target point'}</td><td>${fixture.notes || ''}</td></tr>`).join('') || '<tr><td colspan="8">No fixtures yet. Add lighting objects from the Object Library or Lighting panel.</td></tr>'}</tbody></table>`
+}
+
+function renderRiggingTable() {
+  const rows = state.editorProject?.rigging || []
+  return `<table class="stage-input-table"><thead><tr><th>Rigging</th><th>Type</th><th>Height</th><th>Span</th><th>Qualified</th><th>Notes</th></tr></thead><tbody>${rows.map((rig) => `<tr data-select-object="${rig.linkedObjectId || rig.id}"><td>${rig.name || rig.id}</td><td>${rig.type || ''}</td><td>${rig.height || ''}</td><td>${rig.span || ''}</td><td>${rig.qualifiedOnly ? 'Required' : 'Review'}</td><td>${rig.notes || 'Load calculation required by qualified rigger.'}</td></tr>`).join('') || '<tr><td colspan="6">No rigging items yet.</td></tr>'}</tbody></table>`
+}
+
+function renderWarningsList() {
+  const warnings = stageWarnings()
+  return `<div class="stage-warning-list">${warnings.map((warning) => `<button type="button" data-select-object="${warning.ownerId || ''}" class="stage-warning-row is-${warning.level}"><strong>${warning.level.toUpperCase()}</strong><span>${warning.title}</span></button>`).join('') || '<p class="stage-safety-note">No blocking production warnings.</p>'}</div>`
+}
+
+function renderExportChecklist() {
+  return `<ul class="stage-data-list is-checklist">${exportReadiness().map((item) => `<li class="${item.ok ? 'is-ok' : 'is-warn'}">${item.ok ? '✓' : '⚠'} ${item.label}</li>`).join('')}</ul>`
+}
+
 function renderBottomPrimaryPane() {
   const activeMode = state.activeEditorMode === 'builder' ? 'entities' : state.activeEditorMode
   if (activeMode === 'stage-plot') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Stage Plot Preview</h4><div class="stage-mode-large"></div><p>Top-view vector plot foundation. Scale, labels, and dimension lines will be driven by StagePlan data.</p></section></section>'
   if (activeMode === 'input-list') return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-large"><h4>Input List</h4>${renderInputListTable()}</section></section>`
-  if (activeMode === 'lighting-patch' || activeMode === 'lighting-plot') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Lighting Patch</h4><div class="stage-mode-large lighting"></div><ul><li>Universe 1 / address planning</li><li>Fixture targets and beam angles</li><li>Position assignment by truss or floor package</li></ul></section></section>'
-  if (activeMode === 'rigging' || activeMode === 'rigging-plan') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Rigging</h4><ul><li>Ground support placeholders only</li><li>Attachment notes and qualified-personnel warning</li><li>No structural calculations are generated here</li></ul></section></section>'
-  return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-entities"><h4>Entities</h4>${renderEntityTable()}</section></section>`
+  if (activeMode === 'lighting-patch' || activeMode === 'lighting-plot') return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-large"><h4>Lighting Patch</h4>${renderLightingTable()}</section></section>`
+  if (activeMode === 'rigging' || activeMode === 'rigging-plan') return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-large"><h4>Rigging</h4>${renderRiggingTable()}</section></section>`
+  if (activeMode === 'warnings') return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Warnings</h4>${renderWarningsList()}</section></section>`
+  if (activeMode === 'export') return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Export Readiness</h4>${renderExportChecklist()}<div class="stage-action-grid"><button type="button" data-open-export>Preview Packet</button><button type="button" aria-disabled="true">Packet Builder</button></div></section></section>`
+  return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-entities"><h4>Objects</h4>${renderEntityTable()}</section></section>`
 }
 
 function renderDataPane() {
-  const tabs = [['schema', 'Schema'], ['signal', 'Signal Flow'], ['patch', 'Patch Graph'], ['object', 'Object Graph'], ['export', 'Export Data']]
+  const tabs = [['schema', 'Schema'], ['signal', 'Signal Flow'], ['patch', 'Patch Graph'], ['object', 'Object Graph'], ['export', 'Export Readiness']]
   const dims = currentStageDimensions()
   const unit = dims.unit || state.editorProject?.units || 'ft'
   const objectCount = Math.max(editorMockObjects.length, state.editorProject?.objects?.length || 0)
   const fixtureCount = state.editorProject?.fixtures?.length || 0
   const audioCount = state.editorProject?.audioInputs?.length || 0
   const riggingCount = state.editorProject?.rigging?.length || 0
+  const warningCount = stageWarnings().length
   const body = state.activeDataTab === 'schema'
-    ? `<ul class="stage-data-list"><li>Stage dimensions: ${dims.width || 32}x${dims.depth || 24}x${dims.deckHeight || 4} ${unit}</li><li>Object count: ${objectCount}</li><li>Fixture count: ${fixtureCount}</li><li>Audio inputs: ${audioCount}</li><li>Rigging points: ${riggingCount}</li><li>Current view mode: ${viewportModeLabel()}</li><li>Grid: ${state.gridEnabled ? 'On' : 'Off'} • Snap: ${state.snapEnabled ? 'On' : 'Off'}</li></ul>`
+    ? `<ul class="stage-data-list"><li>Stage dimensions: ${dims.width || 32}x${dims.depth || 24}x${dims.deckHeight || 4} ${unit}</li><li>Object count: ${objectCount}</li><li>Fixture count: ${fixtureCount}</li><li>Audio inputs: ${audioCount}</li><li>Rigging points: ${riggingCount}</li><li>Warnings: ${warningCount}</li><li>Current view mode: ${viewportModeLabel()}</li><li>Render mode: ${state.renderMode}</li><li>Grid: ${state.gridEnabled ? 'On' : 'Off'} • Snap: ${state.snapEnabled ? 'On' : 'Off'}</li></ul>`
     : state.activeDataTab === 'signal'
-      ? '<div class="stage-data-cards"><p>Source → Mic/DI → Channel → Console</p><p>Kick In → Beta 91A → Ch1 → FOH</p><p>Lead Voc → Wireless → Ch12 → FOH</p></div>'
+      ? `<div class="stage-data-cards"><p>Source → Mic/DI → Channel → Console</p>${(state.editorProject?.audioInputs || []).slice(0, 6).map((input) => `<p>${input.source || 'Source'} → ${input.micDi || 'Mic/DI'} → Ch${input.channel || '?'} → FOH</p>`).join('')}</div>`
       : state.activeDataTab === 'patch'
-        ? '<div class="stage-data-cards"><p>DMX U1: 001-096 (placeholder)</p><p>Audio patch: Channels 1-22 (placeholder)</p></div>'
+        ? `<div class="stage-data-cards">${(state.editorProject?.fixtures || []).slice(0, 6).map((fixture) => `<p>${fixture.name || fixture.type} → U${fixture.universe || 1}:${fixture.address || '?'} → ${fixture.mode || 'mode TBD'}</p>`).join('') || '<p>No DMX fixtures patched yet.</p>'}</div>`
         : state.activeDataTab === 'object'
-          ? `<div class="stage-data-cards"><p>Selected: ${selectedEditorObject().label}</p><p>Linked input: placeholder</p><p>Linked fixture: placeholder</p></div>`
-          : '<ul class="stage-data-list"><li>✓ Stage dimensions set</li><li>✓ Labels enabled</li><li>✓ Input list generated</li><li>• Rigging notes present</li><li>• Project info complete</li></ul>'
+          ? `<div class="stage-data-cards"><p>Selected: ${selectedEditorObject().label}</p><p>Exports to: ${selectedEditorObject().type}</p><p>Relationships shown here are generated from StagePlan links.</p></div>`
+          : renderExportChecklist()
   return `<section class="stage-bottom-secondary"><div class="stage-data-tabs">${tabs.map(([k, l]) => `<button type="button" data-data-tab="${k}" class="${state.activeDataTab === k ? 'is-active' : ''}">${l}</button>`).join('')}</div><div class="stage-data-body">${body}</div></section>`
 }
 

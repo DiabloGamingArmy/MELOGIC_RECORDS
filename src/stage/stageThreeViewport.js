@@ -22,6 +22,8 @@ const objectDefsFromProject = (project = {}) => {
       key: object.id || object.key || object.name,
       label: object.label || object.name || object.id || object.key || 'Stage Object',
       type: object.type || object.category || 'Object',
+      category: object.category || 'stage',
+      color: object.color || object.metadata?.color || '',
       position: Array.isArray(object.position) ? object.position : [Number(position.x || 0), Number(position.y || 0), Number(position.z || 0)],
       size: Array.isArray(object.size) ? object.size : [Number(dimensions.width || 1), Number(dimensions.height || 1), Number(dimensions.depth || 1)],
       selectable: object.selectable !== false,
@@ -73,6 +75,9 @@ export function mountStageThreeViewport(container, options = {}) {
     controls.maxPolarAngle = Math.PI * 0.48
     const formatNum = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : 'n/a'
     let currentViewMode = options.viewportMode || 'perspective3d'
+    let currentRenderMode = options.renderMode || 'technical'
+    let currentShowBeams = options.showBeams !== false
+    let currentShowLabels = options.showLabels !== false
     const setOrthoBounds = (orthoCamera, size, aspect) => {
       orthoCamera.left = -size * aspect
       orthoCamera.right = size * aspect
@@ -146,6 +151,12 @@ export function mountStageThreeViewport(container, options = {}) {
     const pickables = []
     const objects = {}
     const addPickable = (mesh, key) => { mesh.userData.objectKey = key; pickables.push(mesh); objects[key] = mesh }
+    const materialColorFor = (d) => d.color || (d.category === 'rigging' ? '#6762d2' : d.category === 'lighting' ? '#49c8ff' : d.category === 'video' ? '#4fc8b4' : d.category === 'audio' ? '#26364b' : d.category === 'power' ? '#ffb86b' : '#222b39')
+    const geometryFor = (d) => {
+      if (d.type?.includes('cylinder') || d.type === 'microphone') return new THREE.CylinderGeometry(Math.max(0.12, d.size[0] / 2), Math.max(0.12, d.size[0] / 2), Math.max(0.2, d.size[1]), 18)
+      if (d.type?.includes('circle')) return new THREE.CylinderGeometry(Math.max(0.2, d.size[0] / 2), Math.max(0.2, d.size[0] / 2), Math.max(0.12, d.size[1]), 32)
+      return new THREE.BoxGeometry(...d.size)
+    }
 
     const deckGroup = new THREE.Group(); deckGroup.name = 'stage-deck-group'; deckGroup.userData.objectKey = 'stage-deck'
     const top = new THREE.Mesh(new THREE.BoxGeometry(deckWidth, Math.max(0.42, deckHeight * 0.18), deckDepth), new THREE.MeshStandardMaterial({ color: '#2b2f37', roughness: 0.72, metalness: 0.16 }))
@@ -164,7 +175,7 @@ export function mountStageThreeViewport(container, options = {}) {
     addPickable(deckGroup, 'stage-deck')
 
     stageObjectDefs.filter((d) => d.key !== 'stage-deck' && d.visible !== false).forEach((d) => {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...d.size), new THREE.MeshStandardMaterial({ color: d.key.includes('truss') ? '#6762d2' : d.key.includes('moving') ? '#49c8ff' : d.key.includes('camera') ? '#4fc8b4' : '#222b39', roughness: 0.72, metalness: 0.22 }))
+      const mesh = new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: materialColorFor(d), roughness: 0.72, metalness: 0.22 }))
       mesh.position.set(...d.position)
       if (d.key === 'camera-1') mesh.rotation.z = Math.PI / 2
       scene.add(mesh)
@@ -190,18 +201,21 @@ export function mountStageThreeViewport(container, options = {}) {
     labelSprites.forEach((sprite) => { sprite.visible = options.showLabels !== false; scene.add(sprite) })
 
     const beams = new THREE.Group()
-    ;[
-      { pos: [0, 8, -8], target: [0, 1.2, 0], color: '#61dcff' },
-      { pos: [6, 8, -8], target: [6, 1.1, 2], color: '#6f87ff' },
-      { pos: [-6, 8, -8], target: [-6, 1.1, 2], color: '#df79ff' }
-    ].forEach((b) => {
+    const beamSources = Array.isArray(options.project?.fixtures) && options.project.fixtures.length
+      ? options.project.fixtures.map((fixture) => ({ pos: [fixture.position?.x || 0, fixture.position?.y || 8, fixture.position?.z || -8], target: Array.isArray(fixture.target) ? fixture.target : [fixture.target?.x || 0, fixture.target?.y || 1.2, fixture.target?.z || 0], color: fixture.color || '#61dcff', angle: fixture.beamAngle || 24 }))
+      : [
+          { pos: [0, 8, -8], target: [0, 1.2, 0], color: '#61dcff' },
+          { pos: [6, 8, -8], target: [6, 1.1, 2], color: '#6f87ff' },
+          { pos: [-6, 8, -8], target: [-6, 1.1, 2], color: '#df79ff' }
+        ]
+    beamSources.forEach((b) => {
       const cone = new THREE.Mesh(new THREE.ConeGeometry(2.2, 14, 20), new THREE.MeshBasicMaterial({ color: b.color, transparent: true, opacity: 0.16, depthWrite: false }))
       cone.position.set(...b.pos)
       cone.lookAt(new THREE.Vector3(...b.target))
       cone.rotateX(Math.PI / 2)
       beams.add(cone)
     })
-    beams.visible = options.showBeams !== false
+    beams.visible = currentShowBeams && currentRenderMode !== 'simple' && currentRenderMode !== 'export-clean'
     scene.add(beams)
 
     const gizmo = new THREE.Group(); scene.add(gizmo)
@@ -322,8 +336,13 @@ export function mountStageThreeViewport(container, options = {}) {
     const update = (nextOptions = {}) => {
       if (nextOptions.viewportMode) setViewMode(nextOptions.viewportMode)
       if (typeof nextOptions.showGrid === 'boolean') gridHelper.visible = nextOptions.showGrid
-      if (typeof nextOptions.showBeams === 'boolean') beams.visible = nextOptions.showBeams
-      if (typeof nextOptions.showLabels === 'boolean') labelSprites.forEach((sprite) => { sprite.visible = nextOptions.showLabels })
+      if (typeof nextOptions.showBeams === 'boolean') currentShowBeams = nextOptions.showBeams
+      if (typeof nextOptions.showLabels === 'boolean') currentShowLabels = nextOptions.showLabels
+      if (nextOptions.renderMode) {
+        currentRenderMode = nextOptions.renderMode
+      }
+      beams.visible = currentShowBeams && currentRenderMode !== 'simple' && currentRenderMode !== 'export-clean'
+      labelSprites.forEach((sprite) => { sprite.visible = currentShowLabels && currentRenderMode !== 'export-clean' })
       if (nextOptions.objectTransforms) applyObjectTransforms(nextOptions.objectTransforms)
       if (typeof nextOptions.selectedObjectKey === 'string') setSelectedKey(nextOptions.selectedObjectKey, { notify: false })
       renderer.render(scene, camera)
