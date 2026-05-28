@@ -45,6 +45,23 @@ service firebase.storage {
         && request.resource.contentType.matches('application/pdf');
     }
 
+    function isMessageAttachmentUpload(maxBytes) {
+      return request.resource != null
+        && request.resource.size <= maxBytes
+        && (
+          request.resource.contentType.matches('image/.*')
+          || request.resource.contentType.matches('video/.*')
+          || request.resource.contentType.matches('audio/.*')
+          || request.resource.contentType.matches('text/.*')
+          || request.resource.contentType.matches('application/pdf')
+          || request.resource.contentType.matches('application/zip')
+          || request.resource.contentType.matches('application/x-zip-compressed')
+          || request.resource.contentType.matches('application/msword')
+          || request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
+    }
+
     function isStudioProjectOwner(projectId) {
       return signedIn()
         && firestore.get(/databases/(default)/documents/studioProjects/$(projectId)).data.ownerId == request.auth.uid;
@@ -289,8 +306,7 @@ service firebase.storage {
     match /threads/{threadId}/messages/{messageId}/attachments/{fileName} {
       allow read: if isThreadParticipant(threadId);
       allow write: if isThreadParticipant(threadId)
-        && request.resource != null
-        && request.resource.size <= 256 * 1024 * 1024;
+        && isMessageAttachmentUpload(256 * 1024 * 1024);
     }
 
     match /threads/{threadId}/avatar/{fileName} {

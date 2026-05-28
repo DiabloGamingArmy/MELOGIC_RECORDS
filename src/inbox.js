@@ -91,6 +91,7 @@ const appState = {
   blockedUsersByUid: {},
   revealBlockedMessageIdsByThreadId: {},
   loadingMessageThreadId: '',
+  optimisticMessagesByThreadId: {},
   activeFilter: 'Messages',
   threadUnsubscribe: () => {},
   messageUnsubscribe: () => {},
@@ -264,7 +265,10 @@ function preloadImage(url) {
     const img = new Image()
     img.decoding = 'async'
     img.onload = () => resolve(true)
-    img.onerror = () => resolve(false)
+    img.onerror = () => {
+      imagePreloadCache.delete(normalizedUrl)
+      resolve(false)
+    }
     img.src = normalizedUrl
   })
   imagePreloadCache.set(normalizedUrl, promise)
@@ -843,6 +847,90 @@ function setAttachmentDraft(threadId, files = []) {
   })
 }
 
+function appendAttachmentDraft(threadId, files = []) {
+  if (!threadId) return
+  const current = appState.attachmentDraftByThreadId[threadId] || []
+  setAttachmentDraft(threadId, [...current, ...(Array.isArray(files) ? files : [])].slice(0, 6))
+}
+
+function revokeOptimisticMessagePreviews(message = {}) {
+  ;(message.attachments || []).forEach((attachment) => {
+    if (!attachment?.localObjectUrl) return
+    try {
+      URL.revokeObjectURL(attachment.localObjectUrl)
+    } catch {
+      // noop
+    }
+  })
+}
+
+function createOptimisticAttachment(file, index) {
+  const type = describeAttachmentType(file)
+  const isImage = type === 'image'
+  const localObjectUrl = isImage ? URL.createObjectURL(file) : ''
+  return {
+    name: file.name || `Attachment ${index + 1}`,
+    type,
+    mimeType: file.type || 'application/octet-stream',
+    size: Number(file.size || 0),
+    url: localObjectUrl,
+    localObjectUrl,
+    optimistic: true
+  }
+}
+
+function addOptimisticMessage(thread, { clientMessageId, body, attachments = [], replyTo = null } = {}) {
+  if (!thread?.id || !appState.user?.uid || !clientMessageId) return null
+  const optimistic = {
+    id: `local-${clientMessageId}`,
+    clientMessageId,
+    senderId: appState.user.uid,
+    body,
+    type: attachments.length ? (attachments.length === 1 && !body ? describeAttachmentType(attachments[0]) : 'attachment') : 'text',
+    attachments: attachments.map(createOptimisticAttachment),
+    pendingFiles: attachments,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    deleted: false,
+    edited: false,
+    replyTo,
+    optimistic: true,
+    sendStatus: 'sending'
+  }
+  appState.optimisticMessagesByThreadId[thread.id] = [
+    ...(appState.optimisticMessagesByThreadId[thread.id] || []),
+    optimistic
+  ]
+  return optimistic
+}
+
+function setOptimisticMessageStatus(threadId, clientMessageId, status, detail = '') {
+  const current = appState.optimisticMessagesByThreadId[threadId] || []
+  appState.optimisticMessagesByThreadId[threadId] = current.map((message) => (
+    message.clientMessageId === clientMessageId
+      ? { ...message, sendStatus: status, sendError: detail }
+      : message
+  ))
+}
+
+function removeOptimisticMessage(threadId, clientMessageId) {
+  const current = appState.optimisticMessagesByThreadId[threadId] || []
+  const removed = current.filter((message) => message.clientMessageId === clientMessageId)
+  removed.forEach(revokeOptimisticMessagePreviews)
+  appState.optimisticMessagesByThreadId[threadId] = current.filter((message) => message.clientMessageId !== clientMessageId)
+}
+
+function reconcileOptimisticMessages(threadId, serverMessages = []) {
+  const current = appState.optimisticMessagesByThreadId[threadId] || []
+  if (!current.length) return
+  const confirmedIds = new Set(serverMessages.map((message) => message.clientMessageId).filter(Boolean))
+  if (!confirmedIds.size) return
+  current.forEach((message) => {
+    if (confirmedIds.has(message.clientMessageId)) revokeOptimisticMessagePreviews(message)
+  })
+  appState.optimisticMessagesByThreadId[threadId] = current.filter((message) => !confirmedIds.has(message.clientMessageId))
+}
+
 function resetCreateChatState() {
   appState.isCreateChatOpen = false
   appState.chatSearchQuery = ''
@@ -1088,6 +1176,8 @@ function buildReplyPreview(thread, message) {
 }
 
 function getOutgoingStatusLabel(thread, message) {
+  if (message?.optimistic && message.sendStatus === 'failed') return 'Failed to send'
+  if (message?.optimistic || message?.sendStatus === 'sending') return 'Sending...'
   const participants = getThreadParticipants(thread.id).filter((entry) => entry.uid && entry.uid !== appState.user?.uid)
   const createdAt = new Date(message.createdAt || 0).getTime()
   if (!createdAt || !participants.length) return `Sent · ${formatTime(message.createdAt)}`
@@ -1108,7 +1198,12 @@ function getOutgoingStatusLabel(thread, message) {
 
 function getMessageGroupsMarkup(thread) {
   const hiddenIds = new Set(appState.hiddenMessageIdsByThreadId[thread.id] || [])
-  const messages = (appState.messagesByThreadId[thread.id] || []).filter((message) => !hiddenIds.has(message.id))
+  const confirmedMessages = appState.messagesByThreadId[thread.id] || []
+  const optimisticMessages = appState.optimisticMessagesByThreadId[thread.id] || []
+  const confirmedClientIds = new Set(confirmedMessages.map((message) => message.clientMessageId).filter(Boolean))
+  const messages = [...confirmedMessages, ...optimisticMessages.filter((message) => !confirmedClientIds.has(message.clientMessageId))]
+    .filter((message) => !hiddenIds.has(message.id))
+    .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
   if (!messages.length) {
     return `
       <section class="inbox-empty-panel inbox-empty-panel-inline">
@@ -1141,6 +1236,7 @@ function getMessageGroupsMarkup(thread) {
           const isLast = messageIndex === entry.messages.length - 1
           const isMiddle = !isFirst && !isLast
           const canEdit = message.senderId === appState.user?.uid
+            && !message.optimistic
             && !message.deleted
             && String(message.type || 'text') === 'text'
             && (!Array.isArray(message.attachments) || !message.attachments.length)
@@ -1150,11 +1246,14 @@ function getMessageGroupsMarkup(thread) {
           const attachmentsMarkup = Array.isArray(message.attachments) && message.attachments.length
             ? `<div class="message-attachment-list">${message.attachments.map((attachment) => {
               const mime = String(attachment.mimeType || '')
-              if (mime.startsWith('image/')) return `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener"><img decoding="async" src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" /></a>`
+              if (mime.startsWith('image/')) return `<a href="${escapeHtml(attachment.url || '#')}" target="_blank" rel="noopener"><img decoding="async" src="${escapeHtml(attachment.url || '')}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" onerror="this.closest('a')?.classList.add('is-image-load-failed')" /></a>`
               if (mime.startsWith('video/')) return `<video src="${escapeHtml(attachment.url)}" controls preload="metadata"></video>`
               if (mime.startsWith('audio/')) return `<audio src="${escapeHtml(attachment.url)}" controls></audio>`
               return `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener" class="message-file-link">${escapeHtml(attachment.name || 'Download attachment')}</a>`
             }).join('')}</div>`
+            : ''
+          const failedActions = message.optimistic && message.sendStatus === 'failed'
+            ? `<div class="message-send-failed-actions"><button type="button" data-retry-message="${escapeHtml(message.clientMessageId || '')}">Retry</button><button type="button" data-remove-failed-message="${escapeHtml(message.clientMessageId || '')}">Remove</button></div>`
             : ''
           const reactionList = appState.reactionsByThreadId[thread.id]?.[message.id] || []
           const reactionPills = groupReactionsByEmoji(reactionList)
@@ -1185,7 +1284,7 @@ function getMessageGroupsMarkup(thread) {
                   </div>
                 </div>
               `
-              : `<p>${escapeHtml(message.body)}</p>`
+              : message.body ? `<p>${escapeHtml(message.body)}</p>` : ''
           const hideBlockedMessage = isBlockedMessageForViewer(thread, message) && !isBlockedMessageRevealed(thread.id, message.id)
           if (hideBlockedMessage) {
             return `
@@ -1196,10 +1295,11 @@ function getMessageGroupsMarkup(thread) {
             `
           }
           return `
-            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''} ${message.optimistic ? 'is-optimistic' : ''} ${message.sendStatus === 'failed' ? 'is-send-failed' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
               ${replyMarkup}
               ${bodyMarkup}
               ${attachmentsMarkup}
+              ${failedActions}
               ${reactionPills ? `<div class="message-reaction-row">${reactionPills}</div>` : ''}
               ${editedMarker}
             </article>
@@ -1287,7 +1387,7 @@ function getConversationBodyMarkup() {
           const ext = escapeHtml((String(file.name || '').split('.').pop() || type).toUpperCase().slice(0, 6))
           return `<article class="composer-attachment-preview is-file" title="${title}"><div class="composer-file-icon">${ext}</div><small>${title}</small><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`
         }).join('')}</div>` : ''}
-        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="Write a message..." required ${isDmComposerBlocked ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="Write a message..." ${isDmComposerBlocked ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
         <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isDmComposerBlocked ? 'disabled' : ''} />
         <div class="message-composer-footer">
           ${appState.errorMessage ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>` : '<span></span>'}
@@ -2657,6 +2757,19 @@ function bindSharedEvents() {
         await handleMessageSubmit(messageForm)
       }
     })
+    textarea.addEventListener('paste', (event) => {
+      if (isThreadInteractionLocked(thread)) return
+      const items = Array.from(event.clipboardData?.items || [])
+      const imageFiles = items
+        .filter((item) => item.kind === 'file' && String(item.type || '').startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter(Boolean)
+      if (!imageFiles.length) return
+      const hasText = Array.from(event.clipboardData?.types || []).includes('text/plain')
+      if (!hasText) event.preventDefault()
+      appendAttachmentDraft(thread.id, imageFiles)
+      renderSignedInState()
+    })
     textarea.addEventListener('blur', () => {
       clearTypingForThread(thread.id)
     })
@@ -2670,7 +2783,7 @@ function bindSharedEvents() {
   attachmentInput?.addEventListener('change', () => {
     if (!thread) return
     if (isThreadInteractionLocked(thread)) return
-    setAttachmentDraft(thread.id, Array.from(attachmentInput.files || []).slice(0, 6))
+    appendAttachmentDraft(thread.id, Array.from(attachmentInput.files || []))
     renderSignedInState()
   })
 
@@ -2724,6 +2837,42 @@ function bindSharedEvents() {
       appState.deleteSubmenuAnchor = null
       appState.reactionPickerAnchor = null
       renderFloatingUi()
+    })
+  })
+
+  inboxRoot.querySelectorAll('[data-retry-message]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!thread?.id || !appState.user?.uid) return
+      const clientMessageId = button.getAttribute('data-retry-message') || ''
+      const message = (appState.optimisticMessagesByThreadId[thread.id] || []).find((entry) => entry.clientMessageId === clientMessageId)
+      if (!message) return
+      setOptimisticMessageStatus(thread.id, clientMessageId, 'sending')
+      renderSignedInState()
+      try {
+        await sendMessage(thread.id, {
+          senderId: appState.user.uid,
+          body: message.body || '',
+          type: message.type || 'text',
+          attachments: message.pendingFiles || [],
+          replyTo: message.replyTo || null,
+          clientMessageId
+        })
+        appState.errorMessage = ''
+      } catch (error) {
+        setOptimisticMessageStatus(thread.id, clientMessageId, 'failed', error?.message || 'Unable to send message.')
+        appState.errorMessage = getSendErrorMessage(error, thread)
+      }
+      renderSignedInState()
+      scrollMessageListToBottom()
+    })
+  })
+
+  inboxRoot.querySelectorAll('[data-remove-failed-message]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!thread?.id) return
+      const clientMessageId = button.getAttribute('data-remove-failed-message') || ''
+      removeOptimisticMessage(thread.id, clientMessageId)
+      renderSignedInState()
     })
   })
 
@@ -2823,6 +2972,23 @@ function renderSignedInState() {
   scrollMessageListToBottom()
 }
 
+function createClientMessageId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function getSendErrorMessage(error, thread) {
+  const message = String(error?.message || '').toLowerCase()
+  const code = String(error?.code || '').toLowerCase()
+  if (!appState.user?.uid) return 'Sign in required.'
+  if (thread?.type === 'dm' && message.includes('block')) return 'This user can no longer receive messages from you.'
+  if (message.includes('not a participant')) return 'You are not a participant in this thread.'
+  if (message.includes('participant') || message.includes('thread not found')) return 'Preparing chat. Try again in a moment.'
+  if (message.includes('attachment') || code.includes('storage')) return 'Attachment upload failed. Your message was not sent.'
+  if (code.includes('permission-denied') || message.includes('permission')) return 'You do not have permission to send in this conversation.'
+  return error?.message || 'Unable to send message.'
+}
+
 async function handleMessageSubmit(form) {
   const thread = getSelectedThread()
   if (!thread || !appState.user?.uid) return
@@ -2846,7 +3012,17 @@ async function handleMessageSubmit(form) {
   }
   if (!body && !attachments.length) return
 
+  const clientMessageId = createClientMessageId()
+  const replyTo = appState.replyDraftByThreadId[thread.id] || null
+  addOptimisticMessage(thread, { clientMessageId, body, attachments, replyTo })
+  appState.errorMessage = ''
+  if (field) field.value = ''
+  appState.composerDraftByThreadId[thread.id] = ''
+  delete appState.replyDraftByThreadId[thread.id]
+  setAttachmentDraft(thread.id, [])
   form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
+  renderSignedInState()
+  scrollMessageListToBottom({ behavior: 'smooth' })
 
   try {
     await sendMessage(thread.id, {
@@ -2854,13 +3030,10 @@ async function handleMessageSubmit(form) {
       body,
       type: 'text',
       attachments,
-      replyTo: appState.replyDraftByThreadId[thread.id] || null
+      replyTo,
+      clientMessageId
     })
     appState.errorMessage = ''
-    field.value = ''
-    appState.composerDraftByThreadId[thread.id] = ''
-    delete appState.replyDraftByThreadId[thread.id]
-    setAttachmentDraft(thread.id, [])
     clearTypingForThread(thread.id)
     if (canMarkThreadRead(thread.id)) {
       await markThreadRead({ threadId: thread.id, uid: appState.user.uid }).catch((error) => {
@@ -2868,11 +3041,8 @@ async function handleMessageSubmit(form) {
       })
     }
   } catch (error) {
-    if (thread.type === 'dm' && String(error?.message || '').toLowerCase().includes('block')) {
-      appState.errorMessage = 'This user can no longer receive messages from you.'
-    } else {
-      appState.errorMessage = error?.message || 'Unable to send message.'
-    }
+    setOptimisticMessageStatus(thread.id, clientMessageId, 'failed', error?.message || 'Unable to send message.')
+    appState.errorMessage = getSendErrorMessage(error, thread)
   }
 
   renderSignedInState()
@@ -2968,6 +3138,7 @@ function startMessageSubscription(threadId) {
   startSelectedSourceThreadSubscription(threadId)
 
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
+    reconcileOptimisticMessages(threadId, messages)
     appState.messagesByThreadId[threadId] = messages
     preloadMessageImages(messages)
     appState.loadingMessageThreadId = ''

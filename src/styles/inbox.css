@@ -735,6 +735,40 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   font-style: italic;
 }
 
+.message-bubble.is-optimistic {
+  opacity: 0.86;
+}
+
+.message-bubble.is-send-failed {
+  border-color: rgba(255, 124, 124, 0.5);
+  background: rgba(76, 28, 35, 0.92);
+}
+
+.message-send-failed-actions {
+  margin-top: 0.45rem;
+  display: flex;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.message-send-failed-actions button {
+  border: 1px solid rgba(255, 190, 190, 0.38);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffe6e6;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.68rem;
+  cursor: pointer;
+}
+
+.message-attachment-list a.is-image-load-failed::after {
+  content: 'Image could not be loaded';
+  display: block;
+  color: #ffd2d2;
+  font-size: 0.72rem;
+  margin-top: 0.25rem;
+}
+
 .message-bubble.has-reply {
   position: relative;
 }

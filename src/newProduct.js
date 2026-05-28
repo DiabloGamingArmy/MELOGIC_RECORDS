@@ -955,17 +955,21 @@ function renderAgreementsPanel() {
   const config = editorState.agreement.config || {}
   const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
   const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
+  const agreementError = String(editorState.agreement.error || '').trim()
+  const agreementBody = editorState.agreement.loading
+    ? '<p class="agreement-loading">Loading agreement…</p>'
+    : agreementError
+      ? `<p class="agreement-error">${escapeHtml(agreementError)}</p>${config.storagePath ? `<p class="agreement-error-detail">Path: ${escapeHtml(config.storagePath)}</p>` : ''}`
+      : editorState.agreement.markdown
+        ? renderAgreementMarkdown(editorState.agreement.markdown)
+        : '<p class="agreement-error">Seller agreement file is missing.</p>'
   return `
     <section class="agreements-workspace">
       <div class="agreements-main-grid">
         <article class="agreement-viewer-panel">
           <h3>Agreement Form</h3>
           <div class="agreement-document">
-            ${editorState.agreement.loading
-              ? '<p class="agreement-loading">Loading agreement…</p>'
-              : editorState.agreement.error
-                ? `<p class="agreement-error">Could not load the seller agreement. Please try again later.${import.meta?.env?.DEV ? ' Storage CORS may not be configured.' : ''}</p>`
-                : renderAgreementMarkdown(editorState.agreement.markdown)}
+            ${agreementBody}
           </div>
           ${agreementState.versionChanged ? '<p class="pricing-warning">A newer seller agreement version is available and must be accepted before publishing.</p>' : ''}
           ${agreementState.accepted ? `<p class="agreement-accepted-status">Agreement accepted by ${escapeHtml(agreementState.current?.signedName || '')}${agreementState.current?.acceptedAt ? ` on ${escapeHtml(formatAgreementAcceptedDate(agreementState.current.acceptedAt))}` : ''}.</p>` : ''}
@@ -2226,7 +2230,7 @@ async function initPage() {
       latestVersion
     })
     editorState.agreement.latestVersion = ''
-    editorState.agreement.error = 'Could not load seller agreement.'
+    editorState.agreement.error = error?.message || 'Could not load seller agreement.'
   } finally {
     editorState.agreement.loading = false
   }

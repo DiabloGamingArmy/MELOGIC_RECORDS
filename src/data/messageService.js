@@ -39,6 +39,7 @@ function validateAttachmentSize(file) {
 function normalizeMessage(messageId, raw = {}) {
   return {
     id: messageId,
+    clientMessageId: String(raw.clientMessageId || '').trim(),
     senderId: raw.senderId || '',
     body: raw.body || '',
     type: raw.type || 'text',
@@ -213,7 +214,22 @@ export async function sendMessage(threadId, payload = {}) {
 
   const [threadSnap, participantSnap] = await Promise.all([getDoc(threadRef), getDoc(participantRef)])
   if (!threadSnap.exists()) throw new Error('Thread not found.')
-  if (!participantSnap.exists()) throw new Error('Sender is not a participant in this thread.')
+  const threadData = threadSnap.data() || {}
+  const participantIds = Array.isArray(threadData.participantIds) ? threadData.participantIds : []
+  if (!participantIds.includes(payload.senderId)) {
+    throw new Error('You are not a participant in this thread.')
+  }
+  if (!participantSnap.exists()) {
+    await setDoc(participantRef, {
+      uid: payload.senderId,
+      role: threadData.createdBy === payload.senderId ? 'owner' : 'member',
+      joinedAt: serverTimestamp(),
+      lastDeliveredAt: null,
+      lastReadAt: null,
+      muted: false,
+      archived: false
+    }, { merge: true })
+  }
 
   const attachments = await uploadMessageAttachments(threadId, messageRef.id, attachmentsInput)
   const summary = summarizeMessage(body, attachments)
@@ -236,6 +252,8 @@ export async function sendMessage(threadId, payload = {}) {
     deleted: false,
     edited: false
   }
+  const clientMessageId = String(payload.clientMessageId || '').trim().slice(0, 80)
+  if (clientMessageId) messagePayload.clientMessageId = clientMessageId
   if (replyTo) messagePayload.replyTo = replyTo
   batch.set(messageRef, messagePayload)
   batch.update(threadRef, {
@@ -253,7 +271,7 @@ export async function sendMessage(threadId, payload = {}) {
     }, { merge: true })
   await batch.commit()
 
-  return true
+  return { ok: true, messageId: messageRef.id, clientMessageId }
 }
 
 export async function editMessage({ threadId, messageId, uid, body }) {
