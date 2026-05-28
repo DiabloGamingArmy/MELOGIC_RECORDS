@@ -678,3 +678,112 @@ body:has([data-stage-editor-app]) #app{
 .stage-editor-bottom{
   align-self:stretch;
 }
+
+.stage-category-filter-row{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:6px;
+}
+.stage-category-chip{
+  display:grid;
+  grid-template-columns:18px minmax(0,1fr);
+  align-items:center;
+  justify-content:start;
+  gap:7px;
+  width:100%;
+  min-height:48px;
+  height:48px;
+  border:1px solid rgba(106,126,160,.35);
+  border-radius:6px;
+  background:rgba(18,26,41,.92);
+  color:#d6e5ff;
+  padding:5px 7px;
+  text-align:left;
+  white-space:normal;
+}
+.stage-category-chip:hover{
+  border-color:rgba(34,184,181,.5);
+  background:rgba(34,184,181,.1);
+}
+.stage-category-chip.is-active{
+  border-color:rgba(34,184,181,.82);
+  background:rgba(34,184,181,.14);
+  color:#efffff;
+}
+.stage-category-chip .stage-object-icon-frame{
+  width:18px;
+  height:18px;
+  min-width:18px;
+  border:0;
+  background:transparent;
+}
+.stage-category-chip .stage-object-icon-frame img{
+  max-width:18px;
+  max-height:18px;
+  object-fit:contain;
+}
+.stage-category-chip .stage-object-fallback-icon{
+  font-size:13px;
+  line-height:1;
+}
+.stage-category-label{
+  min-width:0;
+  overflow:hidden;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  line-height:1.12;
+  font-size:10.5px;
+  font-weight:700;
+}
+.stage-asset-card-list{
+  display:grid;
+  gap:6px;
+}
+.stage-asset-card{
+  display:grid;
+  grid-template-columns:32px minmax(0,1fr) 44px;
+  gap:8px;
+  align-items:center;
+  min-height:50px;
+  padding:7px;
+  border-radius:6px;
+  background:rgba(255,255,255,.026);
+}
+.stage-asset-icon{
+  width:32px;
+  height:32px;
+  border-radius:5px;
+  font-size:11px;
+}
+.stage-asset-main strong{
+  font-size:12px;
+  line-height:1.15;
+}
+.stage-asset-main span{
+  font-size:10.5px;
+}
+.stage-asset-main small{
+  font-size:10px;
+}
+.stage-asset-card button{
+  width:44px;
+  height:28px;
+  padding:0;
+  border-radius:5px;
+}
+.stage-object-data-grid tbody tr.is-empty td{
+  height:72px;
+  color:#aab8d2;
+  background:rgba(255,255,255,.018);
+  text-align:left;
+}
+.stage-empty-state{
+  margin:0;
+  border:1px solid rgba(106,126,160,.34);
+  border-radius:6px;
+  background:rgba(16,24,38,.86);
+  color:#dce7fb;
+  padding:10px;
+  line-height:1.35;
+}

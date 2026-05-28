@@ -149,21 +149,31 @@ function normalizeVenue(raw = {}) {
 }
 
 function normalizeEditorState(raw = {}) {
+  const selectedObjectId = safeString(raw.selectedObjectId, 'stage-deck')
   return {
     viewportMode: safeString(raw.viewportMode, 'perspective3d'),
-    selectedObjectId: safeString(raw.selectedObjectId, 'stage-deck'),
+    paneSizes: raw.paneSizes && typeof raw.paneSizes === 'object' ? { ...raw.paneSizes } : {},
+    activeLayer: safeString(raw.activeLayer, 'stage'),
     activeStageSection: safeString(raw.activeStageSection, 'home'),
-    activeBottomTab: safeString(raw.activeBottomTab || raw.activeEditorMode, 'entities'),
+    activeLibraryCategory: safeString(raw.activeLibraryCategory, 'all'),
+    objectLibrarySearch: safeString(raw.objectLibrarySearch),
+    editorToolMode: safeString(raw.editorToolMode, 'pan'),
     activeEditorMode: safeString(raw.activeEditorMode || raw.activeBottomTab, 'entities'),
     activeInspectorTab: safeString(raw.activeInspectorTab, 'properties'),
-    paneSizes: raw.paneSizes && typeof raw.paneSizes === 'object' ? { ...raw.paneSizes } : {},
-    gridEnabled: raw.gridEnabled ?? raw.showGrid ?? true,
+    activeDataTab: safeString(raw.activeDataTab, 'schema'),
+    renderMode: safeString(raw.renderMode, 'technical'),
+    selectedObjectId,
+    selectedObjectIds: arrayOr(raw.selectedObjectIds, [selectedObjectId].filter(Boolean)).map((id) => safeString(id)).filter(Boolean).slice(0, 250),
+    showGrid: raw.showGrid ?? raw.gridEnabled ?? true,
     snapEnabled: raw.snapEnabled ?? true,
     snapInterval: clampPositive(raw.snapInterval, 1),
-    beamPreviewEnabled: raw.beamPreviewEnabled ?? raw.showBeams ?? true,
-    measureModeEnabled: raw.measureModeEnabled ?? false,
     showLabels: raw.showLabels ?? true,
-    diagnosticsEnabled: raw.diagnosticsEnabled ?? raw.showViewportDiagnostics ?? false
+    showBeams: raw.showBeams ?? raw.beamPreviewEnabled ?? true,
+    showViewportDiagnostics: raw.showViewportDiagnostics ?? raw.diagnosticsEnabled ?? false,
+    stageTabs: arrayOr(raw.stageTabs, [{ id: 'stage-1', title: 'Untitled Stage' }]),
+    activeStageTabId: safeString(raw.activeStageTabId, 'stage-1'),
+    objectTransforms: raw.objectTransforms && typeof raw.objectTransforms === 'object' ? { ...raw.objectTransforms } : {},
+    savedAt: safeString(raw.savedAt)
   }
 }
 
