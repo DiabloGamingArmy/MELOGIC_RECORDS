@@ -117,6 +117,8 @@ const savedBottomSplit = Number(localStorage.getItem('stagePaneBottomSplit'))
 
 export const state = {
   user: null,
+  authReady: false,
+  authUid: '',
   loadingProjects: false,
   projectsError: '',
   projects: [],
@@ -137,6 +139,7 @@ export const state = {
   activeEditorMode: 'entities',
   activeStageSection: 'home',
   activeLibraryCategory: 'all',
+  objectLibrarySearch: '',
   editorToolMode: localStorage.getItem('stageEditorToolMode') || 'pan',
   selectedEditorObject: 'stage-deck',
   selectedEditorObjects: ['stage-deck'],
@@ -778,6 +781,8 @@ export function stageEntities() {
 }
 
 export function projectLoadLabel() {
+  if (state.projectLoadStatus === 'auth-restoring') return 'restoring session'
+  if (state.projectLoadStatus === 'loading') return 'loading'
   if (state.projectLoadStatus === 'loaded') return 'loaded'
   if (state.projectLoadStatus === 'fallback-local') return 'local recovery'
   if (state.projectLoadStatus === 'fallback-default') return 'default fallback'

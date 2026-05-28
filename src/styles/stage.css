@@ -608,3 +608,73 @@ body:has([data-stage-editor-app]) #app{height:100dvh;display:flex;flex-direction
 .stage-editor-app.is-header-hidden .stage-editor-body{height:calc(100% - 64px)}
 
 .stage-select-marquee{position:absolute;z-index:9;border:1px solid rgba(34,184,181,.82);background:rgba(34,184,181,.13);box-shadow:0 0 0 1px rgba(34,184,181,.18) inset;pointer-events:none;border-radius:2px}
+
+/* Locked Stage app shell: left-panel content must never resize the editor rows. */
+body:has([data-stage-editor-app]) #app{
+  height:100dvh;
+  min-height:0;
+  overflow:hidden;
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr);
+}
+[data-stage-global-header-wrapper]{
+  min-height:0;
+}
+[data-stage-editor-app]{
+  height:auto !important;
+  min-height:0 !important;
+  overflow:hidden;
+  display:grid;
+  grid-template-rows:auto auto minmax(0,1fr);
+}
+[data-stage-global-header-wrapper]:not([hidden]) + [data-stage-editor-app]{
+  height:auto !important;
+}
+[data-stage-editor-app] .stage-editor-body{
+  height:auto !important;
+  min-height:0 !important;
+  min-width:0;
+  overflow:hidden;
+  display:grid;
+  grid-template-columns:46px minmax(180px,var(--stage-lib-w,236px)) 6px minmax(320px,1fr) 6px minmax(240px,var(--stage-right-w,286px));
+  grid-template-rows:minmax(0,1fr) minmax(120px,var(--stage-bottom-h,190px));
+}
+.stage-editor-menubar,
+.stage-editor-tabbar{
+  min-height:0;
+  flex:0 0 auto;
+}
+.stage-editor-rail,
+.stage-editor-library,
+.stage-editor-workspace,
+.stage-editor-right,
+.stage-editor-bottom,
+.stage-editor-viewport,
+.stage-editor-canvas,
+.stage-three-viewport{
+  min-height:0;
+  min-width:0;
+}
+.stage-editor-library{
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.stage-editor-library > header{
+  flex:0 0 auto;
+}
+.stage-left-panel-content{
+  flex:1 1 auto;
+  min-height:0;
+  overflow:auto;
+  padding-right:2px;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(255,255,255,.22) rgba(255,255,255,.04);
+}
+.stage-left-panel-content::-webkit-scrollbar{width:8px;height:8px}
+.stage-left-panel-content::-webkit-scrollbar-track{background:rgba(255,255,255,.04)}
+.stage-left-panel-content::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:999px}
+.stage-left-panel-content::-webkit-scrollbar-thumb:hover{background:rgba(34,184,181,.38)}
+.stage-editor-bottom{
+  align-self:stretch;
+}

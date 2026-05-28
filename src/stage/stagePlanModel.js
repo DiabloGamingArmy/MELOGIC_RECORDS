@@ -186,8 +186,8 @@ export function createDefaultStagePlan({ id = '', name = 'Blank Stage', version 
       notes: '',
       metadata: {}
     },
-    { id: 'speaker-left', kind: 'speaker', type: 'speaker', category: 'audio', name: 'Speaker Left', position: { x: -14, y: 2.5, z: -2 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 1.8, depth: 1.6, height: 5 }, label: 'Speaker Left', locked: false, visible: true, selectable: true, notes: '', metadata: {} },
-    { id: 'speaker-right', kind: 'speaker', type: 'speaker', category: 'audio', name: 'Speaker Right', position: { x: 14, y: 2.5, z: -2 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 1.8, depth: 1.6, height: 5 }, label: 'Speaker Right', locked: false, visible: true, selectable: true, notes: '', metadata: {} }
+    { id: 'speaker-left', kind: 'speaker', type: 'speaker', category: 'audio', name: 'Speaker Left', position: { x: -14, y: 2.5, z: 9 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 1.8, depth: 1.6, height: 5 }, label: 'Speaker Left', locked: false, visible: true, selectable: true, notes: '', metadata: {} },
+    { id: 'speaker-right', kind: 'speaker', type: 'speaker', category: 'audio', name: 'Speaker Right', position: { x: 14, y: 2.5, z: 9 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 1.8, depth: 1.6, height: 5 }, label: 'Speaker Right', locked: false, visible: true, selectable: true, notes: '', metadata: {} }
   ]
   return {
     id,

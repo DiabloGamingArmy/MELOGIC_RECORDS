@@ -361,6 +361,16 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('input', (e) => {
+    const librarySearch = e.target.closest('[data-library-search]')
+    if (librarySearch) {
+      state.objectLibrarySearch = librarySearch.value || ''
+      updateLeftPanelUI?.()
+      const nextSearch = app.querySelector('[data-library-search]')
+      nextSearch?.focus?.()
+      nextSearch?.setSelectionRange?.(nextSearch.value.length, nextSearch.value.length)
+      queueEditorStateSave?.()
+      return
+    }
     const dimension = e.target.closest('[data-stage-dimension]')
     if (dimension) {
       if (updateStageDimension(dimension.dataset.stageDimension, dimension.value)) {
@@ -503,6 +513,40 @@ export function bindStageEditorEventsOnce(context) {
     if (editor) editor.classList.toggle('is-header-hidden', !state.showStageGlobalHeader)
     updateStageAppMenu()
     queueEditorStateSave?.()
+  })
+
+  app.addEventListener('dragstart', (e) => {
+    const asset = e.target.closest('[data-stage-asset]')
+    if (!asset?.dataset?.stageAsset || !e.dataTransfer) return
+    e.dataTransfer.effectAllowed = 'copy'
+    e.dataTransfer.setData('text/plain', asset.dataset.stageAsset)
+    e.dataTransfer.setData('application/x-stage-asset', asset.dataset.stageAsset)
+  })
+
+  app.addEventListener('dragover', (e) => {
+    if (!e.target.closest('[data-stage-three-viewport], .stage-editor-canvas')) return
+    e.preventDefault()
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+  })
+
+  app.addEventListener('drop', (e) => {
+    if (!e.target.closest('[data-stage-three-viewport], .stage-editor-canvas')) return
+    const assetId = e.dataTransfer?.getData('application/x-stage-asset') || e.dataTransfer?.getData('text/plain') || ''
+    if (!assetId) return
+    e.preventDefault()
+    const object = addStageAssetToPlan(assetId)
+    if (!object) {
+      showStageNotice('That object is not available yet.')
+      return
+    }
+    refreshStageViewport?.()
+    updateStageInspectorSelection()
+    updateInspectorUI()
+    updateEditorModeUI()
+    updateLeftPanelUI()
+    updateViewportControlUI()
+    showStageNotice(`Added ${object.label || object.name}.`)
+    queueStagePlanSave?.()
   })
 
   app.addEventListener('pointerdown', (e) => {

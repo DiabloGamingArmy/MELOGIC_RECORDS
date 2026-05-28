@@ -2,7 +2,7 @@ import './styles/base.css'
 import './styles/stage.css'
 import { initShellChrome } from './components/assetChrome'
 import { navShell } from './components/navShell'
-import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
+import { waitForInitialAuthState, subscribeToAuthState, subscribeToIdToken } from './firebase/auth'
 import { authRoute, ROUTES, stageProjectRoute } from './utils/routes'
 import { getPublicStorageUrl } from './firebase/storageAssets'
 import { classifyStageProjectError, createStageProject, createStageProjectFromPlan, getStageProject, isValidStageProjectId, listAccessibleStageProjects, saveStageProjectEditorState, saveStageProjectPlan, sortStageProjectsByActivity, stageProjectPath, touchStageProject } from './data/stageProjectService'
@@ -26,6 +26,11 @@ let stageViewportMountedForProjectId = ''
 let stageNoticeTimer = 0
 let editorSaveTimer = 0
 let planSaveTimer = 0
+let activeProjectLoadRequest = 0
+let lastLoadedProjectId = ''
+let lastLoadedAuthUid = ''
+const loggedProjectLoadFailures = new Set()
+const authRecoverableProjectStatuses = new Set(['auth-restoring', 'unauthenticated', 'permission-denied', 'fallback-local', 'fallback-default', 'not-found', 'network-error', 'rules-error'])
 
 function editorRecoveryKey(projectId = state.projectId) {
   return `melogic.stage.editorState.${projectId || 'draft'}`
@@ -48,6 +53,8 @@ function buildEditorStateSnapshot() {
     paneSizes: { ...state.paneSizes },
     activeLayer: 'stage',
     activeStageSection: state.activeStageSection,
+    activeLibraryCategory: state.activeLibraryCategory,
+    objectLibrarySearch: state.objectLibrarySearch,
     editorToolMode: state.editorToolMode,
     activeEditorMode: normalizeEditorMode(state.activeEditorMode),
     activeInspectorTab: state.activeInspectorTab,
@@ -73,6 +80,8 @@ function applyEditorStateSnapshot(editorState = {}) {
   state.viewportMode = editorState.viewportMode || state.viewportMode
   state.paneSizes = { ...state.paneSizes, ...(editorState.paneSizes || {}) }
   state.activeStageSection = editorState.activeStageSection || state.activeStageSection
+  state.activeLibraryCategory = editorState.activeLibraryCategory || state.activeLibraryCategory
+  state.objectLibrarySearch = typeof editorState.objectLibrarySearch === 'string' ? editorState.objectLibrarySearch : state.objectLibrarySearch
   state.editorToolMode = editorState.editorToolMode || state.editorToolMode
   state.activeEditorMode = normalizeEditorMode(editorState.activeEditorMode || state.activeEditorMode)
   state.activeInspectorTab = editorState.activeInspectorTab || state.activeInspectorTab
@@ -606,6 +615,7 @@ async function loadDashboardProjects() {
 }
 
 function stageLoadMessage(status, meta = {}) {
+  if (status === 'auth-restoring') return 'Restoring session...'
   if (status === 'loaded') return 'Stage project loaded from Firestore.'
   if (status === 'loading') return 'Loading stage project...'
   if (status === 'unauthenticated') return 'Sign in required to load this stage plan. Editing a local fallback copy.'
@@ -626,6 +636,10 @@ function setStageLoadState(status, meta = {}) {
 }
 
 function logProjectLoadFailure(status, error, meta = {}) {
+  if (status === 'unauthenticated' || status === 'auth-restoring') return
+  const logKey = [state.projectId, state.user?.uid || 'anon', status, error?.code || meta.code || 'unknown'].join(':')
+  if (loggedProjectLoadFailures.has(logKey)) return
+  loggedProjectLoadFailures.add(logKey)
   console.warn('[stage] Firestore project load failed.', {
     projectId: state.projectId,
     collectionPath: stageProjectPath(state.projectId),
@@ -640,8 +654,10 @@ function logProjectLoadFailure(status, error, meta = {}) {
   })
 }
 
-async function loadEditorProject() {
+async function loadEditorProject({ reason = 'manual', force = false } = {}) {
   if (!state.projectId) return
+  if (state.editorLoading && !force) return
+  const requestId = ++activeProjectLoadRequest
   state.editorLoading = true
   state.editorError = ''
   setStageLoadState('loading')
@@ -651,8 +667,9 @@ async function loadEditorProject() {
     if (!restored) state.editorProject = normalizeStagePlan({ id: state.projectId, title: 'Fallback Stage Plan', stageType: 'Blank Stage', version: 1 })
     restoreLocalEditorState(state.projectId)
     ensureValidEditorSelection()
-    const fallbackStatus = restored ? 'fallback-local' : status
-    setStageLoadState(fallbackStatus, { ...meta, usingLocalRecovery: restored, fallbackMode: restored ? 'local' : 'default' })
+    disposeViewportController()
+    const fallbackStatus = ['unauthenticated', 'permission-denied'].includes(status) ? status : restored ? 'fallback-local' : status
+    setStageLoadState(fallbackStatus, { ...meta, reason, usingLocalRecovery: restored, fallbackMode: restored ? 'local' : 'default' })
     state.editorSaveStatus = 'local'
   }
   try {
@@ -667,6 +684,7 @@ async function loadEditorProject() {
       return
     }
     const project = await getStageProject(state.projectId)
+    if (requestId !== activeProjectLoadRequest) return
     if (!project) {
       useDefaultFallback('not-found', { code: 'not-found', reasonMessage: 'Stage project was not found.' })
       logProjectLoadFailure('not-found', { code: 'not-found', message: 'No document exists at the stage project path.' }, state.projectLoadMeta || {})
@@ -675,14 +693,19 @@ async function loadEditorProject() {
       applyEditorStateSnapshot(project.editorState || project.plan?.editorState)
       if (!project.editorState && !project.plan?.editorState) restoreLocalEditorState(state.projectId)
       ensureValidEditorSelection()
+      disposeViewportController()
       setStageLoadState('loaded')
+      lastLoadedProjectId = state.projectId
+      lastLoadedAuthUid = state.user?.uid || ''
       state.editorSaveStatus = project.editorState ? 'saved' : 'idle'
     }
   } catch (error) {
+    if (requestId !== activeProjectLoadRequest) return
     const status = classifyStageProjectError(error, state.user)
     useDefaultFallback(status, { code: error?.code || status, reasonMessage: stageLoadMessage(status), originalStatus: status })
     logProjectLoadFailure(state.projectLoadStatus, error, state.projectLoadMeta || {})
   } finally {
+    if (requestId !== activeProjectLoadRequest) return
     state.editorLoading = false
     renderApp()
   }
@@ -713,19 +736,93 @@ async function saveCurrentPlanAsNew() {
   }
 }
 
-state.projectId = getCurrentStageProjectId()
-waitForInitialAuthState().then(async (user) => {
+function applyAuthUser(user) {
   state.user = user
-  renderApp()
-  if (state.projectId) await loadEditorProject()
-  else await loadDashboardProjects()
-})
-subscribeToAuthState(async (user) => {
-  state.user = user
+  state.authUid = user?.uid || ''
+}
+
+function preserveCurrentStageAsLocalRecovery() {
+  if (!state.projectId || !state.editorProject) return
+  persistLocalStagePlan()
+  persistLocalEditorState()
+  state.editorSaveStatus = 'local'
+}
+
+async function handleAuthReadyUser(user, source = 'auth-state') {
+  const previousUid = state.authUid || ''
+  const nextUid = user?.uid || ''
+  applyAuthUser(user)
+
   if (!state.projectId) {
-    state.projects = []
-    state.recentProjects = []
+    if (previousUid !== nextUid) {
+      state.projects = []
+      state.recentProjects = []
+    }
+    renderApp()
+    await loadDashboardProjects()
+    return
   }
+
+  if (!nextUid) {
+    lastLoadedAuthUid = ''
+    if (state.editorProject) {
+      preserveCurrentStageAsLocalRecovery()
+      setStageLoadState('unauthenticated', {
+        code: 'auth-required',
+        reason: source,
+        reasonMessage: 'Sign in required to load this private stage plan.',
+        usingLocalRecovery: true,
+        fallbackMode: 'local'
+      })
+      disposeViewportController()
+      renderApp()
+      return
+    }
+    await loadEditorProject({ reason: source, force: true })
+    return
+  }
+
+  const loadedForCurrentUser = lastLoadedProjectId === state.projectId
+    && lastLoadedAuthUid === nextUid
+    && state.projectLoadStatus === 'loaded'
+  const shouldReload = !loadedForCurrentUser
+    && (previousUid !== nextUid || authRecoverableProjectStatuses.has(state.projectLoadStatus) || !state.editorProject)
+
   renderApp()
-  if (!state.projectId) await loadDashboardProjects()
+  if (shouldReload) await loadEditorProject({ reason: source, force: authRecoverableProjectStatuses.has(state.projectLoadStatus) })
+}
+
+state.projectId = getCurrentStageProjectId()
+if (state.projectId) setStageLoadState('auth-restoring')
+renderApp()
+
+waitForInitialAuthState().then(async (user) => {
+  state.authReady = true
+  applyAuthUser(user)
+  if (state.projectId) await loadEditorProject({ reason: 'initial-auth', force: true })
+  else {
+    renderApp()
+    await loadDashboardProjects()
+  }
+}).catch(async (error) => {
+  state.authReady = true
+  applyAuthUser(null)
+  console.warn('[stage] Initial auth restore failed.', error?.code || error?.message || error)
+  if (state.projectId) await loadEditorProject({ reason: 'initial-auth-error', force: true })
+  else renderApp()
+})
+
+subscribeToAuthState(async (user) => {
+  if (!state.authReady) return
+  await handleAuthReadyUser(user, 'auth-state')
+})
+
+subscribeToIdToken(async (user) => {
+  if (!state.authReady) return
+  const nextUid = user?.uid || ''
+  if (nextUid === state.authUid && state.projectLoadStatus === 'loaded' && state.editorProject) {
+    state.user = user
+    return
+  }
+  await handleAuthReadyUser(user, 'id-token')
 })
