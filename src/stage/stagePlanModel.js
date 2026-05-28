@@ -52,6 +52,22 @@ export function createDefaultStagePlan({ id = '', name = 'Blank Stage', version 
       { id: 'in-22', channel: 22, source: 'Playback R', micDi: 'Interface', stand: 'N/A', patch: '', stageLocation: 'Playback Rig', notes: '', linkedObjectId: '' }
     ],
     rigging: [{ id: 'rig-1', name: 'Ground Truss', position: { x: 0, y: 8, z: -8 }, height: 8, type: 'truss', notes: '', qualifiedOnly: true }],
+    video: [{ id: 'vid-camera-1', name: 'Camera 1', type: 'camera', position: { x: 0, y: 1.3, z: 17 }, width: 0.8, height: 2, inputSource: 'Camera 1', cameraAngle: 'FOH Wide', linkedObjectId: 'camera-1', notes: '' }],
+    power: [{ id: 'pwr-1', name: 'House Power', position: { x: -14, y: 1.2, z: -10 }, notes: 'Confirm venue service and distro location.', linkedObjectId: '' }],
+    layers: [
+      { id: 'stage', label: 'Stage', visible: true, locked: false, export: true },
+      { id: 'backline', label: 'Backline', visible: true, locked: false, export: true },
+      { id: 'audio', label: 'Audio', visible: true, locked: false, export: true },
+      { id: 'lighting', label: 'Lighting', visible: true, locked: false, export: true },
+      { id: 'rigging', label: 'Rigging', visible: true, locked: false, export: true },
+      { id: 'video', label: 'Video', visible: true, locked: false, export: true },
+      { id: 'venue', label: 'Venue', visible: true, locked: false, export: true },
+      { id: 'power', label: 'Power', visible: true, locked: false, export: true },
+      { id: 'notes', label: 'Notes', visible: true, locked: false, export: true },
+      { id: 'measurements', label: 'Measurements', visible: true, locked: false, export: false }
+    ],
+    measurements: [],
+    annotations: [],
     venue: { name: 'Blank Stage', roomType: 'Club', fohPosition: 'Center', powerNotes: '', loadingNotes: '', safetyNotes: '' },
     notes: '',
     exportSettings: { pageSize: 'A3', orientation: 'landscape', scale: '1:50', titleBlock: true, showGrid: true, showLabels: true, includeInputList: true, includeLightingPlot: true, includeRiggingPlan: true }
@@ -75,6 +91,11 @@ export function normalizeStagePlan(raw = {}) {
     fixtures: Array.isArray(source.fixtures) ? source.fixtures : Array.isArray(raw.fixtures) ? raw.fixtures : base.fixtures,
     audioInputs: Array.isArray(source.audioInputs) ? source.audioInputs : Array.isArray(raw.audioInputs) ? raw.audioInputs : base.audioInputs,
     rigging: Array.isArray(source.rigging) ? source.rigging : Array.isArray(raw.rigging) ? raw.rigging : base.rigging,
+    video: Array.isArray(source.video) ? source.video : Array.isArray(raw.video) ? raw.video : base.video,
+    power: Array.isArray(source.power) ? source.power : Array.isArray(raw.power) ? raw.power : base.power,
+    layers: Array.isArray(source.layers) ? source.layers : Array.isArray(raw.layers) ? raw.layers : base.layers,
+    measurements: Array.isArray(source.measurements) ? source.measurements : Array.isArray(raw.measurements) ? raw.measurements : base.measurements,
+    annotations: Array.isArray(source.annotations) ? source.annotations : Array.isArray(raw.annotations) ? raw.annotations : base.annotations,
     venue: { ...base.venue, ...(raw.venue || {}), ...(source.venue || {}) },
     notes: source.notes ?? raw.notes ?? base.notes,
     exportSettings: { ...base.exportSettings, ...(raw.exportSettings || {}), ...(source.exportSettings || {}) }

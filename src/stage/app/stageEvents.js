@@ -1,5 +1,5 @@
 import { ROUTES, authRoute } from '../../utils/routes'
-import { state } from './stageState'
+import { addStageAssetToPlan, state, updateSelectedStageObjectField } from './stageState'
 
 let stageEditorEventsBound = false
 
@@ -31,6 +31,8 @@ export function bindStageEditorEventsOnce(context) {
     getViewportController,
     showStageNotice,
     queueEditorStateSave,
+    queueStagePlanSave,
+    refreshStageViewport,
     updateEditorModeUI,
     updateExportPreview,
     updateInspectorUI,
@@ -46,6 +48,22 @@ export function bindStageEditorEventsOnce(context) {
   app.addEventListener('click', (e) => {
     const mode = e.target.closest('[data-editor-mode]')
     if (mode) { state.activeEditorMode = mode.dataset.editorMode || 'entities'; updateEditorModeUI(); queueEditorStateSave?.(); return }
+    const addAsset = e.target.closest('[data-add-stage-asset]')
+    if (addAsset) {
+      const object = addStageAssetToPlan(addAsset.dataset.addStageAsset || '')
+      if (!object) {
+        showStageNotice('That object is not available yet.')
+        return
+      }
+      refreshStageViewport?.()
+      updateStageInspectorSelection()
+      updateInspectorUI()
+      updateEditorModeUI()
+      updateLeftPanelUI()
+      showStageNotice(`Added ${object.label || object.name}.`)
+      queueStagePlanSave?.()
+      return
+    }
     const addStageTab = e.target.closest('[data-add-stage-tab]')
     if (addStageTab) {
       const nextIndex = (state.stageTabs?.length || 0) + 1
@@ -146,6 +164,14 @@ export function bindStageEditorEventsOnce(context) {
     if (inspectorTab) { state.activeInspectorTab = inspectorTab.dataset.inspectorTab || 'properties'; updateInspectorUI(); queueEditorStateSave?.(); return }
     const dataTab = e.target.closest('[data-data-tab]')
     if (dataTab) { state.activeDataTab = dataTab.dataset.dataTab || 'schema'; updateEditorModeUI(); queueEditorStateSave?.() }
+    const renderMode = e.target.closest('[data-render-mode]')
+    if (renderMode) {
+      state.renderMode = renderMode.dataset.renderMode || 'technical'
+      getViewportController()?.update?.({ renderMode: state.renderMode })
+      updateViewportControlUI()
+      updateEditorModeUI()
+      queueEditorStateSave?.()
+    }
   })
 
   app.addEventListener('input', (e) => {
@@ -164,13 +190,30 @@ export function bindStageEditorEventsOnce(context) {
     const key = state.selectedEditorObject
     const existing = state.editorObjectTransforms[key] || {}
     const v = f.type === 'number' ? Number(f.value) : f.type === 'checkbox' ? !!f.checked : f.value
+    updateSelectedStageObjectField(f.dataset.transformField, v)
     state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [f.dataset.transformField]: v } }
     getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms })
+    if (['label', 'visible', 'locked', 'notes', 'layer', 'color'].includes(f.dataset.transformField)) {
+      refreshStageViewport?.()
+    }
     updateEditorModeUI()
-    queueEditorStateSave?.()
+    queueStagePlanSave?.()
   })
 
   app.addEventListener('change', (e) => {
+    const changedTransform = e.target.closest('[data-transform-field]')
+    if (changedTransform) {
+      const key = state.selectedEditorObject
+      const existing = state.editorObjectTransforms[key] || {}
+      const v = changedTransform.type === 'number' ? Number(changedTransform.value) : changedTransform.type === 'checkbox' ? !!changedTransform.checked : changedTransform.value
+      updateSelectedStageObjectField(changedTransform.dataset.transformField, v)
+      state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [changedTransform.dataset.transformField]: v } }
+      getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms })
+      if (['label', 'visible', 'locked', 'notes', 'layer', 'color'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
+      updateEditorModeUI()
+      queueStagePlanSave?.()
+      return
+    }
     const labels = e.target.closest('[data-toggle-labels]')
     if (labels) { state.showStageLabels = !!labels.checked; getViewportController()?.update?.({ showLabels: state.showStageLabels }); queueEditorStateSave?.(); return }
     const gridControl = e.target.closest('[data-toggle-grid-control]')

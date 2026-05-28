@@ -811,7 +811,8 @@ service cloud.firestore {
     function stageDocumentKeysValid(data) {
       return data.keys().hasOnly([
         'title','ownerId','collaboratorIds','visibility','type','stageType','stage','stageDimensions',
-        'coordinateSystem','objects','fixtures','audioInputs','rigging','venue','notes','exportSettings',
+        'coordinateSystem','objects','fixtures','audioInputs','rigging','video','power','layers',
+        'measurements','annotations','venue','notes','exportSettings',
         'plan','version','createdAt','updatedAt','lastOpenedAt','editorState'
       ]);
     }
@@ -850,7 +851,8 @@ service cloud.firestore {
       return plan is map
         && plan.keys().hasOnly([
           'id','name','title','version','createdAt','updatedAt','units','stageType','stageDimensions',
-          'coordinateSystem','objects','fixtures','audioInputs','rigging','venue','notes','exportSettings'
+          'coordinateSystem','objects','fixtures','audioInputs','rigging','video','power','layers',
+          'measurements','annotations','venue','notes','exportSettings'
         ])
         && (!('id' in plan) || plan.id is string)
         && (!('name' in plan) || (plan.name is string && plan.name.size() <= 120))
@@ -864,6 +866,11 @@ service cloud.firestore {
         && (!('fixtures' in plan) || (plan.fixtures is list && plan.fixtures.size() <= 1000))
         && (!('audioInputs' in plan) || (plan.audioInputs is list && plan.audioInputs.size() <= 500))
         && (!('rigging' in plan) || (plan.rigging is list && plan.rigging.size() <= 500))
+        && (!('video' in plan) || (plan.video is list && plan.video.size() <= 500))
+        && (!('power' in plan) || (plan.power is list && plan.power.size() <= 250))
+        && (!('layers' in plan) || (plan.layers is list && plan.layers.size() <= 50))
+        && (!('measurements' in plan) || (plan.measurements is list && plan.measurements.size() <= 500))
+        && (!('annotations' in plan) || (plan.annotations is list && plan.annotations.size() <= 500))
         && (!('venue' in plan) || plan.venue is map)
         && (!('notes' in plan) || (plan.notes is string && plan.notes.size() <= 20000))
         && (!('exportSettings' in plan) || plan.exportSettings is map);
@@ -874,7 +881,7 @@ service cloud.firestore {
         && editorState.keys().hasOnly([
           'viewportMode','paneSizes','activeLayer','selectedObjectId','showGrid','snapEnabled',
           'snapInterval','showLabels','showBeams','showViewportDiagnostics','activeStageSection',
-          'activeEditorMode','activeInspectorTab','activeDataTab','stageTabs','activeStageTabId',
+          'activeEditorMode','activeInspectorTab','activeDataTab','renderMode','stageTabs','activeStageTabId',
           'objectTransforms','savedAt'
         ])
         && (!('viewportMode' in editorState) || editorState.viewportMode in ['perspective3d','top2d','front','side','isometric'])
@@ -886,6 +893,7 @@ service cloud.firestore {
         && (!('showLabels' in editorState) || editorState.showLabels is bool)
         && (!('showBeams' in editorState) || editorState.showBeams is bool)
         && (!('showViewportDiagnostics' in editorState) || editorState.showViewportDiagnostics is bool)
+        && (!('renderMode' in editorState) || editorState.renderMode in ['simple','technical','beam','export-clean'])
         && (!('stageTabs' in editorState) || (editorState.stageTabs is list && editorState.stageTabs.size() <= 24))
         && (!('objectTransforms' in editorState) || editorState.objectTransforms is map)
         && (!('savedAt' in editorState) || editorState.savedAt is string);
@@ -911,6 +919,11 @@ service cloud.firestore {
         && (!('fixtures' in data) || (data.fixtures is list && data.fixtures.size() <= 1000))
         && (!('audioInputs' in data) || (data.audioInputs is list && data.audioInputs.size() <= 500))
         && (!('rigging' in data) || (data.rigging is list && data.rigging.size() <= 500))
+        && (!('video' in data) || (data.video is list && data.video.size() <= 500))
+        && (!('power' in data) || (data.power is list && data.power.size() <= 250))
+        && (!('layers' in data) || (data.layers is list && data.layers.size() <= 50))
+        && (!('measurements' in data) || (data.measurements is list && data.measurements.size() <= 500))
+        && (!('annotations' in data) || (data.annotations is list && data.annotations.size() <= 500))
         && (!('venue' in data) || data.venue is map)
         && (!('exportSettings' in data) || data.exportSettings is map)
         && (!('plan' in data) || stagePlanValid(data.plan))
