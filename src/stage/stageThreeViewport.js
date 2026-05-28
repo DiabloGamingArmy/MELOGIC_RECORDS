@@ -151,7 +151,7 @@ export function mountStageThreeViewport(container, options = {}) {
     const objects = {}
     const objectMeta = Object.fromEntries(stageObjectDefs.map((d) => [d.key, d]))
     const addPickable = (mesh, key) => { mesh.userData.objectKey = key; mesh.userData.stageLocked = !!objectMeta[key]?.locked; pickables.push(mesh); objects[key] = mesh }
-    const materialColorFor = (d) => d.color || (d.category === 'rigging' ? '#6762d2' : d.category === 'lighting' ? '#49c8ff' : d.category === 'video' ? '#4fc8b4' : d.category === 'audio' ? '#26364b' : d.category === 'power' ? '#ffb86b' : '#222b39')
+    const materialColorFor = (d) => d.color || (d.type === 'speaker' ? '#365875' : d.category === 'rigging' ? '#6762d2' : d.category === 'lighting' ? '#49c8ff' : d.category === 'video' ? '#4fc8b4' : d.category === 'audio' ? '#2d4059' : d.category === 'power' ? '#ffb86b' : '#222b39')
     const geometryFor = (d) => {
       if (d.type?.includes('cylinder') || d.type === 'microphone') return new THREE.CylinderGeometry(Math.max(0.12, d.size[0] / 2), Math.max(0.12, d.size[0] / 2), Math.max(0.2, d.size[1]), 18)
       if (d.type?.includes('circle')) return new THREE.CylinderGeometry(Math.max(0.2, d.size[0] / 2), Math.max(0.2, d.size[0] / 2), Math.max(0.12, d.size[1]), 32)

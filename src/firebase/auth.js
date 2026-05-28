@@ -1,6 +1,7 @@
 import {
   getAuth,
   onAuthStateChanged,
+  onIdTokenChanged,
   setPersistence,
   browserLocalPersistence,
   createUserWithEmailAndPassword,
@@ -24,11 +25,15 @@ export const authPersistenceReady = setPersistence(auth, browserLocalPersistence
 })
 
 const googleProvider = new GoogleAuthProvider()
-
-googleProvider.setCustomParameters({ prompt: 'select_account' })
+const googleProviderWithAccountSelect = new GoogleAuthProvider()
+googleProviderWithAccountSelect.setCustomParameters({ prompt: 'select_account' })
 
 export function subscribeToAuthState(callback) {
   return onAuthStateChanged(auth, callback)
+}
+
+export function subscribeToIdToken(callback) {
+  return onIdTokenChanged(auth, callback)
 }
 
 export async function waitForInitialAuthState() {
@@ -47,16 +52,19 @@ export async function waitForInitialAuthState() {
   return initialAuthStatePromise
 }
 
-export function signInWithEmail(email, password) {
+export async function signInWithEmail(email, password) {
+  await authPersistenceReady
   return signInWithEmailAndPassword(auth, email, password)
 }
 
-export function createAccountWithEmail(email, password) {
+export async function createAccountWithEmail(email, password) {
+  await authPersistenceReady
   return createUserWithEmailAndPassword(auth, email, password)
 }
 
-export function signInWithGoogle() {
-  return signInWithPopup(auth, googleProvider)
+export async function signInWithGoogle({ forceAccountSelect = false } = {}) {
+  await authPersistenceReady
+  return signInWithPopup(auth, forceAccountSelect ? googleProviderWithAccountSelect : googleProvider)
 }
 
 export function signOutUser() {

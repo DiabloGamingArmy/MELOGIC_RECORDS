@@ -65,6 +65,8 @@ export function renderStageTabbar() {
 }
 
 export function renderEditor() {
+  if (!state.authReady && state.projectId) return renderEditorState('Restoring session...', '<p>Checking your saved sign-in before loading this stage plan.</p>')
+  if (state.projectLoadStatus === 'auth-restoring') return renderEditorState('Restoring session...', '<p>Checking your saved sign-in before loading this stage plan.</p>')
   if (state.editorLoading) return renderEditorState('Opening stage plan...', '<p>Loading project workspace.</p>')
   if (state.editorError === 'not-found') return renderEditorState('Stage plan not found.', '')
   if (state.editorError) return renderEditorState('Could not open this stage plan.', '')

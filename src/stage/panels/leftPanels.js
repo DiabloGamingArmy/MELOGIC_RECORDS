@@ -1,4 +1,4 @@
-import { ROUTES } from '../../utils/routes'
+import { ROUTES, authRoute } from '../../utils/routes'
 import {
   baseStageTypes,
   currentStageDimensions,
@@ -12,8 +12,10 @@ import {
   viewportModeLabel
 } from '../app/stageState'
 
+const escapeAttr = (value = '') => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+
 export function renderLeftPanel(title, body) {
-  return `<aside class="stage-editor-library"><header><h3>${title}</h3><button type="button" aria-label="Close panel" aria-disabled="true">×</button></header>${body}</aside>`
+  return `<aside class="stage-editor-library"><header><h3>${title}</h3><button type="button" aria-label="Close panel" aria-disabled="true">×</button></header><div class="stage-left-panel-content">${body}</div></aside>`
 }
 
 export function renderLeftPanelBySection(title, stamp) {
@@ -22,17 +24,27 @@ export function renderLeftPanelBySection(title, stamp) {
   const unit = dims.unit || state.editorProject?.units || 'ft'
   const load = projectLoadLabel()
   const degradedLoad = !['loaded', 'loading'].includes(state.projectLoadStatus)
+  const signInAction = !state.user?.uid
+    ? `<a href="${authRoute({ redirect: window.location.pathname + window.location.search })}">Sign In to Load Project</a>`
+    : ''
   const loadWarning = degradedLoad
-    ? `<div class="stage-load-recovery"><p class="stage-subtle-warning">${state.projectLoadMessage || 'Project data failed to load. Editing fallback stage.'}</p><div class="stage-action-grid"><button type="button" data-retry-project-load>Retry Project Load</button><button type="button" data-save-as-new-stage>Save As New</button></div></div>`
+    ? `<div class="stage-load-recovery"><p class="stage-subtle-warning">${state.projectLoadMessage || 'Project data failed to load. Editing fallback stage.'}</p><div class="stage-action-grid"><button type="button" data-retry-project-load>Retry Project Load</button>${signInAction}<button type="button" data-save-as-new-stage>Save Local Copy as New</button></div></div>`
     : ''
   if (section === 'object') {
     const activeFilter = state.activeLibraryCategory || 'all'
+    const search = String(state.objectLibrarySearch || '').trim().toLowerCase()
     const assets = objectLibraryGroups.flatMap((group) => group.assets.map((asset) => ({ ...asset, groupLabel: group.label })))
-    const filteredAssets = assets.filter((asset) => activeFilter === 'all' || asset.category === activeFilter || (activeFilter === 'backline' && asset.category === 'band-backline'))
-    return renderLeftPanel('OBJECT LIBRARY', `<div class="stage-editor-library-tools"><input aria-label="Search object library" placeholder="Search assets" /><button type="button" class="stage-library-filter" aria-disabled="true" title="Search filtering is staged">⌕</button></div><div class="stage-category-filter-row">${editorLibraryCategories.map((c) => `<button class="stage-category-chip ${activeFilter === c.key ? 'is-active' : ''}" data-library-category="${c.key}" type="button"><span class="stage-object-icon-frame" data-stage-icon-path="${c.iconPath}"><img alt="" loading="lazy" hidden /><span class="stage-object-fallback-icon">${c.icon}</span></span>${c.label}</button>`).join('')}</div><label class="stage-editor-check"><input type="checkbox" checked disabled /> Add as stage-aware objects</label><h4>${activeFilter === 'all' ? 'AVAILABLE ASSETS' : `${editorLibraryCategories.find((c) => c.key === activeFilter)?.label || activeFilter} ASSETS`}</h4><div class="stage-asset-card-list">${filteredAssets.map((asset) => `<article class="stage-asset-card" draggable="true" data-stage-asset="${asset.id}"><div class="stage-asset-icon">${asset.icon}</div><div class="stage-asset-main"><strong>${asset.label}</strong><span>${asset.category} · ${asset.type}</span><small>${asset.dimensions?.width || 'n/a'} x ${asset.dimensions?.depth || 'n/a'} x ${asset.dimensions?.height || 'n/a'} ${unit}</small></div><button type="button" data-add-stage-asset="${asset.id}">Add</button></article>`).join('') || '<p class="stage-help-text">No assets in this filter yet.</p>'}</div><h4>BASE STAGE TYPES</h4><div class="stage-base-stage-grid">${baseStageTypes.map((stage) => `<button class="stage-base-stage-card" aria-disabled="true" type="button"><span class="stage-base-stage-thumb" data-stage-icon-path="${stage.icon}"><img alt="" loading="lazy" hidden /><span>${stage.label.slice(0, 2).toUpperCase()}</span></span><span>${stage.label}</span></button>`).join('')}</div>`)
+    const filteredAssets = assets.filter((asset) => {
+      const matchesCategory = activeFilter === 'all' || asset.category === activeFilter || (activeFilter === 'backline' && asset.category === 'band-backline')
+      if (!matchesCategory) return false
+      if (!search) return true
+      return [asset.label, asset.category, asset.type, asset.groupLabel].some((value) => String(value || '').toLowerCase().includes(search))
+    })
+    return renderLeftPanel('OBJECT LIBRARY', `<div class="stage-editor-library-tools"><input aria-label="Search object library" placeholder="Search assets" data-library-search value="${escapeAttr(state.objectLibrarySearch || '')}" /><button type="button" class="stage-library-filter" aria-disabled="true" title="Search filters the asset list">⌕</button></div><div class="stage-category-filter-row">${editorLibraryCategories.map((c) => `<button class="stage-category-chip ${activeFilter === c.key ? 'is-active' : ''}" data-library-category="${c.key}" type="button"><span class="stage-object-icon-frame" data-stage-icon-path="${c.iconPath}"><img alt="" loading="lazy" hidden /><span class="stage-object-fallback-icon">${c.icon}</span></span>${c.label}</button>`).join('')}</div><label class="stage-editor-check"><input type="checkbox" checked disabled /> Add as stage-aware objects</label><h4>${activeFilter === 'all' ? 'AVAILABLE ASSETS' : `${editorLibraryCategories.find((c) => c.key === activeFilter)?.label || activeFilter} ASSETS`}</h4><div class="stage-asset-card-list">${filteredAssets.map((asset) => `<article class="stage-asset-card" draggable="true" data-stage-asset="${asset.id}"><div class="stage-asset-icon">${asset.icon}</div><div class="stage-asset-main"><strong>${asset.label}</strong><span>${asset.category} · ${asset.type}</span><small>${asset.dimensions?.width || 'n/a'} x ${asset.dimensions?.depth || 'n/a'} x ${asset.dimensions?.height || 'n/a'} ${unit}</small></div><button type="button" data-add-stage-asset="${asset.id}">Add</button></article>`).join('') || '<p class="stage-help-text">No assets match this filter.</p>'}</div><h4>BASE STAGE TYPES</h4><div class="stage-base-stage-grid">${baseStageTypes.map((stage) => `<button class="stage-base-stage-card" aria-disabled="true" type="button"><span class="stage-base-stage-thumb" data-stage-icon-path="${stage.icon}"><img alt="" loading="lazy" hidden /><span>${stage.label.slice(0, 2).toUpperCase()}</span></span><span>${stage.label}</span></button>`).join('')}</div>`)
   }
 
-  const homeSummary = `<section class="stage-config-panel"><h3>Home</h3><div class="stage-detail-list"><div><span>Project</span><strong>${title}</strong></div><div><span>Date/Version</span><strong>${stamp} | v${state.editorProject?.version || 1}</strong></div><div><span>Stage Type</span><strong>${state.editorProject?.stageType || 'Blank Stage'}</strong></div><div><span>Status</span><strong>Foundation Preview</strong></div><div><span>Load State</span><strong>${load}</strong></div></div>${loadWarning}</section>`
+  const sessionLabel = !state.authReady ? 'Restoring session...' : state.user?.uid ? 'Signed in' : 'Sign in required'
+  const homeSummary = `<section class="stage-config-panel"><h3>Home</h3><div class="stage-detail-list"><div><span>Project</span><strong>${title}</strong></div><div><span>Date/Version</span><strong>${stamp} | v${state.editorProject?.version || 1}</strong></div><div><span>Stage Type</span><strong>${state.editorProject?.stageType || 'Blank Stage'}</strong></div><div><span>Session</span><strong>${sessionLabel}</strong></div><div><span>Load State</span><strong>${load}</strong></div></div>${loadWarning}</section>`
   const readiness = exportReadiness()
   const warnings = stageWarnings()
   const map = {
