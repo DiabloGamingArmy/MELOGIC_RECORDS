@@ -30,7 +30,7 @@ function renderEntityTable() {
       <td><div class="stage-object-row-actions">${statusBadges.map((badge) => `<span class="stage-entity-status">${badge}</span>`).join('')}<button type="button" data-focus-object="${row.id}">Focus</button></div></td>
     </tr>`
   }).join('')
-  return `<div class="stage-object-table-wrap"><table class="stage-object-data-grid"><colgroup><col class="is-state"><col class="is-name"><col class="is-kind"><col class="is-category"><col class="is-layer"><col class="is-position"><col class="is-size"><col class="is-flag"><col class="is-flag"><col class="is-linked"><col class="is-status"></colgroup><thead><tr><th></th><th>Name / Label</th><th>Kind</th><th>Category</th><th>Layer</th><th>Position</th><th>Size</th><th>Locked</th><th>Visible</th><th>Linked Data</th><th>Status</th></tr></thead><tbody>${body || '<tr><td colspan="11">No stage objects yet. Add assets from the Object Library.</td></tr>'}</tbody></table></div>`
+  return `<div class="stage-object-table-wrap"><table class="stage-object-data-grid"><colgroup><col class="is-state"><col class="is-name"><col class="is-kind"><col class="is-category"><col class="is-layer"><col class="is-position"><col class="is-size"><col class="is-flag"><col class="is-flag"><col class="is-linked"><col class="is-status"></colgroup><thead><tr><th></th><th>Name / Label</th><th>Kind</th><th>Category</th><th>Layer</th><th>Position</th><th>Size</th><th>Locked</th><th>Visible</th><th>Linked Data</th><th>Status</th></tr></thead><tbody>${body || '<tr class="is-empty"><td colspan="11">No stage objects yet. Add assets from the Object Library.</td></tr>'}</tbody></table></div>`
 }
 
 function renderLightingTable() {

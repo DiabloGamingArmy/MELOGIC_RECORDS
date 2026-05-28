@@ -852,7 +852,8 @@ service cloud.firestore {
         && plan.keys().hasOnly([
           'id','name','title','version','createdAt','updatedAt','units','stageType','stageDimensions',
           'coordinateSystem','objects','fixtures','audioInputs','rigging','video','power','layers',
-          'measurements','annotations','venue','notes','warnings','exportSettings','editorState'
+          'measurements','annotations','venue','notes','warnings','exportSettings','editorState',
+          'defaultPlanVersion'
         ])
         && (!('id' in plan) || plan.id is string)
         && (!('name' in plan) || (plan.name is string && plan.name.size() <= 120))
@@ -875,26 +876,32 @@ service cloud.firestore {
         && (!('notes' in plan) || (plan.notes is string && plan.notes.size() <= 20000))
         && (!('warnings' in plan) || (plan.warnings is list && plan.warnings.size() <= 1000))
         && (!('exportSettings' in plan) || plan.exportSettings is map)
-        && (!('editorState' in plan) || plan.editorState is map);
+        && (!('defaultPlanVersion' in plan) || plan.defaultPlanVersion is number)
+        && (!('editorState' in plan) || stageEditorStateValid(plan.editorState));
     }
 
     function stageEditorStateValid(editorState) {
       return editorState is map
         && editorState.keys().hasOnly([
-          'viewportMode','paneSizes','activeLayer','selectedObjectId','showGrid','snapEnabled',
+          'viewportMode','paneSizes','activeLayer','selectedObjectId','selectedObjectIds','showGrid','snapEnabled',
           'snapInterval','showLabels','showBeams','showViewportDiagnostics','activeStageSection',
-          'activeEditorMode','activeInspectorTab','activeDataTab','renderMode','stageTabs','activeStageTabId',
+          'activeLibraryCategory','objectLibrarySearch','editorToolMode','activeEditorMode',
+          'activeInspectorTab','activeDataTab','renderMode','stageTabs','activeStageTabId',
           'objectTransforms','savedAt'
         ])
         && (!('viewportMode' in editorState) || editorState.viewportMode in ['perspective3d','top2d','front','side','isometric'])
         && (!('paneSizes' in editorState) || editorState.paneSizes is map)
         && (!('selectedObjectId' in editorState) || editorState.selectedObjectId is string)
+        && (!('selectedObjectIds' in editorState) || (editorState.selectedObjectIds is list && editorState.selectedObjectIds.size() <= 250))
         && (!('showGrid' in editorState) || editorState.showGrid is bool)
         && (!('snapEnabled' in editorState) || editorState.snapEnabled is bool)
         && (!('snapInterval' in editorState) || (editorState.snapInterval is number && editorState.snapInterval > 0 && editorState.snapInterval <= 12))
         && (!('showLabels' in editorState) || editorState.showLabels is bool)
         && (!('showBeams' in editorState) || editorState.showBeams is bool)
         && (!('showViewportDiagnostics' in editorState) || editorState.showViewportDiagnostics is bool)
+        && (!('activeLibraryCategory' in editorState) || (editorState.activeLibraryCategory is string && editorState.activeLibraryCategory.size() <= 80))
+        && (!('objectLibrarySearch' in editorState) || (editorState.objectLibrarySearch is string && editorState.objectLibrarySearch.size() <= 120))
+        && (!('editorToolMode' in editorState) || editorState.editorToolMode in ['pan','select','move','rotate','scale'])
         && (!('renderMode' in editorState) || editorState.renderMode in ['simple','technical','beam','export-clean'])
         && (!('stageTabs' in editorState) || (editorState.stageTabs is list && editorState.stageTabs.size() <= 24))
         && (!('objectTransforms' in editorState) || editorState.objectTransforms is map)

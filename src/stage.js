@@ -221,12 +221,18 @@ function initStageEditorViewport() {
 function updateSaveStatusUI() {
   const target = app.querySelector('[data-stage-save-status]')
   if (!target) return
+  const saveErrorCode = String(state.editorSaveErrorCode || state.editorSaveError || '').toLowerCase()
+  const saveErrorLabel = saveErrorCode.includes('permission-denied') || saveErrorCode.includes('permissions')
+    ? 'permission denied'
+    : state.editorSaveError
+      ? 'see details'
+      : ''
   const label = state.editorSaveStatus === 'saving'
     ? 'Saving...'
     : state.editorSaveStatus === 'saved'
       ? `Saved${state.lastSavedAt ? ` ${new Date(state.lastSavedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}`
       : state.editorSaveStatus === 'failed'
-        ? 'Save failed'
+        ? `Save failed${saveErrorLabel ? ` — ${saveErrorLabel}` : ''}`
         : state.editorSaveStatus === 'local'
           ? state.projectLoadStatus === 'fallback-local' ? 'Local recovery active' : 'Local fallback active'
           : state.editorSaveStatus === 'unsaved'
@@ -234,6 +240,11 @@ function updateSaveStatusUI() {
             : 'Ready'
   target.textContent = label
   target.dataset.saveStatus = state.editorSaveStatus || 'idle'
+  target.title = state.editorSaveStatus === 'failed'
+    ? (saveErrorLabel === 'permission denied'
+        ? 'Your changes are stored locally. Firestore rules may need deployment.'
+        : (state.editorSaveError || 'Your changes are stored locally and will retry on the next save.'))
+    : ''
 }
 
 async function flushEditorStateSave() {
@@ -252,10 +263,12 @@ async function flushEditorStateSave() {
     await saveStageProjectEditorState(state.projectId, snapshot)
     state.editorSaveStatus = 'saved'
     state.editorSaveError = ''
+    state.editorSaveErrorCode = ''
     state.lastSavedAt = snapshot.savedAt
   } catch (error) {
     state.editorSaveStatus = 'failed'
     state.editorSaveError = error?.message || 'Stage editor state could not be saved.'
+    state.editorSaveErrorCode = error?.code || ''
     console.warn('[stage] editor state save failed; local recovery copy preserved.', error?.code || error?.message || error)
   }
   updateSaveStatusUI()
@@ -292,10 +305,12 @@ async function flushStagePlanSave() {
     await saveStageProjectPlan(state.projectId, state.editorProject, snapshot)
     state.editorSaveStatus = 'saved'
     state.editorSaveError = ''
+    state.editorSaveErrorCode = ''
     state.lastSavedAt = snapshot.savedAt
   } catch (error) {
     state.editorSaveStatus = 'failed'
     state.editorSaveError = error?.message || 'Stage plan could not be saved.'
+    state.editorSaveErrorCode = error?.code || ''
     console.warn('[stage] plan save failed; local recovery copy preserved.', error?.code || error?.message || error)
   }
   updateSaveStatusUI()
@@ -698,6 +713,8 @@ async function loadEditorProject({ reason = 'manual', force = false } = {}) {
       lastLoadedProjectId = state.projectId
       lastLoadedAuthUid = state.user?.uid || ''
       state.editorSaveStatus = project.editorState ? 'saved' : 'idle'
+      state.editorSaveError = ''
+      state.editorSaveErrorCode = ''
     }
   } catch (error) {
     if (requestId !== activeProjectLoadRequest) return
@@ -727,10 +744,13 @@ async function saveCurrentPlanAsNew() {
       editorState: snapshot
     })
     state.editorSaveStatus = 'saved'
+    state.editorSaveError = ''
+    state.editorSaveErrorCode = ''
     window.location.href = stageProjectRoute(project.id)
   } catch (error) {
     state.editorSaveStatus = 'failed'
     state.editorSaveError = error?.message || 'Could not save this stage as a new project.'
+    state.editorSaveErrorCode = error?.code || ''
     updateSaveStatusUI()
     console.warn('[stage] save as new failed.', error?.code || error?.message || error)
   }

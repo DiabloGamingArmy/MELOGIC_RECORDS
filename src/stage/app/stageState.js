@@ -132,6 +132,7 @@ export const state = {
   projectLoadErrorCode: '',
   editorSaveStatus: 'idle',
   editorSaveError: '',
+  editorSaveErrorCode: '',
   lastSavedAt: '',
   editorProject: null,
   createError: '',

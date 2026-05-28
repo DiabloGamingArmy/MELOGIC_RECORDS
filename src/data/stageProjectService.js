@@ -28,11 +28,38 @@ export function sortStageProjectsByActivity(a, b) {
   return bRank - aRank
 }
 
+function hasStageProductionRows(plan = {}) {
+  return ['fixtures', 'audioInputs', 'rigging', 'video', 'power', 'measurements', 'annotations']
+    .some((key) => Array.isArray(plan[key]) && plan[key].length > 0)
+}
+
+function ensureCleanDefaultObjects(plan = {}, raw = {}, projectId = '') {
+  if (Array.isArray(plan.objects) && plan.objects.length > 0) return plan
+  if (hasStageProductionRows(plan)) return plan
+
+  const cleanDefault = createDefaultStagePlan({
+    id: projectId || plan.id || '',
+    name: plan.title || plan.name || raw.title || raw.name || 'Untitled Stage Plan',
+    version: plan.version || raw.version || 1
+  })
+
+  return normalizeStagePlan({
+    ...plan,
+    id: projectId || plan.id || '',
+    name: plan.name || cleanDefault.name,
+    title: plan.title || cleanDefault.title,
+    stageType: plan.stageType || raw.stageType || cleanDefault.stageType,
+    stageDimensions: plan.stageDimensions || cleanDefault.stageDimensions,
+    objects: cleanDefault.objects,
+    defaultPlanVersion: cleanDefault.defaultPlanVersion
+  })
+}
+
 export function normalizeStageProject(projectId, raw = {}) {
   const legacyStageDimensions = raw.stage && typeof raw.stage === 'object'
     ? { width: raw.stage.width, depth: raw.stage.depth, deckHeight: raw.stage.deckHeight ?? raw.stage.height, unit: raw.stage.unit }
     : {}
-  const plan = normalizeStagePlan({
+  const plan = ensureCleanDefaultObjects(normalizeStagePlan({
     ...(raw.plan && typeof raw.plan === 'object' ? raw.plan : {}),
     id: projectId,
     title: raw.title,
@@ -52,7 +79,7 @@ export function normalizeStageProject(projectId, raw = {}) {
     notes: raw.notes ?? raw.plan?.notes,
     exportSettings: raw.exportSettings || raw.plan?.exportSettings,
     version: raw.version || raw.plan?.version || 1
-  })
+  }), raw, projectId)
   return {
     id: String(projectId || '').trim(),
     title: String(raw.title || '').trim().slice(0, 120) || 'Untitled Stage Plan',
