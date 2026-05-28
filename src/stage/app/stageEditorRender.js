@@ -3,7 +3,7 @@ import { renderBottomSplit } from '../bottomPanel/bottomPanel'
 import { renderExportPreview } from '../export/exportPreview'
 import { renderInspectorTabs } from '../inspector/inspectorTabs'
 import { renderLeftPanelBySection } from '../panels/leftPanels'
-import { editorModes, editorRailItems, editorViewModes, ensureStageTabs, projectDate, stageIconPath, state } from './stageState'
+import { editorModes, editorRailItems, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, projectDate, projectLoadLabel, stageIconPath, state } from './stageState'
 
 function renderEditorState(title, body) {
   return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>${title}</h2>${body}<a href="${ROUTES.stage}" class="stage-back-link">Back to Stage Projects</a></section></main>`
@@ -20,12 +20,31 @@ function renderRail() {
 
 function renderViewport() {
   const viewButtons = editorViewModes.map(([k, l]) => `<button type="button" class="${state.viewportMode === k ? 'is-active-view' : ''}" data-view-mode="${k}">${l}</button>`).join('')
-  const hint = state.viewportMode === 'top2d'
-    ? 'Top: pan/zoom • Drag unlocked objects • Arrows nudge • F focus'
-    : state.viewportMode === 'front' || state.viewportMode === 'side'
-      ? 'Planning view: pan/zoom • Arrows nudge • F focus • A frame all'
-      : '3D: orbit drag • pan right-drag • wheel zoom • arrows nudge'
-  return `<section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam Preview</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-focus-selected title="Focus selected object">Focus</button><button type="button" data-frame-all title="Frame full stage">Frame All</button><button type="button" data-toggle-measure class="${state.measureModeEnabled ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${viewButtons}</div></div><div class="stage-three-hint">${hint}</div></div></div></section>`
+  const toolButtons = editorToolModes.map((tool) => `<button type="button" data-tool-mode="${tool.key}" class="stage-tool-mode ${state.editorToolMode === tool.key ? 'is-active' : ''}" aria-pressed="${state.editorToolMode === tool.key}">${tool.label}</button>`).join('')
+  const selected = findStageObject()
+  const locked = !!selected?.locked
+  const selectedStatus = selected
+    ? `Selected: ${selected.label || selected.name || selected.id} · ${selected.category || selected.type || 'object'} · ${locked ? 'locked' : 'unlocked'}`
+    : 'No object selected'
+  const hint = locked
+    ? 'Selected object is locked. Unlock it in Properties before moving.'
+    : state.editorToolMode === 'move'
+      ? 'Move: drag selected objects on the stage plane · arrows nudge · Shift = large'
+      : state.editorToolMode === 'rotate'
+        ? 'Rotate: drag horizontally on the selected object · Rotate buttons work too'
+        : state.editorToolMode === 'scale'
+          ? 'Scale: drag horizontally or use Width / Depth / Height in Properties'
+          : state.editorToolMode === 'pan'
+            ? 'Pan/Orbit: camera controls only'
+            : state.viewportMode === 'top2d'
+              ? 'Top: choose Move to drag objects · pan right-drag · zoom wheel · F focus'
+              : state.viewportMode === 'front' || state.viewportMode === 'side'
+                ? 'Elevation: pan · zoom · F focus · A frame all'
+                : '3D: orbit drag · pan right-drag · wheel zoom · choose Move to drag'
+  const loadWarning = !['loaded', 'loading'].includes(state.projectLoadStatus)
+    ? `<div class="stage-three-load-warning">${state.projectLoadMessage || `${projectLoadLabel()}: editing local/fallback stage.`}</div>`
+    : ''
+  return `<section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><div class="stage-viewport-tool-modes">${toolButtons}</div><div class="stage-viewport-tool-toggles"><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-focus-selected title="Focus selected object">Focus</button><button type="button" data-frame-all title="Frame full stage">Frame All</button><button type="button" data-toggle-measure class="${state.measureModeEnabled ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${viewButtons}</div></div><div class="stage-viewport-status-stack">${loadWarning}<div class="stage-three-hint">${hint}</div></div><div class="stage-viewport-selected-pill">${selectedStatus}</div></div></div></section>`
 }
 
 function renderBottomPanel() {

@@ -48,6 +48,7 @@ function buildEditorStateSnapshot() {
     paneSizes: { ...state.paneSizes },
     activeLayer: 'stage',
     activeStageSection: state.activeStageSection,
+    editorToolMode: state.editorToolMode,
     activeEditorMode: normalizeEditorMode(state.activeEditorMode),
     activeInspectorTab: state.activeInspectorTab,
     activeDataTab: state.activeDataTab,
@@ -71,6 +72,7 @@ function applyEditorStateSnapshot(editorState = {}) {
   state.viewportMode = editorState.viewportMode || state.viewportMode
   state.paneSizes = { ...state.paneSizes, ...(editorState.paneSizes || {}) }
   state.activeStageSection = editorState.activeStageSection || state.activeStageSection
+  state.editorToolMode = editorState.editorToolMode || state.editorToolMode
   state.activeEditorMode = normalizeEditorMode(editorState.activeEditorMode || state.activeEditorMode)
   state.activeInspectorTab = editorState.activeInspectorTab || state.activeInspectorTab
   state.activeDataTab = editorState.activeDataTab || state.activeDataTab
@@ -140,24 +142,30 @@ function initStageEditorViewport() {
     showDiagnostics: state.showViewportDiagnostics,
     selectedObjectKey: state.selectedEditorObject,
     objectTransforms: state.editorObjectTransforms,
+    toolMode: state.editorToolMode,
     onSelectObject: (key) => {
       if (state.selectedEditorObject === key) return
       state.selectedEditorObject = key
       updateStageInspectorSelection()
       updateInspectorUI()
       updateEditorModeUI()
+      updateViewportControlUI()
       queueEditorStateSave()
     },
     onTransformObject: (key, transform) => {
       state.selectedEditorObject = key
-      state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: transform }
+      state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: { ...(state.editorObjectTransforms?.[key] || {}), ...transform } }
       if ([transform.x, transform.y, transform.z].some(Number.isFinite)) {
         moveSelectedStageObject({ x: transform.x, y: transform.y, z: transform.z }, { absolute: true })
       } else {
         if (Number.isFinite(transform.rotY)) updateSelectedStageObjectField('rotY', transform.rotY)
       }
+      ;['width', 'depth', 'height'].forEach((field) => {
+        if (Number.isFinite(transform[field])) updateSelectedStageObjectField(field, transform[field])
+      })
       updateInspectorUI()
       updateEditorModeUI()
+      updateViewportControlUI()
       queueStagePlanSave()
     },
     viewportMode: state.viewportMode,
@@ -351,8 +359,29 @@ function updateInspectorUI() {
   current.outerHTML = renderInspectorTabs(title, stamp)
 }
 
+function selectedViewportObject() {
+  return (state.editorProject?.objects || []).find((object) => object.id === state.selectedEditorObject || object.key === state.selectedEditorObject)
+}
+
+function viewportHintText() {
+  const selected = selectedViewportObject()
+  if (selected?.locked) return 'Selected object is locked. Unlock it in Properties before moving.'
+  if (state.editorToolMode === 'move') return 'Move: drag selected objects on the stage plane · arrows nudge · Shift = large'
+  if (state.editorToolMode === 'rotate') return 'Rotate: drag horizontally on the selected object · Rotate buttons work too'
+  if (state.editorToolMode === 'scale') return 'Scale: drag horizontally or use Width / Depth / Height in Properties'
+  if (state.editorToolMode === 'pan') return 'Pan/Orbit: camera controls only'
+  if (state.viewportMode === 'top2d') return 'Top: choose Move to drag objects · pan right-drag · zoom wheel · F focus'
+  if (state.viewportMode === 'front' || state.viewportMode === 'side') return 'Elevation: pan · zoom · F focus · A frame all'
+  return '3D: orbit drag · pan right-drag · wheel zoom · choose Move to drag'
+}
+
 function updateViewportControlUI() {
   app.querySelectorAll('[data-view-mode]').forEach((el) => el.classList.toggle('is-active-view', (el.dataset.viewMode || '') === state.viewportMode))
+  app.querySelectorAll('[data-tool-mode]').forEach((el) => {
+    const active = (el.dataset.toolMode || '') === state.editorToolMode
+    el.classList.toggle('is-active', active)
+    el.setAttribute('aria-pressed', String(active))
+  })
   const grid = app.querySelector('[data-toggle-grid]')
   if (grid) {
     grid.classList.toggle('is-active', state.gridEnabled)
@@ -368,6 +397,11 @@ function updateViewportControlUI() {
   const measure = app.querySelector('[data-toggle-measure]')
   if (measure) measure.classList.toggle('is-active', state.measureModeEnabled)
   app.querySelectorAll('[data-render-mode]').forEach((el) => el.classList.toggle('is-active', (el.dataset.renderMode || '') === state.renderMode))
+  const hint = app.querySelector('.stage-viewport-status-stack .stage-three-hint')
+  if (hint) hint.textContent = viewportHintText()
+  const selected = selectedViewportObject()
+  const pill = app.querySelector('.stage-viewport-selected-pill')
+  if (pill) pill.textContent = selected ? `Selected: ${selected.label || selected.name || selected.id} · ${selected.category || selected.type || 'object'} · ${selected.locked ? 'locked' : 'unlocked'}` : 'No object selected'
 }
 
 function updateEditorModeUI() {

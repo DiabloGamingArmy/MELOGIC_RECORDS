@@ -79,10 +79,11 @@ export function bindStageEditorEventsOnce(context) {
   const syncObjectSurfaces = ({ refreshViewport = false, save = true, notice = '' } = {}) => {
     syncObjectTransformCache()
     if (refreshViewport) refreshStageViewport?.()
-    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, objectTransforms: state.editorObjectTransforms })
+    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
     updateStageInspectorSelection?.()
     updateInspectorUI?.()
     updateEditorModeUI?.()
+    updateViewportControlUI?.()
     if (notice) showStageNotice?.(notice)
     if (save) queueStagePlanSave?.()
   }
@@ -129,6 +130,15 @@ export function bindStageEditorEventsOnce(context) {
   app.addEventListener('click', (e) => {
     const mode = e.target.closest('[data-editor-mode]')
     if (mode) { state.activeEditorMode = mode.dataset.editorMode || 'entities'; updateEditorModeUI(); queueEditorStateSave?.(); return }
+    const toolMode = e.target.closest('[data-tool-mode]')
+    if (toolMode) {
+      state.editorToolMode = toolMode.dataset.toolMode || 'select'
+      localStorage.setItem('stageEditorToolMode', state.editorToolMode)
+      getViewportController()?.update?.({ toolMode: state.editorToolMode })
+      updateViewportControlUI()
+      queueEditorStateSave?.()
+      return
+    }
     const addAsset = e.target.closest('[data-add-stage-asset]')
     if (addAsset) {
       const object = addStageAssetToPlan(addAsset.dataset.addStageAsset || '')
@@ -141,6 +151,7 @@ export function bindStageEditorEventsOnce(context) {
       updateInspectorUI()
       updateEditorModeUI()
       updateLeftPanelUI()
+      updateViewportControlUI()
       showStageNotice(`Added ${object.label || object.name}.`)
       queueStagePlanSave?.()
       return
@@ -229,12 +240,21 @@ export function bindStageEditorEventsOnce(context) {
     if (!menuPanel && state.stageAppMenuOpen) { state.stageAppMenuOpen = false; updateStageAppMenu() }
     const lib = e.target.closest('[data-library-category]')
     if (lib) {
-      state.activeLibraryCategory = lib.dataset.libraryCategory || 'band-backline'
-      state.selectedEditorObject = lib.dataset.selectObject || state.selectedEditorObject
-      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject })
+      state.activeLibraryCategory = lib.dataset.libraryCategory || 'all'
       updateLibraryActiveState()
+      updateLeftPanelUI()
+      queueEditorStateSave?.()
+      return
+    }
+    const focusObject = e.target.closest('[data-focus-object]')
+    if (focusObject) {
+      state.selectedEditorObject = focusObject.dataset.focusObject || state.selectedEditorObject
+      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject })
+      getViewportController()?.focusSelected?.()
       updateStageInspectorSelection()
+      updateInspectorUI()
       updateEditorModeUI()
+      updateViewportControlUI()
       queueEditorStateSave?.()
       return
     }
@@ -245,6 +265,7 @@ export function bindStageEditorEventsOnce(context) {
       updateStageInspectorSelection()
       updateInspectorUI()
       updateEditorModeUI()
+      updateViewportControlUI()
       queueEditorStateSave?.()
       return
     }
@@ -362,11 +383,12 @@ export function bindStageEditorEventsOnce(context) {
     const v = f.type === 'number' ? Number(f.value) : f.type === 'checkbox' ? !!f.checked : f.value
     updateSelectedStageObjectField(f.dataset.transformField, v)
     state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [f.dataset.transformField]: v } }
-    getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms })
+    getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
     if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(f.dataset.transformField)) {
       refreshStageViewport?.()
     }
     updateEditorModeUI()
+    updateViewportControlUI()
     queueStagePlanSave?.()
   })
 
@@ -405,9 +427,10 @@ export function bindStageEditorEventsOnce(context) {
       const v = changedTransform.type === 'number' ? Number(changedTransform.value) : changedTransform.type === 'checkbox' ? !!changedTransform.checked : changedTransform.value
       updateSelectedStageObjectField(changedTransform.dataset.transformField, v)
       state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [changedTransform.dataset.transformField]: v } }
-      getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms })
+      getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
       if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
       updateEditorModeUI()
+      updateViewportControlUI()
       queueStagePlanSave?.()
       return
     }
