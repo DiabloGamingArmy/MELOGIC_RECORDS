@@ -1,4 +1,5 @@
 import { STORAGE_PATHS } from '../../config/storagePaths'
+import { getStagePlanWarnings } from '../stagePlanModel'
 
 export const sidebarItems = ['My Projects', 'Templates', 'Asset Library', 'Shared With Me', 'Exports', 'Learn']
 export const stageTypes = ['Blank Stage', 'Small Club', 'Festival', 'Worship/Church', 'Livestream Room', 'School Auditorium']
@@ -107,6 +108,9 @@ export const state = {
   editorLoading: false,
   editorError: '',
   projectLoadStatus: 'loading',
+  projectLoadMessage: '',
+  projectLoadMeta: null,
+  projectLoadErrorCode: '',
   editorSaveStatus: 'idle',
   editorSaveError: '',
   lastSavedAt: '',
@@ -134,6 +138,8 @@ export const state = {
   renderMode: 'technical',
   activeStageTabId: 'stage-1',
   stageTabs: [{ id: 'stage-1', title: 'Untitled Stage' }],
+  undoStack: [],
+  redoStack: [],
   paneSizes: {
     library: Number(localStorage.getItem('stagePaneLibrary')) || 236,
     right: Number(localStorage.getItem('stagePaneRight')) || 286,
@@ -239,6 +245,7 @@ export function createStageObjectFromAsset(asset, overrides = {}) {
   const dimensions = { ...(asset.dimensions || {}), ...(overrides.dimensions || {}) }
   return {
     id,
+    kind: overrides.kind || asset.kind || asset.type,
     type: asset.type,
     category: asset.category,
     layer: asset.layer || asset.category || 'stage',
@@ -246,9 +253,12 @@ export function createStageObjectFromAsset(asset, overrides = {}) {
     label: overrides.label || asset.label,
     position,
     rotation: { x: 0, y: 0, z: 0, ...(overrides.rotation || {}) },
+    scale: { x: 1, y: 1, z: 1, ...(overrides.scale || {}) },
     dimensions,
     visible: true,
     locked: false,
+    selectable: true,
+    protected: false,
     color: asset.metadata?.color || overrides.color || '',
     notes: asset.metadata?.notes || '',
     metadata: { ...(asset.metadata || {}), ...(overrides.metadata || {}) }
@@ -374,11 +384,102 @@ export function selectedStageEntity() {
   return { kind: 'mock', entity: selectedEditorObject() }
 }
 
-export function updateSelectedStageObjectField(field, value) {
+const cloneData = (value) => JSON.parse(JSON.stringify(value ?? null))
+
+function syncLinkedDataForObject(object) {
+  if (!object || !state.editorProject) return
+  const syncPosition = (item) => ({ ...item, position: { ...(object.position || {}) } })
+  state.editorProject.fixtures = (state.editorProject.fixtures || []).map((fixture) => fixture.linkedObjectId === object.id ? { ...syncPosition(fixture), name: object.label || fixture.name, label: object.label || fixture.label } : fixture)
+  state.editorProject.rigging = (state.editorProject.rigging || []).map((rig) => rig.linkedObjectId === object.id ? { ...syncPosition(rig), name: object.label || rig.name, label: object.label || rig.label, height: object.position?.y ?? rig.height, span: object.dimensions?.width ?? rig.span } : rig)
+  state.editorProject.video = (state.editorProject.video || []).map((video) => video.linkedObjectId === object.id ? { ...syncPosition(video), name: object.label || video.name, label: object.label || video.label, width: object.dimensions?.width ?? video.width, height: object.dimensions?.height ?? video.height } : video)
+  state.editorProject.power = (state.editorProject.power || []).map((power) => power.linkedObjectId === object.id ? { ...syncPosition(power), name: object.label || power.name } : power)
+}
+
+function recordObjectCommand(objectId, before, after, extra = {}) {
+  if (JSON.stringify(before) === JSON.stringify(after)) return false
+  state.undoStack = [...(state.undoStack || []), { objectId, before: cloneData(before), after: cloneData(after), ...extra }].slice(-80)
+  state.redoStack = []
+  return true
+}
+
+function replaceObjectSnapshot(snapshot) {
+  if (!state.editorProject) return
+  const id = snapshot?.id
+  if (!id) return
+  const objects = state.editorProject.objects || []
+  const index = objects.findIndex((object) => object.id === id)
+  if (index >= 0) state.editorProject.objects = objects.map((object) => object.id === id ? cloneData(snapshot) : object)
+  else state.editorProject.objects = [...objects, cloneData(snapshot)]
+  syncLinkedDataForObject(snapshot)
+}
+
+function removeObjectSnapshot(objectId, { removeLinked = false } = {}) {
+  if (!state.editorProject || !objectId) return
+  state.editorProject.objects = (state.editorProject.objects || []).filter((object) => object.id !== objectId)
+  if (removeLinked) {
+    state.editorProject.audioInputs = (state.editorProject.audioInputs || []).filter((row) => row.linkedObjectId !== objectId)
+    state.editorProject.fixtures = (state.editorProject.fixtures || []).filter((row) => row.linkedObjectId !== objectId)
+    state.editorProject.rigging = (state.editorProject.rigging || []).filter((row) => row.linkedObjectId !== objectId)
+    state.editorProject.video = (state.editorProject.video || []).filter((row) => row.linkedObjectId !== objectId)
+    state.editorProject.power = (state.editorProject.power || []).filter((row) => row.linkedObjectId !== objectId)
+  }
+}
+
+function snapshotLinkedRows(objectId) {
+  const project = state.editorProject || {}
+  return {
+    audioInputs: (project.audioInputs || []).filter((row) => row.linkedObjectId === objectId).map(cloneData),
+    fixtures: (project.fixtures || []).filter((row) => row.linkedObjectId === objectId).map(cloneData),
+    rigging: (project.rigging || []).filter((row) => row.linkedObjectId === objectId).map(cloneData),
+    video: (project.video || []).filter((row) => row.linkedObjectId === objectId).map(cloneData),
+    power: (project.power || []).filter((row) => row.linkedObjectId === objectId).map(cloneData)
+  }
+}
+
+function restoreLinkedRows(snapshot = {}) {
+  if (!state.editorProject) return
+  ;['audioInputs', 'fixtures', 'rigging', 'video', 'power'].forEach((collection) => {
+    const rows = snapshot[collection] || []
+    if (!rows.length) return
+    const ids = new Set(rows.map((row) => row.id))
+    state.editorProject[collection] = [...(state.editorProject[collection] || []).filter((row) => !ids.has(row.id)), ...rows.map(cloneData)]
+  })
+}
+
+function applyCommandSnapshot(command, snapshotKey) {
+  const snapshot = command?.[snapshotKey]
+  if (snapshot) {
+    replaceObjectSnapshot(snapshot)
+    if (snapshotKey === 'before' && command.beforeLinks) restoreLinkedRows(command.beforeLinks)
+    state.selectedEditorObject = snapshot.id
+    return
+  }
+  removeObjectSnapshot(command.objectId, { removeLinked: command.removeLinked })
+  state.selectedEditorObject = 'stage-deck'
+}
+
+export function undoStageEdit() {
+  const command = state.undoStack?.pop()
+  if (!command) return false
+  applyCommandSnapshot(command, 'before')
+  state.redoStack = [...(state.redoStack || []), command]
+  return true
+}
+
+export function redoStageEdit() {
+  const command = state.redoStack?.pop()
+  if (!command) return false
+  applyCommandSnapshot(command, 'after')
+  state.undoStack = [...(state.undoStack || []), command]
+  return true
+}
+
+export function updateSelectedStageObjectField(field, value, options = {}) {
   const object = findStageObject()
   if (!object) return false
+  const before = cloneData(object)
   if (['x', 'y', 'z'].includes(field)) object.position = { ...(object.position || {}), [field]: Number(value) || 0 }
-  else if (['width', 'depth', 'height'].includes(field)) object.dimensions = { ...(object.dimensions || {}), [field]: Number(value) || 0 }
+  else if (['width', 'depth', 'height'].includes(field)) object.dimensions = { ...(object.dimensions || {}), [field]: Math.max(0.05, Number(value) || 0.05) }
   else if (field === 'rotY') object.rotation = { ...(object.rotation || {}), y: Number(value) || 0 }
   else if (field === 'label') { object.label = String(value || ''); object.name = String(value || object.name || '') }
   else if (field === 'locked') object.locked = !!value
@@ -387,45 +488,85 @@ export function updateSelectedStageObjectField(field, value) {
   else if (field === 'layer') object.layer = String(value || object.layer || object.category || 'stage')
   else if (field === 'color') object.color = String(value || '')
   else object.metadata = { ...(object.metadata || {}), [field]: value }
+  syncLinkedDataForObject(object)
+  if (options.track !== false) recordObjectCommand(object.id, before, object)
+  return true
+}
+
+function snapValue(value, interval = state.snapInterval) {
+  const snap = Number(interval)
+  if (!state.snapEnabled || !Number.isFinite(snap) || snap <= 0) return value
+  return Math.round(value / snap) * snap
+}
+
+export function moveSelectedStageObject(delta = {}, options = {}) {
+  const object = findStageObject()
+  if (!object || object.locked) return false
+  const before = cloneData(object)
+  const pos = object.position || { x: 0, y: 0, z: 0 }
+  object.position = {
+    x: options.absolute ? snapValue(Number(delta.x ?? pos.x)) : snapValue(Number(pos.x || 0) + Number(delta.x || 0)),
+    y: options.absolute ? Number(delta.y ?? pos.y ?? 0) : Number(pos.y || 0) + Number(delta.y || 0),
+    z: options.absolute ? snapValue(Number(delta.z ?? pos.z)) : snapValue(Number(pos.z || 0) + Number(delta.z || 0))
+  }
+  syncLinkedDataForObject(object)
+  recordObjectCommand(object.id, before, object)
+  return true
+}
+
+export function rotateSelectedStageObject(deltaDegrees = 0) {
+  const object = findStageObject()
+  if (!object || object.locked) return false
+  const before = cloneData(object)
+  const current = Number(object.rotation?.y || 0)
+  object.rotation = { ...(object.rotation || {}), y: current + Number(deltaDegrees || 0) }
+  syncLinkedDataForObject(object)
+  recordObjectCommand(object.id, before, object)
+  return true
+}
+
+export function resetSelectedStageObjectRotation() {
+  const object = findStageObject()
+  if (!object || object.locked) return false
+  const before = cloneData(object)
+  object.rotation = { ...(object.rotation || {}), y: 0 }
+  syncLinkedDataForObject(object)
+  recordObjectCommand(object.id, before, object)
+  return true
+}
+
+export function duplicateSelectedStageObject() {
+  const object = findStageObject()
+  if (!object) return null
+  const copy = cloneData(object)
+  const prefix = `${object.type || object.kind || 'object'}-copy`
+  copy.id = nextId(prefix, state.editorProject?.objects || [])
+  copy.name = `${object.name || object.label || 'Object'} Copy`
+  copy.label = `${object.label || object.name || 'Object'} Copy`
+  copy.locked = false
+  copy.protected = false
+  copy.position = { ...(copy.position || {}), x: Number(copy.position?.x || 0) + 1, z: Number(copy.position?.z || 0) + 1 }
+  state.editorProject.objects = [...(state.editorProject.objects || []), copy]
+  state.selectedEditorObject = copy.id
+  recordObjectCommand(copy.id, null, copy)
+  return copy
+}
+
+export function deleteSelectedStageObject() {
+  const object = findStageObject()
+  if (!object || object.protected) return false
+  const before = cloneData(object)
+  const beforeLinks = snapshotLinkedRows(object.id)
+  const removeLinked = true
+  removeObjectSnapshot(object.id, { removeLinked })
+  recordObjectCommand(object.id, before, null, { removeLinked, beforeLinks })
+  state.selectedEditorObject = 'stage-deck'
   return true
 }
 
 export function stageWarnings() {
-  const warnings = []
   const project = state.editorProject || {}
-  const dims = currentStageDimensions()
-  const halfWidth = Number(dims.width || 32) / 2
-  const halfDepth = Number(dims.depth || 24) / 2
-  ;(project.objects || []).forEach((object) => {
-    const pos = object.position || {}
-    if (Number.isFinite(pos.x) && Math.abs(pos.x) > halfWidth) warnings.push({ level: 'warning', title: `${object.label || object.name} is off stage width`, ownerId: object.id })
-    if (Number.isFinite(pos.z) && Math.abs(pos.z) > halfDepth) warnings.push({ level: 'warning', title: `${object.label || object.name} is off stage depth`, ownerId: object.id })
-    if (!object.label && !object.name) warnings.push({ level: 'warning', title: `Object ${object.id} has no label`, ownerId: object.id })
-    if (object.category === 'rigging' && !object.notes && !object.metadata?.safetyNote) warnings.push({ level: 'warning', title: `${object.label || object.name} needs rigging notes`, ownerId: object.id })
-  })
-  const inputChannels = new Map()
-  ;(project.audioInputs || []).forEach((input) => {
-    if (!input.source) warnings.push({ level: 'warning', title: `Input channel ${input.channel || '?'} has no source`, ownerId: input.id })
-    if (!input.micDi) warnings.push({ level: 'info', title: `${input.source || 'Audio input'} is missing mic/DI`, ownerId: input.id })
-    if (input.channel) {
-      const previous = inputChannels.get(input.channel)
-      if (previous) warnings.push({ level: 'error', title: `Duplicate input channel ${input.channel}: ${previous} and ${input.source || input.id}`, ownerId: input.id })
-      inputChannels.set(input.channel, input.source || input.id)
-    }
-  })
-  const dmxAddresses = new Map()
-  ;(project.fixtures || []).forEach((fixture) => {
-    const key = `${fixture.universe || 1}:${fixture.address || ''}`
-    if (!fixture.address) warnings.push({ level: 'warning', title: `${fixture.name || fixture.type} has no DMX address`, ownerId: fixture.id })
-    if (fixture.address) {
-      const previous = dmxAddresses.get(key)
-      if (previous) warnings.push({ level: 'error', title: `Duplicate DMX address U${fixture.universe || 1}:${fixture.address} (${previous} / ${fixture.name || fixture.id})`, ownerId: fixture.id })
-      dmxAddresses.set(key, fixture.name || fixture.id)
-    }
-  })
-  if (!project.venue?.name || project.venue.name === 'Blank Stage') warnings.push({ level: 'info', title: 'Venue name is not set', ownerId: 'venue' })
-  if (!(project.rigging || []).some((rig) => rig.notes)) warnings.push({ level: 'info', title: 'Rigging notes are not export-ready yet', ownerId: 'rigging' })
-  return warnings
+  return getStagePlanWarnings(project)
 }
 
 export function exportReadiness() {
@@ -525,8 +666,13 @@ export function stageEntities() {
 
 export function projectLoadLabel() {
   if (state.projectLoadStatus === 'loaded') return 'loaded'
-  if (state.projectLoadStatus === 'fallback') return 'fallback'
-  if (state.projectLoadStatus === 'error') return 'error'
+  if (state.projectLoadStatus === 'fallback-local') return 'local recovery'
+  if (state.projectLoadStatus === 'fallback-default') return 'default fallback'
+  if (state.projectLoadStatus === 'permission-denied') return 'permission denied'
+  if (state.projectLoadStatus === 'unauthenticated') return 'sign in required'
+  if (state.projectLoadStatus === 'not-found') return 'not found'
+  if (state.projectLoadStatus === 'network-error') return 'network error'
+  if (state.projectLoadStatus === 'rules-error') return 'rules error'
   return state.projectLoadStatus || 'loading'
 }
 

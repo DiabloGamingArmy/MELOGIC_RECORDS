@@ -3,9 +3,24 @@ import { db } from '../firebase/firestore'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { createDefaultStagePlan, normalizeStagePlan } from '../stage/stagePlanModel'
 
-const STAGE_PROJECTS_COLLECTION = FIRESTORE_COLLECTIONS.stageProjects || 'stageProjects'
+export const STAGE_PROJECTS_COLLECTION = FIRESTORE_COLLECTIONS.stageProjects || 'stageProjects'
 
 export const timestampToMillis = (value) => (value?.toMillis?.() || 0)
+export const stageProjectPath = (projectId = '') => `${STAGE_PROJECTS_COLLECTION}/${String(projectId || '').trim()}`
+export const isValidStageProjectId = (projectId = '') => {
+  const id = String(projectId || '').trim()
+  return id.length > 0 && id.length <= 180 && !id.includes('/')
+}
+
+export function classifyStageProjectError(error, user = null) {
+  const code = String(error?.code || error?.name || '').toLowerCase()
+  const message = String(error?.message || error || '')
+  if (!user?.uid) return 'unauthenticated'
+  if (code.includes('permission-denied') || message.includes('Missing or insufficient permissions')) return 'permission-denied'
+  if (code.includes('unavailable') || code.includes('deadline-exceeded') || code.includes('network')) return 'network-error'
+  if (code.includes('failed-precondition') || code.includes('invalid-argument')) return 'rules-error'
+  return 'fallback-default'
+}
 
 export function sortStageProjectsByActivity(a, b) {
   const aRank = timestampToMillis(a.lastOpenedAt) || timestampToMillis(a.updatedAt) || timestampToMillis(a.createdAt)
@@ -119,18 +134,24 @@ export async function listAccessibleStageProjects(uid) {
 
 export async function getStageProject(projectId) {
   const id = String(projectId || '').trim(); if (!id) return null
+  if (!isValidStageProjectId(id)) {
+    const error = new Error(`Malformed stage project id: ${id}`)
+    error.code = 'invalid-project-id'
+    throw error
+  }
   const snapshot = await getDoc(doc(db, STAGE_PROJECTS_COLLECTION, id))
   return snapshot.exists() ? normalizeStageProject(snapshot.id, snapshot.data()) : null
 }
 
-export async function createStageProject(user, input = {}) {
-  if (!user?.uid) throw new Error('A signed-in user is required.')
-  const title = String(input.title || '').trim().slice(0, 120) || 'Untitled Stage Plan'
-  const stageType = String(input.stageType || '').trim() || 'Blank Stage'
-  const plan = createDefaultStagePlan({ name: title, version: 1 })
+function buildStageProjectPayload(user, input = {}, planInput = null) {
+  const title = String(input.title || planInput?.title || planInput?.name || '').trim().slice(0, 120) || 'Untitled Stage Plan'
+  const stageType = String(input.stageType || planInput?.stageType || '').trim() || 'Blank Stage'
+  const plan = normalizeStagePlan(planInput || createDefaultStagePlan({ name: title, version: 1 }))
   plan.title = title
+  plan.name = title
   plan.stageType = stageType
-  const payload = {
+  plan.id = plan.id || ''
+  return {
     title,
     ownerId: user.uid,
     collaboratorIds: [],
@@ -154,7 +175,7 @@ export async function createStageProject(user, input = {}) {
     plan,
     notes: plan.notes || '',
     version: 1,
-    editorState: {
+    editorState: input.editorState || plan.editorState || {
       viewportMode: 'perspective3d',
       paneSizes: { library: 236, right: 286, bottom: 190, bottomSplit: 58 },
       selectedObjectId: 'stage-deck',
@@ -175,6 +196,11 @@ export async function createStageProject(user, input = {}) {
     updatedAt: serverTimestamp(),
     lastOpenedAt: serverTimestamp()
   }
+}
+
+export async function createStageProject(user, input = {}) {
+  if (!user?.uid) throw new Error('A signed-in user is required.')
+  const payload = buildStageProjectPayload(user, input)
   const ref = await addDoc(collection(db, STAGE_PROJECTS_COLLECTION), payload)
   setDoc(doc(db, 'users', user.uid, 'stageProjectIndex', ref.id), {
     projectId: ref.id,
@@ -187,6 +213,24 @@ export async function createStageProject(user, input = {}) {
     lastOpenedAt: serverTimestamp(),
     createdAt: serverTimestamp()
   }).catch((e) => console.error('[stageProjectService] index write failed', e))
+  return { id: ref.id, ...normalizeStageProject(ref.id, payload) }
+}
+
+export async function createStageProjectFromPlan(user, planInput, input = {}) {
+  if (!user?.uid) throw new Error('A signed-in user is required.')
+  const payload = buildStageProjectPayload(user, input, planInput)
+  const ref = await addDoc(collection(db, STAGE_PROJECTS_COLLECTION), payload)
+  await setDoc(doc(db, 'users', user.uid, 'stageProjectIndex', ref.id), {
+    projectId: ref.id,
+    title: payload.title,
+    ownerId: user.uid,
+    visibility: 'private',
+    type: 'stage-plan',
+    stageType: payload.stageType,
+    updatedAt: serverTimestamp(),
+    lastOpenedAt: serverTimestamp(),
+    createdAt: serverTimestamp()
+  })
   return { id: ref.id, ...normalizeStageProject(ref.id, payload) }
 }
 
@@ -203,6 +247,7 @@ export async function saveStageProjectEditorState(projectId, editorState) {
 export async function saveStageProjectPlan(projectId, plan, editorState = null) {
   const id = String(projectId || '').trim(); if (!id || !plan || typeof plan !== 'object') return
   const normalizedPlan = normalizeStagePlan({ ...plan, id })
+  if (editorState && typeof editorState === 'object') normalizedPlan.editorState = editorState
   const payload = {
     plan: normalizedPlan,
     stageDimensions: normalizedPlan.stageDimensions,

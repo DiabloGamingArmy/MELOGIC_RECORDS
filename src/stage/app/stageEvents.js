@@ -1,5 +1,17 @@
 import { ROUTES, authRoute } from '../../utils/routes'
-import { addStageAssetToPlan, state, updateSelectedStageObjectField } from './stageState'
+import {
+  addStageAssetToPlan,
+  deleteSelectedStageObject,
+  duplicateSelectedStageObject,
+  findStageObject,
+  moveSelectedStageObject,
+  redoStageEdit,
+  resetSelectedStageObjectRotation,
+  rotateSelectedStageObject,
+  state,
+  undoStageEdit,
+  updateSelectedStageObjectField
+} from './stageState'
 
 let stageEditorEventsBound = false
 
@@ -42,8 +54,77 @@ export function bindStageEditorEventsOnce(context) {
     updateStageAppMenu,
     updateStageTabsUI,
     updateStageInspectorSelection,
-    updateViewportControlUI
+    updateViewportControlUI,
+    loadEditorProject,
+    saveCurrentPlanAsNew
   } = context
+
+  const syncObjectTransformCache = () => {
+    const object = findStageObject()
+    if (!object) return
+    state.editorObjectTransforms = {
+      ...(state.editorObjectTransforms || {}),
+      [object.id]: {
+        x: object.position?.x || 0,
+        y: object.position?.y || 0,
+        z: object.position?.z || 0,
+        rotY: object.rotation?.y || 0,
+        width: object.dimensions?.width || 1,
+        depth: object.dimensions?.depth || 1,
+        height: object.dimensions?.height || 1
+      }
+    }
+  }
+
+  const syncObjectSurfaces = ({ refreshViewport = false, save = true, notice = '' } = {}) => {
+    syncObjectTransformCache()
+    if (refreshViewport) refreshStageViewport?.()
+    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, objectTransforms: state.editorObjectTransforms })
+    updateStageInspectorSelection?.()
+    updateInspectorUI?.()
+    updateEditorModeUI?.()
+    if (notice) showStageNotice?.(notice)
+    if (save) queueStagePlanSave?.()
+  }
+
+  const downloadText = (filename, text, type) => {
+    const blob = new Blob([text], { type })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const updateStageDimension = (field, rawValue) => {
+    if (!state.editorProject) return false
+    const value = field === 'unit' ? String(rawValue || 'ft') : Math.max(field === 'deckHeight' ? 0 : 1, Number(rawValue) || 0)
+    state.editorProject.stageDimensions = { ...(state.editorProject.stageDimensions || {}), [field]: value }
+    const deck = (state.editorProject.objects || []).find((object) => object.id === 'stage-deck')
+    if (deck && field !== 'unit') {
+      deck.dimensions = {
+        ...(deck.dimensions || {}),
+        ...(field === 'width' ? { width: value } : {}),
+        ...(field === 'depth' ? { depth: value } : {}),
+        ...(field === 'deckHeight' ? { height: Math.max(0.2, Number(value) * 0.25 || 1) } : {})
+      }
+    }
+    return true
+  }
+
+  const updateProductionRow = (collectionName, id, field, rawValue) => {
+    if (!state.editorProject || !id || !field) return false
+    const numeric = ['channel', 'universe', 'address', 'beamAngle']
+    state.editorProject[collectionName] = (state.editorProject[collectionName] || []).map((row) => {
+      if (row.id !== id) return row
+      const value = numeric.includes(field) ? Number(rawValue) || 0 : rawValue
+      return { ...row, [field]: value, ...(field === 'type' && collectionName === 'fixtures' ? { fixtureType: value } : {}) }
+    })
+    return true
+  }
 
   app.addEventListener('click', (e) => {
     const mode = e.target.closest('[data-editor-mode]')
@@ -62,6 +143,52 @@ export function bindStageEditorEventsOnce(context) {
       updateLeftPanelUI()
       showStageNotice(`Added ${object.label || object.name}.`)
       queueStagePlanSave?.()
+      return
+    }
+    const retryLoad = e.target.closest('[data-retry-project-load]')
+    if (retryLoad) { loadEditorProject?.(); return }
+    const saveAsNew = e.target.closest('[data-save-as-new-stage]')
+    if (saveAsNew) { saveCurrentPlanAsNew?.(); return }
+    const focusSelected = e.target.closest('[data-focus-selected]')
+    if (focusSelected) { getViewportController()?.focusSelected?.(); showStageNotice?.('Focused selected object.'); return }
+    const frameAll = e.target.closest('[data-frame-all]')
+    if (frameAll) { getViewportController()?.frameAll?.(); showStageNotice?.('Framed full stage.'); return }
+    const duplicateSelected = e.target.closest('[data-duplicate-selected]')
+    if (duplicateSelected) {
+      const copy = duplicateSelectedStageObject()
+      if (!copy) showStageNotice?.('Select an object to duplicate.')
+      else syncObjectSurfaces({ refreshViewport: true, notice: `Duplicated ${copy.label || copy.name}.` })
+      return
+    }
+    const deleteSelected = e.target.closest('[data-delete-selected]')
+    if (deleteSelected) {
+      const deleted = deleteSelectedStageObject()
+      syncObjectSurfaces({ refreshViewport: true, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
+      return
+    }
+    const rotateSelected = e.target.closest('[data-rotate-selected]')
+    if (rotateSelected) {
+      const amount = Number(rotateSelected.dataset.rotateSelected || 0)
+      const rotated = rotateSelectedStageObject(amount)
+      syncObjectSurfaces({ notice: rotated ? `Rotated ${amount > 0 ? '+' : ''}${amount} degrees.` : 'Locked object cannot rotate.', save: rotated })
+      return
+    }
+    const resetRotation = e.target.closest('[data-reset-rotation]')
+    if (resetRotation) {
+      const reset = resetSelectedStageObjectRotation()
+      syncObjectSurfaces({ notice: reset ? 'Rotation reset.' : 'Locked object cannot rotate.', save: reset })
+      return
+    }
+    const undoBtn = e.target.closest('[data-undo-stage]')
+    if (undoBtn) {
+      const ok = undoStageEdit()
+      syncObjectSurfaces({ refreshViewport: true, save: ok, notice: ok ? 'Undo.' : 'Nothing to undo.' })
+      return
+    }
+    const redoBtn = e.target.closest('[data-redo-stage]')
+    if (redoBtn) {
+      const ok = redoStageEdit()
+      syncObjectSurfaces({ refreshViewport: true, save: ok, notice: ok ? 'Redo.' : 'Nothing to redo.' })
       return
     }
     const addStageTab = e.target.closest('[data-add-stage-tab]')
@@ -116,6 +243,7 @@ export function bindStageEditorEventsOnce(context) {
       state.selectedEditorObject = selectObject.dataset.selectObject || state.selectedEditorObject
       getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject })
       updateStageInspectorSelection()
+      updateInspectorUI()
       updateEditorModeUI()
       queueEditorStateSave?.()
       return
@@ -156,8 +284,21 @@ export function bindStageEditorEventsOnce(context) {
     if (openExport) { state.showExportPreview = true; updateExportPreview(); return }
     const closeExport = e.target.closest('[data-close-export]')
     if (closeExport) { state.showExportPreview = false; updateExportPreview(); return }
+    const exportJson = e.target.closest('[data-export-json]')
+    if (exportJson) {
+      downloadText(`${state.editorProject?.title || 'stage-plan'}.json`.replace(/[^a-z0-9._-]+/gi, '-'), JSON.stringify(state.editorProject || {}, null, 2), 'application/json')
+      showStageNotice?.('StagePlan JSON exported.')
+      return
+    }
+    const exportSvg = e.target.closest('[data-export-svg]')
+    if (exportSvg) {
+      const svg = app.querySelector('[data-stage-plot-svg]')?.outerHTML || ''
+      if (!svg) showStageNotice?.('No stage plot SVG available.')
+      else downloadText(`${state.editorProject?.title || 'stage-plot'}.svg`.replace(/[^a-z0-9._-]+/gi, '-'), svg, 'image/svg+xml')
+      return
+    }
     const snap = e.target.closest('[data-toggle-snap]')
-    if (snap) { state.snapEnabled = !state.snapEnabled; updateViewportControlUI(); updateLeftPanelUI(); updateEditorModeUI(); queueEditorStateSave?.(); return }
+    if (snap) { state.snapEnabled = !state.snapEnabled; getViewportController()?.update?.({ snapEnabled: state.snapEnabled, snapInterval: state.snapInterval }); updateViewportControlUI(); updateLeftPanelUI(); updateEditorModeUI(); queueEditorStateSave?.(); return }
     const measure = e.target.closest('[data-toggle-measure]')
     if (measure) { state.measureModeEnabled = !state.measureModeEnabled; updateViewportControlUI(); showStageNotice('Measurement is preview mode only.'); queueEditorStateSave?.(); return }
     const inspectorTab = e.target.closest('[data-inspector-tab]')
@@ -175,11 +316,40 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('input', (e) => {
+    const dimension = e.target.closest('[data-stage-dimension]')
+    if (dimension) {
+      if (updateStageDimension(dimension.dataset.stageDimension, dimension.value)) {
+        refreshStageViewport?.()
+        updateEditorModeUI?.()
+        queueStagePlanSave?.()
+      }
+      return
+    }
+    const projectNotes = e.target.closest('[data-project-notes]')
+    if (projectNotes && state.editorProject) {
+      state.editorProject.notes = projectNotes.value
+      queueStagePlanSave?.()
+      return
+    }
+    const audioField = e.target.closest('[data-audio-input-field]')
+    if (audioField) {
+      if (updateProductionRow('audioInputs', audioField.dataset.rowId, audioField.dataset.audioInputField, audioField.value)) queueStagePlanSave?.()
+      return
+    }
+    const fixtureField = e.target.closest('[data-fixture-field]')
+    if (fixtureField) {
+      if (updateProductionRow('fixtures', fixtureField.dataset.rowId, fixtureField.dataset.fixtureField, fixtureField.value)) {
+        queueStagePlanSave?.()
+        if (['address', 'universe', 'type', 'name'].includes(fixtureField.dataset.fixtureField)) updateInspectorUI?.()
+      }
+      return
+    }
     const snapInterval = e.target.closest('[data-snap-interval]')
     if (snapInterval) {
       const next = Number(snapInterval.value)
       if (Number.isFinite(next) && next > 0) {
         state.snapInterval = next
+        getViewportController()?.update?.({ snapEnabled: state.snapEnabled, snapInterval: state.snapInterval })
         updateEditorModeUI()
         queueEditorStateSave?.()
       }
@@ -193,7 +363,7 @@ export function bindStageEditorEventsOnce(context) {
     updateSelectedStageObjectField(f.dataset.transformField, v)
     state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [f.dataset.transformField]: v } }
     getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms })
-    if (['label', 'visible', 'locked', 'notes', 'layer', 'color'].includes(f.dataset.transformField)) {
+    if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(f.dataset.transformField)) {
       refreshStageViewport?.()
     }
     updateEditorModeUI()
@@ -201,6 +371,33 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('change', (e) => {
+    const dimension = e.target.closest('[data-stage-dimension]')
+    if (dimension) {
+      if (updateStageDimension(dimension.dataset.stageDimension, dimension.value)) {
+        refreshStageViewport?.()
+        updateEditorModeUI?.()
+        queueStagePlanSave?.()
+      }
+      return
+    }
+    const audioField = e.target.closest('[data-audio-input-field]')
+    if (audioField) {
+      if (updateProductionRow('audioInputs', audioField.dataset.rowId, audioField.dataset.audioInputField, audioField.value)) {
+        updateEditorModeUI?.()
+        queueStagePlanSave?.()
+      }
+      return
+    }
+    const fixtureField = e.target.closest('[data-fixture-field]')
+    if (fixtureField) {
+      if (updateProductionRow('fixtures', fixtureField.dataset.rowId, fixtureField.dataset.fixtureField, fixtureField.value)) {
+        refreshStageViewport?.()
+        updateEditorModeUI?.()
+        updateInspectorUI?.()
+        queueStagePlanSave?.()
+      }
+      return
+    }
     const changedTransform = e.target.closest('[data-transform-field]')
     if (changedTransform) {
       const key = state.selectedEditorObject
@@ -209,7 +406,7 @@ export function bindStageEditorEventsOnce(context) {
       updateSelectedStageObjectField(changedTransform.dataset.transformField, v)
       state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [changedTransform.dataset.transformField]: v } }
       getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms })
-      if (['label', 'visible', 'locked', 'notes', 'layer', 'color'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
+      if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
       updateEditorModeUI()
       queueStagePlanSave?.()
       return
@@ -300,6 +497,54 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   document.addEventListener('keydown', (e) => {
+    const tag = e.target?.tagName?.toLowerCase?.()
+    const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable
+    if (!typing && !e.defaultPrevented) {
+      const nudgeBase = e.shiftKey ? 2 : e.altKey ? 0.25 : state.snapEnabled ? state.snapInterval : 0.5
+      const axis = { ArrowLeft: ['x', -nudgeBase], ArrowRight: ['x', nudgeBase], ArrowUp: ['z', -nudgeBase], ArrowDown: ['z', nudgeBase], PageUp: ['y', nudgeBase], PageDown: ['y', -nudgeBase] }[e.key]
+      if (axis) {
+        e.preventDefault()
+        const moved = moveSelectedStageObject({ [axis[0]]: axis[1] })
+        syncObjectSurfaces({ save: moved, notice: moved ? '' : 'Locked object cannot move.' })
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        const ok = e.shiftKey ? redoStageEdit() : undoStageEdit()
+        syncObjectSurfaces({ refreshViewport: true, save: ok, notice: ok ? (e.shiftKey ? 'Redo.' : 'Undo.') : 'Nothing to undo.' })
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        const copy = duplicateSelectedStageObject()
+        syncObjectSurfaces({ refreshViewport: true, save: !!copy, notice: copy ? `Duplicated ${copy.label || copy.name}.` : 'Select an object to duplicate.' })
+        return
+      }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        const deleted = deleteSelectedStageObject()
+        syncObjectSurfaces({ refreshViewport: true, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
+        return
+      }
+      if (e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        getViewportController()?.focusSelected?.()
+        showStageNotice?.('Focused selected object.')
+        return
+      }
+      if (e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        getViewportController()?.frameAll?.()
+        showStageNotice?.('Framed full stage.')
+        return
+      }
+      if (e.key.toLowerCase() === 'r') {
+        e.preventDefault()
+        const rotated = rotateSelectedStageObject(e.shiftKey ? -15 : 15)
+        syncObjectSurfaces({ save: rotated, notice: rotated ? 'Rotated selected object.' : 'Locked object cannot rotate.' })
+        return
+      }
+    }
     if (e.key === 'Escape' && state.stageAppMenuOpen) {
       state.stageAppMenuOpen = false
       updateStageAppMenu()

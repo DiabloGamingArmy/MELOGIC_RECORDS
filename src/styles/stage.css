@@ -351,7 +351,7 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-editor-table-panel h4{margin:0 0 6px}
 .stage-editor-table-panel table{margin:0;table-layout:fixed}
 .stage-three-runtime-status{position:absolute;left:8px;top:8px;z-index:8;padding:4px 8px;font-size:10px;border:1px solid rgba(255,160,120,.5);background:rgba(25,10,6,.88);color:#ffd0b9;pointer-events:none}
-.stage-three-load-warning{position:absolute;left:10px;bottom:10px;z-index:8;padding:6px 10px;font-size:11px;border:1px solid rgba(255,186,102,.55);background:rgba(40,24,6,.88);color:#ffd7a3;border-radius:4px;pointer-events:none}
+.stage-three-load-warning{position:absolute;left:10px;bottom:42px;z-index:8;max-width:min(420px,calc(100% - 20px));padding:6px 10px;font-size:11px;border:1px solid rgba(255,186,102,.55);background:rgba(40,24,6,.88);color:#ffd7a3;border-radius:4px;pointer-events:none}
 .stage-editor-library-tools{display:grid;grid-template-columns:minmax(0,1fr) 36px;gap:6px}
 .stage-object-grid{grid-template-columns:repeat(auto-fit,minmax(58px,1fr))}
 .stage-base-stage-grid{grid-template-columns:repeat(auto-fit,minmax(96px,1fr))}
@@ -370,15 +370,16 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-editor-tab-actions .is-active-view{border-color:var(--stage-accent)!important;background:var(--stage-accent-soft)!important;color:#d9ffff!important}
 .stage-transform-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}.stage-transform-grid label{display:grid;gap:2px;font-size:10px}.stage-transform-grid input,.stage-transform-grid textarea{height:24px;background:#0d1016;border:1px solid var(--stage-border);color:var(--stage-text);font-size:11px}.stage-transform-grid textarea{height:42px}
 .stage-transform-grid .stage-transform-notes{grid-column:1/-1}
+.stage-object-command-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:8px}.stage-object-command-row button{height:26px;border:1px solid rgba(106,126,160,.45);background:#172034;color:#d6e5ff;border-radius:4px;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.stage-object-command-row button:hover{border-color:var(--stage-accent);background:rgba(34,184,181,.14);color:#eaffff}
 .stage-export-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:100}.stage-export-sheet{width:min(900px,90vw);max-height:90vh;overflow:auto;background:var(--stage-panel-2);border:1px solid var(--stage-border-strong);padding:12px}.stage-export-drawing{height:220px;border:1px solid var(--stage-border);margin:8px 0;background:linear-gradient(transparent 23px,rgba(255,255,255,.04) 24px),linear-gradient(90deg,transparent 23px,rgba(255,255,255,.04) 24px)}.stage-export-actions{display:flex;gap:6px;flex-wrap:wrap}
 
 /* Stage interaction wiring pass */
 .stage-viewport-overlay{position:absolute;inset:0;z-index:6;pointer-events:none}
 .stage-viewport-tools,.stage-viewport-view-modes{pointer-events:auto;display:flex;align-items:center;gap:6px;background:rgba(8,12,20,.76);border:1px solid rgba(93,115,152,.45);padding:6px 8px;border-radius:6px}
-.stage-viewport-tools{position:absolute;top:10px;left:10px}
+.stage-viewport-tools{position:absolute;top:10px;left:10px;right:360px;max-width:calc(100% - 380px);flex-wrap:wrap;align-content:flex-start}
 .stage-viewport-view-modes{position:absolute;top:10px;right:10px}
 .stage-viewport-tools span,.stage-viewport-view-modes span{font-size:10px;letter-spacing:.08em;color:rgba(230,240,255,.8)}
-.stage-viewport-tools button,.stage-viewport-view-modes button{height:24px;padding:0 8px;background:#172034;border:1px solid rgba(106,126,160,.45);color:#d6e5ff;border-radius:4px}
+.stage-viewport-tools button,.stage-viewport-view-modes button{height:24px;padding:0 8px;background:#172034;border:1px solid rgba(106,126,160,.45);color:#d6e5ff;border-radius:4px;white-space:nowrap}
 .stage-viewport-tools button.is-active,.stage-viewport-view-modes button.is-active-view{border-color:var(--stage-accent);background:rgba(34,184,181,.18);color:#e7ffff}
 
 .stage-editor-bottom{display:flex;flex-direction:column;min-height:0;overflow:hidden}
@@ -480,8 +481,10 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-input-table{min-width:760px}
 .stage-entity-table th,.stage-entity-table td,.stage-input-table th,.stage-input-table td{border:1px solid var(--stage-border);padding:5px 7px;text-align:left;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stage-entity-table th,.stage-input-table th{height:24px;color:#b9c9e8;background:rgba(255,255,255,.035);font-size:10px;letter-spacing:.07em;text-transform:uppercase}
+.stage-input-table input{width:100%;height:22px;border:0;background:transparent;color:#e7f0ff;font:inherit;min-width:0}.stage-input-table input:focus{outline:1px solid rgba(34,184,181,.55);background:rgba(34,184,181,.08)}
 .stage-entity-table tr{cursor:pointer}
 .stage-entity-table tbody tr:hover{background:rgba(34,184,181,.08)}
+.stage-entity-table tbody tr.is-selected{background:rgba(34,184,181,.16);outline:1px solid rgba(34,184,181,.36);outline-offset:-1px}
 .stage-entity-table td:first-child{display:grid;gap:1px}
 .stage-entity-table strong{min-width:0;overflow:hidden;text-overflow:ellipsis;color:#edf6ff;font-size:12px}
 .stage-entity-table small{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--stage-muted);font-size:10px}
@@ -517,6 +520,7 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-export-packet-grid h4{margin-bottom:5px;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
 .stage-export-stage-rect{height:100%;display:grid;place-items:center;margin:12px;border:1px solid rgba(34,184,181,.55);background:rgba(34,184,181,.06)}
 .stage-export-stage-rect span{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#d7ffff}
+.stage-load-recovery{display:grid;gap:6px}.stage-plot-preview{min-height:180px;border:1px solid var(--stage-border);background:#090e16;display:grid;place-items:stretch;overflow:hidden}.stage-plot-svg{display:block;width:100%;height:100%;min-height:180px;background:#090e16}.stage-export-drawing .stage-plot-svg{height:220px;min-height:220px}
 .stage-save-pill{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid rgba(106,126,160,.35);border-radius:999px;background:rgba(255,255,255,.035);color:var(--stage-muted);font-size:10px;white-space:nowrap}
 .stage-save-pill[data-save-status="unsaved"]{color:#ffd8a8;border-color:rgba(255,186,102,.35)}
 .stage-save-pill[data-save-status="saving"]{color:#d6e5ff}
