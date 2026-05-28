@@ -71,6 +71,7 @@ export function mountStageThreeViewport(container, options = {}) {
     const formatNum = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : 'n/a'
     let currentViewMode = options.viewportMode || 'perspective3d'
     let currentRenderMode = options.renderMode || 'technical'
+    let currentToolMode = options.toolMode || 'select'
     let currentShowBeams = options.showBeams !== false
     let currentShowLabels = options.showLabels !== false
     let currentSnapEnabled = options.snapEnabled !== false
@@ -226,18 +227,37 @@ export function mountStageThreeViewport(container, options = {}) {
     let selectedKey = objects[options.selectedObjectKey] ? options.selectedObjectKey : 'stage-deck'
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
-    const drag = { active: false, key: '', pointerId: 0, plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), offset: new THREE.Vector3(), point: new THREE.Vector3() }
+    const drag = {
+      active: false,
+      mode: '',
+      key: '',
+      pointerId: 0,
+      startX: 0,
+      startRotY: 0,
+      startScale: new THREE.Vector3(1, 1, 1),
+      startSize: [1, 1, 1],
+      scaleFactor: 1,
+      plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
+      offset: new THREE.Vector3(),
+      point: new THREE.Vector3()
+    }
     const syncSelection = () => {
       pickables.forEach((m) => {
         const active = m.userData.objectKey === selectedKey
         if (m.material?.emissive) { m.material.emissive.set(active ? '#1ca8a3' : '#000000'); m.material.emissiveIntensity = active ? 0.3 : 0 }
       })
       const target = objects[selectedKey]
-      if (!target) return
-      gizmo.visible = true
+      if (!target) {
+        gizmo.visible = false
+        boxHelper?.removeFromParent()
+        selectedLabel?.removeFromParent()
+        return
+      }
+      gizmo.visible = currentToolMode === 'move' && !target.userData.stageLocked
       gizmo.position.copy(target.position)
       boxHelper?.removeFromParent(); boxHelper = new THREE.BoxHelper(target, '#5ce9ff'); scene.add(boxHelper)
-      try { selectedLabel?.removeFromParent(); selectedLabel = makeLabel(target.userData.objectKey, [target.position.x, target.position.y + 1.8, target.position.z], '#6bdcff'); scene.add(selectedLabel) } catch (e) { console.warn('[stageThreeViewport] label render skipped', e) }
+      const label = objectMeta[target.userData.objectKey]?.label || target.userData.objectKey
+      try { selectedLabel?.removeFromParent(); selectedLabel = makeLabel(label, [target.position.x, target.position.y + 1.8, target.position.z], '#6bdcff'); scene.add(selectedLabel) } catch (e) { console.warn('[stageThreeViewport] label render skipped', e) }
     }
     const setSelectedKey = (nextKey, { notify = false } = {}) => {
       if (!nextKey || !objects[nextKey]) return
@@ -308,18 +328,33 @@ export function mountStageThreeViewport(container, options = {}) {
       const rect = renderer.domElement.getBoundingClientRect(); pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1; pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
       const hit = raycaster.intersectObjects(pickables, true).find((h) => h.object?.userData?.objectKey || h.object?.parent?.userData?.objectKey)
-      if (!hit) return
-      const hitKey = hit.object.userData.objectKey || hit.object.parent.userData.objectKey
+      if (!hit && !['move', 'rotate', 'scale'].includes(currentToolMode)) return
+      let hitKey = hit ? (hit.object.userData.objectKey || hit.object.parent.userData.objectKey) : selectedKey
+      if (!hitKey || !objects[hitKey]) return
+      const selectedTarget = objects[selectedKey]
+      const hitTarget = objects[hitKey]
+      if (['move', 'rotate', 'scale'].includes(currentToolMode) && hitTarget?.userData?.stageLocked && selectedTarget && !selectedTarget.userData?.stageLocked) {
+        hitKey = selectedKey
+      }
       setSelectedKey(hitKey, { notify: true })
       const target = objects[hitKey]
-      if (currentViewMode !== 'top2d' || target?.userData?.stageLocked) return
+      if (!target || target.userData?.stageLocked || !['move', 'rotate', 'scale'].includes(currentToolMode)) return
       drag.active = true
+      drag.mode = currentToolMode
       drag.key = hitKey
       drag.pointerId = event.pointerId
-      drag.plane.set(new THREE.Vector3(0, 1, 0), -target.position.y)
-      raycaster.ray.intersectPlane(drag.plane, drag.point)
-      drag.offset.copy(target.position).sub(drag.point)
+      drag.startX = event.clientX
+      drag.startRotY = THREE.MathUtils.radToDeg(target.rotation.y || 0)
+      drag.startScale.copy(target.scale || new THREE.Vector3(1, 1, 1))
+      drag.startSize = objectMeta[hitKey]?.size || [1, 1, 1]
+      drag.scaleFactor = 1
+      if (currentToolMode === 'move') {
+        drag.plane.set(new THREE.Vector3(0, 1, 0), -target.position.y)
+        raycaster.ray.intersectPlane(drag.plane, drag.point)
+        drag.offset.copy(target.position).sub(drag.point)
+      }
       controls.enabled = false
+      event.preventDefault()
       renderer.domElement.setPointerCapture?.(event.pointerId)
     }
     const onPointerMove = (event) => {
@@ -328,9 +363,19 @@ export function mountStageThreeViewport(container, options = {}) {
       if (!target) return
       const rect = renderer.domElement.getBoundingClientRect(); pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1; pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
       raycaster.setFromCamera(pointer, camera)
-      if (!raycaster.ray.intersectPlane(drag.plane, drag.point)) return
-      target.position.x = snapNumber(drag.point.x + drag.offset.x)
-      target.position.z = snapNumber(drag.point.z + drag.offset.z)
+      if (drag.mode === 'move') {
+        if (!raycaster.ray.intersectPlane(drag.plane, drag.point)) return
+        target.position.x = snapNumber(drag.point.x + drag.offset.x)
+        target.position.z = snapNumber(drag.point.z + drag.offset.z)
+      }
+      if (drag.mode === 'rotate') {
+        const nextRot = drag.startRotY + ((event.clientX - drag.startX) * 0.35)
+        target.rotation.y = THREE.MathUtils.degToRad(snapNumber(nextRot))
+      }
+      if (drag.mode === 'scale') {
+        drag.scaleFactor = Math.max(0.2, Math.min(4, 1 + ((event.clientX - drag.startX) / 180)))
+        target.scale.set(drag.startScale.x * drag.scaleFactor, drag.startScale.y * drag.scaleFactor, drag.startScale.z * drag.scaleFactor)
+      }
       gizmo.position.copy(target.position)
       boxHelper?.update()
       selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
@@ -342,7 +387,19 @@ export function mountStageThreeViewport(container, options = {}) {
       drag.active = false
       controls.enabled = true
       renderer.domElement.releasePointerCapture?.(event.pointerId || drag.pointerId)
-      if (target) options.onTransformObject?.(drag.key, { x: target.position.x, y: target.position.y, z: target.position.z })
+      if (target) {
+        const transform = drag.mode === 'rotate'
+          ? { rotY: THREE.MathUtils.radToDeg(target.rotation.y || 0) }
+          : drag.mode === 'scale'
+            ? {
+                width: Math.max(0.05, Number(drag.startSize[0] || 1) * drag.scaleFactor),
+                height: Math.max(0.05, Number(drag.startSize[1] || 1) * drag.scaleFactor),
+                depth: Math.max(0.05, Number(drag.startSize[2] || 1) * drag.scaleFactor)
+              }
+            : { x: target.position.x, y: target.position.y, z: target.position.z }
+        options.onTransformObject?.(drag.key, transform)
+      }
+      drag.mode = ''
     }
     const onKeyDown = (event) => {
       const obj = objects[selectedKey]; if (!obj) return
@@ -358,12 +415,6 @@ export function mountStageThreeViewport(container, options = {}) {
     const diagnosticsEnabled = SHOW_VIEWPORT_DIAGNOSTICS || !!options.showDiagnostics
     statusOverlay.hidden = !diagnosticsEnabled
     container.appendChild(statusOverlay)
-    if (options.projectLoadStatus && !['loaded', 'loading'].includes(options.projectLoadStatus)) {
-      const warning = document.createElement('div')
-      warning.className = 'stage-three-load-warning'
-      warning.textContent = options.projectLoadMessage || 'Project data failed to load. Editing fallback stage.'
-      container.appendChild(warning)
-    }
     const writeStatus = (message = '') => {
       const canvas = renderer.domElement
       const buf = renderer.getDrawingBufferSize(new THREE.Vector2())
@@ -420,6 +471,10 @@ export function mountStageThreeViewport(container, options = {}) {
       if (typeof nextOptions.showLabels === 'boolean') currentShowLabels = nextOptions.showLabels
       if (typeof nextOptions.snapEnabled === 'boolean') currentSnapEnabled = nextOptions.snapEnabled
       if (Number.isFinite(Number(nextOptions.snapInterval))) currentSnapInterval = Number(nextOptions.snapInterval)
+      if (typeof nextOptions.toolMode === 'string') {
+        currentToolMode = nextOptions.toolMode || 'select'
+        syncSelection()
+      }
       if (nextOptions.renderMode) {
         currentRenderMode = nextOptions.renderMode
       }

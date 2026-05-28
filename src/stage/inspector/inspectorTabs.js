@@ -9,6 +9,10 @@ import {
 } from '../app/stageState'
 
 const numberValue = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback
+const formatNumber = (value, fallback = 0) => {
+  const number = numberValue(value, fallback)
+  return Number.isFinite(number) ? Number(number.toFixed(2)).toString() : String(fallback)
+}
 
 function selectedObjectRecord() {
   const selected = selectedStageEntity()
@@ -43,15 +47,24 @@ export function selectedEditorObjectMarkup() {
   const y = t.y ?? numberValue(position.y)
   const z = t.z ?? numberValue(position.z)
   const rotY = t.rotY ?? numberValue(rotation.y)
+  const display = {
+    width: formatNumber(width),
+    depth: formatNumber(depth),
+    height: formatNumber(height),
+    x: formatNumber(x),
+    y: formatNumber(y),
+    z: formatNumber(z),
+    rotY: formatNumber(rotY)
+  }
   const rows = [
     ['Selected', selected.label || selected.name],
     ['Type', selected.type || 'Object'],
     ['Category', selected.category || 'stage'],
     ['Layer', selected.layer || selected.category || 'stage'],
-    ['Position', `X ${x} / Y ${y} / Z ${z}`],
-    ['Dimensions', `${width || 'n/a'} x ${depth || 'n/a'} x ${height || 'n/a'}`]
+    ['Position', `X ${display.x} / Y ${display.y} / Z ${display.z}`],
+    ['Dimensions', `${display.width || 'n/a'} x ${display.depth || 'n/a'} x ${display.height || 'n/a'}`]
   ]
-  return `<div class="stage-readout-grid">${rows.map(([k, v]) => `<div><span>${String(k).toUpperCase()}</span><strong>${v}</strong></div>`).join('')}</div><div class="stage-object-command-row"><button type="button" data-focus-selected>Focus</button><button type="button" data-rotate-selected="-15">Rotate -15</button><button type="button" data-rotate-selected="15">Rotate +15</button><button type="button" data-reset-rotation>Reset Rot</button><button type="button" data-duplicate-selected>Duplicate</button><button type="button" data-delete-selected>Delete</button></div><div class="stage-transform-grid"><label>X<input data-transform-field="x" type="number" step="0.1" value="${x}"></label><label>Y<input data-transform-field="y" type="number" step="0.1" value="${y}"></label><label>Z<input data-transform-field="z" type="number" step="0.1" value="${z}"></label><label>Width<input data-transform-field="width" type="number" min="0.05" step="0.1" value="${width || 0}"></label><label>Depth<input data-transform-field="depth" type="number" min="0.05" step="0.1" value="${depth || 0}"></label><label>Height<input data-transform-field="height" type="number" min="0.05" step="0.1" value="${height || 0}"></label><label>Rotation<input data-transform-field="rotY" type="number" step="1" value="${rotY}"></label><label>Label<input data-transform-field="label" type="text" value="${t.label || selected.label || selected.name || ''}"></label><label>Layer<select data-transform-field="layer">${stageLayers.map((layer) => `<option value="${layer}" ${(selected.layer || selected.category) === layer ? 'selected' : ''}>${layer}</option>`).join('')}</select></label><label>Color<input data-transform-field="color" type="color" value="${selected.color || selected.metadata?.color || '#22b8b5'}"></label><label class="stage-editor-check"><input data-transform-field="locked" type="checkbox" ${selected.locked ? 'checked' : ''}> Locked</label><label class="stage-editor-check"><input data-transform-field="visible" type="checkbox" ${selected.visible === false ? '' : 'checked'}> Visible</label><label class="stage-transform-notes">Notes<textarea data-transform-field="notes">${t.notes || selected.notes || ''}</textarea></label></div>`
+  return `<div class="stage-readout-grid">${rows.map(([k, v]) => `<div><span>${String(k).toUpperCase()}</span><strong>${v}</strong></div>`).join('')}</div><div class="stage-object-command-row"><button type="button" data-focus-selected>Focus</button><button type="button" data-rotate-selected="-15">Rotate -15</button><button type="button" data-rotate-selected="15">Rotate +15</button><button type="button" data-reset-rotation>Reset Rot</button><button type="button" data-duplicate-selected>Duplicate</button><button type="button" data-delete-selected>Delete</button></div><div class="stage-transform-grid"><label>X<input data-transform-field="x" type="number" step="0.1" value="${display.x}"></label><label>Y<input data-transform-field="y" type="number" step="0.1" value="${display.y}"></label><label>Z<input data-transform-field="z" type="number" step="0.1" value="${display.z}"></label><label>Width<input data-transform-field="width" type="number" min="0.05" step="0.1" value="${display.width || 0}"></label><label>Depth<input data-transform-field="depth" type="number" min="0.05" step="0.1" value="${display.depth || 0}"></label><label>Height<input data-transform-field="height" type="number" min="0.05" step="0.1" value="${display.height || 0}"></label><label>Rotation<input data-transform-field="rotY" type="number" step="1" value="${display.rotY}"></label><label>Label<input data-transform-field="label" type="text" value="${t.label || selected.label || selected.name || ''}"></label><label>Layer<select data-transform-field="layer">${stageLayers.map((layer) => `<option value="${layer}" ${(selected.layer || selected.category) === layer ? 'selected' : ''}>${layer}</option>`).join('')}</select></label><label>Color<input data-transform-field="color" type="color" value="${selected.color || selected.metadata?.color || '#22b8b5'}"></label><label class="stage-editor-check"><input data-transform-field="locked" type="checkbox" ${selected.locked ? 'checked' : ''}> Locked</label><label class="stage-editor-check"><input data-transform-field="visible" type="checkbox" ${selected.visible === false ? '' : 'checked'}> Visible</label><label class="stage-transform-notes">Notes<textarea data-transform-field="notes">${t.notes || selected.notes || ''}</textarea></label></div>`
 }
 
 function renderDataTab() {

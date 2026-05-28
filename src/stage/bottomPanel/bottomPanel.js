@@ -1,4 +1,4 @@
-import { currentStageDimensions, editorMockObjects, exportReadiness, selectedEditorObject, stageEntities, stageWarnings, state, viewportModeLabel } from '../app/stageState'
+import { currentStageDimensions, exportReadiness, selectedEditorObject, stageEntities, stageObjectsForTable, stageWarnings, state, viewportModeLabel } from '../app/stageState'
 import { renderStagePlotSvg } from '../export/exportPreview'
 
 function renderInputListTable() {
@@ -16,9 +16,31 @@ function renderInputListTable() {
   return `<table class="stage-input-table"><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Patch</th><th>Location</th><th>Notes</th></tr></thead><tbody>${rows.map((row) => `<tr data-select-object="${row.linkedObjectId || row.id || ''}"><td>✓</td><td><input data-audio-input-field="channel" data-row-id="${row.id || ''}" type="number" min="1" value="${row.channel || ''}"></td><td><input data-audio-input-field="source" data-row-id="${row.id || ''}" value="${row.source || ''}"></td><td><input data-audio-input-field="micDi" data-row-id="${row.id || ''}" value="${row.micDi || row.mic || ''}"></td><td><input data-audio-input-field="stand" data-row-id="${row.id || ''}" value="${row.stand || 'N/A'}"></td><td><input data-audio-input-field="patch" data-row-id="${row.id || ''}" value="${row.patch || ''}"></td><td><input data-audio-input-field="stageLocation" data-row-id="${row.id || ''}" value="${row.stageLocation || row.location || ''}"></td><td><input data-audio-input-field="notes" data-row-id="${row.id || ''}" value="${row.notes || ''}"></td></tr>`).join('')}</tbody></table>`
 }
 
+const fmt = (value, digits = 1) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '0.0'
+
 function renderEntityTable() {
-  const rows = stageEntities()
-  return `<table class="stage-entity-table"><thead><tr><th>Entity</th><th>Kind</th><th>Category</th><th>Location</th><th>Size / Patch</th><th>Status</th></tr></thead><tbody>${rows.map((row) => `<tr data-select-object="${row.id || ''}" class="${row.id === state.selectedEditorObject ? 'is-selected' : ''}"><td><strong>${row.name || 'Untitled'}</strong><small>${row.id || ''}</small></td><td>${row.kind || 'Object'}</td><td>${row.category || 'stage'}</td><td>${row.location || 'not placed'}</td><td>${row.size || 'n/a'}</td><td><span class="stage-entity-status">${row.status || 'active'}</span></td></tr>`).join('')}</tbody></table>`
+  const rows = stageObjectsForTable()
+  const body = rows.map((row) => {
+    const linked = row.linkedData.length ? row.linkedData.join(', ') : 'none'
+    const statusBadges = [
+      row.status,
+      row.warnings ? `${row.warnings} warning${row.warnings === 1 ? '' : 's'}` : ''
+    ].filter(Boolean)
+    return `<tr data-select-object="${row.id || ''}" class="${row.id === state.selectedEditorObject ? 'is-selected' : ''}">
+      <td><span class="stage-row-dot ${row.visible ? 'is-visible' : 'is-hidden'}"></span></td>
+      <td class="stage-object-name"><strong>${row.name || 'Untitled'}</strong><small>${row.id || ''}</small></td>
+      <td>${row.kind || row.type || 'object'}</td>
+      <td>${row.category || 'stage'}</td>
+      <td>${row.layer || 'stage'}</td>
+      <td>X ${fmt(row.position.x)} / Y ${fmt(row.position.y)} / Z ${fmt(row.position.z)}</td>
+      <td>${fmt(row.dimensions.width)} x ${fmt(row.dimensions.depth)} x ${fmt(row.dimensions.height)}</td>
+      <td><span class="stage-entity-status ${row.locked ? 'is-locked' : 'is-open'}">${row.locked ? 'locked' : 'open'}</span></td>
+      <td><span class="stage-entity-status ${row.visible ? 'is-visible' : 'is-hidden'}">${row.visible ? 'visible' : 'hidden'}</span></td>
+      <td>${linked}</td>
+      <td><div class="stage-object-row-actions">${statusBadges.map((badge) => `<span class="stage-entity-status">${badge}</span>`).join('')}<button type="button" data-focus-object="${row.id}">Focus</button></div></td>
+    </tr>`
+  }).join('')
+  return `<div class="stage-object-table-wrap"><table class="stage-object-data-grid"><colgroup><col class="is-state"><col class="is-name"><col class="is-kind"><col class="is-category"><col class="is-layer"><col class="is-position"><col class="is-size"><col class="is-flag"><col class="is-flag"><col class="is-linked"><col class="is-status"></colgroup><thead><tr><th></th><th>Name / Label</th><th>Kind</th><th>Category</th><th>Layer</th><th>Position</th><th>Size</th><th>Locked</th><th>Visible</th><th>Linked Data</th><th>Status</th></tr></thead><tbody>${body || '<tr><td colspan="11">No stage objects yet. Add assets from the Object Library.</td></tr>'}</tbody></table></div>`
 }
 
 function renderLightingTable() {
@@ -55,7 +77,7 @@ function renderDataPane() {
   const tabs = [['schema', 'Schema'], ['signal', 'Signal Flow'], ['patch', 'Patch Graph'], ['object', 'Object Graph'], ['export', 'Export Readiness']]
   const dims = currentStageDimensions()
   const unit = dims.unit || state.editorProject?.units || 'ft'
-  const objectCount = Math.max(editorMockObjects.length, state.editorProject?.objects?.length || 0)
+  const objectCount = stageObjectsForTable().length
   const fixtureCount = state.editorProject?.fixtures?.length || 0
   const audioCount = state.editorProject?.audioInputs?.length || 0
   const riggingCount = state.editorProject?.rigging?.length || 0
@@ -67,7 +89,7 @@ function renderDataPane() {
       : state.activeDataTab === 'patch'
         ? `<div class="stage-data-cards">${(state.editorProject?.fixtures || []).slice(0, 6).map((fixture) => `<p>${fixture.name || fixture.type} → U${fixture.universe || 1}:${fixture.address || '?'} → ${fixture.mode || 'mode TBD'}</p>`).join('') || '<p>No DMX fixtures patched yet.</p>'}</div>`
         : state.activeDataTab === 'object'
-          ? `<div class="stage-data-cards"><p>Selected: ${selectedEditorObject().label}</p><p>Exports to: ${selectedEditorObject().type}</p><p>Relationships shown here are generated from StagePlan links.</p></div>`
+          ? `<div class="stage-data-cards"><p>Selected: ${selectedEditorObject().label}</p><p>Exports to: ${selectedEditorObject().type}</p>${stageEntities().slice(0, 8).map((entity) => `<p>${entity.name} → ${entity.category} → ${entity.status}</p>`).join('')}<p>Relationships shown here are generated from StagePlan links.</p></div>`
           : renderExportChecklist()
   return `<section class="stage-bottom-secondary"><div class="stage-data-tabs">${tabs.map(([k, l]) => `<button type="button" data-data-tab="${k}" class="${state.activeDataTab === k ? 'is-active' : ''}">${l}</button>`).join('')}</div><div class="stage-data-body">${body}</div></section>`
 }

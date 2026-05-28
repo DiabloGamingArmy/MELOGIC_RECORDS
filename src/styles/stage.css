@@ -437,7 +437,7 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-subtle-warning,.stage-safety-note{border:1px solid rgba(255,186,102,.4);background:rgba(56,34,10,.45);color:#ffd8a8 !important;padding:6px;border-radius:4px}
 .stage-help-list{margin:0;padding-left:16px;display:grid;gap:6px;color:#c6d4ee;font-size:12px;line-height:1.35}
 .stage-viewport-notice{position:absolute;top:44px;left:50%;transform:translateX(-50%);z-index:8;max-width:min(360px,calc(100% - 28px));padding:6px 10px;border:1px solid rgba(255,255,255,.16);border-radius:4px;background:rgba(18,24,34,.92);color:#ecf4ff;font-size:11px;box-shadow:0 8px 20px rgba(0,0,0,.32);pointer-events:none}
-.stage-bottom-split{grid-template-columns:minmax(180px,var(--stage-bottom-split,58%)) 6px minmax(180px,1fr);align-items:stretch}
+.stage-bottom-split{grid-template-columns:minmax(360px,var(--stage-bottom-split,70%)) 6px minmax(220px,1fr);align-items:stretch}
 .stage-bottom-divider{grid-column:2;min-height:0;cursor:col-resize;background:linear-gradient(90deg,transparent 0 2px,rgba(106,126,160,.36) 2px 4px,transparent 4px 6px)}
 .stage-bottom-divider:hover{background:rgba(34,184,181,.22)}
 .stage-bottom-primary,.stage-bottom-secondary,.stage-editor-mode-panel,.stage-editor-table-panel{align-content:start;justify-content:flex-start}
@@ -530,3 +530,68 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-editor-library{position:relative;z-index:2;overflow:auto;clip-path:inset(0)}
 .stage-editor-bottom{position:relative;z-index:5}
 .stage-editor-mode-tabs{position:relative;z-index:6;background:var(--stage-panel)}
+
+/* Stage editor interaction-model pass */
+.stage-viewport-tools{right:346px;max-width:calc(100% - 366px);align-items:flex-start}
+.stage-viewport-tools > span{height:24px;display:flex;align-items:center;flex:0 0 auto}
+.stage-viewport-tool-modes,.stage-viewport-tool-toggles{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0}
+.stage-viewport-tool-modes{padding-right:5px;border-right:1px solid rgba(255,255,255,.09)}
+.stage-viewport-tools .stage-tool-mode{background:#111824;border-color:rgba(255,255,255,.12);color:#b9c9e8}
+.stage-viewport-tools .stage-tool-mode.is-active{border-color:var(--stage-accent);background:rgba(34,184,181,.18);color:#e7ffff}
+.stage-viewport-status-stack{position:absolute;left:10px;bottom:12px;z-index:7;display:grid;gap:5px;max-width:min(520px,calc(100% - 360px));pointer-events:none}
+.stage-viewport-status-stack .stage-three-hint,.stage-viewport-status-stack .stage-three-load-warning{position:static;left:auto;bottom:auto;max-width:none;margin:0}
+.stage-viewport-status-stack .stage-three-hint{padding:5px 8px;border-radius:4px;background:rgba(8,12,20,.78);border:1px solid rgba(106,126,160,.28);color:rgba(218,230,255,.78);font-size:10.5px;line-height:1.2}
+.stage-viewport-status-stack .stage-three-load-warning{padding:6px 9px;border-radius:4px;background:rgba(42,26,8,.9);border:1px solid rgba(255,186,102,.5);color:#ffd9a7;font-size:11px}
+.stage-viewport-selected-pill{position:absolute;right:10px;bottom:12px;z-index:7;max-width:330px;padding:5px 8px;border:1px solid rgba(106,126,160,.32);border-radius:999px;background:rgba(8,12,20,.76);color:#cfe0ff;font-size:10.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none}
+.stage-category-filter-row{display:flex;flex-wrap:wrap;gap:5px}
+.stage-category-chip{display:inline-flex;align-items:center;gap:5px;min-height:26px;border:1px solid rgba(106,126,160,.35);border-radius:999px;background:#121a29;color:#d6e5ff;padding:0 8px;font-size:10.5px;white-space:nowrap}
+.stage-category-chip:hover{border-color:rgba(34,184,181,.45);background:rgba(34,184,181,.1)}
+.stage-category-chip.is-active{border-color:var(--stage-accent);background:rgba(34,184,181,.16);color:#e7ffff}
+.stage-category-chip .stage-object-icon-frame{width:16px;height:16px;min-width:16px;border:0;background:transparent}
+.stage-asset-card-list{display:grid;gap:6px}
+.stage-asset-card{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:8px;align-items:center;min-height:52px;padding:7px;border:1px solid rgba(106,126,160,.3);border-radius:5px;background:rgba(255,255,255,.025)}
+.stage-asset-card:hover{border-color:rgba(34,184,181,.42);background:rgba(34,184,181,.07)}
+.stage-asset-icon{width:34px;height:34px;display:grid;place-items:center;border:1px solid rgba(34,184,181,.22);border-radius:5px;background:rgba(34,184,181,.08);color:#d7ffff;font-size:11px;font-weight:700}
+.stage-asset-main{display:grid;gap:1px;min-width:0}
+.stage-asset-main strong,.stage-asset-main span,.stage-asset-main small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage-asset-main strong{color:#edf6ff;font-size:12px}
+.stage-asset-main span{color:#a9bad8;font-size:10.5px;text-transform:capitalize}
+.stage-asset-main small{color:rgba(255,255,255,.5);font-size:10px}
+.stage-asset-card button{height:26px;border:1px solid rgba(106,126,160,.45);border-radius:4px;background:#172034;color:#d6e5ff;padding:0 9px;font-size:11px}
+.stage-asset-card button:hover{border-color:var(--stage-accent);background:rgba(34,184,181,.14);color:#eaffff}
+.stage-object-table-wrap{flex:1 1 auto;min-height:0;width:100%;overflow:auto;border:1px solid rgba(106,126,160,.26);background:rgba(255,255,255,.018)}
+.stage-object-table-wrap::-webkit-scrollbar{width:8px;height:8px}
+.stage-object-table-wrap::-webkit-scrollbar-track{background:rgba(255,255,255,.04)}
+.stage-object-table-wrap::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:999px}
+.stage-object-table-wrap::-webkit-scrollbar-thumb:hover{background:rgba(34,184,181,.38)}
+.stage-object-data-grid{width:100%;min-width:1180px;border-collapse:collapse;table-layout:fixed;display:table !important}
+.stage-object-data-grid th,.stage-object-data-grid td{height:31px;border-bottom:1px solid rgba(255,255,255,.07);border-right:1px solid rgba(255,255,255,.055);padding:4px 8px;text-align:left;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:#cddaf1}
+.stage-object-data-grid th{position:sticky;top:0;z-index:1;height:28px;background:#121822;color:#aebfdd;font-size:10px;letter-spacing:.07em;text-transform:uppercase}
+.stage-object-data-grid tbody tr{cursor:pointer}
+.stage-object-data-grid tbody tr:hover{background:rgba(34,184,181,.07)}
+.stage-object-data-grid tbody tr.is-selected{background:rgba(34,184,181,.15);outline:1px solid rgba(34,184,181,.36);outline-offset:-1px}
+.stage-object-data-grid col.is-state{width:30px}
+.stage-object-data-grid col.is-name{width:190px}
+.stage-object-data-grid col.is-kind{width:116px}
+.stage-object-data-grid col.is-category{width:116px}
+.stage-object-data-grid col.is-layer{width:96px}
+.stage-object-data-grid col.is-position{width:190px}
+.stage-object-data-grid col.is-size{width:132px}
+.stage-object-data-grid col.is-flag{width:78px}
+.stage-object-data-grid col.is-linked{width:126px}
+.stage-object-data-grid col.is-status{width:198px}
+.stage-object-name{display:grid;gap:1px}
+.stage-object-name strong,.stage-object-name small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stage-object-name strong{color:#f0f7ff;font-size:12px}
+.stage-object-name small{color:rgba(255,255,255,.46);font-size:10px}
+.stage-row-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#667085}
+.stage-row-dot.is-visible{background:var(--stage-accent);box-shadow:0 0 0 3px rgba(34,184,181,.08)}
+.stage-row-dot.is-hidden{background:#6f7686}
+.stage-entity-status.is-locked{border-color:rgba(255,186,102,.28);background:rgba(255,186,102,.1);color:#ffd8a8}
+.stage-entity-status.is-open,.stage-entity-status.is-visible{border-color:rgba(34,184,181,.24);background:rgba(34,184,181,.08);color:#dffefe}
+.stage-entity-status.is-hidden{border-color:rgba(255,255,255,.13);background:rgba(255,255,255,.05);color:#b5bfd2}
+.stage-object-row-actions{display:flex;align-items:center;gap:5px;min-width:0}
+.stage-object-row-actions button{height:21px;border:1px solid rgba(106,126,160,.38);border-radius:4px;background:#151e2e;color:#d6e5ff;padding:0 7px;font-size:10px}
+.stage-object-row-actions button:hover{border-color:var(--stage-accent);background:rgba(34,184,181,.14)}
+.stage-editor-table-panel.is-entities h4{flex:0 0 auto;margin-bottom:6px}
+.stage-editor-table-panel.is-entities{gap:0}
