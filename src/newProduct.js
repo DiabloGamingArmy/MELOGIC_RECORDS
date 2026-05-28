@@ -92,6 +92,7 @@ let editorState = {
     markdown: '',
     loading: false,
     error: '',
+    errorDetail: '',
     signedName: '',
     accepting: false
   },
@@ -956,10 +957,13 @@ function renderAgreementsPanel() {
   const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
   const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
   const agreementError = String(editorState.agreement.error || '').trim()
+  const agreementErrorDetail = editorState.agreement.errorDetail && import.meta?.env?.DEV
+    ? `<p class="agreement-error-detail">${escapeHtml(editorState.agreement.errorDetail)}</p>`
+    : ''
   const agreementBody = editorState.agreement.loading
     ? '<p class="agreement-loading">Loading agreement…</p>'
     : agreementError
-      ? `<p class="agreement-error">${escapeHtml(agreementError)}</p>${config.storagePath ? `<p class="agreement-error-detail">Path: ${escapeHtml(config.storagePath)}</p>` : ''}`
+      ? `<p class="agreement-error">${escapeHtml(agreementError)}</p>${config.storagePath ? `<p class="agreement-error-detail">Path: ${escapeHtml(config.storagePath)}</p>` : ''}${agreementErrorDetail}<button type="button" class="button button-muted" data-retry-agreement-load>Retry Agreement Load</button>`
       : editorState.agreement.markdown
         ? renderAgreementMarkdown(editorState.agreement.markdown)
         : '<p class="agreement-error">Seller agreement file is missing.</p>'
@@ -1670,6 +1674,17 @@ function renderEditor() {
     }
   })
 
+  editorRoot.querySelector('[data-retry-agreement-load]')?.addEventListener('click', () => {
+    if (!editorState.user) return
+    editorState.agreement.loading = true
+    editorState.agreement.error = ''
+    editorState.agreement.errorDetail = ''
+    renderEditor()
+    loadAgreementForEditor(editorState.user).catch((error) => {
+      console.warn('[new-product] agreement retry failed unexpectedly', error?.code || error?.message || error)
+    })
+  })
+
   const coverInput = editorRoot.querySelector('[data-cover-input]')
   const galleryInput = editorRoot.querySelector('[data-gallery-input]')
   const previewAudioInput = editorRoot.querySelector('[data-preview-audio-input]')
@@ -2172,18 +2187,52 @@ async function initPage() {
   syncPricingDraftFields()
 
   editorState.agreement.signedName = String(editorState.draft.sellerAgreement?.signedName || '')
+  editorState.agreement.loading = true
+  editorState.agreement.error = ''
+  editorState.agreement.errorDetail = ''
+  renderEditor()
+
+  loadAgreementForEditor(user).catch((error) => {
+    console.warn('[new-product] agreement background load failed unexpectedly', error?.code || error?.message || error)
+  })
+}
+
+async function loadAgreementForEditor(user) {
   let agreementId = ''
   let latestVersion = ''
+  let agreementConfig = null
   try {
     let stage = 'latest-agreement-config'
-    const agreementConfig = await getLatestMarketplaceSellerAgreement()
+    agreementConfig = await getLatestMarketplaceSellerAgreement()
     editorState.agreement.config = agreementConfig
     editorState.agreement.latestVersion = agreementConfig.activeVersion
+    editorState.agreement.error = ''
+    editorState.agreement.errorDetail = ''
     agreementId = String(agreementConfig.agreementId || '')
     latestVersion = String(agreementConfig.activeVersion || '')
 
     stage = 'agreement-markdown'
-    editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
+    if (agreementConfig.markdown) {
+      editorState.agreement.markdown = agreementConfig.markdown
+    } else {
+      try {
+        editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
+      } catch (markdownError) {
+        editorState.agreement.markdown = ''
+        editorState.agreement.error = 'Seller agreement could not be loaded.'
+        editorState.agreement.errorDetail = [
+          markdownError?.code ? `Reason: ${markdownError.code}` : '',
+          markdownError?.message || '',
+          markdownError?.details?.storagePath ? `Storage path: ${markdownError.details.storagePath}` : ''
+        ].filter(Boolean).join(' · ')
+        console.warn('[new-product] agreement markdown load failed', {
+          stage,
+          code: markdownError?.code,
+          message: markdownError?.message,
+          storagePath: agreementConfig.storagePath
+        })
+      }
+    }
 
     try {
       stage = 'signed-form-read'
@@ -2230,12 +2279,16 @@ async function initPage() {
       latestVersion
     })
     editorState.agreement.latestVersion = ''
-    editorState.agreement.error = error?.message || 'Could not load seller agreement.'
+    editorState.agreement.error = 'Seller agreement could not be loaded.'
+    editorState.agreement.errorDetail = [
+      error?.code ? `Reason: ${error.code}` : '',
+      error?.message || '',
+      agreementConfig?.storagePath ? `Storage path: ${agreementConfig.storagePath}` : ''
+    ].filter(Boolean).join(' · ')
   } finally {
     editorState.agreement.loading = false
+    renderEditor()
   }
-
-  renderEditor()
 }
 
 window.addEventListener('hashchange', () => {

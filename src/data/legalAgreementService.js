@@ -14,6 +14,13 @@ const FALLBACK_SELLER_AGREEMENT_CONFIG = Object.freeze({
 })
 const AGREEMENT_FOLDER_PATH = 'legal/agreements/marketplace-product-seller-agreement'
 
+function agreementError(code, message, details = {}) {
+  const error = new Error(message)
+  error.code = code
+  error.details = details
+  return error
+}
+
 function isDevEnvironment() {
   return typeof import.meta !== 'undefined' && Boolean(import.meta?.env?.DEV)
 }
@@ -31,6 +38,7 @@ export function normalizeMarketplaceSellerAgreement(raw = {}) {
     title: String(raw.title || fallback.title).trim() || fallback.title,
     storagePath: String(raw.storagePath || fallback.storagePath).trim() || fallback.storagePath,
     format: String(raw.format || fallback.format).trim().toLowerCase() || fallback.format,
+    markdown: String(raw.markdown || raw.body || '').trim(),
     effectiveAt: raw.effectiveAt || null,
     requiresSignature: raw.requiresSignature !== false,
     updatedAt: raw.updatedAt || null
@@ -54,28 +62,63 @@ export async function getMarketplaceSellerAgreementConfig() {
 
 export async function getAgreementMarkdown(storagePath = '') {
   if (!storage || !storagePath) {
-    throw new Error('Seller agreement file is missing.')
+    throw agreementError('storage-unavailable', 'Seller agreement file is missing.', { storagePath })
   }
   const agreementRef = ref(storage, storagePath)
+  let storageError = null
   try {
     const bytes = await getBytes(agreementRef, 1024 * 1024)
-    return new TextDecoder('utf-8').decode(bytes)
+    const text = new TextDecoder('utf-8').decode(bytes)
+    if (!String(text || '').trim()) throw agreementError('agreement-empty', 'Seller agreement file is empty.', { storagePath })
+    return text
   } catch (bytesError) {
+    storageError = bytesError
     const code = String(bytesError?.code || '').toLowerCase()
     if (code.includes('object-not-found')) {
       devWarn('[legalAgreementService] Agreement markdown object missing.', storagePath)
-      throw new Error('Seller agreement file is missing.')
+      throw agreementError('object-not-found', 'Seller agreement file is missing.', { storagePath })
     }
     devWarn('[legalAgreementService] SDK agreement download failed; trying download URL fallback.', bytesError?.code || bytesError?.message || bytesError)
   }
+
+  const sameOriginPath = `/${String(storagePath || '').replace(/^\/+/, '')}`
+  try {
+    const response = await fetch(sameOriginPath, { cache: 'no-cache' })
+    if (response.ok) {
+      const text = await response.text()
+      if (!String(text || '').trim()) throw agreementError('agreement-empty', 'Seller agreement file is empty.', { storagePath, fallbackPath: sameOriginPath })
+      if (/^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
+        throw agreementError('agreement-fetch-failed', 'Seller agreement fallback returned an HTML page instead of markdown.', { storagePath, fallbackPath: sameOriginPath })
+      }
+      return text
+    }
+    devWarn('[legalAgreementService] Same-origin agreement fallback failed.', response.status, sameOriginPath)
+  } catch (fallbackError) {
+    devWarn('[legalAgreementService] Same-origin agreement fallback errored.', fallbackError?.code || fallbackError?.message || fallbackError)
+  }
+
   try {
     const downloadUrl = await getDownloadURL(agreementRef)
     const response = await fetch(downloadUrl)
-    if (!response.ok) throw new Error(`agreement-download-failed:${response.status}`)
-    return response.text()
+    if (!response.ok) throw agreementError('agreement-fetch-failed', `Agreement download failed with status ${response.status}.`, { storagePath, status: response.status })
+    const text = await response.text()
+    if (!String(text || '').trim()) throw agreementError('agreement-empty', 'Seller agreement file is empty.', { storagePath })
+    return text
   } catch (error) {
     devWarn('[legalAgreementService] Failed to fetch agreement markdown from Storage.', error?.code || error?.message || error)
-    throw new Error('Agreement file could not be downloaded. Firebase Storage CORS may not be configured for this domain.')
+    const message = String(error?.message || storageError?.message || '').toLowerCase()
+    const code = String(error?.code || storageError?.code || '').toLowerCase()
+    const likelyCors = message.includes('cors') || message.includes('access-control') || code.includes('cors')
+    if (likelyCors || storageError) {
+      throw agreementError(
+        likelyCors ? 'agreement-cors-blocked' : 'agreement-download-url-failed',
+        likelyCors
+          ? 'Seller agreement could not be loaded. Firebase Storage CORS blocked the request.'
+          : 'Seller agreement could not be downloaded from Firebase Storage.',
+        { storagePath, causeCode: error?.code || storageError?.code || '' }
+      )
+    }
+    throw agreementError('agreement-fetch-failed', 'Seller agreement could not be loaded.', { storagePath, causeCode: error?.code || '' })
   }
 }
 

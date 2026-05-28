@@ -1,8 +1,10 @@
 # Firebase Storage CORS for Marketplace Seller Agreement
 
-The Marketplace Seller Agreement Markdown is loaded in-browser from Firebase Storage using `fetch()`.
+The Marketplace Seller Agreement Markdown may be loaded in-browser from Firebase Storage. The product editor also has a same-origin fallback at:
 
-Because browser `fetch()` enforces CORS, the bucket serving:
+`public/legal/agreements/marketplace-product-seller-agreement/v1.md`
+
+Because browser `fetch()` and Firebase Storage browser reads enforce CORS, the bucket serving:
 
 `legal/agreements/marketplace-product-seller-agreement/v<number>.md`
 
@@ -13,6 +15,26 @@ must allow the app origins.
 Use the repository config file:
 
 `firebase-storage-cors.json`
+
+Current expected contents:
+
+```json
+[
+  {
+    "origin": [
+      "https://melogicrecords.studio",
+      "https://melogic-records.web.app",
+      "https://melogic-records.firebaseapp.com",
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://localhost:3000"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin"],
+    "maxAgeSeconds": 3600
+  }
+]
+```
 
 ### Option A (modern gcloud)
 

@@ -378,6 +378,7 @@
 .agreement-document hr { border: 0; border-top: 1px solid rgba(118, 144, 216, .35); margin: .95rem 0; }
 .agreement-loading, .agreement-error { margin: 0; color: #b8caef; }
 .agreement-error { color: #ffd3de; }
+.agreement-error-detail { margin: .45rem 0 .7rem; color: #8fa6d8; font-size: .86rem; line-height: 1.4; word-break: break-word; }
 .agreement-signature-row { margin-top: .75rem; display: grid; grid-template-columns: 1fr 260px; gap: .7rem; align-items: end; }
 .agreement-signature-field { display: grid; gap: .4rem; }
 .agreement-signature-field label { color: #9eb3e7; text-transform: uppercase; letter-spacing: .06em; font-size: .82rem; }
