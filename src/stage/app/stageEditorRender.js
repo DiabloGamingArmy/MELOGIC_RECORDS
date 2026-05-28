@@ -3,7 +3,7 @@ import { renderBottomSplit } from '../bottomPanel/bottomPanel'
 import { renderExportPreview } from '../export/exportPreview'
 import { renderInspectorTabs } from '../inspector/inspectorTabs'
 import { renderLeftPanelBySection } from '../panels/leftPanels'
-import { editorModes, editorRailItems, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, projectDate, projectLoadLabel, stageIconPath, state } from './stageState'
+import { editorModes, editorRailItems, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, projectDate, projectLoadLabel, selectedStageObjects, stageIconPath, state } from './stageState'
 
 function renderEditorState(title, body) {
   return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>${title}</h2>${body}<a href="${ROUTES.stage}" class="stage-back-link">Back to Stage Projects</a></section></main>`
@@ -22,22 +22,27 @@ function renderViewport() {
   const viewButtons = editorViewModes.map(([k, l]) => `<button type="button" class="${state.viewportMode === k ? 'is-active-view' : ''}" data-view-mode="${k}">${l}</button>`).join('')
   const toolButtons = editorToolModes.map((tool) => `<button type="button" data-tool-mode="${tool.key}" class="stage-tool-mode ${state.editorToolMode === tool.key ? 'is-active' : ''}" aria-pressed="${state.editorToolMode === tool.key}">${tool.label}</button>`).join('')
   const selected = findStageObject()
+  const selectedObjects = selectedStageObjects()
   const locked = !!selected?.locked
-  const selectedStatus = selected
+  const selectedStatus = selectedObjects.length > 1
+    ? `Selected: ${selectedObjects.length} objects · primary ${selected?.label || selected?.name || selected?.id || 'object'}`
+    : selected
     ? `Selected: ${selected.label || selected.name || selected.id} · ${selected.category || selected.type || 'object'} · ${locked ? 'locked' : 'unlocked'}`
     : 'No object selected'
   const hint = locked
     ? 'Selected object is locked. Unlock it in Properties before moving.'
-    : state.editorToolMode === 'move'
-      ? 'Move: drag selected objects on the stage plane · arrows nudge · Shift = large'
-      : state.editorToolMode === 'rotate'
-        ? 'Rotate: drag horizontally on the selected object · Rotate buttons work too'
-        : state.editorToolMode === 'scale'
-          ? 'Scale: drag horizontally or use Width / Depth / Height in Properties'
-          : state.editorToolMode === 'pan'
-            ? 'Pan/Orbit: camera controls only'
-            : state.viewportMode === 'top2d'
-              ? 'Top: choose Move to drag objects · pan right-drag · zoom wheel · F focus'
+    : state.editorToolMode === 'pan'
+      ? 'Pan: drag to move camera · wheel zoom'
+      : state.editorToolMode === 'select'
+        ? 'Select: click object · drag box to select'
+        : state.editorToolMode === 'move'
+          ? 'Move: drag selected object · arrows nudge · Shift = large'
+          : state.editorToolMode === 'rotate'
+            ? 'Rotate: drag or use rotate buttons'
+            : state.editorToolMode === 'scale'
+              ? 'Scale: use handles or Properties dimensions'
+              : state.viewportMode === 'top2d'
+                ? 'Top: drag box to select · switch to Move to place objects'
               : state.viewportMode === 'front' || state.viewportMode === 'side'
                 ? 'Elevation: pan · zoom · F focus · A frame all'
                 : '3D: orbit drag · pan right-drag · wheel zoom · choose Move to drag'

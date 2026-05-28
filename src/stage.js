@@ -10,12 +10,12 @@ import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
 import { renderDashboard } from './stage/app/stageDashboard'
 import { renderEditor, renderStageTabbar } from './stage/app/stageEditorRender'
-import { editorTitleStamp, getCurrentStageProjectId, moveSelectedStageObject, projectDate, stageIconPath, stageTypes, state, updateSelectedStageObjectField } from './stage/app/stageState'
+import { editorTitleStamp, getCurrentStageProjectId, moveSelectedStageObject, projectDate, setSelectedStageObjects, stageIconPath, stageTypes, state, updateSelectedStageObjectField } from './stage/app/stageState'
 import { renderExportPreview } from './stage/export/exportPreview'
 import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspector/inspectorTabs'
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
 import { mountStageThreeViewport } from './stage/stageThreeViewport'
-import { normalizeStagePlan } from './stage/stagePlanModel'
+import { isOldDemoFallbackPlan, migrateDefaultFallbackPlan, normalizeStagePlan } from './stage/stagePlanModel'
 
 const app = document.querySelector('#app')
 
@@ -54,6 +54,7 @@ function buildEditorStateSnapshot() {
     activeDataTab: state.activeDataTab,
     renderMode: state.renderMode,
     selectedObjectId: state.selectedEditorObject,
+    selectedObjectIds: state.selectedEditorObjects,
     showGrid: state.gridEnabled,
     snapEnabled: state.snapEnabled,
     snapInterval: state.snapInterval,
@@ -78,6 +79,9 @@ function applyEditorStateSnapshot(editorState = {}) {
   state.activeDataTab = editorState.activeDataTab || state.activeDataTab
   state.renderMode = editorState.renderMode || state.renderMode
   state.selectedEditorObject = editorState.selectedObjectId || state.selectedEditorObject
+  state.selectedEditorObjects = Array.isArray(editorState.selectedObjectIds) && editorState.selectedObjectIds.length
+    ? editorState.selectedObjectIds
+    : [state.selectedEditorObject].filter(Boolean)
   state.gridEnabled = typeof editorState.showGrid === 'boolean' ? editorState.showGrid : state.gridEnabled
   state.snapEnabled = typeof editorState.snapEnabled === 'boolean' ? editorState.snapEnabled : state.snapEnabled
   state.snapInterval = Number(editorState.snapInterval) || state.snapInterval
@@ -88,6 +92,15 @@ function applyEditorStateSnapshot(editorState = {}) {
   if (Array.isArray(editorState.stageTabs) && editorState.stageTabs.length) state.stageTabs = editorState.stageTabs
   state.activeStageTabId = editorState.activeStageTabId || state.activeStageTabId
   if (editorState.savedAt) state.lastSavedAt = editorState.savedAt
+}
+
+function ensureValidEditorSelection() {
+  const requested = state.selectedEditorObjects?.length ? state.selectedEditorObjects : [state.selectedEditorObject]
+  const normalized = setSelectedStageObjects(requested, state.selectedEditorObject)
+  if (!normalized.length && (state.editorProject?.objects || []).length) {
+    const first = state.editorProject.objects.find((object) => object.id === 'stage-deck') || state.editorProject.objects[0]
+    setSelectedStageObjects([first.id], first.id)
+  }
 }
 
 function restoreLocalEditorState(projectId = state.projectId) {
@@ -111,7 +124,15 @@ function restoreLocalStagePlan(projectId = state.projectId) {
     const snapshot = JSON.parse(raw)
     const plan = snapshot?.plan || snapshot
     if (!plan || typeof plan !== 'object') return false
-    state.editorProject = normalizeStagePlan({ ...plan, id: projectId || plan.id || state.projectId })
+    const migratedOldDemo = isOldDemoFallbackPlan(plan)
+    state.editorProject = migratedOldDemo
+      ? migrateDefaultFallbackPlan(plan, { id: projectId || plan.id || state.projectId, name: plan.title || plan.name || 'Fallback Stage Plan' })
+      : normalizeStagePlan({ ...plan, id: projectId || plan.id || state.projectId })
+    ensureValidEditorSelection()
+    if (migratedOldDemo) {
+      state.projectLoadMessage = 'Old demo fallback was reset to a clean stage.'
+      try { localStorage.setItem(stagePlanRecoveryKey(projectId), JSON.stringify({ plan: state.editorProject, savedAt: new Date().toISOString(), migratedFromDemoFallback: true })) } catch {}
+    }
     state.editorSaveStatus = 'local'
     state.lastSavedAt = snapshot.savedAt || state.lastSavedAt
     return true
@@ -141,11 +162,20 @@ function initStageEditorViewport() {
     projectLoadMessage: state.projectLoadMessage,
     showDiagnostics: state.showViewportDiagnostics,
     selectedObjectKey: state.selectedEditorObject,
+    selectedObjectKeys: state.selectedEditorObjects,
     objectTransforms: state.editorObjectTransforms,
     toolMode: state.editorToolMode,
+    onSelectObjects: (keys = [], primary = '') => {
+      setSelectedStageObjects(keys, primary)
+      updateStageInspectorSelection()
+      updateInspectorUI()
+      updateEditorModeUI()
+      updateViewportControlUI()
+      queueEditorStateSave()
+    },
     onSelectObject: (key) => {
       if (state.selectedEditorObject === key) return
-      state.selectedEditorObject = key
+      setSelectedStageObjects([key], key)
       updateStageInspectorSelection()
       updateInspectorUI()
       updateEditorModeUI()
@@ -153,7 +183,7 @@ function initStageEditorViewport() {
       queueEditorStateSave()
     },
     onTransformObject: (key, transform) => {
-      state.selectedEditorObject = key
+      setSelectedStageObjects([key], key)
       state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: { ...(state.editorObjectTransforms?.[key] || {}), ...transform } }
       if ([transform.x, transform.y, transform.z].some(Number.isFinite)) {
         moveSelectedStageObject({ x: transform.x, y: transform.y, z: transform.z }, { absolute: true })
@@ -366,11 +396,12 @@ function selectedViewportObject() {
 function viewportHintText() {
   const selected = selectedViewportObject()
   if (selected?.locked) return 'Selected object is locked. Unlock it in Properties before moving.'
-  if (state.editorToolMode === 'move') return 'Move: drag selected objects on the stage plane · arrows nudge · Shift = large'
-  if (state.editorToolMode === 'rotate') return 'Rotate: drag horizontally on the selected object · Rotate buttons work too'
-  if (state.editorToolMode === 'scale') return 'Scale: drag horizontally or use Width / Depth / Height in Properties'
-  if (state.editorToolMode === 'pan') return 'Pan/Orbit: camera controls only'
-  if (state.viewportMode === 'top2d') return 'Top: choose Move to drag objects · pan right-drag · zoom wheel · F focus'
+  if (state.editorToolMode === 'pan') return 'Pan: drag to move camera · wheel zoom'
+  if (state.editorToolMode === 'select') return 'Select: click object · drag box to select'
+  if (state.editorToolMode === 'move') return 'Move: drag selected object · arrows nudge · Shift = large'
+  if (state.editorToolMode === 'rotate') return 'Rotate: drag or use rotate buttons'
+  if (state.editorToolMode === 'scale') return 'Scale: use handles or Properties dimensions'
+  if (state.viewportMode === 'top2d') return 'Top: drag box to select · switch to Move to place objects'
   if (state.viewportMode === 'front' || state.viewportMode === 'side') return 'Elevation: pan · zoom · F focus · A frame all'
   return '3D: orbit drag · pan right-drag · wheel zoom · choose Move to drag'
 }
@@ -401,7 +432,12 @@ function updateViewportControlUI() {
   if (hint) hint.textContent = viewportHintText()
   const selected = selectedViewportObject()
   const pill = app.querySelector('.stage-viewport-selected-pill')
-  if (pill) pill.textContent = selected ? `Selected: ${selected.label || selected.name || selected.id} · ${selected.category || selected.type || 'object'} · ${selected.locked ? 'locked' : 'unlocked'}` : 'No object selected'
+  if (pill) {
+    const count = state.selectedEditorObjects?.length || (selected ? 1 : 0)
+    pill.textContent = count > 1
+      ? `Selected: ${count} objects · primary ${selected?.label || selected?.name || selected?.id || 'object'}`
+      : selected ? `Selected: ${selected.label || selected.name || selected.id} · ${selected.category || selected.type || 'object'} · ${selected.locked ? 'locked' : 'unlocked'}` : 'No object selected'
+  }
 }
 
 function updateEditorModeUI() {
@@ -614,6 +650,7 @@ async function loadEditorProject() {
     const restored = restoreLocalStagePlan(state.projectId)
     if (!restored) state.editorProject = normalizeStagePlan({ id: state.projectId, title: 'Fallback Stage Plan', stageType: 'Blank Stage', version: 1 })
     restoreLocalEditorState(state.projectId)
+    ensureValidEditorSelection()
     const fallbackStatus = restored ? 'fallback-local' : status
     setStageLoadState(fallbackStatus, { ...meta, usingLocalRecovery: restored, fallbackMode: restored ? 'local' : 'default' })
     state.editorSaveStatus = 'local'
@@ -637,6 +674,7 @@ async function loadEditorProject() {
       state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name })
       applyEditorStateSnapshot(project.editorState || project.plan?.editorState)
       if (!project.editorState && !project.plan?.editorState) restoreLocalEditorState(state.projectId)
+      ensureValidEditorSelection()
       setStageLoadState('loaded')
       state.editorSaveStatus = project.editorState ? 'saved' : 'idle'
     }

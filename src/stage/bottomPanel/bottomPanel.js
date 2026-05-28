@@ -1,19 +1,9 @@
-import { currentStageDimensions, exportReadiness, selectedEditorObject, stageEntities, stageObjectsForTable, stageWarnings, state, viewportModeLabel } from '../app/stageState'
+import { currentStageDimensions, exportReadiness, isStageObjectSelected, selectedEditorObject, stageEntities, stageObjectsForTable, stageWarnings, state, viewportModeLabel } from '../app/stageState'
 import { renderStagePlotSvg } from '../export/exportPreview'
 
 function renderInputListTable() {
-  const rows = Array.isArray(state.editorProject?.audioInputs) && state.editorProject.audioInputs.length
-    ? state.editorProject.audioInputs
-    : [
-        { channel: 1, source: 'Kick In', micDi: 'Beta 91A', stand: 'Short', notes: 'USC' },
-        { channel: 2, source: 'Kick Out', micDi: 'Beta 52', stand: 'Short', notes: 'USC' },
-        { channel: 3, source: 'Snare Top', micDi: 'SM57', stand: 'Short', notes: 'USC' },
-        { channel: 8, source: 'Bass DI', micDi: 'DI', stand: 'N/A', notes: 'USC' },
-        { channel: 12, source: 'Lead Voc', micDi: 'Wireless', stand: 'N/A', notes: 'DSC' },
-        { channel: 21, source: 'Playback L', micDi: 'Interface', stand: 'N/A', notes: 'Playback Rig' },
-        { channel: 22, source: 'Playback R', micDi: 'Interface', stand: 'N/A', notes: 'Playback Rig' }
-      ]
-  return `<table class="stage-input-table"><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Patch</th><th>Location</th><th>Notes</th></tr></thead><tbody>${rows.map((row) => `<tr data-select-object="${row.linkedObjectId || row.id || ''}"><td>✓</td><td><input data-audio-input-field="channel" data-row-id="${row.id || ''}" type="number" min="1" value="${row.channel || ''}"></td><td><input data-audio-input-field="source" data-row-id="${row.id || ''}" value="${row.source || ''}"></td><td><input data-audio-input-field="micDi" data-row-id="${row.id || ''}" value="${row.micDi || row.mic || ''}"></td><td><input data-audio-input-field="stand" data-row-id="${row.id || ''}" value="${row.stand || 'N/A'}"></td><td><input data-audio-input-field="patch" data-row-id="${row.id || ''}" value="${row.patch || ''}"></td><td><input data-audio-input-field="stageLocation" data-row-id="${row.id || ''}" value="${row.stageLocation || row.location || ''}"></td><td><input data-audio-input-field="notes" data-row-id="${row.id || ''}" value="${row.notes || ''}"></td></tr>`).join('')}</tbody></table>`
+  const rows = Array.isArray(state.editorProject?.audioInputs) ? state.editorProject.audioInputs : []
+  return `<table class="stage-input-table"><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Patch</th><th>Location</th><th>Notes</th></tr></thead><tbody>${rows.map((row) => `<tr data-select-object="${row.linkedObjectId || row.id || ''}"><td>✓</td><td><input data-audio-input-field="channel" data-row-id="${row.id || ''}" type="number" min="1" value="${row.channel || ''}"></td><td><input data-audio-input-field="source" data-row-id="${row.id || ''}" value="${row.source || ''}"></td><td><input data-audio-input-field="micDi" data-row-id="${row.id || ''}" value="${row.micDi || row.mic || ''}"></td><td><input data-audio-input-field="stand" data-row-id="${row.id || ''}" value="${row.stand || 'N/A'}"></td><td><input data-audio-input-field="patch" data-row-id="${row.id || ''}" value="${row.patch || ''}"></td><td><input data-audio-input-field="stageLocation" data-row-id="${row.id || ''}" value="${row.stageLocation || row.location || ''}"></td><td><input data-audio-input-field="notes" data-row-id="${row.id || ''}" value="${row.notes || ''}"></td></tr>`).join('') || '<tr><td colspan="8">No audio inputs yet. Add audio assets from the Object Library.</td></tr>'}</tbody></table>`
 }
 
 const fmt = (value, digits = 1) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '0.0'
@@ -26,7 +16,7 @@ function renderEntityTable() {
       row.status,
       row.warnings ? `${row.warnings} warning${row.warnings === 1 ? '' : 's'}` : ''
     ].filter(Boolean)
-    return `<tr data-select-object="${row.id || ''}" class="${row.id === state.selectedEditorObject ? 'is-selected' : ''}">
+    return `<tr data-select-object="${row.id || ''}" class="${isStageObjectSelected(row.id) ? 'is-selected' : ''}">
       <td><span class="stage-row-dot ${row.visible ? 'is-visible' : 'is-hidden'}"></span></td>
       <td class="stage-object-name"><strong>${row.name || 'Untitled'}</strong><small>${row.id || ''}</small></td>
       <td>${row.kind || row.type || 'object'}</td>
