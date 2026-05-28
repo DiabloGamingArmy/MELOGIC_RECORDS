@@ -3,7 +3,7 @@ import { renderBottomSplit } from '../bottomPanel/bottomPanel'
 import { renderExportPreview } from '../export/exportPreview'
 import { renderInspectorTabs } from '../inspector/inspectorTabs'
 import { renderLeftPanelBySection } from '../panels/leftPanels'
-import { editorModes, editorRailItems, editorViewModes, projectDate, stageIconPath, state } from './stageState'
+import { editorModes, editorRailItems, editorViewModes, ensureStageTabs, projectDate, stageIconPath, state } from './stageState'
 
 function renderEditorState(title, body) {
   return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>${title}</h2>${body}<a href="${ROUTES.stage}" class="stage-back-link">Back to Stage Projects</a></section></main>`
@@ -20,12 +20,19 @@ function renderRail() {
 
 function renderViewport() {
   const viewButtons = editorViewModes.map(([k, l]) => `<button type="button" class="${state.viewportMode === k ? 'is-active-view' : ''}" data-view-mode="${k}">${l}</button>`).join('')
-  return `<section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam Preview</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-measure class="${state.measureModeEnabled ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${viewButtons}</div></div><div class="stage-three-hud-label">Blank Stage</div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section>`
+  return `<section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam Preview</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-measure class="${state.measureModeEnabled ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${viewButtons}</div></div><div class="stage-three-hint">Orbit: drag • Pan: right-drag • Zoom: wheel • Nudge: arrows/PageUp/PageDown</div></div></div></section>`
 }
 
 function renderBottomPanel() {
   const tabs = editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')
   return `<section class="stage-editor-bottom"><div class="stage-resize-handle is-bottom" data-resize="bottom"></div><div class="stage-editor-mode-tabs">${tabs}</div><div data-stage-mode-root>${renderBottomSplit()}</div></section>`
+}
+
+export function renderStageTabbar() {
+  const tabs = ensureStageTabs()
+  const stageTabs = tabs.map((tab) => `<button type="button" class="stage-editor-project-tab ${state.activeStageTabId === tab.id ? 'is-active' : ''}" data-stage-tab="${tab.id}" aria-selected="${state.activeStageTabId === tab.id}">${tab.title || 'Untitled Stage'}</button>`).join('')
+  const canRemove = tabs.length > 1
+  return `<section class="stage-editor-tabbar"><div class="stage-editor-project-tabs">${stageTabs}</div><div class="stage-editor-tab-actions"><button type="button" data-add-stage-tab title="Add stage" aria-label="Add stage">+</button><button type="button" data-remove-stage-tab title="Remove current stage" aria-label="Remove current stage" ${canRemove ? '' : 'aria-disabled="true"'}>-</button></div></section>`
 }
 
 export function renderEditor() {
@@ -34,5 +41,5 @@ export function renderEditor() {
   if (state.editorError) return renderEditorState('Could not open this stage plan.', '')
   const title = state.editorProject?.title || 'Untitled Stage Plan'
   const stamp = (projectDate(state.editorProject) || new Date()).toLocaleDateString()
-  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" style="--stage-lib-w:${state.paneSizes.library}px;--stage-right-w:${state.paneSizes.right}px;--stage-bottom-h:${state.paneSizes.bottom}px;--stage-bottom-split:${state.paneSizes.bottomSplit}%" data-stage-editor-app>${renderMenubar(title, stamp)}<section class="stage-editor-tabbar"><div class="stage-editor-project-tab">${state.editorProject?.stageType || 'Festival Stage'} <span>×</span></div><div class="stage-editor-tab-actions"></div></section><section class="stage-editor-body">${renderRail()}${renderLeftPanelBySection(title, stamp)}<div class="stage-resize-handle is-library" data-resize="library"></div>${renderViewport()}<div class="stage-resize-handle is-right" data-resize="right"></div>${renderInspectorTabs(title, stamp)}${renderBottomPanel()}</section>${state.showExportPreview ? renderExportPreview() : ''}</main>`
+  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" style="--stage-lib-w:${state.paneSizes.library}px;--stage-right-w:${state.paneSizes.right}px;--stage-bottom-h:${state.paneSizes.bottom}px;--stage-bottom-split:${state.paneSizes.bottomSplit}%" data-stage-editor-app>${renderMenubar(title, stamp)}${renderStageTabbar()}<section class="stage-editor-body">${renderRail()}${renderLeftPanelBySection(title, stamp)}<div class="stage-resize-handle is-library" data-resize="library"></div>${renderViewport()}<div class="stage-resize-handle is-right" data-resize="right"></div>${renderInspectorTabs(title, stamp)}${renderBottomPanel()}</section>${state.showExportPreview ? renderExportPreview() : ''}</main>`
 }

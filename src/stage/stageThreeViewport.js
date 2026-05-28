@@ -13,6 +13,23 @@ const DEFAULT_STAGE_OBJECTS = [
   { key: 'moving-head', label: 'Moving Head', type: 'Lighting', position: [5.8, 8, -8], size: [0.8, 0.8, 0.8], selectable: true }
 ]
 
+const objectDefsFromProject = (project = {}) => {
+  const source = Array.isArray(project.objects) && project.objects.length ? project.objects : DEFAULT_STAGE_OBJECTS
+  return source.map((object) => {
+    const dimensions = object.dimensions || {}
+    const position = object.position || {}
+    return {
+      key: object.id || object.key || object.name,
+      label: object.label || object.name || object.id || object.key || 'Stage Object',
+      type: object.type || object.category || 'Object',
+      position: Array.isArray(object.position) ? object.position : [Number(position.x || 0), Number(position.y || 0), Number(position.z || 0)],
+      size: Array.isArray(object.size) ? object.size : [Number(dimensions.width || 1), Number(dimensions.height || 1), Number(dimensions.depth || 1)],
+      selectable: object.selectable !== false,
+      visible: object.visible !== false
+    }
+  }).filter((object) => object.key)
+}
+
 const makeLabel = (text, position, tone = '#64d9ff') => {
   const canvas = document.createElement('canvas')
   canvas.width = 512
@@ -120,19 +137,25 @@ export function mountStageThreeViewport(container, options = {}) {
     gridHelper.visible = options.showGrid !== false
     scene.add(gridHelper)
 
+    const stageObjectDefs = objectDefsFromProject(options.project)
+    const stageDimensions = options.project?.stageDimensions || {}
+    const deckDef = stageObjectDefs.find((d) => d.key === 'stage-deck') || DEFAULT_STAGE_OBJECTS[0]
+    const deckWidth = Number(stageDimensions.width || deckDef.size?.[0] || 32)
+    const deckDepth = Number(stageDimensions.depth || deckDef.size?.[2] || 24)
+    const deckHeight = Number(stageDimensions.deckHeight || deckDef.size?.[1] || 1)
     const pickables = []
     const objects = {}
     const addPickable = (mesh, key) => { mesh.userData.objectKey = key; pickables.push(mesh); objects[key] = mesh }
 
     const deckGroup = new THREE.Group(); deckGroup.name = 'stage-deck-group'; deckGroup.userData.objectKey = 'stage-deck'
-    const top = new THREE.Mesh(new THREE.BoxGeometry(32, 0.72, 24), new THREE.MeshStandardMaterial({ color: '#2b2f37', roughness: 0.72, metalness: 0.16 }))
+    const top = new THREE.Mesh(new THREE.BoxGeometry(deckWidth, Math.max(0.42, deckHeight * 0.18), deckDepth), new THREE.MeshStandardMaterial({ color: '#2b2f37', roughness: 0.72, metalness: 0.16 }))
     top.position.y = 0.86
-    const skirt = new THREE.Mesh(new THREE.BoxGeometry(32.3, 0.46, 24.3), new THREE.MeshStandardMaterial({ color: '#12161f', roughness: 0.9, metalness: 0.12 }))
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(deckWidth + 0.3, 0.46, deckDepth + 0.3), new THREE.MeshStandardMaterial({ color: '#12161f', roughness: 0.9, metalness: 0.12 }))
     skirt.position.y = 0.35
-    const frontLip = new THREE.Mesh(new THREE.BoxGeometry(32.35, 0.06, 0.28), new THREE.MeshStandardMaterial({ color: '#4e6576' }))
-    frontLip.position.set(0, 1.24, 12.12)
+    const frontLip = new THREE.Mesh(new THREE.BoxGeometry(deckWidth + 0.35, 0.06, 0.28), new THREE.MeshStandardMaterial({ color: '#4e6576' }))
+    frontLip.position.set(0, 1.24, deckDepth / 2 + 0.12)
     deckGroup.add(top, skirt, frontLip)
-    for (let x = -14; x <= 14; x += 7) for (let z = -9; z <= 9; z += 6) {
+    for (let x = -deckWidth / 2 + 2; x <= deckWidth / 2 - 2; x += Math.max(6, deckWidth / 4)) for (let z = -deckDepth / 2 + 3; z <= deckDepth / 2 - 3; z += Math.max(5, deckDepth / 4)) {
       const leg = new THREE.Mesh(new THREE.BoxGeometry(0.44, 2.6, 0.44), new THREE.MeshStandardMaterial({ color: '#0f131b', roughness: 0.92 }))
       leg.position.set(x, -1.05, z)
       deckGroup.add(leg)
@@ -140,7 +163,7 @@ export function mountStageThreeViewport(container, options = {}) {
     scene.add(deckGroup)
     addPickable(deckGroup, 'stage-deck')
 
-    DEFAULT_STAGE_OBJECTS.filter((d) => d.key !== 'stage-deck').forEach((d) => {
+    stageObjectDefs.filter((d) => d.key !== 'stage-deck' && d.visible !== false).forEach((d) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(...d.size), new THREE.MeshStandardMaterial({ color: d.key.includes('truss') ? '#6762d2' : d.key.includes('moving') ? '#49c8ff' : d.key.includes('camera') ? '#4fc8b4' : '#222b39', roughness: 0.72, metalness: 0.22 }))
       mesh.position.set(...d.position)
       if (d.key === 'camera-1') mesh.rotation.z = Math.PI / 2
@@ -157,7 +180,7 @@ export function mountStageThreeViewport(container, options = {}) {
     line([[16, 1.2, 6], [24, 1.6, 10], [28, 1.6, 20]], '#d468ff')
 
     const labelSprites = [
-      ["32' x 24' Stage Deck", [-14, 2.8, 14], '#6bdcff'],
+      [`${formatNum(deckWidth, 0)}' x ${formatNum(deckDepth, 0)}' Stage Deck`, [-deckWidth / 2 + 2, 2.8, deckDepth / 2 + 2], '#6bdcff'],
       ['Downstage Centerline', [0, 2.6, 20], '#61d7ff'],
       ['DSC', [-17, 2.5, 12], '#ffb16d'], ['USC', [1, 2.4, -11.5], '#ffb16d'],
       ['US Left', [-8, 2.2, -8], '#ffb16d'], ['Stage Left', [-20, 1.8, 18], '#ffb16d'],
@@ -186,7 +209,7 @@ export function mountStageThreeViewport(container, options = {}) {
     addArrow(new THREE.Vector3(1, 0, 0), '#ff6f6f'); addArrow(new THREE.Vector3(0, 1, 0), '#7cff87'); addArrow(new THREE.Vector3(0, 0, 1), '#5bc7ff')
     let boxHelper = null
     let selectedLabel = null
-    let selectedKey = options.selectedObjectKey || 'stage-deck'
+    let selectedKey = objects[options.selectedObjectKey] ? options.selectedObjectKey : 'stage-deck'
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
     const syncSelection = () => {

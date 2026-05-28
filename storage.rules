@@ -250,6 +250,42 @@ service firebase.storage {
       allow read, write: if false;
     }
 
+    match /stage/projects/{projectId}/exports/{fileName} {
+      allow read: if canReadStageProject(projectId);
+      allow write: if canWriteStageProject(projectId)
+        && request.resource != null
+        && request.resource.size <= 250 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('application/pdf')
+          || request.resource.contentType.matches('application/json')
+          || request.resource.contentType.matches('image/.*')
+          || request.resource.contentType.matches('application/zip')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
+    }
+
+    match /stage/projects/{projectId}/snapshots/{fileName} {
+      allow read: if canReadStageProject(projectId);
+      allow write: if canWriteStageProject(projectId)
+        && isImageUpload(25 * 1024 * 1024);
+    }
+
+    match /stage/projects/{projectId}/assets/{assetPath=**} {
+      allow read: if canReadStageProject(projectId);
+      allow write: if canWriteStageProject(projectId)
+        && request.resource != null
+        && request.resource.size <= 100 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('image/.*')
+          || isJsonUpload(100 * 1024 * 1024)
+          || isModelUpload(100 * 1024 * 1024)
+        );
+    }
+
+    match /stage/projects/{projectId}/{allPaths=**} {
+      allow read, write: if false;
+    }
+
     match /threads/{threadId}/messages/{messageId}/attachments/{fileName} {
       allow read: if isThreadParticipant(threadId);
       allow write: if isThreadParticipant(threadId)

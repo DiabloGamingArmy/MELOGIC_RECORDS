@@ -1,6 +1,7 @@
 import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
+import { createDefaultStagePlan, normalizeStagePlan } from '../stage/stagePlanModel'
 
 const STAGE_PROJECTS_COLLECTION = FIRESTORE_COLLECTIONS.stageProjects || 'stageProjects'
 
@@ -13,6 +14,25 @@ export function sortStageProjectsByActivity(a, b) {
 }
 
 export function normalizeStageProject(projectId, raw = {}) {
+  const legacyStageDimensions = raw.stage && typeof raw.stage === 'object'
+    ? { width: raw.stage.width, depth: raw.stage.depth, deckHeight: raw.stage.deckHeight ?? raw.stage.height, unit: raw.stage.unit }
+    : {}
+  const plan = normalizeStagePlan({
+    ...(raw.plan && typeof raw.plan === 'object' ? raw.plan : {}),
+    id: projectId,
+    title: raw.title,
+    name: raw.title || raw.name,
+    stageType: raw.stageType,
+    stageDimensions: raw.stageDimensions || legacyStageDimensions,
+    objects: Array.isArray(raw.objects) && !(raw.plan?.objects) ? raw.objects : raw.plan?.objects,
+    fixtures: raw.fixtures || raw.plan?.fixtures,
+    audioInputs: raw.audioInputs || raw.plan?.audioInputs,
+    rigging: raw.rigging || raw.plan?.rigging,
+    venue: raw.venue || raw.plan?.venue,
+    notes: raw.notes ?? raw.plan?.notes,
+    exportSettings: raw.exportSettings || raw.plan?.exportSettings,
+    version: raw.version || raw.plan?.version || 1
+  })
   return {
     id: String(projectId || '').trim(),
     title: String(raw.title || '').trim().slice(0, 120) || 'Untitled Stage Plan',
@@ -22,8 +42,16 @@ export function normalizeStageProject(projectId, raw = {}) {
     type: raw.type || 'stage-plan',
     stageType: String(raw.stageType || '').trim() || 'Blank Stage',
     stage: raw.stage && typeof raw.stage === 'object' ? raw.stage : { width: 32, depth: 20, height: 4, unit: 'ft' },
-    objects: Array.isArray(raw.objects) ? raw.objects : [],
-    notes: String(raw.notes || ''),
+    stageDimensions: plan.stageDimensions,
+    coordinateSystem: plan.coordinateSystem,
+    objects: plan.objects,
+    fixtures: plan.fixtures,
+    audioInputs: plan.audioInputs,
+    rigging: plan.rigging,
+    venue: plan.venue,
+    exportSettings: plan.exportSettings,
+    plan,
+    notes: String(raw.notes ?? plan.notes ?? ''),
     version: Number(raw.version || 1),
     createdAt: raw.createdAt || null,
     updatedAt: raw.updatedAt || null,
@@ -89,6 +117,9 @@ export async function createStageProject(user, input = {}) {
   if (!user?.uid) throw new Error('A signed-in user is required.')
   const title = String(input.title || '').trim().slice(0, 120) || 'Untitled Stage Plan'
   const stageType = String(input.stageType || '').trim() || 'Blank Stage'
+  const plan = createDefaultStagePlan({ name: title, version: 1 })
+  plan.title = title
+  plan.stageType = stageType
   const payload = {
     title,
     ownerId: user.uid,
@@ -96,10 +127,34 @@ export async function createStageProject(user, input = {}) {
     visibility: 'private',
     type: 'stage-plan',
     stageType,
-    stage: { width: 32, depth: 20, height: 4, unit: 'ft' },
-    objects: [],
-    notes: '',
+    stage: { width: plan.stageDimensions.width, depth: plan.stageDimensions.depth, height: plan.stageDimensions.deckHeight, unit: plan.stageDimensions.unit },
+    stageDimensions: plan.stageDimensions,
+    coordinateSystem: plan.coordinateSystem,
+    objects: plan.objects,
+    fixtures: plan.fixtures,
+    audioInputs: plan.audioInputs,
+    rigging: plan.rigging,
+    venue: plan.venue,
+    exportSettings: plan.exportSettings,
+    plan,
+    notes: plan.notes || '',
     version: 1,
+    editorState: {
+      viewportMode: 'perspective3d',
+      paneSizes: { library: 236, right: 286, bottom: 190, bottomSplit: 58 },
+      selectedObjectId: 'stage-deck',
+      showGrid: true,
+      snapEnabled: true,
+      snapInterval: 1,
+      showLabels: true,
+      showBeams: true,
+      activeStageSection: 'home',
+      activeEditorMode: 'entities',
+      activeInspectorTab: 'properties',
+      activeDataTab: 'schema',
+      stageTabs: [{ id: 'stage-1', title: 'Untitled Stage' }],
+      activeStageTabId: 'stage-1'
+    },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     lastOpenedAt: serverTimestamp()
@@ -127,4 +182,25 @@ export async function touchStageProject(projectId) {
 export async function saveStageProjectEditorState(projectId, editorState) {
   const id = String(projectId || '').trim(); if (!id || !editorState || typeof editorState !== 'object') return
   await updateDoc(doc(db, STAGE_PROJECTS_COLLECTION, id), { editorState, updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() })
+}
+
+export async function saveStageProjectPlan(projectId, plan, editorState = null) {
+  const id = String(projectId || '').trim(); if (!id || !plan || typeof plan !== 'object') return
+  const normalizedPlan = normalizeStagePlan({ ...plan, id })
+  const payload = {
+    plan: normalizedPlan,
+    stageDimensions: normalizedPlan.stageDimensions,
+    coordinateSystem: normalizedPlan.coordinateSystem,
+    objects: normalizedPlan.objects,
+    fixtures: normalizedPlan.fixtures,
+    audioInputs: normalizedPlan.audioInputs,
+    rigging: normalizedPlan.rigging,
+    venue: normalizedPlan.venue,
+    exportSettings: normalizedPlan.exportSettings,
+    notes: normalizedPlan.notes || '',
+    updatedAt: serverTimestamp(),
+    lastOpenedAt: serverTimestamp()
+  }
+  if (editorState && typeof editorState === 'object') payload.editorState = editorState
+  await updateDoc(doc(db, STAGE_PROJECTS_COLLECTION, id), payload)
 }

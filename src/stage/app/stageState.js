@@ -44,11 +44,11 @@ export const baseStageTypes = [
 ]
 
 export const editorModes = [
-  { key: 'builder', label: '3D Builder' },
-  { key: 'stage-plot', label: '2D Stage Plot' },
+  { key: 'entities', label: 'Entities' },
+  { key: 'stage-plot', label: 'Stage Plot' },
   { key: 'input-list', label: 'Input List' },
-  { key: 'lighting-plot', label: 'Lighting Plot' },
-  { key: 'rigging-plan', label: 'Rigging Plan' }
+  { key: 'lighting-patch', label: 'Lighting Patch' },
+  { key: 'rigging', label: 'Rigging' }
 ]
 
 export const editorViewModes = [['perspective3d', '3D'], ['top2d', 'Top'], ['front', 'Front'], ['side', 'Side'], ['isometric', 'Iso']]
@@ -73,10 +73,13 @@ export const state = {
   editorLoading: false,
   editorError: '',
   projectLoadStatus: 'loading',
+  editorSaveStatus: 'idle',
+  editorSaveError: '',
+  lastSavedAt: '',
   editorProject: null,
   createError: '',
   selectedStageType: 'Blank Stage',
-  activeEditorMode: 'builder',
+  activeEditorMode: 'entities',
   activeStageSection: 'home',
   activeLibraryCategory: 'band-backline',
   selectedEditorObject: 'stage-deck',
@@ -94,6 +97,8 @@ export const state = {
   viewportMode: localStorage.getItem('stageViewportMode') || 'perspective3d',
   activeInspectorTab: 'properties',
   activeDataTab: 'schema',
+  activeStageTabId: 'stage-1',
+  stageTabs: [{ id: 'stage-1', title: 'Untitled Stage' }],
   paneSizes: {
     library: Number(localStorage.getItem('stagePaneLibrary')) || 236,
     right: Number(localStorage.getItem('stagePaneRight')) || 286,
@@ -135,11 +140,97 @@ export function getStageTypeClass(stageType = '') {
 }
 
 export function selectedEditorObject() {
-  return editorMockObjects.find((o) => o.key === state.selectedEditorObject) || editorMockObjects[0]
+  const mock = editorMockObjects.find((o) => o.key === state.selectedEditorObject)
+  if (mock) return mock
+  const object = Array.isArray(state.editorProject?.objects) ? state.editorProject.objects.find((o) => o.id === state.selectedEditorObject || o.key === state.selectedEditorObject) : null
+  if (!object) return editorMockObjects[0]
+  return {
+    key: object.id || object.key,
+    label: object.label || object.name || object.id || 'Stage Object',
+    type: object.type || object.category || 'Object',
+    details: {
+      width: object.dimensions?.width,
+      depth: object.dimensions?.depth,
+      height: object.dimensions?.height
+    }
+  }
 }
 
 export function currentStageDimensions() {
   return state.editorProject?.stageDimensions || { width: 32, depth: 24, deckHeight: 4, unit: 'ft' }
+}
+
+export function ensureStageTabs() {
+  if (!Array.isArray(state.stageTabs) || state.stageTabs.length === 0) {
+    state.stageTabs = [{ id: 'stage-1', title: 'Untitled Stage' }]
+  }
+  if (!state.stageTabs.some((tab) => tab.id === state.activeStageTabId)) {
+    state.activeStageTabId = state.stageTabs[0].id
+  }
+  return state.stageTabs
+}
+
+export function activeStageTab() {
+  return ensureStageTabs().find((tab) => tab.id === state.activeStageTabId) || state.stageTabs[0]
+}
+
+function objectEntity(object) {
+  const dimensions = object.dimensions || object.details || {}
+  const position = object.position || {}
+  return {
+    id: object.id || object.key || object.name,
+    name: object.name || object.label || object.id || object.key || 'Untitled Object',
+    kind: object.type || 'Object',
+    category: object.category || 'stage',
+    location: [position.x, position.y, position.z].some((value) => Number.isFinite(value))
+      ? `X ${Number(position.x || 0).toFixed(1)} / Y ${Number(position.y || 0).toFixed(1)} / Z ${Number(position.z || 0).toFixed(1)}`
+      : 'not placed',
+    size: dimensions.width || dimensions.depth || dimensions.height
+      ? `${dimensions.width || 'n/a'} x ${dimensions.depth || 'n/a'} x ${dimensions.height || 'n/a'}`
+      : 'n/a',
+    status: object.visible === false ? 'hidden' : object.locked ? 'locked' : 'active'
+  }
+}
+
+export function stageEntities() {
+  const project = state.editorProject || {}
+  const entities = []
+  if (Array.isArray(project.objects)) entities.push(...project.objects.map(objectEntity))
+  if (Array.isArray(project.fixtures)) {
+    entities.push(...project.fixtures.map((fixture) => ({
+      id: fixture.id || fixture.name,
+      name: fixture.name || fixture.label || fixture.type || 'Fixture',
+      kind: fixture.type || 'Fixture',
+      category: 'lighting',
+      location: fixture.position ? `X ${Number(fixture.position.x || 0).toFixed(1)} / Y ${Number(fixture.position.y || 0).toFixed(1)} / Z ${Number(fixture.position.z || 0).toFixed(1)}` : fixture.positionName || 'lighting position',
+      size: fixture.beamAngle ? `${fixture.beamAngle} deg beam` : fixture.mode || 'n/a',
+      status: fixture.visible === false ? 'hidden' : 'patched'
+    })))
+  }
+  if (Array.isArray(project.audioInputs)) {
+    entities.push(...project.audioInputs.map((input) => ({
+      id: input.id || `input-${input.channel}`,
+      name: input.source || `Channel ${input.channel || '?'}`,
+      kind: 'Audio Input',
+      category: 'audio',
+      location: input.stageLocation || input.notes || 'stage',
+      size: input.micDi || 'n/a',
+      status: input.patch || input.channel ? `ch ${input.channel || '?'}` : 'unpatched'
+    })))
+  }
+  if (Array.isArray(project.rigging)) {
+    entities.push(...project.rigging.map((rig) => ({
+      id: rig.id || rig.name,
+      name: rig.name || rig.type || 'Rigging',
+      kind: rig.type || 'Rigging',
+      category: 'rigging',
+      location: rig.position ? `X ${Number(rig.position.x || 0).toFixed(1)} / Y ${Number(rig.position.y || 0).toFixed(1)} / Z ${Number(rig.position.z || 0).toFixed(1)}` : 'not placed',
+      size: rig.height ? `${rig.height} ft height` : rig.span ? `${rig.span} ft span` : 'n/a',
+      status: rig.qualifiedOnly ? 'qualified only' : 'planned'
+    })))
+  }
+  if (entities.length) return entities
+  return editorMockObjects.map((object) => objectEntity({ ...object, id: object.key, name: object.label, dimensions: object.details }))
 }
 
 export function projectLoadLabel() {
