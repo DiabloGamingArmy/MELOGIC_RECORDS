@@ -852,7 +852,7 @@ service cloud.firestore {
         && plan.keys().hasOnly([
           'id','name','title','version','createdAt','updatedAt','units','stageType','stageDimensions',
           'coordinateSystem','objects','fixtures','audioInputs','rigging','video','power','layers',
-          'measurements','annotations','venue','notes','exportSettings'
+          'measurements','annotations','venue','notes','warnings','exportSettings','editorState'
         ])
         && (!('id' in plan) || plan.id is string)
         && (!('name' in plan) || (plan.name is string && plan.name.size() <= 120))
@@ -873,7 +873,9 @@ service cloud.firestore {
         && (!('annotations' in plan) || (plan.annotations is list && plan.annotations.size() <= 500))
         && (!('venue' in plan) || plan.venue is map)
         && (!('notes' in plan) || (plan.notes is string && plan.notes.size() <= 20000))
-        && (!('exportSettings' in plan) || plan.exportSettings is map);
+        && (!('warnings' in plan) || (plan.warnings is list && plan.warnings.size() <= 1000))
+        && (!('exportSettings' in plan) || plan.exportSettings is map)
+        && (!('editorState' in plan) || plan.editorState is map);
     }
 
     function stageEditorStateValid(editorState) {

@@ -1,0 +1,108 @@
+[2026-05-28T03:25:39.668Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[2026-05-28T03:25:39.669Z] > authorizing via signed-in user (gene.a.barnes2@gmail.com)
+[2026-05-28T03:25:39.669Z] [iam] checking project melogic-records for permissions ["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]
+[2026-05-28T03:25:39.669Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:39.669Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:39.669Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records:testIamPermissions [none]
+[2026-05-28T03:25:39.669Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records:testIamPermissions  x-goog-user-project=melogic-records
+[2026-05-28T03:25:39.669Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[2026-05-28T03:25:40.012Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records:testIamPermissions 200
+[2026-05-28T03:25:40.013Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records:testIamPermissions {"permissions":["cloudfunctions.functions.create","cloudfunctions.functions.delete","cloudfunctions.functions.get","cloudfunctions.functions.list","cloudfunctions.functions.update","cloudfunctions.operations.get","firebase.projects.get"]}
+[2026-05-28T03:25:40.013Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:40.013Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:40.013Z] >>> [apiv2][query] POST https://iam.googleapis.com/v1/projects/melogic-records/serviceAccounts/melogic-records@appspot.gserviceaccount.com:testIamPermissions [none]
+[2026-05-28T03:25:40.013Z] >>> [apiv2][body] POST https://iam.googleapis.com/v1/projects/melogic-records/serviceAccounts/melogic-records@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+[2026-05-28T03:25:40.381Z] <<< [apiv2][status] POST https://iam.googleapis.com/v1/projects/melogic-records/serviceAccounts/melogic-records@appspot.gserviceaccount.com:testIamPermissions 200
+[2026-05-28T03:25:40.381Z] <<< [apiv2][body] POST https://iam.googleapis.com/v1/projects/melogic-records/serviceAccounts/melogic-records@appspot.gserviceaccount.com:testIamPermissions {"permissions":["iam.serviceAccounts.actAs"]}
+
+=== Deploying to 'melogic-records'...
+
+i  deploying functions 
+[2026-05-28T03:25:40.384Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:40.384Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:40.384Z] >>> [apiv2][query] GET https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records [none]
+[2026-05-28T03:25:40.536Z] <<< [apiv2][status] GET https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records 200
+[2026-05-28T03:25:40.537Z] <<< [apiv2][body] GET https://cloudresourcemanager.googleapis.com/v1/projects/melogic-records {"projectNumber":"799449606868","projectId":"melogic-records","lifecycleState":"ACTIVE","name":"MELOGIC-RECORDS","labels":{"firebase":"enabled","firebase-core":"disabled"},"createTime":"2026-04-22T20:34:22.799Z"}
+i  functions: preparing codebase default for deployment 
+i  functions: ensuring required API cloudfunctions.googleapis.com is enabled... 
+i  functions: ensuring required API cloudbuild.googleapis.com is enabled... 
+i  artifactregistry: ensuring required API artifactregistry.googleapis.com is enabled... 
+[2026-05-28T03:25:40.539Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:40.539Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:40.539Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/melogic-records/adminSdkConfig [none]
+[2026-05-28T03:25:41.374Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/melogic-records/adminSdkConfig 200
+[2026-05-28T03:25:41.374Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/melogic-records/adminSdkConfig {"projectId":"melogic-records","databaseURL":"https://melogic-records-default-rtdb.firebaseio.com","storageBucket":"melogic-records.firebasestorage.app"}
+[2026-05-28T03:25:41.375Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:41.375Z] Checked if tokens are valid: true, expires at: 1779941840819
+[2026-05-28T03:25:41.375Z] >>> [apiv2][query] GET https://runtimeconfig.googleapis.com/v1beta1/projects/melogic-records/configs [none]
+[2026-05-28T03:25:42.065Z] <<< [apiv2][status] GET https://runtimeconfig.googleapis.com/v1beta1/projects/melogic-records/configs 200
+[2026-05-28T03:25:42.065Z] <<< [apiv2][body] GET https://runtimeconfig.googleapis.com/v1beta1/projects/melogic-records/configs {}
+[2026-05-28T03:25:42.067Z] Validating nodejs source
+⚠  functions: Runtime Node.js 20 was deprecated on 2026-04-30 and will be decommissioned on 2026-10-30, after which you will not be able to deploy without upgrading. Consider upgrading now to avoid disruption. See https://cloud.google.com/functions/docs/runtime-support for full details on the lifecycle policy 
+⚠  functions: Couldn't find firebase-functions package in your source code. Have you run 'npm install'? 
+[2026-05-28T03:25:42.068Z] getFunctionsSDKVersion encountered error: Cannot find module 'firebase-functions'
+Require stack:
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/versioning.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/prepare.js
+- /usr/local/lib/node_modules/firebase-tools/lib/emulator/functionsEmulatorShared.js
+- /usr/local/lib/node_modules/firebase-tools/lib/frameworks/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/hosting/prepare.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/hosting/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/commands/deploy.js
+- /usr/local/lib/node_modules/firebase-tools/lib/commands/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/bin/cli.js
+- /usr/local/lib/node_modules/firebase-tools/lib/bin/firebase.js {"code":"MODULE_NOT_FOUND","requireStack":["/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/versioning.js","/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/index.js","/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/index.js","/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/prepare.js","/usr/local/lib/node_modules/firebase-tools/lib/emulator/functionsEmulatorShared.js","/usr/local/lib/node_modules/firebase-tools/lib/frameworks/index.js","/usr/local/lib/node_modules/firebase-tools/lib/deploy/hosting/prepare.js","/usr/local/lib/node_modules/firebase-tools/lib/deploy/hosting/index.js","/usr/local/lib/node_modules/firebase-tools/lib/deploy/index.js","/usr/local/lib/node_modules/firebase-tools/lib/commands/deploy.js","/usr/local/lib/node_modules/firebase-tools/lib/commands/index.js","/usr/local/lib/node_modules/firebase-tools/lib/index.js","/usr/local/lib/node_modules/firebase-tools/lib/bin/cli.js","/usr/local/lib/node_modules/firebase-tools/lib/bin/firebase.js"]}
+[2026-05-28T03:25:42.069Z] checkFunctionsSDKVersion encountered error: Invalid Version:  {}
+[2026-05-28T03:25:42.070Z] > [functions] package.json contents: {
+  "name": "melogic-functions",
+  "private": true,
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "lint": "echo 'No lint configured'",
+    "serve": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "firebase-functions": "^6.1.1",
+    "stripe": "^16.12.0"
+  }
+}
+[2026-05-28T03:25:42.070Z] Building nodejs source
+i  functions: Loading and analyzing source code for codebase default to determine what to deploy 
+[2026-05-28T03:25:42.070Z] Could not parse firebase-functions version '' into semver.
+[2026-05-28T03:25:42.071Z] Could not find functions.yaml. Must use http discovery
+[2026-05-28T03:25:42.330Z] Error: Cannot find module 'firebase-functions'
+Require stack:
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/prepare.js
+- /usr/local/lib/node_modules/firebase-tools/lib/emulator/functionsEmulatorShared.js
+- /usr/local/lib/node_modules/firebase-tools/lib/frameworks/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/hosting/prepare.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/hosting/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/deploy/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/commands/deploy.js
+- /usr/local/lib/node_modules/firebase-tools/lib/commands/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/index.js
+- /usr/local/lib/node_modules/firebase-tools/lib/bin/cli.js
+- /usr/local/lib/node_modules/firebase-tools/lib/bin/firebase.js
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1421:15)
+    at require.resolve (node:internal/modules/helpers:163:19)
+    at Delegate.findFunctionsBinary (/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/index.js:101:33)
+    at Delegate.spawnFunctionsProcess (/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/index.js:131:30)
+    at Delegate.serveAdmin (/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/index.js:152:35)
+    at Delegate.discoverBuild (/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/runtimes/node/index.js:192:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async loadCodebases (/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/prepare.js:380:33)
+    at async prepare (/usr/local/lib/node_modules/firebase-tools/lib/deploy/functions/prepare.js:73:24)
+    at async chain (/usr/local/lib/node_modules/firebase-tools/lib/deploy/index.js:45:9)
+
+Error: An unexpected error has occurred.

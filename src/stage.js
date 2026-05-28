@@ -5,12 +5,12 @@ import { navShell } from './components/navShell'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES, stageProjectRoute } from './utils/routes'
 import { getPublicStorageUrl } from './firebase/storageAssets'
-import { createStageProject, getStageProject, listAccessibleStageProjects, saveStageProjectEditorState, saveStageProjectPlan, sortStageProjectsByActivity, touchStageProject } from './data/stageProjectService'
+import { classifyStageProjectError, createStageProject, createStageProjectFromPlan, getStageProject, isValidStageProjectId, listAccessibleStageProjects, saveStageProjectEditorState, saveStageProjectPlan, sortStageProjectsByActivity, stageProjectPath, touchStageProject } from './data/stageProjectService'
 import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
 import { renderDashboard } from './stage/app/stageDashboard'
 import { renderEditor, renderStageTabbar } from './stage/app/stageEditorRender'
-import { editorTitleStamp, getCurrentStageProjectId, projectDate, stageIconPath, stageTypes, state, updateSelectedStageObjectField } from './stage/app/stageState'
+import { editorTitleStamp, getCurrentStageProjectId, moveSelectedStageObject, projectDate, stageIconPath, stageTypes, state, updateSelectedStageObjectField } from './stage/app/stageState'
 import { renderExportPreview } from './stage/export/exportPreview'
 import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspector/inspectorTabs'
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
@@ -29,6 +29,10 @@ let planSaveTimer = 0
 
 function editorRecoveryKey(projectId = state.projectId) {
   return `melogic.stage.editorState.${projectId || 'draft'}`
+}
+
+function stagePlanRecoveryKey(projectId = state.projectId) {
+  return `melogic.stage.plan.${projectId || 'draft'}`
 }
 
 function normalizeEditorMode(mode) {
@@ -98,6 +102,22 @@ function restoreLocalEditorState(projectId = state.projectId) {
   }
 }
 
+function restoreLocalStagePlan(projectId = state.projectId) {
+  try {
+    const raw = localStorage.getItem(stagePlanRecoveryKey(projectId))
+    if (!raw) return false
+    const snapshot = JSON.parse(raw)
+    const plan = snapshot?.plan || snapshot
+    if (!plan || typeof plan !== 'object') return false
+    state.editorProject = normalizeStagePlan({ ...plan, id: projectId || plan.id || state.projectId })
+    state.editorSaveStatus = 'local'
+    state.lastSavedAt = snapshot.savedAt || state.lastSavedAt
+    return true
+  } catch {
+    return false
+  }
+}
+
 function persistLocalEditorState(snapshot = buildEditorStateSnapshot()) {
   try { localStorage.setItem(editorRecoveryKey(), JSON.stringify(snapshot)) } catch {}
 }
@@ -116,6 +136,7 @@ function initStageEditorViewport() {
   stageViewportController = mountStageThreeViewport(container, {
     project: state.editorProject,
     projectLoadStatus: state.projectLoadStatus,
+    projectLoadMessage: state.projectLoadMessage,
     showDiagnostics: state.showViewportDiagnostics,
     selectedObjectKey: state.selectedEditorObject,
     objectTransforms: state.editorObjectTransforms,
@@ -123,22 +144,29 @@ function initStageEditorViewport() {
       if (state.selectedEditorObject === key) return
       state.selectedEditorObject = key
       updateStageInspectorSelection()
+      updateInspectorUI()
       updateEditorModeUI()
+      queueEditorStateSave()
     },
     onTransformObject: (key, transform) => {
+      state.selectedEditorObject = key
       state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: transform }
-      if (state.selectedEditorObject === key) {
-        if (Number.isFinite(transform.x)) updateSelectedStageObjectField('x', transform.x)
-        if (Number.isFinite(transform.y)) updateSelectedStageObjectField('y', transform.y)
-        if (Number.isFinite(transform.z)) updateSelectedStageObjectField('z', transform.z)
+      if ([transform.x, transform.y, transform.z].some(Number.isFinite)) {
+        moveSelectedStageObject({ x: transform.x, y: transform.y, z: transform.z }, { absolute: true })
+      } else {
+        if (Number.isFinite(transform.rotY)) updateSelectedStageObjectField('rotY', transform.rotY)
       }
+      updateInspectorUI()
+      updateEditorModeUI()
       queueStagePlanSave()
     },
     viewportMode: state.viewportMode,
     renderMode: state.renderMode,
     showGrid: state.gridEnabled,
     showBeams: state.beamPreviewEnabled,
-    showLabels: state.showStageLabels
+    showLabels: state.showStageLabels,
+    snapEnabled: state.snapEnabled,
+    snapInterval: state.snapInterval
   })
   if (stageViewportController) stageViewportMountedForProjectId = state.projectId
 }
@@ -153,7 +181,7 @@ function updateSaveStatusUI() {
       : state.editorSaveStatus === 'failed'
         ? 'Save failed'
         : state.editorSaveStatus === 'local'
-          ? 'Local recovery active'
+          ? state.projectLoadStatus === 'fallback-local' ? 'Local recovery active' : 'Local fallback active'
           : state.editorSaveStatus === 'unsaved'
             ? 'Unsaved changes'
             : 'Ready'
@@ -197,7 +225,7 @@ function queueEditorStateSave() {
 }
 
 function persistLocalStagePlan() {
-  try { localStorage.setItem(`melogic.stage.plan.${state.projectId || 'draft'}`, JSON.stringify({ plan: state.editorProject, savedAt: new Date().toISOString() })) } catch {}
+  try { localStorage.setItem(stagePlanRecoveryKey(), JSON.stringify({ plan: state.editorProject, savedAt: new Date().toISOString() })) } catch {}
 }
 
 async function flushStagePlanSave() {
@@ -404,7 +432,9 @@ function bindEditorEvents() {
     updateStageInspectorSelection,
     updateViewportControlUI,
     queueEditorStateSave,
-    refreshStageViewport
+    refreshStageViewport,
+    loadEditorProject,
+    saveCurrentPlanAsNew
   })
 }
 
@@ -505,32 +535,109 @@ async function loadDashboardProjects() {
   }
 }
 
+function stageLoadMessage(status, meta = {}) {
+  if (status === 'loaded') return 'Stage project loaded from Firestore.'
+  if (status === 'loading') return 'Loading stage project...'
+  if (status === 'unauthenticated') return 'Sign in required to load this stage plan. Editing a local fallback copy.'
+  if (status === 'permission-denied') return 'You do not have permission to open this stage plan. Editing a local fallback copy.'
+  if (status === 'not-found') return 'Stage project was not found. Editing a default fallback stage.'
+  if (status === 'network-error') return 'Network or Firestore connection failed. Editing local recovery.'
+  if (status === 'rules-error') return 'Firestore rejected this Stage project shape. Editing local recovery.'
+  if (status === 'fallback-local') return `${meta.reasonMessage || 'Project data could not be loaded.'} Editing local recovery.`
+  if (status === 'fallback-default') return `${meta.reasonMessage || 'Project data could not be loaded.'} Editing default fallback stage.`
+  return 'Project data could not be loaded. Editing fallback stage.'
+}
+
+function setStageLoadState(status, meta = {}) {
+  state.projectLoadStatus = status
+  state.projectLoadMeta = meta
+  state.projectLoadErrorCode = meta.code || ''
+  state.projectLoadMessage = stageLoadMessage(status, meta)
+}
+
+function logProjectLoadFailure(status, error, meta = {}) {
+  console.warn('[stage] Firestore project load failed.', {
+    projectId: state.projectId,
+    collectionPath: stageProjectPath(state.projectId),
+    currentUserUid: state.user?.uid || null,
+    authStateLoaded: true,
+    loadState: status,
+    firestoreCode: error?.code || '',
+    firestoreMessage: error?.message || String(error || ''),
+    usingLocalRecovery: !!meta.usingLocalRecovery,
+    projectIdMalformed: !isValidStageProjectId(state.projectId),
+    fallbackMode: meta.fallbackMode || ''
+  })
+}
+
 async function loadEditorProject() {
   if (!state.projectId) return
   state.editorLoading = true
   state.editorError = ''
-  state.projectLoadStatus = 'loading'
+  setStageLoadState('loading')
   renderApp()
+  const useDefaultFallback = (status, meta = {}) => {
+    const restored = restoreLocalStagePlan(state.projectId)
+    if (!restored) state.editorProject = normalizeStagePlan({ id: state.projectId, title: 'Fallback Stage Plan', stageType: 'Blank Stage', version: 1 })
+    restoreLocalEditorState(state.projectId)
+    const fallbackStatus = restored ? 'fallback-local' : status
+    setStageLoadState(fallbackStatus, { ...meta, usingLocalRecovery: restored, fallbackMode: restored ? 'local' : 'default' })
+    state.editorSaveStatus = 'local'
+  }
   try {
+    if (!isValidStageProjectId(state.projectId)) {
+      useDefaultFallback('not-found', { code: 'invalid-project-id', reasonMessage: 'Stage project ID is malformed.' })
+      logProjectLoadFailure('not-found', { code: 'invalid-project-id', message: 'Malformed project id.' }, state.projectLoadMeta || {})
+      return
+    }
+    if (!state.user?.uid) {
+      useDefaultFallback('unauthenticated', { code: 'auth-required', reasonMessage: 'Sign in required to load this private stage plan.' })
+      logProjectLoadFailure('unauthenticated', { code: 'auth-required', message: 'No signed-in user.' }, state.projectLoadMeta || {})
+      return
+    }
     const project = await getStageProject(state.projectId)
     if (!project) {
-      state.editorError = 'not-found'
-      state.projectLoadStatus = 'error'
+      useDefaultFallback('not-found', { code: 'not-found', reasonMessage: 'Stage project was not found.' })
+      logProjectLoadFailure('not-found', { code: 'not-found', message: 'No document exists at the stage project path.' }, state.projectLoadMeta || {})
     } else {
       state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name })
-      applyEditorStateSnapshot(project.editorState)
-      if (!project.editorState) restoreLocalEditorState(state.projectId)
-      state.projectLoadStatus = 'loaded'
+      applyEditorStateSnapshot(project.editorState || project.plan?.editorState)
+      if (!project.editorState && !project.plan?.editorState) restoreLocalEditorState(state.projectId)
+      setStageLoadState('loaded')
       state.editorSaveStatus = project.editorState ? 'saved' : 'idle'
     }
-  } catch {
-    state.editorProject = normalizeStagePlan({ id: state.projectId, title: 'Fallback Stage Plan', stageType: 'Blank Stage', version: 1 })
-    state.projectLoadStatus = 'fallback'
-    restoreLocalEditorState(state.projectId)
-    console.warn('[stage] Firestore project load failed. Stage editor shell remains available with default viewport objects.')
+  } catch (error) {
+    const status = classifyStageProjectError(error, state.user)
+    useDefaultFallback(status, { code: error?.code || status, reasonMessage: stageLoadMessage(status), originalStatus: status })
+    logProjectLoadFailure(state.projectLoadStatus, error, state.projectLoadMeta || {})
   } finally {
     state.editorLoading = false
     renderApp()
+  }
+}
+
+async function saveCurrentPlanAsNew() {
+  if (!state.editorProject) return
+  if (!state.user?.uid) {
+    window.location.href = authRoute({ redirect: window.location.pathname + window.location.search })
+    return
+  }
+  state.editorSaveStatus = 'saving'
+  updateSaveStatusUI()
+  try {
+    const snapshot = buildEditorStateSnapshot()
+    const project = await createStageProjectFromPlan(state.user, state.editorProject, {
+      title: state.editorProject.title || state.editorProject.name || 'Untitled Stage Plan',
+      stageType: state.editorProject.stageType || 'Blank Stage',
+      editorState: snapshot
+    })
+    state.editorSaveStatus = 'saved'
+    window.location.href = stageProjectRoute(project.id)
+  } catch (error) {
+    state.editorSaveStatus = 'failed'
+    state.editorSaveError = error?.message || 'Could not save this stage as a new project.'
+    updateSaveStatusUI()
+    console.warn('[stage] save as new failed.', error?.code || error?.message || error)
   }
 }
 

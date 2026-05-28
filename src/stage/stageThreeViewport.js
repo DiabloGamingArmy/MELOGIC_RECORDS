@@ -1,20 +1,13 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { createDefaultStagePlan } from './stagePlanModel'
 const FORCE_STAGE_VIEWPORT_SMOKE_TEST = false
 const SHOW_VIEWPORT_DIAGNOSTICS = Boolean(import.meta?.env?.DEV)
 
-const DEFAULT_STAGE_OBJECTS = [
-  { key: 'stage-deck', label: 'Stage Deck', type: 'Base Stage', position: [0, 0.5, 0], size: [32, 1, 24], selectable: true },
-  { key: 'drum-riser', label: 'Drum Riser', type: 'Backline', position: [0, 1.1, -2], size: [6, 0.6, 5], selectable: true },
-  { key: 'truss-a', label: 'Truss A', type: 'Rigging', position: [0, 8.4, -8], size: [34, 0.35, 0.35], selectable: true },
-  { key: 'speaker-left', label: 'Speaker Left', type: 'Audio', position: [-14, 2.5, -2], size: [1.8, 5, 1.6], selectable: true },
-  { key: 'speaker-right', label: 'Speaker Right', type: 'Audio', position: [14, 2.5, -2], size: [1.8, 5, 1.6], selectable: true },
-  { key: 'camera-1', label: 'Camera 1', type: 'Video', position: [0, 1.3, 17], size: [0.8, 2, 0.8], selectable: true },
-  { key: 'moving-head', label: 'Moving Head', type: 'Lighting', position: [5.8, 8, -8], size: [0.8, 0.8, 0.8], selectable: true }
-]
+const defaultStagePlan = () => createDefaultStagePlan({ id: 'viewport-fallback', name: 'Viewport Fallback' })
 
 const objectDefsFromProject = (project = {}) => {
-  const source = Array.isArray(project.objects) && project.objects.length ? project.objects : DEFAULT_STAGE_OBJECTS
+  const source = Array.isArray(project.objects) && project.objects.length ? project.objects : defaultStagePlan().objects
   return source.map((object) => {
     const dimensions = object.dimensions || {}
     const position = object.position || {}
@@ -26,8 +19,10 @@ const objectDefsFromProject = (project = {}) => {
       color: object.color || object.metadata?.color || '',
       position: Array.isArray(object.position) ? object.position : [Number(position.x || 0), Number(position.y || 0), Number(position.z || 0)],
       size: Array.isArray(object.size) ? object.size : [Number(dimensions.width || 1), Number(dimensions.height || 1), Number(dimensions.depth || 1)],
+      rotation: object.rotation || { x: 0, y: 0, z: 0 },
       selectable: object.selectable !== false,
-      visible: object.visible !== false
+      visible: object.visible !== false,
+      locked: !!object.locked
     }
   }).filter((object) => object.key)
 }
@@ -78,6 +73,9 @@ export function mountStageThreeViewport(container, options = {}) {
     let currentRenderMode = options.renderMode || 'technical'
     let currentShowBeams = options.showBeams !== false
     let currentShowLabels = options.showLabels !== false
+    let currentSnapEnabled = options.snapEnabled !== false
+    let currentSnapInterval = Number(options.snapInterval) || 1
+    const snapNumber = (value) => currentSnapEnabled && currentSnapInterval > 0 ? Math.round(value / currentSnapInterval) * currentSnapInterval : value
     const setOrthoBounds = (orthoCamera, size, aspect) => {
       orthoCamera.left = -size * aspect
       orthoCamera.right = size * aspect
@@ -144,13 +142,14 @@ export function mountStageThreeViewport(container, options = {}) {
 
     const stageObjectDefs = objectDefsFromProject(options.project)
     const stageDimensions = options.project?.stageDimensions || {}
-    const deckDef = stageObjectDefs.find((d) => d.key === 'stage-deck') || DEFAULT_STAGE_OBJECTS[0]
+    const deckDef = stageObjectDefs.find((d) => d.key === 'stage-deck') || objectDefsFromProject(defaultStagePlan())[0]
     const deckWidth = Number(stageDimensions.width || deckDef.size?.[0] || 32)
     const deckDepth = Number(stageDimensions.depth || deckDef.size?.[2] || 24)
     const deckHeight = Number(stageDimensions.deckHeight || deckDef.size?.[1] || 1)
     const pickables = []
     const objects = {}
-    const addPickable = (mesh, key) => { mesh.userData.objectKey = key; pickables.push(mesh); objects[key] = mesh }
+    const objectMeta = Object.fromEntries(stageObjectDefs.map((d) => [d.key, d]))
+    const addPickable = (mesh, key) => { mesh.userData.objectKey = key; mesh.userData.stageLocked = !!objectMeta[key]?.locked; pickables.push(mesh); objects[key] = mesh }
     const materialColorFor = (d) => d.color || (d.category === 'rigging' ? '#6762d2' : d.category === 'lighting' ? '#49c8ff' : d.category === 'video' ? '#4fc8b4' : d.category === 'audio' ? '#26364b' : d.category === 'power' ? '#ffb86b' : '#222b39')
     const geometryFor = (d) => {
       if (d.type?.includes('cylinder') || d.type === 'microphone') return new THREE.CylinderGeometry(Math.max(0.12, d.size[0] / 2), Math.max(0.12, d.size[0] / 2), Math.max(0.2, d.size[1]), 18)
@@ -177,7 +176,8 @@ export function mountStageThreeViewport(container, options = {}) {
     stageObjectDefs.filter((d) => d.key !== 'stage-deck' && d.visible !== false).forEach((d) => {
       const mesh = new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: materialColorFor(d), roughness: 0.72, metalness: 0.22 }))
       mesh.position.set(...d.position)
-      if (d.key === 'camera-1') mesh.rotation.z = Math.PI / 2
+      mesh.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))
+      if (d.key === 'camera-1' && !d.rotation?.z) mesh.rotation.z = Math.PI / 2
       scene.add(mesh)
       addPickable(mesh, d.key)
     })
@@ -226,6 +226,7 @@ export function mountStageThreeViewport(container, options = {}) {
     let selectedKey = objects[options.selectedObjectKey] ? options.selectedObjectKey : 'stage-deck'
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
+    const drag = { active: false, key: '', pointerId: 0, plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), offset: new THREE.Vector3(), point: new THREE.Vector3() }
     const syncSelection = () => {
       pickables.forEach((m) => {
         const active = m.userData.objectKey === selectedKey
@@ -245,6 +246,48 @@ export function mountStageThreeViewport(container, options = {}) {
       syncSelection()
       if (notify && changed) options.onSelectObject?.(selectedKey)
     }
+
+    const objectBox = (key = selectedKey) => {
+      const target = objects[key]
+      if (!target) return null
+      return new THREE.Box3().setFromObject(target)
+    }
+
+    const frameBox = (box) => {
+      if (!box || box.isEmpty()) return
+      const center = box.getCenter(new THREE.Vector3())
+      const size = box.getSize(new THREE.Vector3())
+      const radius = Math.max(size.x, size.y, size.z, 4)
+      controls.target.copy(center)
+      if (camera.isPerspectiveCamera) {
+        const direction = camera.position.clone().sub(controls.target).normalize()
+        if (!Number.isFinite(direction.length()) || direction.length() < 0.01) direction.set(1, 0.6, 1).normalize()
+        const distance = Math.max(10, radius / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * 1.2)
+        camera.position.copy(center).add(direction.multiplyScalar(distance))
+      } else {
+        if (currentViewMode === 'top2d') camera.position.set(center.x, 64, center.z + 0.001)
+        else if (currentViewMode === 'front') camera.position.set(center.x, center.y + 8, 64)
+        else if (currentViewMode === 'side') camera.position.set(64, center.y + 8, center.z)
+        else camera.position.set(center.x + 36, center.y + 30, center.z + 36)
+        camera.lookAt(center)
+        const viewWidth = currentViewMode === 'side' ? Math.max(size.z, 1) : Math.max(size.x, 1)
+        const viewHeight = currentViewMode === 'top2d' ? Math.max(size.z, 1) : Math.max(size.y, 1)
+        const availableW = Math.max(Math.abs(camera.right - camera.left), 1)
+        const availableH = Math.max(Math.abs(camera.top - camera.bottom), 1)
+        camera.zoom = Math.max(0.3, Math.min(4, Math.min(availableW / (viewWidth * 1.55), availableH / (viewHeight * 1.55))))
+        camera.updateProjectionMatrix()
+      }
+      controls.update()
+      renderer.render(scene, camera)
+    }
+
+    const frameAll = () => {
+      const box = new THREE.Box3()
+      pickables.forEach((obj) => box.expandByObject(obj))
+      frameBox(box)
+    }
+
+    const focusSelected = () => frameBox(objectBox(selectedKey))
 
     const applyObjectTransforms = (transforms = {}) => {
       Object.entries(transforms).forEach(([k, t]) => {
@@ -266,14 +309,48 @@ export function mountStageThreeViewport(container, options = {}) {
       raycaster.setFromCamera(pointer, camera)
       const hit = raycaster.intersectObjects(pickables, true).find((h) => h.object?.userData?.objectKey || h.object?.parent?.userData?.objectKey)
       if (!hit) return
-      setSelectedKey(hit.object.userData.objectKey || hit.object.parent.userData.objectKey, { notify: true })
+      const hitKey = hit.object.userData.objectKey || hit.object.parent.userData.objectKey
+      setSelectedKey(hitKey, { notify: true })
+      const target = objects[hitKey]
+      if (currentViewMode !== 'top2d' || target?.userData?.stageLocked) return
+      drag.active = true
+      drag.key = hitKey
+      drag.pointerId = event.pointerId
+      drag.plane.set(new THREE.Vector3(0, 1, 0), -target.position.y)
+      raycaster.ray.intersectPlane(drag.plane, drag.point)
+      drag.offset.copy(target.position).sub(drag.point)
+      controls.enabled = false
+      renderer.domElement.setPointerCapture?.(event.pointerId)
+    }
+    const onPointerMove = (event) => {
+      if (!drag.active) return
+      const target = objects[drag.key]
+      if (!target) return
+      const rect = renderer.domElement.getBoundingClientRect(); pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1; pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(pointer, camera)
+      if (!raycaster.ray.intersectPlane(drag.plane, drag.point)) return
+      target.position.x = snapNumber(drag.point.x + drag.offset.x)
+      target.position.z = snapNumber(drag.point.z + drag.offset.z)
+      gizmo.position.copy(target.position)
+      boxHelper?.update()
+      selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+      renderer.render(scene, camera)
+    }
+    const onPointerUp = (event) => {
+      if (!drag.active) return
+      const target = objects[drag.key]
+      drag.active = false
+      controls.enabled = true
+      renderer.domElement.releasePointerCapture?.(event.pointerId || drag.pointerId)
+      if (target) options.onTransformObject?.(drag.key, { x: target.position.x, y: target.position.y, z: target.position.z })
     }
     const onKeyDown = (event) => {
       const obj = objects[selectedKey]; if (!obj) return
-      const step = event.shiftKey ? 0.6 : 0.2
+      if (obj.userData.stageLocked) return
+      const step = event.shiftKey ? 2 : event.altKey ? 0.25 : currentSnapEnabled ? currentSnapInterval : 0.5
       const axis = { ArrowLeft: ['x', -1], ArrowRight: ['x', 1], ArrowUp: ['z', -1], ArrowDown: ['z', 1], PageUp: ['y', 1], PageDown: ['y', -1] }[event.key]
       if (!axis) return
-      event.preventDefault(); obj.position[axis[0]] += step * axis[1]; gizmo.position.copy(obj.position); boxHelper?.update(); selectedLabel?.position.set(obj.position.x, obj.position.y + 1.8, obj.position.z)
+      event.preventDefault(); obj.position[axis[0]] += step * axis[1]; if (axis[0] !== 'y') obj.position[axis[0]] = snapNumber(obj.position[axis[0]]); gizmo.position.copy(obj.position); boxHelper?.update(); selectedLabel?.position.set(obj.position.x, obj.position.y + 1.8, obj.position.z)
       options.onTransformObject?.(selectedKey, { x: obj.position.x, y: obj.position.y, z: obj.position.z })
     }
     const statusOverlay = document.createElement('div')
@@ -281,16 +358,16 @@ export function mountStageThreeViewport(container, options = {}) {
     const diagnosticsEnabled = SHOW_VIEWPORT_DIAGNOSTICS || !!options.showDiagnostics
     statusOverlay.hidden = !diagnosticsEnabled
     container.appendChild(statusOverlay)
-    if (options.projectLoadStatus === 'fallback' || options.projectLoadStatus === 'error') {
+    if (options.projectLoadStatus && !['loaded', 'loading'].includes(options.projectLoadStatus)) {
       const warning = document.createElement('div')
       warning.className = 'stage-three-load-warning'
-      warning.textContent = 'Project data failed to load. Editing fallback stage.'
+      warning.textContent = options.projectLoadMessage || 'Project data failed to load. Editing fallback stage.'
       container.appendChild(warning)
     }
     const writeStatus = (message = '') => {
       const canvas = renderer.domElement
       const buf = renderer.getDrawingBufferSize(new THREE.Vector2())
-      const projectState = options.project ? 'loaded' : 'fallback'
+      const projectState = options.projectLoadStatus || (options.project ? 'loaded' : 'fallback')
       const camDetails = camera?.isPerspectiveCamera
         ? `Perspective aspect ${formatNum(camera.aspect)}`
         : `Ortho l/r/t/b ${formatNum(camera.left)}/${formatNum(camera.right)}/${formatNum(camera.top)}/${formatNum(camera.bottom)} z ${formatNum(camera.zoom)}`
@@ -317,6 +394,9 @@ export function mountStageThreeViewport(container, options = {}) {
     const ro = new ResizeObserver(onResize); ro.observe(container)
 
     renderer.domElement.addEventListener('pointerdown', onPointerDown)
+    renderer.domElement.addEventListener('pointermove', onPointerMove)
+    renderer.domElement.addEventListener('pointerup', onPointerUp)
+    renderer.domElement.addEventListener('pointercancel', onPointerUp)
     container.addEventListener('keydown', onKeyDown)
     container.addEventListener('pointerdown', () => container.focus())
     if (FORCE_STAGE_VIEWPORT_SMOKE_TEST) {
@@ -338,6 +418,8 @@ export function mountStageThreeViewport(container, options = {}) {
       if (typeof nextOptions.showGrid === 'boolean') gridHelper.visible = nextOptions.showGrid
       if (typeof nextOptions.showBeams === 'boolean') currentShowBeams = nextOptions.showBeams
       if (typeof nextOptions.showLabels === 'boolean') currentShowLabels = nextOptions.showLabels
+      if (typeof nextOptions.snapEnabled === 'boolean') currentSnapEnabled = nextOptions.snapEnabled
+      if (Number.isFinite(Number(nextOptions.snapInterval))) currentSnapInterval = Number(nextOptions.snapInterval)
       if (nextOptions.renderMode) {
         currentRenderMode = nextOptions.renderMode
       }
@@ -355,6 +437,9 @@ export function mountStageThreeViewport(container, options = {}) {
       cancelAnimationFrame(raf)
       ro.disconnect()
       renderer.domElement.removeEventListener('pointerdown', onPointerDown)
+      renderer.domElement.removeEventListener('pointermove', onPointerMove)
+      renderer.domElement.removeEventListener('pointerup', onPointerUp)
+      renderer.domElement.removeEventListener('pointercancel', onPointerUp)
       container.removeEventListener('keydown', onKeyDown)
       controls.dispose()
       scene.traverse((obj) => { if (obj.geometry?.dispose) obj.geometry.dispose(); const mat = obj.material; if (Array.isArray(mat)) mat.forEach((m) => m?.dispose?.()); else mat?.dispose?.(); if (obj.material?.map?.dispose) obj.material.map.dispose() })
@@ -363,7 +448,7 @@ export function mountStageThreeViewport(container, options = {}) {
       console.info('[stageThreeViewport] disposed')
     }
 
-    return { dispose, update }
+    return { dispose, update, focusSelected, frameAll }
   } catch (error) {
     console.error('[stageThreeViewport] mount failed', error)
     container.classList.add('is-three-error')
