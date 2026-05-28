@@ -22,7 +22,7 @@ export function selectedEditorObjectMarkup() {
 }
 
 export function renderInspectorTabs(title, stamp) {
-  const tabs = [['properties', 'Properties'], ['ai', 'AI Assist'], ['rig', 'Rig Notes'], ['project', 'Project Info']]
+  const tabs = [['properties', 'Properties'], ['ai', 'AI Assist'], ['rig', 'Rig Notes'], ['project', 'Project']]
   const active = state.activeInspectorTab
   const body = active === 'properties'
     ? `<section class="stage-config-panel"><h3>Properties</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section>`
@@ -30,6 +30,6 @@ export function renderInspectorTabs(title, stamp) {
       ? '<section class="stage-ai-panel"><h3>AI Assistant</h3><p>Prompt-based stage assistant placeholder.</p><textarea aria-label="AI prompt" placeholder="Build me a 24x16 stage for a 5-piece metalcore band with tracks and lighting."></textarea><button type="button" aria-disabled="true">Generate</button></section>'
       : active === 'rig'
         ? '<section class="stage-config-panel"><h3>Rigging Notes</h3><p>Qualified personnel required for rigging/hangs.</p><textarea aria-label="Rigging notes" placeholder="Rigging notes"></textarea><ul><li>Add Truss (placeholder)</li><li>Add Rigging Point (placeholder)</li></ul></section>'
-        : `<section class="stage-config-panel"><h3>Project Info</h3><p data-stage-project-info-title>${title}</p><p data-stage-project-info-type>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: ${state.projectLoadStatus}</p><p>Project ID: ${state.projectId}</p></section>`
+        : `<section class="stage-config-panel stage-project-info-panel"><h3>Project Info</h3><p data-stage-project-info-title>${title}</p><p data-stage-project-info-type>${state.editorProject?.stageType || 'Blank Stage'}</p><p>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p><p>Category: ${editorLibraryCategories.find((c) => c.key === state.activeLibraryCategory)?.label || 'Band / Backline'}</p><p>Status: ${state.projectLoadStatus}</p><p>Save State: <span data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span></p><p class="stage-project-id">Project ID: ${state.projectId}</p></section>`
   return `<aside class="stage-editor-right"><div class="stage-inspector-tabs">${tabs.map(([k, l]) => `<button type="button" data-inspector-tab="${k}" class="${state.activeInspectorTab === k ? 'is-active' : ''}">${l}</button>`).join('')}</div><div class="stage-inspector-body">${body}</div></aside>`
 }

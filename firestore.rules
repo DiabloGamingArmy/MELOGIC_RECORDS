@@ -808,76 +808,129 @@ service cloud.firestore {
       return value in ['ft', 'm'];
     }
 
+    function stageDocumentKeysValid(data) {
+      return data.keys().hasOnly([
+        'title','ownerId','collaboratorIds','visibility','type','stageType','stage','stageDimensions',
+        'coordinateSystem','objects','fixtures','audioInputs','rigging','venue','notes','exportSettings',
+        'plan','version','createdAt','updatedAt','lastOpenedAt','editorState'
+      ]);
+    }
+
+    function legacyStageValid(stage) {
+      return stage is map
+        && stage.keys().hasOnly(['width', 'depth', 'height', 'deckHeight', 'unit'])
+        && stage.width is number
+        && stage.width > 0
+        && stage.width <= 1000
+        && stage.depth is number
+        && stage.depth > 0
+        && stage.depth <= 1000
+        && (!('height' in stage) || (stage.height is number && stage.height >= 0 && stage.height <= 100))
+        && (!('deckHeight' in stage) || (stage.deckHeight is number && stage.deckHeight >= 0 && stage.deckHeight <= 100))
+        && stage.unit is string
+        && stageUnitValid(stage.unit);
+    }
+
+    function stageDimensionsValid(dimensions) {
+      return dimensions is map
+        && dimensions.keys().hasOnly(['width', 'depth', 'height', 'deckHeight', 'unit'])
+        && dimensions.width is number
+        && dimensions.width > 0
+        && dimensions.width <= 1000
+        && dimensions.depth is number
+        && dimensions.depth > 0
+        && dimensions.depth <= 1000
+        && (!('height' in dimensions) || (dimensions.height is number && dimensions.height >= 0 && dimensions.height <= 100))
+        && (!('deckHeight' in dimensions) || (dimensions.deckHeight is number && dimensions.deckHeight >= 0 && dimensions.deckHeight <= 100))
+        && dimensions.unit is string
+        && stageUnitValid(dimensions.unit);
+    }
+
+    function stagePlanValid(plan) {
+      return plan is map
+        && plan.keys().hasOnly([
+          'id','name','title','version','createdAt','updatedAt','units','stageType','stageDimensions',
+          'coordinateSystem','objects','fixtures','audioInputs','rigging','venue','notes','exportSettings'
+        ])
+        && (!('id' in plan) || plan.id is string)
+        && (!('name' in plan) || (plan.name is string && plan.name.size() <= 120))
+        && (!('title' in plan) || (plan.title is string && plan.title.size() <= 120))
+        && (!('version' in plan) || plan.version is number)
+        && (!('units' in plan) || (plan.units is string && stageUnitValid(plan.units)))
+        && (!('stageType' in plan) || (plan.stageType is string && stageTypeValid(plan.stageType)))
+        && (!('stageDimensions' in plan) || stageDimensionsValid(plan.stageDimensions))
+        && (!('coordinateSystem' in plan) || plan.coordinateSystem is map)
+        && (!('objects' in plan) || (plan.objects is list && plan.objects.size() <= 1000))
+        && (!('fixtures' in plan) || (plan.fixtures is list && plan.fixtures.size() <= 1000))
+        && (!('audioInputs' in plan) || (plan.audioInputs is list && plan.audioInputs.size() <= 500))
+        && (!('rigging' in plan) || (plan.rigging is list && plan.rigging.size() <= 500))
+        && (!('venue' in plan) || plan.venue is map)
+        && (!('notes' in plan) || (plan.notes is string && plan.notes.size() <= 20000))
+        && (!('exportSettings' in plan) || plan.exportSettings is map);
+    }
+
+    function stageEditorStateValid(editorState) {
+      return editorState is map
+        && editorState.keys().hasOnly([
+          'viewportMode','paneSizes','activeLayer','selectedObjectId','showGrid','snapEnabled',
+          'snapInterval','showLabels','showBeams','showViewportDiagnostics','activeStageSection',
+          'activeEditorMode','activeInspectorTab','activeDataTab','stageTabs','activeStageTabId',
+          'objectTransforms','savedAt'
+        ])
+        && (!('viewportMode' in editorState) || editorState.viewportMode in ['perspective3d','top2d','front','side','isometric'])
+        && (!('paneSizes' in editorState) || editorState.paneSizes is map)
+        && (!('selectedObjectId' in editorState) || editorState.selectedObjectId is string)
+        && (!('showGrid' in editorState) || editorState.showGrid is bool)
+        && (!('snapEnabled' in editorState) || editorState.snapEnabled is bool)
+        && (!('snapInterval' in editorState) || (editorState.snapInterval is number && editorState.snapInterval > 0 && editorState.snapInterval <= 12))
+        && (!('showLabels' in editorState) || editorState.showLabels is bool)
+        && (!('showBeams' in editorState) || editorState.showBeams is bool)
+        && (!('showViewportDiagnostics' in editorState) || editorState.showViewportDiagnostics is bool)
+        && (!('stageTabs' in editorState) || (editorState.stageTabs is list && editorState.stageTabs.size() <= 24))
+        && (!('objectTransforms' in editorState) || editorState.objectTransforms is map)
+        && (!('savedAt' in editorState) || editorState.savedAt is string);
+    }
+
+    function stageProjectDataValid(data) {
+      return stageDocumentKeysValid(data)
+        && data.visibility == 'private'
+        && data.type == 'stage-plan'
+        && data.version == 1
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && data.stageType is string
+        && stageTypeValid(data.stageType)
+        && legacyStageValid(data.stage)
+        && data.objects is list
+        && data.objects.size() <= 1000
+        && data.notes is string
+        && data.notes.size() <= 20000
+        && (!('stageDimensions' in data) || stageDimensionsValid(data.stageDimensions))
+        && (!('coordinateSystem' in data) || data.coordinateSystem is map)
+        && (!('fixtures' in data) || (data.fixtures is list && data.fixtures.size() <= 1000))
+        && (!('audioInputs' in data) || (data.audioInputs is list && data.audioInputs.size() <= 500))
+        && (!('rigging' in data) || (data.rigging is list && data.rigging.size() <= 500))
+        && (!('venue' in data) || data.venue is map)
+        && (!('exportSettings' in data) || data.exportSettings is map)
+        && (!('plan' in data) || stagePlanValid(data.plan))
+        && (!('editorState' in data) || stageEditorStateValid(data.editorState));
+    }
+
     function stageProjectCreateIsValid() {
       return signedIn()
-        && request.resource.data.keys().hasOnly([
-          'title','ownerId','collaboratorIds','visibility','type','stageType','stage','objects','notes','version','createdAt','updatedAt','lastOpenedAt','editorState'
-        ])
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.collaboratorIds is list
         && request.resource.data.collaboratorIds.size() == 0
-        && request.resource.data.visibility == 'private'
-        && request.resource.data.type == 'stage-plan'
-        && request.resource.data.version == 1
-        && request.resource.data.title is string
-        && request.resource.data.title.size() >= 1
-        && request.resource.data.title.size() <= 120
-        && request.resource.data.stageType is string
-        && stageTypeValid(request.resource.data.stageType)
-        && request.resource.data.stage is map
-        && request.resource.data.stage.keys().hasOnly(['width', 'depth', 'height', 'unit'])
-        && request.resource.data.stage.width is number
-        && request.resource.data.stage.width > 0
-        && request.resource.data.stage.width <= 1000
-        && request.resource.data.stage.depth is number
-        && request.resource.data.stage.depth > 0
-        && request.resource.data.stage.depth <= 1000
-        && request.resource.data.stage.height is number
-        && request.resource.data.stage.height >= 0
-        && request.resource.data.stage.height <= 100
-        && request.resource.data.stage.unit is string
-        && stageUnitValid(request.resource.data.stage.unit)
-        && request.resource.data.objects is list
-        && request.resource.data.objects.size() <= 500
-        && request.resource.data.notes is string
-        && request.resource.data.notes.size() <= 20000
-        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
+        && stageProjectDataValid(request.resource.data);
     }
 
     function stageProjectUpdateIsValid() {
       return signedIn()
-        && request.resource.data.keys().hasOnly([
-          'title','ownerId','collaboratorIds','visibility','type','stageType','stage','objects','notes','version','createdAt','updatedAt','lastOpenedAt','editorState'
-        ])
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.collaboratorIds == resource.data.collaboratorIds
-        && request.resource.data.visibility == 'private'
-        && request.resource.data.type == 'stage-plan'
-        && request.resource.data.version == 1
-        && request.resource.data.title is string
-        && request.resource.data.title.size() >= 1
-        && request.resource.data.title.size() <= 120
-        && request.resource.data.stageType is string
-        && stageTypeValid(request.resource.data.stageType)
-        && request.resource.data.stage is map
-        && request.resource.data.stage.keys().hasOnly(['width', 'depth', 'height', 'unit'])
-        && request.resource.data.stage.width is number
-        && request.resource.data.stage.width > 0
-        && request.resource.data.stage.width <= 1000
-        && request.resource.data.stage.depth is number
-        && request.resource.data.stage.depth > 0
-        && request.resource.data.stage.depth <= 1000
-        && request.resource.data.stage.height is number
-        && request.resource.data.stage.height >= 0
-        && request.resource.data.stage.height <= 100
-        && request.resource.data.stage.unit is string
-        && stageUnitValid(request.resource.data.stage.unit)
-        && request.resource.data.objects is list
-        && request.resource.data.objects.size() <= 500
-        && request.resource.data.notes is string
-        && request.resource.data.notes.size() <= 20000
-        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
+        && stageProjectDataValid(request.resource.data);
     }
     match /users/{uid} {
       allow read, write: if isOwner(uid);

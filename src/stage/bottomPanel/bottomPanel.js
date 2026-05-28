@@ -1,15 +1,32 @@
-import { currentStageDimensions, editorMockObjects, selectedEditorObject, state, viewportModeLabel } from '../app/stageState'
+import { currentStageDimensions, editorMockObjects, selectedEditorObject, stageEntities, state, viewportModeLabel } from '../app/stageState'
 
 function renderInputListTable() {
-  return '<table><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Notes</th></tr></thead><tbody><tr><td>✓</td><td>1</td><td>Kick In</td><td>Beta 91A</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>2</td><td>Kick Out</td><td>Beta 52</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>3</td><td>Snare Top</td><td>SM57</td><td>Short</td><td>USC</td></tr><tr><td>✓</td><td>8</td><td>Bass DI</td><td>DI</td><td>N/A</td><td>USC</td></tr><tr><td>✓</td><td>12</td><td>Lead Voc</td><td>Wireless</td><td>N/A</td><td>DSC</td></tr><tr><td>✓</td><td>21</td><td>Playback L</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr><tr><td>✓</td><td>22</td><td>Playback R</td><td>Interface</td><td>N/A</td><td>Playback Rig</td></tr></tbody></table>'
+  const rows = Array.isArray(state.editorProject?.audioInputs) && state.editorProject.audioInputs.length
+    ? state.editorProject.audioInputs
+    : [
+        { channel: 1, source: 'Kick In', micDi: 'Beta 91A', stand: 'Short', notes: 'USC' },
+        { channel: 2, source: 'Kick Out', micDi: 'Beta 52', stand: 'Short', notes: 'USC' },
+        { channel: 3, source: 'Snare Top', micDi: 'SM57', stand: 'Short', notes: 'USC' },
+        { channel: 8, source: 'Bass DI', micDi: 'DI', stand: 'N/A', notes: 'USC' },
+        { channel: 12, source: 'Lead Voc', micDi: 'Wireless', stand: 'N/A', notes: 'DSC' },
+        { channel: 21, source: 'Playback L', micDi: 'Interface', stand: 'N/A', notes: 'Playback Rig' },
+        { channel: 22, source: 'Playback R', micDi: 'Interface', stand: 'N/A', notes: 'Playback Rig' }
+      ]
+  return `<table class="stage-input-table"><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Patch</th><th>Location</th><th>Notes</th></tr></thead><tbody>${rows.map((row) => `<tr><td>✓</td><td>${row.channel || ''}</td><td>${row.source || ''}</td><td>${row.micDi || row.mic || ''}</td><td>${row.stand || 'N/A'}</td><td>${row.patch || ''}</td><td>${row.stageLocation || row.location || ''}</td><td>${row.notes || ''}</td></tr>`).join('')}</tbody></table>`
+}
+
+function renderEntityTable() {
+  const rows = stageEntities()
+  return `<table class="stage-entity-table"><thead><tr><th>Entity</th><th>Kind</th><th>Category</th><th>Location</th><th>Size / Patch</th><th>Status</th></tr></thead><tbody>${rows.map((row) => `<tr data-select-object="${row.id || ''}"><td><strong>${row.name || 'Untitled'}</strong><small>${row.id || ''}</small></td><td>${row.kind || 'Object'}</td><td>${row.category || 'stage'}</td><td>${row.location || 'not placed'}</td><td>${row.size || 'n/a'}</td><td><span class="stage-entity-status">${row.status || 'active'}</span></td></tr>`).join('')}</tbody></table>`
 }
 
 function renderBottomPrimaryPane() {
-  if (state.activeEditorMode === 'stage-plot') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>2D Stage Plot</h4><div class="stage-mode-large"></div></section></section>'
-  if (state.activeEditorMode === 'input-list') return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-large"><h4>Auto-Generated Input List</h4>${renderInputListTable()}</section></section>`
-  if (state.activeEditorMode === 'lighting-plot') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Lighting Plot Schematic</h4><div class="stage-mode-large lighting"></div></section></section>'
-  if (state.activeEditorMode === 'rigging-plan') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Rigging Plan</h4><ul><li>Ground support verified</li><li>Point load check pending</li><li>Qualified personnel assigned</li></ul></section></section>'
-  return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel"><h4>Auto-Generated Input List</h4>${renderInputListTable()}</section></section>`
+  const activeMode = state.activeEditorMode === 'builder' ? 'entities' : state.activeEditorMode
+  if (activeMode === 'stage-plot') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Stage Plot Preview</h4><div class="stage-mode-large"></div><p>Top-view vector plot foundation. Scale, labels, and dimension lines will be driven by StagePlan data.</p></section></section>'
+  if (activeMode === 'input-list') return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-large"><h4>Input List</h4>${renderInputListTable()}</section></section>`
+  if (activeMode === 'lighting-patch' || activeMode === 'lighting-plot') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Lighting Patch</h4><div class="stage-mode-large lighting"></div><ul><li>Universe 1 / address planning</li><li>Fixture targets and beam angles</li><li>Position assignment by truss or floor package</li></ul></section></section>'
+  if (activeMode === 'rigging' || activeMode === 'rigging-plan') return '<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-mode-panel"><h4>Rigging</h4><ul><li>Ground support placeholders only</li><li>Attachment notes and qualified-personnel warning</li><li>No structural calculations are generated here</li></ul></section></section>'
+  return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-entities"><h4>Entities</h4>${renderEntityTable()}</section></section>`
 }
 
 function renderDataPane() {
@@ -17,9 +34,9 @@ function renderDataPane() {
   const dims = currentStageDimensions()
   const unit = dims.unit || state.editorProject?.units || 'ft'
   const objectCount = Math.max(editorMockObjects.length, state.editorProject?.objects?.length || 0)
-  const fixtureCount = state.editorProject?.fixtures?.length || 3
-  const audioCount = state.editorProject?.audioInputs?.length || 22
-  const riggingCount = state.editorProject?.rigging?.length || 2
+  const fixtureCount = state.editorProject?.fixtures?.length || 0
+  const audioCount = state.editorProject?.audioInputs?.length || 0
+  const riggingCount = state.editorProject?.rigging?.length || 0
   const body = state.activeDataTab === 'schema'
     ? `<ul class="stage-data-list"><li>Stage dimensions: ${dims.width || 32}x${dims.depth || 24}x${dims.deckHeight || 4} ${unit}</li><li>Object count: ${objectCount}</li><li>Fixture count: ${fixtureCount}</li><li>Audio inputs: ${audioCount}</li><li>Rigging points: ${riggingCount}</li><li>Current view mode: ${viewportModeLabel()}</li><li>Grid: ${state.gridEnabled ? 'On' : 'Off'} • Snap: ${state.snapEnabled ? 'On' : 'Off'}</li></ul>`
     : state.activeDataTab === 'signal'

@@ -452,3 +452,37 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-help-list::-webkit-scrollbar-track{background:rgba(255,255,255,.04)}
 .stage-help-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.22);border-radius:999px}
 .stage-help-list::-webkit-scrollbar-thumb:hover{background:rgba(34,184,181,.38)}
+
+/* Stage professional pass: workspace tabs, entity center, resilient text */
+.stage-three-hud-label{display:none !important}
+.stage-editor-tabbar{grid-template-columns:minmax(0,1fr) auto;gap:8px}
+.stage-editor-menu-left{position:relative}
+.stage-editor-project-tabs{display:flex;align-items:end;gap:4px;min-width:0;overflow:auto hidden;scrollbar-width:thin}
+.stage-editor-project-tab{appearance:none;min-width:112px;max-width:220px;justify-content:flex-start;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;color:var(--stage-muted)}
+.stage-editor-project-tab.is-active{border-color:var(--stage-border-strong);border-bottom-color:var(--stage-accent);color:var(--stage-text);background:#181d26}
+.stage-editor-project-tab:hover{border-color:rgba(34,184,181,.36);color:#e7ffff}
+.stage-editor-tab-actions{align-items:center}
+.stage-editor-tab-actions button{min-width:26px;padding:0 7px;border-color:var(--stage-border);background:#151a23;color:#d8e6ff}
+.stage-editor-tab-actions button:hover{border-color:var(--stage-accent);background:var(--stage-accent-soft);color:#efffff}
+.stage-editor-tab-actions button[aria-disabled="true"]{opacity:.42;cursor:not-allowed}
+.stage-editor-app-menu-panel{position:absolute;top:34px;left:8px;z-index:20;display:grid;min-width:190px;padding:6px}
+.stage-menu-check{display:flex;align-items:center;gap:7px;border-top:1px solid var(--stage-border);margin-top:4px;padding:8px 8px 4px;color:var(--stage-text);font-size:11px;white-space:nowrap}
+.stage-menu-check input{accent-color:var(--stage-accent)}
+.stage-inspector-tabs button{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 5px}
+.stage-project-info-panel p{min-width:0;overflow-wrap:anywhere;word-break:normal}
+.stage-project-id{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px !important;color:var(--stage-muted) !important}
+[data-stage-save-status][data-save-status="failed"]{color:#ffb7a3}
+[data-stage-save-status][data-save-status="saved"]{color:#b5f3de}
+[data-stage-save-status][data-save-status="local"]{color:#ffd8a8}
+.stage-editor-table-panel.is-entities{width:100%;padding:8px;overflow:auto}
+.stage-entity-table,.stage-input-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.stage-entity-table{min-width:100%}
+.stage-input-table{min-width:760px}
+.stage-entity-table th,.stage-entity-table td,.stage-input-table th,.stage-input-table td{border:1px solid var(--stage-border);padding:5px 7px;text-align:left;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stage-entity-table th,.stage-input-table th{height:24px;color:#b9c9e8;background:rgba(255,255,255,.035);font-size:10px;letter-spacing:.07em;text-transform:uppercase}
+.stage-entity-table tr{cursor:pointer}
+.stage-entity-table tbody tr:hover{background:rgba(34,184,181,.08)}
+.stage-entity-table td:first-child{display:grid;gap:1px}
+.stage-entity-table strong{min-width:0;overflow:hidden;text-overflow:ellipsis;color:#edf6ff;font-size:12px}
+.stage-entity-table small{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--stage-muted);font-size:10px}
+.stage-entity-status{display:inline-flex;align-items:center;max-width:100%;height:18px;padding:0 6px;border:1px solid rgba(34,184,181,.24);border-radius:999px;background:rgba(34,184,181,.08);color:#dffefe;font-size:10px;overflow:hidden;text-overflow:ellipsis}

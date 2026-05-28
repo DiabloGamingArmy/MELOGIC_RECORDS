@@ -5,11 +5,11 @@ import { navShell } from './components/navShell'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES, stageProjectRoute } from './utils/routes'
 import { getPublicStorageUrl } from './firebase/storageAssets'
-import { createStageProject, getStageProject, listAccessibleStageProjects, sortStageProjectsByActivity, touchStageProject } from './data/stageProjectService'
+import { createStageProject, getStageProject, listAccessibleStageProjects, saveStageProjectEditorState, sortStageProjectsByActivity, touchStageProject } from './data/stageProjectService'
 import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
 import { renderDashboard } from './stage/app/stageDashboard'
-import { renderEditor } from './stage/app/stageEditorRender'
+import { renderEditor, renderStageTabbar } from './stage/app/stageEditorRender'
 import { editorTitleStamp, getCurrentStageProjectId, projectDate, stageIconPath, stageTypes, state } from './stage/app/stageState'
 import { renderExportPreview } from './stage/export/exportPreview'
 import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspector/inspectorTabs'
@@ -24,6 +24,80 @@ let stageEditorMounted = false
 let stageIconHydrationPromise = null
 let stageViewportMountedForProjectId = ''
 let stageNoticeTimer = 0
+let editorSaveTimer = 0
+
+function editorRecoveryKey(projectId = state.projectId) {
+  return `melogic.stage.editorState.${projectId || 'draft'}`
+}
+
+function normalizeEditorMode(mode) {
+  if (mode === 'builder') return 'entities'
+  if (mode === 'lighting-plot') return 'lighting-patch'
+  if (mode === 'rigging-plan') return 'rigging'
+  return mode || 'entities'
+}
+
+function buildEditorStateSnapshot() {
+  return {
+    viewportMode: state.viewportMode,
+    paneSizes: { ...state.paneSizes },
+    activeLayer: 'stage',
+    activeStageSection: state.activeStageSection,
+    activeEditorMode: normalizeEditorMode(state.activeEditorMode),
+    activeInspectorTab: state.activeInspectorTab,
+    activeDataTab: state.activeDataTab,
+    selectedObjectId: state.selectedEditorObject,
+    showGrid: state.gridEnabled,
+    snapEnabled: state.snapEnabled,
+    snapInterval: state.snapInterval,
+    showLabels: state.showStageLabels,
+    showBeams: state.beamPreviewEnabled,
+    showViewportDiagnostics: state.showViewportDiagnostics,
+    stageTabs: state.stageTabs,
+    activeStageTabId: state.activeStageTabId,
+    objectTransforms: state.editorObjectTransforms,
+    savedAt: new Date().toISOString()
+  }
+}
+
+function applyEditorStateSnapshot(editorState = {}) {
+  if (!editorState || typeof editorState !== 'object') return
+  state.viewportMode = editorState.viewportMode || state.viewportMode
+  state.paneSizes = { ...state.paneSizes, ...(editorState.paneSizes || {}) }
+  state.activeStageSection = editorState.activeStageSection || state.activeStageSection
+  state.activeEditorMode = normalizeEditorMode(editorState.activeEditorMode || state.activeEditorMode)
+  state.activeInspectorTab = editorState.activeInspectorTab || state.activeInspectorTab
+  state.activeDataTab = editorState.activeDataTab || state.activeDataTab
+  state.selectedEditorObject = editorState.selectedObjectId || state.selectedEditorObject
+  state.gridEnabled = typeof editorState.showGrid === 'boolean' ? editorState.showGrid : state.gridEnabled
+  state.snapEnabled = typeof editorState.snapEnabled === 'boolean' ? editorState.snapEnabled : state.snapEnabled
+  state.snapInterval = Number(editorState.snapInterval) || state.snapInterval
+  state.showStageLabels = typeof editorState.showLabels === 'boolean' ? editorState.showLabels : state.showStageLabels
+  state.beamPreviewEnabled = typeof editorState.showBeams === 'boolean' ? editorState.showBeams : state.beamPreviewEnabled
+  state.showViewportDiagnostics = typeof editorState.showViewportDiagnostics === 'boolean' ? editorState.showViewportDiagnostics : state.showViewportDiagnostics
+  state.editorObjectTransforms = editorState.objectTransforms && typeof editorState.objectTransforms === 'object' ? editorState.objectTransforms : state.editorObjectTransforms
+  if (Array.isArray(editorState.stageTabs) && editorState.stageTabs.length) state.stageTabs = editorState.stageTabs
+  state.activeStageTabId = editorState.activeStageTabId || state.activeStageTabId
+  if (editorState.savedAt) state.lastSavedAt = editorState.savedAt
+}
+
+function restoreLocalEditorState(projectId = state.projectId) {
+  try {
+    const raw = localStorage.getItem(editorRecoveryKey(projectId))
+    if (!raw) return false
+    const snapshot = JSON.parse(raw)
+    applyEditorStateSnapshot(snapshot)
+    state.editorSaveStatus = 'local'
+    state.lastSavedAt = snapshot.savedAt || state.lastSavedAt
+    return true
+  } catch {
+    return false
+  }
+}
+
+function persistLocalEditorState(snapshot = buildEditorStateSnapshot()) {
+  try { localStorage.setItem(editorRecoveryKey(), JSON.stringify(snapshot)) } catch {}
+}
 
 function disposeViewportController() {
   stageViewportController?.dispose?.()
@@ -50,6 +124,7 @@ function initStageEditorViewport() {
     },
     onTransformObject: (key, transform) => {
       state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: transform }
+      queueEditorStateSave()
     },
     viewportMode: state.viewportMode,
     showGrid: state.gridEnabled,
@@ -57,6 +132,59 @@ function initStageEditorViewport() {
     showLabels: state.showStageLabels
   })
   if (stageViewportController) stageViewportMountedForProjectId = state.projectId
+}
+
+function updateSaveStatusUI() {
+  const target = app.querySelector('[data-stage-save-status]')
+  if (!target) return
+  const label = state.editorSaveStatus === 'saving'
+    ? 'Saving...'
+    : state.editorSaveStatus === 'saved'
+      ? `Saved${state.lastSavedAt ? ` ${new Date(state.lastSavedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}`
+      : state.editorSaveStatus === 'failed'
+        ? 'Save failed'
+        : state.editorSaveStatus === 'local'
+          ? 'Local recovery active'
+          : state.editorSaveStatus === 'unsaved'
+            ? 'Unsaved changes'
+            : 'Ready'
+  target.textContent = label
+  target.dataset.saveStatus = state.editorSaveStatus || 'idle'
+}
+
+async function flushEditorStateSave() {
+  if (!state.projectId || !state.editorProject) return
+  const snapshot = buildEditorStateSnapshot()
+  persistLocalEditorState(snapshot)
+  if (state.projectLoadStatus !== 'loaded') {
+    state.editorSaveStatus = 'local'
+    state.lastSavedAt = snapshot.savedAt
+    updateSaveStatusUI()
+    return
+  }
+  state.editorSaveStatus = 'saving'
+  updateSaveStatusUI()
+  try {
+    await saveStageProjectEditorState(state.projectId, snapshot)
+    state.editorSaveStatus = 'saved'
+    state.editorSaveError = ''
+    state.lastSavedAt = snapshot.savedAt
+  } catch (error) {
+    state.editorSaveStatus = 'failed'
+    state.editorSaveError = error?.message || 'Stage editor state could not be saved.'
+    console.warn('[stage] editor state save failed; local recovery copy preserved.', error?.code || error?.message || error)
+  }
+  updateSaveStatusUI()
+}
+
+function queueEditorStateSave() {
+  if (!state.projectId || !state.editorProject) return
+  state.editorSaveStatus = state.projectLoadStatus === 'loaded' ? 'unsaved' : 'local'
+  const snapshot = buildEditorStateSnapshot()
+  persistLocalEditorState(snapshot)
+  updateSaveStatusUI()
+  window.clearTimeout(editorSaveTimer)
+  editorSaveTimer = window.setTimeout(() => { flushEditorStateSave().catch(() => {}) }, 1800)
 }
 
 function ensureStageViewportMounted() {
@@ -97,7 +225,7 @@ function updateStageAppMenu() {
   const existing = left.querySelector('[data-stage-app-menu-panel]')
   existing?.remove()
   if (!state.stageAppMenuOpen) return
-  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.stage}">Stage Projects</a><a href="/">Dashboard</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button></div>`)
+  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.stage}">Stage Projects</a><a href="/">Dashboard</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button><label class="stage-menu-check"><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}> Show site-wide header</label></div>`)
 }
 
 function updateExportPreview() {
@@ -171,6 +299,12 @@ function updateEditorModeUI() {
   root.innerHTML = renderBottomSplit()
 }
 
+function updateStageTabsUI() {
+  const current = app.querySelector('.stage-editor-tabbar')
+  if (!current) return
+  current.outerHTML = renderStageTabbar()
+}
+
 function updateLibraryActiveState() {
   app.querySelectorAll('[data-library-category]').forEach((el) => el.classList.toggle('is-active', (el.dataset.libraryCategory || '') === state.activeLibraryCategory))
 }
@@ -211,8 +345,10 @@ function bindEditorEvents() {
     updateLibraryActiveState,
     updateRailUI,
     updateStageAppMenu,
+    updateStageTabsUI,
     updateStageInspectorSelection,
-    updateViewportControlUI
+    updateViewportControlUI,
+    queueEditorStateSave
   })
 }
 
@@ -235,15 +371,18 @@ function renderApp() {
     hydrateStageIconsOnce()
     stageEditorMounted = true
     updateEditorProjectHeader()
+    updateSaveStatusUI()
     updateStageAppMenu()
     return
   }
   updateEditorProjectHeader()
+  updateSaveStatusUI()
   updateRailUI()
   updateLeftPanelUI()
   updateInspectorUI()
   updateViewportControlUI()
   updateEditorModeUI()
+  updateStageTabsUI()
   updateStageAppMenu()
   updateExportPreview()
   ensureStageViewportMounted()
@@ -323,11 +462,15 @@ async function loadEditorProject() {
       state.projectLoadStatus = 'error'
     } else {
       state.editorProject = normalizeStagePlan({ ...project, id: project.id || state.projectId, name: project.title || project.name })
+      applyEditorStateSnapshot(project.editorState)
+      if (!project.editorState) restoreLocalEditorState(state.projectId)
       state.projectLoadStatus = 'loaded'
+      state.editorSaveStatus = project.editorState ? 'saved' : 'idle'
     }
   } catch {
     state.editorProject = normalizeStagePlan({ id: state.projectId, title: 'Fallback Stage Plan', stageType: 'Blank Stage', version: 1 })
     state.projectLoadStatus = 'fallback'
+    restoreLocalEditorState(state.projectId)
     console.warn('[stage] Firestore project load failed. Stage editor shell remains available with default viewport objects.')
   } finally {
     state.editorLoading = false
