@@ -4,6 +4,8 @@ export const DEFAULT_COORDINATE_SYSTEM = {
   origin: 'stage-center'
 }
 
+export const CLEAN_DEFAULT_PLAN_VERSION = 2
+
 const nowIso = () => new Date().toISOString()
 const asNumber = (value, fallback = 0) => {
   const parsed = Number(value)
@@ -184,17 +186,14 @@ export function createDefaultStagePlan({ id = '', name = 'Blank Stage', version 
       notes: '',
       metadata: {}
     },
-    { id: 'drum-riser', kind: 'riser', type: 'riser', category: 'band-backline', name: 'Drum Riser', position: { x: 0, y: 1.1, z: -2 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 6, depth: 5, height: 0.6 }, label: 'Drum Riser', locked: false, visible: true, selectable: true, notes: '', metadata: {} },
-    { id: 'truss-a', kind: 'truss', type: 'truss', category: 'rigging', name: 'Truss A', position: { x: 0, y: 8.4, z: -8 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 34, depth: 0.35, height: 0.35 }, label: 'Ground supported truss', locked: false, visible: true, selectable: true, notes: 'Ground support placeholder only.', metadata: { qualifiedOnly: true } },
     { id: 'speaker-left', kind: 'speaker', type: 'speaker', category: 'audio', name: 'Speaker Left', position: { x: -14, y: 2.5, z: -2 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 1.8, depth: 1.6, height: 5 }, label: 'Speaker Left', locked: false, visible: true, selectable: true, notes: '', metadata: {} },
-    { id: 'speaker-right', kind: 'speaker', type: 'speaker', category: 'audio', name: 'Speaker Right', position: { x: 14, y: 2.5, z: -2 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 1.8, depth: 1.6, height: 5 }, label: 'Speaker Right', locked: false, visible: true, selectable: true, notes: '', metadata: {} },
-    { id: 'camera-1', kind: 'camera', type: 'camera', category: 'video', name: 'Camera 1', position: { x: 0, y: 1.3, z: 17 }, rotation: { x: 0, y: 0, z: 90 }, dimensions: { width: 0.8, depth: 0.8, height: 2 }, label: 'Camera 1', locked: false, visible: true, selectable: true, notes: '', metadata: { target: 'Downstage Center' } },
-    { id: 'moving-head', kind: 'fixture', type: 'moving-head', category: 'lighting', name: 'Moving Head', position: { x: 5.8, y: 8, z: -8 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 0.8, depth: 0.8, height: 0.8 }, label: 'Moving Head', locked: false, visible: true, selectable: true, notes: '', metadata: { universe: 1, address: 1, mode: '24ch', beamAngle: 24 } }
+    { id: 'speaker-right', kind: 'speaker', type: 'speaker', category: 'audio', name: 'Speaker Right', position: { x: 14, y: 2.5, z: -2 }, rotation: { x: 0, y: 0, z: 0 }, dimensions: { width: 1.8, depth: 1.6, height: 5 }, label: 'Speaker Right', locked: false, visible: true, selectable: true, notes: '', metadata: {} }
   ]
   return {
     id,
     name,
     title: name,
+    defaultPlanVersion: CLEAN_DEFAULT_PLAN_VERSION,
     version,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -202,23 +201,11 @@ export function createDefaultStagePlan({ id = '', name = 'Blank Stage', version 
     stageDimensions: { width: 32, depth: 24, deckHeight: 4, unit: 'ft' },
     coordinateSystem: DEFAULT_COORDINATE_SYSTEM,
     objects: defaultObjects,
-    fixtures: [
-      { id: 'fx-1', name: 'Moving Head L', type: 'Moving Head', universe: 1, address: 1, mode: '24ch', position: { x: -6, y: 8, z: -8 }, target: { x: -4, y: 1.1, z: 2 }, color: '#df79ff', beamAngle: 24, linkedObjectId: 'truss-a' },
-      { id: 'fx-2', name: 'Moving Head C', type: 'Moving Head', universe: 1, address: 25, mode: '24ch', position: { x: 0, y: 8, z: -8 }, target: { x: 0, y: 1.1, z: 0 }, color: '#61dcff', beamAngle: 24, linkedObjectId: 'truss-a' },
-      { id: 'fx-3', name: 'Moving Head R', type: 'Moving Head', universe: 1, address: 49, mode: '24ch', position: { x: 6, y: 8, z: -8 }, target: { x: 4, y: 1.1, z: 2 }, color: '#6f87ff', beamAngle: 24, linkedObjectId: 'truss-a' }
-    ],
-    audioInputs: [
-      { id: 'in-1', channel: 1, source: 'Kick In', micDi: 'Beta 91A', stand: 'Short', patch: '', stageLocation: 'USC', notes: '', linkedObjectId: 'drum-riser' },
-      { id: 'in-2', channel: 2, source: 'Kick Out', micDi: 'Beta 52', stand: 'Short', patch: '', stageLocation: 'USC', notes: '', linkedObjectId: 'drum-riser' },
-      { id: 'in-3', channel: 3, source: 'Snare Top', micDi: 'SM57', stand: 'Short', patch: '', stageLocation: 'USC', notes: '', linkedObjectId: 'drum-riser' },
-      { id: 'in-8', channel: 8, source: 'Bass DI', micDi: 'DI', stand: 'N/A', patch: '', stageLocation: 'USC', notes: '', linkedObjectId: '' },
-      { id: 'in-12', channel: 12, source: 'Lead Voc', micDi: 'Wireless', stand: 'N/A', patch: '', stageLocation: 'DSC', notes: '', linkedObjectId: '' },
-      { id: 'in-21', channel: 21, source: 'Playback L', micDi: 'Interface', stand: 'N/A', patch: '', stageLocation: 'Playback Rig', notes: '', linkedObjectId: '' },
-      { id: 'in-22', channel: 22, source: 'Playback R', micDi: 'Interface', stand: 'N/A', patch: '', stageLocation: 'Playback Rig', notes: '', linkedObjectId: '' }
-    ],
-    rigging: [{ id: 'rig-1', name: 'Ground Truss', position: { x: 0, y: 8, z: -8 }, height: 8, type: 'truss', notes: '', qualifiedOnly: true }],
-    video: [{ id: 'vid-camera-1', name: 'Camera 1', type: 'camera', position: { x: 0, y: 1.3, z: 17 }, width: 0.8, height: 2, inputSource: 'Camera 1', cameraAngle: 'FOH Wide', linkedObjectId: 'camera-1', notes: '' }],
-    power: [{ id: 'pwr-1', name: 'House Power', position: { x: -14, y: 1.2, z: -10 }, notes: 'Confirm venue service and distro location.', linkedObjectId: '' }],
+    fixtures: [],
+    audioInputs: [],
+    rigging: [],
+    video: [],
+    power: [],
     layers: [
       { id: 'stage', label: 'Stage', visible: true, locked: false, export: true },
       { id: 'backline', label: 'Backline', visible: true, locked: false, export: true },
@@ -250,6 +237,7 @@ export function normalizeStagePlan(raw = {}) {
   const normalized = {
     ...base,
     ...source,
+    defaultPlanVersion: source.defaultPlanVersion || raw.defaultPlanVersion || base.defaultPlanVersion,
     title: raw.title || source.title || source.name || base.name,
     stageType: raw.stageType || source.stageType || 'Blank Stage',
     stageDimensions: { ...base.stageDimensions, ...legacyStageDimensions, ...(source.stageDimensions || raw.stageDimensions || {}) },
@@ -270,6 +258,25 @@ export function normalizeStagePlan(raw = {}) {
   }
   normalized.warnings = getStagePlanWarnings(normalized)
   return normalized
+}
+
+export function isOldDemoFallbackPlan(plan = {}) {
+  const objectIds = new Set(arrayOr(plan.objects).map((object) => object?.id || object?.key).filter(Boolean))
+  const oldDemoIds = ['drum-riser', 'truss-a', 'camera-1', 'moving-head']
+  const hasOldDemoObjects = oldDemoIds.some((id) => objectIds.has(id))
+  const hasOldDemoRows = arrayOr(plan.fixtures).some((fixture) => String(fixture?.id || '').startsWith('fx-'))
+    || arrayOr(plan.audioInputs).some((input) => ['Kick In', 'Kick Out', 'Snare Top', 'Playback L', 'Playback R'].includes(input?.source))
+    || arrayOr(plan.rigging).some((rig) => rig?.id === 'rig-1' || rig?.linkedObjectId === 'truss-a')
+  return plan.defaultPlanVersion !== CLEAN_DEFAULT_PLAN_VERSION && (hasOldDemoObjects || hasOldDemoRows)
+}
+
+export function migrateDefaultFallbackPlan(plan = {}, overrides = {}) {
+  if (!isOldDemoFallbackPlan(plan)) return normalizeStagePlan(plan)
+  return createDefaultStagePlan({
+    id: overrides.id || plan.id || '',
+    name: overrides.name || plan.title || plan.name || 'Fallback Stage Plan',
+    version: plan.version || overrides.version || 1
+  })
 }
 
 export function findDuplicateInputChannels(plan = {}) {

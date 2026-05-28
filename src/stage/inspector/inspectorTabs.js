@@ -4,6 +4,7 @@ import {
   linkedRigging,
   linkedVideo,
   selectedStageEntity,
+  selectedStageObjects,
   stageLayers,
   state
 } from '../app/stageState'
@@ -17,6 +18,23 @@ const formatNumber = (value, fallback = 0) => {
 function selectedObjectRecord() {
   const selected = selectedStageEntity()
   if (selected.kind === 'object') return selected.entity
+  if (selected.kind === 'none') {
+    return {
+      id: '',
+      label: 'No object selected',
+      name: 'No object selected',
+      type: 'none',
+      category: 'stage',
+      layer: 'stage',
+      position: { x: 0, y: 0, z: 0 },
+      rotation: { y: 0 },
+      dimensions: { width: 0, depth: 0, height: 0 },
+      visible: true,
+      locked: false,
+      notes: '',
+      metadata: {}
+    }
+  }
   return {
     id: selected.entity?.id || state.selectedEditorObject,
     label: selected.entity?.name || selected.entity?.source || 'Stage Object',
@@ -35,7 +53,16 @@ function selectedObjectRecord() {
 }
 
 export function selectedEditorObjectMarkup() {
+  const selectedObjects = selectedStageObjects()
+  if (selectedObjects.length > 1) {
+    const categories = [...new Set(selectedObjects.map((object) => object.category || 'stage'))]
+    const layers = [...new Set(selectedObjects.map((object) => object.layer || object.category || 'stage'))]
+    const lockedCount = selectedObjects.filter((object) => object.locked).length
+    const hiddenCount = selectedObjects.filter((object) => object.visible === false).length
+    return `<div class="stage-readout-grid"><div><span>SELECTION</span><strong>${selectedObjects.length} objects</strong></div><div><span>CATEGORY</span><strong>${categories.length === 1 ? categories[0] : 'mixed'}</strong></div><div><span>LAYER</span><strong>${layers.length === 1 ? layers[0] : 'mixed'}</strong></div><div><span>STATUS</span><strong>${lockedCount} locked · ${hiddenCount} hidden</strong></div></div><div class="stage-object-command-row"><button type="button" data-focus-selected>Focus</button><button type="button" data-multi-transform-field="locked" data-value="true">Lock</button><button type="button" data-multi-transform-field="locked" data-value="false">Unlock</button><button type="button" data-multi-transform-field="visible" data-value="true">Show</button><button type="button" data-multi-transform-field="visible" data-value="false">Hide</button><button type="button" data-delete-selected>Delete</button></div><p class="stage-help-text">Multiple objects selected. Use Move mode to drag the primary selection, or apply shared lock/visibility actions here. Group tools are planned.</p>`
+  }
   const selected = selectedObjectRecord()
+  if (!selected.id) return '<p class="stage-empty-state">No object selected. Use Select to click or drag a box around objects.</p>'
   const t = state.editorObjectTransforms[selected.id] || {}
   const position = selected.position || {}
   const dimensions = selected.dimensions || {}

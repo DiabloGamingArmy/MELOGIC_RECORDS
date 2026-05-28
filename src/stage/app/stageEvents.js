@@ -8,9 +8,11 @@ import {
   redoStageEdit,
   resetSelectedStageObjectRotation,
   rotateSelectedStageObject,
+  setSelectedStageObjects,
   state,
   undoStageEdit,
-  updateSelectedStageObjectField
+  updateSelectedStageObjectField,
+  updateSelectedStageObjectsField
 } from './stageState'
 
 let stageEditorEventsBound = false
@@ -79,7 +81,7 @@ export function bindStageEditorEventsOnce(context) {
   const syncObjectSurfaces = ({ refreshViewport = false, save = true, notice = '' } = {}) => {
     syncObjectTransformCache()
     if (refreshViewport) refreshStageViewport?.()
-    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
+    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
     updateStageInspectorSelection?.()
     updateInspectorUI?.()
     updateEditorModeUI?.()
@@ -248,8 +250,8 @@ export function bindStageEditorEventsOnce(context) {
     }
     const focusObject = e.target.closest('[data-focus-object]')
     if (focusObject) {
-      state.selectedEditorObject = focusObject.dataset.focusObject || state.selectedEditorObject
-      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject })
+      setSelectedStageObjects([focusObject.dataset.focusObject || state.selectedEditorObject], focusObject.dataset.focusObject || state.selectedEditorObject)
+      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects })
       getViewportController()?.focusSelected?.()
       updateStageInspectorSelection()
       updateInspectorUI()
@@ -260,13 +262,21 @@ export function bindStageEditorEventsOnce(context) {
     }
     const selectObject = e.target.closest('[data-select-object]')
     if (selectObject) {
-      state.selectedEditorObject = selectObject.dataset.selectObject || state.selectedEditorObject
-      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject })
+      setSelectedStageObjects([selectObject.dataset.selectObject || state.selectedEditorObject], selectObject.dataset.selectObject || state.selectedEditorObject)
+      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects })
       updateStageInspectorSelection()
       updateInspectorUI()
       updateEditorModeUI()
       updateViewportControlUI()
       queueEditorStateSave?.()
+      return
+    }
+    const multiTransform = e.target.closest('[data-multi-transform-field]')
+    if (multiTransform) {
+      const field = multiTransform.dataset.multiTransformField
+      const value = multiTransform.dataset.value === 'true'
+      const updated = updateSelectedStageObjectsField(field, value)
+      syncObjectSurfaces({ refreshViewport: true, save: updated, notice: updated ? 'Updated selected objects.' : 'No selected objects updated.' })
       return
     }
     const rail = e.target.closest('[data-rail-section]')
@@ -334,6 +344,20 @@ export function bindStageEditorEventsOnce(context) {
       updateEditorModeUI()
       queueEditorStateSave?.()
     }
+  })
+
+  app.addEventListener('dblclick', (e) => {
+    const row = e.target.closest('[data-select-object]')
+    const objectId = row?.dataset?.selectObject || ''
+    if (!objectId) return
+    setSelectedStageObjects([objectId], objectId)
+    getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects })
+    getViewportController()?.focusSelected?.()
+    updateStageInspectorSelection?.()
+    updateInspectorUI?.()
+    updateEditorModeUI?.()
+    updateViewportControlUI?.()
+    queueEditorStateSave?.()
   })
 
   app.addEventListener('input', (e) => {

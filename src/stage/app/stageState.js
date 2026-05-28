@@ -60,11 +60,11 @@ export const editorModes = [
 export const editorViewModes = [['perspective3d', '3D'], ['top2d', 'Top'], ['front', 'Front'], ['side', 'Side'], ['isometric', 'Iso']]
 
 export const editorToolModes = [
+  { key: 'pan', label: 'Pan' },
   { key: 'select', label: 'Select' },
   { key: 'move', label: 'Move' },
   { key: 'rotate', label: 'Rotate' },
-  { key: 'scale', label: 'Scale' },
-  { key: 'pan', label: 'Pan' }
+  { key: 'scale', label: 'Scale' }
 ]
 
 export const editorMockObjects = [
@@ -137,8 +137,9 @@ export const state = {
   activeEditorMode: 'entities',
   activeStageSection: 'home',
   activeLibraryCategory: 'all',
-  editorToolMode: localStorage.getItem('stageEditorToolMode') || 'select',
+  editorToolMode: localStorage.getItem('stageEditorToolMode') || 'pan',
   selectedEditorObject: 'stage-deck',
+  selectedEditorObjects: ['stage-deck'],
   editorObjectTransforms: {},
   snapEnabled: true,
   snapInterval: 1,
@@ -214,9 +215,16 @@ export function selectedEditorObject() {
       height: object.dimensions?.height
     }
   }
-  const mock = editorMockObjects.find((o) => o.key === state.selectedEditorObject)
-  if (mock) return mock
-  return editorMockObjects[0]
+  return {
+    key: state.selectedEditorObject || '',
+    label: 'No object selected',
+    type: 'None',
+    category: 'stage',
+    layer: 'stage',
+    locked: false,
+    visible: true,
+    details: {}
+  }
 }
 
 export function currentStageDimensions() {
@@ -367,6 +375,7 @@ export function addStageAssetToPlan(assetId, overrides = {}) {
     state.editorProject.power = [...(state.editorProject.power || []), power]
   }
   state.selectedEditorObject = object.id
+  state.selectedEditorObjects = [object.id]
   state.activeInspectorTab = 'properties'
   state.activeEditorMode = 'entities'
   return object
@@ -374,6 +383,30 @@ export function addStageAssetToPlan(assetId, overrides = {}) {
 
 export function findStageObject(objectId = state.selectedEditorObject) {
   return (state.editorProject?.objects || []).find((object) => object.id === objectId || object.key === objectId)
+}
+
+export function normalizeSelectedStageObjectIds(ids = state.selectedEditorObjects) {
+  const available = new Set((state.editorProject?.objects || []).map((object) => object.id || object.key).filter(Boolean))
+  const list = Array.isArray(ids) ? ids : [ids]
+  return [...new Set(list.filter((id) => id && available.has(id)))]
+}
+
+export function setSelectedStageObjects(ids = [], primaryId = '') {
+  const normalized = normalizeSelectedStageObjectIds(ids)
+  const primary = primaryId && normalized.includes(primaryId) ? primaryId : normalized[0] || ''
+  state.selectedEditorObjects = normalized
+  state.selectedEditorObject = primary
+  return normalized
+}
+
+export function selectedStageObjects() {
+  return normalizeSelectedStageObjectIds(state.selectedEditorObjects?.length ? state.selectedEditorObjects : [state.selectedEditorObject])
+    .map((id) => findStageObject(id))
+    .filter(Boolean)
+}
+
+export function isStageObjectSelected(objectId = '') {
+  return normalizeSelectedStageObjectIds(state.selectedEditorObjects?.length ? state.selectedEditorObjects : [state.selectedEditorObject]).includes(objectId)
 }
 
 export function linkedAudioInput(objectId = state.selectedEditorObject) {
@@ -403,7 +436,7 @@ export function selectedStageEntity() {
   if (rig) return { kind: 'rigging', entity: rig }
   const video = (state.editorProject?.video || []).find((row) => row.id === state.selectedEditorObject)
   if (video) return { kind: 'video', entity: video }
-  return { kind: 'mock', entity: selectedEditorObject() }
+  return { kind: 'none', entity: null }
 }
 
 const cloneData = (value) => JSON.parse(JSON.stringify(value ?? null))
@@ -473,11 +506,11 @@ function applyCommandSnapshot(command, snapshotKey) {
   if (snapshot) {
     replaceObjectSnapshot(snapshot)
     if (snapshotKey === 'before' && command.beforeLinks) restoreLinkedRows(command.beforeLinks)
-    state.selectedEditorObject = snapshot.id
+    setSelectedStageObjects([snapshot.id], snapshot.id)
     return
   }
   removeObjectSnapshot(command.objectId, { removeLinked: command.removeLinked })
-  state.selectedEditorObject = 'stage-deck'
+  setSelectedStageObjects(['stage-deck'], 'stage-deck')
 }
 
 export function undoStageEdit() {
@@ -513,6 +546,19 @@ export function updateSelectedStageObjectField(field, value, options = {}) {
   syncLinkedDataForObject(object)
   if (options.track !== false) recordObjectCommand(object.id, before, object)
   return true
+}
+
+export function updateSelectedStageObjectsField(field, value, options = {}) {
+  const objects = selectedStageObjects()
+  if (!objects.length) return false
+  let changed = false
+  objects.forEach((object) => {
+    const previous = state.selectedEditorObject
+    state.selectedEditorObject = object.id
+    if (updateSelectedStageObjectField(field, value, options)) changed = true
+    state.selectedEditorObject = previous
+  })
+  return changed
 }
 
 function snapValue(value, interval = state.snapInterval) {
@@ -569,20 +615,22 @@ export function duplicateSelectedStageObject() {
   copy.protected = false
   copy.position = { ...(copy.position || {}), x: Number(copy.position?.x || 0) + 1, z: Number(copy.position?.z || 0) + 1 }
   state.editorProject.objects = [...(state.editorProject.objects || []), copy]
-  state.selectedEditorObject = copy.id
+  setSelectedStageObjects([copy.id], copy.id)
   recordObjectCommand(copy.id, null, copy)
   return copy
 }
 
 export function deleteSelectedStageObject() {
-  const object = findStageObject()
-  if (!object || object.protected) return false
-  const before = cloneData(object)
-  const beforeLinks = snapshotLinkedRows(object.id)
-  const removeLinked = true
-  removeObjectSnapshot(object.id, { removeLinked })
-  recordObjectCommand(object.id, before, null, { removeLinked, beforeLinks })
-  state.selectedEditorObject = 'stage-deck'
+  const targets = selectedStageObjects().filter((object) => !object.protected)
+  if (!targets.length) return false
+  targets.forEach((object) => {
+    const before = cloneData(object)
+    const beforeLinks = snapshotLinkedRows(object.id)
+    const removeLinked = true
+    removeObjectSnapshot(object.id, { removeLinked })
+    recordObjectCommand(object.id, before, null, { removeLinked, beforeLinks })
+  })
+  setSelectedStageObjects(['stage-deck'], 'stage-deck')
   return true
 }
 
@@ -726,8 +774,7 @@ export function stageEntities() {
       status: power.notes ? 'noted' : 'needs notes'
     })))
   }
-  if (entities.length) return entities
-  return editorMockObjects.map((object) => objectEntity({ ...object, id: object.key, name: object.label, dimensions: object.details }))
+  return entities
 }
 
 export function projectLoadLabel() {

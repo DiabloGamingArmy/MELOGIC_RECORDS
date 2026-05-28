@@ -595,3 +595,16 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-object-row-actions button:hover{border-color:var(--stage-accent);background:rgba(34,184,181,.14)}
 .stage-editor-table-panel.is-entities h4{flex:0 0 auto;margin-bottom:6px}
 .stage-editor-table-panel.is-entities{gap:0}
+
+/* Stage app layout must reserve real space for the optional site header. */
+body:has([data-stage-editor-app]) #app{height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+[data-stage-global-header-wrapper]{flex:0 0 auto;min-height:0}
+[data-stage-global-header-wrapper][hidden]{display:none !important}
+[data-stage-global-header-wrapper] .nav-shell{position:relative !important;inset:auto !important;z-index:30;min-height:4.25rem}
+[data-stage-global-header-wrapper] .nav-inner{min-height:4.25rem}
+[data-stage-editor-app]{flex:1 1 auto;min-height:0;height:100%;padding-top:0 !important}
+[data-stage-global-header-wrapper]:not([hidden]) + [data-stage-editor-app]{height:calc(100dvh - 4.25rem)}
+[data-stage-editor-app] .stage-editor-body{height:calc(100% - 64px)}
+.stage-editor-app.is-header-hidden .stage-editor-body{height:calc(100% - 64px)}
+
+.stage-select-marquee{position:absolute;z-index:9;border:1px solid rgba(34,184,181,.82);background:rgba(34,184,181,.13);box-shadow:0 0 0 1px rgba(34,184,181,.18) inset;pointer-events:none;border-radius:2px}
