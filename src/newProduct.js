@@ -93,6 +93,9 @@ let editorState = {
     loading: false,
     error: '',
     errorDetail: '',
+    warning: '',
+    source: '',
+    loadRequestId: 0,
     signedName: '',
     accepting: false
   },
@@ -957,15 +960,19 @@ function renderAgreementsPanel() {
   const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
   const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
   const agreementError = String(editorState.agreement.error || '').trim()
+  const agreementWarning = String(editorState.agreement.warning || '').trim()
   const agreementErrorDetail = editorState.agreement.errorDetail && import.meta?.env?.DEV
     ? `<p class="agreement-error-detail">${escapeHtml(editorState.agreement.errorDetail)}</p>`
+    : ''
+  const agreementSourceDetail = editorState.agreement.source && import.meta?.env?.DEV
+    ? `<p class="agreement-error-detail">Source: ${escapeHtml(editorState.agreement.source)}</p>`
     : ''
   const agreementBody = editorState.agreement.loading
     ? '<p class="agreement-loading">Loading agreement…</p>'
     : agreementError
-      ? `<p class="agreement-error">${escapeHtml(agreementError)}</p>${config.storagePath ? `<p class="agreement-error-detail">Path: ${escapeHtml(config.storagePath)}</p>` : ''}${agreementErrorDetail}<button type="button" class="button button-muted" data-retry-agreement-load>Retry Agreement Load</button>`
+      ? `<p class="agreement-error">${escapeHtml(agreementError)}</p>${config.activeVersion ? `<p class="agreement-error-detail">Version: ${escapeHtml(config.activeVersion)}</p>` : ''}${config.storagePath ? `<p class="agreement-error-detail">Path: ${escapeHtml(config.storagePath)}</p>` : ''}${agreementErrorDetail}<button type="button" class="button button-muted" data-retry-agreement-load>Retry Agreement Load</button>`
       : editorState.agreement.markdown
-        ? renderAgreementMarkdown(editorState.agreement.markdown)
+        ? `${agreementWarning ? `<p class="pricing-warning">${escapeHtml(agreementWarning)}</p>` : ''}${agreementSourceDetail}${renderAgreementMarkdown(editorState.agreement.markdown)}`
         : '<p class="agreement-error">Seller agreement file is missing.</p>'
   return `
     <section class="agreements-workspace">
@@ -1679,6 +1686,8 @@ function renderEditor() {
     editorState.agreement.loading = true
     editorState.agreement.error = ''
     editorState.agreement.errorDetail = ''
+    editorState.agreement.warning = ''
+    editorState.agreement.source = ''
     renderEditor()
     loadAgreementForEditor(editorState.user).catch((error) => {
       console.warn('[new-product] agreement retry failed unexpectedly', error?.code || error?.message || error)
@@ -2190,6 +2199,8 @@ async function initPage() {
   editorState.agreement.loading = true
   editorState.agreement.error = ''
   editorState.agreement.errorDetail = ''
+  editorState.agreement.warning = ''
+  editorState.agreement.source = ''
   renderEditor()
 
   loadAgreementForEditor(user).catch((error) => {
@@ -2198,26 +2209,50 @@ async function initPage() {
 }
 
 async function loadAgreementForEditor(user) {
+  const requestId = Number(editorState.agreement.loadRequestId || 0) + 1
+  editorState.agreement.loadRequestId = requestId
+  const isCurrentLoad = () => editorState.agreement.loadRequestId === requestId
+  const timeoutId = setTimeout(() => {
+    if (!isCurrentLoad() || !editorState.agreement.loading) return
+    editorState.agreement.loading = false
+    editorState.agreement.markdown = ''
+    editorState.agreement.error = 'Seller agreement could not be loaded.'
+    editorState.agreement.errorDetail = 'Reason: agreement-timeout · The request timed out. Firebase Storage CORS or permissions may need configuration.'
+    renderEditor()
+  }, 12000)
   let agreementId = ''
   let latestVersion = ''
   let agreementConfig = null
   try {
     let stage = 'latest-agreement-config'
     agreementConfig = await getLatestMarketplaceSellerAgreement()
+    if (!isCurrentLoad()) return
     editorState.agreement.config = agreementConfig
     editorState.agreement.latestVersion = agreementConfig.activeVersion
     editorState.agreement.error = ''
     editorState.agreement.errorDetail = ''
+    editorState.agreement.warning = agreementConfig.versionDiscoveryWarning || ''
+    editorState.agreement.source = ''
     agreementId = String(agreementConfig.agreementId || '')
     latestVersion = String(agreementConfig.activeVersion || '')
 
     stage = 'agreement-markdown'
     if (agreementConfig.markdown) {
       editorState.agreement.markdown = agreementConfig.markdown
+      editorState.agreement.source = 'platform-settings-inline'
+      editorState.agreement.error = ''
+      editorState.agreement.errorDetail = ''
     } else {
       try {
-        editorState.agreement.markdown = await getAgreementMarkdown(agreementConfig.storagePath)
+        const agreementResult = await getAgreementMarkdown(agreementConfig.storagePath, { returnMetadata: true })
+        if (!isCurrentLoad()) return
+        editorState.agreement.markdown = agreementResult.markdown || ''
+        editorState.agreement.source = agreementResult.source || ''
+        editorState.agreement.warning = agreementResult.warning || editorState.agreement.warning || ''
+        editorState.agreement.error = ''
+        editorState.agreement.errorDetail = ''
       } catch (markdownError) {
+        if (!isCurrentLoad()) return
         editorState.agreement.markdown = ''
         editorState.agreement.error = 'Seller agreement could not be loaded.'
         editorState.agreement.errorDetail = [
@@ -2233,11 +2268,17 @@ async function loadAgreementForEditor(user) {
         })
       }
     }
+    clearTimeout(timeoutId)
+    if (isCurrentLoad()) {
+      editorState.agreement.loading = false
+      renderEditor()
+    }
 
     try {
       stage = 'signed-form-read'
       const formKey = `${agreementId}_${latestVersion}`
       const signedFormSnap = await getDoc(doc(db, 'users', user.uid, 'signedForms', formKey))
+      if (!isCurrentLoad()) return
       if (signedFormSnap.exists() && signedFormSnap.data()?.accepted === true) {
         const signedForm = signedFormSnap.data() || {}
         updateDraftField('sellerAgreement', {
@@ -2270,6 +2311,7 @@ async function loadAgreementForEditor(user) {
       updateDraftField('sellerAgreementAccepted', false)
     }
   } catch (error) {
+    if (!isCurrentLoad()) return
     console.warn('[new-product] agreement load failed', {
       stage: editorState.agreement.config ? 'agreement-markdown' : 'latest-agreement-config',
       code: error?.code,
@@ -2286,8 +2328,11 @@ async function loadAgreementForEditor(user) {
       agreementConfig?.storagePath ? `Storage path: ${agreementConfig.storagePath}` : ''
     ].filter(Boolean).join(' · ')
   } finally {
-    editorState.agreement.loading = false
-    renderEditor()
+    clearTimeout(timeoutId)
+    if (isCurrentLoad()) {
+      editorState.agreement.loading = false
+      renderEditor()
+    }
   }
 }
 
