@@ -435,3 +435,100 @@
 .gallery-thumb img { width:100%; height:100%; object-fit:cover; display:block; }
 .gallery-thumb button { position:absolute; top:4px; right:4px; width:24px; height:24px; min-height:0; padding:0; opacity:0; }
 .gallery-thumb:hover button, .gallery-thumb:focus-within button { opacity:1; }
+
+/* Product editor polish: flatter, denser, more tool-like than card-like. */
+.marketplace-editor-header,
+.marketplace-editor-tabs-wrap,
+.marketplace-editor-workspace,
+.listing-preview-panel,
+.file-viewer-panel,
+.media-upload-actions,
+.contributors-main-panel,
+.contributors-notice,
+.pricing-input-column,
+.pricing-calculator-column,
+.pricing-notice,
+.agreement-viewer-panel,
+.agreement-notice,
+.publish-summary-card,
+.publish-checklist-panel,
+.publish-submit-panel,
+.publish-confirm-modal {
+  border-radius: 6px;
+  box-shadow: none;
+}
+
+.marketplace-editor-header,
+.marketplace-editor-tabs-wrap,
+.marketplace-editor-workspace {
+  background: rgba(6, 10, 18, .96);
+}
+
+.marketplace-editor-tab {
+  border-radius: 4px;
+  min-height: 40px;
+  font-size: .9rem;
+  background: rgba(15, 21, 34, .96);
+}
+
+.marketplace-editor-tab.is-active {
+  background: rgba(28, 41, 57, .98);
+  border-color: rgba(80, 214, 201, .75);
+  color: #e9fffb;
+}
+
+.product-info-field input,
+.product-info-field select,
+.product-info-field textarea,
+.tag-editor,
+.placeholder-panel,
+.product-info-readonly,
+.listing-preview-card,
+.listing-preview-card-cover,
+.file-viewer-add-btn,
+.editor-file-row,
+.editor-file-add-button,
+.editor-file-add-menu,
+.editor-file-menu-button,
+.editor-file-row-menu,
+.file-viewer-warning,
+.media-upload-action-btn,
+.contributor-search,
+.contributors-toolbar input[type='text'],
+.contributor-results button,
+.contributor-row,
+.pricing-price-field input,
+.pricing-currency-action,
+.pricing-fee-row,
+.pricing-warning,
+.pricing-breakdown,
+.pricing-calculator-row,
+.agreement-document,
+.agreement-signature-field input,
+.agreement-accept-button,
+.agreement-accepted-status,
+.publish-cover-preview,
+.publish-checklist-row,
+.publish-checklist-row button,
+.launch-readiness,
+.publish-next-steps,
+.rich-editor-toolbar button,
+.rich-editor-toolbar select,
+.rich-editor-toolbar input[type='color'],
+.rich-description-editor,
+.file-description-input,
+.cover-preview-block,
+.cover-preview-block button,
+.gallery-thumb,
+.gallery-thumb button {
+  border-radius: 4px;
+}
+
+.tag-pill,
+.contributor-filter-row button,
+.file-role-badge,
+.editor-file-status-pill,
+.pricing-free-toggle,
+.pricing-currency-action {
+  border-radius: 4px;
+}
