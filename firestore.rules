@@ -774,8 +774,8 @@ service cloud.firestore {
         && productAllowedKeys()
         && productFieldShapesAreValid()
         && productServerFieldsSafeOnCreate()
-        && request.resource.data.status != 'published'
-        && request.resource.data.visibility != 'public';
+        && request.resource.data.status in ['draft', 'review_pending']
+        && request.resource.data.visibility in ['private', 'unlisted'];
     }
 
     function productUpdateIsAllowed() {
