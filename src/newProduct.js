@@ -294,6 +294,9 @@ function friendlySubmitError(error, step = '') {
     return 'You need to sign in again before submitting this product.'
   }
   if (haystack.includes('permission-denied') || haystack.includes('permission denied')) {
+    if (step === 'create-product-shell') {
+      return 'Product draft could not be created because Firestore permissions rejected the write. This is usually a rules/payload mismatch. Your form data is still saved locally.'
+    }
     return 'You do not have permission to submit this product.'
   }
   if (haystack.includes('failed-precondition')) {
@@ -2252,6 +2255,7 @@ function renderEditor() {
         message: error?.message,
         productId: editorState.draft?.id || '',
         uid: editorState.user?.uid || '',
+        productShellDiagnostics: error?.productShellDiagnostics || null,
         error
       })
       if (submittingForReview) {

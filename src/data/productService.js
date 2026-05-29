@@ -811,6 +811,34 @@ function logDraftFirestoreWrite({
   })
 }
 
+function getPayloadFieldTypes(payload = {}) {
+  return Object.fromEntries(Object.entries(payload || {}).map(([key, value]) => {
+    let type = typeof value
+    if (Array.isArray(value)) type = 'array'
+    else if (value === null) type = 'null'
+    return [key, type]
+  }))
+}
+
+function buildProductShellDiagnostics({ user = null, productId = '', payload = null } = {}) {
+  return {
+    uid: user?.uid || null,
+    productId: productId || null,
+    payloadId: payload?.id || null,
+    payloadArtistId: payload?.artistId || null,
+    payloadStatus: payload?.status || null,
+    payloadVisibility: payload?.visibility || null,
+    payloadTitle: payload?.title || null,
+    payloadSlug: payload?.slug || null,
+    payloadKeys: payload ? Object.keys(payload).sort() : [],
+    fieldTypes: payload ? getPayloadFieldTypes(payload) : {}
+  }
+}
+
+function withoutUndefinedValues(payload = {}) {
+  return Object.fromEntries(Object.entries(payload || {}).filter(([, value]) => value !== undefined))
+}
+
 function createStageError(stage, message, cause = null) {
   const error = new Error(message)
   error.stage = stage
@@ -1445,20 +1473,19 @@ export async function submitMarketplaceProductForReview({ user, productId, produ
 export function resolveProductId(input = {}) {
   const rawId = String(input?.id || input?.productId || '').trim()
   if (rawId && !isPlaceholderProductId(rawId)) return rawId
-  const slugId = slugify(input?.slug || input?.title || '')
-  return slugId || doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
+  return createProductId()
 }
 
 export async function createOrUpdateProductShell(input = {}, user = null) {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
   const productId = resolveProductId(input)
   const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
-  const existing = await getDoc(productRef)
   const creator = getCreatorIdentity(user, input)
   const pricing = normalizePriceFields(input)
-  const payload = {
+  const hasExistingProductId = Boolean(String(input?.id || input?.productId || '').trim() && !isPlaceholderProductId(input?.id || input?.productId))
+  const payload = withoutUndefinedValues({
     id: productId,
-    slug: String(input.slug || productId),
+    slug: String(input.slug || slugify(input.title) || productId),
     status: 'draft',
     visibility: 'private',
     title: String(input.title || '').trim() || 'Untitled product',
@@ -1472,20 +1499,25 @@ export async function createOrUpdateProductShell(input = {}, user = null) {
     artistProfilePath: `profiles/${user.uid}`,
     artistAvatarURL: String(creator.artistAvatarURL || ''),
     artistPhotoURL: String(creator.artistPhotoURL || ''),
-    featured: false,
-    releasedAt: null,
-    likeCount: 0,
-    saveCount: 0,
-    downloadCount: 0,
-    commentCount: 0,
-    shareCount: 0,
-    followCount: 0,
-    counts: { likes: 0, dislikes: 0, saves: 0, shares: 0, comments: 0, downloads: 0, follows: 0 },
     ...pricing,
     updatedAt: serverTimestamp(),
-    ...(existing.exists() ? {} : { createdAt: serverTimestamp() })
+    ...(hasExistingProductId ? {} : { createdAt: serverTimestamp() })
+  })
+  const diagnostics = buildProductShellDiagnostics({ user, productId, payload })
+  if (isDevelopmentRuntime) {
+    console.info('[productService] product shell write diagnostic', diagnostics)
   }
-  await setDoc(productRef, payload, { merge: true })
+  try {
+    await setDoc(productRef, payload, { merge: true })
+  } catch (error) {
+    console.error('[productService] product shell write failed', {
+      ...diagnostics,
+      code: error?.code || '',
+      message: error?.message || ''
+    })
+    error.productShellDiagnostics = diagnostics
+    throw error
+  }
   return { productId, payload }
 }
 
