@@ -25,6 +25,8 @@ export default defineConfig({
         inbox: resolve(__dirname, 'inbox.html'),
         profile: resolve(__dirname, 'profile.html'),
         profilePublic: resolve(__dirname, 'profile-public.html'),
+        library: resolve(__dirname, 'library.html'),
+        orders: resolve(__dirname, 'orders.html'),
         editProfile: resolve(__dirname, 'edit-profile.html'),
         newProduct: resolve(__dirname, 'new-product.html')
       }

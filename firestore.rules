@@ -986,6 +986,16 @@ service cloud.firestore {
         allow create, update, delete: if false;
       }
 
+      match /libraryItems/{itemId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /orders/{orderId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /savedProducts/{productId} {
         allow read: if isOwner(uid);
 
@@ -1443,6 +1453,11 @@ service cloud.firestore {
 
     match /productModeration/{moderationId} {
       allow read, write: if false;
+    }
+
+    match /orders/{orderId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
     }
 
     match /{document=**} {

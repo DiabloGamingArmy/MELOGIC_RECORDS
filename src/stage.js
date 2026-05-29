@@ -35,14 +35,15 @@ const authRecoverableProjectStatuses = new Set(['auth-restoring', 'unauthenticat
 function canonicalizeLegacyStageRoute() {
   const pathname = window.location.pathname || ''
   if (pathname === ROUTES.stage) {
-    window.history.replaceState({}, '', `${ROUTES.studioStagemaker}${window.location.search || ''}${window.location.hash || ''}`)
-    return
+    window.location.replace(`${ROUTES.studioStagemaker}${window.location.search || ''}${window.location.hash || ''}`)
+    return true
   }
   if (pathname.startsWith(`${ROUTES.stage}/`)) {
     const projectId = decodeURIComponent(pathname.replace(`${ROUTES.stage}/`, '').split('/')[0] || '').trim()
-    if (!projectId) return
+    if (!projectId) return false
     window.history.replaceState({}, '', `${stageProjectRoute(projectId)}${window.location.search || ''}${window.location.hash || ''}`)
   }
+  return false
 }
 
 function editorRecoveryKey(projectId = state.projectId) {
@@ -842,38 +843,39 @@ async function handleAuthReadyUser(user, source = 'auth-state') {
   if (shouldReload) await loadEditorProject({ reason: source, force: authRecoverableProjectStatuses.has(state.projectLoadStatus) })
 }
 
-canonicalizeLegacyStageRoute()
-state.projectId = getCurrentStageProjectId()
-if (state.projectId) setStageLoadState('auth-restoring')
-renderApp()
+if (!canonicalizeLegacyStageRoute()) {
+  state.projectId = getCurrentStageProjectId()
+  if (state.projectId) setStageLoadState('auth-restoring')
+  renderApp()
 
-waitForInitialAuthState().then(async (user) => {
-  state.authReady = true
-  applyAuthUser(user)
-  if (state.projectId) await loadEditorProject({ reason: 'initial-auth', force: true })
-  else {
-    renderApp()
-    await loadDashboardProjects()
-  }
-}).catch(async (error) => {
-  state.authReady = true
-  applyAuthUser(null)
-  console.warn('[stage] Initial auth restore failed.', error?.code || error?.message || error)
-  if (state.projectId) await loadEditorProject({ reason: 'initial-auth-error', force: true })
-  else renderApp()
-})
+  waitForInitialAuthState().then(async (user) => {
+    state.authReady = true
+    applyAuthUser(user)
+    if (state.projectId) await loadEditorProject({ reason: 'initial-auth', force: true })
+    else {
+      renderApp()
+      await loadDashboardProjects()
+    }
+  }).catch(async (error) => {
+    state.authReady = true
+    applyAuthUser(null)
+    console.warn('[stage] Initial auth restore failed.', error?.code || error?.message || error)
+    if (state.projectId) await loadEditorProject({ reason: 'initial-auth-error', force: true })
+    else renderApp()
+  })
 
-subscribeToAuthState(async (user) => {
-  if (!state.authReady) return
-  await handleAuthReadyUser(user, 'auth-state')
-})
+  subscribeToAuthState(async (user) => {
+    if (!state.authReady) return
+    await handleAuthReadyUser(user, 'auth-state')
+  })
 
-subscribeToIdToken(async (user) => {
-  if (!state.authReady) return
-  const nextUid = user?.uid || ''
-  if (nextUid === state.authUid && state.projectLoadStatus === 'loaded' && state.editorProject) {
-    state.user = user
-    return
-  }
-  await handleAuthReadyUser(user, 'id-token')
-})
+  subscribeToIdToken(async (user) => {
+    if (!state.authReady) return
+    const nextUid = user?.uid || ''
+    if (nextUid === state.authUid && state.projectLoadStatus === 'loaded' && state.editorProject) {
+      state.user = user
+      return
+    }
+    await handleAuthReadyUser(user, 'id-token')
+  })
+}
