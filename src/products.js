@@ -6,8 +6,10 @@ import { attachHeroVideo } from './components/heroVideo'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { addToCart } from './data/cartService'
+import { claimFreeProduct } from './data/entitlementService'
 import { listPublicProductsPage } from './data/productService'
-import { ROUTES, productRoute, publicProfileRoute, usernameProfileRoute } from './utils/routes'
+import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
+import { ROUTES, authRoute, productRoute, publicProfileRoute, usernameProfileRoute } from './utils/routes'
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
@@ -52,7 +54,8 @@ const state = {
   hasMore: true,
   isLoadingInitial: false,
   isLoadingMore: false,
-  hasFatalError: false
+  hasFatalError: false,
+  currentUser: null
 }
 
 let searchDebounceTimer = null
@@ -90,6 +93,9 @@ function productCardMarkup(product) {
     : (product.tags || []).slice(0, 3).map((tag) => `#${escapeHtml(tag)}`).join(' · ')
   const likes = product.likeCount ?? product.counts?.likes ?? 0
   const dislikes = product.counts?.dislikes ?? 0
+  const isFreeProduct = Boolean(product.isFree) || Number(product.priceCents || 0) <= 0
+  const isOwnProduct = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
+  const actionLabel = isOwnProduct ? 'Your product' : isFreeProduct ? 'Add to Library' : 'Add to cart'
 
   const mediaMarkup = product.thumbnailURL || product.coverURL
     ? `<img src="${escapeHtml(product.thumbnailURL || product.coverURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`
@@ -120,7 +126,7 @@ function productCardMarkup(product) {
 
         <div class="product-actions">
           <button type="button" class="preview-btn" ${(product.previewAssignment?.hoverAudioURL || product.previewAssignment?.hoverVideoURL || product.previewAudioURLs.length || product.primaryPreviewURL) ? '' : 'disabled'} aria-label="Preview ${escapeHtml(product.title)}">▶ Preview</button>
-          <button type="button" class="add-btn" data-add-to-cart data-product-id="${escapeHtml(product.id)}" aria-label="Add ${escapeHtml(product.title)} to cart">Add to cart</button>
+          <button type="button" class="add-btn" data-product-card-action data-product-id="${escapeHtml(product.id)}" ${isOwnProduct ? 'disabled' : ''} aria-label="${escapeHtml(actionLabel)} ${escapeHtml(product.title)}">${escapeHtml(actionLabel)}</button>
         </div>
       </div>
     </article>
@@ -312,13 +318,13 @@ function bindProductActions(visibleProducts = []) {
     }
 
     card.addEventListener('click', (event) => {
-      if (event.target.closest('[data-add-to-cart], .preview-btn, [data-artist-link]')) return
+      if (event.target.closest('[data-product-card-action], .preview-btn, [data-artist-link]')) return
       openDashboard()
     })
 
     card.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return
-      if (event.target.closest('[data-add-to-cart], .preview-btn, [data-artist-link]')) return
+      if (event.target.closest('[data-product-card-action], .preview-btn, [data-artist-link]')) return
       event.preventDefault()
       openDashboard()
     })
@@ -335,12 +341,30 @@ function bindProductActions(visibleProducts = []) {
     })
   })
 
-  app.querySelectorAll('[data-add-to-cart]').forEach((button) => {
-    button.addEventListener('click', (event) => {
+  app.querySelectorAll('[data-product-card-action]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
       event.stopPropagation()
       const id = button.getAttribute('data-product-id')
       const product = state.products.find((entry) => entry.id === id) || visibleProducts.find((entry) => entry.id === id)
       if (!product) return
+      const isFreeProduct = Boolean(product.isFree) || Number(product.priceCents || 0) <= 0
+      if (isFreeProduct) {
+        if (!state.currentUser?.uid) {
+          window.location.assign(authRoute({ redirect: productRoute(product) }))
+          return
+        }
+        button.disabled = true
+        button.textContent = 'Adding...'
+        try {
+          await claimFreeProduct(state.currentUser.uid, product.id)
+          button.textContent = 'In Library'
+        } catch (error) {
+          console.warn('[products] free claim failed', { code: error?.code, message: error?.message })
+          button.disabled = false
+          button.textContent = 'Add to Library'
+        }
+        return
+      }
       addToCart(product)
       button.textContent = 'Added'
       setTimeout(() => {
@@ -622,3 +646,13 @@ createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
 bindCatalogControls()
 setupInfiniteScroll()
 loadNextPage({ reset: true })
+
+waitForInitialAuthState().then((user) => {
+  state.currentUser = user || null
+  renderProducts()
+})
+
+subscribeToAuthState((user) => {
+  state.currentUser = user || null
+  renderProducts()
+})

@@ -241,6 +241,7 @@ service cloud.firestore {
         'previewAudioPaths',
         'previewVideoPaths',
         'downloadPath',
+        'deliverableFiles',
         'licensePath',
         'assetSummary',
         'primaryPreviewPath',
@@ -271,6 +272,20 @@ service cloud.firestore {
         'moderationStatus',
         'moderationSummary',
         'moderationReasons',
+        'moderationRiskLevel',
+        'moderationAIConfigured',
+        'moderationAIAttempted',
+        'moderationAISucceeded',
+        'moderationAIEnabled',
+        'moderationAIModel',
+        'moderationAIError',
+        'moderationAIErrorCode',
+        'moderationAIErrorCategory',
+        'moderationAICompletedAt',
+        'moderationAIFailedAt',
+        'reviewRequestedAt',
+        'reviewRequestedBy',
+        'reviewJobStatus',
         'reviewedAt',
         'reviewedBy',
 
@@ -408,6 +423,10 @@ service cloud.firestore {
           && request.resource.data.previewVideoPaths.size() <= 8
         ))
         && (!('downloadPath' in request.resource.data) || request.resource.data.downloadPath is string)
+        && (!('deliverableFiles' in request.resource.data) || (
+          request.resource.data.deliverableFiles is list
+          && request.resource.data.deliverableFiles.size() <= 500
+        ))
         && (!('licensePath' in request.resource.data) || request.resource.data.licensePath is string)
         && (!('assetSummary' in request.resource.data) || request.resource.data.assetSummary is map)
         && (!('primaryPreviewPath' in request.resource.data) || request.resource.data.primaryPreviewPath is string)
@@ -433,7 +452,18 @@ service cloud.firestore {
         && (!('includedFiles' in request.resource.data) || (
           request.resource.data.includedFiles is string
           && request.resource.data.includedFiles.size() <= 10000
-        ));
+        ))
+        && (!('moderationRiskLevel' in request.resource.data) || request.resource.data.moderationRiskLevel is string)
+        && (!('moderationAIConfigured' in request.resource.data) || request.resource.data.moderationAIConfigured is bool)
+        && (!('moderationAIAttempted' in request.resource.data) || request.resource.data.moderationAIAttempted is bool)
+        && (!('moderationAISucceeded' in request.resource.data) || request.resource.data.moderationAISucceeded is bool)
+        && (!('moderationAIEnabled' in request.resource.data) || request.resource.data.moderationAIEnabled is bool)
+        && (!('moderationAIModel' in request.resource.data) || request.resource.data.moderationAIModel is string)
+        && (!('moderationAIError' in request.resource.data) || request.resource.data.moderationAIError is string)
+        && (!('moderationAIErrorCode' in request.resource.data) || request.resource.data.moderationAIErrorCode is string)
+        && (!('moderationAIErrorCategory' in request.resource.data) || request.resource.data.moderationAIErrorCategory is string)
+        && (!('reviewRequestedBy' in request.resource.data) || request.resource.data.reviewRequestedBy is string)
+        && (!('reviewJobStatus' in request.resource.data) || request.resource.data.reviewJobStatus is string);
     }
 
     function zeroOrMissing(field) {
@@ -462,18 +492,6 @@ service cloud.firestore {
         || (
           request.resource.data[field] is list
           && request.resource.data[field].size() == 0
-        );
-    }
-
-    function stableOrSafeDefault(field, defaultValue) {
-      return !(field in request.resource.data)
-        || (
-          field in resource.data
-          && request.resource.data[field] == resource.data[field]
-        )
-        || (
-          !(field in resource.data)
-          && request.resource.data[field] == defaultValue
         );
     }
 
@@ -671,6 +689,20 @@ service cloud.firestore {
       return safeModerationStatusCreate()
         && emptyStringNullOrMissing('moderationSummary')
         && emptyListOrMissing('moderationReasons')
+        && emptyStringNullOrMissing('moderationRiskLevel')
+        && falseOrMissing('moderationAIConfigured')
+        && falseOrMissing('moderationAIAttempted')
+        && falseOrMissing('moderationAISucceeded')
+        && falseOrMissing('moderationAIEnabled')
+        && emptyStringNullOrMissing('moderationAIModel')
+        && emptyStringNullOrMissing('moderationAIError')
+        && emptyStringNullOrMissing('moderationAIErrorCode')
+        && emptyStringNullOrMissing('moderationAIErrorCategory')
+        && nullOrMissing('moderationAICompletedAt')
+        && nullOrMissing('moderationAIFailedAt')
+        && nullOrMissing('reviewRequestedAt')
+        && emptyStringNullOrMissing('reviewRequestedBy')
+        && emptyStringNullOrMissing('reviewJobStatus')
         && nullOrMissing('reviewedAt')
         && emptyStringNullOrMissing('reviewedBy')
         && nullOrMissing('publishedAt')
@@ -695,6 +727,20 @@ service cloud.firestore {
       return safeModerationStatusUpdate()
         && safeModerationSummaryUpdate()
         && safeModerationReasonsUpdate()
+        && stableEmptyStringNullOrDefault('moderationRiskLevel')
+        && stableFalseOrDefault('moderationAIConfigured')
+        && stableFalseOrDefault('moderationAIAttempted')
+        && stableFalseOrDefault('moderationAISucceeded')
+        && stableFalseOrDefault('moderationAIEnabled')
+        && stableEmptyStringNullOrDefault('moderationAIModel')
+        && stableEmptyStringNullOrDefault('moderationAIError')
+        && stableEmptyStringNullOrDefault('moderationAIErrorCode')
+        && stableEmptyStringNullOrDefault('moderationAIErrorCategory')
+        && stableNullOrDefault('moderationAICompletedAt')
+        && stableNullOrDefault('moderationAIFailedAt')
+        && stableNullOrDefault('reviewRequestedAt')
+        && stableEmptyStringNullOrDefault('reviewRequestedBy')
+        && stableEmptyStringNullOrDefault('reviewJobStatus')
         && safeReviewedAtUpdate()
         && safeReviewedByUpdate()
         && safePublishedAtUpdate()
@@ -728,18 +774,53 @@ service cloud.firestore {
         && productAllowedKeys()
         && productFieldShapesAreValid()
         && productServerFieldsSafeOnCreate()
-        && request.resource.data.status != 'published';
+        && request.resource.data.status != 'published'
+        && request.resource.data.visibility != 'public';
     }
 
     function productUpdateIsAllowed() {
       return signedIn()
         && resource.data.artistId == request.auth.uid
-        && resource.data.status != 'published'
         && creatorIdentityIsStable()
         && productAllowedKeys()
         && productFieldShapesAreValid()
         && productServerFieldsSafeOnUpdate()
-        && request.resource.data.status != 'published';
+        && request.resource.data.status != 'published'
+        && request.resource.data.visibility != 'public'
+        && (
+          resource.data.status != 'published'
+          || request.resource.data.status in ['draft', 'review_pending', 'pending_ai_review', 'needs_changes']
+        );
+    }
+
+    function productIsPublicById(productId) {
+      return get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
+        && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public';
+    }
+
+    function productOwnerById(productId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid;
+    }
+
+    function productEntitledById(productId) {
+      return signedIn()
+        && (
+          exists(/databases/$(database)/documents/users/$(request.auth.uid)/entitlements/$(productId))
+          || exists(/databases/$(database)/documents/users/$(request.auth.uid)/libraryItems/$(productId))
+        );
+    }
+
+    function canReadProductById(productId) {
+      return productIsPublicById(productId)
+        || productOwnerById(productId)
+        || productEntitledById(productId);
+    }
+
+    function canReadProductResource(productId) {
+      return (resource.data.status == 'published' && resource.data.visibility == 'public')
+        || (signedIn() && resource.data.artistId == request.auth.uid)
+        || productEntitledById(productId);
     }
 
 
@@ -1104,26 +1185,14 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-  allow read: if (resource.data.status == 'published' && resource.data.visibility == 'public')
-    || signedIn();
+  allow read: if canReadProductResource(productId);
 
-  allow create: if signedIn();
+  allow create: if productCreateIsAllowed(productId);
 
-  allow update: if (
-      signedIn()
-      && (
-        !('artistId' in resource.data)
-        || resource.data.artistId == request.auth.uid
-        || request.resource.data.artistId == request.auth.uid
-      )
-      && (!('status' in request.resource.data) || request.resource.data.status != 'published')
-    );
+  allow update: if productUpdateIsAllowed();
 
   allow delete: if signedIn()
-    && (
-      resource.data.artistId == request.auth.uid
-      || !('artistId' in resource.data)
-    )
+    && resource.data.artistId == request.auth.uid
     && resource.data.status != 'published';
 
   match /reviews/{reviewId} {
@@ -1196,17 +1265,11 @@ service cloud.firestore {
   }
 
   match /files/{fileId} {
-    allow read: if signedIn()
-      || (
-        get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
-        && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public'
-      );
+    allow read: if canReadProductById(productId);
 
     allow create, update, delete: if signedIn()
-      && (
-        get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
-        || !('artistId' in get(/databases/$(database)/documents/products/$(productId)).data)
-      );
+      && productOwnerById(productId)
+      && get(/databases/$(database)/documents/products/$(productId)).data.status != 'published';
   }
 
   match /contributors/{uid} {

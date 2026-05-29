@@ -409,6 +409,11 @@
 .publish-review-alert { display: grid; gap: .25rem; margin: .55rem 0; border: 1px solid rgba(235, 145, 107, .48); border-radius: 9px; background: rgba(87, 38, 28, .32); color: #ffe0cf; padding: .58rem .66rem; }
 .publish-review-alert strong, .publish-review-alert span, .publish-review-alert small { margin: 0; }
 .publish-review-alert small { color: #ffc2aa; line-height: 1.35; }
+.publish-submit-status{display:grid;gap:.25rem;margin-top:.7rem;border:1px solid rgba(107,135,205,.32);border-radius:10px;background:rgba(14,21,39,.92);padding:.62rem .72rem;color:#c9d9fb}
+.publish-submit-status strong{color:#edf3ff}
+.publish-submit-status span{line-height:1.4}
+.publish-submit-status.is-success{border-color:rgba(96,214,199,.46);background:rgba(42,116,102,.18);color:#cffff5}
+.publish-submit-status.is-error{border-color:rgba(232,89,116,.52);background:rgba(154,52,71,.22);color:#ffd3de}
 .launch-readiness { margin: .7rem 0; padding: .6rem .7rem; border: 1px solid rgba(109,137,207,.25); border-radius: 10px; background: rgba(14,21,39,.92); }
 .launch-readiness p { margin: 0 0 .4rem; color: #bdd0f6; font-size: .84rem; }
 .launch-readiness p:last-child { margin-bottom: 0; }

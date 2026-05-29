@@ -55,9 +55,13 @@ exports.createCheckoutSession = onCall(
       if (!canAccess) {
         throw new HttpsError('permission-denied', `Product is not available for purchase: ${productId}`)
       }
+      if (product.artistId === uid) continue
 
-      const entitlementDoc = await db.doc(`users/${uid}/entitlements/${productId}`).get()
-      if (entitlementDoc.exists) continue
+      const [entitlementDoc, libraryDoc] = await Promise.all([
+        db.doc(`users/${uid}/entitlements/${productId}`).get(),
+        db.doc(`users/${uid}/libraryItems/${productId}`).get()
+      ])
+      if (entitlementDoc.exists || libraryDoc.exists) continue
 
       const priceCents = Number(product.priceCents || 0)
       const isFree = Boolean(product.isFree) || priceCents <= 0

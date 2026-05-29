@@ -103,6 +103,11 @@ let editorState = {
   },
   publishConfirmOpen: false,
   status: { message: '', state: 'info' },
+  isSubmittingReview: false,
+  submitStep: '',
+  submitError: '',
+  submitSuccess: false,
+  lastSubmitResult: null,
   reviewResult: null,
   creatorProfile: null,
   draft: null,
@@ -253,6 +258,72 @@ function ensureLocalContributorRow() {
 
 function setStatus(message, state = 'info') {
   editorState.status = { message, state }
+}
+
+function renderEditorStatusMarkup() {
+  const message = String(editorState.status?.message || '').trim()
+  if (!message) return ''
+  const state = String(editorState.status?.state || 'info')
+  return `<div class="product-status is-visible is-${escapeHtml(state)}" role="status" aria-live="polite">${escapeHtml(message)}</div>`
+}
+
+function isPreviouslyPublishedDraft(draft = {}) {
+  return draft.status === 'published'
+    || draft.currentStatus === 'published'
+    || Boolean(draft.publishedAt || draft.releasedAt)
+}
+
+function getSubmitReviewLabel(draft = {}, isEditMode = false) {
+  if (editorState.submitSuccess) return 'Submitted for Review'
+  if (editorState.isSubmittingReview) {
+    return String(editorState.submitStep || '').startsWith('upload') ? 'Uploading...' : 'Submitting...'
+  }
+  return isEditMode && isPreviouslyPublishedDraft(draft) ? 'Submit Edits for Review' : 'Submit for Review'
+}
+
+function setSubmitProgress(step, message, state = 'info') {
+  editorState.submitStep = step
+  setStatus(message, state)
+}
+
+function friendlySubmitError(error, step = '') {
+  const code = String(error?.code || '').toLowerCase()
+  const message = String(error?.message || '')
+  const haystack = `${code} ${message}`.toLowerCase()
+  if (haystack.includes('unauthenticated') || haystack.includes('auth')) {
+    return 'You need to sign in again before submitting this product.'
+  }
+  if (haystack.includes('permission-denied') || haystack.includes('permission denied')) {
+    return 'You do not have permission to submit this product.'
+  }
+  if (haystack.includes('failed-precondition')) {
+    return message || 'Product details are incomplete. Check the publish checklist and try again.'
+  }
+  if (haystack.includes('unavailable') || haystack.includes('network')) {
+    return 'Marketplace review is temporarily unavailable. Try again.'
+  }
+  if (haystack.includes('recaptcha') || haystack.includes('token') || haystack.includes('403')) {
+    return 'Security verification failed. Refresh, sign in again, or contact support if this continues.'
+  }
+  if (step) return `Could not submit this product for review during ${step}. Try again.`
+  return 'Could not submit this product for review. Try again.'
+}
+
+function submitStatusPanelMarkup() {
+  if (!editorState.isSubmittingReview && !editorState.submitError && !editorState.submitSuccess) return ''
+  const state = editorState.submitError ? 'error' : editorState.submitSuccess ? 'success' : 'info'
+  const heading = editorState.submitError ? 'Submission failed' : editorState.submitSuccess ? 'Submitted for review' : 'Submitting product'
+  const detail = editorState.submitError
+    ? editorState.submitError
+    : editorState.submitSuccess
+      ? 'Your product is in marketplace review and will stay off public listings until approved.'
+      : (editorState.status?.message || 'Preparing submission...')
+  return `
+    <div class="publish-submit-status is-${state}" role="status" aria-live="polite">
+      <strong>${escapeHtml(heading)}</strong>
+      <span>${escapeHtml(detail)}</span>
+    </div>
+  `
 }
 
 function updateDraftField(key, value) {
@@ -1108,7 +1179,8 @@ function renderPublishPanel() {
   const deliverables = fileEntries.filter((item) => item.isDeliverable)
   const deliverableBytes = deliverables.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0)
   const previewAssigned = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || editorState.mediaFiles.previewAudio.length || editorState.mediaFiles.previewVideo.length)
-  const canSubmit = blockingIssues.length === 0 && (isEditMode || (draft.status !== 'review_pending' && draft.status !== 'published'))
+  const canSubmit = !editorState.isSubmittingReview && blockingIssues.length === 0 && (isEditMode || (draft.status !== 'review_pending' && draft.status !== 'published'))
+  const submitLabel = getSubmitReviewLabel(draft, isEditMode)
 
   return `
     <section class="publish-workspace">
@@ -1143,7 +1215,7 @@ function renderPublishPanel() {
         </article>
 
         <aside class="publish-submit-panel">
-          <h3>${isEditMode ? 'Submit Edits' : 'Submit for Review'}</h3>
+          <h3>${isEditMode && isPreviouslyPublishedDraft(draft) ? 'Submit Edits for Review' : 'Submit for Review'}</h3>
           <p>Current status: <strong>${escapeHtml(draft.status || 'draft')}</strong></p>
           <p>Last updated: ${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}</p>
           ${reviewFailureNoticeMarkup(draft)}
@@ -1168,9 +1240,10 @@ function renderPublishPanel() {
             <button type="button" class="button button-muted" data-save-draft>Save Draft</button>
             <button type="button" class="button button-muted" data-open-marketplace-preview>Marketplace Preview</button>
             <button type="button" class="button button-muted" data-publish-fix="media-upload">Back to Media & Upload</button>
-            <button type="button" class="button button-accent" data-open-submit-confirm ${canSubmit ? '' : 'disabled'}>${isEditMode ? 'Submit Edits' : (draft.status === 'needs_changes' ? 'Resubmit Changes' : 'Submit for Review')}</button>
+            <button type="button" class="button button-accent" data-open-submit-confirm ${canSubmit ? '' : 'disabled'}>${escapeHtml(submitLabel)}</button>
           </div>
-          ${canSubmit ? '' : '<p class="pricing-warning">Resolve blocked items before submitting.</p>'}
+          ${submitStatusPanelMarkup()}
+          ${canSubmit || editorState.isSubmittingReview || editorState.submitSuccess ? '' : '<p class="pricing-warning">Resolve blocked items before submitting.</p>'}
           ${(draft.status === 'review_pending') ? '<p class="agreement-accepted-status">Product is awaiting review.</p>' : ''}
           ${(draft.status === 'published') ? '<p class="dashboard-mini-note">Product is already published.</p>' : ''}
         </aside>
@@ -1182,7 +1255,7 @@ function renderPublishPanel() {
             <p>Your product will be reviewed before becoming visible in the marketplace. You can continue editing drafts, but published changes may require approval.</p>
             <div class="publish-action-row">
               <button type="button" class="button button-muted" data-close-submit-confirm>Cancel</button>
-              <button type="button" class="button button-accent" data-confirm-submit-review>${isEditMode ? 'Submit Edits' : 'Submit for Review'}</button>
+              <button type="button" class="button button-accent" data-confirm-submit-review ${editorState.isSubmittingReview ? 'disabled' : ''}>${escapeHtml(submitLabel)}</button>
             </div>
           </div>
         </div>
@@ -1400,6 +1473,7 @@ function renderEditor() {
         <p class="marketplace-editor-header-kicker">NEW MARKETPLACE ITEM</p>
         <p class="marketplace-editor-header-copy">Configure product metadata, media, pricing, and publish state for the Melogic marketplace.</p>
       </header>
+      ${renderEditorStatusMarkup()}
 
       <section class="marketplace-editor-tabs-wrap">
         <p class="marketplace-editor-pages-label"><span></span>PAGES<span></span></p>
@@ -2046,6 +2120,8 @@ function renderEditor() {
 
   async function persistProduct(desiredStatus = 'draft') {
     if (!editorState.user || !editorState.draft) return
+    const submittingForReview = desiredStatus === 'published'
+    if (submittingForReview && editorState.isSubmittingReview) return
     const pricingMetrics = syncPricingDraftFields()
     if (pricingMetrics?.invalidConfig) {
       setStatus('Marketplace fee configuration is invalid.', 'error')
@@ -2066,39 +2142,58 @@ function renderEditor() {
         return
       }
     }
-    setStatus(desiredStatus === 'published' ? 'Submitting for review...' : 'Saving draft...', 'info')
+    if (submittingForReview) {
+      editorState.isSubmittingReview = true
+      editorState.submitError = ''
+      editorState.submitSuccess = false
+      editorState.lastSubmitResult = null
+      setSubmitProgress('saving-product-draft', 'Saving product draft...')
+    } else {
+      setStatus('Saving draft...', 'info')
+    }
     renderEditor()
     let submitStep = 'starting'
     try {
       const pendingContributors = (editorState.contributorUI.rows || []).filter((row) => row.status === 'pending').length
       if (desiredStatus === 'published' && pendingContributors > 0) {
+        editorState.isSubmittingReview = false
+        editorState.submitError = 'Pending contributor approvals must be resolved before publishing.'
         setStatus('Pending contributor approvals must be resolved before publishing.', 'error')
         renderEditor()
         return
       }
       const deliverableValidation = validateDraftFiles(editorState.draft, editorState.mediaFiles)
       if (!deliverableValidation.ok) {
+        editorState.isSubmittingReview = false
+        editorState.submitError = deliverableValidation.errors[0]
         setStatus(deliverableValidation.errors[0], 'error')
         renderEditor()
         return
       }
       if (desiredStatus === 'published' && deliverableValidation.warnings.includes('No deliverable has been added yet.')) {
+        editorState.isSubmittingReview = false
+        editorState.submitError = 'Add a deliverable before submitting for review.'
         setStatus('Add a deliverable before submitting for review.', 'error')
         renderEditor()
         return
       }
       submitStep = 'create-product-shell'
+      if (submittingForReview) setSubmitProgress('saving-product-draft', 'Saving product draft...')
       const shell = await createOrUpdateProductShell(editorState.draft, editorState.user)
       const productId = shell.productId
       editorState.draft.id = productId
       updateDraftField('id', productId)
       submitStep = 'upload-files'
       if (editorState.uploadQueue.some((item) => item.status === 'uploading')) {
+        editorState.isSubmittingReview = false
+        editorState.submitError = 'Wait for uploads to finish before publishing.'
         setStatus('Wait for uploads to finish before publishing.', 'error')
         renderEditor()
         return
       }
       const uploadedFiles = []
+      const hasPendingUploads = editorState.uploadQueue.some((item) => item.status !== 'uploaded' || !item.storagePath)
+      if (submittingForReview && hasPendingUploads) setSubmitProgress('uploading-files', 'Uploading files...')
       for (let index = 0; index < editorState.uploadQueue.length; index += 1) {
         const item = editorState.uploadQueue[index]
         if (item.status === 'uploaded' && item.storagePath) {
@@ -2114,19 +2209,26 @@ function renderEditor() {
       }
       syncDeliverableDraftMetadata()
       submitStep = 'save-product-manifest'
+      if (submittingForReview) setSubmitProgress('saving-product-manifest', 'Saving product manifest...')
       await saveProductManifest({ productId, draft: editorState.draft, uploadedFiles, user: editorState.user })
       if (desiredStatus === 'published') {
         submitStep = 'submit-for-review'
+        setSubmitProgress('requesting-marketplace-review', 'Requesting marketplace review...')
         const reviewResult = await submitProductForReview({ productId })
         editorState.reviewResult = reviewResult || null
+        editorState.lastSubmitResult = reviewResult || null
         const latest = await getProductById(productId).catch(() => null)
         if (latest) editorState.draft = { ...editorState.draft, ...latest, id: productId }
         const resolvedStatus = latest?.status || reviewResult?.status || 'review_pending'
         updateDraftField('status', resolvedStatus)
         updateDraftField('visibility', latest?.visibility || editorState.draft.visibility || 'private')
-        if (resolvedStatus === 'published') setStatus('Product published. It is now public.', 'success')
-        else if (resolvedStatus === 'needs_changes') setStatus('Product needs changes before publishing.', 'error')
-        else setStatus('Product submitted for review. It will not appear publicly until approved.', 'info')
+        editorState.isSubmittingReview = false
+        editorState.submitSuccess = resolvedStatus !== 'needs_changes'
+        if (resolvedStatus === 'published') setSubmitProgress('submitted-for-review', 'Product published. It is now public.', 'success')
+        else if (resolvedStatus === 'needs_changes') {
+          editorState.submitError = 'Product needs changes before publishing.'
+          setSubmitProgress('submitted-for-review', 'Product needs changes before publishing.', 'error')
+        } else setSubmitProgress('submitted-for-review', 'Product submitted for review. It will not appear publicly until approved.', 'success')
         console.info('[new-product] review final state', {
           status: latest?.status || reviewResult?.status || '',
           visibility: latest?.visibility || '',
@@ -2152,7 +2254,12 @@ function renderEditor() {
         uid: editorState.user?.uid || '',
         error
       })
-      setStatus(`Submit failed during ${submitStep}: ${error?.message || 'Unknown error'}`, 'error')
+      if (submittingForReview) {
+        editorState.isSubmittingReview = false
+        editorState.submitSuccess = false
+        editorState.submitError = friendlySubmitError(error, submitStep)
+      }
+      setStatus(submittingForReview ? editorState.submitError : `Save failed during ${submitStep}: ${error?.message || 'Unknown error'}`, 'error')
       renderEditor()
     }
   }

@@ -4,11 +4,11 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
 import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
-import { userOwnsProduct } from './data/entitlementService'
+import { claimFreeProduct, createProductDownloadUrl, userOwnsProduct } from './data/entitlementService'
 import { getProductEngagementState, setProductEngagement } from './data/productEngagementService'
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
-import { ROUTES, productRoute, publicProfileRoute } from './utils/routes'
+import { ROUTES, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { renderSafeRichDescription } from './utils/richDescription'
 import { iconSvg } from './utils/icons'
 
@@ -447,8 +447,8 @@ function renderProductFileBrowser(product, productFiles, ownsProduct) {
   }).join('')
   const fileRows = currentNode.files.slice().sort((a, b) => a.viewerName.localeCompare(b.viewerName)).map((file) => {
     const description = inferFileDescription(file, file.viewerName)
-    const status = ownsProduct ? 'Included in download' : 'Locked manifest'
-    return `<button type="button" class="product-file-row is-file" role="treeitem" data-file-browser-file="${escapeHtml(file.viewerPath)}"><span class="product-file-icon">${iconSvg(iconForFile(file.viewerName))}</span><span class="product-file-name">${escapeHtml(file.viewerName)}</span><span class="product-file-description">${escapeHtml(description)}</span><span class="product-file-meta"><span class="product-file-status">${iconSvg(ownsProduct ? 'package' : 'lock')} ${escapeHtml(status)}</span><span>${formatBytes(file.sizeBytes || file.size || 0)}</span></span></button>`
+    const status = ownsProduct ? 'Download' : 'Locked manifest'
+    return `<button type="button" class="product-file-row is-file" role="treeitem" data-file-browser-file="${escapeHtml(file.viewerPath)}" data-file-browser-file-id="${escapeHtml(file.id || '')}" data-file-browser-storage-path="${escapeHtml(file.storagePath || '')}"><span class="product-file-icon">${iconSvg(iconForFile(file.viewerName))}</span><span class="product-file-name">${escapeHtml(file.viewerName)}</span><span class="product-file-description">${escapeHtml(description)}</span><span class="product-file-meta"><span class="product-file-status">${iconSvg(ownsProduct ? 'package' : 'lock')} ${escapeHtml(status)}</span><span>${formatBytes(file.sizeBytes || file.size || 0)}</span></span></button>`
   }).join('')
   const rows = `${backRow}${folderRows}${fileRows}` || '<div class="product-file-empty">No included files listed yet.</div>'
   return `<div class="product-file-browser" data-file-browser-root><div class="product-file-browser-header"><div><h2>File Viewer</h2><p>Product package manifest. File contents stay locked.</p></div><div class="product-file-browser-summary">${rootSummary.fileCount} files · ${rootSummary.folderCount} folders · ${formatBytes(rootSummary.sizeBytes)}</div></div><div class="product-file-browser-divider"></div><div class="product-file-browser-body"><div class="product-file-breadcrumbs" aria-label="File browser breadcrumbs">${crumbs}</div><div class="product-file-list-wrap"><div class="product-file-message ${state.fileBrowserMessage ? 'is-visible' : ''}" data-file-browser-message>${escapeHtml(state.fileBrowserMessage)}</div><div class="product-file-list" role="tree" aria-label="Product package files">${rows}</div></div></div><p class="product-file-footer">Viewing ${escapeHtml(currentPath || 'Root')} · ${currentSummary.fileCount} files · ${currentSummary.folderCount} folders</p></div>`
@@ -517,7 +517,7 @@ function bindProductFileBrowser(product, productFiles, ownsProduct) {
     root.replaceWith(next.firstElementChild)
     bindProductFileBrowser(product, productFiles, ownsProduct)
   }
-  root.addEventListener('click', (event) => {
+  root.addEventListener('click', async (event) => {
     const pathButton = event.target.closest('[data-file-browser-path]')
     if (pathButton) {
       event.preventDefault()
@@ -529,7 +529,28 @@ function bindProductFileBrowser(product, productFiles, ownsProduct) {
     const fileButton = event.target.closest('[data-file-browser-file]')
     if (fileButton) {
       event.preventDefault()
-      state.fileBrowserMessage = 'File contents are available after checkout/download. This viewer only shows the package manifest.'
+      if (!ownsProduct) {
+        state.fileBrowserMessage = 'File contents are available after purchase or free library claim.'
+        renderIntoRoot()
+        return
+      }
+      state.fileBrowserMessage = 'Creating secure download link...'
+      renderIntoRoot()
+      try {
+        const result = await createProductDownloadUrl(product.id, {
+          fileId: fileButton.getAttribute('data-file-browser-file-id') || '',
+          filePath: fileButton.getAttribute('data-file-browser-storage-path') || '',
+          path: fileButton.getAttribute('data-file-browser-file') || ''
+        })
+        if (!result?.url) throw new Error('Missing download URL.')
+        window.open(result.url, '_blank', 'noopener')
+        state.fileBrowserMessage = `Download link opened for ${result.fileName || 'file'}. It expires shortly.`
+      } catch (error) {
+        console.warn('[product] download link failed', { code: error?.code, message: error?.message })
+        state.fileBrowserMessage = error?.code === 'functions/permission-denied'
+          ? 'You do not have access to download this file.'
+          : 'Could not create download link. Try again.'
+      }
       renderIntoRoot()
     }
   })
@@ -742,6 +763,13 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     return product.moderationStatus || 'Pending'
   })()
   const contributorRows = buildContributorRows(product)
+  const isFreeProduct = Boolean(product.isFree) || Number(product.priceCents || 0) <= 0
+  const userHasAccess = Boolean(isOwner || ownsProduct)
+  const primaryActionLabel = userHasAccess
+    ? 'In Library'
+    : isFreeProduct
+      ? 'Add to Library'
+      : 'Add to Cart'
 
   const thumbMarkup = mediaItems.map((item, index) => `
     <button type="button" class="dashboard-thumb" data-media-index="${index}" aria-label="Show media ${index + 1}" aria-pressed="${index === 0 ? 'true' : 'false'}">
@@ -870,7 +898,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
               <div class="dashboard-action-stack">
-                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-add-dashboard-cart ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}>Add to Cart</button>
+                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-product-primary-action ${state.isDraftPreview || userHasAccess ? 'disabled' : ''} ${state.isDraftPreview ? 'title="Disabled in marketplace preview."' : ''}>${escapeHtml(primaryActionLabel)}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
                 <div class="dashboard-action-icons-row">
                   <button type="button" class="dashboard-icon-action ${state.productEngagement.reaction === 'like' ? 'is-active' : ''}" data-product-reaction="like" aria-label="Like this product" title="Like" aria-pressed="${state.productEngagement.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em data-product-like-count>${Math.max(0, likeCount)}</em></button>
@@ -923,17 +951,35 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   bindProductFileBrowser(product, productFiles, ownsProduct)
   initShellChrome()
 
-  app.querySelector('[data-add-dashboard-cart]')?.addEventListener('click', (event) => {
+  app.querySelector('[data-product-primary-action]')?.addEventListener('click', async (event) => {
     if (state.isDraftPreview) return
     event.preventDefault()
-    addToCart(product)
     const button = event.currentTarget
-    if (button instanceof HTMLButtonElement) {
-      button.textContent = 'Added to cart'
+    if (!(button instanceof HTMLButtonElement)) return
+    if (isFreeProduct) {
+      if (!state.currentUser?.uid) {
+        window.location.assign(authRoute({ redirect: productRoute(product) }))
+        return
+      }
+      button.disabled = true
+      button.textContent = 'Adding...'
+      try {
+        await claimFreeProduct(state.currentUser.uid, product.id)
+        button.textContent = 'Added to Library'
+        renderProduct(product, recommendations, ownerPreview, productFiles, true)
+      } catch (error) {
+        console.warn('[product] free claim failed', { code: error?.code, message: error?.message })
+        showActionMessage(error?.code === 'functions/permission-denied' ? 'This product is not available for free claim.' : 'Could not add product to library.')
+        button.disabled = false
+        button.textContent = primaryActionLabel
+      }
+      return
+    }
+    addToCart(product)
+    button.textContent = 'Added to cart'
       setTimeout(() => {
         button.textContent = 'Add to Cart'
       }, 1200)
-    }
     document.querySelector('[data-cart-trigger]')?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
   })
 

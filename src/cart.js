@@ -5,6 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { clearCart, getCartItems, removeFromCart, subscribeToCart } from './data/cartService'
 import { createCheckoutSession } from './data/checkoutService'
+import { claimFreeProduct } from './data/entitlementService'
 import { ROUTES, authRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
@@ -26,6 +27,10 @@ function formatCurrencyFromCents(cents = 0) {
 
 function getSubtotal(items) {
   return items.reduce((sum, item) => sum + Number(item.priceCents || 0), 0)
+}
+
+function isFreeCartItem(item = {}) {
+  return Boolean(item.isFree) || Number(item.priceCents || 0) <= 0
 }
 
 function getCheckoutStatus() {
@@ -57,25 +62,43 @@ async function handleCheckoutClick(checkoutButton) {
   }
 
   const cartItems = getCartItems()
-  const productIds = cartItems.map((item) => String(item.id || '')).filter(Boolean)
-  if (!productIds.length) {
+  if (!cartItems.map((item) => String(item.id || '')).filter(Boolean).length) {
     setSummaryError('Your cart is empty.')
     return
   }
 
   const defaultLabel = activeUser ? 'Checkout' : 'Sign in to Checkout'
   checkoutButton.disabled = true
-  checkoutButton.textContent = 'Redirecting...'
+  checkoutButton.textContent = 'Preparing...'
   setSummaryError('')
 
   try {
-    const result = await createCheckoutSession(productIds)
+    const freeItems = cartItems.filter(isFreeCartItem)
+    const paidItems = cartItems.filter((item) => !isFreeCartItem(item))
+
+    if (freeItems.length) {
+      checkoutButton.textContent = 'Adding free items...'
+      for (const item of freeItems) {
+        await claimFreeProduct(activeUser.uid, item.id)
+        removeFromCart(item.id)
+      }
+    }
+
+    if (!paidItems.length) {
+      setSummaryError('Free products were added to your Library.')
+      checkoutButton.textContent = 'Opening Library...'
+      window.setTimeout(() => window.location.assign(ROUTES.library), 700)
+      return
+    }
+
+    checkoutButton.textContent = 'Redirecting...'
+    const result = await createCheckoutSession(paidItems.map((item) => item.id))
     if (!result?.url) {
       throw new Error('Missing checkout URL from server response.')
     }
     window.location.assign(result.url)
   } catch (error) {
-    const fallback = 'Could not start checkout. Please try again.'
+    const fallback = 'Could not complete cart action. Please try again.'
     const message = error?.message || fallback
     setSummaryError(message)
     checkoutButton.disabled = false
@@ -135,7 +158,7 @@ function renderCart(items = []) {
       <span>Subtotal</span>
       <strong>${formatCurrencyFromCents(subtotal)}</strong>
     </div>
-    <button class="button button-accent" type="button" data-checkout-trigger>${activeUser ? 'Checkout' : 'Sign in to Checkout'}</button>
+    <button class="button button-accent" type="button" data-checkout-trigger>${activeUser ? (items.every(isFreeCartItem) ? 'Add Free Items to Library' : 'Checkout') : 'Sign in to Checkout'}</button>
     <a class="button button-muted" href="${ROUTES.products}">Continue Shopping</a>
   `
 

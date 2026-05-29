@@ -1623,10 +1623,13 @@ export async function requestProductReview(productId = '') {
       details: error?.details
     })
     const code = String(error?.code || '')
+    const wrapped = new Error(error?.message || 'Could not submit product for review.')
+    wrapped.code = error?.code || ''
+    wrapped.details = error?.details || null
     if (code.includes('not-found') || code.includes('unavailable') || code.includes('internal')) {
-      throw new Error('Review service is currently unavailable. Please try again shortly.')
+      wrapped.message = 'Review service is currently unavailable. Please try again shortly.'
     }
-    throw new Error(error?.message || 'Could not submit product for review.')
+    throw wrapped
   }
 }
 
