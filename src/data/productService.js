@@ -870,6 +870,27 @@ async function getProductShellExistsForDiagnostics(productId = '') {
   }
 }
 
+async function getProductParentDiagnostics(productId = '') {
+  if (!db || !productId) return { parentExists: null, parentArtistId: null, parentStatus: null, parentVisibility: null }
+  try {
+    const snapshot = await getDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId))
+    const data = snapshot.exists() ? (snapshot.data() || {}) : {}
+    return {
+      parentExists: snapshot.exists(),
+      parentArtistId: data.artistId || null,
+      parentStatus: data.status || null,
+      parentVisibility: data.visibility || null
+    }
+  } catch (error) {
+    return {
+      parentExists: `unknown:${error?.code || error?.message || 'read-failed'}`,
+      parentArtistId: null,
+      parentStatus: null,
+      parentVisibility: null
+    }
+  }
+}
+
 export function isPlaceholderProductId(productId = '') {
   const normalized = String(productId || '').trim().toLowerCase()
   if (!normalized) return true
@@ -1571,7 +1592,7 @@ export async function deleteProductStorageFile(storagePath = '') {
 }
 
 export async function saveProductManifest({ productId, draft = {}, uploadedFiles = [] } = {}) {
-  if (!db || !productId) throw new Error('Missing productId.')
+  if (!functions || !db || !productId) throw new Error('Missing productId.')
   const byRole = (role) => uploadedFiles.filter((item) => item.role === role)
   const cover = byRole('cover')[0]
   const thumbnail = byRole('thumbnail')[0]
@@ -1583,12 +1604,11 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
   const previewVideo = byRole('previewVideo').map((item) => item.storagePath).filter(Boolean)
   const existingDeliverables = Array.isArray(draft.deliverableFiles) ? draft.deliverableFiles : []
   const deliverableRows = deliverables.length ? deliverables : existingDeliverables
-  const totalBytes = uploadedFiles.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
-  const pricing = normalizePriceFields(draft)
+  const fileRows = uploadedFiles.length ? uploadedFiles : deliverableRows
+  const totalBytes = fileRows.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
   const resolvedCoverPath = cover?.storagePath || draft.coverPath || ''
   const resolvedThumbnailPath = thumbnail?.storagePath || draft.thumbnailPath || resolvedCoverPath || ''
-  const payload = {
-    ...pricing,
+  const manifest = {
     coverPath: resolvedCoverPath,
     thumbnailPath: resolvedThumbnailPath,
     galleryPaths: gallery.length ? gallery : (Array.isArray(draft.galleryPaths) ? draft.galleryPaths : []),
@@ -1616,46 +1636,94 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
     primaryDownloadPath: deliverable?.storagePath || draft.primaryDownloadPath || draft.downloadPath || '',
     primaryDownloadBytes: Number(deliverable?.sizeBytes || draft.primaryDownloadBytes || 0),
     licensePath: license?.storagePath || '',
-    assetSummary: { totalFiles: uploadedFiles.length, totalBytes },
-    updatedAt: serverTimestamp()
-  }
-  console.info('[productService] saving product pricing fields', {
-    productId,
-    priceCents: payload.priceCents,
-    payoutTargetCents: payload.payoutTargetCents,
-    isFree: payload.isFree,
-    currency: payload.currency
-  })
-  await setDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId), {
-    ...payload
-  }, { merge: true })
-
-  const filesCol = collection(db, FIRESTORE_COLLECTIONS.products, productId, 'files')
-  const batch = writeBatch(db)
-  uploadedFiles.forEach((row) => {
-    const fileRef = doc(filesCol, row.id)
-    batch.set(fileRef, {
+    assetSummary: {
+      totalFiles: fileRows.length,
+      totalBytes,
+      downloadableCount: fileRows.filter((row) => row.role === 'deliverable' || row.isDownloadable).length,
+      previewableCount: fileRows.filter((row) => row.canPreview).length
+    },
+    primaryPreviewPath: draft.primaryPreviewPath || '',
+    primaryPreviewType: draft.primaryPreviewType || '',
+    primaryPreviewDuration: Number(draft.primaryPreviewDuration || 0),
+    previewAssignment: normalizePreviewAssignment(draft.previewAssignment || {}, draft.productType),
+    productKind: draft.productKind || normalizeProductKind(draft.productType),
+    previewMode: draft.previewMode || '',
+    distributionMode: draft.distributionMode || '',
+    formatKeys: Array.isArray(draft.formatKeys) ? draft.formatKeys : parseCsv(draft.formatKeys),
+    dawCompatibility: Array.isArray(draft.dawCompatibility) ? draft.dawCompatibility : parseCsv(draft.dawCompatibility),
+    compatibilityNotes: String(draft.compatibilityNotes || ''),
+    formatNotes: String(draft.formatNotes || ''),
+    includedFiles: String(draft.includedFiles || ''),
+    files: fileRows.map((row, index) => ({
       id: row.id,
       productId,
       name: row.name,
       displayPath: row.displayPath || row.name,
+      parentPath: row.parentPath || '',
       storagePath: row.storagePath,
-      role: row.role,
-      category: row.role === 'deliverable' ? 'Deliverables' : row.role === 'gallery' ? 'Listing Media' : 'Preview Media',
+      role: row.role || 'deliverable',
+      category: row.role === 'deliverable' ? 'Deliverables' : row.role === 'gallery' ? 'Listing Media' : row.role === 'license' ? 'License' : 'Preview Media',
       sizeBytes: Number(row.sizeBytes || 0),
-      contentType: row.contentType || 'application/octet-stream',
+      contentType: row.contentType || row.mimeType || 'application/octet-stream',
       extension: String(row.name || '').split('.').pop() || '',
-      type: row.contentType || 'file',
+      type: row.type || row.kind || row.contentType || 'file',
       description: String(row.description || '').slice(0, 150),
-      isDownloadable: row.role === 'deliverable',
-      canPreview: row.role === 'deliverable' && String(row.contentType || '').startsWith('audio/'),
-      isDeliverable: row.role === 'deliverable',
-      isPublicPreview: row.role === 'previewAudio' || row.role === 'previewVideo' || row.role === 'gallery',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    }, { merge: true })
-  })
-  await batch.commit()
+      isDownloadable: row.role === 'deliverable' || row.isDownloadable === true,
+      canPreview: row.canPreview === true || (row.role === 'deliverable' && String(row.contentType || '').startsWith('audio/')),
+      isDeliverable: row.role === 'deliverable' || row.isDeliverable === true,
+      isPublicPreview: row.role === 'previewAudio' || row.role === 'previewVideo' || row.role === 'gallery' || row.role === 'cover' || row.role === 'thumbnail',
+      sortIndex: Number(row.sortIndex ?? index)
+    }))
+  }
+  const operationName = 'callable saveProductManifest'
+  const path = `${FIRESTORE_COLLECTIONS.products}/${productId}`
+  const parent = await getProductParentDiagnostics(productId)
+  if (isDevelopmentRuntime) {
+    console.info('[productService] save-product-manifest operation start', {
+      operationName,
+      path,
+      productId,
+      uid: draft.artistId || null,
+      keys: Object.keys(manifest).sort(),
+      fileMetadataCount: manifest.files.length,
+      ...parent
+    })
+  }
+  try {
+    const callable = httpsCallable(functions, 'saveProductManifest')
+    const result = await callable({ productId, manifest })
+    const data = result?.data || {}
+    if (isDevelopmentRuntime) {
+      console.info('[productService] save-product-manifest result', {
+        productId,
+        manifestSaved: Boolean(data.manifestSaved),
+        productUpdated: Boolean(data.productUpdated),
+        fileMetadataWritten: Number(data.fileMetadataWritten || 0),
+        updatedPaths: data.updatedPaths || []
+      })
+    }
+    return data
+  } catch (error) {
+    const details = error?.details || {}
+    const failedOperation = details.operationName || operationName
+    const failedPath = details.path || path
+    console.error(`save-product-manifest failed at operation: ${failedOperation}`)
+    console.error(`path: ${failedPath}`)
+    console.error(`code: ${error?.code || ''}`)
+    console.error('[productService] save-product-manifest failed', {
+      operationName: failedOperation,
+      path: failedPath,
+      code: error?.code || '',
+      message: error?.message || '',
+      details,
+      productId,
+      uid: draft.artistId || null,
+      keys: Object.keys(manifest).sort(),
+      fileMetadataCount: manifest.files.length,
+      ...parent
+    })
+    throw error
+  }
 }
 
 export async function submitProductForReview({ productId } = {}) {

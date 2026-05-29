@@ -291,6 +291,9 @@ function friendlySubmitError(error, step = '') {
   if (step === 'create-product-shell') {
     return 'Product draft could not be created. The backend rejected the product shell. Your form data is still saved locally.'
   }
+  if (step === 'save-product-manifest') {
+    return 'Product manifest could not be saved. Your product draft and uploaded files are still preserved. Try again.'
+  }
   const code = String(error?.code || '').toLowerCase()
   const message = String(error?.message || '')
   const haystack = `${code} ${message}`.toLowerCase()
@@ -2224,7 +2227,11 @@ function renderEditor() {
       syncDeliverableDraftMetadata()
       submitStep = 'save-product-manifest'
       if (submittingForReview) setSubmitProgress('saving-product-manifest', 'Saving product manifest...')
-      await saveProductManifest({ productId, draft: editorState.draft, uploadedFiles, user: editorState.user })
+      const manifestResult = await saveProductManifest({ productId, draft: editorState.draft, uploadedFiles, user: editorState.user })
+      if (manifestResult?.manifest) {
+        editorState.draft = { ...editorState.draft, ...manifestResult.manifest, id: productId }
+        saveDraftState()
+      }
       if (desiredStatus === 'published') {
         submitStep = 'submit-for-review'
         setSubmitProgress('requesting-marketplace-review', 'Requesting marketplace review...')

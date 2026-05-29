@@ -16,6 +16,7 @@ const { stripeWebhook } = require('./src/payments/stripeWebhook')
 const { claimFreeProduct } = require('./src/products/claimFreeProduct')
 const { createProductDownloadUrl } = require('./src/products/createProductDownloadUrl')
 const { createOrUpdateProductShell } = require('./src/products/createOrUpdateProductShell')
+const { saveProductManifest } = require('./src/products/saveProductManifest')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -36,3 +37,4 @@ exports.stripeWebhook = stripeWebhook
 exports.claimFreeProduct = claimFreeProduct
 exports.createProductDownloadUrl = createProductDownloadUrl
 exports.createOrUpdateProductShell = createOrUpdateProductShell
+exports.saveProductManifest = saveProductManifest
