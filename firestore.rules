@@ -348,21 +348,8 @@ service cloud.firestore {
         && (!('productKind' in request.resource.data) || request.resource.data.productKind is string)
         && (!('previewMode' in request.resource.data) || request.resource.data.previewMode is string)
         && (!('distributionMode' in request.resource.data) || request.resource.data.distributionMode is string)
-        && (!('price' in request.resource.data) || (
-          (
-            request.resource.data.price is string
-            && request.resource.data.price.size() <= 40
-          )
-          || (
-            request.resource.data.price is number
-            && request.resource.data.price >= 0
-            && request.resource.data.price <= 10000000
-          )
-        ))
-        && (!('priceLabel' in request.resource.data) || (
-          request.resource.data.priceLabel is string
-          && request.resource.data.priceLabel.size() <= 80
-        ))
+        && (!('price' in request.resource.data) || request.resource.data.price is string)
+        && (!('priceLabel' in request.resource.data) || request.resource.data.priceLabel is string)
         && (!('priceCents' in request.resource.data) || (
           request.resource.data.priceCents is number
           && request.resource.data.priceCents >= 0
@@ -785,14 +772,51 @@ service cloud.firestore {
     }
 
     function productCreateIsAllowed(productId) {
+      // Product shell creation needs to be permissive enough for the editor's
+      // first draft write, but it must never let a client publish directly.
+      // Keep update/review/publish rules stricter after the shell exists.
       return signedIn()
+        && request.resource.data.id is string
         && request.resource.data.id == productId
+        && request.resource.data.artistId is string
         && request.resource.data.artistId == request.auth.uid
-        && productAllowedKeys()
-        && productFieldShapesAreValid()
-        && productServerFieldsSafeOnCreate()
-        && request.resource.data.status in ['draft', 'review_pending']
-        && request.resource.data.visibility in ['private', 'unlisted'];
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.title.size() <= 160
+        && request.resource.data.status in ['draft', 'review_pending', 'pending_ai_review']
+        && request.resource.data.visibility in ['private', 'unlisted']
+        && (!('slug' in request.resource.data) || request.resource.data.slug is string)
+        && (!('shortDescription' in request.resource.data) || (
+          request.resource.data.shortDescription is string
+          && request.resource.data.shortDescription.size() <= 500
+        ))
+        && (!('description' in request.resource.data) || (
+          request.resource.data.description is string
+          && request.resource.data.description.size() <= 20000
+        ))
+        && (!('artistName' in request.resource.data) || request.resource.data.artistName is string)
+        && (!('artistDisplayName' in request.resource.data) || request.resource.data.artistDisplayName is string)
+        && (!('artistUsername' in request.resource.data) || request.resource.data.artistUsername is string)
+        && (!('artistProfilePath' in request.resource.data) || request.resource.data.artistProfilePath is string)
+        && (!('artistAvatarURL' in request.resource.data) || request.resource.data.artistAvatarURL is string)
+        && (!('artistPhotoURL' in request.resource.data) || request.resource.data.artistPhotoURL is string)
+        && (!('productType' in request.resource.data) || request.resource.data.productType is string)
+        && (!('currency' in request.resource.data) || request.resource.data.currency in ['USD', 'EUR', 'GBP'])
+        && (!('price' in request.resource.data) || request.resource.data.price is string)
+        && (!('priceLabel' in request.resource.data) || request.resource.data.priceLabel is string)
+        && (!('price' in request.resource.data) || request.resource.data.price is string)
+        && (!('priceLabel' in request.resource.data) || request.resource.data.priceLabel is string)
+        && (!('priceCents' in request.resource.data) || (
+          request.resource.data.priceCents is number
+          && request.resource.data.priceCents >= 0
+          && request.resource.data.priceCents <= 10000000
+        ))
+        && (!('payoutTargetCents' in request.resource.data) || (
+          request.resource.data.payoutTargetCents is number
+          && request.resource.data.payoutTargetCents >= 0
+          && request.resource.data.payoutTargetCents <= 10000000
+        ))
+        && (!('isFree' in request.resource.data) || request.resource.data.isFree is bool);
     }
 
     function productUpdateIsAllowed() {
@@ -1202,10 +1226,8 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-  // Important: the product editor checks whether a generated draft ID already exists
-  // before creating it. For a brand-new random ID, that get() targets a non-existent
-  // document. Without this non-existent get allowance, the client receives
-  // permission-denied before the create rule can run.
+  // Allow the editor to safely check a generated product ID that does not exist yet,
+  // without exposing existing private/draft products.
   allow get: if !exists(/databases/$(database)/documents/products/$(productId))
     || canReadProductResource(productId);
 
