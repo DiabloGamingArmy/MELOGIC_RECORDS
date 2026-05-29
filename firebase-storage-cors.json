@@ -9,7 +9,7 @@
       "http://localhost:3000"
     ],
     "method": ["GET", "HEAD"],
-    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin"],
+    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin", "x-goog-meta-*"],
     "maxAgeSeconds": 3600
   }
 ]

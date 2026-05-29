@@ -13,12 +13,46 @@ const FALLBACK_SELLER_AGREEMENT_CONFIG = Object.freeze({
   requiresSignature: true
 })
 const AGREEMENT_FOLDER_PATH = 'legal/agreements/marketplace-product-seller-agreement'
+const FALLBACK_AGREEMENT_STORAGE_PATH = `${AGREEMENT_FOLDER_PATH}/v1.md`
+const AGREEMENT_REQUEST_TIMEOUT_MS = 10000
 
 function agreementError(code, message, details = {}) {
   const error = new Error(message)
   error.code = code
   error.details = details
   return error
+}
+
+function withTimeout(promise, timeoutMs, code, message, details = {}) {
+  let timeoutId
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(agreementError(code, message, details)), timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId))
+}
+
+async function fetchTextWithTimeout(url, details = {}, timeoutMs = AGREEMENT_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetch(url, { cache: 'no-cache', signal: controller.signal })
+    if (!response.ok) {
+      throw agreementError('agreement-fetch-failed', `Agreement download failed with status ${response.status}.`, { ...details, status: response.status })
+    }
+    const text = await response.text()
+    if (!String(text || '').trim()) throw agreementError('agreement-empty', 'Seller agreement file is empty.', details)
+    if (/^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
+      throw agreementError('agreement-fetch-failed', 'Seller agreement fallback returned an HTML page instead of markdown.', details)
+    }
+    return text
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw agreementError('agreement-timeout', 'The request timed out. Firebase Storage CORS or permissions may need configuration.', details)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 function isDevEnvironment() {
@@ -60,17 +94,24 @@ export async function getMarketplaceSellerAgreementConfig() {
   }
 }
 
-export async function getAgreementMarkdown(storagePath = '') {
+export async function getAgreementMarkdown(storagePath = '', options = {}) {
   if (!storage || !storagePath) {
     throw agreementError('storage-unavailable', 'Seller agreement file is missing.', { storagePath })
   }
+  const returnMetadata = options.returnMetadata === true
   const agreementRef = ref(storage, storagePath)
   let storageError = null
   try {
-    const bytes = await getBytes(agreementRef, 1024 * 1024)
+    const bytes = await withTimeout(
+      getBytes(agreementRef, 1024 * 1024),
+      AGREEMENT_REQUEST_TIMEOUT_MS,
+      'agreement-timeout',
+      'The request timed out. Firebase Storage CORS or permissions may need configuration.',
+      { storagePath }
+    )
     const text = new TextDecoder('utf-8').decode(bytes)
     if (!String(text || '').trim()) throw agreementError('agreement-empty', 'Seller agreement file is empty.', { storagePath })
-    return text
+    return returnMetadata ? { markdown: text, source: 'storage-sdk', warning: '' } : text
   } catch (bytesError) {
     storageError = bytesError
     const code = String(bytesError?.code || '').toLowerCase()
@@ -83,27 +124,44 @@ export async function getAgreementMarkdown(storagePath = '') {
 
   const sameOriginPath = `/${String(storagePath || '').replace(/^\/+/, '')}`
   try {
-    const response = await fetch(sameOriginPath, { cache: 'no-cache' })
-    if (response.ok) {
-      const text = await response.text()
-      if (!String(text || '').trim()) throw agreementError('agreement-empty', 'Seller agreement file is empty.', { storagePath, fallbackPath: sameOriginPath })
-      if (/^\s*<!doctype html/i.test(text) || /^\s*<html[\s>]/i.test(text)) {
-        throw agreementError('agreement-fetch-failed', 'Seller agreement fallback returned an HTML page instead of markdown.', { storagePath, fallbackPath: sameOriginPath })
-      }
-      return text
-    }
-    devWarn('[legalAgreementService] Same-origin agreement fallback failed.', response.status, sameOriginPath)
+    const text = await fetchTextWithTimeout(sameOriginPath, { storagePath, fallbackPath: sameOriginPath })
+    return returnMetadata
+      ? { markdown: text, source: 'same-origin', fallbackPath: sameOriginPath, warning: 'Loaded same-origin fallback agreement.' }
+      : text
   } catch (fallbackError) {
     devWarn('[legalAgreementService] Same-origin agreement fallback errored.', fallbackError?.code || fallbackError?.message || fallbackError)
   }
 
+  if (storagePath !== FALLBACK_AGREEMENT_STORAGE_PATH) {
+    const bundledFallbackPath = `/${FALLBACK_AGREEMENT_STORAGE_PATH}`
+    try {
+      const text = await fetchTextWithTimeout(bundledFallbackPath, {
+        storagePath,
+        fallbackPath: bundledFallbackPath
+      })
+      return returnMetadata
+        ? {
+            markdown: text,
+            source: 'same-origin-fallback',
+            fallbackPath: bundledFallbackPath,
+            warning: 'Could not verify or load the latest Storage version. Showing bundled fallback.'
+          }
+        : text
+    } catch (fallbackError) {
+      devWarn('[legalAgreementService] Bundled agreement fallback errored.', fallbackError?.code || fallbackError?.message || fallbackError)
+    }
+  }
+
   try {
-    const downloadUrl = await getDownloadURL(agreementRef)
-    const response = await fetch(downloadUrl)
-    if (!response.ok) throw agreementError('agreement-fetch-failed', `Agreement download failed with status ${response.status}.`, { storagePath, status: response.status })
-    const text = await response.text()
-    if (!String(text || '').trim()) throw agreementError('agreement-empty', 'Seller agreement file is empty.', { storagePath })
-    return text
+    const downloadUrl = await withTimeout(
+      getDownloadURL(agreementRef),
+      AGREEMENT_REQUEST_TIMEOUT_MS,
+      'agreement-timeout',
+      'The request timed out. Firebase Storage CORS or permissions may need configuration.',
+      { storagePath }
+    )
+    const text = await fetchTextWithTimeout(downloadUrl, { storagePath })
+    return returnMetadata ? { markdown: text, source: 'storage-download-url', warning: '' } : text
   } catch (error) {
     devWarn('[legalAgreementService] Failed to fetch agreement markdown from Storage.', error?.code || error?.message || error)
     const message = String(error?.message || storageError?.message || '').toLowerCase()
@@ -122,8 +180,8 @@ export async function getAgreementMarkdown(storagePath = '') {
   }
 }
 
-function parseVersionFromPath(path = '') {
-  const match = String(path || '').match(/\/(v(\d+))\.md$/i)
+export function parseVersionFromPath(path = '') {
+  const match = String(path || '').match(/(?:^|\/)(v(\d+))\.md$/i)
   if (!match) return null
   return {
     version: match[1].toLowerCase(),
@@ -134,14 +192,20 @@ function parseVersionFromPath(path = '') {
 
 export async function getLatestMarketplaceSellerAgreement() {
   const config = await getMarketplaceSellerAgreementConfig()
-  const fallbackPath = config.storagePath || `${AGREEMENT_FOLDER_PATH}/v1.md`
+  const fallbackPath = config.storagePath || FALLBACK_AGREEMENT_STORAGE_PATH
   const fallbackVersion = String(config.activeVersion || 'v1').toLowerCase()
 
   if (!storage) return { ...config, storagePath: fallbackPath, activeVersion: fallbackVersion }
 
   try {
     const folderRef = ref(storage, AGREEMENT_FOLDER_PATH)
-    const listing = await listAll(folderRef)
+    const listing = await withTimeout(
+      listAll(folderRef),
+      AGREEMENT_REQUEST_TIMEOUT_MS,
+      'agreement-timeout',
+      'The request timed out while listing seller agreement versions.',
+      { folderPath: AGREEMENT_FOLDER_PATH }
+    )
     const candidates = listing.items
       .map((item) => parseVersionFromPath(item.fullPath))
       .filter(Boolean)
@@ -155,6 +219,13 @@ export async function getLatestMarketplaceSellerAgreement() {
     }
   } catch (error) {
     devWarn('[legalAgreementService] Could not list agreement versions from Storage; falling back to config/default.', error?.code || error?.message || error)
+    return {
+      ...config,
+      storagePath: fallbackPath,
+      activeVersion: fallbackVersion,
+      versionDiscoveryWarning: 'Could not verify latest Storage agreement version. Falling back to configured agreement.',
+      versionDiscoveryCode: error?.code || 'agreement-list-failed'
+    }
   }
 
   return {
