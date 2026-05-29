@@ -15,6 +15,7 @@ const { createCheckoutSession } = require('./src/payments/createCheckoutSession'
 const { stripeWebhook } = require('./src/payments/stripeWebhook')
 const { claimFreeProduct } = require('./src/products/claimFreeProduct')
 const { createProductDownloadUrl } = require('./src/products/createProductDownloadUrl')
+const { createOrUpdateProductShell } = require('./src/products/createOrUpdateProductShell')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -34,3 +35,4 @@ exports.createCheckoutSession = createCheckoutSession
 exports.stripeWebhook = stripeWebhook
 exports.claimFreeProduct = claimFreeProduct
 exports.createProductDownloadUrl = createProductDownloadUrl
+exports.createOrUpdateProductShell = createOrUpdateProductShell

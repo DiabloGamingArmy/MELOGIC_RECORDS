@@ -860,6 +860,16 @@ async function waitForDraftDocument(productId, attempts = 4, delayMs = 120) {
   return false
 }
 
+async function getProductShellExistsForDiagnostics(productId = '') {
+  if (!db || !productId) return null
+  try {
+    const snapshot = await getDoc(doc(db, FIRESTORE_COLLECTIONS.products, productId))
+    return snapshot.exists()
+  } catch (error) {
+    return `unknown:${error?.code || error?.message || 'read-failed'}`
+  }
+}
+
 export function isPlaceholderProductId(productId = '') {
   const normalized = String(productId || '').trim().toLowerCase()
   if (!normalized) return true
@@ -871,7 +881,6 @@ async function ensureDraftProductDocument(user, input = {}, productId = '') {
   if (!db || !user?.uid || !productId) return
   const creator = getCreatorIdentity(user, input)
 
-  const now = serverTimestamp()
   const payload = {
     id: productId,
     artistId: creator.artistId || user.uid,
@@ -885,22 +894,16 @@ async function ensureDraftProductDocument(user, input = {}, productId = '') {
     productType: input.productType || 'Sample Pack',
     slug: input.slug || productId,
     status: 'draft',
-    visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private'),
-    createdAt: now,
-    updatedAt: now
+    visibility: input.visibility === 'public' ? 'unlisted' : (input.visibility || 'private')
   }
   logDraftFirestoreWrite({
-    operation: 'setDoc ensureDraftProductDocument',
+    operation: 'callable ensureDraftProductDocument',
     path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
     user,
     productId,
     payload
   })
-  await setDoc(
-    doc(db, FIRESTORE_COLLECTIONS.products, productId),
-    payload,
-    { merge: true }
-  )
+  await createOrUpdateProductShell(payload, user)
 }
 
 export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
@@ -1180,15 +1183,11 @@ export async function saveProductFileManifest(productId, fileRows = [], user = n
 
 export async function initializeProductDraft(user, input = {}, requestedId = '') {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
-  const productId = !isPlaceholderProductId(requestedId) ? requestedId : createProductId()
-  const draftRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
-  const draftSnapshot = await getDoc(draftRef)
-  const created = !draftSnapshot.exists()
-  if (created) {
-    const basePayload = buildProductPayload({ ...input, id: productId }, user)
-    await ensureDraftProductDocument(user, basePayload, productId)
-  }
-  return { productId, created }
+  const productId = !isPlaceholderProductId(requestedId) ? requestedId : ''
+  const basePayload = buildProductPayload({ ...input, ...(productId ? { id: productId } : {}) }, user)
+  if (!productId) delete basePayload.id
+  const shell = await createOrUpdateProductShell(basePayload, user)
+  return { productId: shell.productId, created: Boolean(shell.created) }
 }
 
 export async function saveProductDraft(user, input = {}, options = {}) {
@@ -1199,10 +1198,9 @@ export async function saveProductDraft(user, input = {}, options = {}) {
   const rawId = String(options.productId || input.id || '').trim()
   const slugId = slugify(input?.slug || input?.title || '')
   const existingId = rawId && !isPlaceholderProductId(rawId) ? rawId : ''
-  const productId = existingId || slugId || doc(collection(db, FIRESTORE_COLLECTIONS.products)).id
   const hasExistingId = Boolean(existingId)
-  const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
-  if (!productId) throw new Error('Could not create product id for draft save.')
+  let productId = existingId
+  let productRef = productId ? doc(db, FIRESTORE_COLLECTIONS.products, productId) : null
   let created = !hasExistingId
   let payload = null
   try {
@@ -1215,8 +1213,8 @@ export async function saveProductDraft(user, input = {}, options = {}) {
     }
     const creator = getCreatorIdentity(user, input)
     const ownerPayload = {
-      id: productId,
-      slug: String(input.slug || existing.slug || productId),
+      ...(productId ? { id: productId } : {}),
+      slug: String(input.slug || existing.slug || slugId || productId || ''),
       status: 'draft',
       visibility: 'private',
       title: String(input.title || existing.title || '').trim() || 'Untitled product',
@@ -1229,21 +1227,22 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       artistUsername: String(existing.artistUsername || creator.artistUsername || ''),
       artistProfilePath: String(existing.artistProfilePath || creator.artistProfilePath || ''),
       artistAvatarURL: String(existing.artistAvatarURL || creator.artistAvatarURL || ''),
-      artistPhotoURL: String(existing.artistPhotoURL || creator.artistPhotoURL || ''),
-      updatedAt: serverTimestamp(),
-      ...(created ? { createdAt: serverTimestamp() } : {})
+      artistPhotoURL: String(existing.artistPhotoURL || creator.artistPhotoURL || '')
     }
-    saveStep = 'pre-save-owner-doc'
+    saveStep = 'pre-save-owner-doc-callable'
     if (isDevelopmentRuntime) {
       console.info('[productService] draft pre-save owner doc', {
-        path: `${FIRESTORE_COLLECTIONS.products}/${productId}`,
+        path: productId ? `${FIRESTORE_COLLECTIONS.products}/${productId}` : `${FIRESTORE_COLLECTIONS.products}/(server-generated)`,
         uid: user.uid,
-        productId,
+        productId: productId || null,
         title: ownerPayload.title,
         slug: ownerPayload.slug
       })
     }
-    await setDoc(productRef, ownerPayload, { merge: true })
+    const shellResult = await createOrUpdateProductShell(ownerPayload, user)
+    productId = shellResult.productId
+    productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
+    created = Boolean(shellResult.created)
     if (typeof options.onStatus === 'function' && created) options.onStatus('Draft document created.')
   } catch (error) {
     console.error('[productService] draft save failed', {
@@ -1473,52 +1472,75 @@ export async function submitMarketplaceProductForReview({ user, productId, produ
 export function resolveProductId(input = {}) {
   const rawId = String(input?.id || input?.productId || '').trim()
   if (rawId && !isPlaceholderProductId(rawId)) return rawId
-  return createProductId()
+  return ''
 }
 
 export async function createOrUpdateProductShell(input = {}, user = null) {
-  if (!db || !user?.uid) throw new Error('Authenticated user required.')
+  if (!functions || !db || !user?.uid) throw new Error('Authenticated user required.')
   const productId = resolveProductId(input)
-  const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
   const creator = getCreatorIdentity(user, input)
   const pricing = normalizePriceFields(input)
-  const hasExistingProductId = Boolean(String(input?.id || input?.productId || '').trim() && !isPlaceholderProductId(input?.id || input?.productId))
-  const payload = withoutUndefinedValues({
-    id: productId,
-    slug: String(input.slug || slugify(input.title) || productId),
-    status: 'draft',
-    visibility: 'private',
-    title: String(input.title || '').trim() || 'Untitled product',
-    shortDescription: String(input.shortDescription || ''),
-    description: String(input.description || ''),
-    productType: String(input.productType || 'Sample Pack'),
+  const requestedStatus = String(input.status || '').trim()
+  const requestedVisibility = String(input.visibility || '').trim()
+  const basePayload = buildProductPayload({ ...input, ...(productId ? { id: productId } : {}) }, user)
+  const payload = sanitizeClientProductDraftPayload(withoutUndefinedValues({
+    ...basePayload,
+    ...(productId ? { id: productId } : {}),
+    slug: String(input.slug || basePayload.slug || slugify(input.title) || productId || ''),
+    status: requestedStatus === 'published' ? 'review_pending' : (requestedStatus || 'draft'),
+    visibility: requestedVisibility === 'public' ? 'unlisted' : (requestedVisibility || 'private'),
+    title: String(input.title || basePayload.title || '').trim() || 'Untitled product',
     artistId: user.uid,
     artistName: String(creator.artistName || 'Creator'),
     artistDisplayName: String(creator.artistDisplayName || creator.artistName || 'Creator'),
     artistUsername: String(creator.artistUsername || ''),
-    artistProfilePath: `profiles/${user.uid}`,
+    artistProfilePath: creator.artistProfilePath || `profiles/${user.uid}`,
     artistAvatarURL: String(creator.artistAvatarURL || ''),
     artistPhotoURL: String(creator.artistPhotoURL || ''),
-    ...pricing,
-    updatedAt: serverTimestamp(),
-    ...(hasExistingProductId ? {} : { createdAt: serverTimestamp() })
-  })
-  const diagnostics = buildProductShellDiagnostics({ user, productId, payload })
+    ...pricing
+  }))
+  delete payload.createdAt
+  delete payload.updatedAt
+  if (!productId) delete payload.id
+
+  const callableName = 'createOrUpdateProductShell'
+  const productDocExists = productId ? await getProductShellExistsForDiagnostics(productId) : null
+  const diagnostics = {
+    ...buildProductShellDiagnostics({ user, productId, payload }),
+    productDocExists,
+    callableName
+  }
   if (isDevelopmentRuntime) {
-    console.info('[productService] product shell write diagnostic', diagnostics)
+    console.info('[productService] product shell callable diagnostic', diagnostics)
   }
   try {
-    await setDoc(productRef, payload, { merge: true })
+    const callable = httpsCallable(functions, callableName)
+    const result = await callable({
+      ...(productId ? { productId } : {}),
+      product: payload
+    })
+    const data = result?.data || {}
+    if (!data.productId) throw new Error('Product shell callable did not return a productId.')
+    if (isDevelopmentRuntime) {
+      console.info('[productService] product shell callable result', {
+        productId: data.productId,
+        status: data.status || '',
+        visibility: data.visibility || '',
+        created: Boolean(data.created),
+        updated: Boolean(data.updated)
+      })
+    }
+    return { ...data, payload }
   } catch (error) {
-    console.error('[productService] product shell write failed', {
+    console.error('[productService] product shell callable failed', {
       ...diagnostics,
       code: error?.code || '',
-      message: error?.message || ''
+      message: error?.message || '',
+      details: error?.details || null
     })
     error.productShellDiagnostics = diagnostics
     throw error
   }
-  return { productId, payload }
 }
 
 export async function uploadProductFile({ productId, queueItem, onProgress } = {}) {

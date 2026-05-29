@@ -55,6 +55,7 @@ app.innerHTML = `
 
 initShellChrome()
 
+const isDevelopmentRuntime = import.meta.env.DEV
 const editorRoot = document.querySelector('[data-product-editor-root]')
 let editorState = {
   user: null,
@@ -287,18 +288,16 @@ function setSubmitProgress(step, message, state = 'info') {
 }
 
 function friendlySubmitError(error, step = '') {
+  if (step === 'create-product-shell') {
+    return 'Product draft could not be created. The backend rejected the product shell. Your form data is still saved locally.'
+  }
   const code = String(error?.code || '').toLowerCase()
   const message = String(error?.message || '')
   const haystack = `${code} ${message}`.toLowerCase()
   if (haystack.includes('unauthenticated') || haystack.includes('auth')) {
     return 'You need to sign in again before submitting this product.'
   }
-  if (haystack.includes('permission-denied') || haystack.includes('permission denied')) {
-    if (step === 'create-product-shell') {
-      return 'Product draft could not be created because Firestore permissions rejected the write. This is usually a rules/payload mismatch. Your form data is still saved locally.'
-    }
-    return 'You do not have permission to submit this product.'
-  }
+  if (haystack.includes('permission-denied') || haystack.includes('permission denied')) return 'You do not have permission to submit this product.'
   if (haystack.includes('failed-precondition')) {
     return message || 'Product details are incomplete. Check the publish checklist and try again.'
   }
@@ -625,9 +624,14 @@ function syncDeliverableDraftMetadata() {
 }
 
 async function ensureDraftProductShell() {
-  if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) return editorState.draft.id
+  if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) {
+    if (isDevelopmentRuntime) console.info('[new-product] using productId for upload', editorState.draft.id)
+    return editorState.draft.id
+  }
   const shell = await createOrUpdateProductShell(editorState.draft, editorState.user)
+  if (isDevelopmentRuntime) console.info('[new-product] shell result', shell)
   updateDraftField('id', shell.productId)
+  if (isDevelopmentRuntime) console.info('[new-product] using productId for upload', shell.productId)
   return shell.productId
 }
 
@@ -2182,7 +2186,14 @@ function renderEditor() {
       }
       submitStep = 'create-product-shell'
       if (submittingForReview) setSubmitProgress('saving-product-draft', 'Saving product draft...')
+      const existingDraftId = editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)
+        ? editorState.draft.id
+        : ''
+      if (isDevelopmentRuntime) {
+        console.info('[new-product] using productId for submit', existingDraftId || '(server-generated)')
+      }
       const shell = await createOrUpdateProductShell(editorState.draft, editorState.user)
+      if (isDevelopmentRuntime) console.info('[new-product] shell result', shell)
       const productId = shell.productId
       editorState.draft.id = productId
       updateDraftField('id', productId)
@@ -2253,6 +2264,7 @@ function renderEditor() {
         submitStep,
         code: error?.code,
         message: error?.message,
+        details: error?.details || null,
         productId: editorState.draft?.id || '',
         uid: editorState.user?.uid || '',
         productShellDiagnostics: error?.productShellDiagnostics || null,
