@@ -314,6 +314,8 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     moderationAISucceeded: Boolean(rawProduct.moderationAISucceeded),
     moderationAIEnabled: Boolean(rawProduct.moderationAIEnabled),
     moderationAIError: String(rawProduct.moderationAIError || ''),
+    moderationAIErrorCode: String(rawProduct.moderationAIErrorCode || ''),
+    moderationAIErrorCategory: String(rawProduct.moderationAIErrorCategory || ''),
     moderationAIModel: String(rawProduct.moderationAIModel || ''),
     reviewJobStatus: String(rawProduct.reviewJobStatus || ''),
     reviewRequestedAt: toIsoDate(rawProduct.reviewRequestedAt),

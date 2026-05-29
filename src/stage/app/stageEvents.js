@@ -25,7 +25,7 @@ export function bindDashboardEvents({ app, renderCreateModal, openProject, loadD
   }))
   app.querySelectorAll('[data-use-template]').forEach((el) => el.addEventListener('click', () => {
     if (!state.user) {
-      window.location.href = authRoute({ redirect: ROUTES.stage })
+      window.location.href = authRoute({ redirect: ROUTES.studioStagemaker })
       return
     }
     state.selectedStageType = el.dataset.useTemplate || 'Blank Stage'
@@ -235,7 +235,7 @@ export function bindStageEditorEventsOnce(context) {
       return
     }
     const newStage = e.target.closest('[data-new-stage-plan]')
-    if (newStage && app.querySelector('[data-stage-editor-app]')) { window.location.href = ROUTES.stage; return }
+    if (newStage && app.querySelector('[data-stage-editor-app]')) { window.location.href = ROUTES.studioStagemaker; return }
     const menuBtn = e.target.closest('[data-stage-app-menu]')
     if (menuBtn) { state.stageAppMenuOpen = !state.stageAppMenuOpen; updateStageAppMenu(); return }
     const menuPanel = e.target.closest('[data-stage-app-menu-panel]')

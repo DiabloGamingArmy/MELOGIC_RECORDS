@@ -124,12 +124,12 @@
       },
       {
         "source": "/stage.html",
-        "destination": "/stage",
+        "destination": "/studio/stagemaker",
         "type": 301
       },
       {
         "source": "/studio-project.html",
-        "destination": "/studio",
+        "destination": "/studio/daw",
         "type": 301
       },
       {
@@ -228,6 +228,26 @@
       {
         "source": "/studio",
         "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/daw",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/daw/project/**",
+        "destination": "/studio-project.html"
+      },
+      {
+        "source": "/studio/daw/**",
+        "destination": "/studio-project.html"
+      },
+      {
+        "source": "/studio/stagemaker",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/studio/stagemaker/**",
+        "destination": "/stage.html"
       },
       {
         "source": "/stage",

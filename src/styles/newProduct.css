@@ -406,6 +406,9 @@
 .publish-checklist-row.is-ready { border-color: rgba(96, 214, 199, .35); }
 .publish-checklist-row.is-warning { border-color: rgba(252, 190, 92, .4); }
 .publish-checklist-row.is-blocked { border-color: rgba(216, 101, 127, .45); }
+.publish-review-alert { display: grid; gap: .25rem; margin: .55rem 0; border: 1px solid rgba(235, 145, 107, .48); border-radius: 9px; background: rgba(87, 38, 28, .32); color: #ffe0cf; padding: .58rem .66rem; }
+.publish-review-alert strong, .publish-review-alert span, .publish-review-alert small { margin: 0; }
+.publish-review-alert small { color: #ffc2aa; line-height: 1.35; }
 .launch-readiness { margin: .7rem 0; padding: .6rem .7rem; border: 1px solid rgba(109,137,207,.25); border-radius: 10px; background: rgba(14,21,39,.92); }
 .launch-readiness p { margin: 0 0 .4rem; color: #bdd0f6; font-size: .84rem; }
 .launch-readiness p:last-child { margin-bottom: 0; }

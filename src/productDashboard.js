@@ -142,6 +142,28 @@ function creatorInitials(name) {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('')
 }
 
+function hasAiAuthReviewFailure(product = {}) {
+  return product.reviewJobStatus === 'failed_ai_auth'
+    || product.moderationAIErrorCategory === 'auth'
+    || ['gemini_auth_failed', 'gemini_secret_invalid'].includes(product.moderationAIErrorCode)
+}
+
+function ownerReviewNoticeMarkup(product = {}) {
+  if (hasAiAuthReviewFailure(product)) {
+    return `
+      <div class="dashboard-owner-alert" role="status">
+        <strong>AI review failed: Gemini authentication error.</strong>
+        <span>Product remains pending review and is not publicly listed.</span>
+        ${product.moderationAIError ? `<small>${escapeHtml(product.moderationAIError)}</small>` : ''}
+      </div>
+    `
+  }
+  if (product.status === 'review_pending') {
+    return '<p class="dashboard-owner-note">Product is pending marketplace review and is not public yet.</p>'
+  }
+  return ''
+}
+
 function renderProduct(product, recommendations = []) {
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
@@ -179,6 +201,7 @@ function renderProduct(product, recommendations = []) {
                 <p>Status: ${escapeHtml(product.status || 'draft')} · Visibility: ${escapeHtml(product.visibility || 'private')}</p>
                 <p>Created: ${escapeHtml(formatReleaseDate(product.createdAt))} · Updated: ${escapeHtml(formatReleaseDate(product.updatedAt || product.createdAt))}</p>
                 <p>Moderation: ${escapeHtml(product.moderationStatus || 'pending')}</p>
+                ${ownerReviewNoticeMarkup(product)}
                 <a class="button button-muted" href="${ROUTES.newProduct}?id=${encodeURIComponent(product.id)}">Edit listing</a>
               </article>
             ` : ''}

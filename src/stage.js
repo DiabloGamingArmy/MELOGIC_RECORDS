@@ -4,7 +4,7 @@ import { initShellChrome } from './components/assetChrome'
 import { navShell } from './components/navShell'
 import { waitForInitialAuthState, subscribeToAuthState, subscribeToIdToken } from './firebase/auth'
 import { authRoute, ROUTES, stageProjectRoute } from './utils/routes'
-import { getPublicStorageUrl } from './firebase/storageAssets'
+import { getStorageAssetCandidates } from './firebase/storageAssets'
 import { classifyStageProjectError, createStageProject, createStageProjectFromPlan, getStageProject, isValidStageProjectId, listAccessibleStageProjects, saveStageProjectEditorState, saveStageProjectPlan, sortStageProjectsByActivity, stageProjectPath, touchStageProject } from './data/stageProjectService'
 import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
@@ -31,6 +31,19 @@ let lastLoadedProjectId = ''
 let lastLoadedAuthUid = ''
 const loggedProjectLoadFailures = new Set()
 const authRecoverableProjectStatuses = new Set(['auth-restoring', 'unauthenticated', 'permission-denied', 'fallback-local', 'fallback-default', 'not-found', 'network-error', 'rules-error'])
+
+function canonicalizeLegacyStageRoute() {
+  const pathname = window.location.pathname || ''
+  if (pathname === ROUTES.stage) {
+    window.history.replaceState({}, '', `${ROUTES.studioStagemaker}${window.location.search || ''}${window.location.hash || ''}`)
+    return
+  }
+  if (pathname.startsWith(`${ROUTES.stage}/`)) {
+    const projectId = decodeURIComponent(pathname.replace(`${ROUTES.stage}/`, '').split('/')[0] || '').trim()
+    if (!projectId) return
+    window.history.replaceState({}, '', `${stageProjectRoute(projectId)}${window.location.search || ''}${window.location.hash || ''}`)
+  }
+}
 
 function editorRecoveryKey(projectId = state.projectId) {
   return `melogic.stage.editorState.${projectId || 'draft'}`
@@ -342,13 +355,30 @@ async function hydrateStageIcons() {
     const path = node.dataset.stageIconPath
     if (!path || node.dataset.iconHydrated === 'true') return
     node.dataset.iconHydrated = 'true'
-    const url = await getPublicStorageUrl(path)
-    if (!url) return
     const img = node.querySelector('img')
     if (!img) return
-    img.addEventListener('load', () => { img.hidden = false; node.classList.add('has-stage-icon') }, { once: true })
-    img.addEventListener('error', () => { img.hidden = true; node.classList.remove('has-stage-icon') }, { once: true })
-    img.src = url
+    const candidates = await getStorageAssetCandidates(path, { warnOnFail: false })
+    const fallback = node.querySelector('.stage-rail-fallback, .stage-object-fallback-icon, span:not([class])')
+    let index = 0
+    const showFallback = () => {
+      img.hidden = true
+      node.classList.remove('has-stage-icon')
+      fallback?.removeAttribute('hidden')
+      if (import.meta.env.DEV) console.warn('[stage-icons] missing icon path', path)
+    }
+    const tryNext = () => {
+      const url = candidates[index]
+      index += 1
+      if (!url) return showFallback()
+      img.onload = () => {
+        img.hidden = false
+        node.classList.add('has-stage-icon')
+        fallback?.setAttribute('hidden', 'hidden')
+      }
+      img.onerror = tryNext
+      img.src = url
+    }
+    tryNext()
   }))
 }
 
@@ -368,7 +398,7 @@ function updateStageAppMenu() {
   const existing = left.querySelector('[data-stage-app-menu-panel]')
   existing?.remove()
   if (!state.stageAppMenuOpen) return
-  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.stage}">Stage Projects</a><a href="/">Dashboard</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button><label class="stage-menu-check"><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}> Show site-wide header</label></div>`)
+  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.studioStagemaker}">Stagemaker Projects</a><a href="${ROUTES.studio}">Studio Hub</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button><label class="stage-menu-check"><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}> Show site-wide header</label></div>`)
 }
 
 function updateExportPreview() {
@@ -537,14 +567,14 @@ function renderApp() {
     disposeViewportController()
     stageEditorMounted = false
     stageIconHydrationPromise = null
-    app.innerHTML = `${navShell({ currentPage: 'stage' })}${renderDashboard()}`
+    app.innerHTML = `${navShell({ currentPage: 'studio' })}${renderDashboard()}`
     initShellChrome()
     bindDashboardEvents({ app, renderCreateModal, openProject, loadDashboardProjects })
     return
   }
   const mounted = app.querySelector('[data-stage-editor-app]')
   if (!stageEditorMounted || !mounted) {
-    app.innerHTML = `<div data-stage-global-header-wrapper ${state.showStageGlobalHeader ? '' : 'hidden'}>${navShell({ currentPage: 'stage' })}</div>${renderEditor()}`
+    app.innerHTML = `<div data-stage-global-header-wrapper ${state.showStageGlobalHeader ? '' : 'hidden'}>${navShell({ currentPage: 'studio' })}</div>${renderEditor()}`
     initShellChrome()
     bindEditorEvents()
     ensureStageViewportMounted()
@@ -812,6 +842,7 @@ async function handleAuthReadyUser(user, source = 'auth-state') {
   if (shouldReload) await loadEditorProject({ reason: source, force: authRecoverableProjectStatuses.has(state.projectLoadStatus) })
 }
 
+canonicalizeLegacyStageRoute()
 state.projectId = getCurrentStageProjectId()
 if (state.projectId) setStageLoadState('auth-restoring')
 renderApp()
