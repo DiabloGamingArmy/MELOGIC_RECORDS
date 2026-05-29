@@ -17,9 +17,11 @@ export const ROUTES = {
   faq: '/faq',
   support: '/support',
   studio: '/studio',
+  studioDaw: '/studio/daw',
+  studioStagemaker: '/studio/stagemaker',
   stage: '/stage',
-  studioProject: '/studio/project',
-  stageProject: '/stage/project',
+  studioProject: '/studio/daw/project',
+  stageProject: '/studio/stagemaker/project',
   studioDemos: '/studio/demos',
   studioTutorials: '/studio/tutorials',
   distribution: '/distribution'
@@ -44,8 +46,8 @@ const LEGACY_ROUTE_MAP = {
   '/faq.html': ROUTES.faq,
   '/support.html': ROUTES.support,
   '/studio.html': ROUTES.studio,
-  '/stage.html': ROUTES.stage,
-  '/studio-project.html': ROUTES.studioProject,
+  '/stage.html': ROUTES.studioStagemaker,
+  '/studio-project.html': ROUTES.studioDaw,
   '/studio-demos.html': ROUTES.studioDemos,
   '/studio-tutorials.html': ROUTES.studioTutorials,
   '/distribution.html': ROUTES.distribution
@@ -115,11 +117,11 @@ export function productRoute(productOrId = '') {
 
 
 export function studioProjectRoute(projectId = '') {
-  return `/studio/${encodeURIComponent(String(projectId || '').trim())}`
+  return `/studio/daw/project/${encodeURIComponent(String(projectId || '').trim())}`
 }
 
 export function stageProjectRoute(projectId = '') {
-  return `/stage/${encodeURIComponent(String(projectId || '').trim())}`
+  return `/studio/stagemaker/project/${encodeURIComponent(String(projectId || '').trim())}`
 }
 
 export function getCurrentPath() {

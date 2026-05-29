@@ -1079,6 +1079,23 @@ function calculateLaunchReadiness(checks = []) {
   }
 }
 
+function hasAiAuthReviewFailure(draft = {}) {
+  return draft.reviewJobStatus === 'failed_ai_auth'
+    || draft.moderationAIErrorCategory === 'auth'
+    || ['gemini_auth_failed', 'gemini_secret_invalid'].includes(draft.moderationAIErrorCode)
+}
+
+function reviewFailureNoticeMarkup(draft = {}) {
+  if (!hasAiAuthReviewFailure(draft)) return ''
+  return `
+    <div class="publish-review-alert" role="status">
+      <strong>AI review failed: Gemini authentication error.</strong>
+      <span>Your product remains pending review and is not publicly listed.</span>
+      ${draft.moderationAIError ? `<small>${escapeHtml(draft.moderationAIError)}</small>` : ''}
+    </div>
+  `
+}
+
 function renderPublishPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
   const isEditMode = Boolean(editorState.requestedProductId || (draft.id && !isPlaceholderProductId(draft.id)))
@@ -1129,6 +1146,7 @@ function renderPublishPanel() {
           <h3>${isEditMode ? 'Submit Edits' : 'Submit for Review'}</h3>
           <p>Current status: <strong>${escapeHtml(draft.status || 'draft')}</strong></p>
           <p>Last updated: ${escapeHtml(formattedEditDate(draft.updatedAt || draft.createdAt))}</p>
+          ${reviewFailureNoticeMarkup(draft)}
           <p>Latest agreement: <strong>${escapeHtml(agreementLatest)}</strong></p>
           <p>Accepted agreement: <strong>${escapeHtml(agreementAccepted)}</strong></p>
           ${agreementAccepted !== agreementLatest ? '<p class="pricing-warning">A newer seller agreement version is available and must be accepted before publishing.</p>' : ''}
@@ -2117,7 +2135,10 @@ function renderEditor() {
           moderationAIConfigured: latest?.moderationAIConfigured ?? reviewResult?.aiConfigured ?? null,
           moderationAIAttempted: latest?.moderationAIAttempted ?? reviewResult?.aiAttempted ?? null,
           moderationAISucceeded: latest?.moderationAISucceeded ?? reviewResult?.aiSucceeded ?? null,
-          moderationAIError: latest?.moderationAIError || reviewResult?.error || ''
+          moderationAIError: latest?.moderationAIError || reviewResult?.error || '',
+          moderationAIErrorCode: latest?.moderationAIErrorCode || reviewResult?.errorCode || '',
+          moderationAIErrorCategory: latest?.moderationAIErrorCategory || reviewResult?.errorCategory || '',
+          reviewJobStatus: latest?.reviewJobStatus || reviewResult?.reviewJobStatus || ''
         })
       }
       if (desiredStatus !== 'published') setStatus('Draft saved.', 'success')

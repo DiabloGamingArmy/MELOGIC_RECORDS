@@ -173,6 +173,8 @@ export const state = {
 
 export const getCurrentStageProjectId = () => {
   const pathname = window.location.pathname || ''
+  if (pathname.startsWith('/studio/stagemaker/project/')) return decodeURIComponent(pathname.replace('/studio/stagemaker/project/', '').split('/')[0] || '').trim()
+  if (pathname.startsWith('/studio/stagemaker/')) return decodeURIComponent(pathname.replace('/studio/stagemaker/', '').split('/')[0] || '').trim()
   if (pathname.startsWith('/stage/')) return decodeURIComponent(pathname.replace('/stage/', '').split('/')[0] || '').trim()
   return new URLSearchParams(window.location.search || '').get('projectId')?.trim() || ''
 }

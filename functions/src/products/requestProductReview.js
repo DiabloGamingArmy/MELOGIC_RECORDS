@@ -19,6 +19,63 @@ const BLOCKED_KEYWORDS = [
   'cocaine'
 ]
 
+function safeString(value = '', max = 240) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+function isObviouslyInvalidGeminiSecret(apiKey = '') {
+  const value = String(apiKey || '').trim()
+  if (!value) return true
+  if (value.length < 24) return true
+  if (/\s/.test(value)) return true
+  if (/^\{/.test(value)) return true
+  if (/^ya29\./i.test(value)) return true
+  if (/-----BEGIN/i.test(value)) return true
+  if (/client_secret|oauth|service_account/i.test(value)) return true
+  return false
+}
+
+function summarizeGeminiError(status = 0, body = '') {
+  let parsed = null
+  try { parsed = JSON.parse(String(body || '')) } catch {}
+  const error = parsed?.error || {}
+  const detailInfo = Array.isArray(error.details)
+    ? error.details.find((detail) => detail?.reason || detail?.metadata?.method)
+    : null
+  const reason = safeString(detailInfo?.reason || error.status || '')
+  const message = safeString(error.message || body || `Gemini HTTP ${status}`)
+  const authFailure = status === 401 || status === 403 ||
+    ['UNAUTHENTICATED', 'PERMISSION_DENIED', 'ACCESS_TOKEN_TYPE_UNSUPPORTED'].includes(reason) ||
+    /credential|authentication|permission|api key|unauthenticated|forbidden/i.test(message)
+  return {
+    errorCode: authFailure ? 'gemini_auth_failed' : `gemini_http_${status || 'error'}`,
+    errorCategory: authFailure ? 'auth' : 'http',
+    error: authFailure
+      ? 'Gemini authentication error. Product remains pending review.'
+      : `Gemini review failed: ${message}`,
+    safeMessage: message,
+    status,
+    reason
+  }
+}
+
+function aiUnavailableResult({ configured = true, attempted = true, code = 'gemini_unavailable', category = 'unavailable', message = 'AI moderation unavailable; product remains pending review.' } = {}) {
+  return {
+    approved: true,
+    reasons: [],
+    riskLevel: 'unknown',
+    suggestedAction: 'review_pending',
+    summary: message,
+    aiConfigured: configured,
+    aiAttempted: attempted,
+    aiSucceeded: false,
+    aiEnabled: configured,
+    error: message,
+    errorCode: code,
+    errorCategory: category
+  }
+}
+
 function collectText(product = {}) {
   return [
     product.title,
@@ -55,8 +112,20 @@ async function moderateProductWithAI(product = {}, { model = '', apiKey = '' } =
       aiAttempted: false,
       aiSucceeded: false,
       aiEnabled: false,
-      error: ''
+      error: '',
+      errorCode: '',
+      errorCategory: ''
     }
+  }
+
+  if (isObviouslyInvalidGeminiSecret(apiKey)) {
+    return aiUnavailableResult({
+      configured: true,
+      attempted: false,
+      code: 'gemini_secret_invalid',
+      category: 'auth',
+      message: 'Gemini API key is missing or invalid. Product remains pending review.'
+    })
   }
 
   const moderationInput = {
@@ -90,7 +159,14 @@ ${JSON.stringify(moderationInput)}`
 
     if (!resp.ok) {
       const errorText = await resp.text().catch(() => '')
-      throw new Error(`Gemini HTTP ${resp.status}: ${errorText.slice(0, 500)}`)
+      const summary = summarizeGeminiError(resp.status, errorText)
+      return aiUnavailableResult({
+        configured: true,
+        attempted: true,
+        code: summary.errorCode,
+        category: summary.errorCategory,
+        message: summary.error
+      })
     }
 
     const data = await resp.json()
@@ -109,7 +185,9 @@ ${JSON.stringify(moderationInput)}`
         aiAttempted: true,
         aiSucceeded: true,
         aiEnabled: true,
-        error: ''
+        error: '',
+        errorCode: '',
+        errorCategory: ''
       }
     } catch (error) {
       return {
@@ -122,22 +200,68 @@ ${JSON.stringify(moderationInput)}`
         aiAttempted: true,
         aiSucceeded: false,
         aiEnabled: true,
-        error: error?.message || 'json-parse-error'
+        error: 'AI moderation returned an unreadable response.',
+        errorCode: 'gemini_unreadable_response',
+        errorCategory: 'response'
       }
     }
   } catch (error) {
-    return {
-      approved: true,
-      riskLevel: 'unknown',
-      suggestedAction: 'review_pending',
-      reasons: [],
-      summary: 'AI moderation unavailable; product remains pending review.',
-      aiConfigured: true,
-      aiAttempted: true,
-      aiSucceeded: false,
-      aiEnabled: true,
-      error: error?.message || 'ai-error'
-    }
+    return aiUnavailableResult({
+      configured: true,
+      attempted: true,
+      code: 'gemini_request_failed',
+      category: 'network',
+      message: 'AI moderation unavailable; product remains pending review.'
+    })
+  }
+}
+
+function decideReviewOutcome({ product = {}, ruleResult = {}, aiResult = {}, autoApprove = false, allowRuleBasedAutoApprove = false, model = '' } = {}) {
+  const aiFailed = Boolean(aiResult.aiAttempted || aiResult.aiConfigured) && aiResult.aiSucceeded !== true
+  const aiAuthFailed = aiResult.errorCategory === 'auth' || aiResult.errorCode === 'gemini_auth_failed' || aiResult.errorCode === 'gemini_secret_invalid'
+  const ruleFallbackApproved = Boolean(autoApprove && allowRuleBasedAutoApprove && ruleResult.approved && aiResult.aiSucceeded !== true)
+  let finalStatus = 'review_pending'
+  let moderationStatus = aiFailed ? 'ai_error' : 'pending'
+
+  if (!ruleResult.approved || aiResult.suggestedAction === 'needs_changes' || aiResult.suggestedAction === 'reject') {
+    finalStatus = 'needs_changes'
+    moderationStatus = 'rejected'
+  } else if (autoApprove && aiResult.aiSucceeded === true && aiResult.suggestedAction === 'approve') {
+    finalStatus = 'published'
+    moderationStatus = 'approved'
+  } else if (ruleFallbackApproved) {
+    finalStatus = 'published'
+    moderationStatus = 'rule_based_fallback_approved'
+  } else if (aiAuthFailed) {
+    moderationStatus = 'ai_error'
+  }
+
+  const reviewJobStatus = ruleFallbackApproved
+    ? 'rule_based_fallback_approved'
+    : aiAuthFailed && finalStatus === 'review_pending'
+    ? 'failed_ai_auth'
+    : aiFailed && finalStatus === 'review_pending'
+    ? 'ai_failed'
+    : finalStatus === 'review_pending'
+    ? 'pending_manual_review'
+    : 'completed'
+
+  const summary = ruleFallbackApproved
+    ? 'AI moderation failed, but rule-based moderation passed and explicit rule-based fallback auto-approval published the product.'
+    : aiAuthFailed
+    ? 'AI review failed: Gemini authentication error. Product remains pending review.'
+    : (aiResult.summary || (finalStatus === 'review_pending' ? 'Product remains pending review.' : 'Automated moderation passed.'))
+
+  return {
+    finalStatus,
+    moderationStatus,
+    reviewJobStatus,
+    summary,
+    aiFailed,
+    aiAuthFailed,
+    ruleFallbackApproved,
+    visibility: finalStatus === 'published' ? 'public' : (product.visibility === 'public' ? 'unlisted' : (product.visibility || 'private')),
+    model
   }
 }
 
@@ -155,24 +279,13 @@ async function processReviewJob(jobId, job = {}) {
   const aiResult = await moderateProductWithAI(product, { model, apiKey })
   const autoApprove = autoApproveProducts.value() === 'true'
   const allowRuleBasedAutoApprove = autoApproveRuleBasedOnly.value() === 'true'
-  let finalStatus = 'review_pending'
-  let moderationStatus = 'pending'
-  if (!ruleResult.approved || aiResult.suggestedAction === 'needs_changes' || aiResult.suggestedAction === 'reject') {
-    finalStatus = 'needs_changes'; moderationStatus = 'rejected'
-  } else if (autoApprove && aiResult.aiSucceeded === true && aiResult.suggestedAction === 'approve') {
-    finalStatus = 'published'; moderationStatus = 'approved'
-  } else if (autoApprove && allowRuleBasedAutoApprove && ruleResult.approved) {
-    finalStatus = 'published'; moderationStatus = 'approved'
-  }
-  const summary = finalStatus === 'published' && !aiResult.aiSucceeded
-    ? 'AI moderation was unavailable, but rule-based moderation passed and fallback auto-approval published the product.'
-    : (aiResult.summary || (finalStatus === 'review_pending' ? 'Product remains pending review.' : 'Automated moderation passed.'))
-  await productRef.set({
-    status: finalStatus,
-    visibility: finalStatus === 'published' ? 'public' : (product.visibility === 'public' ? 'unlisted' : (product.visibility || 'private')),
-    moderationStatus,
+  const outcome = decideReviewOutcome({ product, ruleResult, aiResult, autoApprove, allowRuleBasedAutoApprove, model })
+  const productUpdate = {
+    status: outcome.finalStatus,
+    visibility: outcome.visibility,
+    moderationStatus: outcome.moderationStatus,
     moderationReasons: [...(ruleResult.reasons || []), ...(aiResult.reasons || [])],
-    moderationSummary: summary,
+    moderationSummary: outcome.summary,
     moderationRiskLevel: aiResult.riskLevel || 'unknown',
     moderationAIConfigured: Boolean(aiResult.aiConfigured),
     moderationAIAttempted: Boolean(aiResult.aiAttempted),
@@ -180,19 +293,32 @@ async function processReviewJob(jobId, job = {}) {
     moderationAIEnabled: Boolean(aiResult.aiEnabled),
     moderationAIModel: model || '',
     moderationAIError: aiResult.error || '',
-    moderationAICompletedAt: admin.firestore.FieldValue.serverTimestamp(),
-    reviewJobStatus: finalStatus === 'review_pending' ? 'completed' : 'completed',
+    moderationAIErrorCode: aiResult.errorCode || '',
+    moderationAIErrorCategory: aiResult.errorCategory || '',
+    reviewJobStatus: outcome.reviewJobStatus,
     reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
     reviewedBy: 'system',
-    publishedAt: finalStatus === 'published' ? admin.firestore.FieldValue.serverTimestamp() : null,
-    releasedAt: finalStatus === 'published' ? (product.releasedAt || admin.firestore.FieldValue.serverTimestamp()) : (product.releasedAt || null),
+    publishedAt: outcome.finalStatus === 'published' ? admin.firestore.FieldValue.serverTimestamp() : null,
+    releasedAt: outcome.finalStatus === 'published' ? (product.releasedAt || admin.firestore.FieldValue.serverTimestamp()) : (product.releasedAt || null),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
-  }, { merge: true })
+  }
+  if (aiResult.aiSucceeded) {
+    productUpdate.moderationAICompletedAt = admin.firestore.FieldValue.serverTimestamp()
+    productUpdate.moderationAIFailedAt = null
+  }
+  if (aiResult.aiAttempted && !aiResult.aiSucceeded) {
+    productUpdate.moderationAICompletedAt = null
+    productUpdate.moderationAIFailedAt = admin.firestore.FieldValue.serverTimestamp()
+  }
+  await productRef.set(productUpdate, { merge: true })
   await db.collection('productReviewJobs').doc(jobId).set({
-    status: 'completed',
+    status: outcome.reviewJobStatus,
     completedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    resultStatus: finalStatus
+    resultStatus: outcome.finalStatus,
+    moderationStatus: outcome.moderationStatus,
+    aiSucceeded: Boolean(aiResult.aiSucceeded),
+    aiErrorCode: aiResult.errorCode || ''
   }, { merge: true })
 }
 
@@ -253,6 +379,13 @@ exports.requestProductReview = onCall(
   })
   return { status: 'review_pending', reviewJobStatus: 'queued', productId, jobId: jobRef.id }
 })
+
+exports.__test = {
+  decideReviewOutcome,
+  isObviouslyInvalidGeminiSecret,
+  runRuleBasedModeration,
+  summarizeGeminiError
+}
 
 exports.processProductReviewJob = onDocumentCreated({ document: 'productReviewJobs/{jobId}', secrets: [geminiApiKey], timeoutSeconds: 180, memory: '512MiB' }, async (event) => {
   const jobId = event.params.jobId

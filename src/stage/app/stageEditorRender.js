@@ -6,7 +6,7 @@ import { renderLeftPanelBySection } from '../panels/leftPanels'
 import { editorModes, editorRailItems, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, projectDate, projectLoadLabel, selectedStageObjects, stageIconPath, state } from './stageState'
 
 function renderEditorState(title, body) {
-  return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>${title}</h2>${body}<a href="${ROUTES.stage}" class="stage-back-link">Back to Stage Projects</a></section></main>`
+  return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>${title}</h2>${body}<a href="${ROUTES.studioStagemaker}" class="stage-back-link">Back to Stagemaker Projects</a></section></main>`
 }
 
 function renderMenubar(title, stamp) {
@@ -15,7 +15,7 @@ function renderMenubar(title, stamp) {
 
 function renderRail() {
   const railItems = editorRailItems.map((item) => `<button type="button" class="${state.activeStageSection === item.key ? 'is-active' : ''}" data-rail-section="${item.key}" title="${item.label}"><span class="stage-rail-icon" data-stage-icon-path="${item.icon}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">◈</span></span><small>${item.label}</small></button>`).join('')
-  return `<nav class="stage-editor-rail" aria-label="Editor tools">${railItems}<a class="stage-back-link" href="${ROUTES.stage}"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Exit</small></a></nav>`
+  return `<nav class="stage-editor-rail" aria-label="Editor tools">${railItems}<a class="stage-back-link" href="${ROUTES.studioStagemaker}"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Exit</small></a></nav>`
 }
 
 function renderViewport() {
