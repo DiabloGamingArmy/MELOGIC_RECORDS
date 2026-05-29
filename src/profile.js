@@ -118,6 +118,8 @@ function renderSignedInState(user, storedProfile = null) {
         <div class="profile-actions">
           <a class="button button-muted" href="${ROUTES.editProfile}">Edit Profile</a>
           <a class="button button-muted" href="${publicProfileRoute({ uid: user.uid, preview: true })}">View Public Profile</a>
+          <a class="button button-muted" href="${ROUTES.library}">Library</a>
+          <a class="button button-muted" href="${ROUTES.orders}">Orders</a>
           <button type="button" class="button button-accent" data-signout-profile>Sign Out</button>
         </div>
       </article>

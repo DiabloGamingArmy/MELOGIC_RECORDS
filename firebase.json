@@ -88,6 +88,16 @@
         "type": 301
       },
       {
+        "source": "/library.html",
+        "destination": "/library",
+        "type": 301
+      },
+      {
+        "source": "/orders.html",
+        "destination": "/orders",
+        "type": 301
+      },
+      {
         "source": "/inbox.html",
         "destination": "/inbox",
         "type": 301
@@ -198,6 +208,14 @@
         "destination": "/profile-public.html"
       },
       {
+        "source": "/library",
+        "destination": "/library.html"
+      },
+      {
+        "source": "/orders",
+        "destination": "/orders.html"
+      },
+      {
         "source": "/u/**",
         "destination": "/profile-public.html"
       },
@@ -242,8 +260,12 @@
         "destination": "/studio-project.html"
       },
       {
-        "source": "/studio/stagemaker",
+        "source": "/studio/stagemaker/project/**",
         "destination": "/stage.html"
+      },
+      {
+        "source": "/studio/stagemaker",
+        "destination": "/studio.html"
       },
       {
         "source": "/studio/stagemaker/**",

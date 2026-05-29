@@ -231,11 +231,11 @@ export async function createStageProject(user, input = {}) {
   const ref = await addDoc(collection(db, STAGE_PROJECTS_COLLECTION), payload)
   setDoc(doc(db, 'users', user.uid, 'stageProjectIndex', ref.id), {
     projectId: ref.id,
-    title,
+    title: payload.title,
     ownerId: user.uid,
     visibility: 'private',
     type: 'stage-plan',
-    stageType,
+    stageType: payload.stageType,
     updatedAt: serverTimestamp(),
     lastOpenedAt: serverTimestamp(),
     createdAt: serverTimestamp()

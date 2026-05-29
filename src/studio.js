@@ -3,59 +3,271 @@ import './styles/studio.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
-import { ROUTES, authRoute, studioProjectRoute } from './utils/routes'
-import { createStudioProject, listAccessibleStudioProjects, listIndexedStudioProjects, sortProjectsByActivity, touchStudioProject } from './data/studioProjectService'
+import { ROUTES, authRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
+import {
+  createStudioProject,
+  listAccessibleStudioProjects,
+  listIndexedStudioProjects,
+  sortProjectsByActivity,
+  touchStudioProject
+} from './data/studioProjectService'
+import {
+  createStageProject,
+  listAccessibleStageProjects,
+  sortStageProjectsByActivity,
+  touchStageProject
+} from './data/stageProjectService'
 import { studioSidebar } from './components/studioShell'
 import { initStudioBrandLogo } from './components/studioBrandLogo'
 
-// TODO: replace Explore items with featured demos/templates once Studio demo data exists.
-// TODO: render real recent projects once save/recall is implemented.
-// TODO: render project folders/files from Firestore/Storage.
-const exploreItems = [
-  { title: 'WILDFLOWER', artist: 'Billie Eilish', year: '2024' },
-  { title: 'Blinding Lights', artist: 'The Weeknd', year: '2019' },
-  { title: 'As It Was', artist: 'Harry Styles', year: '2022' },
-  { title: 'bad guy', artist: 'Billie Eilish', year: '2019' }
+const app = document.querySelector('#app')
+
+const dawDemos = [
+  { title: 'WILDFLOWER', artist: 'Billie Eilish', year: '2024', tool: 'DAW' },
+  { title: 'Blinding Lights', artist: 'The Weeknd', year: '2019', tool: 'DAW' },
+  { title: 'As It Was', artist: 'Harry Styles', year: '2022', tool: 'DAW' },
+  { title: 'bad guy', artist: 'Billie Eilish', year: '2019', tool: 'DAW' }
 ]
 
-const app = document.querySelector('#app')
-const state = { user: null, creating: false, createError: '', projects: [], recentProjects: [], loadingProjects: false, projectsError: '' }
-const isHubRoute = () => (window.location.pathname || '') === ROUTES.studio
-const fmtDate = (p) => (p.lastOpenedAt?.toDate?.() || p.updatedAt?.toDate?.() || p.createdAt?.toDate?.() || new Date()).toLocaleDateString()
-const icon = (name) => {
-  const c = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
-  return name === 'plus' ? `<svg ${c}><path d="M12 5v14"/><path d="M5 12h14"/></svg>` : `<svg ${c}><path d="M18 21a6 6 0 0 0-12 0"/><circle cx="12" cy="7" r="4"/></svg>`
+const stageDemos = [
+  { title: 'Red Rocks Amphitheatre', artist: 'Outdoor venue', year: 'Stagemaker', tool: 'Stagemaker' },
+  { title: 'Madison Square Garden', artist: 'Arena layout', year: 'Stagemaker', tool: 'Stagemaker' },
+  { title: 'Coachella Outdoor Stage', artist: 'Festival plot', year: 'Stagemaker', tool: 'Stagemaker' },
+  { title: 'Tiny Desk / Live Room', artist: 'Small room', year: 'Stagemaker', tool: 'Stagemaker' }
+]
+
+const moduleCards = [
+  { title: 'DAW', href: ROUTES.studioDaw, body: 'Open projects, build arrangements, and produce sessions.' },
+  { title: 'Stagemaker', href: ROUTES.studioStagemaker, body: 'Build stage plots, input lists, viewport plans, and show files.' },
+  { title: 'Demos', href: ROUTES.studioDemos, body: 'Explore example sessions and production references.' },
+  { title: 'Tutorials', href: ROUTES.studioTutorials, body: 'Learn the tools and workflows inside Melogic Studio.' },
+  { title: 'Release Builder', href: '#', body: 'Future release prep, assets, checklists, and distribution handoff.', placeholder: true }
+]
+
+const state = {
+  user: null,
+  createError: '',
+  daw: { projects: [], recentProjects: [], loading: false, error: '' },
+  stage: { projects: [], recentProjects: [], loading: false, error: '' }
 }
 
-function renderRecent() {
-  if (!state.recentProjects.length) return '<p class="studio-recents-empty">Recent projects will appear here once you open a project.</p>'
-  return `<div class="studio-recent-list">${state.recentProjects.map((p) => `<button class="studio-recent-item" data-open-project="${p.id}"><strong>${p.title}</strong><span>${p.bpm} BPM • ${p.key} • ${fmtDate(p)}</span></button>`).join('')}</div>`
+const icon = (name) => {
+  const c = 'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
+  return name === 'plus'
+    ? `<svg ${c}><path d="M12 5v14"/><path d="M5 12h14"/></svg>`
+    : `<svg ${c}><path d="M18 21a6 6 0 0 0-12 0"/><circle cx="12" cy="7" r="4"/></svg>`
 }
-function renderProjectArea() {
-  if (state.loadingProjects) return '<p class="studio-recents-empty">Loading projects...</p>'
-  if (state.projectsError) return `<p class="studio-recents-empty">${state.projectsError}</p>`
-  if (!state.projects.length) return '<div class="studio-projects-empty"><p class="studio-projects-empty-title">No project files yet.</p><p>Create a project, folder, or import sounds to start building.</p></div>'
-  return `<div class="studio-project-grid">${state.projects.map((p) => `<article class="studio-project-row"><button class="studio-project-open" data-open-project="${p.id}"><h4>${p.title}</h4><p>${p.bpm} BPM • ${p.key} • ${p.type}</p><small>${fmtDate(p)}</small></button><span class="studio-badge">${state.user?.uid === p.ownerId ? 'Owner' : 'Shared'}</span></article>`).join('')}</div>`
+
+function currentStudioSection() {
+  const pathname = window.location.pathname || ''
+  if (pathname === ROUTES.studio) return 'hub'
+  if (pathname.startsWith(ROUTES.studioStagemaker)) return 'stagemaker'
+  return 'daw'
+}
+
+function projectTime(project = {}) {
+  return project.lastOpenedAt?.toMillis?.()
+    || project.updatedAt?.toMillis?.()
+    || project.createdAt?.toMillis?.()
+    || 0
+}
+
+function fmtDate(project = {}) {
+  const stamp = project.lastOpenedAt?.toDate?.() || project.updatedAt?.toDate?.() || project.createdAt?.toDate?.() || null
+  if (!stamp) return 'Recently'
+  return stamp.toLocaleDateString()
+}
+
+function ownerBadge(project = {}) {
+  return state.user?.uid && state.user.uid === project.ownerId ? 'Owner' : 'Shared'
+}
+
+function dawSubtitle(project = {}) {
+  return `${project.bpm || 140} BPM - ${project.key || 'C minor'} - ${project.type || 'song'}`
+}
+
+function stageSubtitle(project = {}) {
+  const dims = project.stageDimensions || project.stage || {}
+  const width = dims.width || project.stage?.width || 32
+  const depth = dims.depth || project.stage?.depth || 20
+  const unit = dims.unit || project.stage?.unit || 'ft'
+  return `${project.stageType || 'Blank Stage'} - ${width}x${depth} ${unit}`
+}
+
+function taggedProjects(kind, projects = []) {
+  return projects.map((project) => ({ ...project, studioTool: kind }))
+}
+
+function mixedProjects() {
+  return [
+    ...taggedProjects('DAW', state.daw.projects),
+    ...taggedProjects('Stagemaker', state.stage.projects)
+  ].sort((a, b) => projectTime(b) - projectTime(a))
+}
+
+function renderDemoCards(items = []) {
+  return `<div class="studio-explore-row">${items.map((item) => `
+    <button type="button" class="studio-explore-card is-placeholder" data-placeholder-demo aria-disabled="true">
+      <div class="studio-cover-placeholder ${item.tool === 'Stagemaker' ? 'is-stage-demo' : ''}"></div>
+      <div class="studio-explore-copy">
+        <h3 class="studio-explore-title">${item.title}</h3>
+        <p>${item.artist}</p>
+        <p>${item.year}</p>
+      </div>
+    </button>
+  `).join('')}</div>`
+}
+
+function renderRecentList(projects = [], kind = 'daw') {
+  if (!projects.length) {
+    return `<p class="studio-recents-empty">${kind === 'stage' ? 'Recent stage projects will appear here once you open a Stagemaker project.' : 'Recent projects will appear here once you open a project.'}</p>`
+  }
+  const attr = kind === 'stage' ? 'data-open-stage-project' : 'data-open-daw-project'
+  return `<div class="studio-recent-list">${projects.map((project) => `
+    <button class="studio-recent-item" ${attr}="${project.id}" type="button">
+      <strong>${project.title}</strong>
+      <span>${kind === 'stage' ? stageSubtitle(project) : dawSubtitle(project)} - ${fmtDate(project)}</span>
+    </button>
+  `).join('')}</div>`
+}
+
+function renderMixedProjectRows(projects = []) {
+  if (!projects.length) {
+    return `
+      <div class="studio-hub-empty">
+        <p>Your DAW and Stagemaker projects will appear here once you start working.</p>
+        <div>
+          <a class="button button-muted" href="${state.user ? ROUTES.studioDaw : authRoute({ redirect: ROUTES.studioDaw })}">Create DAW Project</a>
+          <a class="button button-muted" href="${state.user ? ROUTES.studioStagemaker : authRoute({ redirect: ROUTES.studioStagemaker })}">Create Stage Plan</a>
+        </div>
+      </div>
+    `
+  }
+  return `<div class="studio-project-grid">${projects.map((project) => {
+    const isStage = project.studioTool === 'Stagemaker'
+    const attr = isStage ? 'data-open-stage-project' : 'data-open-daw-project'
+    return `
+      <article class="studio-project-row">
+        <button class="studio-project-open" ${attr}="${project.id}" type="button">
+          <h4>${project.title}</h4>
+          <p>${isStage ? stageSubtitle(project) : dawSubtitle(project)}</p>
+          <small>${project.studioTool} - ${fmtDate(project)}</small>
+        </button>
+        <span class="studio-badge">${ownerBadge(project)}</span>
+      </article>
+    `
+  }).join('')}</div>`
+}
+
+function renderProjectArea(kind = 'daw') {
+  const source = kind === 'stage' ? state.stage : state.daw
+  if (source.loading) return '<p class="studio-recents-empty">Loading projects...</p>'
+  if (source.error) return `<p class="studio-recents-empty">${source.error}</p>`
+  if (!source.projects.length) {
+    return `<div class="studio-projects-empty"><p class="studio-projects-empty-title">No ${kind === 'stage' ? 'stage plans' : 'project files'} yet.</p><p>${kind === 'stage' ? 'Create a Stagemaker project to start building plots, lists, and show files.' : 'Create a project, folder, or import sounds to start building.'}</p></div>`
+  }
+
+  const attr = kind === 'stage' ? 'data-open-stage-project' : 'data-open-daw-project'
+  return `<div class="studio-project-grid">${source.projects.map((project) => `
+    <article class="studio-project-row">
+      <button class="studio-project-open" ${attr}="${project.id}" type="button">
+        <h4>${project.title}</h4>
+        <p>${kind === 'stage' ? stageSubtitle(project) : dawSubtitle(project)}</p>
+        <small>${fmtDate(project)}</small>
+      </button>
+      <span class="studio-badge">${ownerBadge(project)}</span>
+    </article>
+  `).join('')}</div>`
+}
+
+function renderProjectsPanel(kind = 'daw') {
+  return `<section class="studio-projects-panel"><header class="studio-projects-toolbar"><button class="studio-folder-button" type="button" data-placeholder-demo>NEW FOLDER</button><button class="studio-toolbar-icon" type="button" aria-label="Search projects" data-tooltip="Search" data-placeholder-demo><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Filter projects" data-tooltip="Filters" data-placeholder-demo><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 10h4"/><path d="M18 16h4"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Project options" data-tooltip="More" data-placeholder-demo><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button></header><div class="studio-projects-body">${renderProjectArea(kind)}</div></section>`
 }
 
 function renderHub() {
-  return `<section class="studio-main"><div class="studio-section-heading"><h2>MELOGIC STUDIO</h2><span class="studio-section-line studio-section-line--explore"></span></div><p class="studio-recents-empty">Your creative software hub for writing, production, planning, and release prep.</p><div class="studio-module-grid"><a class="studio-module-tile" href="${ROUTES.studioDaw}"><strong>DAW</strong><span>Open projects, build arrangements, and produce sessions.</span></a><a class="studio-module-tile" href="${ROUTES.studioStagemaker}"><strong>Stagemaker</strong><span>Build stage plots, input lists, viewport plans, and show files.</span></a><a class="studio-module-tile" href="${ROUTES.studioDemos}"><strong>Demos</strong><span>Explore example sessions and production references.</span></a><a class="studio-module-tile" href="${ROUTES.studioTutorials}"><strong>Tutorials</strong><span>Learn the tools and workflows inside Melogic Studio.</span></a></div></section>`
+  const combined = mixedProjects()
+  const recent = combined.slice(0, 6)
+  return `
+    <section class="studio-main">
+      <section class="studio-hub-hero">
+        <div>
+          <p class="eyebrow">Creative Dashboard</p>
+          <h1>Melogic Studio</h1>
+          <p>Your creative workspace for production, stage planning, collaboration, and release prep.</p>
+        </div>
+        <div class="studio-hub-actions">
+          <a class="button button-accent" href="${ROUTES.studioDaw}">Open DAW</a>
+          <a class="button button-muted" href="${ROUTES.studioStagemaker}">Open Stagemaker</a>
+        </div>
+      </section>
+
+      <div class="studio-section-heading"><h2>CONTINUE WORKING</h2><span class="studio-section-line studio-section-line--recents"></span></div>
+      ${state.daw.loading || state.stage.loading ? '<p class="studio-recents-empty">Loading recent work...</p>' : renderMixedProjectRows(recent)}
+
+      <div class="studio-section-heading"><h2>DEMO PROJECTS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      <div class="studio-demo-stack">
+        ${renderDemoCards(dawDemos)}
+        ${renderDemoCards(stageDemos)}
+      </div>
+
+      <div class="studio-section-heading"><h2>YOUR PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div>
+      <section class="studio-projects-panel is-compact"><div class="studio-projects-body">${state.daw.error && state.stage.error ? `<p class="studio-recents-empty">${state.daw.error} ${state.stage.error}</p>` : renderMixedProjectRows(combined)}</div></section>
+
+      <div class="studio-section-heading"><h2>STUDIO MODULES</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      <div class="studio-module-grid">
+        ${moduleCards.map((card) => `<a class="studio-module-tile ${card.placeholder ? 'is-placeholder' : ''}" href="${card.href}" ${card.placeholder ? 'data-placeholder-demo aria-disabled="true"' : ''}><strong>${card.title}</strong><span>${card.body}</span></a>`).join('')}
+      </div>
+      <div data-studio-modal-root></div>
+    </section>
+  `
 }
 
 function renderDaw() {
-  return `<section class="studio-main"><div class="studio-top-actions"><a class="studio-action-button" data-action="new-project" data-new-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">NEW PROJECT <span>${icon('plus')}</span></a><a class="studio-action-button" data-action="start-collab" href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">START COLLAB <span>${icon('user')}</span></a></div><div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div><div class="studio-explore-row">${exploreItems.map((item) => `<article class="studio-explore-card"><div class="studio-cover-placeholder"></div><div class="studio-explore-copy"><h3 class="studio-explore-title">${item.title}</h3><p>${item.artist}</p><p>${item.year}</p></div></article>`).join('')}</div><div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>${renderRecent()}<div class="studio-section-heading"><h2>PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div><section class="studio-projects-panel"><header class="studio-projects-toolbar"><button class="studio-folder-button" type="button">NEW FOLDER</button><button class="studio-toolbar-icon" type="button" aria-label="Search projects" data-tooltip="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Filter projects" data-tooltip="Filters"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 10h4"/><path d="M18 16h4"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Project options" data-tooltip="More"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button></header><div class="studio-projects-body">${renderProjectArea()}</div></section><div data-studio-modal-root></div></section>`
+  return `
+    <section class="studio-main">
+      <div class="studio-top-actions">
+        <a class="studio-action-button" data-action="new-project" data-new-daw-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">NEW PROJECT <span>${icon('plus')}</span></a>
+        <a class="studio-action-button" data-action="start-collab" data-start-collab href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">START COLLAB <span>${icon('user')}</span></a>
+      </div>
+      <div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      ${renderDemoCards(dawDemos)}
+      <div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>
+      ${renderRecentList(state.daw.recentProjects, 'daw')}
+      <div class="studio-section-heading"><h2>PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div>
+      ${renderProjectsPanel('daw')}
+      <div data-studio-modal-root></div>
+    </section>
+  `
+}
+
+function renderStagemaker() {
+  return `
+    <section class="studio-main">
+      <div class="studio-top-actions">
+        <a class="studio-action-button" data-action="new-project" data-new-stage-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">NEW STAGE PROJECT <span>${icon('plus')}</span></a>
+        <a class="studio-action-button" data-action="start-collab" data-start-collab href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">START COLLAB <span>${icon('user')}</span></a>
+      </div>
+      <div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      ${renderDemoCards(stageDemos)}
+      <div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>
+      ${renderRecentList(state.stage.recentProjects, 'stage')}
+      <div class="studio-section-heading"><h2>PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div>
+      ${renderProjectsPanel('stage')}
+      <div data-studio-modal-root></div>
+    </section>
+  `
 }
 
 function renderShell() {
-  const active = isHubRoute() ? 'hub' : 'daw'
-  app.innerHTML = `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active })}${isHubRoute() ? renderHub() : renderDaw()}</section></main>`
-  initShellChrome(); initStudioBrandLogo(); bind()
+  const active = currentStudioSection()
+  const content = active === 'hub' ? renderHub() : active === 'stagemaker' ? renderStagemaker() : renderDaw()
+  app.innerHTML = `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active })}${content}</section></main>`
+  initShellChrome()
+  initStudioBrandLogo()
+  bind()
 }
 
-async function loadStudioProjects() {
-  if (isHubRoute()) return
-  if (!state.user?.uid) return
-  state.loadingProjects = true; renderShell()
+async function loadDawData() {
   const [indexedResult, accessibleResult] = await Promise.allSettled([
     listIndexedStudioProjects(state.user.uid),
     listAccessibleStudioProjects(state.user.uid)
@@ -65,41 +277,130 @@ async function loadStudioProjects() {
   else console.error('[studio] indexed project query failed', indexedResult.reason)
   if (accessibleResult.status === 'fulfilled') projects.push(...accessibleResult.value)
   else console.error('[studio] accessible project query failed', accessibleResult.reason)
-  const merged = new Map(); projects.forEach((project) => project?.id && merged.set(project.id, project))
+  const merged = new Map()
+  projects.forEach((project) => project?.id && merged.set(project.id, project))
   const deduped = [...merged.values()].sort(sortProjectsByActivity)
-  if (deduped.length || indexedResult.status === 'fulfilled' || accessibleResult.status === 'fulfilled') {
-    state.projects = deduped
-    state.recentProjects = deduped.slice(0, 6)
-    state.projectsError = ''
-  } else {
-    state.projects = []
-    state.recentProjects = []
-    state.projectsError = 'Could not load Studio projects.'
-  }
-  state.loadingProjects = false; renderShell()
+  state.daw.projects = deduped
+  state.daw.recentProjects = deduped.slice(0, 6)
+  state.daw.error = deduped.length || indexedResult.status === 'fulfilled' || accessibleResult.status === 'fulfilled'
+    ? ''
+    : 'Could not load DAW projects.'
 }
 
-function openProject(projectId) { touchStudioProject(projectId).catch(() => {}); window.location.href = studioProjectRoute(projectId) }
+async function loadStageData() {
+  try {
+    const projects = await listAccessibleStageProjects(state.user.uid)
+    state.stage.projects = [...projects].sort(sortStageProjectsByActivity)
+    state.stage.recentProjects = state.stage.projects.slice(0, 6)
+    state.stage.error = ''
+  } catch (error) {
+    console.error('[studio] stage project query failed', error)
+    state.stage.projects = []
+    state.stage.recentProjects = []
+    state.stage.error = 'Could not load Stagemaker projects.'
+  }
+}
 
-function renderModal(loading = false) {
-  const root = app.querySelector('[data-studio-modal-root]'); if (!root) return
-  if (loading) { root.innerHTML = '<div class="studio-modal"><div class="studio-modal-panel"><h3>Loading project...</h3></div></div>'; return }
-  root.innerHTML = `<div class="studio-modal" data-modal-backdrop><form class="studio-modal-panel" data-create-form><h3>New Project</h3><div class="studio-modal-field"><label for="studio-project-name">Project name</label><input id="studio-project-name" name="title" maxlength="120" placeholder="Name your project" required /></div>${state.createError ? `<p class="studio-form-error">${state.createError}</p>` : ''}<div class="studio-modal-actions"><button class="button" type="submit">Create Project</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
+async function loadProjectsForCurrentRoute() {
+  if (!state.user?.uid) {
+    state.daw = { projects: [], recentProjects: [], loading: false, error: '' }
+    state.stage = { projects: [], recentProjects: [], loading: false, error: '' }
+    renderShell()
+    return
+  }
+
+  const active = currentStudioSection()
+  const wantsDaw = active === 'hub' || active === 'daw'
+  const wantsStage = active === 'hub' || active === 'stagemaker'
+  if (wantsDaw) state.daw.loading = true
+  if (wantsStage) state.stage.loading = true
+  renderShell()
+
+  await Promise.allSettled([
+    wantsDaw ? loadDawData() : Promise.resolve(),
+    wantsStage ? loadStageData() : Promise.resolve()
+  ])
+
+  if (wantsDaw) state.daw.loading = false
+  if (wantsStage) state.stage.loading = false
+  renderShell()
+}
+
+function openDawProject(projectId) {
+  touchStudioProject(projectId).catch(() => {})
+  window.location.href = studioProjectRoute(projectId)
+}
+
+function openStageProject(projectId) {
+  touchStageProject(projectId).catch(() => {})
+  window.location.href = stageProjectRoute(projectId)
+}
+
+function renderCreateModal(kind = 'daw', loading = false) {
+  const root = app.querySelector('[data-studio-modal-root]')
+  if (!root) return
+  const isStage = kind === 'stage'
+  if (loading) {
+    root.innerHTML = `<div class="studio-modal"><div class="studio-modal-panel"><h3>Creating ${isStage ? 'stage plan' : 'project'}...</h3></div></div>`
+    return
+  }
+  root.innerHTML = `<div class="studio-modal" data-modal-backdrop><form class="studio-modal-panel" data-create-form data-create-kind="${kind}"><h3>${isStage ? 'New Stage Project' : 'New Project'}</h3><div class="studio-modal-field"><label for="studio-project-name">Project name</label><input id="studio-project-name" name="title" maxlength="120" placeholder="${isStage ? 'Name your stage plan' : 'Name your project'}" required /></div>${state.createError ? `<p class="studio-form-error">${state.createError}</p>` : ''}<div class="studio-modal-actions"><button class="button" type="submit">${isStage ? 'Create Stage Plan' : 'Create Project'}</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
   const close = () => { root.innerHTML = ''; document.removeEventListener('keydown', onKeydown) }
-  const onKeydown = (e) => e.key === 'Escape' && close(); document.addEventListener('keydown', onKeydown)
+  const onKeydown = (e) => e.key === 'Escape' && close()
+  document.addEventListener('keydown', onKeydown)
   root.querySelector('[data-modal-backdrop]')?.addEventListener('click', (e) => e.target === e.currentTarget && close())
   root.querySelector('[data-close-modal]')?.addEventListener('click', close)
   root.querySelector('[data-create-form]')?.addEventListener('submit', async (e) => {
-    e.preventDefault(); state.createError = ''; renderModal(true)
-    try { const title = new FormData(e.currentTarget).get('title'); const project = await createStudioProject(state.user, { title }); window.location.href = studioProjectRoute(project.id) }
-    catch (error) { console.error('[studio]', error); state.createError = 'Could not create project right now.'; renderModal(false) }
+    e.preventDefault()
+    state.createError = ''
+    renderCreateModal(kind, true)
+    try {
+      const title = new FormData(e.currentTarget).get('title')
+      if (isStage) {
+        const project = await createStageProject(state.user, { title })
+        window.location.href = stageProjectRoute(project.id)
+      } else {
+        const project = await createStudioProject(state.user, { title })
+        window.location.href = studioProjectRoute(project.id)
+      }
+    } catch (error) {
+      console.error('[studio]', error)
+      state.createError = isStage ? 'Could not create stage project right now.' : 'Could not create project right now.'
+      renderCreateModal(kind, false)
+    }
   })
 }
 
 function bind() {
-  app.querySelector('[data-new-project]')?.addEventListener('click', (e) => { if (!state.user) return; e.preventDefault(); renderModal(false) })
-  app.querySelectorAll('[data-open-project]').forEach((el) => el.addEventListener('click', () => openProject(el.dataset.openProject)))
+  app.querySelector('[data-new-daw-project]')?.addEventListener('click', (e) => {
+    if (!state.user) return
+    e.preventDefault()
+    state.createError = ''
+    renderCreateModal('daw')
+  })
+  app.querySelector('[data-new-stage-project]')?.addEventListener('click', (e) => {
+    if (!state.user) return
+    e.preventDefault()
+    state.createError = ''
+    renderCreateModal('stage')
+  })
+  app.querySelectorAll('[data-open-daw-project]').forEach((el) => el.addEventListener('click', () => openDawProject(el.dataset.openDawProject)))
+  app.querySelectorAll('[data-open-stage-project]').forEach((el) => el.addEventListener('click', () => openStageProject(el.dataset.openStageProject)))
+  app.querySelectorAll('[data-placeholder-demo]').forEach((el) => {
+    el.addEventListener('click', (e) => e.preventDefault())
+  })
+  app.querySelectorAll('[data-start-collab]').forEach((el) => {
+    el.addEventListener('click', (e) => { if (state.user) e.preventDefault() })
+  })
 }
 
-waitForInitialAuthState().then(async (user) => { state.user = user; renderShell(); await loadStudioProjects() })
-subscribeToAuthState(async (user) => { state.user = user; app.querySelector('[data-new-project]')?.setAttribute('href', user ? '#' : authRoute({ redirect: ROUTES.studioDaw })); await loadStudioProjects() })
+waitForInitialAuthState().then(async (user) => {
+  state.user = user
+  renderShell()
+  await loadProjectsForCurrentRoute()
+})
+
+subscribeToAuthState(async (user) => {
+  state.user = user
+  await loadProjectsForCurrentRoute()
+})

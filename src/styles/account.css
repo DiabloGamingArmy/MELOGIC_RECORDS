@@ -1,0 +1,226 @@
+.account-page {
+  min-height: calc(100vh - var(--nav-offset));
+  background:
+    radial-gradient(circle at 100% 0, rgba(58, 92, 156, 0.16), transparent 38%),
+    linear-gradient(180deg, #0b0d13, #0a0c11);
+  color: #f2f5ff;
+}
+
+.account-shell {
+  width: min(1320px, 94vw);
+  margin: 0 auto;
+  padding: clamp(1.2rem, 3vw, 2.4rem) 0 3rem;
+}
+
+.account-panel {
+  border: 1px solid rgba(132, 154, 198, 0.24);
+  border-radius: 8px;
+  background: rgba(12, 17, 29, 0.92);
+  box-shadow: inset 0 1px 0 rgba(162, 196, 255, 0.08), 0 20px 42px rgba(2, 7, 15, 0.28);
+  padding: clamp(1rem, 2vw, 1.35rem);
+}
+
+.account-empty {
+  max-width: 720px;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.account-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(132, 154, 198, 0.18);
+  padding-bottom: 1rem;
+}
+
+.account-heading h1,
+.account-heading p,
+.account-empty h1,
+.account-empty p {
+  margin: 0;
+}
+
+.account-heading p,
+.account-empty p {
+  color: #b8c6e2;
+  line-height: 1.5;
+}
+
+.account-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 1rem 0;
+}
+
+.account-filter-row button,
+.account-row-action,
+.account-support-panel a,
+.account-action-links a {
+  border: 1px solid rgba(126, 160, 219, 0.34);
+  border-radius: 4px;
+  background: rgba(25, 35, 58, 0.78);
+  color: #dbe7ff;
+  text-decoration: none;
+}
+
+.account-filter-row button {
+  min-height: 34px;
+  padding: 0 0.75rem;
+  cursor: pointer;
+}
+
+.account-filter-row button.is-active {
+  border-color: rgba(96, 214, 199, 0.72);
+  background: rgba(34, 184, 181, 0.14);
+  color: #e8fffe;
+}
+
+.account-empty-inline {
+  border: 1px dashed rgba(132, 154, 198, 0.26);
+  border-radius: 6px;
+  color: #b8c6e2;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 1rem;
+}
+
+.account-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.account-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(120px, 0.7fr) minmax(120px, 0.7fr) minmax(90px, 0.5fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  border: 1px solid rgba(132, 154, 198, 0.2);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.72rem;
+}
+
+.account-row strong,
+.account-row span,
+.account-row small {
+  display: block;
+}
+
+.account-row span,
+.account-row small,
+.account-label {
+  color: #aebbd7;
+}
+
+.account-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.account-row-action {
+  min-height: 34px;
+  padding: 0 0.78rem;
+}
+
+.account-row-action:disabled {
+  opacity: 0.55;
+}
+
+.account-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin: 1rem 0 0;
+}
+
+.account-summary-grid article {
+  border: 1px solid rgba(132, 154, 198, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 0.85rem;
+}
+
+.account-summary-grid span {
+  display: block;
+  color: #aebbd7;
+  font-size: 0.78rem;
+}
+
+.account-summary-grid strong {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 1.25rem;
+}
+
+.account-table {
+  border: 1px solid rgba(132, 154, 198, 0.22);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.account-table-head,
+.account-table-row {
+  display: grid;
+  grid-template-columns: 0.8fr 0.75fr minmax(220px, 1.5fr) 0.65fr 0.7fr 1fr;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.68rem 0.75rem;
+}
+
+.account-table-head {
+  background: rgba(33, 45, 72, 0.86);
+  color: #dce8ff;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.account-table-row {
+  border-top: 1px solid rgba(132, 154, 198, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.account-table-row small {
+  display: block;
+  color: #aebbd7;
+}
+
+.account-action-links,
+.account-support-panel div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.account-action-links a,
+.account-support-panel a {
+  padding: 0.36rem 0.52rem;
+  font-size: 0.78rem;
+}
+
+.account-support-panel {
+  margin-top: 1rem;
+  border-top: 1px solid rgba(132, 154, 198, 0.18);
+  padding-top: 1rem;
+}
+
+.account-support-panel h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+}
+
+@media (max-width: 980px) {
+  .account-heading {
+    display: grid;
+  }
+
+  .account-row,
+  .account-table-head,
+  .account-table-row,
+  .account-summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
