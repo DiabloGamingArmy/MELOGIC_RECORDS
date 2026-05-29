@@ -251,6 +251,8 @@ service cloud.firestore {
         'primaryDownloadBytes',
         'previewAssignment',
 
+        'price',
+        'priceLabel',
         'priceCents',
         'payoutTargetCents',
         'currency',
@@ -346,6 +348,21 @@ service cloud.firestore {
         && (!('productKind' in request.resource.data) || request.resource.data.productKind is string)
         && (!('previewMode' in request.resource.data) || request.resource.data.previewMode is string)
         && (!('distributionMode' in request.resource.data) || request.resource.data.distributionMode is string)
+        && (!('price' in request.resource.data) || (
+          (
+            request.resource.data.price is string
+            && request.resource.data.price.size() <= 40
+          )
+          || (
+            request.resource.data.price is number
+            && request.resource.data.price >= 0
+            && request.resource.data.price <= 10000000
+          )
+        ))
+        && (!('priceLabel' in request.resource.data) || (
+          request.resource.data.priceLabel is string
+          && request.resource.data.priceLabel.size() <= 80
+        ))
         && (!('priceCents' in request.resource.data) || (
           request.resource.data.priceCents is number
           && request.resource.data.priceCents >= 0
@@ -1185,7 +1202,14 @@ service cloud.firestore {
     }
 
     match /products/{productId} {
-  allow read: if canReadProductResource(productId);
+  // Important: the product editor checks whether a generated draft ID already exists
+  // before creating it. For a brand-new random ID, that get() targets a non-existent
+  // document. Without this non-existent get allowance, the client receives
+  // permission-denied before the create rule can run.
+  allow get: if !exists(/databases/$(database)/documents/products/$(productId))
+    || canReadProductResource(productId);
+
+  allow list: if canReadProductResource(productId);
 
   allow create: if productCreateIsAllowed(productId);
 
