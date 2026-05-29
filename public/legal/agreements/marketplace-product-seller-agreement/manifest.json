@@ -1,0 +1,10 @@
+{
+  "agreementId": "marketplace-product-seller-agreement",
+  "versions": [
+    {
+      "version": "v1",
+      "storagePath": "legal/agreements/marketplace-product-seller-agreement/v1.md",
+      "publicPath": "/legal/agreements/marketplace-product-seller-agreement/v1.md"
+    }
+  ]
+}

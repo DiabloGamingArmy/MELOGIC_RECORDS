@@ -4,6 +4,12 @@ The Marketplace Seller Agreement Markdown may be loaded in-browser from Firebase
 
 `public/legal/agreements/marketplace-product-seller-agreement/v1.md`
 
+It also supports a same-origin manifest:
+
+`public/legal/agreements/marketplace-product-seller-agreement/manifest.json`
+
+For production stability, keep `platformSettings/marketplaceSellerAgreement` or the manifest pointed at the latest agreement version. Browser-side Firebase Storage folder listing is intentionally not the default because it creates noisy CORS failures when the bucket CORS policy is missing or stale.
+
 Because browser `fetch()` and Firebase Storage browser reads enforce CORS, the bucket serving:
 
 `legal/agreements/marketplace-product-seller-agreement/v<number>.md`
@@ -61,3 +67,12 @@ It is **not** applied by a normal Firebase Hosting deploy unless one of the comm
 
 The actual bucket name should be verified in Firebase Console / Storage before applying the command.
 Storage security rules and bucket CORS are separate settings: rules decide who may read the object, while CORS decides whether the browser origin is allowed to fetch it.
+
+## Recommended latest-version flow
+
+Use one of these as the authoritative latest-version pointer:
+
+1. `platformSettings/marketplaceSellerAgreement` in Firestore with `activeVersion`, `storagePath`, and optional `publicPath`.
+2. `public/legal/agreements/marketplace-product-seller-agreement/manifest.json`.
+
+Only enable browser-side Storage version discovery if bucket CORS has been applied. In Firestore config, set `versionDiscoveryMode: "storage"` or `storageDiscoveryEnabled: true` when you intentionally want the browser to list Storage objects.

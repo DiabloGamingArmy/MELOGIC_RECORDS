@@ -95,6 +95,8 @@ let editorState = {
     errorDetail: '',
     warning: '',
     source: '',
+    loadedVersion: '',
+    acceptanceBlockedReason: '',
     loadRequestId: 0,
     signedName: '',
     accepting: false
@@ -957,7 +959,8 @@ function sellerAgreementState() {
 function renderAgreementsPanel() {
   const agreementState = sellerAgreementState()
   const config = editorState.agreement.config || {}
-  const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error)
+  const acceptanceBlockedReason = String(editorState.agreement.acceptanceBlockedReason || '').trim()
+  const signatureDisabled = agreementState.accepted || editorState.agreement.loading || Boolean(editorState.agreement.error) || Boolean(acceptanceBlockedReason)
   const canAccept = !signatureDisabled && !editorState.agreement.accepting && String(editorState.agreement.signedName || '').trim().length >= 3
   const agreementError = String(editorState.agreement.error || '').trim()
   const agreementWarning = String(editorState.agreement.warning || '').trim()
@@ -972,7 +975,7 @@ function renderAgreementsPanel() {
     : agreementError
       ? `<p class="agreement-error">${escapeHtml(agreementError)}</p>${config.activeVersion ? `<p class="agreement-error-detail">Version: ${escapeHtml(config.activeVersion)}</p>` : ''}${config.storagePath ? `<p class="agreement-error-detail">Path: ${escapeHtml(config.storagePath)}</p>` : ''}${agreementErrorDetail}<button type="button" class="button button-muted" data-retry-agreement-load>Retry Agreement Load</button>`
       : editorState.agreement.markdown
-        ? `${agreementWarning ? `<p class="pricing-warning">${escapeHtml(agreementWarning)}</p>` : ''}${agreementSourceDetail}${renderAgreementMarkdown(editorState.agreement.markdown)}`
+        ? `${agreementWarning ? `<p class="pricing-warning">${escapeHtml(agreementWarning)}</p>` : ''}${acceptanceBlockedReason ? `<p class="pricing-warning">${escapeHtml(acceptanceBlockedReason)}</p>` : ''}${agreementSourceDetail}${renderAgreementMarkdown(editorState.agreement.markdown)}`
         : '<p class="agreement-error">Seller agreement file is missing.</p>'
   return `
     <section class="agreements-workspace">
@@ -1609,7 +1612,7 @@ function renderEditor() {
 
   editorRoot.querySelector('[data-accept-agreement]')?.addEventListener('click', async () => {
     if (!editorState.user || !editorState.draft) return
-    if (!editorState.agreement.config || editorState.agreement.loading || editorState.agreement.error) return
+    if (!editorState.agreement.config || editorState.agreement.loading || editorState.agreement.error || editorState.agreement.acceptanceBlockedReason) return
     const signedName = String(editorState.agreement.signedName || '').trim()
     if (signedName.length < 3) {
       setStatus('Please enter your full legal name before accepting the agreement.', 'error')
@@ -1688,6 +1691,8 @@ function renderEditor() {
     editorState.agreement.errorDetail = ''
     editorState.agreement.warning = ''
     editorState.agreement.source = ''
+    editorState.agreement.loadedVersion = ''
+    editorState.agreement.acceptanceBlockedReason = ''
     renderEditor()
     loadAgreementForEditor(editorState.user).catch((error) => {
       console.warn('[new-product] agreement retry failed unexpectedly', error?.code || error?.message || error)
@@ -2201,6 +2206,8 @@ async function initPage() {
   editorState.agreement.errorDetail = ''
   editorState.agreement.warning = ''
   editorState.agreement.source = ''
+  editorState.agreement.loadedVersion = ''
+  editorState.agreement.acceptanceBlockedReason = ''
   renderEditor()
 
   loadAgreementForEditor(user).catch((error) => {
@@ -2233,6 +2240,8 @@ async function loadAgreementForEditor(user) {
     editorState.agreement.errorDetail = ''
     editorState.agreement.warning = agreementConfig.versionDiscoveryWarning || ''
     editorState.agreement.source = ''
+    editorState.agreement.loadedVersion = ''
+    editorState.agreement.acceptanceBlockedReason = ''
     agreementId = String(agreementConfig.agreementId || '')
     latestVersion = String(agreementConfig.activeVersion || '')
 
@@ -2240,20 +2249,31 @@ async function loadAgreementForEditor(user) {
     if (agreementConfig.markdown) {
       editorState.agreement.markdown = agreementConfig.markdown
       editorState.agreement.source = 'platform-settings-inline'
+      editorState.agreement.loadedVersion = latestVersion
       editorState.agreement.error = ''
       editorState.agreement.errorDetail = ''
     } else {
       try {
-        const agreementResult = await getAgreementMarkdown(agreementConfig.storagePath, { returnMetadata: true })
+        const agreementResult = await getAgreementMarkdown(agreementConfig.storagePath, {
+          returnMetadata: true,
+          publicPath: agreementConfig.publicPath,
+          allowStorageFetch: agreementConfig.allowStorageFetch === true
+        })
         if (!isCurrentLoad()) return
         editorState.agreement.markdown = agreementResult.markdown || ''
         editorState.agreement.source = agreementResult.source || ''
+        editorState.agreement.loadedVersion = agreementResult.version || ''
         editorState.agreement.warning = agreementResult.warning || editorState.agreement.warning || ''
+        if (editorState.agreement.loadedVersion && latestVersion && editorState.agreement.loadedVersion !== latestVersion) {
+          editorState.agreement.acceptanceBlockedReason = `Showing ${editorState.agreement.loadedVersion}; load latest seller agreement ${latestVersion} before accepting.`
+        }
         editorState.agreement.error = ''
         editorState.agreement.errorDetail = ''
       } catch (markdownError) {
         if (!isCurrentLoad()) return
         editorState.agreement.markdown = ''
+        editorState.agreement.loadedVersion = ''
+        editorState.agreement.acceptanceBlockedReason = ''
         editorState.agreement.error = 'Seller agreement could not be loaded.'
         editorState.agreement.errorDetail = [
           markdownError?.code ? `Reason: ${markdownError.code}` : '',
