@@ -1,7 +1,8 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
-const { defineSecret } = require('firebase-functions/params')
+const { defineSecret, defineString } = require('firebase-functions/params')
 
 const RECAPTCHA_ENTERPRISE_API_KEY = defineSecret('RECAPTCHA_ENTERPRISE_API_KEY')
+const RECAPTCHA_ENTERPRISE_SITE_KEY = defineString('RECAPTCHA_ENTERPRISE_SITE_KEY')
 
 const PROJECT_ID =
   process.env.GOOGLE_CLOUD_PROJECT ||
@@ -10,7 +11,6 @@ const PROJECT_ID =
   'melogic-records'
 // Backend SITE_KEY must match the frontend VITE_RECAPTCHA_ENTERPRISE_SITE_KEY used by
 // grecaptcha.enterprise.execute(); mismatches can trigger INVALID_ARGUMENT or invalid token assessments.
-const SITE_KEY = process.env.AUTH_RECAPTCHA_ENTERPRISE_SITE_KEY || process.env.RECAPTCHA_ENTERPRISE_SITE_KEY
 
 function maskKey(value) {
   const key = String(value || '').trim()
@@ -37,6 +37,7 @@ const THRESHOLDS = {
 exports.verifyRecaptchaEnterprise = onCall({ secrets: [RECAPTCHA_ENTERPRISE_API_KEY] }, async (request) => {
   const token = String(request.data?.token || '').trim()
   const action = String(request.data?.action || '').trim().toUpperCase()
+  const SITE_KEY = RECAPTCHA_ENTERPRISE_SITE_KEY.value()
 
   if (!token || !action || !(action in THRESHOLDS)) {
     throw new HttpsError('failed-precondition', 'Security verification failed. Please try again.')
