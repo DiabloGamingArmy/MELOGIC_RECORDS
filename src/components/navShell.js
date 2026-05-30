@@ -6,6 +6,7 @@ export function navShell(options = {}) {
   const isProfile = currentPage === 'profile'
   const isInbox = currentPage === 'inbox'
   const isStudio = currentPage === 'studio'
+  const isAdmin = currentPage === 'admin'
 
   return `
     <header class="nav-shell">
@@ -52,6 +53,7 @@ export function navShell(options = {}) {
               <span class="profile-avatar" data-profile-avatar aria-hidden="true"></span>
             </button>
             <div class="profile-dropdown" id="nav-profile-dropdown" data-nav-profile-dropdown role="menu" hidden>
+              <a href="${ROUTES.admin}" data-nav-menu-admin role="menuitem" ${isAdmin ? 'aria-current="page"' : ''} hidden>Admin</a>
               <a href="${ROUTES.profile}" data-nav-menu-view role="menuitem">View Profile</a>
               <a href="${ROUTES.editProfile}" data-nav-menu-edit role="menuitem">Edit Profile</a>
               <button type="button" data-nav-menu-signout role="menuitem">Log Out</button>

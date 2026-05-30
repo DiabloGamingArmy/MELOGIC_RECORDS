@@ -17,7 +17,9 @@ const { claimFreeProduct } = require('./src/products/claimFreeProduct')
 const { createProductDownloadUrl } = require('./src/products/createProductDownloadUrl')
 const { createOrUpdateProductShell } = require('./src/products/createOrUpdateProductShell')
 const { saveProductManifest } = require('./src/products/saveProductManifest')
-const { reviewProductDecision, listMarketplaceReviewQueue } = require('./src/products/reviewProductDecision')
+const { reviewProductDecision } = require('./src/admin/reviewProductDecision')
+const { listMarketplaceReviewQueue } = require('./src/admin/listMarketplaceReviewQueue')
+const { setAdminUserRole } = require('./src/admin/setAdminUserRole')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -41,3 +43,4 @@ exports.createOrUpdateProductShell = createOrUpdateProductShell
 exports.saveProductManifest = saveProductManifest
 exports.reviewProductDecision = reviewProductDecision
 exports.listMarketplaceReviewQueue = listMarketplaceReviewQueue
+exports.setAdminUserRole = setAdminUserRole

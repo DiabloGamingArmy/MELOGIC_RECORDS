@@ -159,7 +159,12 @@
       },
       {
         "source": "/admin-marketplace-review.html",
-        "destination": "/admin/marketplace-review",
+        "destination": "/admin/reviews",
+        "type": 301
+      },
+      {
+        "source": "/admin/marketplace-review",
+        "destination": "/admin/reviews",
         "type": 301
       }
     ],
@@ -185,8 +190,12 @@
         "destination": "/product-dashboard.html"
       },
       {
-        "source": "/admin/marketplace-review",
-        "destination": "/admin-marketplace-review.html"
+        "source": "/admin",
+        "destination": "/admin.html"
+      },
+      {
+        "source": "/admin/**",
+        "destination": "/admin.html"
       },
       {
         "source": "/products/**",

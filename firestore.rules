@@ -6,6 +6,26 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isAdminClaim() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function isOwnerAdminRole() {
+      return isAdminClaim() && request.auth.token.adminRole in ['owner', 'admin'];
+    }
+
+    function hasProductReviewClaim() {
+      return isOwnerAdminRole() || (isAdminClaim() && request.auth.token.productReview == true);
+    }
+
+    function hasAuditReadClaim() {
+      return isOwnerAdminRole() || (isAdminClaim() && request.auth.token.auditRead == true);
+    }
+
+    function hasRoleManageClaim() {
+      return isAdminClaim() && request.auth.token.roleManage == true;
+    }
+
     function isOwner(uid) {
       return signedIn() && request.auth.uid == uid;
     }
@@ -1560,8 +1580,24 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /adminUsers/{uid} {
+      allow read: if isAdminClaim();
+      allow write: if false;
+    }
+
+    match /adminLogs/{logId} {
+      allow read: if hasAuditReadClaim() || hasRoleManageClaim();
+      allow write: if false;
+    }
+
     match /productModeration/{moderationId} {
-      allow read, write: if false;
+      allow read: if hasProductReviewClaim();
+      allow write: if false;
+
+      match /events/{eventId} {
+        allow read: if hasProductReviewClaim();
+        allow write: if false;
+      }
     }
 
     match /orders/{orderId} {

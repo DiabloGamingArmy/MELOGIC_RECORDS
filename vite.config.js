@@ -20,7 +20,7 @@ export default defineConfig({
         distribution: resolve(__dirname, 'distribution.html'),
         cart: resolve(__dirname, 'cart.html'),
         productDashboard: resolve(__dirname, 'product-dashboard.html'),
-        adminMarketplaceReview: resolve(__dirname, 'admin-marketplace-review.html'),
+        admin: resolve(__dirname, 'admin.html'),
         auth: resolve(__dirname, 'auth.html'),
         product: resolve(__dirname, 'product.html'),
         inbox: resolve(__dirname, 'inbox.html'),
