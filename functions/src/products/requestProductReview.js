@@ -5,10 +5,17 @@ const admin = require('firebase-admin')
 
 const geminiApiKey = defineSecret('GEMINI_API_KEY')
 const productModerationModel = defineString('PRODUCT_MODERATION_MODEL', {
-  default: 'gemini-1.5-flash'
+  default: 'gemini-2.5-flash-lite'
 })
 const autoApproveProducts = defineString('AUTO_APPROVE_PRODUCTS', { default: 'false' })
 const autoApproveRuleBasedOnly = defineString('AUTO_APPROVE_WITH_RULE_BASED_ONLY', { default: 'false' })
+
+const DEFAULT_MODERATION_MODELS = [
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-flash-latest'
+]
+const ALLOWED_MODERATION_MODELS = new Set(DEFAULT_MODERATION_MODELS)
 
 const BLOCKED_KEYWORDS = [
   'terrorist',
@@ -21,6 +28,16 @@ const BLOCKED_KEYWORDS = [
 
 function safeString(value = '', max = 240) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+function resolveModerationModelOrder(configuredModel = '') {
+  const configured = safeString(configuredModel, 120)
+  const ordered = []
+  if (ALLOWED_MODERATION_MODELS.has(configured)) ordered.push(configured)
+  DEFAULT_MODERATION_MODELS.forEach((model) => {
+    if (!ordered.includes(model)) ordered.push(model)
+  })
+  return ordered
 }
 
 function isObviouslyInvalidGeminiSecret(apiKey = '') {
@@ -49,7 +66,7 @@ function summarizeGeminiError(status = 0, body = '') {
     /credential|authentication|permission|api key|unauthenticated|forbidden/i.test(message)
   return {
     errorCode: authFailure ? 'gemini_auth_failed' : `gemini_http_${status || 'error'}`,
-    errorCategory: authFailure ? 'auth' : 'http',
+    errorCategory: authFailure ? 'auth' : status === 404 ? 'not_found' : 'http',
     error: authFailure
       ? 'Gemini authentication error. Product remains pending review.'
       : `Gemini review failed: ${message}`,
@@ -59,7 +76,7 @@ function summarizeGeminiError(status = 0, body = '') {
   }
 }
 
-function aiUnavailableResult({ configured = true, attempted = true, code = 'gemini_unavailable', category = 'unavailable', message = 'AI moderation unavailable; product remains pending review.' } = {}) {
+function aiUnavailableResult({ configured = true, attempted = true, code = 'gemini_unavailable', category = 'unavailable', message = 'AI moderation unavailable; product remains pending review.', modelUsed = '', exhaustedModelFallbacks = false } = {}) {
   return {
     approved: true,
     reasons: [],
@@ -72,7 +89,9 @@ function aiUnavailableResult({ configured = true, attempted = true, code = 'gemi
     aiEnabled: configured,
     error: message,
     errorCode: code,
-    errorCategory: category
+    errorCategory: category,
+    modelUsed,
+    exhaustedModelFallbacks
   }
 }
 
@@ -99,8 +118,10 @@ function runRuleBasedModeration(product = {}) {
   }
 }
 
-async function moderateProductWithAI(product = {}, { model = '', apiKey = '' } = {}) {
-  const aiConfigured = Boolean(model && apiKey)
+async function moderateProductWithAI(product = {}, { model = '', models = null, apiKey = '', fetchImpl = fetch } = {}) {
+  const modelOrder = Array.isArray(models) && models.length ? models : resolveModerationModelOrder(model)
+  const selectedModel = modelOrder[0] || ''
+  const aiConfigured = Boolean(selectedModel && apiKey)
   if (!aiConfigured) {
     return {
       approved: true,
@@ -114,7 +135,8 @@ async function moderateProductWithAI(product = {}, { model = '', apiKey = '' } =
       aiEnabled: false,
       error: '',
       errorCode: '',
-      errorCategory: ''
+      errorCategory: '',
+      modelUsed: ''
     }
   }
 
@@ -124,7 +146,8 @@ async function moderateProductWithAI(product = {}, { model = '', apiKey = '' } =
       attempted: false,
       code: 'gemini_secret_invalid',
       category: 'auth',
-      message: 'Gemini API key is missing or invalid. Product remains pending review.'
+      message: 'Gemini API key is missing or invalid. Product remains pending review.',
+      modelUsed: selectedModel
     })
   }
 
@@ -150,76 +173,98 @@ async function moderateProductWithAI(product = {}, { model = '', apiKey = '' } =
   const prompt = `Return ONLY strict JSON with keys approved,riskLevel,suggestedAction,reasons,summary.
 ${JSON.stringify(moderationInput)}`
 
-  try {
-    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-    })
+  let lastFailure = null
+  for (const candidateModel of modelOrder) {
+    try {
+      const resp = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(candidateModel)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+      })
 
-    if (!resp.ok) {
-      const errorText = await resp.text().catch(() => '')
-      const summary = summarizeGeminiError(resp.status, errorText)
+      if (!resp.ok) {
+        const errorText = await resp.text().catch(() => '')
+        const summary = summarizeGeminiError(resp.status, errorText)
+        lastFailure = {
+          configured: true,
+          attempted: true,
+          code: summary.errorCode,
+          category: summary.errorCategory,
+          message: summary.error,
+          modelUsed: candidateModel
+        }
+        if (resp.status === 404) continue
+        return aiUnavailableResult(lastFailure)
+      }
+
+      const data = await resp.json()
+      const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || ''
+      const cleaned = text.replace(/```json|```/g, '').trim()
+
+      try {
+        const parsed = JSON.parse(cleaned)
+        return {
+          approved: parsed?.approved !== false,
+          riskLevel: ['low', 'medium', 'high'].includes(parsed?.riskLevel) ? parsed.riskLevel : 'unknown',
+          suggestedAction: ['approve', 'review_pending', 'needs_changes', 'reject'].includes(parsed?.suggestedAction) ? parsed.suggestedAction : 'review_pending',
+          reasons: Array.isArray(parsed?.reasons) ? parsed.reasons.map(String) : ['AI moderation returned an unreadable response.'],
+          summary: String(parsed?.summary || 'AI moderation was inconclusive.'),
+          aiConfigured: true,
+          aiAttempted: true,
+          aiSucceeded: true,
+          aiEnabled: true,
+          error: '',
+          errorCode: '',
+          errorCategory: '',
+          modelUsed: candidateModel
+        }
+      } catch (error) {
+        return {
+          approved: true,
+          riskLevel: 'unknown',
+          suggestedAction: 'review_pending',
+          reasons: ['AI moderation returned an unreadable response.'],
+          summary: 'AI moderation was inconclusive.',
+          aiConfigured: true,
+          aiAttempted: true,
+          aiSucceeded: false,
+          aiEnabled: true,
+          error: 'AI moderation returned an unreadable response.',
+          errorCode: 'gemini_unreadable_response',
+          errorCategory: 'response',
+          modelUsed: candidateModel
+        }
+      }
+    } catch (error) {
       return aiUnavailableResult({
         configured: true,
         attempted: true,
-        code: summary.errorCode,
-        category: summary.errorCategory,
-        message: summary.error
+        code: 'gemini_request_failed',
+        category: 'network',
+        message: 'AI moderation unavailable; product remains pending review.',
+        modelUsed: candidateModel
       })
     }
-
-    const data = await resp.json()
-    const text = data?.candidates?.[0]?.content?.parts?.map((part) => part.text || '').join('') || ''
-    const cleaned = text.replace(/```json|```/g, '').trim()
-
-    try {
-      const parsed = JSON.parse(cleaned)
-      return {
-        approved: parsed?.approved !== false,
-        riskLevel: ['low', 'medium', 'high'].includes(parsed?.riskLevel) ? parsed.riskLevel : 'unknown',
-        suggestedAction: ['approve', 'review_pending', 'needs_changes', 'reject'].includes(parsed?.suggestedAction) ? parsed.suggestedAction : 'review_pending',
-        reasons: Array.isArray(parsed?.reasons) ? parsed.reasons.map(String) : ['AI moderation returned an unreadable response.'],
-        summary: String(parsed?.summary || 'AI moderation was inconclusive.'),
-        aiConfigured: true,
-        aiAttempted: true,
-        aiSucceeded: true,
-        aiEnabled: true,
-        error: '',
-        errorCode: '',
-        errorCategory: ''
-      }
-    } catch (error) {
-      return {
-        approved: true,
-        riskLevel: 'unknown',
-        suggestedAction: 'review_pending',
-        reasons: ['AI moderation returned an unreadable response.'],
-        summary: 'AI moderation was inconclusive.',
-        aiConfigured: true,
-        aiAttempted: true,
-        aiSucceeded: false,
-        aiEnabled: true,
-        error: 'AI moderation returned an unreadable response.',
-        errorCode: 'gemini_unreadable_response',
-        errorCategory: 'response'
-      }
-    }
-  } catch (error) {
-    return aiUnavailableResult({
-      configured: true,
-      attempted: true,
-      code: 'gemini_request_failed',
-      category: 'network',
-      message: 'AI moderation unavailable; product remains pending review.'
-    })
   }
+
+  return aiUnavailableResult({
+    ...(lastFailure || {
+    configured: true,
+    attempted: true,
+    code: 'gemini_unavailable',
+    category: 'unavailable',
+    message: 'AI moderation unavailable; product remains pending review.',
+    modelUsed: selectedModel
+    }),
+    exhaustedModelFallbacks: Boolean(lastFailure)
+  })
 }
 
 function decideReviewOutcome({ product = {}, ruleResult = {}, aiResult = {}, autoApprove = false, allowRuleBasedAutoApprove = false, model = '' } = {}) {
   const aiFailed = Boolean(aiResult.aiAttempted || aiResult.aiConfigured) && aiResult.aiSucceeded !== true
   const aiAuthFailed = aiResult.errorCategory === 'auth' || aiResult.errorCode === 'gemini_auth_failed' || aiResult.errorCode === 'gemini_secret_invalid'
-  const ruleFallbackApproved = Boolean(autoApprove && allowRuleBasedAutoApprove && ruleResult.approved && aiResult.aiSucceeded !== true)
+  const exhaustedModelFallbacks = Boolean(aiResult.exhaustedModelFallbacks)
+  const ruleFallbackApproved = Boolean(autoApprove && allowRuleBasedAutoApprove && ruleResult.approved && aiResult.aiSucceeded !== true && !exhaustedModelFallbacks)
   let finalStatus = 'review_pending'
   let moderationStatus = aiFailed ? 'ai_error' : 'pending'
 
@@ -232,7 +277,7 @@ function decideReviewOutcome({ product = {}, ruleResult = {}, aiResult = {}, aut
   } else if (ruleFallbackApproved) {
     finalStatus = 'published'
     moderationStatus = 'rule_based_fallback_approved'
-  } else if (aiAuthFailed) {
+  } else if (aiAuthFailed || exhaustedModelFallbacks) {
     moderationStatus = 'ai_error'
   }
 
@@ -273,13 +318,14 @@ async function processReviewJob(jobId, job = {}) {
   const productSnap = await productRef.get()
   if (!productSnap.exists) throw new Error('Product not found')
   const product = productSnap.data() || {}
-  const model = productModerationModel.value() || 'gemini-1.5-flash'
+  const modelOrder = resolveModerationModelOrder(productModerationModel.value())
   const apiKey = geminiApiKey.value()
   const ruleResult = runRuleBasedModeration(product)
-  const aiResult = await moderateProductWithAI(product, { model, apiKey })
+  const aiResult = await moderateProductWithAI(product, { models: modelOrder, apiKey })
+  const selectedModel = aiResult.modelUsed || modelOrder[0] || ''
   const autoApprove = autoApproveProducts.value() === 'true'
   const allowRuleBasedAutoApprove = autoApproveRuleBasedOnly.value() === 'true'
-  const outcome = decideReviewOutcome({ product, ruleResult, aiResult, autoApprove, allowRuleBasedAutoApprove, model })
+  const outcome = decideReviewOutcome({ product, ruleResult, aiResult, autoApprove, allowRuleBasedAutoApprove, model: selectedModel })
   const productUpdate = {
     status: outcome.finalStatus,
     visibility: outcome.visibility,
@@ -291,7 +337,7 @@ async function processReviewJob(jobId, job = {}) {
     moderationAIAttempted: Boolean(aiResult.aiAttempted),
     moderationAISucceeded: Boolean(aiResult.aiSucceeded),
     moderationAIEnabled: Boolean(aiResult.aiEnabled),
-    moderationAIModel: model || '',
+    moderationAIModel: selectedModel,
     moderationAIError: aiResult.error || '',
     moderationAIErrorCode: aiResult.errorCode || '',
     moderationAIErrorCategory: aiResult.errorCategory || '',
@@ -318,7 +364,8 @@ async function processReviewJob(jobId, job = {}) {
     resultStatus: outcome.finalStatus,
     moderationStatus: outcome.moderationStatus,
     aiSucceeded: Boolean(aiResult.aiSucceeded),
-    aiErrorCode: aiResult.errorCode || ''
+    aiErrorCode: aiResult.errorCode || '',
+    moderationAIModel: selectedModel
   }, { merge: true })
 }
 
@@ -383,6 +430,8 @@ exports.requestProductReview = onCall(
 exports.__test = {
   decideReviewOutcome,
   isObviouslyInvalidGeminiSecret,
+  moderateProductWithAI,
+  resolveModerationModelOrder,
   runRuleBasedModeration,
   summarizeGeminiError
 }
