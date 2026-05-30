@@ -90,3 +90,21 @@ test('approve validation blocks missing approval requirements', () => {
   assert.ok(problems.some((problem) => problem.includes('Seller agreement')))
   assert.ok(problems.some((problem) => problem.includes('deliverable')))
 })
+
+test('creator change notification carries product return reason', () => {
+  const notification = __test.buildCreatorChangeNotification({
+    notificationId: 'notice-1',
+    productId: 'product-1',
+    product: { title: 'Loop pack' },
+    reason: 'Description does not match the uploaded files.',
+    notes: 'Ask for a clearer description.'
+  })
+
+  assert.equal(notification.id, 'notice-1')
+  assert.equal(notification.type, 'product_changes_requested')
+  assert.equal(notification.reviewDecision, 'request_changes')
+  assert.equal(notification.productId, 'product-1')
+  assert.match(notification.body, /Description does not match/)
+  assert.match(notification.actionHref, /product-1/)
+  assert.equal(notification.data.adminNotes, 'Ask for a clearer description.')
+})

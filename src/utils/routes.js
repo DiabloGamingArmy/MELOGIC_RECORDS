@@ -131,6 +131,10 @@ export function productRoute(productOrId = '') {
   return `/products/${encodeURIComponent(String(productOrId || '').trim())}`
 }
 
+export function adminReviewRoute(productId = '') {
+  const id = String(productId || '').trim()
+  return id ? `${ROUTES.adminReviews}/${encodeURIComponent(id)}` : ROUTES.adminReviews
+}
 
 export function studioProjectRoute(projectId = '') {
   return `/studio/daw/project/${encodeURIComponent(String(projectId || '').trim())}`
