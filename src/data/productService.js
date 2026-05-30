@@ -1744,6 +1744,13 @@ export async function reviewProductDecision({ productId = '', decision = '', rea
   return result?.data || { ok: false }
 }
 
+export async function setAdminUserRole({ uid = '', role = '', active = true, reason = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'setAdminUserRole')
+  const result = await callable({ uid, role, active, reason })
+  return result?.data || { ok: false }
+}
+
 export async function requestProductReview(productId = '') {
   if (!functions || !productId) throw new Error('Missing product id for review request.')
   try {

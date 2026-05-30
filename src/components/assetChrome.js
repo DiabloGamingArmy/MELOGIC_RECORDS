@@ -348,6 +348,7 @@ function initNavAuthState() {
   const profileAvatar = document.querySelector('[data-profile-avatar]')
   const viewProfileLink = document.querySelector('[data-nav-menu-view]')
   const editProfileLink = document.querySelector('[data-nav-menu-edit]')
+  const adminLink = document.querySelector('[data-nav-menu-admin]')
   const signOutButton = document.querySelector('[data-nav-menu-signout]')
   const authEntryLink = document.querySelector('[data-nav-menu-auth]')
   const inboxLink = document.querySelector('[data-nav-inbox]')
@@ -368,6 +369,7 @@ function initNavAuthState() {
     signOutButton.hidden = true
     if (viewProfileLink) viewProfileLink.hidden = true
     if (editProfileLink) editProfileLink.hidden = true
+    if (adminLink) adminLink.hidden = true
   }
 
   const setSignedInView = (user) => {
@@ -376,6 +378,14 @@ function initNavAuthState() {
     signOutButton.hidden = false
     if (viewProfileLink) viewProfileLink.hidden = false
     if (editProfileLink) editProfileLink.hidden = false
+    if (adminLink) {
+      adminLink.hidden = true
+      user.getIdTokenResult?.().then((tokenResult) => {
+        if (currentUser?.uid === user.uid) adminLink.hidden = tokenResult?.claims?.admin !== true
+      }).catch(() => {
+        if (currentUser?.uid === user.uid) adminLink.hidden = true
+      })
+    }
 
     if (user?.photoURL) {
       profileAvatar.classList.add('has-photo')
@@ -425,6 +435,9 @@ function initNavAuthState() {
   }
   if (editProfileLink) {
     editProfileLink.addEventListener('click', () => setMenuOpen(false))
+  }
+  if (adminLink) {
+    adminLink.addEventListener('click', () => setMenuOpen(false))
   }
 
   signOutButton.addEventListener('click', async (event) => {

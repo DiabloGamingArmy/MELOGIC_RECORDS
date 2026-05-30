@@ -1,22 +1,14 @@
-const { onCall, HttpsError } = require('firebase-functions/v2/https')
+const { HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
+const { cleanString } = require('./adminAuth')
 
-const STAFF_ROLES = new Set(['admin', 'staff', 'moderator', 'marketplace_admin', 'marketplace_reviewer'])
 const DECISIONS = new Set(['approve', 'request_changes', 'reject', 'keep_pending'])
-const REVIEW_STATUSES = new Set(['review_pending', 'pending_ai_review'])
-const REVIEW_JOB_STATUSES = new Set(['pending_manual_review', 'ai_failed', 'failed_ai_auth'])
-const REVIEW_MODERATION_STATUSES = new Set(['pending', 'ai_error'])
+const REVIEW_STATUSES = new Set(['review_pending', 'pending_ai_review', 'needs_changes'])
+const REVIEW_JOB_STATUSES = new Set(['pending_manual_review', 'ai_failed', 'failed_ai_auth', 'needs_changes'])
+const REVIEW_MODERATION_STATUSES = new Set(['pending', 'ai_error', 'needs_changes'])
 
 function db() {
   return admin.firestore()
-}
-
-function cleanString(value = '', max = 1200) {
-  return String(value ?? '')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max)
 }
 
 function normalizeProductId(value = '') {
@@ -49,47 +41,14 @@ function serializeDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
-function tokenHasStaffRole(token = {}) {
-  if (token.admin === true || token.staff === true || token.moderator === true || token.marketplaceAdmin === true || token.marketplaceReviewer === true) {
-    return true
-  }
-  const scalarRoles = [token.role, token.accountType, token.userRole]
-  if (scalarRoles.some((role) => STAFF_ROLES.has(cleanString(role, 80).toLowerCase()))) return true
-  const arrayRoles = [
-    ...(Array.isArray(token.roles) ? token.roles : []),
-    ...(Array.isArray(token.permissions) ? token.permissions : [])
-  ]
-  return arrayRoles.some((role) => STAFF_ROLES.has(cleanString(role, 80).toLowerCase()))
-}
-
-async function serverStaffDocExists(uid = '') {
-  if (!uid) return false
-  const [adminSnap, staffSnap] = await Promise.all([
-    db().collection('adminUsers').doc(uid).get(),
-    db().collection('staffUsers').doc(uid).get()
-  ])
-  return (adminSnap.exists && adminSnap.data()?.active !== false) ||
-    (staffSnap.exists && staffSnap.data()?.active !== false)
-}
-
-async function requireStaff(request) {
-  const uid = request.auth?.uid
-  if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.')
-  const token = request.auth?.token || {}
-  if (tokenHasStaffRole(token) || await serverStaffDocExists(uid)) {
-    return {
-      uid,
-      email: cleanString(token.email || '', 320),
-      role: token.admin ? 'admin' : token.staff ? 'staff' : token.marketplaceReviewer ? 'marketplace_reviewer' : 'staff'
-    }
-  }
-  throw new HttpsError('permission-denied', 'Marketplace review requires an admin or staff account.')
-}
-
 function productIsInReviewQueue(product = {}) {
   return REVIEW_STATUSES.has(cleanString(product.status, 80)) ||
     REVIEW_JOB_STATUSES.has(cleanString(product.reviewJobStatus, 80)) ||
     REVIEW_MODERATION_STATUSES.has(cleanString(product.moderationStatus, 80))
+}
+
+function sanitizePathList(value = [], max = 24) {
+  return Array.isArray(value) ? value.map((item) => cleanString(item, 900)).filter(Boolean).slice(0, max) : []
 }
 
 function sanitizeProductForQueue(id = '', product = {}) {
@@ -129,9 +88,9 @@ function sanitizeProductForQueue(id = '', product = {}) {
     downloadPath: cleanString(product.downloadPath || '', 900),
     primaryDownloadPath: cleanString(product.primaryDownloadPath || product.downloadPath || '', 900),
     primaryDownloadBytes: Math.max(0, Math.round(Number(product.primaryDownloadBytes || 0))),
-    galleryPaths: Array.isArray(product.galleryPaths) ? product.galleryPaths.map((item) => cleanString(item, 900)).filter(Boolean).slice(0, 24) : [],
-    previewAudioPaths: Array.isArray(product.previewAudioPaths) ? product.previewAudioPaths.map((item) => cleanString(item, 900)).filter(Boolean).slice(0, 12) : [],
-    previewVideoPaths: Array.isArray(product.previewVideoPaths) ? product.previewVideoPaths.map((item) => cleanString(item, 900)).filter(Boolean).slice(0, 8) : [],
+    galleryPaths: sanitizePathList(product.galleryPaths, 24),
+    previewAudioPaths: sanitizePathList(product.previewAudioPaths, 12),
+    previewVideoPaths: sanitizePathList(product.previewVideoPaths, 8),
     previewAssignment: {
       cardPreviewMode: cleanString(previewAssignment.cardPreviewMode || '', 80),
       hoverAudioPath: cleanString(previewAssignment.hoverAudioPath || '', 900),
@@ -214,6 +173,35 @@ function buildDecisionUpdate(decision = '', { uid = '', reason = '', notes = '',
   }
 }
 
+function productHasDeliverables(product = {}) {
+  const deliverableFiles = Array.isArray(product.deliverableFiles) ? product.deliverableFiles : []
+  const deliverableCount = deliverableFiles.filter((file) => cleanString(file?.storagePath || file?.path || '', 900)).length
+  const assetSummary = product.assetSummary && typeof product.assetSummary === 'object' && !Array.isArray(product.assetSummary)
+    ? product.assetSummary
+    : {}
+  return deliverableCount > 0 ||
+    Number(assetSummary.downloadableCount || 0) > 0 ||
+    Boolean(cleanString(product.primaryDownloadPath || product.downloadPath || '', 900))
+}
+
+function validateProductForApproval(product = {}) {
+  const problems = []
+  const priceCents = Number(product.priceCents)
+  const payoutTargetCents = Number(product.payoutTargetCents || 0)
+  if (!productIsInReviewQueue(product)) problems.push('Product is not in a reviewable state.')
+  if (!cleanString(product.artistId || '', 180)) problems.push('Artist ownership is missing.')
+  if (!cleanString(product.title || '', 160)) problems.push('Title is missing.')
+  if (!cleanString(product.slug || '', 180)) problems.push('Slug is missing.')
+  if (!cleanString(product.productType || '', 120)) problems.push('Product type is missing.')
+  if (!cleanString(product.shortDescription || product.description || '', 500)) problems.push('Description is missing.')
+  if (!Boolean(product.sellerAgreementAccepted || product.sellerAgreement?.accepted)) problems.push('Seller agreement is missing.')
+  if (!productHasDeliverables(product)) problems.push('At least one deliverable is required.')
+  if (!Number.isFinite(priceCents) || priceCents < 0) problems.push('Price is invalid.')
+  if (!Number.isFinite(payoutTargetCents) || payoutTargetCents < 0) problems.push('Payout target is invalid.')
+  if (!cleanString(product.currency || 'USD', 12)) problems.push('Currency is missing.')
+  return problems
+}
+
 async function loadReviewQueue(limitCount = 60) {
   const pageSize = Math.max(1, Math.min(Number(limitCount || 60), 100))
   const products = new Map()
@@ -240,64 +228,19 @@ async function loadReviewQueue(limitCount = 60) {
     .slice(0, pageSize)
 }
 
-exports.listMarketplaceReviewQueue = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  await requireStaff(request)
-  const products = await loadReviewQueue(request.data?.limit)
-  return { ok: true, products }
-})
-
-exports.reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const staff = await requireStaff(request)
-  const productId = normalizeProductId(request.data?.productId)
-  const decision = normalizeDecision(request.data?.decision)
-  const reason = cleanString(request.data?.reason || '', 1200)
-  const notes = cleanString(request.data?.notes || '', 2400)
-  const productRef = db().collection('products').doc(productId)
-  const productSnap = await productRef.get()
-  if (!productSnap.exists) throw new HttpsError('not-found', 'Product not found.')
-  const product = productSnap.data() || {}
-
-  if (decision === 'approve' && (!productIsInReviewQueue(product) && product.status !== 'needs_changes')) {
-    throw new HttpsError('failed-precondition', 'Only products in marketplace review can be approved.')
-  }
-
-  const productUpdate = buildDecisionUpdate(decision, { uid: staff.uid, reason, notes, existing: product })
-  const eventRef = db().collection('productModeration').doc(productId).collection('events').doc()
-  const now = admin.firestore.FieldValue.serverTimestamp()
-  const batch = db().batch()
-  batch.set(productRef, productUpdate, { merge: true })
-  batch.set(eventRef, {
-    id: eventRef.id,
-    productId,
-    decision,
-    reason,
-    notes,
-    actorUid: staff.uid,
-    actorEmail: staff.email,
-    actorRole: staff.role,
-    previousStatus: cleanString(product.status || '', 80),
-    previousVisibility: cleanString(product.visibility || '', 80),
-    previousModerationStatus: cleanString(product.moderationStatus || '', 80),
-    createdAt: now
-  })
-  await batch.commit()
-
-  return {
-    ok: true,
-    productId,
-    decision,
-    status: productUpdate.status,
-    visibility: productUpdate.visibility,
-    moderationStatus: productUpdate.moderationStatus || product.moderationStatus || '',
-    reviewJobStatus: productUpdate.reviewJobStatus || product.reviewJobStatus || ''
-  }
-})
-
-exports.__test = {
+module.exports = {
+  DECISIONS,
+  REVIEW_JOB_STATUSES,
+  REVIEW_MODERATION_STATUSES,
+  REVIEW_STATUSES,
   buildDecisionUpdate,
   cleanString,
+  loadReviewQueue,
   normalizeDecision,
+  normalizeProductId,
+  productHasDeliverables,
   productIsInReviewQueue,
   sanitizeProductForQueue,
-  tokenHasStaffRole
+  serializeDate,
+  validateProductForApproval
 }

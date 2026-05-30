@@ -1,0 +1,500 @@
+.admin-console-page {
+  min-height: calc(100vh - var(--nav-offset, 4rem));
+  padding: calc(var(--nav-offset, 4rem) + 1rem) 1rem 2rem;
+  background: #eef1f4;
+  color: #17202a;
+}
+
+.admin-console-shell {
+  width: min(1640px, 98vw);
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.admin-sidebar,
+.admin-section-slab,
+.review-row,
+.review-preview-panel,
+.admin-access-state,
+.admin-status,
+.admin-empty-state,
+.admin-metric {
+  border: 1px solid #d4dbe3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.admin-sidebar {
+  position: sticky;
+  top: calc(var(--nav-offset, 4rem) + 1rem);
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.75rem;
+}
+
+.admin-sidebar-header {
+  display: grid;
+  gap: 0.16rem;
+  padding: 0.45rem 0.5rem 0.75rem;
+  border-bottom: 1px solid #e2e7ed;
+}
+
+.admin-sidebar-kicker,
+.eyebrow,
+.admin-metric span,
+.review-row-facts dt,
+.review-preview-grid dt,
+.review-field span,
+.admin-role-form span,
+.admin-muted {
+  color: #66717d;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.admin-sidebar-nav {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.admin-sidebar-nav a,
+.admin-primary-link,
+.admin-primary-button,
+.admin-icon-button,
+.review-refresh,
+.review-action,
+.review-link-button,
+.review-private-note {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 40px;
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.admin-sidebar-nav a {
+  justify-content: start;
+  color: #2c3743;
+  padding: 0 0.58rem;
+}
+
+.admin-sidebar-nav a svg,
+.admin-primary-button svg,
+.admin-icon-button svg,
+.review-action svg,
+.review-link-button svg,
+.review-private-note svg {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-sidebar-nav a.is-active {
+  background: #12284a;
+  color: #ffffff;
+}
+
+.admin-sidebar-nav a.is-locked {
+  color: #8a949f;
+}
+
+.admin-main {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
+}
+
+.admin-page-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 66px;
+}
+
+.admin-page-header h1,
+.admin-page-header p,
+.admin-access-state h1,
+.admin-access-state p,
+.admin-section-slab h2,
+.admin-section-slab p,
+.review-row p,
+.review-preview-panel p,
+.review-preview-panel h2,
+.review-preview-panel h3 {
+  margin: 0;
+}
+
+.admin-page-header h1,
+.admin-access-state h1 {
+  font-size: clamp(1.7rem, 4vw, 2.65rem);
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.admin-primary-link,
+.admin-primary-button,
+.admin-icon-button {
+  border: 1px solid #1b4e7a;
+  background: #1b4e7a;
+  color: #ffffff;
+  cursor: pointer;
+}
+
+.admin-icon-button {
+  width: 44px;
+  padding: 0;
+}
+
+.admin-access-state {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.85rem;
+  width: min(520px, 100%);
+  margin: 10vh auto 0;
+  padding: 1.25rem;
+}
+
+.admin-status,
+.admin-empty-state {
+  padding: 0.75rem 0.9rem;
+}
+
+.admin-status.is-success {
+  border-color: #9ccfb6;
+  background: #eefaf3;
+  color: #145534;
+}
+
+.admin-status.is-error {
+  border-color: #e7a1a6;
+  background: #fff1f1;
+  color: #8a1f2a;
+}
+
+.admin-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.admin-metric {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem;
+}
+
+.admin-metric strong {
+  font-size: 1.55rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-section-slab {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.95rem;
+}
+
+.admin-review-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.admin-segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.admin-segmented button,
+.admin-review-tools select {
+  min-height: 38px;
+  border: 1px solid #c9d2dc;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #26313d;
+  font: inherit;
+  font-weight: 800;
+  padding: 0 0.66rem;
+}
+
+.admin-segmented button[aria-pressed="true"] {
+  background: #224863;
+  border-color: #224863;
+  color: #ffffff;
+}
+
+.admin-review-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.92fr) minmax(0, 1.08fr);
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.review-queue {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.review-queue.is-compact {
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+}
+
+.review-row {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.72rem;
+}
+
+.review-row.is-selected {
+  border-color: #2779a7;
+  box-shadow: 0 0 0 1px rgba(39, 121, 167, 0.16);
+}
+
+.review-row-main {
+  display: grid;
+  gap: 0.18rem;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-row-title {
+  font-size: 1.02rem;
+  font-weight: 900;
+}
+
+.review-row-artist,
+.review-row-meta,
+.review-row-summary,
+.review-muted {
+  color: #66717d;
+  font-size: 0.84rem;
+}
+
+.review-row-status,
+.review-actions,
+.review-reason-list,
+.review-path-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.review-badge,
+.review-reason-list span {
+  border: 1px solid #cbd5df;
+  border-radius: 999px;
+  padding: 0.2rem 0.48rem;
+  background: #f6f8fa;
+  color: #26313d;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.review-badge.is-published {
+  background: #e8f7ef;
+  border-color: #9ccfb6;
+  color: #145534;
+}
+
+.review-badge.is-rejected,
+.review-badge.is-needs-changes {
+  background: #fff1f1;
+  border-color: #e7a1a6;
+  color: #8a1f2a;
+}
+
+.review-row-facts,
+.review-preview-grid dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.review-row-facts div,
+.review-preview-grid dl div {
+  min-width: 0;
+}
+
+.review-row-facts dd,
+.review-preview-grid dd {
+  margin: 0.08rem 0 0;
+  color: #25313d;
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.review-field {
+  display: grid;
+  gap: 0.28rem;
+}
+
+.review-field input,
+.review-field textarea,
+.admin-role-form input,
+.admin-role-form select {
+  width: 100%;
+  border: 1px solid #c9d2dc;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17202a;
+  padding: 0.55rem 0.6rem;
+  font: inherit;
+}
+
+.review-action,
+.review-link-button,
+.review-private-note {
+  min-width: 104px;
+  border: 1px solid #c9d2dc;
+  background: #f7f9fb;
+  color: #26313d;
+  padding: 0 0.62rem;
+  cursor: pointer;
+}
+
+.review-action.is-approve {
+  background: #1f6b4a;
+  border-color: #1f6b4a;
+  color: #ffffff;
+}
+
+.review-action.is-danger {
+  background: #9a2836;
+  border-color: #9a2836;
+  color: #ffffff;
+}
+
+.review-preview-panel {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.9rem;
+  position: sticky;
+  top: calc(var(--nav-offset, 4rem) + 1rem);
+}
+
+.review-preview-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+}
+
+.review-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 0.75rem;
+}
+
+.review-summary-card,
+.review-preview-section {
+  border: 1px solid #dce2e8;
+  border-radius: 8px;
+  background: #fafbfc;
+  padding: 0.72rem;
+}
+
+.review-file-list {
+  display: grid;
+  gap: 0.45rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.45rem 0 0;
+}
+
+.review-file-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 0.7rem;
+  border: 1px solid #dde5ec;
+  border-radius: 7px;
+  padding: 0.5rem;
+  background: #ffffff;
+}
+
+.review-file-list small {
+  grid-column: 1 / -1;
+  color: #66717d;
+  overflow-wrap: anywhere;
+}
+
+.review-path-list {
+  margin-top: 0.45rem;
+}
+
+.review-path-list code {
+  max-width: 100%;
+  border: 1px solid #dce2e8;
+  border-radius: 7px;
+  padding: 0.32rem 0.42rem;
+  background: #ffffff;
+  color: #2b465d;
+  overflow-wrap: anywhere;
+}
+
+.admin-role-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 0.55fr) minmax(240px, 1fr) auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.admin-role-form label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+@media (max-width: 1060px) {
+  .admin-console-shell,
+  .admin-review-layout,
+  .review-preview-grid,
+  .admin-role-form {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-sidebar,
+  .review-preview-panel {
+    position: static;
+  }
+
+  .admin-sidebar-nav {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .admin-console-page {
+    padding-inline: 0.7rem;
+  }
+
+  .admin-page-header,
+  .review-preview-header {
+    display: grid;
+  }
+
+  .admin-metric-grid,
+  .review-row-facts,
+  .review-preview-grid dl {
+    grid-template-columns: 1fr;
+  }
+
+  .review-action {
+    flex: 1 1 130px;
+  }
+}

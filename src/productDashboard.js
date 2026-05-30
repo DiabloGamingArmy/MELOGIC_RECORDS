@@ -156,7 +156,7 @@ function ownerReviewNoticeMarkup(product = {}) {
     return '<p class="dashboard-owner-note is-success">Published</p>'
   }
   if (status === 'needs_changes') {
-    return '<p class="dashboard-owner-note">Changes requested</p>'
+    return '<p class="dashboard-owner-note">Changes requested by marketplace review.</p>'
   }
   if (reviewJobStatus === 'ai_failed' || reviewJobStatus === 'failed_ai_auth' || moderationStatus === 'ai_error') {
     return '<p class="dashboard-owner-note">AI review failed. Product is waiting for manual review.</p>'
