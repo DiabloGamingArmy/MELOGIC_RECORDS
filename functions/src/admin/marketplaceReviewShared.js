@@ -51,6 +51,44 @@ function sanitizePathList(value = [], max = 24) {
   return Array.isArray(value) ? value.map((item) => cleanString(item, 900)).filter(Boolean).slice(0, max) : []
 }
 
+function sanitizeStringList(value = [], max = 40, stringMax = 220) {
+  return Array.isArray(value)
+    ? value.map((item) => cleanString(item, stringMax)).filter(Boolean).slice(0, max)
+    : []
+}
+
+function sanitizePrimitive(value, depth = 0) {
+  if (value === null || value === undefined) return value === undefined ? null : value
+  if (typeof value?.toDate === 'function') return serializeDate(value)
+  if (typeof value === 'string') return cleanString(value, 1200)
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'boolean') return value
+  if (Array.isArray(value)) {
+    if (depth >= 2) return `[array:${value.length}]`
+    return value.slice(0, 24).map((item) => sanitizePrimitive(item, depth + 1))
+  }
+  if (typeof value === 'object') {
+    if (depth >= 2) return '[object]'
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 40)
+        .map(([key, child]) => [cleanString(key, 120), sanitizePrimitive(child, depth + 1)])
+    )
+  }
+  return cleanString(String(value), 500)
+}
+
+function sanitizeAdditionalProductFields(product = {}, displayed = {}) {
+  const displayedKeys = new Set(Object.keys(displayed))
+  return Object.fromEntries(
+    Object.entries(product)
+      .filter(([key]) => !displayedKeys.has(key))
+      .slice(0, 80)
+      .map(([key, value]) => [cleanString(key, 120), sanitizePrimitive(value)])
+      .filter(([key]) => Boolean(key))
+  )
+}
+
 function sanitizeProductForQueue(id = '', product = {}) {
   const assetSummary = product.assetSummary && typeof product.assetSummary === 'object' && !Array.isArray(product.assetSummary)
     ? product.assetSummary
@@ -59,7 +97,10 @@ function sanitizeProductForQueue(id = '', product = {}) {
     ? product.previewAssignment
     : {}
   const deliverableFiles = Array.isArray(product.deliverableFiles) ? product.deliverableFiles : []
-  return {
+  const counts = product.counts && typeof product.counts === 'object' && !Array.isArray(product.counts)
+    ? product.counts
+    : {}
+  const sanitized = {
     id,
     slug: cleanString(product.slug || '', 180),
     title: cleanString(product.title || 'Untitled product', 180),
@@ -91,6 +132,9 @@ function sanitizeProductForQueue(id = '', product = {}) {
     reviewRequestedBy: cleanString(product.reviewRequestedBy || '', 180),
     reviewedAt: serializeDate(product.reviewedAt),
     reviewedBy: cleanString(product.reviewedBy || '', 180),
+    publishedAt: serializeDate(product.publishedAt),
+    releasedAt: serializeDate(product.releasedAt),
+    priorDecision: cleanString(product.priorDecision || product.reviewDecision || '', 80),
     reviewDecision: cleanString(product.reviewDecision || '', 80),
     reviewReason: cleanString(product.reviewReason || '', 1200),
     reviewNotes: cleanString(product.reviewNotes || '', 2400),
@@ -103,6 +147,7 @@ function sanitizeProductForQueue(id = '', product = {}) {
     downloadPath: cleanString(product.downloadPath || '', 900),
     primaryDownloadPath: cleanString(product.primaryDownloadPath || product.downloadPath || '', 900),
     primaryDownloadBytes: Math.max(0, Math.round(Number(product.primaryDownloadBytes || 0))),
+    licensePath: cleanString(product.licensePath || '', 900),
     galleryPaths: sanitizePathList(product.galleryPaths, 24),
     previewAudioPaths: sanitizePathList(product.previewAudioPaths, 12),
     previewVideoPaths: sanitizePathList(product.previewVideoPaths, 8),
@@ -114,7 +159,11 @@ function sanitizeProductForQueue(id = '', product = {}) {
       hoverVideoURL: cleanString(previewAssignment.hoverVideoURL || '', 900),
       demoReelPath: cleanString(previewAssignment.demoReelPath || '', 900),
       demoReelType: cleanString(previewAssignment.demoReelType || '', 80),
-      detailHeroPreviewPath: cleanString(previewAssignment.detailHeroPreviewPath || '', 900)
+      detailHeroPreviewPath: cleanString(previewAssignment.detailHeroPreviewPath || '', 900),
+      detailHeroPreviewType: cleanString(previewAssignment.detailHeroPreviewType || '', 80),
+      hoverDelayMs: Math.max(0, Math.round(Number(previewAssignment.hoverDelayMs || 0))),
+      hoverEnabled: previewAssignment.hoverEnabled !== false,
+      updatedAt: serializeDate(previewAssignment.updatedAt)
     },
     assetSummary: {
       downloadableCount: Math.max(0, Math.round(Number(assetSummary.downloadableCount || 0))),
@@ -126,14 +175,36 @@ function sanitizeProductForQueue(id = '', product = {}) {
       id: cleanString(file?.id || '', 180),
       name: cleanString(file?.name || file?.displayPath || '', 220),
       displayPath: cleanString(file?.displayPath || file?.name || '', 320),
-      storagePath: cleanString(file?.storagePath || '', 900),
+      storagePath: cleanString(file?.storagePath || file?.path || '', 900),
+      path: cleanString(file?.path || file?.storagePath || '', 900),
+      role: cleanString(file?.role || '', 120),
+      category: cleanString(file?.category || '', 120),
+      type: cleanString(file?.type || file?.contentType || '', 120),
+      extension: cleanString(file?.extension || '', 40),
       sizeBytes: Math.max(0, Math.round(Number(file?.sizeBytes || 0))),
       contentType: cleanString(file?.contentType || '', 120),
-      downloadable: file?.downloadable !== false,
-      previewable: file?.previewable === true
-    })).filter((file) => file.storagePath).slice(0, 50),
+      isDeliverable: file?.isDeliverable !== false,
+      isDownloadable: file?.isDownloadable ?? file?.downloadable ?? true,
+      canPreview: file?.canPreview ?? file?.previewable ?? false,
+      downloadable: file?.downloadable ?? file?.isDownloadable ?? true,
+      previewable: file?.previewable ?? file?.canPreview ?? false
+    })).filter((file) => file.storagePath || file.path).slice(0, 50),
     shortDescription: cleanString(product.shortDescription || '', 500),
     description: cleanString(product.description || '', 2200),
+    includedFiles: cleanString(product.includedFiles || '', 1200),
+    compatibilityNotes: cleanString(product.compatibilityNotes || '', 1200),
+    formatNotes: cleanString(product.formatNotes || '', 1200),
+    categories: sanitizeStringList(product.categories, 30),
+    categoryKeys: sanitizeStringList(product.categoryKeys, 30),
+    genres: sanitizeStringList(product.genres, 30),
+    genreKeys: sanitizeStringList(product.genreKeys, 30),
+    tags: sanitizeStringList(product.tags, 40),
+    tagKeys: sanitizeStringList(product.tagKeys, 40),
+    searchKeywords: sanitizeStringList(product.searchKeywords, 60),
+    dawCompatibility: sanitizeStringList(product.dawCompatibility, 30),
+    formatKeys: sanitizeStringList(product.formatKeys, 30),
+    distributionMode: cleanString(product.distributionMode || '', 120),
+    previewMode: cleanString(product.previewMode || '', 120),
     sellerAgreementAccepted: Boolean(product.sellerAgreementAccepted || product.sellerAgreement?.accepted),
     sellerAgreementVersion: cleanString(product.sellerAgreementVersion || product.sellerAgreement?.version || '', 80),
     sellerAgreement: {
@@ -149,8 +220,34 @@ function sanitizeProductForQueue(id = '', product = {}) {
     moderationAIFailedAt: serializeDate(product.moderationAIFailedAt),
     moderationAIError: cleanString(product.moderationAIError || '', 1200),
     moderationAIErrorCode: cleanString(product.moderationAIErrorCode || '', 120),
-    moderationAIErrorCategory: cleanString(product.moderationAIErrorCategory || '', 120)
+    moderationAIErrorCategory: cleanString(product.moderationAIErrorCategory || '', 120),
+    contributorIds: sanitizeStringList(product.contributorIds, 50, 180),
+    contributorNames: sanitizeStringList(product.contributorNames, 50, 180),
+    contributorCount: Math.max(0, Math.round(Number(product.contributorCount || 0))),
+    pendingContributorIds: sanitizeStringList(product.pendingContributorIds, 50, 180),
+    contributorRequestCount: Math.max(0, Math.round(Number(product.contributorRequestCount || 0))),
+    likeCount: Math.max(0, Math.round(Number(product.likeCount || counts.likes || 0))),
+    dislikeCount: Math.max(0, Math.round(Number(product.dislikeCount || counts.dislikes || 0))),
+    saveCount: Math.max(0, Math.round(Number(product.saveCount || counts.saves || 0))),
+    shareCount: Math.max(0, Math.round(Number(product.shareCount || counts.shares || 0))),
+    commentCount: Math.max(0, Math.round(Number(product.commentCount || counts.comments || 0))),
+    downloadCount: Math.max(0, Math.round(Number(product.downloadCount || counts.downloads || 0))),
+    followCount: Math.max(0, Math.round(Number(product.followCount || counts.follows || 0))),
+    salesCount: Math.max(0, Math.round(Number(product.salesCount || 0))),
+    revenue: Math.max(0, Math.round(Number(product.revenue || 0))),
+    entitlementCount: Math.max(0, Math.round(Number(product.entitlementCount || 0))),
+    counts: {
+      likes: Math.max(0, Math.round(Number(counts.likes || product.likeCount || 0))),
+      dislikes: Math.max(0, Math.round(Number(counts.dislikes || product.dislikeCount || 0))),
+      saves: Math.max(0, Math.round(Number(counts.saves || product.saveCount || 0))),
+      shares: Math.max(0, Math.round(Number(counts.shares || product.shareCount || 0))),
+      comments: Math.max(0, Math.round(Number(counts.comments || product.commentCount || 0))),
+      downloads: Math.max(0, Math.round(Number(counts.downloads || product.downloadCount || 0))),
+      follows: Math.max(0, Math.round(Number(counts.follows || product.followCount || 0)))
+    }
   }
+  sanitized.additionalProductFields = sanitizeAdditionalProductFields(product, sanitized)
+  return sanitized
 }
 
 function buildDecisionUpdate(decision = '', { uid = '', reason = '', notes = '', existing = {} } = {}) {

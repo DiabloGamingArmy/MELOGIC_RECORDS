@@ -4,10 +4,12 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { listMarketplaceReviewQueue, reviewProductDecision, setAdminUserRole } from './data/productService'
 import { waitForInitialAuthState } from './firebase/auth'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 import { ROUTES, adminReviewRoute, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
+const ADMIN_THEME_KEY = 'melogic-admin-theme'
 
 const SECTIONS = [
   { key: 'dashboard', route: ROUTES.admin, label: 'Overview', icon: 'barChart', permission: 'admin' },
@@ -36,6 +38,25 @@ const DECISION_LABELS = {
   keep_pending: 'Keep Pending'
 }
 
+const DISPLAYED_PRODUCT_KEYS = new Set([
+  'id', 'slug', 'title', 'artistId', 'artistName', 'artistDisplayName', 'artistUsername', 'artistProfilePath',
+  'status', 'visibility', 'productType', 'productKind', 'version', 'usageLicense', 'createdAt', 'updatedAt',
+  'reviewRequestedAt', 'reviewRequestedBy', 'reviewedAt', 'reviewedBy', 'publishedAt', 'releasedAt',
+  'shortDescription', 'description', 'includedFiles', 'compatibilityNotes', 'formatNotes', 'categories',
+  'categoryKeys', 'genres', 'genreKeys', 'tags', 'tagKeys', 'searchKeywords', 'dawCompatibility',
+  'formatKeys', 'coverPath', 'thumbnailPath', 'coverURL', 'thumbnailURL', 'galleryPaths', 'previewAudioPaths',
+  'previewVideoPaths', 'previewAssignment', 'downloadPath', 'primaryDownloadPath', 'primaryDownloadBytes',
+  'licensePath', 'assetSummary', 'deliverableFiles', 'priceCents', 'payoutTargetCents', 'currency', 'isFree',
+  'sellerAgreementAccepted', 'sellerAgreementVersion', 'sellerAgreement', 'moderationAIAttempted',
+  'moderationAISucceeded', 'moderationAIConfigured', 'moderationAIEnabled', 'moderationAIModel',
+  'moderationStatus', 'moderationRiskLevel', 'moderationSummary', 'moderationReasons', 'moderationAIError',
+  'moderationAIErrorCode', 'moderationAIErrorCategory', 'moderationAICompletedAt', 'moderationAIFailedAt',
+  'reviewJobStatus', 'contributorIds', 'contributorNames', 'contributorCount', 'pendingContributorIds',
+  'contributorRequestCount', 'likeCount', 'dislikeCount', 'saveCount', 'shareCount', 'commentCount',
+  'downloadCount', 'followCount', 'salesCount', 'revenue', 'entitlementCount', 'counts', 'reviewDecision',
+  'priorDecision', 'reviewReason', 'reviewNotes', 'additionalProductFields', 'distributionMode', 'previewMode'
+])
+
 const state = {
   currentUser: null,
   claims: {},
@@ -50,6 +71,9 @@ const state = {
   sort: 'newest',
   message: '',
   error: '',
+  theme: 'light',
+  mediaByProductId: {},
+  mediaRequests: {},
   dialog: {
     open: false,
     decision: '',
@@ -58,13 +82,35 @@ const state = {
 }
 
 function escapeHtml(value) {
-  return String(value || '')
+  return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;')
 }
+
+function readAdminTheme() {
+  try {
+    const value = window.localStorage?.getItem(ADMIN_THEME_KEY)
+    return value === 'dark' ? 'dark' : 'light'
+  } catch {
+    return 'light'
+  }
+}
+
+function applyAdminTheme(theme = 'light') {
+  const nextTheme = theme === 'dark' ? 'dark' : 'light'
+  state.theme = nextTheme
+  document.documentElement.dataset.adminTheme = nextTheme
+  try {
+    window.localStorage?.setItem(ADMIN_THEME_KEY, nextTheme)
+  } catch {
+    // localStorage can be unavailable in private contexts; the attribute still applies for this session.
+  }
+}
+
+applyAdminTheme(readAdminTheme())
 
 function formatDate(value) {
   const date = new Date(value || 0)
@@ -148,14 +194,131 @@ function filteredProducts() {
   })
 }
 
+function isDirectUrl(value = '') {
+  const text = String(value || '').trim()
+  return /^https?:\/\//i.test(text) || text.startsWith('data:')
+}
+
+function normalizeList(value) {
+  return Array.isArray(value) ? value.map((item) => String(item || '').trim()).filter(Boolean) : []
+}
+
+function isResolvablePreviewPath(path = '') {
+  const value = String(path || '').trim()
+  if (!value || isDirectUrl(value)) return false
+  if (value.includes('..')) return false
+  if (/\/(downloads|files|licenses)\//i.test(value)) return false
+  return /^products\/[^/]+\/(thumbnails|cover|gallery|audio-previews|video-previews)\//i.test(value)
+}
+
+function mediaForProduct(product = {}) {
+  return state.mediaByProductId[String(product.id || '')] || {}
+}
+
 function safeImageUrl(product = {}) {
+  const media = mediaForProduct(product)
   const candidates = [
+    media.thumbnailUrl,
+    media.coverUrl,
     product.thumbnailURL,
-    product.coverURL,
-    product.thumbnailPath,
-    product.coverPath
+    product.coverURL
   ].map((value) => String(value || '').trim())
   return candidates.find((value) => /^https?:\/\//i.test(value) || value.startsWith('data:image/')) || ''
+}
+
+async function resolveAdminMediaUrl({ url = '', path = '', label = '', warnings = [] } = {}) {
+  const directUrl = String(url || '').trim()
+  if (isDirectUrl(directUrl)) return directUrl
+  const cleanPath = String(path || '').trim()
+  if (!cleanPath) return ''
+  if (isDirectUrl(cleanPath)) return cleanPath
+  if (!isResolvablePreviewPath(cleanPath)) {
+    warnings.push(`${label || 'Media'} path is not a public preview path.`)
+    return ''
+  }
+  const resolved = await getStorageAssetUrl(cleanPath, { warnOnFail: false })
+  if (!resolved) warnings.push(`${label || 'Media'} could not be resolved from Storage.`)
+  return resolved || ''
+}
+
+async function resolveProductMediaForAdmin(product = {}, { detail = false } = {}) {
+  if (!product?.id) return
+  const existing = state.mediaByProductId[product.id] || {}
+  if (existing.detailReady && detail) return
+  if (existing.queueReady && !detail) return
+
+  const warnings = []
+  const coverUrl = await resolveAdminMediaUrl({
+    url: product.coverURL,
+    path: product.coverPath,
+    label: 'Cover',
+    warnings
+  })
+  const thumbnailUrl = await resolveAdminMediaUrl({
+    url: product.thumbnailURL,
+    path: product.thumbnailPath || product.coverPath,
+    label: 'Thumbnail',
+    warnings
+  }) || coverUrl
+
+  const next = {
+    ...existing,
+    coverUrl,
+    thumbnailUrl,
+    queueReady: true,
+    warnings
+  }
+
+  if (detail) {
+    const previewAssignment = product.previewAssignment || {}
+    const galleryPaths = normalizeList(product.galleryPaths)
+    const audioPaths = [
+      ...normalizeList(product.previewAudioPaths),
+      previewAssignment.hoverAudioPath
+    ].filter(Boolean)
+    const videoPaths = [
+      ...normalizeList(product.previewVideoPaths),
+      previewAssignment.hoverVideoPath,
+      previewAssignment.demoReelPath,
+      previewAssignment.detailHeroPreviewPath
+    ].filter(Boolean)
+    const galleryUrls = await Promise.all(galleryPaths.map((path, index) => resolveAdminMediaUrl({ path, label: `Gallery ${index + 1}`, warnings })))
+    const audioUrls = await Promise.all(audioPaths.map((path, index) => resolveAdminMediaUrl({ path, label: `Audio preview ${index + 1}`, warnings })))
+    const videoUrls = await Promise.all(videoPaths.map((path, index) => resolveAdminMediaUrl({ path, label: `Video preview ${index + 1}`, warnings })))
+    next.gallery = galleryPaths.map((path, index) => ({ path, url: galleryUrls[index] || '' }))
+    next.audio = audioPaths.map((path, index) => ({ path, url: audioUrls[index] || '' }))
+    next.video = videoPaths.map((path, index) => ({ path, url: videoUrls[index] || '' }))
+    next.detailReady = true
+  }
+
+  state.mediaByProductId = {
+    ...state.mediaByProductId,
+    [product.id]: next
+  }
+}
+
+async function hydrateReviewMedia(products = [], { detailProductId = '' } = {}) {
+  await Promise.all(products.map((product) => resolveProductMediaForAdmin(product)))
+  const detailProduct = detailProductId ? products.find((product) => product.id === detailProductId) : null
+  if (detailProduct) await resolveProductMediaForAdmin(detailProduct, { detail: true })
+}
+
+function ensureDetailMedia(productId = '') {
+  const product = productForId(productId)
+  if (!product?.id) return
+  const media = mediaForProduct(product)
+  if (media.detailReady || state.mediaRequests[product.id]) return
+  state.mediaRequests = { ...state.mediaRequests, [product.id]: true }
+  resolveProductMediaForAdmin(product, { detail: true })
+    .catch((error) => {
+      console.warn('[admin] media resolution failed', { productId: product.id, message: error?.message || error })
+    })
+    .finally(() => {
+      const requests = { ...state.mediaRequests }
+      delete requests[product.id]
+      state.mediaRequests = requests
+      render()
+    })
 }
 
 function compactText(value = '', max = 150) {
@@ -233,11 +396,23 @@ function statusMessage() {
   `
 }
 
+function themeToggleButton() {
+  const isDark = state.theme === 'dark'
+  return `
+    <div class="admin-top-toolbar">
+      <button type="button" class="admin-theme-toggle" data-admin-theme-toggle aria-label="${isDark ? 'Switch to light mode' : 'Switch to dark mode'}" title="${isDark ? 'Switch to light mode' : 'Switch to dark mode'}">
+        ${iconSvg(isDark ? 'sun' : 'moon')}
+      </button>
+    </div>
+  `
+}
+
 function renderLayout(content) {
   renderShell()
   app.querySelector('[data-admin-root]').innerHTML = `
     ${sidebar()}
     <section class="admin-main ${reviewDetailProductId() ? 'admin-main-detail' : ''}">
+      ${themeToggleButton()}
       ${statusMessage()}
       ${content}
     </section>
@@ -341,66 +516,218 @@ function productCard(product) {
   `
 }
 
-function valueMarkup(value) {
+function valueMarkup(value, { preserveLines = false } = {}) {
   if (value === true) return '<span class="admin-value-true">true</span>'
   if (value === false) return '<span class="admin-value-false">false</span>'
   if (value === null || value === undefined || value === '') return '<span class="admin-muted">Not set</span>'
-  return escapeHtml(value)
+  if (Array.isArray(value)) return value.length ? escapeHtml(value.join(', ')) : '<span class="admin-muted">None</span>'
+  if (typeof value === 'object') return `<code class="admin-code-value">${escapeHtml(JSON.stringify(value))}</code>`
+  const escaped = escapeHtml(value)
+  return preserveLines ? escaped.replace(/\n/g, '<br>') : escaped
 }
 
-function detailList(rows = []) {
+function renderField(label, value, options = {}) {
   return `
-    <dl class="admin-detail-list">
-      ${rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${valueMarkup(value)}</dd></div>`).join('')}
-    </dl>
+    <div class="admin-field ${options.wide ? 'is-wide' : ''}">
+      <dt>${escapeHtml(label)}</dt>
+      <dd class="admin-field-value ${options.code ? 'is-code' : ''}">${valueMarkup(value, options)}</dd>
+    </div>
   `
 }
 
-function codeList(items = [], empty = 'No paths recorded.') {
-  const values = items.map((item) => String(item || '').trim()).filter(Boolean)
-  if (!values.length) return `<p class="admin-muted">${escapeHtml(empty)}</p>`
-  return `<div class="review-path-list">${values.map((item) => `<code>${escapeHtml(item)}</code>`).join('')}</div>`
+function renderBooleanField(label, value) {
+  return renderField(label, Boolean(value))
 }
 
-function assetSummaryList(product = {}) {
+function renderDateField(label, value) {
+  return renderField(label, value ? formatDate(value) : '')
+}
+
+function renderMoneyField(label, cents = 0, currency = 'USD') {
+  return renderField(label, formatMoney(cents, currency))
+}
+
+function renderBadge(value, tone = '') {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return `<span class="review-badge ${tone ? `is-${escapeHtml(tone)}` : ''}">${escapeHtml(text)}</span>`
+}
+
+function renderBadgeList(items = [], empty = 'None') {
+  const values = normalizeList(items)
+  if (!values.length) return `<p class="admin-muted">${escapeHtml(empty)}</p>`
+  return `<div class="admin-badge-list">${values.map((item) => renderBadge(item)).join('')}</div>`
+}
+
+function renderKeyValueGrid(fields = [], options = {}) {
+  const rows = fields.filter(Boolean)
+  if (!rows.length) return `<p class="admin-muted">${escapeHtml(options.empty || 'No values recorded.')}</p>`
+  return `<dl class="admin-field-grid ${options.compact ? 'is-compact' : ''}">${rows.join('')}</dl>`
+}
+
+function stripUnsafeHtml(value = '') {
+  return String(value || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function renderTextBlock(title, value = '', empty = 'Not set') {
+  const text = stripUnsafeHtml(value)
+  return `
+    <div class="admin-text-block">
+      <h3>${escapeHtml(title)}</h3>
+      <p>${text ? escapeHtml(text) : `<span class="admin-muted">${escapeHtml(empty)}</span>`}</p>
+    </div>
+  `
+}
+
+function renderPathField(label, value) {
+  const text = String(value || '').trim()
+  if (!text) return ''
+  return `
+    <div class="admin-path-row">
+      <span>${escapeHtml(label)}</span>
+      <code class="admin-code-value">${escapeHtml(text)}</code>
+      <button type="button" class="admin-copy-button" data-copy-value="${escapeHtml(text)}">Copy</button>
+    </div>
+  `
+}
+
+function renderPathList(label, values = [], empty = '') {
+  const paths = normalizeList(values)
+  if (!paths.length) {
+    return empty ? `<p class="admin-muted">${escapeHtml(empty)}</p>` : ''
+  }
+  return `
+    <div class="admin-path-group">
+      <h4>${escapeHtml(label)}</h4>
+      ${paths.map((path, index) => renderPathField(`${label} ${paths.length > 1 ? index + 1 : ''}`.trim(), path)).join('')}
+    </div>
+  `
+}
+
+function assetSummaryGrid(product = {}) {
   const summary = product.assetSummary || {}
-  return detailList([
-    ['Total files', Number(summary.totalFiles || 0)],
-    ['Downloadable', Number(summary.downloadableCount || 0)],
-    ['Previewable', Number(summary.previewableCount || 0)],
-    ['Total bytes', formatBytes(summary.totalBytes || 0)]
-  ])
+  return renderKeyValueGrid([
+    renderField('Total files', Number(summary.totalFiles || 0)),
+    renderField('Downloadable', Number(summary.downloadableCount || 0)),
+    renderField('Previewable', Number(summary.previewableCount || 0)),
+    renderField('Total bytes', formatBytes(summary.totalBytes || 0))
+  ], { compact: true })
+}
+
+function mediaDiagnostics(product = {}) {
+  const media = mediaForProduct(product)
+  const warnings = [
+    ...(media.warnings || []),
+    ((product.coverPath || product.thumbnailPath) && !safeImageUrl(product)) ? 'Cover or thumbnail path exists, but no preview URL is currently available.' : ''
+  ].filter(Boolean)
+  if (!warnings.length) return ''
+  return `
+    <details class="admin-technical-details">
+      <summary>Media diagnostics</summary>
+      <ul class="admin-diagnostic-list">${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>
+    </details>
+  `
 }
 
 function mediaPanel(product = {}) {
+  const media = mediaForProduct(product)
   const imageUrl = safeImageUrl(product)
-  const gallery = product.galleryPaths || []
-  const audio = [
-    ...(product.previewAudioPaths || []),
-    product.previewAssignment?.hoverAudioPath
-  ].filter(Boolean)
-  const video = [
-    ...(product.previewVideoPaths || []),
-    product.previewAssignment?.hoverVideoPath,
-    product.previewAssignment?.demoReelPath,
-    product.previewAssignment?.detailHeroPreviewPath
-  ].filter(Boolean)
+  const hasImagePath = Boolean(product.coverPath || product.thumbnailPath)
+  const gallery = media.gallery || []
+  const audio = media.audio || []
+  const video = media.video || []
   return `
     <section class="admin-audit-panel admin-media-panel">
-      <h2>Media</h2>
+      <div class="admin-panel-heading">
+        <h2>Media Preview</h2>
+        ${state.mediaRequests[product.id] ? '<span class="admin-muted">Resolving media...</span>' : ''}
+      </div>
       <div class="admin-media-preview">
         ${imageUrl
           ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(product.title)} cover" loading="lazy" decoding="async" />`
-          : `<div class="admin-media-placeholder">${iconSvg('image')}<span>No cover image</span></div>`}
+          : `<div class="admin-media-placeholder">${iconSvg('image')}<span>${hasImagePath ? (media.queueReady ? 'Cover unavailable' : 'Resolving cover image') : 'No cover image'}</span></div>`}
       </div>
-      <h3>Cover and thumbnail paths</h3>
-      ${codeList([product.thumbnailPath, product.coverPath], 'No cover or thumbnail paths.')}
-      <h3>Gallery image paths</h3>
-      ${codeList(gallery, 'No gallery paths.')}
-      <h3>Preview audio paths</h3>
-      ${codeList(audio, 'No preview audio paths.')}
-      <h3>Preview video paths</h3>
-      ${codeList(video, 'No preview video paths.')}
+      ${media.thumbnailUrl && media.thumbnailUrl !== imageUrl ? `
+        <div class="admin-thumbnail-strip">
+          <img src="${escapeHtml(media.thumbnailUrl)}" alt="${escapeHtml(product.title)} thumbnail" loading="lazy" decoding="async" />
+          <span>Thumbnail</span>
+        </div>
+      ` : ''}
+      <div class="admin-media-subsection">
+        <h3>Gallery</h3>
+        ${gallery.some((item) => item.url)
+          ? `<div class="admin-gallery-grid">${gallery.filter((item) => item.url).map((item, index) => `<img src="${escapeHtml(item.url)}" alt="Gallery preview ${index + 1}" loading="lazy" decoding="async" />`).join('')}</div>`
+          : '<p class="admin-muted">No gallery previews.</p>'}
+      </div>
+      <div class="admin-media-subsection">
+        <h3>Audio previews</h3>
+        ${audio.some((item) => item.url)
+          ? audio.filter((item) => item.url).map((item, index) => `<audio controls preload="none" src="${escapeHtml(item.url)}" aria-label="Audio preview ${index + 1}"></audio>`).join('')
+          : '<p class="admin-muted">No resolvable audio previews.</p>'}
+      </div>
+      <div class="admin-media-subsection">
+        <h3>Video previews</h3>
+        ${video.some((item) => item.url)
+          ? video.filter((item) => item.url).map((item, index) => `<video controls preload="metadata" src="${escapeHtml(item.url)}" aria-label="Video preview ${index + 1}"></video>`).join('')
+          : '<p class="admin-muted">No resolvable video previews.</p>'}
+      </div>
+      ${mediaDiagnostics(product)}
+    </section>
+  `
+}
+
+function identityPanel(product = {}) {
+  return `
+    <section class="admin-audit-panel">
+      <h2>Product Identity</h2>
+      ${renderKeyValueGrid([
+        renderField('Title', product.title),
+        renderField('Slug', product.slug),
+        renderField('Product ID', product.id, { code: true }),
+        renderField('Artist ID', product.artistId, { code: true }),
+        renderField('Artist name', product.artistName),
+        renderField('Artist display name', product.artistDisplayName),
+        renderField('Artist username', product.artistUsername),
+        renderField('Artist profile path', product.artistProfilePath, { code: true }),
+        renderField('Status', product.status),
+        renderField('Visibility', product.visibility),
+        renderField('Product type', product.productType),
+        renderField('Product kind', product.productKind),
+        renderField('Version', product.version),
+        renderField('Usage license', product.usageLicense),
+        renderDateField('Created at', product.createdAt),
+        renderDateField('Updated at', product.updatedAt),
+        renderDateField('Review requested at', product.reviewRequestedAt),
+        renderField('Review requested by', product.reviewRequestedBy, { code: true }),
+        renderDateField('Reviewed at', product.reviewedAt),
+        renderField('Reviewed by', product.reviewedBy, { code: true }),
+        renderDateField('Published at', product.publishedAt),
+        renderDateField('Released at', product.releasedAt)
+      ])}
+    </section>
+  `
+}
+
+function listingContentPanel(product = {}) {
+  return `
+    <section class="admin-audit-panel is-wide">
+      <h2>Listing Content</h2>
+      ${renderTextBlock('Short description', product.shortDescription)}
+      ${renderTextBlock('Full description', product.description)}
+      ${renderTextBlock('Included files', product.includedFiles)}
+      ${renderTextBlock('Compatibility notes', product.compatibilityNotes)}
+      ${renderTextBlock('Format notes', product.formatNotes)}
+      <div class="admin-listing-taxonomy">
+        <div><h3>Categories</h3>${renderBadgeList(product.categories)}</div>
+        <div><h3>Category keys</h3>${renderBadgeList(product.categoryKeys)}</div>
+        <div><h3>Genres</h3>${renderBadgeList(product.genres)}</div>
+        <div><h3>Genre keys</h3>${renderBadgeList(product.genreKeys)}</div>
+        <div><h3>Tags</h3>${renderBadgeList(product.tags)}</div>
+        <div><h3>Tag keys</h3>${renderBadgeList(product.tagKeys)}</div>
+        <div><h3>Search keywords</h3>${renderBadgeList(product.searchKeywords)}</div>
+        <div><h3>DAW compatibility</h3>${renderBadgeList(product.dawCompatibility)}</div>
+        <div><h3>Format keys</h3>${renderBadgeList(product.formatKeys)}</div>
+      </div>
     </section>
   `
 }
@@ -408,47 +735,51 @@ function mediaPanel(product = {}) {
 function filesPanel(product = {}) {
   const files = Array.isArray(product.deliverableFiles) ? product.deliverableFiles : []
   return `
-    <section class="admin-audit-panel">
-      <h2>Files</h2>
-      ${assetSummaryList(product)}
+    <section class="admin-audit-panel is-wide">
+      <h2>Files / File Structure</h2>
+      ${assetSummaryGrid(product)}
       <div class="admin-file-table">
-        ${files.length ? files.map((file) => `
-          <article class="admin-file-row">
-            <strong>${escapeHtml(file.displayPath || file.name || 'File')}</strong>
-            <span>${escapeHtml(formatBytes(file.sizeBytes || 0))}</span>
-            <span>${escapeHtml(file.contentType || 'Unknown type')}</span>
-            <span>${file.downloadable ? 'Downloadable' : 'Not downloadable'} · ${file.previewable ? 'Previewable' : 'Not previewable'}</span>
-            <code>${escapeHtml(file.storagePath || '')}</code>
-          </article>
-        `).join('') : '<p class="admin-muted">No deliverable file rows. Check asset summary and manifest.</p>'}
+        ${files.length ? files.map((file) => {
+          const storagePath = file.storagePath || file.path || ''
+          return `
+            <article class="admin-file-row">
+              <div class="admin-file-main">
+                <strong>${escapeHtml(file.displayPath || file.name || 'File')}</strong>
+                <span>${escapeHtml(file.name || file.displayPath || 'Unnamed file')}</span>
+              </div>
+              <div class="admin-file-meta">
+                ${renderBadge(file.role || 'file')}
+                ${renderBadge(file.category || 'deliverable')}
+                ${renderBadge(file.extension || 'no extension')}
+                ${renderBadge(file.contentType || file.type || 'Unknown type')}
+              </div>
+              <dl class="admin-file-facts">
+                ${renderField('Size', formatBytes(file.sizeBytes || 0))}
+                ${renderBooleanField('Deliverable', file.isDeliverable !== false)}
+                ${renderBooleanField('Downloadable', file.isDownloadable ?? file.downloadable)}
+                ${renderBooleanField('Previewable', file.canPreview ?? file.previewable)}
+              </dl>
+              ${storagePath ? `
+                <details class="admin-technical-details">
+                  <summary>Storage path</summary>
+                  ${renderPathField('storagePath', storagePath)}
+                </details>
+              ` : ''}
+            </article>
+          `
+        }).join('') : '<p class="admin-muted">No deliverable file rows. Check asset summary and manifest.</p>'}
       </div>
-    </section>
-  `
-}
-
-function moderationPanel(product = {}) {
-  return `
-    <section class="admin-audit-panel">
-      <h2>AI Moderation</h2>
-      ${detailList([
-        ['Attempted', Boolean(product.moderationAIAttempted)],
-        ['Succeeded', Boolean(product.moderationAISucceeded)],
-        ['Configured', Boolean(product.moderationAIConfigured)],
-        ['Enabled', Boolean(product.moderationAIEnabled)],
-        ['Model', product.moderationAIModel],
-        ['Moderation status', product.moderationStatus],
-        ['Risk level', product.moderationRiskLevel],
-        ['Review job status', product.reviewJobStatus],
-        ['Completed at', product.moderationAICompletedAt],
-        ['Failed at', product.moderationAIFailedAt],
-        ['Error code', product.moderationAIErrorCode],
-        ['Error category', product.moderationAIErrorCategory],
-        ['Error', product.moderationAIError]
-      ])}
-      <h3>Summary</h3>
-      <p>${escapeHtml(product.moderationSummary || 'No moderation summary recorded.')}</p>
-      <h3>Reasons</h3>
-      <div class="review-reason-list">${(product.moderationReasons || []).map((reason) => `<span>${escapeHtml(reason)}</span>`).join('') || '<span>No reasons</span>'}</div>
+      <details class="admin-technical-details">
+        <summary>Primary download technical fields</summary>
+        ${renderKeyValueGrid([
+          renderField('Primary download bytes', formatBytes(product.primaryDownloadBytes || 0)),
+          renderField('Distribution mode', product.distributionMode),
+          renderField('Preview mode', product.previewMode)
+        ], { compact: true })}
+        ${renderPathField('primaryDownloadPath', product.primaryDownloadPath)}
+        ${renderPathField('downloadPath', product.downloadPath)}
+        ${renderPathField('licensePath', product.licensePath)}
+      </details>
     </section>
   `
 }
@@ -458,60 +789,51 @@ function sellerPanel(product = {}) {
   return `
     <section class="admin-audit-panel">
       <h2>Pricing and Seller Agreement</h2>
-      ${detailList([
-        ['Price', formatMoney(product.priceCents, product.currency)],
-        ['priceCents', Number(product.priceCents || 0)],
-        ['payoutTargetCents', Number(product.payoutTargetCents || 0)],
-        ['Currency', product.currency],
-        ['Free', Boolean(product.isFree)],
-        ['Agreement accepted', Boolean(product.sellerAgreementAccepted || agreement.accepted)],
-        ['Agreement version', product.sellerAgreementVersion || agreement.version],
-        ['Agreement id', agreement.agreementId],
-        ['Accepted at', agreement.acceptedAt]
+      ${renderKeyValueGrid([
+        renderMoneyField('Price', product.priceCents, product.currency),
+        renderField('priceCents', Number(product.priceCents || 0)),
+        renderMoneyField('Payout target', product.payoutTargetCents, product.currency),
+        renderField('payoutTargetCents', Number(product.payoutTargetCents || 0)),
+        renderField('Currency', product.currency),
+        renderBooleanField('Free', product.isFree),
+        renderBooleanField('Seller agreement accepted', product.sellerAgreementAccepted || agreement.accepted),
+        renderField('Seller agreement version', product.sellerAgreementVersion),
+        renderBooleanField('sellerAgreement.accepted', agreement.accepted),
+        renderDateField('sellerAgreement.acceptedAt', agreement.acceptedAt),
+        renderField('sellerAgreement.agreementId', agreement.agreementId),
+        renderField('sellerAgreement.version', agreement.version)
       ])}
     </section>
   `
 }
 
-function identityPanel(product = {}) {
+function moderationPanel(product = {}) {
   return `
-    <section class="admin-audit-panel">
-      <h2>Product Identity</h2>
-      ${detailList([
-        ['Title', product.title],
-        ['Slug', product.slug],
-        ['Product ID', product.id],
-        ['Artist ID', product.artistId],
-        ['Artist name', product.artistName || product.artistDisplayName],
-        ['Artist username', product.artistUsername],
-        ['Artist profile path', product.artistProfilePath],
-        ['Status', product.status],
-        ['Visibility', product.visibility],
-        ['Product type', product.productType],
-        ['Product kind', product.productKind],
-        ['Usage license', product.usageLicense],
-        ['Version', product.version],
-        ['Created at', product.createdAt],
-        ['Updated at', product.updatedAt],
-        ['Review requested at', product.reviewRequestedAt],
-        ['Review requested by', product.reviewRequestedBy]
+    <section class="admin-audit-panel is-wide">
+      <h2>AI Moderation</h2>
+      ${renderKeyValueGrid([
+        renderBooleanField('AI attempted', product.moderationAIAttempted),
+        renderBooleanField('AI succeeded', product.moderationAISucceeded),
+        renderBooleanField('AI configured', product.moderationAIConfigured),
+        renderBooleanField('AI enabled', product.moderationAIEnabled),
+        renderField('AI model', product.moderationAIModel),
+        renderField('Moderation status', product.moderationStatus),
+        renderField('Risk level', product.moderationRiskLevel),
+        renderField('Review job status', product.reviewJobStatus),
+        renderDateField('AI completed at', product.moderationAICompletedAt),
+        renderDateField('AI failed at', product.moderationAIFailedAt),
+        renderField('AI error code', product.moderationAIErrorCode),
+        renderField('AI error category', product.moderationAIErrorCategory),
+        renderField('AI error', product.moderationAIError, { wide: true })
       ])}
-    </section>
-  `
-}
-
-function adminHistoryPanel(product = {}) {
-  return `
-    <section class="admin-audit-panel">
-      <h2>Admin History</h2>
-      ${detailList([
-        ['Prior decision', product.reviewDecision],
-        ['Reviewed at', product.reviewedAt],
-        ['Reviewed by', product.reviewedBy],
-        ['Review reason', product.reviewReason],
-        ['Review notes', product.reviewNotes]
-      ])}
-      <p class="admin-muted">Full audit log browsing is reserved for the Logs section. New decisions write adminLogs and productModeration events.</p>
+      <div class="admin-summary-block">
+        <h3>Moderation summary</h3>
+        <p>${escapeHtml(product.moderationSummary || 'No moderation summary recorded.')}</p>
+      </div>
+      <div>
+        <h3>Moderation reasons</h3>
+        ${renderBadgeList(product.moderationReasons, 'No reasons')}
+      </div>
     </section>
   `
 }
@@ -520,16 +842,151 @@ function creatorContextPanel(product = {}) {
   return `
     <section class="admin-audit-panel">
       <h2>Creator Context</h2>
-      ${detailList([
-        ['Artist ID', product.artistId],
-        ['Artist name', product.artistName || product.artistDisplayName],
-        ['Username', product.artistUsername],
-        ['Profile path', product.artistProfilePath]
+      ${renderKeyValueGrid([
+        renderField('Artist ID', product.artistId, { code: true }),
+        renderField('Artist name', product.artistName),
+        renderField('Display name', product.artistDisplayName),
+        renderField('Username', product.artistUsername),
+        renderField('Profile path', product.artistProfilePath, { code: true }),
+        renderField('Contributor count', Number(product.contributorCount || 0)),
+        renderField('Contributor requests', Number(product.contributorRequestCount || 0))
       ])}
+      <div>
+        <h3>Contributor IDs</h3>
+        ${renderBadgeList(product.contributorIds)}
+      </div>
+      <div>
+        <h3>Contributor names</h3>
+        ${renderBadgeList(product.contributorNames)}
+      </div>
+      <div>
+        <h3>Pending contributor IDs</h3>
+        ${renderBadgeList(product.pendingContributorIds)}
+      </div>
       <div class="admin-detail-actions">
         ${product.artistId ? `<a class="admin-secondary-link" href="${publicProfileRoute({ uid: product.artistId, preview: true })}" target="_blank" rel="noreferrer">${iconSvg('eye')}<span>View Creator Profile</span></a>` : ''}
         <a class="admin-secondary-link" href="${ROUTES.adminUsers}">${iconSvg('messageCircle')}<span>Creator History Tools</span></a>
       </div>
+    </section>
+  `
+}
+
+function metricsPanel(product = {}) {
+  const counts = product.counts || {}
+  return `
+    <section class="admin-audit-panel">
+      <h2>Marketplace Metrics</h2>
+      ${renderKeyValueGrid([
+        renderField('Likes', Number(product.likeCount || 0)),
+        renderField('Dislikes', Number(product.dislikeCount || 0)),
+        renderField('Saves', Number(product.saveCount || 0)),
+        renderField('Shares', Number(product.shareCount || 0)),
+        renderField('Comments', Number(product.commentCount || 0)),
+        renderField('Downloads', Number(product.downloadCount || 0)),
+        renderField('Follows', Number(product.followCount || 0)),
+        renderField('Sales', Number(product.salesCount || 0)),
+        renderMoneyField('Revenue', product.revenue || 0, product.currency),
+        renderField('Entitlements', Number(product.entitlementCount || 0))
+      ], { compact: true })}
+      <details class="admin-technical-details">
+        <summary>Counts map</summary>
+        ${renderKeyValueGrid(Object.entries(counts).map(([key, value]) => renderField(key, Number(value || 0))), { compact: true })}
+      </details>
+    </section>
+  `
+}
+
+function adminHistoryPanel(product = {}) {
+  return `
+    <section class="admin-audit-panel">
+      <h2>Admin History</h2>
+      ${renderKeyValueGrid([
+        renderField('Prior decision', product.priorDecision || product.reviewDecision),
+        renderDateField('Reviewed at', product.reviewedAt),
+        renderField('Reviewed by', product.reviewedBy, { code: true }),
+        renderField('Review reason', product.reviewReason, { wide: true }),
+        renderField('Review notes', product.reviewNotes, { wide: true })
+      ])}
+      <p class="admin-muted">Full audit log browsing is reserved for the Logs section. New decisions write adminLogs and productModeration events.</p>
+    </section>
+  `
+}
+
+function technicalDataPanel(product = {}) {
+  const assignment = product.previewAssignment || {}
+  return `
+    <section class="admin-audit-panel is-wide">
+      <h2>Technical Data</h2>
+      <details class="admin-technical-details">
+        <summary>Technical media paths</summary>
+        ${renderPathField('coverPath', product.coverPath)}
+        ${renderPathField('thumbnailPath', product.thumbnailPath)}
+        ${renderPathList('galleryPaths', product.galleryPaths)}
+        ${renderPathList('previewAudioPaths', product.previewAudioPaths)}
+        ${renderPathList('previewVideoPaths', product.previewVideoPaths)}
+        ${renderPathField('previewAssignment.hoverAudioPath', assignment.hoverAudioPath)}
+        ${renderPathField('previewAssignment.hoverVideoPath', assignment.hoverVideoPath)}
+        ${renderPathField('previewAssignment.demoReelPath', assignment.demoReelPath)}
+        ${renderPathField('previewAssignment.detailHeroPreviewPath', assignment.detailHeroPreviewPath)}
+        ${renderPathField('downloadPath', product.downloadPath)}
+        ${renderPathField('primaryDownloadPath', product.primaryDownloadPath)}
+        ${renderPathField('licensePath', product.licensePath)}
+      </details>
+      <details class="admin-technical-details">
+        <summary>Raw IDs</summary>
+        ${renderPathField('productId', product.id)}
+        ${renderPathField('artistId', product.artistId)}
+        ${renderPathField('reviewRequestedBy', product.reviewRequestedBy)}
+        ${renderPathField('reviewedBy', product.reviewedBy)}
+      </details>
+      <details class="admin-technical-details">
+        <summary>View Raw Product JSON</summary>
+        <pre class="admin-json-block">${escapeHtml(JSON.stringify(product, null, 2))}</pre>
+      </details>
+    </section>
+  `
+}
+
+function valueType(value) {
+  if (Array.isArray(value)) return 'array'
+  if (value === null) return 'null'
+  return typeof value
+}
+
+function valueSummary(value) {
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? '' : 's'}`
+  if (value && typeof value === 'object') return `${Object.keys(value).length} field${Object.keys(value).length === 1 ? '' : 's'}`
+  return compactText(String(value ?? ''), 180) || 'Not set'
+}
+
+function additionalProductFieldsPanel(product = {}) {
+  const backendExtras = product.additionalProductFields && typeof product.additionalProductFields === 'object'
+    ? Object.entries(product.additionalProductFields)
+    : []
+  const localExtras = Object.entries(product).filter(([key]) => !DISPLAYED_PRODUCT_KEYS.has(key))
+  const merged = new Map()
+  backendExtras.forEach(([key, value]) => merged.set(key, value))
+  localExtras.forEach(([key, value]) => merged.set(key, value))
+  const entries = Array.from(merged.entries()).filter(([key]) => key && key !== 'additionalProductFields')
+  return `
+    <section class="admin-audit-panel is-wide">
+      <h2>Additional Product Fields</h2>
+      ${entries.length ? `
+        <details class="admin-technical-details">
+          <summary>${entries.length} additional field${entries.length === 1 ? '' : 's'}</summary>
+          <div class="admin-extra-field-list">
+            ${entries.map(([key, value]) => `
+              <article>
+                <div>
+                  <strong>${escapeHtml(key)}</strong>
+                  <span>${escapeHtml(valueType(value))} · ${escapeHtml(valueSummary(value))}</span>
+                </div>
+                <pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>
+              </article>
+            `).join('')}
+          </div>
+        </details>
+      ` : '<p class="admin-muted">No additional fields in the current review payload.</p>'}
     </section>
   `
 }
@@ -598,26 +1055,40 @@ function reviewDetailView(productId) {
     `
   }
   const isPublic = product.status === 'published' && product.visibility === 'public'
+  ensureDetailMedia(product.id)
   return `
     <header class="admin-page-header admin-detail-header">
       <div>
         <p class="eyebrow">Product Audit</p>
         <h1>${escapeHtml(product.title)}</h1>
-        <p>${escapeHtml(product.id)} · ${escapeHtml(product.artistName || 'Creator')}</p>
+        <p>${escapeHtml(product.id)} · ${escapeHtml(product.artistName || product.artistDisplayName || 'Creator')}</p>
+        <div class="admin-heading-badges">
+          ${renderBadge(product.status || 'unknown', statusClass(product.status))}
+          ${renderBadge(product.visibility || 'unknown')}
+          ${renderBadge(product.reviewJobStatus || product.moderationStatus || 'review')}
+        </div>
       </div>
       <div class="admin-detail-actions">
         <a class="admin-secondary-link" href="${ROUTES.adminReviews}">${iconSvg('arrowLeft')}<span>Back</span></a>
         ${isPublic ? `<a class="admin-secondary-link" href="${productRoute(product)}" target="_blank" rel="noreferrer">${iconSvg('eye')}<span>Public Route</span></a>` : ''}
       </div>
     </header>
-    <section class="admin-audit-layout">
-      ${mediaPanel(product)}
-      ${identityPanel(product)}
-      ${filesPanel(product)}
-      ${sellerPanel(product)}
-      ${moderationPanel(product)}
-      ${adminHistoryPanel(product)}
-      ${creatorContextPanel(product)}
+    <section class="admin-detail-grid">
+      <div class="admin-detail-column">
+        ${mediaPanel(product)}
+        ${sellerPanel(product)}
+        ${creatorContextPanel(product)}
+        ${metricsPanel(product)}
+      </div>
+      <div class="admin-detail-column">
+        ${identityPanel(product)}
+        ${listingContentPanel(product)}
+        ${filesPanel(product)}
+        ${moderationPanel(product)}
+        ${adminHistoryPanel(product)}
+        ${technicalDataPanel(product)}
+        ${additionalProductFieldsPanel(product)}
+      </div>
     </section>
     ${detailDecisionBar(product)}
     ${decisionDialog(product)}
@@ -694,6 +1165,7 @@ async function loadQueue({ silent = false } = {}) {
     const result = await listMarketplaceReviewQueue({ limitCount: 100 })
     state.products = result.products || []
     state.queueLoaded = true
+    await hydrateReviewMedia(state.products, { detailProductId: reviewDetailProductId() })
     const visible = filteredProducts()
     const detailId = reviewDetailProductId()
     if (detailId) {
@@ -807,7 +1279,25 @@ function navigateToReviewProduct(productId) {
 }
 
 function bindEvents() {
+  app.querySelector('[data-admin-theme-toggle]')?.addEventListener('click', () => {
+    applyAdminTheme(state.theme === 'dark' ? 'light' : 'dark')
+    render()
+  })
   app.querySelector('[data-refresh-queue]')?.addEventListener('click', () => loadQueue())
+  app.querySelectorAll('[data-copy-value]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const value = button.getAttribute('data-copy-value') || ''
+      if (!value) return
+      try {
+        await navigator.clipboard?.writeText(value)
+        state.message = 'Copied technical value.'
+        state.error = ''
+      } catch {
+        state.error = 'Could not copy the value from this browser context.'
+      }
+      render()
+    })
+  })
   app.querySelectorAll('[data-audit-product]').forEach((link) => {
     link.addEventListener('click', (event) => {
       const productId = link.getAttribute('data-audit-product') || ''
