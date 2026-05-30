@@ -156,6 +156,11 @@
         "source": "/studio-tutorials.html",
         "destination": "/studio/tutorials",
         "type": 301
+      },
+      {
+        "source": "/admin-marketplace-review.html",
+        "destination": "/admin/marketplace-review",
+        "type": 301
       }
     ],
     "rewrites": [
@@ -178,6 +183,10 @@
       {
         "source": "/products/dashboard",
         "destination": "/product-dashboard.html"
+      },
+      {
+        "source": "/admin/marketplace-review",
+        "destination": "/admin-marketplace-review.html"
       },
       {
         "source": "/products/**",

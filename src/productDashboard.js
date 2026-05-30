@@ -149,6 +149,21 @@ function hasAiAuthReviewFailure(product = {}) {
 }
 
 function ownerReviewNoticeMarkup(product = {}) {
+  const status = String(product.status || '').toLowerCase()
+  const reviewJobStatus = String(product.reviewJobStatus || '').toLowerCase()
+  const moderationStatus = String(product.moderationStatus || '').toLowerCase()
+  if (status === 'published') {
+    return '<p class="dashboard-owner-note is-success">Published</p>'
+  }
+  if (status === 'needs_changes') {
+    return '<p class="dashboard-owner-note">Changes requested</p>'
+  }
+  if (reviewJobStatus === 'ai_failed' || reviewJobStatus === 'failed_ai_auth' || moderationStatus === 'ai_error') {
+    return '<p class="dashboard-owner-note">AI review failed. Product is waiting for manual review.</p>'
+  }
+  if (status === 'review_pending' && reviewJobStatus === 'pending_manual_review' && product.moderationAISucceeded === true) {
+    return '<p class="dashboard-owner-note is-success">AI review complete. Waiting for manual marketplace approval.</p>'
+  }
   if (hasAiAuthReviewFailure(product)) {
     return `
       <div class="dashboard-owner-alert" role="status">
@@ -158,7 +173,7 @@ function ownerReviewNoticeMarkup(product = {}) {
       </div>
     `
   }
-  if (product.status === 'review_pending') {
+  if (status === 'review_pending') {
     return '<p class="dashboard-owner-note">Product is pending marketplace review and is not public yet.</p>'
   }
   return ''

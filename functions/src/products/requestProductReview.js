@@ -249,29 +249,64 @@ ${JSON.stringify(moderationInput)}`
 
   return aiUnavailableResult({
     ...(lastFailure || {
-    configured: true,
-    attempted: true,
-    code: 'gemini_unavailable',
-    category: 'unavailable',
-    message: 'AI moderation unavailable; product remains pending review.',
-    modelUsed: selectedModel
+      configured: true,
+      attempted: true,
+      code: 'gemini_unavailable',
+      category: 'unavailable',
+      message: 'AI moderation unavailable; product remains pending review.',
+      modelUsed: selectedModel
     }),
     exhaustedModelFallbacks: Boolean(lastFailure)
   })
+}
+
+function productHasDeliverables(product = {}) {
+  const deliverableFiles = Array.isArray(product.deliverableFiles) ? product.deliverableFiles : []
+  const assetSummary = product.assetSummary && typeof product.assetSummary === 'object' ? product.assetSummary : {}
+  return deliverableFiles.some((file) => file?.storagePath || file?.path || file?.downloadPath) ||
+    Number(assetSummary.downloadableCount || 0) > 0 ||
+    Boolean(product.downloadPath || product.primaryDownloadPath)
+}
+
+function productHasRequiredReviewFields(product = {}) {
+  const priceCents = Number(product.priceCents)
+  const sellerAgreementAccepted = product.sellerAgreementAccepted === true || product.sellerAgreement?.accepted === true
+  return Boolean(
+    String(product.title || '').trim() &&
+    String(product.productType || '').trim() &&
+    String(product.shortDescription || product.description || '').trim() &&
+    Number.isFinite(priceCents) &&
+    priceCents >= 0 &&
+    sellerAgreementAccepted &&
+    productHasDeliverables(product)
+  )
+}
+
+function productIsSafeForAIAutoApproval(product = {}, ruleResult = {}, aiResult = {}) {
+  const combinedReasons = [...(ruleResult.reasons || []), ...(aiResult.reasons || [])].filter(Boolean)
+  return Boolean(
+    ruleResult.approved &&
+    aiResult.aiSucceeded === true &&
+    aiResult.suggestedAction === 'approve' &&
+    ['low', 'unknown', ''].includes(String(aiResult.riskLevel || '').toLowerCase()) &&
+    combinedReasons.length === 0 &&
+    productHasRequiredReviewFields(product)
+  )
 }
 
 function decideReviewOutcome({ product = {}, ruleResult = {}, aiResult = {}, autoApprove = false, allowRuleBasedAutoApprove = false, model = '' } = {}) {
   const aiFailed = Boolean(aiResult.aiAttempted || aiResult.aiConfigured) && aiResult.aiSucceeded !== true
   const aiAuthFailed = aiResult.errorCategory === 'auth' || aiResult.errorCode === 'gemini_auth_failed' || aiResult.errorCode === 'gemini_secret_invalid'
   const exhaustedModelFallbacks = Boolean(aiResult.exhaustedModelFallbacks)
-  const ruleFallbackApproved = Boolean(autoApprove && allowRuleBasedAutoApprove && ruleResult.approved && aiResult.aiSucceeded !== true && !exhaustedModelFallbacks)
+  const aiAutoApproved = Boolean(autoApprove && productIsSafeForAIAutoApproval(product, ruleResult, aiResult))
+  const ruleFallbackApproved = false
   let finalStatus = 'review_pending'
   let moderationStatus = aiFailed ? 'ai_error' : 'pending'
 
   if (!ruleResult.approved || aiResult.suggestedAction === 'needs_changes' || aiResult.suggestedAction === 'reject') {
     finalStatus = 'needs_changes'
     moderationStatus = 'rejected'
-  } else if (autoApprove && aiResult.aiSucceeded === true && aiResult.suggestedAction === 'approve') {
+  } else if (aiAutoApproved) {
     finalStatus = 'published'
     moderationStatus = 'approved'
   } else if (ruleFallbackApproved) {
@@ -304,6 +339,7 @@ function decideReviewOutcome({ product = {}, ruleResult = {}, aiResult = {}, aut
     summary,
     aiFailed,
     aiAuthFailed,
+    aiAutoApproved,
     ruleFallbackApproved,
     visibility: finalStatus === 'published' ? 'public' : (product.visibility === 'public' ? 'unlisted' : (product.visibility || 'private')),
     model

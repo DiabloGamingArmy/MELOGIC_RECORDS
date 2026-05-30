@@ -17,6 +17,7 @@ const { claimFreeProduct } = require('./src/products/claimFreeProduct')
 const { createProductDownloadUrl } = require('./src/products/createProductDownloadUrl')
 const { createOrUpdateProductShell } = require('./src/products/createOrUpdateProductShell')
 const { saveProductManifest } = require('./src/products/saveProductManifest')
+const { reviewProductDecision, listMarketplaceReviewQueue } = require('./src/products/reviewProductDecision')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -38,3 +39,5 @@ exports.claimFreeProduct = claimFreeProduct
 exports.createProductDownloadUrl = createProductDownloadUrl
 exports.createOrUpdateProductShell = createOrUpdateProductShell
 exports.saveProductManifest = saveProductManifest
+exports.reviewProductDecision = reviewProductDecision
+exports.listMarketplaceReviewQueue = listMarketplaceReviewQueue

@@ -107,6 +107,12 @@
   color: #ffe2a7;
 }
 
+.dashboard-owner-note.is-success {
+  border-color: rgba(92, 224, 170, 0.45);
+  background: rgba(19, 86, 61, 0.26);
+  color: #c9ffe9;
+}
+
 .dashboard-media-area { grid-area: media; }
 .dashboard-overview { display: grid; gap: 0.56rem; align-content: start; }
 .dashboard-main-sections {
