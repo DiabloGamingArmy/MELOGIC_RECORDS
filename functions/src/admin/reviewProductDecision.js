@@ -25,12 +25,43 @@ function productAuditSummary(product = {}) {
   }
 }
 
+function buildCreatorChangeNotification({ notificationId = '', productId = '', product = {}, reason = '', notes = '' } = {}) {
+  const productTitle = cleanString(product.title || 'your product', 180)
+  const adminNotes = cleanString(notes || reason, 2400)
+  return {
+    id: notificationId,
+    type: 'product_changes_requested',
+    title: 'Product changes requested',
+    body: `An admin reviewed ${productTitle} and requested changes: ${cleanString(reason, 900)}`,
+    productId,
+    productTitle,
+    status: 'needs_changes',
+    severity: 'warning',
+    actionHref: `/products/edit?id=${encodeURIComponent(productId)}`,
+    reviewDecision: 'request_changes',
+    adminNotes,
+    reason: cleanString(reason, 1200),
+    readAt: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    data: {
+      type: 'product_changes_requested',
+      productId,
+      productTitle,
+      reviewDecision: 'request_changes',
+      adminNotes
+    }
+  }
+}
+
 const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const reviewer = assertPermission(request, 'productReview')
   const productId = normalizeProductId(request.data?.productId)
   const decision = normalizeDecision(request.data?.decision)
   const reason = cleanString(request.data?.reason || '', 1200)
   const notes = cleanString(request.data?.notes || '', 2400)
+  if (['reject', 'request_changes'].includes(decision) && !reason) {
+    throw new HttpsError('invalid-argument', 'A reason is required for this review decision.')
+  }
   const productRef = db().collection('products').doc(productId)
   const productSnap = await productRef.get()
   if (!productSnap.exists) throw new HttpsError('not-found', 'Product not found.')
@@ -52,6 +83,9 @@ const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, a
   const productUpdate = buildDecisionUpdate(decision, { uid: reviewer.uid, reason, notes, existing: product })
   const eventRef = db().collection('productModeration').doc(productId).collection('events').doc()
   const auditRef = db().collection('adminLogs').doc()
+  const notificationRef = decision === 'request_changes' && cleanString(product.artistId || '', 180)
+    ? db().collection('users').doc(cleanString(product.artistId || '', 180)).collection('systemNotifications').doc()
+    : null
   const now = admin.firestore.FieldValue.serverTimestamp()
   const batch = db().batch()
   batch.set(productRef, productUpdate, { merge: true })
@@ -85,6 +119,15 @@ const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, a
       metadata: { decision, notes }
     })
   })
+  if (notificationRef) {
+    batch.set(notificationRef, buildCreatorChangeNotification({
+      notificationId: notificationRef.id,
+      productId,
+      product,
+      reason,
+      notes
+    }))
+  }
   await batch.commit()
 
   return {
@@ -95,7 +138,8 @@ const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, a
     visibility: productUpdate.visibility,
     moderationStatus: productUpdate.moderationStatus || product.moderationStatus || '',
     reviewJobStatus: productUpdate.reviewJobStatus || product.reviewJobStatus || '',
-    auditLogId: auditRef.id
+    auditLogId: auditRef.id,
+    notificationId: notificationRef?.id || ''
   }
 })
 
@@ -103,6 +147,7 @@ module.exports = {
   reviewProductDecision,
   __test: {
     buildDecisionUpdate,
+    buildCreatorChangeNotification,
     normalizeDecision,
     productIsInReviewQueue,
     validateProductForApproval

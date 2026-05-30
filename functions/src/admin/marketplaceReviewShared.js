@@ -65,8 +65,15 @@ function sanitizeProductForQueue(id = '', product = {}) {
     title: cleanString(product.title || 'Untitled product', 180),
     artistId: cleanString(product.artistId || '', 180),
     artistName: cleanString(product.artistDisplayName || product.artistName || 'Creator', 180),
+    artistDisplayName: cleanString(product.artistDisplayName || product.artistName || 'Creator', 180),
+    artistUsername: cleanString(product.artistUsername || '', 180),
+    artistProfilePath: cleanString(product.artistProfilePath || '', 360),
+    artistAvatarURL: cleanString(product.artistAvatarURL || product.artistPhotoURL || '', 900),
+    artistPhotoURL: cleanString(product.artistPhotoURL || product.artistAvatarURL || '', 900),
     productType: cleanString(product.productType || 'Product', 120),
     productKind: cleanString(product.productKind || '', 120),
+    usageLicense: cleanString(product.usageLicense || '', 180),
+    version: cleanString(product.version || '', 80),
     priceCents: Math.max(0, Math.round(Number(product.priceCents || 0))),
     payoutTargetCents: Math.max(0, Math.round(Number(product.payoutTargetCents || 0))),
     currency: cleanString(product.currency || 'USD', 12),
@@ -81,10 +88,18 @@ function sanitizeProductForQueue(id = '', product = {}) {
     moderationReasons: Array.isArray(product.moderationReasons) ? product.moderationReasons.map((item) => cleanString(item, 220)).filter(Boolean).slice(0, 20) : [],
     reviewJobStatus: cleanString(product.reviewJobStatus || '', 120),
     reviewRequestedAt: serializeDate(product.reviewRequestedAt),
+    reviewRequestedBy: cleanString(product.reviewRequestedBy || '', 180),
+    reviewedAt: serializeDate(product.reviewedAt),
+    reviewedBy: cleanString(product.reviewedBy || '', 180),
+    reviewDecision: cleanString(product.reviewDecision || '', 80),
+    reviewReason: cleanString(product.reviewReason || '', 1200),
+    reviewNotes: cleanString(product.reviewNotes || '', 2400),
     createdAt: serializeDate(product.createdAt),
     updatedAt: serializeDate(product.updatedAt),
     coverPath: cleanString(product.coverPath || '', 900),
+    coverURL: cleanString(product.coverURL || '', 900),
     thumbnailPath: cleanString(product.thumbnailPath || '', 900),
+    thumbnailURL: cleanString(product.thumbnailURL || '', 900),
     downloadPath: cleanString(product.downloadPath || '', 900),
     primaryDownloadPath: cleanString(product.primaryDownloadPath || product.downloadPath || '', 900),
     primaryDownloadBytes: Math.max(0, Math.round(Number(product.primaryDownloadBytes || 0))),
@@ -94,8 +109,11 @@ function sanitizeProductForQueue(id = '', product = {}) {
     previewAssignment: {
       cardPreviewMode: cleanString(previewAssignment.cardPreviewMode || '', 80),
       hoverAudioPath: cleanString(previewAssignment.hoverAudioPath || '', 900),
+      hoverAudioURL: cleanString(previewAssignment.hoverAudioURL || '', 900),
       hoverVideoPath: cleanString(previewAssignment.hoverVideoPath || '', 900),
+      hoverVideoURL: cleanString(previewAssignment.hoverVideoURL || '', 900),
       demoReelPath: cleanString(previewAssignment.demoReelPath || '', 900),
+      demoReelType: cleanString(previewAssignment.demoReelType || '', 80),
       detailHeroPreviewPath: cleanString(previewAssignment.detailHeroPreviewPath || '', 900)
     },
     assetSummary: {
@@ -110,11 +128,28 @@ function sanitizeProductForQueue(id = '', product = {}) {
       displayPath: cleanString(file?.displayPath || file?.name || '', 320),
       storagePath: cleanString(file?.storagePath || '', 900),
       sizeBytes: Math.max(0, Math.round(Number(file?.sizeBytes || 0))),
-      contentType: cleanString(file?.contentType || '', 120)
+      contentType: cleanString(file?.contentType || '', 120),
+      downloadable: file?.downloadable !== false,
+      previewable: file?.previewable === true
     })).filter((file) => file.storagePath).slice(0, 50),
     shortDescription: cleanString(product.shortDescription || '', 500),
     description: cleanString(product.description || '', 2200),
-    sellerAgreementAccepted: Boolean(product.sellerAgreementAccepted || product.sellerAgreement?.accepted)
+    sellerAgreementAccepted: Boolean(product.sellerAgreementAccepted || product.sellerAgreement?.accepted),
+    sellerAgreementVersion: cleanString(product.sellerAgreementVersion || product.sellerAgreement?.version || '', 80),
+    sellerAgreement: {
+      accepted: Boolean(product.sellerAgreement?.accepted || product.sellerAgreementAccepted),
+      acceptedAt: serializeDate(product.sellerAgreement?.acceptedAt),
+      agreementId: cleanString(product.sellerAgreement?.agreementId || '', 180),
+      version: cleanString(product.sellerAgreement?.version || product.sellerAgreementVersion || '', 80)
+    },
+    moderationAIAttempted: Boolean(product.moderationAIAttempted),
+    moderationAIConfigured: Boolean(product.moderationAIConfigured),
+    moderationAIEnabled: Boolean(product.moderationAIEnabled),
+    moderationAICompletedAt: serializeDate(product.moderationAICompletedAt),
+    moderationAIFailedAt: serializeDate(product.moderationAIFailedAt),
+    moderationAIError: cleanString(product.moderationAIError || '', 1200),
+    moderationAIErrorCode: cleanString(product.moderationAIErrorCode || '', 120),
+    moderationAIErrorCategory: cleanString(product.moderationAIErrorCategory || '', 120)
   }
 }
 
