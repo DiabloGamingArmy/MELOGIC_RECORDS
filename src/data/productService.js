@@ -1730,6 +1730,20 @@ export async function submitProductForReview({ productId } = {}) {
   return requestProductReview(productId)
 }
 
+export async function listMarketplaceReviewQueue({ limitCount = 60 } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listMarketplaceReviewQueue')
+  const result = await callable({ limit: limitCount })
+  return result?.data || { ok: false, products: [] }
+}
+
+export async function reviewProductDecision({ productId = '', decision = '', reason = '', notes = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'reviewProductDecision')
+  const result = await callable({ productId, decision, reason, notes })
+  return result?.data || { ok: false }
+}
+
 export async function requestProductReview(productId = '') {
   if (!functions || !productId) throw new Error('Missing product id for review request.')
   try {

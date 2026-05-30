@@ -124,7 +124,15 @@ test('all Gemini 404 fallbacks keep product pending with ai_error inputs', async
 
 test('AI success can publish only when auto approval is enabled', () => {
   const base = {
-    product: { visibility: 'private' },
+    product: {
+      visibility: 'private',
+      title: 'Clean sample pack',
+      productType: 'Sample Pack',
+      description: 'Original loops and one-shots.',
+      priceCents: 1200,
+      sellerAgreementAccepted: true,
+      deliverableFiles: [{ storagePath: 'products/prod-1/downloads/pack.zip' }]
+    },
     ruleResult: { approved: true, reasons: [] },
     aiResult: {
       aiConfigured: true,
@@ -140,9 +148,17 @@ test('AI success can publish only when auto approval is enabled', () => {
   assert.equal(__test.decideReviewOutcome({ ...base, autoApprove: true }).finalStatus, 'published')
 })
 
-test('rule-based fallback approval is labeled honestly', () => {
+test('rule-based fallback does not publish when AI fails', () => {
   const outcome = __test.decideReviewOutcome({
-    product: { visibility: 'private' },
+    product: {
+      visibility: 'private',
+      title: 'Clean sample pack',
+      productType: 'Sample Pack',
+      description: 'Original loops and one-shots.',
+      priceCents: 1200,
+      sellerAgreementAccepted: true,
+      deliverableFiles: [{ storagePath: 'products/prod-1/downloads/pack.zip' }]
+    },
     ruleResult: { approved: true, reasons: [] },
     aiResult: {
       aiConfigured: true,
@@ -156,10 +172,9 @@ test('rule-based fallback approval is labeled honestly', () => {
     allowRuleBasedAutoApprove: true
   })
 
-  assert.equal(outcome.finalStatus, 'published')
-  assert.equal(outcome.moderationStatus, 'rule_based_fallback_approved')
-  assert.equal(outcome.reviewJobStatus, 'rule_based_fallback_approved')
-  assert.match(outcome.summary, /rule-based fallback/i)
+  assert.equal(outcome.finalStatus, 'review_pending')
+  assert.equal(outcome.moderationStatus, 'ai_error')
+  assert.equal(outcome.reviewJobStatus, 'ai_failed')
 })
 
 test('obvious non-Gemini secrets are rejected before request', () => {

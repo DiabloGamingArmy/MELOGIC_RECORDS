@@ -1,26 +1,34 @@
-# Marketplace AI Review Pipeline (Phase 1)
+# Marketplace AI Review Pipeline
 
 1. Seller submits from New Product editor.
-2. Client writes `pendingReview/marketplace/items/{productId}`.
-3. Backend Cloud Function triggers on create/update.
-4. Function loads product metadata, file manifest, previews, and signed form references.
-5. Function runs deterministic checks + optional AI checks.
-6. Function writes results into `checks` fields on pendingReview doc.
-7. Backend (Admin SDK only) may publish low-risk items.
-8. Backend routes uncertain items to human review.
-9. Backend rejects/needs-changes with actionable reasons.
+2. Client calls `requestProductReview`.
+3. Backend creates `productReviewJobs/{jobId}` and keeps the product `review_pending` / private.
+4. `processProductReviewJob` loads product metadata, file manifest, previews, and seller agreement data.
+5. The function runs deterministic checks and Gemini review with the safe moderation model fallback order.
+6. AI success records `moderationAISucceeded: true`, `moderationAIModel`, `moderationStatus`, and `reviewJobStatus`.
+7. By default, products that pass AI remain `review_pending` with `reviewJobStatus: "pending_manual_review"`.
+8. Staff review pending products at `/admin/marketplace-review`.
+9. Staff decisions call `reviewProductDecision`, which publishes or returns the listing to a private non-public state through Admin SDK.
 
 ## Security boundaries
 - Client can submit/cancel review requests only.
 - Client cannot approve or publish directly.
 - AI provider keys must be server-side secrets.
 - No AI calls from browser/client JavaScript.
+- Admin approval is server-only. The review page uses callables and does not require broad Firestore reads.
+- Reviewer authorization is based on custom claims or server-only `adminUsers/{uid}` / `staffUsers/{uid}` marker docs, not self-writable profile role labels.
 
-## Suggested function
-`reviewMarketplaceProductSubmission` on `pendingReview/marketplace/items/{productId}`
+## Manual Review
 
-Initial stub should:
-- read review + product docs
-- compute `checks.rules`
-- set `checks.ai.status = "not_configured"` unless server AI is enabled
-- avoid auto-publishing in phase 1
+`reviewProductDecision` accepts:
+
+- `approve`: publishes the product as `published` / `public`.
+- `request_changes`: keeps the product private with `needs_changes`.
+- `reject`: keeps the product private with `rejected`.
+- `keep_pending`: returns the product to `review_pending` / private.
+
+Every decision writes an audit event under `productModeration/{productId}/events/{eventId}`.
+
+## AI Auto-Approval
+
+`AUTO_APPROVE_PRODUCTS` defaults to false. If enabled, automatic publish only happens when Gemini succeeds, rule checks pass, the AI risk level is low or unknown with no reasons, required listing fields are present, the seller agreement is accepted, product deliverables exist, and pricing is valid. AI failures never publish through rule-based fallback.
