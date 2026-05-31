@@ -1,5 +1,6 @@
 import { getDownloadURL, getStorage, ref } from 'firebase/storage'
 import { app } from './firebaseConfig'
+import { getCachedStorageUrl } from '../services/pageMediaCache'
 
 const storage = getStorage(app)
 const urlCache = new Map()
@@ -21,10 +22,14 @@ export async function getPublicStorageUrl(path, options = {}) {
   if (urlCache.has(key)) return urlCache.get(key)
   const warnOnFail = options.warnOnFail !== false
 
-  const promise = getDownloadURL(ref(storage, key)).catch((error) => {
-    if (warnOnFail) devWarn('[storageAssets] Could not load public asset', { path: key, code: error?.code })
-    return ''
-  })
+  const promise = getCachedStorageUrl(key, async (storagePath) => {
+    try {
+      return await getDownloadURL(ref(storage, storagePath))
+    } catch (error) {
+      if (warnOnFail) devWarn('[storageAssets] Could not load public asset', { path: storagePath, code: error?.code })
+      return ''
+    }
+  }, { scopeKey: options.scopeKey || 'global-storage-assets', type: options.type || 'asset' })
 
   urlCache.set(key, promise)
   return promise

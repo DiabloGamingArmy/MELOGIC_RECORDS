@@ -3,7 +3,7 @@ import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
-import { createReport, getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
+import { createReport, getProductShellById, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
 import { claimFreeProduct, createProductDownloadUrl, userOwnsProduct } from './data/entitlementService'
 import { getProductEngagementState, setProductEngagement } from './data/productEngagementService'
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
@@ -36,6 +36,7 @@ const state = {
   ,openReviewMenuId: ''
   ,openReplyMenuKey: ''
   ,productReport: { open: false, submitting: false, error: '', message: '' }
+  ,pageData: { product: null, recommendations: [], productFiles: [], ownsProduct: false, ownerPreview: false, recommendationsLoading: false, reviewsLoading: false }
 }
 
 const PRODUCT_REPORT_REASONS = [
@@ -916,7 +917,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
           <div class="dashboard-full-width-divider"></div>
               <article class="dashboard-section-card dashboard-recommendations-section dashboard-recommendations-fullwidth">
                 <div class="dashboard-lower-section-header"><h2>Recommended products</h2><a href="${ROUTES.products}">Browse all</a></div>
-                ${recommendations.length ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>` : '<p>No recommendations yet.</p>'}
+                ${recommendations.length ? `<div class="dashboard-recommend-carousel" aria-label="Recommended products">${recommendations.map((item) => recommendationCardMarkup(item)).join('')}</div>` : `<p>${state.pageData.recommendationsLoading ? 'Loading recommendations...' : 'No recommendations yet.'}</p>`}
               </article>
               <div class="dashboard-lower-section-divider"></div>
               <article class="dashboard-section-card dashboard-reviews-section dashboard-reviews-fullwidth">
@@ -925,7 +926,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   <span class="dashboard-review-count-badge">${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews</span>
                 </div>
                 ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><button type="button" class="dashboard-rating-stars-wrap dashboard-rating-interactive" data-rating-interactive aria-label="Set rating out of 5 stars"><span class="dashboard-rating-stars" aria-hidden="true"><span class="dashboard-rating-stars-empty">★★★★★</span><span class="dashboard-rating-stars-fill" data-rating-fill style="width:0%">★★★★★</span></span></button><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider is-visually-hidden" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><div class="dashboard-review-submit-row"><button class="button button-accent" type="submit">Submit review</button></div></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
-                <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-review-header"><div class="dashboard-review-author">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div class="dashboard-review-author-meta"><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Review options" class="dashboard-review-menu-button" data-toggle-review-menu="${escapeHtml(review.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReviewMenuId === review.id ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${review.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-review-menu-action="${escapeHtml(review.id)}:${review.uid === state.currentUser?.uid ? 'delete' : 'report'}">${review.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p><div class="dashboard-review-actions"><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'like' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:like"><span class="icon">${iconSvg('thumbsUp')}</span> <em>${Math.max(0, Number(review.likeCount || 0))}</em></button><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'dislike' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:dislike"><span class="icon">${iconSvg('thumbsDown')}</span> <em>${Math.max(0, Number(review.dislikeCount || 0))}</em></button><button type="button" class="dashboard-review-action" data-toggle-replies="${escapeHtml(review.id)}"><span class="icon">${iconSvg('messageCircleReply')}</span> <em>${Number(review.replyCount || 0)}</em></button></div>${state.reviewActionErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.reviewActionErrors[review.id])}</p>` : ''}${state.openReplyComposerFor === review.id ? `<form class="dashboard-review-reply-composer" data-review-reply-form="${escapeHtml(review.id)}"><textarea class="dashboard-review-reply-textarea" maxlength="1200" placeholder="Write a reply...">${escapeHtml(state.replyDrafts[review.id] || '')}</textarea><div class="dashboard-review-reply-submit-row"><button type="submit" class="button button-muted">Post reply</button></div></form>` : ''}${state.replyLoadErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.replyLoadErrors[review.id])}</p>` : ''}<div class="dashboard-review-replies">${(state.reviewReplies[review.id] || []).map((reply) => `<article class="dashboard-review-reply-card"><div class="dashboard-review-reply-header"><div class="dashboard-review-reply-author">${reply.avatarURL ? `<img class="dashboard-review-reply-avatar" src="${escapeHtml(reply.avatarURL)}" alt="${escapeHtml(reply.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(reply.displayName || 'User'))}</span>`}<div><p class="dashboard-review-reply-name">${escapeHtml(reply.displayName || 'User')}</p><p class="dashboard-review-reply-time">${escapeHtml(formatReviewTime(reply.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Reply options" class="dashboard-review-menu-button" data-toggle-reply-menu="${escapeHtml(review.id)}:${escapeHtml(reply.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReplyMenuKey === `${review.id}:${reply.id}` ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${reply.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-reply-menu-action="${escapeHtml(review.id)}:${escapeHtml(reply.id)}:${reply.uid === state.currentUser?.uid ? 'delete' : 'report'}">${reply.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-reply-body">${escapeHtml(reply.body || '')}</p></article>`).join('')}</div></article>`).join('') : '<p class="dashboard-review-empty">No reviews yet. Be the first to review this product.</p>'}</div>
+                <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-review-header"><div class="dashboard-review-author">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div class="dashboard-review-author-meta"><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Review options" class="dashboard-review-menu-button" data-toggle-review-menu="${escapeHtml(review.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReviewMenuId === review.id ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${review.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-review-menu-action="${escapeHtml(review.id)}:${review.uid === state.currentUser?.uid ? 'delete' : 'report'}">${review.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p><div class="dashboard-review-actions"><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'like' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:like"><span class="icon">${iconSvg('thumbsUp')}</span> <em>${Math.max(0, Number(review.likeCount || 0))}</em></button><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'dislike' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:dislike"><span class="icon">${iconSvg('thumbsDown')}</span> <em>${Math.max(0, Number(review.dislikeCount || 0))}</em></button><button type="button" class="dashboard-review-action" data-toggle-replies="${escapeHtml(review.id)}"><span class="icon">${iconSvg('messageCircleReply')}</span> <em>${Number(review.replyCount || 0)}</em></button></div>${state.reviewActionErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.reviewActionErrors[review.id])}</p>` : ''}${state.openReplyComposerFor === review.id ? `<form class="dashboard-review-reply-composer" data-review-reply-form="${escapeHtml(review.id)}"><textarea class="dashboard-review-reply-textarea" maxlength="1200" placeholder="Write a reply...">${escapeHtml(state.replyDrafts[review.id] || '')}</textarea><div class="dashboard-review-reply-submit-row"><button type="submit" class="button button-muted">Post reply</button></div></form>` : ''}${state.replyLoadErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.replyLoadErrors[review.id])}</p>` : ''}<div class="dashboard-review-replies">${(state.reviewReplies[review.id] || []).map((reply) => `<article class="dashboard-review-reply-card"><div class="dashboard-review-reply-header"><div class="dashboard-review-reply-author">${reply.avatarURL ? `<img class="dashboard-review-reply-avatar" src="${escapeHtml(reply.avatarURL)}" alt="${escapeHtml(reply.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(reply.displayName || 'User'))}</span>`}<div><p class="dashboard-review-reply-name">${escapeHtml(reply.displayName || 'User')}</p><p class="dashboard-review-reply-time">${escapeHtml(formatReviewTime(reply.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Reply options" class="dashboard-review-menu-button" data-toggle-reply-menu="${escapeHtml(review.id)}:${escapeHtml(reply.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReplyMenuKey === `${review.id}:${reply.id}` ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${reply.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-reply-menu-action="${escapeHtml(review.id)}:${escapeHtml(reply.id)}:${reply.uid === state.currentUser?.uid ? 'delete' : 'report'}">${reply.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-reply-body">${escapeHtml(reply.body || '')}</p></article>`).join('')}</div></article>`).join('') : `<p class="dashboard-review-empty">${state.pageData.reviewsLoading ? 'Loading reviews...' : 'No reviews yet. Be the first to review this product.'}</p>`}</div>
               </article>
 
           <aside class="dashboard-lower-sidebar">
@@ -1124,7 +1125,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
         targetOwnerUid: product.artistId || '',
         reason,
         description,
-        sourcePath: productRoute(product),
+        sourcePath: window.location.pathname,
         metadata: {
           title: product.title || '',
           artistId: product.artistId || '',
@@ -1258,7 +1259,7 @@ async function init() {
   }
 
   try {
-    const product = await getProductById(id)
+    const product = await getProductShellById(id)
     if (!product) {
       renderState('This product could not be found.', 'It may have been removed or is not public yet.')
       return
@@ -1275,6 +1276,27 @@ async function init() {
       return
     }
 
+    state.pageData = {
+      product,
+      recommendations: [],
+      productFiles: [],
+      ownsProduct: Boolean(isOwner),
+      ownerPreview: !isPublic && isOwner,
+      recommendationsLoading: true,
+      reviewsLoading: true
+    }
+    state.productEngagement = {
+      productId: product.id,
+      reaction: null,
+      saved: false,
+      likeCount: getProductLikeCount(product),
+      dislikeCount: getProductDislikeCount(product),
+      saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0),
+      loading: true,
+      error: ''
+    }
+    renderProduct(product, [], !isPublic && isOwner, [], Boolean(isOwner))
+
     const safe = async (label, fallback, task) => {
       try {
         return await task()
@@ -1284,36 +1306,71 @@ async function init() {
       }
     }
 
-    const recommendations = await safe('recommendations', [], () => listRecommendedProducts({ product, pageSize: 8 }))
-    const productFiles = await safe('files', [], () => listProductFiles(product.id))
-    const ownsProduct = await safe('ownership', false, () => userOwnsProduct(state.currentUser?.uid || '', product.id))
-    const reviews = await safe('reviews', [], () => listProductReviews(product.id, { limitCount: 20 }))
-    const engagementState = await safe('engagement-state', { reaction: null, saved: false, likeCount: getProductLikeCount(product), dislikeCount: getProductDislikeCount(product), saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0) }, () => getProductEngagementState(product.id, state.currentUser?.uid))
-    const reviewReactions = await safe('review-reactions', {}, () => getReviewReactionStates(product.id, (reviews || []).map((item) => item.id), state.currentUser))
-    state.reviews = reviews
-    state.reviewReactions = reviewReactions
-    state.productEngagement = {
-      ...state.productEngagement,
-      ...engagementState,
-      productId: product.id,
-      reaction: engagementState.reaction,
-      saved: engagementState.saved,
-      likeCount: Math.max(0, Number(engagementState.likeCount || 0)),
-      dislikeCount: Math.max(0, Number(engagementState.dislikeCount || 0)),
-      saveCount: Math.max(0, Number(engagementState.saveCount || 0)),
-      loading: false,
-      error: ''
+    const renderCurrent = () => {
+      if (!state.pageData.product) return
+      renderProduct(
+        state.pageData.product,
+        state.pageData.recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(state.pageData.product.id)),
+        state.pageData.ownerPreview,
+        state.pageData.productFiles,
+        state.pageData.ownsProduct
+      )
+      syncProductEngagementUi()
     }
-    console.info('[product] engagement state loaded', {
-      productId: product.id,
-      reaction: state.productEngagement.reaction,
-      saved: state.productEngagement.saved,
-      likeCount: state.productEngagement.likeCount,
-      dislikeCount: state.productEngagement.dislikeCount,
-      saveCount: state.productEngagement.saveCount
+
+    resolveProductMedia(product).then((media) => {
+      if (state.pageData.product?.id !== product.id) return
+      state.pageData.product = normalizeProduct(product.id, product, media)
+      renderCurrent()
+    }).catch((error) => console.warn('[product] optional media load failed', error?.message || error))
+
+    listProductFiles(product.id).then((productFiles) => {
+      if (state.pageData.product?.id !== product.id) return
+      state.pageData.productFiles = productFiles || []
+      renderCurrent()
+    }).catch((error) => console.warn('[product] optional files load failed', error?.message || error))
+
+    userOwnsProduct(state.currentUser?.uid || '', product.id).then((ownsProduct) => {
+      if (state.pageData.product?.id !== product.id) return
+      state.pageData.ownsProduct = Boolean(ownsProduct || isOwner)
+      renderCurrent()
+    }).catch((error) => console.warn('[product] optional ownership load failed', error?.message || error))
+
+    listRecommendedProducts({ product, pageSize: 8 }).then((recommendations) => {
+      if (state.pageData.product?.id !== product.id) return
+      state.pageData.recommendations = recommendations || []
+      state.pageData.recommendationsLoading = false
+      renderCurrent()
+    }).catch((error) => {
+      console.warn('[product] optional recommendations load failed', error?.message || error)
+      state.pageData.recommendationsLoading = false
+      renderCurrent()
     })
-    renderProduct(product, recommendations.filter((item) => normalizeKey(item.id) !== normalizeKey(product.id)), !isPublic && isOwner, productFiles, ownsProduct || Boolean(isOwner))
-    syncProductEngagementUi()
+
+    safe('engagement-state', { reaction: null, saved: false, likeCount: getProductLikeCount(product), dislikeCount: getProductDislikeCount(product), saveCount: Number(product.saveCount ?? product.counts?.saves ?? 0) }, () => getProductEngagementState(product.id, state.currentUser?.uid)).then((engagementState) => {
+      if (state.pageData.product?.id !== product.id) return
+      state.productEngagement = {
+        ...state.productEngagement,
+        ...engagementState,
+        productId: product.id,
+        reaction: engagementState.reaction,
+        saved: engagementState.saved,
+        likeCount: Math.max(0, Number(engagementState.likeCount || 0)),
+        dislikeCount: Math.max(0, Number(engagementState.dislikeCount || 0)),
+        saveCount: Math.max(0, Number(engagementState.saveCount || 0)),
+        loading: false,
+        error: ''
+      }
+      renderCurrent()
+    })
+
+    safe('reviews', [], () => listProductReviews(product.id, { limitCount: 20 })).then(async (reviews) => {
+      if (state.pageData.product?.id !== product.id) return
+      state.reviews = reviews
+      state.reviewReactions = await safe('review-reactions', {}, () => getReviewReactionStates(product.id, (reviews || []).map((item) => item.id), state.currentUser))
+      state.pageData.reviewsLoading = false
+      renderCurrent()
+    })
   } catch (error) {
     console.error('[product] failed to load product page', {
       message: error?.message,

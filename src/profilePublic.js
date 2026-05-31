@@ -1,7 +1,6 @@
 import './styles/base.css'
 import './styles/profilePublic.css'
 import { collection, getDocs, limit, query, where } from 'firebase/firestore'
-import { getDownloadURL, ref } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -9,7 +8,7 @@ import { addToCart } from './data/cartService'
 import { createReport } from './data/productService'
 import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
-import { storage } from './firebase/storage'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath, productRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
 
@@ -102,11 +101,9 @@ function getProfileRoles(profile = {}) {
 }
 
 async function loadBadgeAssetUrls() {
-  if (!storage) return {}
-
   const entries = await Promise.all(Object.entries(BADGE_CONFIG).map(async ([key, config]) => {
     try {
-      const url = await getDownloadURL(ref(storage, `assets/badges/${config.fileName}`))
+      const url = await getStorageAssetUrl(`assets/badges/${config.fileName}`, { warnOnFail: false, scopeKey: 'profile-badges', type: 'badge' })
       return [key, url]
     } catch (error) {
       console.warn('[profilePublic] badge asset failed to load', { key, fileName: config.fileName, code: error?.code, message: error?.message })
@@ -249,7 +246,7 @@ function bindProfileReport(profile = {}) {
         targetOwnerUid: profile.uid,
         reason,
         description,
-        sourcePath: publicProfileRoute({ uid: profile.uid }),
+        sourcePath: window.location.pathname,
         metadata: {
           displayName: profile.displayName || '',
           username: profile.username || profile.usernameLower || ''

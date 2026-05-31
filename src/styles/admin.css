@@ -1446,8 +1446,8 @@
 }
 
 .admin-data-table.is-logs .admin-data-row {
-  min-width: 1240px;
-  grid-template-columns: minmax(150px, 0.72fr) minmax(190px, 0.92fr) minmax(210px, 0.9fr) minmax(120px, 0.52fr) minmax(180px, 0.76fr) minmax(190px, 0.82fr) minmax(230px, 1fr) minmax(128px, 0.48fr);
+  min-width: 1040px;
+  grid-template-columns: minmax(150px, 0.85fr) minmax(190px, 1fr) minmax(180px, 0.95fr) minmax(110px, 0.55fr) minmax(190px, 1fr) minmax(220px, 1.1fr) minmax(128px, 0.5fr);
 }
 
 .admin-data-table.is-logs .review-badge {
