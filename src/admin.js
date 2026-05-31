@@ -4,6 +4,8 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import {
   getAdminSettings,
+  getAdminOrder,
+  getAdminReport,
   getAdminUserProfile,
   listActiveStaffPresence,
   listAdminLogs,
@@ -15,7 +17,9 @@ import {
   listMarketplaceReviewQueue,
   reviewProductDecision,
   setAdminUserRole,
-  updateAdminSettings
+  updateReportDecision,
+  updateAdminSettings,
+  uploadSellerAgreementMarkdown
 } from './data/productService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
@@ -105,8 +109,7 @@ const SETTINGS_SECTIONS = [
     title: 'Marketplace',
     fields: [
       ['marketplaceEnabled', 'Marketplace Enabled', 'boolean'],
-      ['manualReviewRequired', 'Manual Review Required', 'boolean'],
-      ['requiredSellerAgreementVersion', 'Seller Agreement Version', 'string']
+      ['manualReviewRequired', 'Manual Review Required', 'boolean']
     ]
   },
   {
@@ -116,7 +119,8 @@ const SETTINGS_SECTIONS = [
       ['productModerationModel', 'Moderation Model', 'string'],
       ['fallbackModels', 'Fallback Models', 'array'],
       ['autoApproveProducts', 'Auto Approve Products', 'boolean'],
-      ['aiModerationEnabled', 'AI Moderation Enabled', 'boolean']
+      ['aiModerationEnabled', 'AI Moderation Enabled', 'boolean'],
+      ['productModerationInstructions', 'Product Moderation Instructions', 'textarea']
     ]
   },
   {
@@ -135,7 +139,10 @@ const SETTINGS_SECTIONS = [
     title: 'Agreements',
     fields: [
       ['sellerAgreementId', 'Seller Agreement ID', 'string'],
-      ['sellerAgreementVersion', 'Seller Agreement Version', 'string']
+      ['sellerAgreementVersion', 'Seller Agreement Version', 'string'],
+      ['sellerAgreementPath', 'Seller Agreement Path', 'string'],
+      ['sellerAgreementUpdatedAt', 'Updated At', 'string'],
+      ['sellerAgreementUpdatedBy', 'Updated By', 'string']
     ]
   },
   {
@@ -218,10 +225,10 @@ const state = {
   adminData: {
     products: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
     users: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
-    reports: { items: [], loading: false, loaded: false, error: '', filter: 'open' },
-    orders: { items: [], detail: null, loading: false, loaded: false, error: '', filter: 'all' },
-    team: { items: [], loading: false, loaded: false, error: '' },
-    logs: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' }
+    reports: { items: [], detail: null, reporter: null, target: null, loading: false, loaded: false, error: '', filter: 'open', actioning: '' },
+    orders: { items: [], detail: null, logs: [], loading: false, loaded: false, error: '', filter: 'all' },
+    team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
+    logs: { items: [], detailId: '', loading: false, loaded: false, error: '', filter: 'all', search: '' }
   },
   settings: {
     data: {},
@@ -377,7 +384,10 @@ function currentSectionKey() {
   const path = window.location.pathname.replace(/\/+$/, '') || ROUTES.admin
   if (isReviewPath(path)) return 'reviews'
   if (path.startsWith(`${ROUTES.adminUsers}/`)) return 'users'
+  if (path.startsWith(`${ROUTES.adminReports}/`)) return 'reports'
   if (path.startsWith(`${ROUTES.adminOrders}/`)) return 'orders'
+  if (path.startsWith(`${ROUTES.adminTeam}/`)) return 'team'
+  if (path.startsWith(`${ROUTES.adminLogs}/`)) return 'logs'
   const section = SECTIONS.find((item) => item.route.replace(/\/+$/, '') === path)
   return section?.key || 'dashboard'
 }
@@ -392,6 +402,24 @@ function adminOrderDetailId() {
   const cleanPath = window.location.pathname.replace(/\/+$/, '')
   if (!cleanPath.startsWith(`${ROUTES.adminOrders}/`)) return ''
   return decodeURIComponent(cleanPath.slice(`${ROUTES.adminOrders}/`.length).split('/')[0] || '').trim()
+}
+
+function adminReportDetailId() {
+  const cleanPath = window.location.pathname.replace(/\/+$/, '')
+  if (!cleanPath.startsWith(`${ROUTES.adminReports}/`)) return ''
+  return decodeURIComponent(cleanPath.slice(`${ROUTES.adminReports}/`.length).split('/')[0] || '').trim()
+}
+
+function adminTeamDetailUid() {
+  const cleanPath = window.location.pathname.replace(/\/+$/, '')
+  if (!cleanPath.startsWith(`${ROUTES.adminTeam}/`)) return ''
+  return decodeURIComponent(cleanPath.slice(`${ROUTES.adminTeam}/`.length).split('/')[0] || '').trim()
+}
+
+function adminLogDetailId() {
+  const cleanPath = window.location.pathname.replace(/\/+$/, '')
+  if (!cleanPath.startsWith(`${ROUTES.adminLogs}/`)) return ''
+  return decodeURIComponent(cleanPath.slice(`${ROUTES.adminLogs}/`.length).split('/')[0] || '').trim()
 }
 
 function productForId(productId = '') {
@@ -643,7 +671,7 @@ function renderLayout(content) {
   renderShell()
   app.querySelector('[data-admin-root]').innerHTML = `
     ${sidebar()}
-    <section class="admin-main ${reviewDetailProductId() || adminUserDetailUid() || adminOrderDetailId() ? 'admin-main-detail' : ''}">
+    <section class="admin-main ${reviewDetailProductId() || adminUserDetailUid() || adminReportDetailId() || adminOrderDetailId() || adminTeamDetailUid() || adminLogDetailId() ? 'admin-main-detail' : ''}">
       ${themeToggleButton()}
       ${statusMessage()}
       ${content}
@@ -719,7 +747,7 @@ function dashboardView() {
         humanLabel(log.action),
         `${humanLabel(log.targetType)} ${log.targetId || ''}`.trim(),
         formatDate(log.createdAt),
-        htmlCell('<button type="button" class="admin-row-action-button" disabled>View</button>')
+        htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminLogs}/${encodeURIComponent(log.id)}">View</a>`)
       ]), 'No admin logs loaded.')}
     </section>
   `
@@ -1685,6 +1713,8 @@ function placeholderView(sectionKey) {
 
 function teamView() {
   if (!can('roleManage')) return permissionState('roleManage')
+  const detailUid = adminTeamDetailUid()
+  if (detailUid) return roleDetailView(detailUid)
   const data = state.adminData.team
   return `
     <header class="admin-page-header">
@@ -2029,6 +2059,8 @@ function usersView() {
 function reportsView() {
   if (!can('admin') && !can('userModerate') && !can('productReview') && !can('orderSupport')) return permissionState('userModerate')
   const data = adminData('reports')
+  const reportId = adminReportDetailId()
+  if (reportId) return reportDetailView(reportId)
   const loading = adminBusyState(data)
   const reports = data.items.filter((report) => {
     if (data.filter === 'open') return !report.status || report.status === 'open'
@@ -2037,8 +2069,22 @@ function reportsView() {
     if (data.filter === 'dismissed') return report.status === 'dismissed'
     return report.type === data.filter || report.targetType === data.filter
   })
+  const summary = {
+    open: data.items.filter((report) => !report.status || report.status === 'open').length,
+    inReview: data.items.filter((report) => report.status === 'in_review').length,
+    product: data.items.filter((report) => report.targetType === 'product' || report.type === 'product').length,
+    user: data.items.filter((report) => ['user', 'profile'].includes(report.targetType) || ['user', 'profile'].includes(report.type)).length,
+    resolved: data.items.filter((report) => report.status === 'resolved').length
+  }
   return `
     ${adminPageHeader({ eyebrow: 'Trust', title: 'Reports', refreshLabel: 'Refresh reports' })}
+    <section class="admin-metric-grid is-compact">
+      <article class="admin-metric"><span>Open</span><strong>${summary.open}</strong></article>
+      <article class="admin-metric"><span>In Review</span><strong>${summary.inReview}</strong></article>
+      <article class="admin-metric"><span>Product</span><strong>${summary.product}</strong></article>
+      <article class="admin-metric"><span>User/Profile</span><strong>${summary.user}</strong></article>
+      <article class="admin-metric"><span>Resolved</span><strong>${summary.resolved}</strong></article>
+    </section>
     <section class="admin-review-tools">${adminFilterControls('reports', REPORT_ADMIN_FILTERS)}</section>
     ${loading || adminSimpleTable('Reports', ['Type', 'Target', 'Reporter', 'Reason', 'Priority', 'Status', 'Created', 'Assigned', 'Actions'], reports.map((report) => [
       humanLabel(report.type),
@@ -2049,7 +2095,7 @@ function reportsView() {
       humanLabel(report.status),
       formatDate(report.createdAt),
       report.assignedTo,
-      htmlCell('<button type="button" class="admin-secondary-button" disabled>Open Report</button><button type="button" class="admin-secondary-button" disabled>Assign to Me</button>')
+      htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminReports}/${encodeURIComponent(report.id)}">View</a>`)
     ]), {
       className: 'is-reports',
       emptyTitle: 'No active reports.',
@@ -2058,9 +2104,111 @@ function reportsView() {
   `
 }
 
+function reportTargetLink(report = {}, target = null) {
+  const targetType = report.targetType || report.type
+  const targetId = report.targetId || ''
+  if (targetType === 'product' && targetId) return `<a class="admin-secondary-link" href="${adminReviewRoute(targetId)}">Audit/View Product</a>`
+  if (['profile', 'user'].includes(targetType) && targetId) return `<a class="admin-secondary-link" href="${ROUTES.adminUsers}/${encodeURIComponent(targetId)}">Open Account Hub</a>`
+  if (targetType === 'order' && targetId) return `<a class="admin-secondary-link" href="${ROUTES.adminOrders}/${encodeURIComponent(targetId)}">Open Order Audit</a>`
+  if (target?.id) return `<span class="admin-muted">${escapeHtml(target.id)}</span>`
+  return '<span class="admin-muted">No target route available.</span>'
+}
+
+function reportDetailView(reportId = '') {
+  const data = adminData('reports')
+  if (data.loading || !data.loaded) return '<article class="admin-empty-state">Loading report...</article>'
+  if (data.error) return `<article class="admin-empty-state"><strong>Could not load report.</strong><span>${escapeHtml(data.error)}</span></article>`
+  const report = data.detail || data.items.find((item) => item.id === reportId)
+  if (!report) {
+    return `
+      <article class="admin-empty-state">
+        <strong>Report not found.</strong>
+        <span>${escapeHtml(reportId)}</span>
+        <a class="admin-primary-link" href="${ROUTES.adminReports}">Back to Reports</a>
+      </article>
+    `
+  }
+  const reporter = data.reporter || {}
+  const target = data.target || {}
+  const busy = Boolean(data.actioning)
+  return `
+    <header class="admin-page-header admin-hub-header">
+      <div>
+        <p class="eyebrow">Report Detail</p>
+        <h1>${escapeHtml(report.id || reportId)}</h1>
+        <p>${escapeHtml(humanLabel(report.targetType || report.type))} · ${escapeHtml(report.reason || 'No reason')}</p>
+        <div class="admin-heading-badges">
+          ${renderBadge(humanLabel(report.status || 'open'), statusClass(report.status || 'open'))}
+          ${renderBadge(humanLabel(report.priority || 'normal'))}
+          ${renderBadge(humanLabel(report.targetType || report.type || 'report'))}
+        </div>
+      </div>
+      <div class="admin-header-actions">
+        <button type="button" class="admin-secondary-button" data-report-action="assign_self" ${busy ? 'disabled' : ''}>Assign to Me</button>
+        <button type="button" class="admin-secondary-button" data-report-action="in_review" ${busy ? 'disabled' : ''}>Mark In Review</button>
+        <button type="button" class="admin-secondary-button" data-report-action="dismiss" ${busy ? 'disabled' : ''}>Dismiss</button>
+        <button type="button" class="admin-secondary-button" data-report-action="resolve" ${busy ? 'disabled' : ''}>Resolve</button>
+        <button type="button" class="admin-secondary-button" data-report-action="action_taken" ${busy ? 'disabled' : ''}>Action Taken</button>
+        ${reportTargetLink(report, target)}
+        <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh report">${iconSvg('barChart')}</button>
+      </div>
+    </header>
+    <a class="admin-secondary-link admin-back-link" href="${ROUTES.adminReports}">${iconSvg('arrowLeft')}<span>Back to Reports</span></a>
+    <section class="admin-hub-grid">
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Report Overview</h2>${renderBadge(humanLabel(report.status || 'open'))}</div>
+        ${renderKeyValueGrid([
+          renderField('Type', humanLabel(report.type)),
+          renderField('Target type', humanLabel(report.targetType)),
+          renderField('Target ID', report.targetId, { code: true }),
+          renderField('Target owner UID', report.targetOwnerUid, { code: true }),
+          renderField('Reporter UID', report.reporterUid, { code: true }),
+          renderField('Reason', report.reason),
+          renderField('Description', report.description, { wide: true }),
+          renderField('Source path', report.sourcePath, { code: true }),
+          renderField('Status', humanLabel(report.status)),
+          renderField('Priority', humanLabel(report.priority)),
+          renderField('Assigned to', report.assignedTo, { code: true }),
+          renderDateField('Created at', report.createdAt),
+          renderDateField('Updated at', report.updatedAt)
+        ])}
+      </article>
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Reporter</h2>${reporter?.uid ? `<a href="${ROUTES.adminUsers}/${encodeURIComponent(reporter.uid)}">Account Hub</a>` : ''}</div>
+        ${reporter?.uid ? renderKeyValueGrid([
+          renderField('Display name', reporter.displayName),
+          renderField('Username', formatUsername(reporter.username)),
+          renderField('Email', reporter.email),
+          renderField('UID', reporter.uid, { code: true })
+        ]) : '<article class="admin-empty-state">Reporter profile summary is unavailable.</article>'}
+      </article>
+    </section>
+    <section class="admin-hub-grid">
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Target</h2>${reportTargetLink(report, target)}</div>
+        ${target ? `<pre class="admin-json-block">${escapeHtml(JSON.stringify(target, null, 2))}</pre>` : '<article class="admin-empty-state">Target summary is unavailable.</article>'}
+      </article>
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Resolution</h2></div>
+        ${renderKeyValueGrid([
+          renderField('Resolution', report.resolution, { wide: true }),
+          renderDateField('Resolved at', report.resolvedAt),
+          renderField('Resolved by', report.resolvedBy, { code: true }),
+          renderField('Admin notes', report.adminNotes, { wide: true })
+        ])}
+      </article>
+    </section>
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading"><h2>Timeline / Logs</h2><a href="${ROUTES.adminLogs}" class="admin-secondary-link">Open Logs</a></div>
+      <article class="admin-empty-state">Report decision events are written to admin logs after action buttons are used.</article>
+    </section>
+  `
+}
+
 function orderDetailView(orderId = '') {
   const data = adminData('orders')
   const order = data.detail || data.items.find((item) => item.id === orderId)
+  const logs = Array.isArray(data.logs) ? data.logs : []
   if (data.loading || !data.loaded) return '<article class="admin-empty-state">Loading order...</article>'
   if (data.error) return `<article class="admin-empty-state"><strong>Could not load order.</strong><span>${escapeHtml(data.error)}</span></article>`
   if (!order) return `<article class="admin-empty-state"><strong>Order not found.</strong><span>${escapeHtml(orderId)}</span></article>`
@@ -2070,7 +2218,8 @@ function orderDetailView(orderId = '') {
       <div>
         <p class="eyebrow">Commerce</p>
         <h1>Order Hub</h1>
-        <p class="admin-code-value">${escapeHtml(order.id)}</p>
+        <p>${escapeHtml(order.buyerEmail || order.buyerUid || order.uid || 'Unknown buyer')} · ${escapeHtml(formatMoney(order.amountCents, order.currency))} · ${escapeHtml(humanLabel(order.paymentStatus) || 'Unknown payment')}</p>
+        <p class="admin-code-value">${escapeHtml(order.id)} · ${escapeHtml(humanLabel(order.refundStatus) || 'No refund')} · ${escapeHtml(formatDate(order.createdAt))}</p>
       </div>
       <div class="admin-header-actions">
         <button type="button" class="admin-secondary-button" disabled title="Stripe dashboard links are not wired yet.">Open Stripe</button>
@@ -2136,7 +2285,12 @@ function orderDetailView(orderId = '') {
       </article>
       <article class="admin-section-slab">
         <div class="admin-slab-heading"><h2>Timeline / Logs</h2><a href="${ROUTES.adminLogs}" class="admin-secondary-link">Open Logs</a></div>
-        <article class="admin-empty-state">No order-specific timeline is loaded here yet.</article>
+        ${logs.length ? adminSimpleTable('Order Logs', ['Time', 'Actor', 'Action', 'Reason'], logs.slice(0, 10).map((log) => [
+          formatDate(log.createdAt),
+          log.actorEmail || log.actorUid || 'Admin',
+          humanLabel(log.action),
+          log.reason || log.summary || ''
+        ]), { className: 'is-logs', emptyTitle: 'No order logs.', emptyBody: 'Order-specific logs are not available.' }) : '<article class="admin-empty-state">No order-specific timeline is loaded here yet.</article>'}
       </article>
     </section>
   `
@@ -2200,9 +2354,7 @@ function adminTeamTable(team = []) {
           <span class="admin-code-value">${escapeHtml(member.addedBy || member.updatedBy || '')}</span>
           <span>${escapeHtml(formatDate(member.updatedAt || member.createdAt))}</span>
           <span class="admin-row-actions">
-            <button type="button" class="admin-secondary-button" disabled title="${canManageTargetRole(member.role, member.uid) ? 'Use the role form above.' : 'You cannot manage a role equal to or higher than your own.'}">Change Role</button>
-            <button type="button" class="admin-secondary-button" disabled title="${canManageTargetRole(member.role, member.uid) ? 'Disable action is not wired yet.' : 'You cannot manage a role equal to or higher than your own.'}">Disable</button>
-            <a class="admin-secondary-link" href="${ROUTES.adminUsers}/${encodeURIComponent(member.uid)}">Activity</a>
+            <a class="admin-row-action-button" href="${ROUTES.adminTeam}/${encodeURIComponent(member.uid)}">Audit/View</a>
           </span>
         </article>
       `).join('')}
@@ -2210,10 +2362,99 @@ function adminTeamTable(team = []) {
   `
 }
 
+function permissionMatrixMarkup(permissions = {}) {
+  const keys = ['admin', 'productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead', 'settingsManage']
+  return `
+    <div class="admin-permission-matrix">
+      ${keys.map((key) => {
+        const enabled = key === 'admin' ? true : permissions[key] === true
+        return `<span class="${enabled ? 'is-enabled' : ''}"><strong>${escapeHtml(humanLabel(key))}</strong><em>${enabled ? 'Allowed' : 'No access'}</em></span>`
+      }).join('')}
+    </div>
+  `
+}
+
+function roleDetailView(uid = '') {
+  const data = adminData('team')
+  if (data.loading || !data.loaded) return '<article class="admin-empty-state">Loading role detail...</article>'
+  if (data.error) return `<article class="admin-empty-state"><strong>Could not load role detail.</strong><span>${escapeHtml(data.error)}</span></article>`
+  const member = data.items.find((item) => item.uid === uid) || data.adminUser || {}
+  const user = data.profile || {}
+  if (!member.uid && !user.uid) {
+    return `<article class="admin-empty-state"><strong>Role not found.</strong><span>${escapeHtml(uid)}</span><a class="admin-primary-link" href="${ROUTES.adminTeam}">Back to Roles</a></article>`
+  }
+  const manageable = canManageTargetRole(member.role || user.adminRole, uid)
+  return `
+    <header class="admin-page-header admin-hub-header">
+      <div class="admin-hub-title">
+        ${adminAvatar(user.uid ? user : member, 'lg')}
+        <div>
+          <p class="eyebrow">Role Audit</p>
+          <h1>${escapeHtml(user.displayName || member.displayName || member.email || uid)}</h1>
+          <p>${escapeHtml(formatUsername(user.username) || member.email || '')} · ${escapeHtml(humanLabel(member.role || user.adminRole || 'admin'))} · ${escapeHtml(member.active === false ? 'Disabled' : 'Active')}</p>
+          <small class="admin-code-value">${escapeHtml(uid)}</small>
+        </div>
+      </div>
+      <div class="admin-header-actions">
+        <button type="button" class="admin-secondary-button" disabled title="${manageable ? 'Use the role form on the Roles page to change this role.' : 'You cannot manage a role equal to or higher than your own.'}">Change Role</button>
+        <button type="button" class="admin-secondary-button" disabled title="${manageable ? 'Disable action is not wired yet.' : 'You cannot manage a role equal to or higher than your own.'}">Disable Admin</button>
+        <a class="admin-secondary-link" href="${ROUTES.adminLogs}">Activity</a>
+        <a class="admin-secondary-link" href="${ROUTES.adminUsers}/${encodeURIComponent(uid)}">Open Account Hub</a>
+        <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh role">${iconSvg('barChart')}</button>
+      </div>
+    </header>
+    <a class="admin-secondary-link admin-back-link" href="${ROUTES.adminTeam}">${iconSvg('arrowLeft')}<span>Back to Roles</span></a>
+    <section class="admin-hub-grid">
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Role Overview</h2>${renderBadge(member.active ? 'Active' : 'Disabled', member.active ? 'published' : 'rejected')}</div>
+        ${renderKeyValueGrid([
+          renderField('Admin role', humanLabel(member.role || user.adminRole)),
+          renderBooleanField('Active', member.active),
+          renderField('Added by', member.addedBy || member.updatedBy, { code: true }),
+          renderField('Updated by', member.updatedBy, { code: true }),
+          renderDateField('Created at', member.createdAt),
+          renderDateField('Updated at', member.updatedAt)
+        ])}
+      </article>
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Permission Matrix</h2></div>
+        ${permissionMatrixMarkup(member.permissions || {})}
+      </article>
+    </section>
+    <section class="admin-hub-grid">
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>User Context</h2><a href="${ROUTES.adminUsers}/${encodeURIComponent(uid)}">Account Hub</a></div>
+        ${renderKeyValueGrid([
+          renderField('Display name', user.displayName || member.displayName),
+          renderField('Username', formatUsername(user.username)),
+          renderField('Email', user.email || member.email),
+          renderField('UID', uid, { code: true })
+        ])}
+        <div class="admin-listing-taxonomy">
+          <div><h3>Account Roles</h3>${renderBadgeList((user.roles || []).map(humanLabel), 'No account roles')}</div>
+          <div><h3>Profile Badges</h3>${renderBadgeList((user.badges || []).map(humanLabel), 'No profile badges')}</div>
+        </div>
+      </article>
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Role Change History</h2><a href="${ROUTES.adminLogs}">Open Logs</a></div>
+        <article class="admin-empty-state">Role changes are recorded in admin logs.</article>
+      </article>
+    </section>
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading"><h2>Danger Zone</h2></div>
+      <div class="admin-detail-actions">
+        <button type="button" class="admin-secondary-button" disabled title="${manageable ? 'Disable action is not wired yet.' : 'Hierarchy rules block this action.'}">Disable Admin</button>
+        <button type="button" class="admin-secondary-button" disabled title="${manageable ? 'Use the remove role option in the role form.' : 'Hierarchy rules block this action.'}">Remove Role</button>
+      </div>
+    </section>
+  `
+}
+
 function logsView() {
   if (!can('auditRead')) return permissionState('auditRead')
   const data = adminData('logs')
   const loading = adminBusyState(data)
+  const detailId = adminLogDetailId() || data.detailId
   return `
     ${adminPageHeader({ eyebrow: 'Audit', title: 'Logs', refreshLabel: 'Refresh logs' })}
     <section class="admin-section-slab">
@@ -2223,6 +2464,7 @@ function logsView() {
       </div>
     </section>
     ${loading || logsTable(data.items)}
+    ${logDetailModal(detailId)}
   `
 }
 
@@ -2240,12 +2482,73 @@ function logsTable(logs = []) {
       htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetId || '')}</code>`),
       log.reason,
       htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetPath || '')}</code>`),
-      htmlCell('<button type="button" class="admin-secondary-button" disabled>View Details</button>')
+      htmlCell(`<button type="button" class="admin-row-action-button" data-open-log-detail="${escapeHtml(log.id)}">View Details</button>`)
     ]), {
       className: 'is-logs',
       emptyTitle: 'No admin logs found.',
       emptyBody: 'Admin role changes, review decisions, and settings changes will appear here.'
     })
+}
+
+function logTargetLink(log = {}) {
+  const type = String(log.targetType || '').toLowerCase()
+  const id = String(log.targetId || '').trim()
+  if (!id) return ''
+  if (type === 'product') return adminReviewRoute(id)
+  if (['user', 'profile', 'adminuser'].includes(type)) return `${ROUTES.adminUsers}/${encodeURIComponent(id)}`
+  if (type === 'order') return `${ROUTES.adminOrders}/${encodeURIComponent(id)}`
+  if (type === 'report') return `${ROUTES.adminReports}/${encodeURIComponent(id)}`
+  return ''
+}
+
+function logDetailModal(logId = '') {
+  if (!logId) return ''
+  const log = state.adminData.logs.items.find((item) => item.id === logId)
+  if (!log) return ''
+  const targetHref = logTargetLink(log)
+  return `
+    <div class="admin-modal-backdrop" role="presentation">
+      <section class="admin-decision-modal admin-log-detail-modal" role="dialog" aria-modal="true" aria-labelledby="log-detail-title">
+        <header>
+          <h2 id="log-detail-title">Log Details</h2>
+          <button type="button" class="admin-icon-button" data-close-log-detail title="Close">${iconSvg('x')}</button>
+        </header>
+        ${renderKeyValueGrid([
+          renderField('Log ID', log.id, { code: true }),
+          renderDateField('Time', log.createdAt),
+          renderField('Actor UID', log.actorUid, { code: true }),
+          renderField('Actor email/name', log.actorEmail),
+          renderField('Actor role', humanLabel(log.actorRole)),
+          renderField('Action', humanLabel(log.action)),
+          renderField('Target type', humanLabel(log.targetType)),
+          renderField('Target ID', log.targetId, { code: true }),
+          renderField('Target path', log.targetPath, { code: true }),
+          renderField('Reason', log.reason, { wide: true }),
+          renderField('Summary', log.summary, { wide: true })
+        ])}
+        <details class="admin-technical-details">
+          <summary>Before summary</summary>
+          <pre class="admin-json-block">${escapeHtml(JSON.stringify(log.before || null, null, 2))}</pre>
+        </details>
+        <details class="admin-technical-details">
+          <summary>After summary</summary>
+          <pre class="admin-json-block">${escapeHtml(JSON.stringify(log.after || null, null, 2))}</pre>
+        </details>
+        <details class="admin-technical-details">
+          <summary>Metadata</summary>
+          <pre class="admin-json-block">${escapeHtml(JSON.stringify(log.metadata || {}, null, 2))}</pre>
+        </details>
+        <details class="admin-technical-details">
+          <summary>Raw JSON</summary>
+          <pre class="admin-json-block">${escapeHtml(JSON.stringify(log, null, 2))}</pre>
+        </details>
+        <div class="admin-modal-actions">
+          <button type="button" class="admin-secondary-button" data-close-log-detail>Close</button>
+          ${targetHref ? `<a class="admin-primary-link" href="${targetHref}">Open Target</a>` : '<button type="button" class="admin-secondary-button" disabled title="No target route is known for this log.">Open Target</button>'}
+        </div>
+      </section>
+    </div>
+  `
 }
 
 function settingsView() {
@@ -2290,6 +2593,9 @@ function settingsDialog() {
   if (!section) return ''
   const values = state.settings.data?.[section.key] || {}
   const saving = state.settings.saving
+  const editableFields = section.key === 'agreements'
+    ? section.fields.filter(([key]) => !['sellerAgreementUpdatedAt', 'sellerAgreementUpdatedBy', 'sellerAgreementPath'].includes(key))
+    : section.fields
   return `
     <div class="admin-modal-backdrop" role="presentation">
       <section class="admin-decision-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
@@ -2298,7 +2604,16 @@ function settingsDialog() {
           <button type="button" class="admin-icon-button" data-close-settings-dialog title="Close">${iconSvg('x')}</button>
         </header>
         <form data-settings-form="${escapeHtml(section.key)}">
-          ${section.fields.map(([key, label, type]) => settingsInput(key, label, type, values[key])).join('')}
+          ${editableFields.map(([key, label, type]) => settingsInput(key, label, type, values[key])).join('')}
+          ${section.key === 'agreements' ? `
+            <label>
+              <span>Agreement Markdown</span>
+              <input type="file" data-agreement-md-file accept=".md,text/markdown,text/plain" ${saving ? 'disabled' : ''} />
+            </label>
+            <p class="admin-muted">Upload stores the file as agreements/marketplace-product-seller-agreement/{version}.md using the version above.</p>
+            ${values.sellerAgreementPath ? `<p class="admin-muted">Current path: <code class="admin-code-value">${escapeHtml(values.sellerAgreementPath)}</code></p>` : ''}
+          ` : ''}
+          ${section.key === 'aiModeration' ? '<p class="admin-muted">Describe what the AI should allow, flag, or reject when reviewing marketplace products.</p>' : ''}
           <label>
             <span>Reason</span>
             <input data-settings-reason maxlength="1200" placeholder="Why this setting changed" ${saving ? 'disabled' : ''} />
@@ -2323,10 +2638,11 @@ function settingsInput(key, label, type, value) {
     `
   }
   if (type === 'textarea') {
+    const rows = key === 'productModerationInstructions' ? 8 : 4
     return `
       <label>
         <span>${escapeHtml(label)}</span>
-        <textarea data-settings-field="${escapeHtml(key)}" data-settings-type="${escapeHtml(type)}" rows="4">${escapeHtml(value || '')}</textarea>
+        <textarea data-settings-field="${escapeHtml(key)}" data-settings-type="${escapeHtml(type)}" rows="${rows}">${escapeHtml(value || '')}</textarea>
       </label>
     `
   }
@@ -2461,18 +2777,49 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       state.adminData.users.items = result.users || []
     },
     reports: async () => {
-      const result = await listAdminReports({ limitCount: 50 })
-      state.adminData.reports.items = result.reports || []
+      const reportId = adminReportDetailId()
+      if (reportId) {
+        const result = await getAdminReport({ reportId })
+        state.adminData.reports.detail = result.report || null
+        state.adminData.reports.reporter = result.reporter || null
+        state.adminData.reports.target = result.target || null
+        state.adminData.reports.items = result.reports || (result.report ? [result.report] : [])
+      } else {
+        const result = await listAdminReports({ limitCount: 50 })
+        state.adminData.reports.items = result.reports || []
+        state.adminData.reports.detail = null
+        state.adminData.reports.reporter = null
+        state.adminData.reports.target = null
+      }
     },
     orders: async () => {
       const orderId = adminOrderDetailId()
-      const result = await listAdminOrders({ limitCount: 50, orderId })
-      state.adminData.orders.items = result.orders || []
-      state.adminData.orders.detail = orderId ? result.order || null : null
+      if (orderId) {
+        const result = await getAdminOrder({ orderId })
+        state.adminData.orders.detail = result.order || null
+        state.adminData.orders.logs = result.logs || []
+        state.adminData.orders.items = result.order ? [result.order] : []
+      } else {
+        const result = await listAdminOrders({ limitCount: 50 })
+        state.adminData.orders.items = result.orders || []
+        state.adminData.orders.detail = null
+        state.adminData.orders.logs = []
+      }
     },
     team: async () => {
+      const detailUid = adminTeamDetailUid()
       const result = await listAdminTeam({ limitCount: 50 })
       state.adminData.team.items = result.team || []
+      if (detailUid) {
+        const profileResult = await getAdminUserProfile({ uid: detailUid })
+        state.adminData.team.profile = profileResult.user || null
+        state.adminData.team.adminUser = profileResult.adminUser || null
+        state.adminData.team.recentProducts = profileResult.recentProducts || []
+      } else {
+        state.adminData.team.profile = null
+        state.adminData.team.adminUser = null
+        state.adminData.team.recentProducts = []
+      }
     },
     logs: async () => {
       const result = await listAdminLogs({ limitCount: 50 })
@@ -2638,11 +2985,39 @@ async function submitSettingsForm(form) {
     const key = input.getAttribute('data-settings-field') || ''
     if (key) values[key] = parseSettingsValue(input)
   })
+  const agreementFile = form.querySelector('[data-agreement-md-file]')?.files?.[0] || null
+  if (section === 'agreements') {
+    const version = String(values.sellerAgreementVersion || '').trim()
+    const agreementId = String(values.sellerAgreementId || 'marketplace-product-seller-agreement').trim() || 'marketplace-product-seller-agreement'
+    if (!/^v[0-9]+$/.test(version)) {
+      state.settings.error = 'Version must use lowercase v followed by a number, such as v2.'
+      render()
+      return
+    }
+    if (agreementFile) {
+      const fileName = String(agreementFile.name || '').toLowerCase()
+      const mime = String(agreementFile.type || '').toLowerCase()
+      if (!fileName.endsWith('.md') || (mime && !['text/markdown', 'text/plain', 'application/octet-stream'].includes(mime))) {
+        state.settings.error = 'Agreement upload must be a .md markdown file.'
+        render()
+        return
+      }
+    }
+    values.sellerAgreementPath = `agreements/${agreementId}/${version}.md`
+  }
   state.settings.saving = true
   state.settings.error = ''
   state.message = ''
   render()
   try {
+    if (section === 'agreements' && agreementFile) {
+      const uploadResult = await uploadSellerAgreementMarkdown({
+        file: agreementFile,
+        version: values.sellerAgreementVersion,
+        agreementId: values.sellerAgreementId || 'marketplace-product-seller-agreement'
+      })
+      values.sellerAgreementPath = uploadResult.storagePath
+    }
     const result = await updateAdminSettings({
       section,
       values,
@@ -2659,6 +3034,37 @@ async function submitSettingsForm(form) {
     state.settings.error = error?.message || 'Could not save settings.'
   } finally {
     state.settings.saving = false
+    render()
+  }
+}
+
+async function handleReportAction(action = '') {
+  const reportId = adminReportDetailId()
+  if (!reportId || !action) return
+  let reason = ''
+  let notes = ''
+  if (['dismiss', 'resolve', 'action_taken'].includes(action)) {
+    reason = window.prompt('Reason for this report action') || ''
+    if (!reason.trim()) {
+      state.error = 'A reason is required for this report action.'
+      render()
+      return
+    }
+    notes = window.prompt('Optional admin notes') || ''
+  }
+  state.adminData.reports.actioning = action
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    const result = await updateReportDecision({ reportId, action, reason, notes })
+    state.message = `Report ${result.status || action} saved.`
+    await loadAdminSectionData('reports', { silent: true })
+  } catch (error) {
+    console.warn('[admin] report action failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = error?.message || 'Could not update this report.'
+  } finally {
+    state.adminData.reports.actioning = ''
     render()
   }
 }
@@ -2708,6 +3114,26 @@ function bindEvents() {
       nextInput.focus()
       if (Number.isInteger(cursor)) nextInput.setSelectionRange(cursor, cursor)
     }
+  })
+  app.querySelectorAll('[data-open-log-detail]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const logId = button.getAttribute('data-open-log-detail') || ''
+      if (!logId) return
+      state.adminData.logs.detailId = logId
+      const target = `${ROUTES.adminLogs}/${encodeURIComponent(logId)}`
+      if (window.location.pathname !== target) window.history.pushState({}, '', target)
+      render()
+    })
+  })
+  app.querySelectorAll('[data-close-log-detail]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.adminData.logs.detailId = ''
+      if (window.location.pathname.startsWith(`${ROUTES.adminLogs}/`)) window.history.pushState({}, '', ROUTES.adminLogs)
+      render()
+    })
+  })
+  app.querySelectorAll('[data-report-action]').forEach((button) => {
+    button.addEventListener('click', () => handleReportAction(button.getAttribute('data-report-action') || ''))
   })
   app.querySelectorAll('[data-edit-settings]').forEach((button) => {
     button.addEventListener('click', () => openSettingsDialog(button.getAttribute('data-edit-settings') || ''))

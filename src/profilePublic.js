@@ -6,6 +6,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { addToCart } from './data/cartService'
+import { createReport } from './data/productService'
 import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
 import { storage } from './firebase/storage'
@@ -62,8 +63,18 @@ const uiState = {
   productsByUid: new Map(),
   parallaxBound: false,
   marqueeTicker: null,
-  badgeUrls: {}
+  badgeUrls: {},
+  report: { open: false, submitting: false, error: '', message: '' }
 }
+
+const PROFILE_REPORT_REASONS = [
+  'Impersonation',
+  'Harassment or abuse',
+  'Spam',
+  'Misleading profile',
+  'Inappropriate content',
+  'Other'
+]
 
 function escapeHtml(value) {
   return String(value || '')
@@ -162,6 +173,102 @@ function renderNotFound() {
       <a class="button button-accent" href="${ROUTES.products}">Browse Products</a>
     </article>
   `
+}
+
+function profileReportDialog(profile = {}) {
+  if (!uiState.report.open) return ''
+  return `
+    <div class="public-report-backdrop" role="presentation">
+      <section class="public-report-modal" role="dialog" aria-modal="true" aria-labelledby="profile-report-title">
+        <header>
+          <h2 id="profile-report-title">Report Profile</h2>
+          <button type="button" class="public-report-close" data-close-profile-report aria-label="Close report modal">&times;</button>
+        </header>
+        ${uiState.report.message ? `<p class="public-report-success">${escapeHtml(uiState.report.message)}</p>` : `
+          <form data-profile-report-form>
+            <label>
+              <span>Reason</span>
+              <select name="reason" required>
+                <option value="">Choose a reason</option>
+                ${PROFILE_REPORT_REASONS.map((reason) => `<option value="${escapeHtml(reason)}">${escapeHtml(reason)}</option>`).join('')}
+              </select>
+            </label>
+            <label>
+              <span>Description</span>
+              <textarea name="description" rows="5" maxlength="2000" placeholder="Add details that can help marketplace staff review this profile."></textarea>
+            </label>
+            ${uiState.report.error ? `<p class="public-report-error">${escapeHtml(uiState.report.error)}</p>` : ''}
+            <div class="public-report-actions">
+              <button type="button" class="button button-muted" data-close-profile-report ${uiState.report.submitting ? 'disabled' : ''}>Cancel</button>
+              <button type="submit" class="button button-accent" ${uiState.report.submitting ? 'disabled' : ''}>${uiState.report.submitting ? 'Submitting...' : 'Submit Report'}</button>
+            </div>
+          </form>
+        `}
+      </section>
+    </div>
+  `
+}
+
+function bindProfileReport(profile = {}) {
+  profileRoot.querySelector('[data-report-profile]')?.addEventListener('click', () => {
+    if (!uiState.currentUser?.uid) {
+      window.location.assign(authRoute({ redirect: getCurrentPath() }))
+      return
+    }
+    if (uiState.currentUser.uid === profile.uid) return
+    uiState.report = { open: true, submitting: false, error: '', message: '' }
+    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+  })
+  profileRoot.querySelectorAll('[data-close-profile-report]').forEach((button) => {
+    button.addEventListener('click', () => {
+      uiState.report = { ...uiState.report, open: false, submitting: false, error: '' }
+      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+    })
+  })
+  profileRoot.querySelector('[data-profile-report-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const formData = new FormData(event.currentTarget)
+    const reason = String(formData.get('reason') || '').trim()
+    const description = String(formData.get('description') || '').trim()
+    if (!reason) {
+      uiState.report.error = 'Choose a reason before submitting.'
+      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      return
+    }
+    if (reason === 'Other' && !description) {
+      uiState.report.error = 'Description is required when reason is Other.'
+      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      return
+    }
+    uiState.report = { ...uiState.report, submitting: true, error: '' }
+    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+    try {
+      await createReport({
+        targetType: 'profile',
+        targetId: profile.uid,
+        targetOwnerUid: profile.uid,
+        reason,
+        description,
+        sourcePath: publicProfileRoute({ uid: profile.uid }),
+        metadata: {
+          displayName: profile.displayName || '',
+          username: profile.username || profile.usernameLower || ''
+        }
+      })
+      uiState.report = { open: true, submitting: false, error: '', message: 'Thank you. Your report has been submitted.' }
+      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      window.setTimeout(() => {
+        if (uiState.report.message) {
+          uiState.report = { ...uiState.report, open: false }
+          renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+        }
+      }, 1200)
+    } catch (error) {
+      console.warn('[profilePublic] report failed', { code: error?.code, message: error?.message, details: error?.details })
+      uiState.report = { ...uiState.report, submitting: false, error: error?.message || 'Could not submit this report.' }
+      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+    }
+  })
 }
 
 // TODO: Add verified badge in additional username surfaces once role hydration is included in those payloads.
@@ -328,9 +435,11 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
       ? `
         <a class="button button-accent public-hero-btn-primary" href="${ROUTES.inbox}?start=${encodeURIComponent(uid)}">Message</a>
         <button class="button button-muted public-hero-btn-outline" type="button" disabled aria-disabled="true" title="Follow is coming soon">Follow</button>
+        <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
       `
       : `
         <a class="button button-accent public-hero-btn-primary" href="${authRoute({ redirect: getCurrentPath() })}">Sign in to interact</a>
+        <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
       `
 
   profileRoot.innerHTML = `
@@ -375,6 +484,7 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
 
       ${renderCategorySection(profile)}
     </section>
+    ${profileReportDialog(profile)}
   `
 
   profileRoot.querySelectorAll('[data-category]').forEach((button) => {
@@ -411,6 +521,7 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
 
   bindParallax()
   bindMarquee()
+  bindProfileReport(profile)
 }
 
 async function resolveUid(params) {

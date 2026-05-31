@@ -26,6 +26,18 @@ service cloud.firestore {
       return isAdminClaim() && request.auth.token.roleManage == true;
     }
 
+    function hasUserModerateClaim() {
+      return isOwnerAdminRole() || (isAdminClaim() && request.auth.token.userModerate == true);
+    }
+
+    function hasOrderSupportClaim() {
+      return isOwnerAdminRole() || (isAdminClaim() && request.auth.token.orderSupport == true);
+    }
+
+    function canReadReportsClaim() {
+      return hasUserModerateClaim() || hasProductReviewClaim() || hasOrderSupportClaim();
+    }
+
     function isOwner(uid) {
       return signedIn() && request.auth.uid == uid;
     }
@@ -1594,6 +1606,11 @@ service cloud.firestore {
 
     match /adminLogs/{logId} {
       allow read: if hasAuditReadClaim() || hasRoleManageClaim();
+      allow write: if false;
+    }
+
+    match /reports/{reportId} {
+      allow read: if canReadReportsClaim();
       allow write: if false;
     }
 

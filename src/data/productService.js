@@ -1779,11 +1779,32 @@ export async function listAdminReports({ limitCount = 50 } = {}) {
   return result?.data || { ok: false, reports: [] }
 }
 
+export async function getAdminReport({ reportId = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminReports')
+  const result = await callable({ reportId })
+  return result?.data || { ok: false, reports: [] }
+}
+
+export async function updateReportDecision({ reportId = '', action = '', reason = '', notes = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'updateReportDecision')
+  const result = await callable({ reportId, action, reason, notes })
+  return result?.data || { ok: false }
+}
+
 export async function listAdminOrders({ limitCount = 50, orderId = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminOrders')
   const result = await callable({ limit: limitCount, orderId })
   return result?.data || { ok: false, orders: [] }
+}
+
+export async function getAdminOrder({ orderId = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'getAdminOrder')
+  const result = await callable({ orderId })
+  return result?.data || { ok: false, order: null, logs: [] }
 }
 
 export async function listAdminLogs({ limitCount = 50 } = {}) {
@@ -1819,6 +1840,36 @@ export async function updateAdminSettings({ section = '', values = {}, reason = 
   const callable = httpsCallable(functions, 'updateAdminSettings')
   const result = await callable({ section, values, reason })
   return result?.data || { ok: false, settings: {} }
+}
+
+export async function createReport({ targetType = '', targetId = '', targetOwnerUid = '', reason = '', description = '', sourcePath = '', metadata = {} } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'createReport')
+  const result = await callable({ targetType, targetId, targetOwnerUid, reason, description, sourcePath, metadata })
+  return result?.data || { ok: false }
+}
+
+export async function uploadSellerAgreementMarkdown({ file, version = '', agreementId = 'marketplace-product-seller-agreement' } = {}) {
+  if (!storage) throw new Error('Storage is not configured.')
+  const cleanVersion = String(version || '').trim()
+  const cleanAgreementId = String(agreementId || 'marketplace-product-seller-agreement').trim() || 'marketplace-product-seller-agreement'
+  if (!/^v[0-9]+$/.test(cleanVersion)) {
+    throw new Error('Version must use lowercase v followed by a number, such as v2.')
+  }
+  if (!(file instanceof File)) throw new Error('Choose a markdown file before uploading.')
+  const fileName = String(file.name || '').toLowerCase()
+  const mime = String(file.type || '').toLowerCase()
+  if (!fileName.endsWith('.md') || (mime && !['text/markdown', 'text/plain', 'application/octet-stream'].includes(mime))) {
+    throw new Error('Agreement upload must be a .md markdown file.')
+  }
+  const storagePath = `agreements/${cleanAgreementId}/${cleanVersion}.md`
+  await uploadBytes(ref(storage, storagePath), file, { contentType: 'text/markdown' })
+  return {
+    ok: true,
+    storagePath,
+    agreementId: cleanAgreementId,
+    version: cleanVersion
+  }
 }
 
 export async function requestProductReview(productId = '') {

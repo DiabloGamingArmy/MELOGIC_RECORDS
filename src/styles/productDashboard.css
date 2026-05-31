@@ -889,3 +889,70 @@
   display: block !important;
   flex: none !important;
 }
+
+.dashboard-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(5, 8, 16, 0.72);
+}
+
+.dashboard-report-modal {
+  width: min(520px, 100%);
+  border: 1px solid rgba(120, 153, 220, 0.34);
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e8efff;
+  padding: 1rem;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+
+.dashboard-report-modal header,
+.dashboard-report-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.dashboard-report-modal h2 { margin: 0; }
+.dashboard-report-close {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(143, 166, 216, 0.32);
+  border-radius: 10px;
+  background: rgba(20, 30, 54, 0.92);
+  color: #e8efff;
+}
+
+.dashboard-report-modal form,
+.dashboard-report-modal label {
+  display: grid;
+  gap: .55rem;
+}
+
+.dashboard-report-modal form { margin-top: .9rem; }
+.dashboard-report-modal label span {
+  color: #aebfe8;
+  font-size: .84rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.dashboard-report-modal select,
+.dashboard-report-modal textarea {
+  width: 100%;
+  border: 1px solid rgba(122, 148, 209, 0.35);
+  border-radius: 10px;
+  background: rgba(8, 13, 25, 0.92);
+  color: #eff5ff;
+  padding: .7rem .75rem;
+}
+
+.dashboard-report-success { color: #a7fff3; }
+.dashboard-report-error { color: #ffd3de; }

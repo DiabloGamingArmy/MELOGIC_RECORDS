@@ -6,6 +6,15 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function isAdminStorageWriter() {
+      return signedIn()
+        && (
+          request.auth.token.admin == true
+          || request.auth.token.roleManage == true
+          || request.auth.token.settingsManage == true
+        );
+    }
+
     function isThreadParticipant(threadId) {
       return signedIn()
         && request.auth.uid in firestore.get(/databases/(default)/documents/threads/$(threadId)).data.participantIds;
@@ -124,6 +133,19 @@ service firebase.storage {
     match /legal/agreements/{allPaths=**} {
       allow read: if signedIn();
       allow write: if false;
+    }
+
+    match /agreements/{agreementId}/{fileName} {
+      allow read: if true;
+      allow write: if isAdminStorageWriter()
+        && request.resource != null
+        && request.resource.size <= 2 * 1024 * 1024
+        && fileName.matches('v[0-9]+\\.md')
+        && (
+          request.resource.contentType.matches('text/markdown')
+          || request.resource.contentType.matches('text/plain')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
     }
 
     match /users/{uid}/stage/custom-assets/{assetId}/{version}/{fileName} {

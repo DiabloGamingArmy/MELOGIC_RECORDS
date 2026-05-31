@@ -16,6 +16,14 @@ const DEFAULT_MODERATION_MODELS = [
   'gemini-flash-latest'
 ]
 const ALLOWED_MODERATION_MODELS = new Set(DEFAULT_MODERATION_MODELS)
+const BASE_PRODUCT_MODERATION_POLICY = [
+  'Never approve malware, malicious files, credential stealers, or unsafe download instructions.',
+  'Flag copyright, stolen-content, impersonation, or unauthorized resale indicators.',
+  'Flag explicit illegal content, harassment, hate, or exploitation indicators.',
+  'Flag misleading listings where the title, description, previews, files, or pricing do not match.',
+  'Require a non-empty title, product type, description, valid price, accepted seller agreement, and at least one deliverable file.',
+  'Keep uncertain cases in review_pending for manual marketplace review.'
+].join('\n- ')
 
 const BLOCKED_KEYWORDS = [
   'terrorist',
@@ -38,6 +46,48 @@ function resolveModerationModelOrder(configuredModel = '') {
     if (!ordered.includes(model)) ordered.push(model)
   })
   return ordered
+}
+
+function resolveModerationModelsFromSettings(settings = {}) {
+  const aiSettings = settings.aiModeration && typeof settings.aiModeration === 'object' && !Array.isArray(settings.aiModeration)
+    ? settings.aiModeration
+    : {}
+  const configured = safeString(aiSettings.productModerationModel || productModerationModel.value(), 120)
+  const fallbacks = Array.isArray(aiSettings.fallbackModels)
+    ? aiSettings.fallbackModels.map((model) => safeString(model, 120)).filter((model) => ALLOWED_MODERATION_MODELS.has(model))
+    : []
+  const ordered = []
+  ;[configured, ...fallbacks, ...DEFAULT_MODERATION_MODELS].forEach((model) => {
+    if (ALLOWED_MODERATION_MODELS.has(model) && !ordered.includes(model)) ordered.push(model)
+  })
+  return ordered
+}
+
+async function loadPlatformModerationSettings(db) {
+  try {
+    const snap = await db.collection('platformConfig').doc('current').get()
+    const raw = snap.exists ? snap.data() || {} : {}
+    const aiModeration = raw.aiModeration && typeof raw.aiModeration === 'object' && !Array.isArray(raw.aiModeration)
+      ? raw.aiModeration
+      : {}
+    return {
+      aiModeration,
+      modelOrder: resolveModerationModelsFromSettings(raw),
+      aiModerationEnabled: aiModeration.aiModerationEnabled !== false,
+      autoApproveProducts: aiModeration.autoApproveProducts === true || autoApproveProducts.value() === 'true',
+      productModerationInstructions: safeString(aiModeration.productModerationInstructions || '', 4000),
+      policyVersion: safeString(aiModeration.productModerationPolicyVersion || raw.updatedAt?.toDate?.()?.toISOString?.() || '', 120)
+    }
+  } catch {
+    return {
+      aiModeration: {},
+      modelOrder: resolveModerationModelOrder(productModerationModel.value()),
+      aiModerationEnabled: true,
+      autoApproveProducts: autoApproveProducts.value() === 'true',
+      productModerationInstructions: '',
+      policyVersion: ''
+    }
+  }
 }
 
 function isObviouslyInvalidGeminiSecret(apiKey = '') {
@@ -118,7 +168,7 @@ function runRuleBasedModeration(product = {}) {
   }
 }
 
-async function moderateProductWithAI(product = {}, { model = '', models = null, apiKey = '', fetchImpl = fetch } = {}) {
+async function moderateProductWithAI(product = {}, { model = '', models = null, apiKey = '', fetchImpl = fetch, adminInstructions = '', policyVersion = '' } = {}) {
   const modelOrder = Array.isArray(models) && models.length ? models : resolveModerationModelOrder(model)
   const selectedModel = modelOrder[0] || ''
   const aiConfigured = Boolean(selectedModel && apiKey)
@@ -170,7 +220,15 @@ async function moderateProductWithAI(product = {}, { model = '', models = null, 
     priceCents: product.priceCents,
     isFree: product.isFree
   }
+  const instructions = safeString(adminInstructions, 4000)
   const prompt = `Return ONLY strict JSON with keys approved,riskLevel,suggestedAction,reasons,summary.
+SYSTEM/BASE POLICY:
+- ${BASE_PRODUCT_MODERATION_POLICY}
+
+ADMIN MARKETPLACE POLICY:
+${instructions || 'No additional admin marketplace policy is configured.'}
+
+PRODUCT INPUT:
 ${JSON.stringify(moderationInput)}`
 
   let lastFailure = null
@@ -216,7 +274,9 @@ ${JSON.stringify(moderationInput)}`
           error: '',
           errorCode: '',
           errorCategory: '',
-          modelUsed: candidateModel
+          modelUsed: candidateModel,
+          moderationInstructionsUsed: Boolean(instructions),
+          moderationPolicyVersion: policyVersion || ''
         }
       } catch (error) {
         return {
@@ -232,7 +292,9 @@ ${JSON.stringify(moderationInput)}`
           error: 'AI moderation returned an unreadable response.',
           errorCode: 'gemini_unreadable_response',
           errorCategory: 'response',
-          modelUsed: candidateModel
+          modelUsed: candidateModel,
+          moderationInstructionsUsed: Boolean(instructions),
+          moderationPolicyVersion: policyVersion || ''
         }
       }
     } catch (error) {
@@ -354,12 +416,36 @@ async function processReviewJob(jobId, job = {}) {
   const productSnap = await productRef.get()
   if (!productSnap.exists) throw new Error('Product not found')
   const product = productSnap.data() || {}
-  const modelOrder = resolveModerationModelOrder(productModerationModel.value())
+  const moderationConfig = await loadPlatformModerationSettings(db)
+  const modelOrder = moderationConfig.modelOrder
   const apiKey = geminiApiKey.value()
   const ruleResult = runRuleBasedModeration(product)
-  const aiResult = await moderateProductWithAI(product, { models: modelOrder, apiKey })
+  const aiResult = moderationConfig.aiModerationEnabled === false
+    ? {
+        approved: true,
+        reasons: [],
+        riskLevel: 'unknown',
+        suggestedAction: 'review_pending',
+        summary: 'AI moderation disabled in admin settings; product remains pending manual review.',
+        aiConfigured: false,
+        aiAttempted: false,
+        aiSucceeded: false,
+        aiEnabled: false,
+        error: '',
+        errorCode: '',
+        errorCategory: '',
+        modelUsed: '',
+        moderationInstructionsUsed: Boolean(moderationConfig.productModerationInstructions),
+        moderationPolicyVersion: moderationConfig.policyVersion
+      }
+    : await moderateProductWithAI(product, {
+        models: modelOrder,
+        apiKey,
+        adminInstructions: moderationConfig.productModerationInstructions,
+        policyVersion: moderationConfig.policyVersion
+      })
   const selectedModel = aiResult.modelUsed || modelOrder[0] || ''
-  const autoApprove = autoApproveProducts.value() === 'true'
+  const autoApprove = moderationConfig.autoApproveProducts
   const allowRuleBasedAutoApprove = autoApproveRuleBasedOnly.value() === 'true'
   const outcome = decideReviewOutcome({ product, ruleResult, aiResult, autoApprove, allowRuleBasedAutoApprove, model: selectedModel })
   const productUpdate = {
@@ -377,6 +463,8 @@ async function processReviewJob(jobId, job = {}) {
     moderationAIError: aiResult.error || '',
     moderationAIErrorCode: aiResult.errorCode || '',
     moderationAIErrorCategory: aiResult.errorCategory || '',
+    moderationInstructionsUsed: Boolean(aiResult.moderationInstructionsUsed),
+    moderationPolicyVersion: aiResult.moderationPolicyVersion || '',
     reviewJobStatus: outcome.reviewJobStatus,
     reviewedAt: admin.firestore.FieldValue.serverTimestamp(),
     reviewedBy: 'system',
@@ -401,7 +489,9 @@ async function processReviewJob(jobId, job = {}) {
     moderationStatus: outcome.moderationStatus,
     aiSucceeded: Boolean(aiResult.aiSucceeded),
     aiErrorCode: aiResult.errorCode || '',
-    moderationAIModel: selectedModel
+    moderationAIModel: selectedModel,
+    moderationInstructionsUsed: Boolean(aiResult.moderationInstructionsUsed),
+    moderationPolicyVersion: aiResult.moderationPolicyVersion || ''
   }, { merge: true })
 }
 

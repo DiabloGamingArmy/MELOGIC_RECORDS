@@ -1846,6 +1846,43 @@
   box-shadow: 0 -10px 24px var(--admin-shadow);
 }
 
+.admin-permission-matrix {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: .6rem;
+}
+
+.admin-permission-matrix span {
+  display: grid;
+  gap: .18rem;
+  min-height: 72px;
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  padding: .65rem;
+  background: color-mix(in srgb, var(--admin-card) 86%, transparent);
+}
+
+.admin-permission-matrix span.is-enabled {
+  border-color: rgba(52, 211, 153, .42);
+  background: rgba(52, 211, 153, .1);
+}
+
+.admin-permission-matrix em {
+  color: var(--admin-muted);
+  font-style: normal;
+  font-size: .82rem;
+}
+
+.admin-log-detail-modal {
+  max-width: 760px;
+  max-height: min(860px, calc(100vh - 2rem));
+  overflow: auto;
+}
+
+.admin-data-table.is-order-items .admin-data-row {
+  grid-template-columns: minmax(220px, 1.5fr) minmax(120px, .9fr) minmax(100px, .7fr) minmax(120px, .9fr) minmax(110px, .7fr);
+}
+
 @media (max-width: 1060px) {
   .admin-console-shell,
   .admin-review-layout,
