@@ -328,6 +328,7 @@ main {
 
 .profile-menu {
   position: relative;
+  z-index: 2140;
 }
 
 .button {
@@ -444,7 +445,7 @@ main {
   padding: 0.28rem;
   display: grid;
   gap: 0.1rem;
-  z-index: 150;
+  z-index: 2140;
 }
 
 .profile-dropdown[hidden] {

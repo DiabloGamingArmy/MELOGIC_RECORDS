@@ -43,6 +43,7 @@ import {
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { markAccountEventRead, subscribeToAccountEvents } from './services/accountEvents'
 import { markSystemNotificationRead, subscribeToSystemNotifications } from './data/systemNotificationService'
+import { buildInboxPinId, deleteInboxPin, subscribeToInboxPins, upsertInboxPin } from './data/inboxPinService'
 
 const app = document.querySelector('#app')
 
@@ -117,6 +118,9 @@ const appState = {
   warnedSystemPermissions: false,
   systemNotifications: [],
   accountEvents: [],
+  inboxPins: [],
+  inboxPinsUnsubscribe: () => {},
+  isSavingInboxPin: '',
   systemFilter: ['account', 'security'].includes(initialSystemFilter) ? initialSystemFilter : 'all',
   systemUnsubscribe: () => {},
   accountEventsUnsubscribe: () => {},
@@ -714,6 +718,7 @@ function clearRealtimeListeners() {
   appState.blockedUsersUnsubscribe()
   appState.systemUnsubscribe()
   appState.accountEventsUnsubscribe()
+  appState.inboxPinsUnsubscribe()
   appState.reactionUnsubscribe()
   appState.hiddenMessagesUnsubscribe()
   appState.threadUnsubscribe = () => {}
@@ -724,6 +729,7 @@ function clearRealtimeListeners() {
   appState.blockedUsersUnsubscribe = () => {}
   appState.systemUnsubscribe = () => {}
   appState.accountEventsUnsubscribe = () => {}
+  appState.inboxPinsUnsubscribe = () => {}
   appState.reactionUnsubscribe = () => {}
   appState.hiddenMessagesUnsubscribe = () => {}
   appState.threadsFallbackPending = false
@@ -961,6 +967,47 @@ function closeCreateChatModal() {
   renderCreateChatModal()
 }
 
+function inboxPinFor(type = '', targetId = '') {
+  const pinId = buildInboxPinId(type, targetId)
+  return appState.inboxPins.find((pin) => pin.pinId === pinId || pin.id === pinId) || null
+}
+
+function isInboxPinned(type = '', targetId = '') {
+  return Boolean(inboxPinFor(type, targetId))
+}
+
+function threadInboxPin(thread = {}) {
+  return {
+    pinId: buildInboxPinId('thread', thread.id),
+    type: 'thread',
+    targetId: thread.id,
+    title: thread.title || 'Chat',
+    subtitle: thread.type === 'group' ? 'Group chat' : 'Direct message',
+    sourceCategory: 'Messages',
+    targetPath: ROUTES.inbox,
+    metadata: { threadType: thread.type || 'thread' }
+  }
+}
+
+function systemInboxPin(item = {}) {
+  const sourceCollection = item.sourceCollection || 'systemNotifications'
+  const isAccountEvent = sourceCollection === 'accountEvents'
+  const type = isAccountEvent ? 'accountEvent' : 'systemNotification'
+  const systemFilter = isAccountEvent
+    ? (String(item.type || '').includes('security') ? 'security' : 'account')
+    : (item.type || 'other')
+  return {
+    pinId: buildInboxPinId(type, item.id),
+    type,
+    targetId: item.id,
+    title: item.title || 'Notification',
+    subtitle: item.body || item.message || '',
+    sourceCategory: 'System',
+    targetPath: item.actionHref || item.path || ROUTES.inbox,
+    metadata: { sourceCollection, systemFilter }
+  }
+}
+
 function getMessagesSidebarMarkup() {
   const filterMarkup = inboxFilters
     .map(
@@ -978,14 +1025,47 @@ function getMessagesSidebarMarkup() {
       <p>Messages and activity</p>
     </div>
     <div class="inbox-filters" data-inbox-filters>${filterMarkup}</div>
+    ${getPinnedInboxSidebarMarkup()}
     ${getRecentThreadsSidebarMarkup()}
   `
 }
 
-function getRecentThreadsSidebarMarkup() {
-  const isMessages = appState.activeFilter === 'Messages'
+function getPinnedInboxSidebarMarkup() {
+  const pins = appState.inboxPins.slice(0, 8)
+  if (!pins.length) {
+    return `
+      <section class="sidebar-recent-block">
+        <p class="sidebar-label">Pinned</p>
+        <p class="sidebar-note">Pin messages and notifications here.</p>
+      </section>
+    `
+  }
 
-  if (appState.isLoadingThreads && isMessages) {
+  const rows = pins.map((pin) => {
+    const isActiveThread = pin.type === 'thread' && appState.activeFilter === 'Messages' && appState.selectedThreadId === pin.targetId
+    return `
+      <div class="sidebar-pin-row">
+        <button type="button" class="sidebar-thread-pill ${isActiveThread ? 'is-active' : ''}" data-open-inbox-pin="${escapeHtml(pin.pinId || pin.id)}">
+          <strong>${escapeHtml(pin.title)}</strong>
+          <small>${escapeHtml(pin.sourceCategory || 'Inbox')}${pin.subtitle ? ` · ${escapeHtml(pin.subtitle)}` : ''}</small>
+        </button>
+        <button type="button" class="sidebar-pin-remove" data-unpin-inbox-pin="${escapeHtml(pin.pinId || pin.id)}" aria-label="Remove pinned item">×</button>
+      </div>
+    `
+  }).join('')
+
+  return `
+    <section class="sidebar-recent-block">
+      <p class="sidebar-label">Pinned</p>
+      <div class="sidebar-recent-list">${rows}</div>
+    </section>
+  `
+}
+
+function getRecentThreadsSidebarMarkup() {
+  if (appState.activeFilter !== 'Messages') return ''
+
+  if (appState.isLoadingThreads) {
     return `
       <section class="sidebar-recent-block">
         <p class="sidebar-label">Recent threads</p>
@@ -998,29 +1078,20 @@ function getRecentThreadsSidebarMarkup() {
     `
   }
 
-  if (isMessages && appState.isRepairingInbox) {
+  if (appState.isRepairingInbox) {
     return `
       <section class="sidebar-recent-block">
         <p class="sidebar-label">Recent threads</p>
-        <p class="sidebar-note">Restoring conversations…</p>
+        <p class="sidebar-note">Restoring conversations...</p>
       </section>
     `
   }
 
-  if (isMessages && (!appState.threadsRealtimeReady || appState.threadsFallbackPending) && !appState.threadsFallbackTried) {
+  if ((!appState.threadsRealtimeReady || appState.threadsFallbackPending) && !appState.threadsFallbackTried) {
     return `
       <section class="sidebar-recent-block">
         <p class="sidebar-label">Recent threads</p>
-        <p class="sidebar-note">Loading conversations…</p>
-      </section>
-    `
-  }
-
-  if (!isMessages) {
-    return `
-      <section class="sidebar-recent-block">
-        <p class="sidebar-label">Recent threads</p>
-        <p class="sidebar-note">Open Messages to access recent direct and group chats.</p>
+        <p class="sidebar-note">Loading conversations...</p>
       </section>
     `
   }
@@ -1038,7 +1109,7 @@ function getRecentThreadsSidebarMarkup() {
     return `
       <section class="sidebar-recent-block">
         <p class="sidebar-label">Recent threads</p>
-        <p class="sidebar-note">Loading conversations…</p>
+        <p class="sidebar-note">Loading conversations...</p>
       </section>
     `
   }
@@ -1048,11 +1119,11 @@ function getRecentThreadsSidebarMarkup() {
     .map((thread) => {
       const isActive = appState.selectedThreadId === thread.id
       return `
-      <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-select-thread-id="${thread.id}">
-        <strong>${escapeHtml(thread.title)}</strong>
-        ${thread.type === 'group' ? '<small>Group</small>' : '<small>Direct</small>'}
-      </button>
-    `
+        <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-select-thread-id="${escapeHtml(thread.id)}">
+          <strong>${escapeHtml(thread.title)}</strong>
+          ${thread.type === 'group' ? '<small>Group</small>' : '<small>Direct</small>'}
+        </button>
+      `
     })
     .join('')
 
@@ -1494,6 +1565,7 @@ function getThreadActionMenuMarkup() {
   const position = clampMenuPosition(menu.x, menu.y, 180, 120)
   const dmOtherUid = getDmOtherParticipant(thread)
   const isDm = thread.type === 'dm' && Boolean(dmOtherUid)
+  const sidebarPinned = isInboxPinned('thread', thread.id)
   const blockAction = isDm
     ? `<button type="button" data-thread-action="${isUserBlocked(dmOtherUid) ? 'unblock-contact' : 'block-contact'}" data-thread-action-id="${thread.id}">
         ${isUserBlocked(dmOtherUid) ? 'Unblock contact' : 'Block contact'}
@@ -1504,6 +1576,9 @@ function getThreadActionMenuMarkup() {
       <div class="thread-actions-menu" style="left:${position.x}px;top:${position.y}px;">
         <button type="button" data-thread-action="${thread.pinned ? 'unpin' : 'pin'}" data-thread-action-id="${thread.id}">
           ${thread.pinned ? 'Unpin chat' : 'Pin chat'}
+        </button>
+        <button type="button" data-thread-action="${sidebarPinned ? 'unpin-sidebar' : 'pin-sidebar'}" data-thread-action-id="${thread.id}">
+          ${sidebarPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}
         </button>
         <button type="button" data-thread-action="delete" data-thread-action-id="${thread.id}">
           Delete chat
@@ -1677,6 +1752,56 @@ async function handleThreadConfirmAction() {
   }
 }
 
+async function saveInboxPin(pin) {
+  if (!appState.user?.uid || !pin?.pinId || appState.isSavingInboxPin) return
+  appState.isSavingInboxPin = pin.pinId
+  try {
+    await upsertInboxPin(appState.user.uid, pin)
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Unable to pin item.'
+  } finally {
+    appState.isSavingInboxPin = ''
+    renderSignedInState()
+  }
+}
+
+async function removeInboxPin(pinId) {
+  if (!appState.user?.uid || !pinId || appState.isSavingInboxPin) return
+  appState.isSavingInboxPin = pinId
+  try {
+    await deleteInboxPin(appState.user.uid, pinId)
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Unable to remove pinned item.'
+  } finally {
+    appState.isSavingInboxPin = ''
+    renderSignedInState()
+  }
+}
+
+async function openInboxPin(pinId) {
+  const pin = appState.inboxPins.find((entry) => (entry.pinId || entry.id) === pinId)
+  if (!pin) return
+  if (pin.type === 'thread') {
+    appState.activeFilter = 'Messages'
+    appState.selectedThreadId = pin.targetId
+    saveLastSelectedThread(appState.user?.uid, pin.targetId)
+    const selectedMirror = appState.threads.find((thread) => thread.id === pin.targetId)
+    const hydratedThread = await hydrateThreadFromSourceIfNeeded(selectedMirror)
+    if (hydratedThread) upsertThreadInState(hydratedThread)
+    startMessageSubscription(pin.targetId)
+    hydrateProfilesForThread(getSelectedThread())
+    renderSignedInState()
+    return
+  }
+  if (pin.sourceCategory === 'System' || pin.type === 'systemNotification' || pin.type === 'accountEvent') {
+    appState.activeFilter = 'System'
+    appState.systemFilter = pin.metadata?.systemFilter || (pin.type === 'accountEvent' ? 'account' : 'all')
+    renderSignedInState()
+    return
+  }
+  if (pin.targetPath && pin.targetPath.startsWith('/')) window.location.assign(pin.targetPath)
+}
+
 function openThreadActionMenu(threadId, event) {
   if (!threadId) return
   clearFloatingOverlays()
@@ -1731,14 +1856,21 @@ function getFilterContentMarkup(filterName) {
         </div>
         ${rows.length ? `
           <div class="system-notification-list">
-            ${rows.map((item) => `
-              <article class="system-notification-card ${item.readAt ? '' : 'is-unread'}" ${item.sourceCollection === 'accountEvents' ? `data-account-event-id="${escapeHtml(item.id)}"` : `data-system-id="${escapeHtml(item.id)}"`}>
-                <p class="system-notification-title">${escapeHtml(item.title)}</p>
-                <p>${escapeHtml(item.body)}</p>
-                <small>${escapeHtml(formatThreadTimestamp(item.createdAt))} · ${escapeHtml(item.severity)}</small>
-                ${item.actionHref ? `<a class="button button-muted" href="${escapeHtml(item.actionHref)}">Open</a>` : ''}
-              </article>
-            `).join('')}
+            ${rows.map((item) => {
+              const pin = systemInboxPin(item)
+              const pinned = isInboxPinned(pin.type, pin.targetId)
+              return `
+                <article class="system-notification-card ${item.readAt ? '' : 'is-unread'}" ${item.sourceCollection === 'accountEvents' ? `data-account-event-id="${escapeHtml(item.id)}"` : `data-system-id="${escapeHtml(item.id)}"`}>
+                  <div class="system-notification-topline">
+                    <p class="system-notification-title">${escapeHtml(item.title)}</p>
+                    <button type="button" class="system-pin-button ${pinned ? 'is-pinned' : ''}" data-pin-system-item="${escapeHtml(item.sourceCollection)}:${escapeHtml(item.id)}">${pinned ? 'Pinned' : 'Pin'}</button>
+                  </div>
+                  <p>${escapeHtml(item.body)}</p>
+                  <small>${escapeHtml(formatThreadTimestamp(item.createdAt))} · ${escapeHtml(item.severity)}</small>
+                  ${item.actionHref ? `<a class="button button-muted" href="${escapeHtml(item.actionHref)}">Open</a>` : ''}
+                </article>
+              `
+            }).join('')}
           </div>
         ` : `
           <section class="inbox-empty-panel activity-empty-panel">
@@ -1998,6 +2130,15 @@ function setupFloatingEventDelegates() {
     if (threadMenuAction) {
       const threadId = threadMenuAction.getAttribute('data-thread-action-id') || ''
       const action = threadMenuAction.getAttribute('data-thread-action') || ''
+      if (action === 'pin-sidebar' || action === 'unpin-sidebar') {
+        const thread = appState.threads.find((entry) => entry.id === threadId)
+        const pin = threadInboxPin(thread)
+        appState.threadActionMenu = null
+        if (action === 'pin-sidebar') await saveInboxPin(pin)
+        else await removeInboxPin(pin.pinId)
+        renderFloatingUi()
+        return
+      }
       if (action === 'pin' || action === 'unpin' || action === 'delete' || action === 'block-contact' || action === 'unblock-contact') {
         openThreadConfirmModal(action, threadId)
       }
@@ -2738,6 +2879,20 @@ function bindSharedEvents() {
     })
   })
 
+  inboxRoot.querySelectorAll('[data-open-inbox-pin]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await openInboxPin(button.getAttribute('data-open-inbox-pin') || '')
+    })
+  })
+
+  inboxRoot.querySelectorAll('[data-unpin-inbox-pin]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      await removeInboxPin(button.getAttribute('data-unpin-inbox-pin') || '')
+    })
+  })
+
   inboxRoot.querySelectorAll('[data-system-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       appState.systemFilter = button.getAttribute('data-system-filter') || 'all'
@@ -2756,6 +2911,23 @@ function bindSharedEvents() {
     card.addEventListener('click', async () => {
       if (!appState.user?.uid) return
       await markAccountEventRead(appState.user.uid, card.getAttribute('data-account-event-id')).catch(() => {})
+    })
+  })
+
+  inboxRoot.querySelectorAll('[data-pin-system-item]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const [sourceCollection, itemId] = String(button.getAttribute('data-pin-system-item') || '').split(':')
+      const rows = sourceCollection === 'accountEvents' ? appState.accountEvents : appState.systemNotifications
+      const item = rows.find((entry) => entry.id === itemId)
+      if (!item) return
+      const row = sourceCollection === 'accountEvents'
+        ? { ...item, sourceCollection: 'accountEvents', body: item.message || '', actionHref: item.path || '' }
+        : { ...item, sourceCollection: 'systemNotifications', body: item.body || item.message || '' }
+      const pin = systemInboxPin(row)
+      if (isInboxPinned(pin.type, pin.targetId)) await removeInboxPin(pin.pinId)
+      else await saveInboxPin(pin)
     })
   })
 
@@ -3406,6 +3578,21 @@ function startAccountEventsSubscription() {
   )
 }
 
+function startInboxPinsSubscription() {
+  if (!appState.user?.uid) return
+  appState.inboxPinsUnsubscribe()
+  appState.inboxPinsUnsubscribe = subscribeToInboxPins(
+    appState.user.uid,
+    (items) => {
+      appState.inboxPins = items
+      renderSignedInState()
+    },
+    (error) => {
+      warnSystemPermission(error)
+    }
+  )
+}
+
 function startBlockedUsersSubscription() {
   if (!appState.user?.uid) return
   // Private blockedUsers docs are per-account records; cross-account DM lockout comes from dmBlockState.
@@ -3494,6 +3681,8 @@ waitForInitialAuthState().then(async (user) => {
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()
+  startAccountEventsSubscription()
+  startInboxPinsSubscription()
   startBlockedUsersSubscription()
   hasInitializedAuthObserver = true
 
@@ -3543,5 +3732,6 @@ subscribeToAuthState(async (user) => {
   startThreadSubscription()
   startSystemNotificationSubscription()
   startAccountEventsSubscription()
+  startInboxPinsSubscription()
   startBlockedUsersSubscription()
 })

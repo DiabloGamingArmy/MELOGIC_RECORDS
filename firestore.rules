@@ -1274,6 +1274,33 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
       }
 
+      match /inboxPins/{pinId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly([
+            'pinId', 'type', 'targetId', 'title', 'subtitle', 'sourceCategory',
+            'targetPath', 'metadata', 'pinnedAt', 'updatedAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'pinId', 'type', 'targetId', 'title', 'sourceCategory', 'pinnedAt', 'updatedAt'
+          ])
+          && request.resource.data.pinId == pinId
+          && request.resource.data.type is string
+          && request.resource.data.type in ['thread', 'systemNotification', 'accountEvent']
+          && request.resource.data.targetId is string
+          && request.resource.data.targetId.size() >= 1
+          && request.resource.data.targetId.size() <= 180
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 1
+          && request.resource.data.title.size() <= 180
+          && (!('subtitle' in request.resource.data) || request.resource.data.subtitle is string)
+          && (!('targetPath' in request.resource.data) || request.resource.data.targetPath is string)
+          && request.resource.data.sourceCategory is string
+          && request.resource.data.sourceCategory in ['Messages', 'System', 'Inbox']
+          && (!('metadata' in request.resource.data) || request.resource.data.metadata is map);
+        allow delete: if isOwner(uid);
+      }
+
       match /hiddenThreadMessages/{threadId}/messages/{messageId} {
         allow read, create, update, delete: if isOwner(uid);
       }

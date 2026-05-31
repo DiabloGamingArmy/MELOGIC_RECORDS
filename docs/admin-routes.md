@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `/admin` | `admin` | Presence, products, orders, reports, logs | `listActiveStaffPresence`, `listAdminProducts`, `listAdminOrders`, `listAdminReports`, `listAdminLogs` | View platform overview | No |
 | `/admin/reviews` | `productReview` | Products in review queue | `listMarketplaceReviewQueue` | Inspect review queue | No |
-| `/admin/reviews/{productId}` | `productReview` for decisions; `listingEdit` can inspect read-only details | Product detail and review metadata | `listMarketplaceReviewQueue`, `listAdminProducts`, `reviewProductDecision` | Approve, return, reject, keep pending only when pending review | Yes |
+| `/admin/reviews/{productId}` | `productReview` for decisions; `listingEdit` can inspect read-only details | Product detail and review metadata | `listMarketplaceReviewQueue`, `listAdminProducts`, `reviewProductDecision` | Approve, return, reject, keep pending for pending review or returned `needs_changes` products | Yes |
 | `/admin/products` | `listingEdit` or `productReview` | Products | `listAdminProducts` | Browse product inventory | No |
 | `/admin/users` | `userRead` or `roleManage` | Profiles/users/adminUsers | `listAdminUsers` | Browse users | No |
 | `/admin/users/{uid}` | `userRead` or `roleManage` | Profile, user doc, products, account events | `getAdminUserProfile` | View Account Hub | No |
@@ -25,7 +25,7 @@
 | Route | Required permission | Data source | Backend callable | Main actions | Changes state |
 | --- | --- | --- | --- | --- | --- |
 | `/account/security` | Signed-in user | Firebase Auth current user, `users/{uid}/accountEvents` | `recordAccountSecurityEvent` | Request password reset, view/mark events read | Yes, read markers and low-risk event |
-| `/inbox?system=account` | Signed-in user | `users/{uid}/systemNotifications`, `users/{uid}/accountEvents` | None for reads | View Account/System events, mark read | Yes, read markers |
+| `/inbox?system=account` | Signed-in user | `users/{uid}/systemNotifications`, `users/{uid}/accountEvents`, `users/{uid}/inboxPins` | None for reads | View Account/System events, mark read, pin inbox shortcuts | Yes, read markers and user-owned pins |
 
 ## Public and Creator Routes
 

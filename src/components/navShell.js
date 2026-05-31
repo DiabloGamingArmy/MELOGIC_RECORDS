@@ -56,6 +56,9 @@ export function navShell(options = {}) {
               <a href="${ROUTES.admin}" data-nav-menu-admin role="menuitem" ${isAdmin ? 'aria-current="page"' : ''} hidden>Admin</a>
               <a href="${ROUTES.profile}" data-nav-menu-view role="menuitem">View Profile</a>
               <a href="${ROUTES.editProfile}" data-nav-menu-edit role="menuitem">Edit Profile</a>
+              <a href="${ROUTES.library}" data-nav-menu-library role="menuitem">Library</a>
+              <a href="${ROUTES.orders}" data-nav-menu-orders role="menuitem">Orders</a>
+              <a href="${ROUTES.accountSecurity}" data-nav-menu-security role="menuitem">Security</a>
               <button type="button" data-nav-menu-signout role="menuitem">Log Out</button>
               <a href="${ROUTES.auth}" data-nav-menu-auth role="menuitem">Sign In / Sign Up</a>
             </div>
