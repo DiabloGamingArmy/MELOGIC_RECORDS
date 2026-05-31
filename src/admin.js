@@ -441,9 +441,12 @@ function selectedProduct() {
 
 function isActionableReviewProduct(product = {}) {
   return product.status === 'review_pending'
+    || product.status === 'needs_changes'
     || product.reviewJobStatus === 'pending_manual_review'
+    || product.reviewJobStatus === 'needs_changes'
     || product.moderationStatus === 'pending'
     || product.moderationStatus === 'review_pending'
+    || product.moderationStatus === 'needs_changes'
 }
 
 function filteredProducts() {
@@ -1736,6 +1739,7 @@ function reviewDetailView(productId) {
   }
   const isPublic = product.status === 'published' && product.visibility === 'public'
   const isActionable = isActionableReviewProduct(product)
+  const isReturnedForChanges = product.status === 'needs_changes' || product.moderationStatus === 'needs_changes'
   ensureDetailMedia(product.id)
   state.auditTab = auditTabFromHash()
   return `
@@ -1755,7 +1759,12 @@ function reviewDetailView(productId) {
         ${isPublic ? `<a class="admin-secondary-link" href="${productRoute(product)}" target="_blank" rel="noreferrer">${iconSvg('eye')}<span>Public Route</span></a>` : ''}
       </div>
     </header>
-    ${isActionable ? '' : `
+    ${isReturnedForChanges ? `
+      <article class="admin-status is-info admin-readonly-audit">
+        <strong>Product returned for changes.</strong>
+        <span>This product was returned for changes and can be reviewed again.</span>
+      </article>
+    ` : isActionable ? '' : `
       <article class="admin-status is-info admin-readonly-audit">
         <strong>Read-only product audit.</strong>
         <span>This product is not currently pending review. Current state: ${escapeHtml(humanLabel(product.status || 'unknown'))} / ${escapeHtml(humanLabel(product.visibility || 'unknown'))}.</span>

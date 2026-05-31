@@ -364,6 +364,9 @@ function initNavAuthState() {
   const profileAvatar = document.querySelector('[data-profile-avatar]')
   const viewProfileLink = document.querySelector('[data-nav-menu-view]')
   const editProfileLink = document.querySelector('[data-nav-menu-edit]')
+  const libraryLink = document.querySelector('[data-nav-menu-library]')
+  const ordersLink = document.querySelector('[data-nav-menu-orders]')
+  const securityLink = document.querySelector('[data-nav-menu-security]')
   const adminLink = document.querySelector('[data-nav-menu-admin]')
   const signOutButton = document.querySelector('[data-nav-menu-signout]')
   const authEntryLink = document.querySelector('[data-nav-menu-auth]')
@@ -385,6 +388,9 @@ function initNavAuthState() {
     signOutButton.hidden = true
     if (viewProfileLink) viewProfileLink.hidden = true
     if (editProfileLink) editProfileLink.hidden = true
+    if (libraryLink) libraryLink.hidden = true
+    if (ordersLink) ordersLink.hidden = true
+    if (securityLink) securityLink.hidden = true
     if (adminLink) adminLink.hidden = true
   }
 
@@ -394,6 +400,9 @@ function initNavAuthState() {
     signOutButton.hidden = false
     if (viewProfileLink) viewProfileLink.hidden = false
     if (editProfileLink) editProfileLink.hidden = false
+    if (libraryLink) libraryLink.hidden = false
+    if (ordersLink) ordersLink.hidden = false
+    if (securityLink) securityLink.hidden = false
     if (adminLink) {
       adminLink.hidden = true
       user.getIdTokenResult?.().then((tokenResult) => {
@@ -421,7 +430,9 @@ function initNavAuthState() {
     }
   }
 
-  profileTrigger.addEventListener('click', () => {
+  profileTrigger.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
     const isOpen = profileTrigger.getAttribute('aria-expanded') === 'true'
     setMenuOpen(!isOpen)
   })
@@ -437,6 +448,10 @@ function initNavAuthState() {
       setMenuOpen(false)
       profileTrigger.focus()
     }
+  })
+
+  profileDropdown.addEventListener('click', (event) => {
+    event.stopPropagation()
   })
 
   document.addEventListener('click', (event) => {
