@@ -15,6 +15,7 @@ import {
   authPersistenceReady,
   auth,
   waitForInitialAuthState,
+  sendPasswordReset,
   updateCurrentUserProfile
 } from './firebase/auth'
 import { executeRecaptchaAction, getRecaptchaSiteKey, isRecaptchaAuthEnabled } from './security/recaptchaEnterprise'
@@ -81,7 +82,7 @@ app.innerHTML = `
               </span>
             </div>
             <button type="submit" class="button button-accent auth-submit" data-signin-btn>Sign In</button>
-            <a class="auth-link" href="#" aria-label="Forgot password">Forgot password?</a>
+            <button type="button" class="auth-link" data-forgot-password aria-label="Send password reset email">Forgot password?</button>
           </form>
 
           <form class="auth-form is-hidden" data-panel="signup">
@@ -157,6 +158,7 @@ const signupForm = document.querySelector('[data-panel="signup"]')
 const googleButton = document.querySelector('[data-google-btn]')
 const signinButton = document.querySelector('[data-signin-btn]')
 const signupButton = document.querySelector('[data-signup-btn]')
+const forgotPasswordButton = document.querySelector('[data-forgot-password]')
 const feedback = document.querySelector('[data-auth-feedback]')
 const authCardTitle = document.querySelector('#auth-card-title')
 const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
@@ -513,6 +515,38 @@ async function handleGoogleSignIn() {
   }
 }
 
+async function handleForgotPassword() {
+  if (isSubmitting) return
+  const email = signinForm.querySelector('[name="signin-email"]').value.trim()
+  if (!email) {
+    setFeedback('Enter your email, then request a password reset.', 'error')
+    return
+  }
+
+  setFeedback('Checking security verification...', 'info')
+  setLoadingState(true)
+  if (forgotPasswordButton) forgotPasswordButton.disabled = true
+
+  try {
+    setRecaptchaStatus(signinForm, 'checking', 'Checking security verification...')
+    await verifyAuthHuman('PASSWORD_RESET')
+    setRecaptchaStatus(signinForm, 'verified', 'Verified for this request.')
+    await sendPasswordReset(email)
+    setFeedback('If an account exists for that email, a password reset link has been sent.', 'success')
+  } catch (error) {
+    setRecaptchaStatus(signinForm, 'error', 'Verification failed. Please try again.')
+    logFirebaseAuthError('sendPasswordResetEmail', error)
+    if (error?.code === 'auth/invalid-email') {
+      setFeedback('Please enter a valid email address.', 'error')
+    } else {
+      setFeedback('If an account exists for that email, a password reset link has been sent.', 'success')
+    }
+  } finally {
+    setLoadingState(false)
+    if (forgotPasswordButton) forgotPasswordButton.disabled = false
+  }
+}
+
 async function provisionUserAccount(payload) {
   const provisionCallable = httpsCallable(functions, 'provisionUserAccount')
   try {
@@ -536,6 +570,7 @@ tabButtons.forEach((button) => {
 signinForm?.addEventListener('submit', handleSignInSubmit)
 signupForm?.addEventListener('submit', handleSignUpSubmit)
 googleButton?.addEventListener('click', handleGoogleSignIn)
+forgotPasswordButton?.addEventListener('click', handleForgotPassword)
 initPasswordToggles()
 setRecaptchaStatus(signinForm, 'idle', 'Verification runs when you submit.')
 setRecaptchaStatus(signupForm, 'idle', 'Verification runs when you submit.')

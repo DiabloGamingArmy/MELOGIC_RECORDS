@@ -1234,6 +1234,13 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
       }
 
+      match /accountEvents/{eventId} {
+        allow read: if isOwner(uid);
+        allow create, delete: if false;
+        allow update: if isOwner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
+      }
+
       match /hiddenThreadMessages/{threadId}/messages/{messageId} {
         allow read, create, update, delete: if isOwner(uid);
       }

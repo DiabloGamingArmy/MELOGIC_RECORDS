@@ -1669,6 +1669,11 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   cursor: pointer;
 }
 
+.system-notification-card.is-unread {
+  border-color: rgba(137, 181, 255, 0.5);
+  background: rgba(52, 91, 161, 0.18);
+}
+
 .system-notification-title {
   font-weight: 600;
   margin-bottom: 0.3rem;

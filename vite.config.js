@@ -24,6 +24,7 @@ export default defineConfig({
         auth: resolve(__dirname, 'auth.html'),
         product: resolve(__dirname, 'product.html'),
         inbox: resolve(__dirname, 'inbox.html'),
+        accountSecurity: resolve(__dirname, 'account-security.html'),
         profile: resolve(__dirname, 'profile.html'),
         profilePublic: resolve(__dirname, 'profile-public.html'),
         library: resolve(__dirname, 'library.html'),

@@ -77,6 +77,28 @@
   display: none;
 }
 
+.auth-link {
+  width: fit-content;
+  border: 0;
+  padding: 0;
+  color: #9fd4ff;
+  background: transparent;
+  font: inherit;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.auth-link:hover,
+.auth-link:focus-visible {
+  color: #d7ecff;
+  text-decoration: underline;
+}
+
+.auth-link:disabled {
+  opacity: 0.58;
+  cursor: progress;
+}
+
 .auth-form label {
   display: grid;
   gap: 0.28rem;

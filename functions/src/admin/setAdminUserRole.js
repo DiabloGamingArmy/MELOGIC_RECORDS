@@ -11,6 +11,7 @@ const {
   stripAdminClaims
 } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
+const { writeAccountEvent } = require('../account/accountEvents')
 
 function db() {
   return admin.firestore()
@@ -112,6 +113,23 @@ const setAdminUserRole = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async 
     before: pickAdminClaims(existingClaims),
     after: pickAdminClaims(nextClaims),
     metadata: { requestedRole, active }
+  })
+  await writeAccountEvent(db(), uid, {
+    type: 'admin_role_changed',
+    severity: active && ['admin', 'owner'].includes(requestedRole) ? 'critical' : 'warning',
+    title: active ? 'Admin role changed' : 'Admin role removed',
+    message: active
+      ? `Your admin role was changed to ${requestedRole}.`
+      : 'Your admin access was removed.',
+    actorUid: actor.uid,
+    actorType: 'admin',
+    source: 'admin-roles',
+    path: '',
+    metadata: {
+      requestedRole,
+      active,
+      auditLogId
+    }
   })
 
   return {

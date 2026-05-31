@@ -224,7 +224,7 @@ const state = {
   },
   adminData: {
     products: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
-    users: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
+    users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loaded: false, error: '', filter: 'open', actioning: '' },
     orders: { items: [], detail: null, logs: [], loading: false, loaded: false, error: '', filter: 'all' },
     team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
@@ -939,6 +939,24 @@ function renderKeyValueGrid(fields = [], options = {}) {
   const rows = fields.filter(Boolean)
   if (!rows.length) return `<p class="admin-muted">${escapeHtml(options.empty || 'No values recorded.')}</p>`
   return `<dl class="admin-field-grid ${options.compact ? 'is-compact' : ''}">${rows.join('')}</dl>`
+}
+
+function accountEventsList(events = []) {
+  if (!events.length) return '<article class="admin-empty-state">No account events loaded for this user.</article>'
+  return `
+    <div class="admin-account-event-list">
+      ${events.map((event) => `
+        <article class="admin-account-event">
+          <div>
+            <strong>${escapeHtml(event.title || humanLabel(event.type))}</strong>
+            <p>${escapeHtml(event.message || '')}</p>
+            <small>${escapeHtml(formatDate(event.createdAt))} · ${escapeHtml(humanLabel(event.severity || 'info'))} · ${escapeHtml(event.source || 'system')}</small>
+          </div>
+          ${event.path ? `<a class="admin-secondary-link" href="${escapeHtml(event.path)}">Open</a>` : ''}
+        </article>
+      `).join('')}
+    </div>
+  `
 }
 
 function stripUnsafeHtml(value = '') {
@@ -2021,6 +2039,7 @@ function selectedUserPanel() {
             renderDateField('Role updated', adminUser.updatedAt),
             renderDateField('Last sign-in', user.lastActiveAt)
           ])}
+          ${accountEventsList(data.accountEvents || [])}
         </article>
       </section>
       <section class="admin-section-slab">
@@ -2767,11 +2786,13 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.profile = result.user || null
         state.adminData.users.adminUser = result.adminUser || null
         state.adminData.users.recentProducts = result.recentProducts || []
+        state.adminData.users.accountEvents = result.accountEvents || []
         await hydrateReviewMedia(state.adminData.users.recentProducts)
       } else {
         state.adminData.users.profile = null
         state.adminData.users.adminUser = null
         state.adminData.users.recentProducts = []
+        state.adminData.users.accountEvents = []
       }
       const result = await listAdminUsers({ limitCount: 50, search: data.search, uid: detailUid || '' })
       state.adminData.users.items = result.users || []
