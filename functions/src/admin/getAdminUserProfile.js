@@ -15,9 +15,10 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   ])
 
   const source = profileSnap.exists ? profileSnap : userSnap
+  const account = userSnap.exists ? userSnap.data() || {} : {}
   return {
     ok: true,
-    user: source.exists ? profileSummary(source, adminSnap.exists ? adminUserSummary(adminSnap) : null) : null,
+    user: source.exists ? profileSummary(source, adminSnap.exists ? adminUserSummary(adminSnap) : null, account) : null,
     adminUser: adminSnap.exists ? adminUserSummary(adminSnap) : null,
     recentProducts: productsSnap.docs.map(productSummary),
     requester: { uid: claims.uid, role: claims.adminRole }

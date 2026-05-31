@@ -34,28 +34,42 @@ function countMap(raw = {}) {
   )
 }
 
+function cleanStringList(value = [], maxItems = 20) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => cleanString(item, 80))
+    .filter(Boolean)
+    .slice(0, maxItems)
+}
+
 function productSummary(docSnap) {
   const raw = docSnap.data() || {}
   return sanitizeProductForQueue(docSnap.id, raw)
 }
 
-function profileSummary(docSnap, adminUser = null) {
+function profileSummary(docSnap, adminUser = null, accountData = {}) {
   const raw = docSnap.data() || {}
   const stats = raw.stats && typeof raw.stats === 'object' && !Array.isArray(raw.stats) ? raw.stats : {}
   const adminData = adminUser || {}
+  const account = accountData && typeof accountData === 'object' && !Array.isArray(accountData) ? accountData : {}
+  const roles = cleanStringList(account.roles || raw.roles)
+  const badges = cleanStringList(raw.badges || account.badges)
+  const verified = raw.verified === true || roles.includes('verified') || badges.includes('verified')
   return {
     uid: cleanString(raw.uid || docSnap.id, 180),
     displayName: cleanString(raw.displayName || raw.name || adminData.displayName || 'User', 180),
     username: cleanString(raw.username || raw.usernameLower || '', 120),
     usernameLower: cleanString(raw.usernameLower || raw.username || '', 120),
-    email: cleanString(raw.email || adminData.email || '', 320),
-    avatarURL: cleanString(raw.avatarURL || raw.photoURL || adminData.photoURL || '', 900),
-    photoURL: cleanString(raw.photoURL || raw.avatarURL || adminData.photoURL || '', 900),
+    email: cleanString(raw.email || account.email || adminData.email || '', 320),
+    avatarURL: cleanString(raw.avatarURL || raw.photoURL || account.photoURL || adminData.photoURL || '', 900),
+    photoURL: cleanString(raw.photoURL || raw.avatarURL || account.photoURL || adminData.photoURL || '', 900),
     role: cleanString(raw.role || raw.accountType || adminData.role || 'user', 80),
     roleLabel: cleanString(raw.roleLabel || adminData.role || 'User', 120),
     adminRole: cleanString(adminData.role || '', 80),
     adminActive: adminData.active === true,
-    verified: raw.verified === true,
+    roles,
+    badges,
+    verified,
     suspended: raw.suspended === true,
     productCount: Math.max(0, Math.round(toNumber(stats.products || raw.productCount))),
     reportCount: Math.max(0, Math.round(toNumber(stats.reports || raw.reportCount))),
@@ -159,5 +173,6 @@ module.exports = {
   productSummary,
   profileSummary,
   reportSummary,
-  safeListCollection
+  safeListCollection,
+  serializeDate
 }

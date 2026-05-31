@@ -27,6 +27,7 @@ const { listAdminReports } = require('./src/admin/listAdminReports')
 const { listAdminOrders } = require('./src/admin/listAdminOrders')
 const { listAdminLogs } = require('./src/admin/listAdminLogs')
 const { listAdminTeam } = require('./src/admin/listAdminTeam')
+const { listActiveStaffPresence } = require('./src/admin/listActiveStaffPresence')
 const { getAdminSettings } = require('./src/admin/getAdminSettings')
 const { updateAdminSettings } = require('./src/admin/updateAdminSettings')
 
@@ -60,5 +61,6 @@ exports.listAdminReports = listAdminReports
 exports.listAdminOrders = listAdminOrders
 exports.listAdminLogs = listAdminLogs
 exports.listAdminTeam = listAdminTeam
+exports.listActiveStaffPresence = listActiveStaffPresence
 exports.getAdminSettings = getAdminSettings
 exports.updateAdminSettings = updateAdminSettings

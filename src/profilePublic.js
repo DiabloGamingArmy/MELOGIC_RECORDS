@@ -10,6 +10,7 @@ import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
 import { storage } from './firebase/storage'
 import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath, productRoute } from './utils/routes'
+import { formatUsername } from './utils/format'
 
 const app = document.querySelector('#app')
 
@@ -303,7 +304,7 @@ function bindMarquee() {
 function renderPublicProfile(profile, currentUser, previewMode = false) {
   const uid = profile.uid || ''
   const displayName = profile.displayName || 'Melogic Creator'
-  const username = profile.username || profile.usernameLower || 'unknown'
+  const username = formatUsername(profile.username || profile.usernameLower)
   const bio = profile.bio || 'No bio has been added yet.'
   const avatarURL = profile.avatarURL || profile.photoURL || ''
   const bannerURL = profile.bannerURL || ''
@@ -341,7 +342,7 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
           ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" />` : '<div class="public-avatar public-avatar-fallback">MR</div>'}
           <div class="public-hero-copy ${isLongName ? 'is-marquee-name' : ''}">
             <div class="public-name-mask"><h1 class="public-name-track">${escapeHtml(displayName)}</h1></div>
-            <p class="public-handle"><span>@${escapeHtml(username)}</span>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</p>
+            <p class="public-handle"><span>${escapeHtml(username || 'No username')}</span>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</p>
             <p class="public-role">${escapeHtml(roleLabel)}</p>
             <div class="public-badge-row" aria-label="Profile badges">${profileBadgeKeys.map((key) => badgeIconMarkup(key)).join('') || '<span class="public-badge-empty">No badges yet</span>'}</div>
             <div class="public-actions">${actionsMarkup}</div>

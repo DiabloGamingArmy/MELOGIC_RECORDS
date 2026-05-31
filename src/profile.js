@@ -4,6 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, signOutUser, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
+import { formatUsername } from './utils/format'
 import { ROUTES, publicProfileRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
@@ -88,7 +89,7 @@ function getMetrics(profile) {
 function renderSignedInState(user, storedProfile = null) {
   const profile = storedProfile || {}
   const displayName = profile.displayName || user.displayName || 'Melogic User'
-  const username = profile.username || 'not-set'
+  const username = formatUsername(profile.username)
   const email = profile.email || user.email || 'No email available'
   const bio = profile.bio || 'No bio yet. Add context about your sound, tools, or creator direction.'
   const photoURL = profile.photoURL || user.photoURL || ''
@@ -110,7 +111,7 @@ function renderSignedInState(user, storedProfile = null) {
           <div class="profile-identity">
             <p class="profile-role">${role}</p>
             <h2>${displayName}</h2>
-            <p class="profile-handle">@${username}</p>
+            <p class="profile-handle">${username || 'No username set'}</p>
             <p class="profile-bio-preview">${bio}</p>
           </div>
         </div>

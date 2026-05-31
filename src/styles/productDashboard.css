@@ -379,7 +379,7 @@
 .dashboard-recommend-thumb {
   border-radius: 0.55rem;
   overflow: hidden;
-  min-height: 100%;
+  aspect-ratio: 1 / 1;
   background: rgba(17, 29, 47, 0.9);
 }
 

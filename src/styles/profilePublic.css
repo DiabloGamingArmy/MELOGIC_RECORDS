@@ -346,7 +346,7 @@ body {
 
 .public-product-link { display: block; }
 
-.public-product-thumb { aspect-ratio: 16 / 10; background: rgba(15, 22, 38, 0.9); }
+.public-product-thumb { aspect-ratio: 1 / 1; background: rgba(15, 22, 38, 0.9); }
 .public-product-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .public-product-fallback { width: 100%; height: 100%; background: radial-gradient(circle at 30% 30%, rgba(80, 174, 195, 0.35), rgba(10, 17, 30, 0.98)); }
 

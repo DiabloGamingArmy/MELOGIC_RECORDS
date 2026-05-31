@@ -9,6 +9,7 @@ import { getProductEngagementState, setProductEngagement } from './data/productE
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute, productRoute, publicProfileRoute } from './utils/routes'
+import { formatUsername } from './utils/format'
 import { renderSafeRichDescription } from './utils/richDescription'
 import { iconSvg } from './utils/icons'
 
@@ -768,7 +769,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const dislikeCount = state.productEngagement.dislikeCount
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'
   const handleRaw = product.artistUsername || product.creatorUsername || product.username || product.artistHandle || product.creator?.username || product.artist?.username || ''
-  const artistHandle = String(handleRaw || '').trim() ? `@${String(handleRaw).replace(/^@+/, '')}` : ''
+  const artistHandle = formatUsername(handleRaw)
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
   const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
   const ratedReviews = (state.reviews || []).map((review) => Number(review.rating)).filter((rating) => Number.isFinite(rating) && rating >= 1 && rating <= 5)
@@ -941,7 +942,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-contributor-list">
                 ${contributorRows.map((row) => {
                   const name = row.displayName || 'Contributor'
-                  const handle = row.username ? `@${String(row.username).replace(/^@+/, '')}` : ''
+                  const handle = formatUsername(row.username)
                   const route = row.profilePath || (row.uid ? publicProfileRoute({ uid: row.uid }) : '')
                   return `<div class="dashboard-contributor-row"><div class="dashboard-contributor-row-inner">${row.avatarURL ? `<img class="dashboard-contributor-avatar" src="${escapeHtml(row.avatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(creatorInitials(name))}</span>`}<div class="dashboard-contributor-meta"><p class="dashboard-contributor-name">${escapeHtml(name)}</p><p class="dashboard-contributor-role">${escapeHtml(row.role || 'Contributor')}${handle ? ` · ${escapeHtml(handle)}` : ''}</p></div>${route ? `<a class="button button-muted dashboard-contributor-action" href="/${escapeHtml(String(route).replace(/^\/+/, ''))}">View</a>` : ''}</div></div>`
                 }).join('')}
