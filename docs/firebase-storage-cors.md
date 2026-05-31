@@ -100,3 +100,9 @@ Only enable browser-side Storage version discovery if bucket CORS has been appli
 - `updateAdminSettings` writes `platformConfig/current` and mirrors the active agreement to `platformSettings/marketplaceSellerAgreement`.
 - The mirror enables direct fetch of the configured Storage object with `allowStorageFetch: true`.
 - Browser-side Storage folder listing remains opt-in and is not the default.
+
+## Production Readiness Caveat
+
+- Do not report bucket CORS as applied unless `gsutil cors set ...` or `gcloud storage buckets update ... --cors-file=...` has actually been run and verified.
+- If CORS is not applied, the product editor should continue using the Firestore settings mirror and same-origin public fallback rather than browser-side bucket listing.
+- Storage rules and CORS must both be correct: rules authorize the object read, while CORS authorizes the browser origin.
