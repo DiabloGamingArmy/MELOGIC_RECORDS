@@ -130,9 +130,18 @@ service firebase.storage {
       allow write: if false;
     }
 
-    match /legal/agreements/{allPaths=**} {
+    match /legal/agreements/{agreementId}/{fileName} {
       allow read: if signedIn();
-      allow write: if false;
+      allow write: if isAdminStorageWriter()
+        && request.resource != null
+        && request.resource.size <= 2 * 1024 * 1024
+        && agreementId == 'marketplace-product-seller-agreement'
+        && fileName.matches('v[0-9]+\\.md')
+        && (
+          request.resource.contentType.matches('text/markdown')
+          || request.resource.contentType.matches('text/plain')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
     }
 
     match /agreements/{agreementId}/{fileName} {

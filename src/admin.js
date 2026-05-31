@@ -24,6 +24,7 @@ import {
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 import { formatUsername } from './utils/format'
+import { formatActionLabel as sharedActionLabel } from './utils/displayFormat'
 import { ROUTES, adminReviewRoute, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 
@@ -324,12 +325,7 @@ function humanLabel(value = '') {
     listingEditor: 'Listing Editor'
   }
   if (known[text]) return known[text]
-  return text
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+  return sharedActionLabel(text)
 }
 
 function roleRank(role = '') {
@@ -2591,7 +2587,7 @@ function settingsCard(section, values = {}) {
     <section class="admin-section-slab">
       <div class="admin-slab-heading">
         <h2>${escapeHtml(section.title)}</h2>
-        <button type="button" class="admin-secondary-button" data-edit-settings="${escapeHtml(section.key)}" ${can('roleManage') ? '' : 'disabled'}>Edit</button>
+        <button type="button" class="admin-secondary-button" data-edit-settings="${escapeHtml(section.key)}" ${can('settingsManage') || can('roleManage') ? '' : 'disabled'}>Edit</button>
       </div>
       ${renderKeyValueGrid(section.fields.map(([key, label]) => renderField(label, formatSettingValue(values[key]))), { compact: true })}
     </section>
@@ -2629,7 +2625,7 @@ function settingsDialog() {
               <span>Agreement Markdown</span>
               <input type="file" data-agreement-md-file accept=".md,text/markdown,text/plain" ${saving ? 'disabled' : ''} />
             </label>
-            <p class="admin-muted">Upload stores the file as agreements/marketplace-product-seller-agreement/{version}.md using the version above.</p>
+            <p class="admin-muted">Upload stores the file as legal/agreements/marketplace-product-seller-agreement/{version}.md using the version above.</p>
             ${values.sellerAgreementPath ? `<p class="admin-muted">Current path: <code class="admin-code-value">${escapeHtml(values.sellerAgreementPath)}</code></p>` : ''}
           ` : ''}
           ${section.key === 'aiModeration' ? '<p class="admin-muted">Describe what the AI should allow, flag, or reject when reviewing marketplace products.</p>' : ''}
@@ -2976,7 +2972,7 @@ function closeSettingsDialog() {
 }
 
 function openSettingsDialog(sectionKey = '') {
-  if (!can('roleManage')) return
+  if (!can('settingsManage') && !can('roleManage')) return
   const section = SETTINGS_SECTIONS.find((item) => item.key === sectionKey)
   if (!section) return
   state.settings.dialog = { open: true, section: section.key }
@@ -3024,7 +3020,7 @@ async function submitSettingsForm(form) {
         return
       }
     }
-    values.sellerAgreementPath = `agreements/${agreementId}/${version}.md`
+    values.sellerAgreementPath = `legal/agreements/${agreementId}/${version}.md`
   }
   state.settings.saving = true
   state.settings.error = ''

@@ -9,7 +9,8 @@ const ADMIN_CLAIM_KEYS = [
   'userModerate',
   'orderSupport',
   'roleManage',
-  'auditRead'
+  'auditRead',
+  'settingsManage'
 ]
 
 const PERMISSION_KEYS = ADMIN_CLAIM_KEYS.filter((key) => key !== 'admin' && key !== 'adminRole')
@@ -39,7 +40,8 @@ const ROLE_PERMISSIONS = {
     userModerate: true,
     orderSupport: true,
     roleManage: true,
-    auditRead: true
+    auditRead: true,
+    settingsManage: true
   },
   admin: {
     productReview: true,
@@ -48,7 +50,8 @@ const ROLE_PERMISSIONS = {
     userModerate: true,
     orderSupport: true,
     roleManage: false,
-    auditRead: true
+    auditRead: true,
+    settingsManage: true
   },
   marketplaceReviewer: {
     productReview: true,
@@ -57,7 +60,8 @@ const ROLE_PERMISSIONS = {
     userModerate: false,
     orderSupport: false,
     roleManage: false,
-    auditRead: false
+    auditRead: false,
+    settingsManage: false
   },
   listingEditor: {
     productReview: false,
@@ -66,7 +70,8 @@ const ROLE_PERMISSIONS = {
     userModerate: false,
     orderSupport: false,
     roleManage: false,
-    auditRead: false
+    auditRead: false,
+    settingsManage: false
   },
   support: {
     productReview: false,
@@ -75,7 +80,8 @@ const ROLE_PERMISSIONS = {
     userModerate: false,
     orderSupport: true,
     roleManage: false,
-    auditRead: false
+    auditRead: false,
+    settingsManage: false
   },
   auditor: {
     productReview: false,
@@ -84,7 +90,8 @@ const ROLE_PERMISSIONS = {
     userModerate: false,
     orderSupport: false,
     roleManage: false,
-    auditRead: true
+    auditRead: true,
+    settingsManage: false
   }
 }
 

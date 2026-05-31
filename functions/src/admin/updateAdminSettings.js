@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
-const { assertPermission, cleanString } = require('./adminAuth')
+const { assertAnyPermission, cleanString } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
 const { mergeSettings, sanitizeSettingsPatch, settingsRef } = require('./adminSettingsShared')
 
@@ -11,7 +11,7 @@ function sellerAgreementVersionIsValid(version = '') {
 async function mirrorSellerAgreementSettings(actor = {}, sectionAfter = {}) {
   const agreementId = cleanString(sectionAfter.sellerAgreementId || 'marketplace-product-seller-agreement', 180) || 'marketplace-product-seller-agreement'
   const version = cleanString(sectionAfter.sellerAgreementVersion || 'v1', 40) || 'v1'
-  const storagePath = cleanString(sectionAfter.sellerAgreementPath || `agreements/${agreementId}/${version}.md`, 900)
+  const storagePath = cleanString(sectionAfter.sellerAgreementPath || `legal/agreements/${agreementId}/${version}.md`, 900)
   await admin.firestore().collection('platformSettings').doc('marketplaceSellerAgreement').set({
     enabled: true,
     agreementId,
@@ -20,14 +20,15 @@ async function mirrorSellerAgreementSettings(actor = {}, sectionAfter = {}) {
     storagePath,
     format: 'markdown',
     requiresSignature: true,
-    storageDiscoveryEnabled: true,
+    allowStorageFetch: true,
+    storageDiscoveryEnabled: false,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: actor.uid
   }, { merge: true })
 }
 
 const updateAdminSettings = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const actor = assertPermission(request, 'roleManage')
+  const actor = assertAnyPermission(request, ['settingsManage', 'roleManage'])
   const patch = sanitizeSettingsPatch(request.data?.section || '', request.data?.values || {})
   if (!patch) throw new HttpsError('invalid-argument', 'A valid settings section and at least one setting are required.')
 

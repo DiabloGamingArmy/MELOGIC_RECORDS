@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/accountSecurity.css'
-import { multiFactor } from 'firebase/auth'
+import { getIdTokenResult, multiFactor } from 'firebase/auth'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { auth, sendPasswordReset, waitForInitialAuthState } from './firebase/auth'
@@ -41,6 +41,7 @@ let state = {
   resetStatus: '',
   resetStatusType: 'info',
   sendingReset: false,
+  claims: {},
   unsubscribeEvents: () => {}
 }
 
@@ -120,6 +121,7 @@ function render() {
 
   const providers = user.providerData?.length ? user.providerData : [{ providerId: 'password' }]
   const factors = getMfaFactors(user)
+  const isAdminAccount = state.claims.admin === true
   const unreadCount = state.events.filter((event) => !event.readAt).length
   const resetMessage = state.resetStatus
     ? `<p class="security-status" data-state="${escapeHtml(state.resetStatusType)}">${escapeHtml(state.resetStatus)}</p>`
@@ -141,6 +143,7 @@ function render() {
           <div><dt>Last sign-in</dt><dd>${escapeHtml(formatDate(user.metadata?.lastSignInTime))}</dd></div>
           <div><dt>2FA</dt><dd>${factors.length ? `${factors.length} factor enrolled` : 'Not enrolled'}</dd></div>
         </dl>
+        ${isAdminAccount && !factors.length ? '<p class="security-status" data-state="error">Admin accounts should enroll 2FA when authenticator-app support is enabled.</p>' : ''}
       </article>
 
       <article class="security-panel">
@@ -269,11 +272,17 @@ function startAccountEventsSubscription() {
   )
 }
 
-waitForInitialAuthState().then((user) => {
+waitForInitialAuthState().then(async (user) => {
   state.user = user || auth.currentUser || null
   if (!state.user) {
     window.location.assign(authRoute({ redirect: ROUTES.accountSecurity }))
     return
+  }
+  try {
+    const token = await getIdTokenResult(state.user, true)
+    state.claims = token.claims || {}
+  } catch {
+    state.claims = {}
   }
   render()
   startAccountEventsSubscription()

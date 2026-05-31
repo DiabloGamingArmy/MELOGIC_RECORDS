@@ -1862,7 +1862,7 @@ export async function uploadSellerAgreementMarkdown({ file, version = '', agreem
   if (!fileName.endsWith('.md') || (mime && !['text/markdown', 'text/plain', 'application/octet-stream'].includes(mime))) {
     throw new Error('Agreement upload must be a .md markdown file.')
   }
-  const storagePath = `agreements/${cleanAgreementId}/${cleanVersion}.md`
+  const storagePath = `legal/agreements/${cleanAgreementId}/${cleanVersion}.md`
   await uploadBytes(ref(storage, storagePath), file, { contentType: 'text/markdown' })
   return {
     ok: true,

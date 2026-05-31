@@ -7,7 +7,8 @@
     "dev": "vite",
     "check": "node scripts/check-config.mjs && npm run build",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "storage:cors:get": "gsutil cors get gs://melogic-records.firebasestorage.app"
   },
   "devDependencies": {
     "vite": "^8.0.9"

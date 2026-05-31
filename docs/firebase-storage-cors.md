@@ -8,7 +8,7 @@ It also supports a same-origin manifest:
 
 `public/legal/agreements/marketplace-product-seller-agreement/manifest.json`
 
-For production stability, keep `platformSettings/marketplaceSellerAgreement` or the manifest pointed at the latest agreement version. Browser-side Firebase Storage folder listing is intentionally not the default because it creates noisy CORS failures when the bucket CORS policy is missing or stale.
+For production stability, keep `platformConfig/current.agreements` as the authoritative admin settings document and mirror the active seller agreement to `platformSettings/marketplaceSellerAgreement` for the product editor. Browser-side Firebase Storage folder listing is intentionally not the default because it creates noisy CORS failures when the bucket CORS policy is missing or stale.
 
 Because browser `fetch()` and Firebase Storage browser reads enforce CORS, the bucket serving:
 
@@ -60,6 +60,12 @@ gcloud storage buckets update gs://melogic-records.firebasestorage.app --cors-fi
 gsutil cors get gs://melogic-records.firebasestorage.app
 ```
 
+The repo also exposes a read-only helper:
+
+```bash
+npm run storage:cors:get
+```
+
 ## Important
 
 This is a **bucket configuration** change.
@@ -70,9 +76,27 @@ Storage security rules and bucket CORS are separate settings: rules decide who m
 
 ## Recommended latest-version flow
 
-Use one of these as the authoritative latest-version pointer:
+Use this as the authoritative latest-version pointer:
 
-1. `platformSettings/marketplaceSellerAgreement` in Firestore with `activeVersion`, `storagePath`, and optional `publicPath`.
-2. `public/legal/agreements/marketplace-product-seller-agreement/manifest.json`.
+1. `platformConfig/current.agreements` for admin-owned platform settings.
+2. Mirrored `platformSettings/marketplaceSellerAgreement` with `activeVersion`, `storagePath`, and optional `publicPath` for creator editor reads.
+3. `public/legal/agreements/marketplace-product-seller-agreement/manifest.json` as same-origin fallback.
 
-Only enable browser-side Storage version discovery if bucket CORS has been applied. In Firestore config, set `versionDiscoveryMode: "storage"` or `storageDiscoveryEnabled: true` when you intentionally want the browser to list Storage objects.
+Only enable browser-side Storage version discovery if bucket CORS has been applied. In Firestore config, set `versionDiscoveryMode: "storage"` or `storageDiscoveryEnabled: true` when you intentionally want the browser to list Storage objects. Direct fetch of the exact configured agreement object is controlled separately by `allowStorageFetch`.
+
+## Operator Runbook
+
+1. Verify the bucket name in Firebase Console / Storage.
+2. Review `firebase-storage-cors.json`; it should include `https://melogicrecords.studio`, `https://melogic-records.web.app`, `https://melogic-records.firebaseapp.com`, and localhost development origins.
+3. Apply with `gsutil cors set firebase-storage-cors.json gs://melogic-records.firebasestorage.app` or `gcloud storage buckets update gs://melogic-records.firebasestorage.app --cors-file=firebase-storage-cors.json`.
+4. Verify with `gsutil cors get gs://melogic-records.firebasestorage.app` or `npm run storage:cors:get`.
+5. Remember that `firebase deploy` does not apply bucket CORS.
+
+## Implementation Status
+
+- `firebase-storage-cors.json` exists with production and localhost origins.
+- Admin agreement upload accepts `.md` files only and validates `v<number>` versions.
+- New uploads use `legal/agreements/marketplace-product-seller-agreement/v<number>.md`.
+- `updateAdminSettings` writes `platformConfig/current` and mirrors the active agreement to `platformSettings/marketplaceSellerAgreement`.
+- The mirror enables direct fetch of the configured Storage object with `allowStorageFetch: true`.
+- Browser-side Storage folder listing remains opt-in and is not the default.
