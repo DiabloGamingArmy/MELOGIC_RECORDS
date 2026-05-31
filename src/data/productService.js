@@ -1751,6 +1751,69 @@ export async function setAdminUserRole({ uid = '', role = '', active = true, rea
   return result?.data || { ok: false }
 }
 
+export async function listAdminProducts({ limitCount = 50, search = '', productId = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminProducts')
+  const result = await callable({ limit: limitCount, search, productId })
+  return result?.data || { ok: false, products: [] }
+}
+
+export async function listAdminUsers({ limitCount = 50, search = '', uid = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminUsers')
+  const result = await callable({ limit: limitCount, search, uid })
+  return result?.data || { ok: false, users: [] }
+}
+
+export async function getAdminUserProfile({ uid = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'getAdminUserProfile')
+  const result = await callable({ uid })
+  return result?.data || { ok: false, user: null, recentProducts: [] }
+}
+
+export async function listAdminReports({ limitCount = 50 } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminReports')
+  const result = await callable({ limit: limitCount })
+  return result?.data || { ok: false, reports: [] }
+}
+
+export async function listAdminOrders({ limitCount = 50 } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminOrders')
+  const result = await callable({ limit: limitCount })
+  return result?.data || { ok: false, orders: [] }
+}
+
+export async function listAdminLogs({ limitCount = 50 } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminLogs')
+  const result = await callable({ limit: limitCount })
+  return result?.data || { ok: false, logs: [] }
+}
+
+export async function listAdminTeam({ limitCount = 50 } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminTeam')
+  const result = await callable({ limit: limitCount })
+  return result?.data || { ok: false, team: [] }
+}
+
+export async function getAdminSettings() {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'getAdminSettings')
+  const result = await callable({})
+  return result?.data || { ok: false, settings: {} }
+}
+
+export async function updateAdminSettings({ section = '', values = {}, reason = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'updateAdminSettings')
+  const result = await callable({ section, values, reason })
+  return result?.data || { ok: false, settings: {} }
+}
+
 export async function requestProductReview(productId = '') {
   if (!functions || !productId) throw new Error('Missing product id for review request.')
   try {

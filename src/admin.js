@@ -2,7 +2,20 @@ import './styles/base.css'
 import './styles/admin.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
-import { listMarketplaceReviewQueue, reviewProductDecision, setAdminUserRole } from './data/productService'
+import {
+  getAdminSettings,
+  getAdminUserProfile,
+  listAdminLogs,
+  listAdminOrders,
+  listAdminProducts,
+  listAdminReports,
+  listAdminTeam,
+  listAdminUsers,
+  listMarketplaceReviewQueue,
+  reviewProductDecision,
+  setAdminUserRole,
+  updateAdminSettings
+} from './data/productService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 import { ROUTES, adminReviewRoute, authRoute, productRoute, publicProfileRoute } from './utils/routes'
@@ -29,6 +42,109 @@ const REVIEW_FILTERS = [
   { key: 'ai-passed', label: 'AI Passed' },
   { key: 'ai-error', label: 'AI Error' },
   { key: 'needs-changes', label: 'Needs Changes' }
+]
+
+const AUDIT_TABS = [
+  { key: 'listing', label: 'Listing Content' },
+  { key: 'pricing', label: 'Pricing & Agreement' },
+  { key: 'creator', label: 'Creator Context' },
+  { key: 'metrics', label: 'Marketplace Metrics' },
+  { key: 'moderation', label: 'AI Moderation' },
+  { key: 'history', label: 'Admin History' },
+  { key: 'technical', label: 'Technical Data' }
+]
+
+const PRODUCT_ADMIN_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'published', label: 'Published' },
+  { key: 'review_pending', label: 'Review Pending' },
+  { key: 'needs_changes', label: 'Needs Changes' },
+  { key: 'rejected', label: 'Rejected' },
+  { key: 'draft', label: 'Draft' },
+  { key: 'archived', label: 'Suspended/Archived' },
+  { key: 'ai_failed', label: 'AI Failed' },
+  { key: 'free', label: 'Free' },
+  { key: 'paid', label: 'Paid' }
+]
+
+const USER_ADMIN_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'admins', label: 'Admins' },
+  { key: 'creators', label: 'Creators' },
+  { key: 'suspended', label: 'Suspended' },
+  { key: 'verified', label: 'Verified' },
+  { key: 'has_products', label: 'Has Products' },
+  { key: 'has_reports', label: 'Has Reports' }
+]
+
+const REPORT_ADMIN_FILTERS = [
+  { key: 'open', label: 'Open' },
+  { key: 'in_review', label: 'In Review' },
+  { key: 'product', label: 'Product Reports' },
+  { key: 'user', label: 'User Reports' },
+  { key: 'order', label: 'Order Reports' },
+  { key: 'resolved', label: 'Resolved' },
+  { key: 'dismissed', label: 'Dismissed' }
+]
+
+const ORDER_ADMIN_FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'paid', label: 'Paid' },
+  { key: 'free', label: 'Free Claims' },
+  { key: 'refund_requested', label: 'Refund Requested' },
+  { key: 'refunded', label: 'Refunded' },
+  { key: 'failed', label: 'Failed' },
+  { key: 'recent', label: 'Last 30 Days' }
+]
+
+const SETTINGS_SECTIONS = [
+  {
+    key: 'marketplace',
+    title: 'Marketplace',
+    fields: [
+      ['marketplaceEnabled', 'Marketplace Enabled', 'boolean'],
+      ['manualReviewRequired', 'Manual Review Required', 'boolean'],
+      ['requiredSellerAgreementVersion', 'Seller Agreement Version', 'string']
+    ]
+  },
+  {
+    key: 'aiModeration',
+    title: 'AI Moderation',
+    fields: [
+      ['productModerationModel', 'Moderation Model', 'string'],
+      ['fallbackModels', 'Fallback Models', 'array'],
+      ['autoApproveProducts', 'Auto Approve Products', 'boolean'],
+      ['aiModerationEnabled', 'AI Moderation Enabled', 'boolean']
+    ]
+  },
+  {
+    key: 'uploadLimits',
+    title: 'Upload Limits',
+    fields: [
+      ['coverMaxMb', 'Cover Max MB', 'number'],
+      ['galleryMaxMb', 'Gallery Max MB', 'number'],
+      ['audioPreviewMaxMb', 'Audio Preview Max MB', 'number'],
+      ['videoPreviewMaxMb', 'Video Preview Max MB', 'number'],
+      ['downloadsMaxMb', 'Downloads Max MB', 'number']
+    ]
+  },
+  {
+    key: 'agreements',
+    title: 'Agreements',
+    fields: [
+      ['sellerAgreementId', 'Seller Agreement ID', 'string'],
+      ['sellerAgreementVersion', 'Seller Agreement Version', 'string']
+    ]
+  },
+  {
+    key: 'reviewPolicy',
+    title: 'Review Policy',
+    fields: [
+      ['passBehavior', 'Pass Behavior', 'textarea'],
+      ['rejectBehavior', 'Reject Behavior', 'textarea'],
+      ['returnBehavior', 'Return Behavior', 'textarea']
+    ]
+  }
 ]
 
 const DECISION_LABELS = {
@@ -74,6 +190,25 @@ const state = {
   theme: 'light',
   mediaByProductId: {},
   mediaRequests: {},
+  auditTab: 'listing',
+  adminData: {
+    products: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
+    users: { items: [], profile: null, recentProducts: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
+    reports: { items: [], loading: false, loaded: false, error: '', filter: 'open' },
+    orders: { items: [], loading: false, loaded: false, error: '', filter: 'all' },
+    team: { items: [], loading: false, loaded: false, error: '' },
+    logs: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' }
+  },
+  settings: {
+    data: {},
+    loading: false,
+    loaded: false,
+    error: '',
+    saving: false,
+    updatedAt: null,
+    updatedBy: '',
+    dialog: { open: false, section: '' }
+  },
   dialog: {
     open: false,
     decision: '',
@@ -139,6 +274,18 @@ function statusClass(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')
 }
 
+function auditTabFromHash() {
+  const raw = String(window.location.hash || '').replace(/^#/, '')
+  const normalized = raw.startsWith('tab=') ? raw.slice(4) : raw
+  return AUDIT_TABS.some((tab) => tab.key === normalized) ? normalized : 'listing'
+}
+
+function setAuditTab(tabKey = 'listing') {
+  state.auditTab = AUDIT_TABS.some((tab) => tab.key === tabKey) ? tabKey : 'listing'
+  const current = window.location.pathname + window.location.search
+  window.history.replaceState({}, '', `${current}#${state.auditTab}`)
+}
+
 function can(permission = 'admin') {
   if (permission === 'admin') return state.claims.admin === true
   return state.claims[permission] === true
@@ -158,8 +305,15 @@ function reviewDetailProductId() {
 function currentSectionKey() {
   const path = window.location.pathname.replace(/\/+$/, '') || ROUTES.admin
   if (isReviewPath(path)) return 'reviews'
+  if (path.startsWith(`${ROUTES.adminUsers}/`)) return 'users'
   const section = SECTIONS.find((item) => item.route.replace(/\/+$/, '') === path)
   return section?.key || 'dashboard'
+}
+
+function adminUserDetailUid() {
+  const cleanPath = window.location.pathname.replace(/\/+$/, '')
+  if (!cleanPath.startsWith(`${ROUTES.adminUsers}/`)) return ''
+  return decodeURIComponent(cleanPath.slice(`${ROUTES.adminUsers}/`.length).split('/')[0] || '').trim()
 }
 
 function productForId(productId = '') {
@@ -557,6 +711,37 @@ function renderBadgeList(items = [], empty = 'None') {
   const values = normalizeList(items)
   if (!values.length) return `<p class="admin-muted">${escapeHtml(empty)}</p>`
   return `<div class="admin-badge-list">${values.map((item) => renderBadge(item)).join('')}</div>`
+}
+
+function initialsFor(name = '') {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return '?'
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('') || '?'
+}
+
+function adminAvatar(entity = {}, size = 'md') {
+  const src = String(entity.avatarURL || entity.photoURL || entity.artistAvatarURL || entity.artistPhotoURL || '').trim()
+  const name = entity.displayName || entity.artistDisplayName || entity.artistName || entity.username || entity.email || entity.uid || 'User'
+  return `
+    <span class="admin-avatar is-${escapeHtml(size)}" aria-hidden="true">
+      ${src && /^https?:\/\//i.test(src)
+        ? `<img src="${escapeHtml(src)}" alt="" loading="lazy" decoding="async" />`
+        : `<span>${escapeHtml(initialsFor(name))}</span>`}
+    </span>
+  `
+}
+
+function adminPersonCell(entity = {}, primary = '', secondary = '', tertiary = '') {
+  return `
+    <span class="admin-person-cell">
+      ${adminAvatar(entity)}
+      <span>
+        <strong>${escapeHtml(primary || entity.displayName || entity.artistName || entity.email || entity.uid || 'User')}</strong>
+        ${secondary ? `<small>${escapeHtml(secondary)}</small>` : ''}
+        ${tertiary ? `<small class="admin-code-value">${escapeHtml(tertiary)}</small>` : ''}
+      </span>
+    </span>
+  `
 }
 
 function renderKeyValueGrid(fields = [], options = {}) {
@@ -991,13 +1176,250 @@ function additionalProductFieldsPanel(product = {}) {
   `
 }
 
+function technicalDataContent(product = {}) {
+  const assignment = product.previewAssignment || {}
+  return `
+    <div class="admin-tab-content-grid">
+      <details class="admin-technical-details">
+        <summary>Technical media paths</summary>
+        ${renderPathField('coverPath', product.coverPath)}
+        ${renderPathField('thumbnailPath', product.thumbnailPath)}
+        ${renderPathList('galleryPaths', product.galleryPaths)}
+        ${renderPathList('previewAudioPaths', product.previewAudioPaths)}
+        ${renderPathList('previewVideoPaths', product.previewVideoPaths)}
+        ${renderPathField('previewAssignment.hoverAudioPath', assignment.hoverAudioPath)}
+        ${renderPathField('previewAssignment.hoverVideoPath', assignment.hoverVideoPath)}
+        ${renderPathField('previewAssignment.demoReelPath', assignment.demoReelPath)}
+        ${renderPathField('previewAssignment.detailHeroPreviewPath', assignment.detailHeroPreviewPath)}
+        ${renderPathField('downloadPath', product.downloadPath)}
+        ${renderPathField('primaryDownloadPath', product.primaryDownloadPath)}
+        ${renderPathField('licensePath', product.licensePath)}
+      </details>
+      <details class="admin-technical-details">
+        <summary>Raw IDs</summary>
+        ${renderPathField('productId', product.id)}
+        ${renderPathField('artistId', product.artistId)}
+        ${renderPathField('reviewRequestedBy', product.reviewRequestedBy)}
+        ${renderPathField('reviewedBy', product.reviewedBy)}
+      </details>
+      ${mediaDiagnostics(product)}
+      ${additionalProductFieldsContent(product)}
+      <details class="admin-technical-details">
+        <summary>View Raw Product JSON</summary>
+        <pre class="admin-json-block">${escapeHtml(JSON.stringify(product, null, 2))}</pre>
+      </details>
+    </div>
+  `
+}
+
+function additionalProductFieldsContent(product = {}) {
+  const backendExtras = product.additionalProductFields && typeof product.additionalProductFields === 'object'
+    ? Object.entries(product.additionalProductFields)
+    : []
+  const localExtras = Object.entries(product).filter(([key]) => !DISPLAYED_PRODUCT_KEYS.has(key))
+  const merged = new Map()
+  backendExtras.forEach(([key, value]) => merged.set(key, value))
+  localExtras.forEach(([key, value]) => merged.set(key, value))
+  const entries = Array.from(merged.entries()).filter(([key]) => key && key !== 'additionalProductFields')
+  return `
+    <details class="admin-technical-details">
+      <summary>Additional Product Fields (${entries.length})</summary>
+      ${entries.length ? `
+        <div class="admin-extra-field-list">
+          ${entries.map(([key, value]) => `
+            <article>
+              <div>
+                <strong>${escapeHtml(key)}</strong>
+                <span>${escapeHtml(valueType(value))} · ${escapeHtml(valueSummary(value))}</span>
+              </div>
+              <pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre>
+            </article>
+          `).join('')}
+        </div>
+      ` : '<p class="admin-muted">No additional fields in the current review payload.</p>'}
+    </details>
+  `
+}
+
+function auditTabContent(product = {}) {
+  if (state.auditTab === 'pricing') {
+    const agreement = product.sellerAgreement || {}
+    return renderKeyValueGrid([
+      renderMoneyField('Price', product.priceCents, product.currency),
+      renderField('priceCents', Number(product.priceCents || 0)),
+      renderMoneyField('Payout target', product.payoutTargetCents, product.currency),
+      renderField('payoutTargetCents', Number(product.payoutTargetCents || 0)),
+      renderField('Currency', product.currency),
+      renderBooleanField('Free', product.isFree),
+      renderBooleanField('Seller agreement accepted', product.sellerAgreementAccepted || agreement.accepted),
+      renderField('Seller agreement version', product.sellerAgreementVersion),
+      renderBooleanField('sellerAgreement.accepted', agreement.accepted),
+      renderDateField('sellerAgreement.acceptedAt', agreement.acceptedAt),
+      renderField('sellerAgreement.agreementId', agreement.agreementId),
+      renderField('sellerAgreement.version', agreement.version)
+    ])
+  }
+  if (state.auditTab === 'creator') {
+    return `
+      ${renderKeyValueGrid([
+        renderField('Artist ID', product.artistId, { code: true }),
+        renderField('Artist name', product.artistName),
+        renderField('Display name', product.artistDisplayName),
+        renderField('Username', product.artistUsername),
+        renderField('Profile path', product.artistProfilePath, { code: true }),
+        renderField('Contributor count', Number(product.contributorCount || 0)),
+        renderField('Contributor requests', Number(product.contributorRequestCount || 0))
+      ])}
+      <div class="admin-listing-taxonomy">
+        <div><h3>Contributor IDs</h3>${renderBadgeList(product.contributorIds)}</div>
+        <div><h3>Contributor names</h3>${renderBadgeList(product.contributorNames)}</div>
+        <div><h3>Pending contributor IDs</h3>${renderBadgeList(product.pendingContributorIds)}</div>
+      </div>
+      <div class="admin-detail-actions">
+        ${product.artistId ? `<a class="admin-secondary-link" href="${publicProfileRoute({ uid: product.artistId, preview: true })}" target="_blank" rel="noreferrer">${iconSvg('eye')}<span>View Creator Profile</span></a>` : ''}
+        ${product.artistId ? `<a class="admin-secondary-link" href="${ROUTES.adminUsers}/${encodeURIComponent(product.artistId)}">${iconSvg('messageCircle')}<span>Creator History Tools</span></a>` : ''}
+      </div>
+    `
+  }
+  if (state.auditTab === 'metrics') {
+    const counts = product.counts || {}
+    return `
+      ${renderKeyValueGrid([
+        renderField('Likes', Number(product.likeCount || 0)),
+        renderField('Dislikes', Number(product.dislikeCount || 0)),
+        renderField('Saves', Number(product.saveCount || 0)),
+        renderField('Shares', Number(product.shareCount || 0)),
+        renderField('Comments', Number(product.commentCount || 0)),
+        renderField('Downloads', Number(product.downloadCount || 0)),
+        renderField('Follows', Number(product.followCount || 0)),
+        renderField('Sales', Number(product.salesCount || 0)),
+        renderMoneyField('Revenue', product.revenue || 0, product.currency),
+        renderField('Entitlements', Number(product.entitlementCount || 0))
+      ], { compact: true })}
+      <details class="admin-technical-details">
+        <summary>Counts map</summary>
+        ${renderKeyValueGrid(Object.entries(counts).map(([key, value]) => renderField(key, Number(value || 0))), { compact: true })}
+      </details>
+    `
+  }
+  if (state.auditTab === 'moderation') {
+    return `
+      ${renderKeyValueGrid([
+        renderBooleanField('AI attempted', product.moderationAIAttempted),
+        renderBooleanField('AI succeeded', product.moderationAISucceeded),
+        renderBooleanField('AI configured', product.moderationAIConfigured),
+        renderBooleanField('AI enabled', product.moderationAIEnabled),
+        renderField('AI model', product.moderationAIModel),
+        renderField('Moderation status', product.moderationStatus),
+        renderField('Risk level', product.moderationRiskLevel),
+        renderField('Review job status', product.reviewJobStatus),
+        renderDateField('AI completed at', product.moderationAICompletedAt),
+        renderDateField('AI failed at', product.moderationAIFailedAt),
+        renderField('AI error code', product.moderationAIErrorCode),
+        renderField('AI error category', product.moderationAIErrorCategory),
+        renderField('AI error', product.moderationAIError, { wide: true })
+      ])}
+      <div class="admin-summary-block is-emphasized">
+        <h3>Moderation summary</h3>
+        <p>${escapeHtml(product.moderationSummary || 'No moderation summary recorded.')}</p>
+      </div>
+      <div>
+        <h3>Moderation reasons</h3>
+        ${renderBadgeList(product.moderationReasons, 'No reasons')}
+      </div>
+    `
+  }
+  if (state.auditTab === 'history') {
+    return `
+      ${renderKeyValueGrid([
+        renderField('Prior decision', product.priorDecision || product.reviewDecision),
+        renderField('Latest decision', product.reviewDecision),
+        renderDateField('Reviewed at', product.reviewedAt),
+        renderField('Reviewed by', product.reviewedBy, { code: true }),
+        renderField('Review reason', product.reviewReason, { wide: true }),
+        renderField('Review notes', product.reviewNotes, { wide: true })
+      ])}
+      <p class="admin-muted">Full audit log browsing is available in Logs. New decisions write adminLogs and productModeration events.</p>
+      <a class="admin-secondary-link" href="${ROUTES.adminLogs}">${iconSvg('fileText')}<span>Full Logs</span></a>
+    `
+  }
+  if (state.auditTab === 'technical') return technicalDataContent(product)
+
+  return `
+    ${renderKeyValueGrid([
+      renderField('Title', product.title),
+      renderField('Slug', product.slug),
+      renderField('Product type', product.productType),
+      renderField('Product kind', product.productKind),
+      renderField('Version', product.version),
+      renderField('Usage license', product.usageLicense)
+    ])}
+    ${renderTextBlock('Short description', product.shortDescription)}
+    ${renderTextBlock('Full description', product.description)}
+    ${renderTextBlock('Included files', product.includedFiles)}
+    ${renderTextBlock('Compatibility notes', product.compatibilityNotes)}
+    ${renderTextBlock('Format notes', product.formatNotes)}
+    <div class="admin-listing-taxonomy">
+      <div><h3>Categories</h3>${renderBadgeList(product.categories)}</div>
+      <div><h3>Category keys</h3>${renderBadgeList(product.categoryKeys)}</div>
+      <div><h3>Genres</h3>${renderBadgeList(product.genres)}</div>
+      <div><h3>Genre keys</h3>${renderBadgeList(product.genreKeys)}</div>
+      <div><h3>Tags</h3>${renderBadgeList(product.tags)}</div>
+      <div><h3>Tag keys</h3>${renderBadgeList(product.tagKeys)}</div>
+      <div><h3>Search keywords</h3>${renderBadgeList(product.searchKeywords)}</div>
+      <div><h3>DAW compatibility</h3>${renderBadgeList(product.dawCompatibility)}</div>
+      <div><h3>Format keys</h3>${renderBadgeList(product.formatKeys)}</div>
+    </div>
+  `
+}
+
+function contentViewerSection(product = {}) {
+  return `
+    <section class="admin-audit-section admin-content-viewer">
+      <header class="admin-audit-section-header">
+        <div>
+          <p class="eyebrow">Section 1</p>
+          <h2>Content Viewer</h2>
+        </div>
+      </header>
+      <div class="admin-audit-section-scroll is-viewer">
+        <div class="admin-content-viewer-grid">
+          ${mediaPanel(product)}
+          ${filesPanel(product)}
+        </div>
+      </div>
+    </section>
+  `
+}
+
+function contentTextSection(product = {}) {
+  return `
+    <section class="admin-audit-section admin-content-text">
+      <header class="admin-audit-section-header">
+        <div>
+          <p class="eyebrow">Section 2</p>
+          <h2>Content Text</h2>
+        </div>
+      </header>
+      <div class="admin-audit-tabs" role="tablist" aria-label="Product audit content sections">
+        ${AUDIT_TABS.map((tab) => `
+          <button type="button" role="tab" data-audit-tab="${tab.key}" aria-selected="${state.auditTab === tab.key}" tabindex="${state.auditTab === tab.key ? '0' : '-1'}">${escapeHtml(tab.label)}</button>
+        `).join('')}
+      </div>
+      <div class="admin-audit-tab-panel admin-audit-section-scroll is-text" role="tabpanel">
+        ${auditTabContent(product)}
+      </div>
+    </section>
+  `
+}
+
 function detailDecisionBar(product = {}) {
   const busy = state.actionProductId === product.id
   return `
     <section class="admin-decision-bar" aria-label="Review decision actions">
       <div>
         <strong>${escapeHtml(product.title || 'Product')}</strong>
-        <span>${escapeHtml(product.status || 'unknown')} / ${escapeHtml(product.visibility || 'unknown')}</span>
+        <span>${escapeHtml(product.status || 'unknown')} / ${escapeHtml(product.visibility || 'unknown')} · ${escapeHtml(product.reviewJobStatus || product.moderationStatus || 'review')}</span>
       </div>
       <div class="admin-decision-actions">
         <button type="button" class="admin-decision-button is-pass" data-detail-decision="approve" ${busy ? 'disabled aria-busy="true"' : ''}>Pass</button>
@@ -1056,6 +1478,7 @@ function reviewDetailView(productId) {
   }
   const isPublic = product.status === 'published' && product.visibility === 'public'
   ensureDetailMedia(product.id)
+  state.auditTab = auditTabFromHash()
   return `
     <header class="admin-page-header admin-detail-header">
       <div>
@@ -1073,23 +1496,8 @@ function reviewDetailView(productId) {
         ${isPublic ? `<a class="admin-secondary-link" href="${productRoute(product)}" target="_blank" rel="noreferrer">${iconSvg('eye')}<span>Public Route</span></a>` : ''}
       </div>
     </header>
-    <section class="admin-detail-grid">
-      <div class="admin-detail-column">
-        ${mediaPanel(product)}
-        ${sellerPanel(product)}
-        ${creatorContextPanel(product)}
-        ${metricsPanel(product)}
-      </div>
-      <div class="admin-detail-column">
-        ${identityPanel(product)}
-        ${listingContentPanel(product)}
-        ${filesPanel(product)}
-        ${moderationPanel(product)}
-        ${adminHistoryPanel(product)}
-        ${technicalDataPanel(product)}
-        ${additionalProductFieldsPanel(product)}
-      </div>
-    </section>
+    ${contentViewerSection(product)}
+    ${contentTextSection(product)}
     ${detailDecisionBar(product)}
     ${decisionDialog(product)}
   `
@@ -1114,14 +1522,20 @@ function placeholderView(sectionKey) {
 
 function teamView() {
   if (!can('roleManage')) return permissionState('roleManage')
+  const data = state.adminData.team
   return `
     <header class="admin-page-header">
       <div>
         <p class="eyebrow">Access</p>
         <h1>Team</h1>
       </div>
+      <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh team">${iconSvg('barChart')}</button>
     </header>
-    <section class="admin-section-slab">
+    <section class="admin-section-slab admin-role-panel">
+      <div>
+        <h2>Add / Update Admin User</h2>
+        <p class="admin-muted">Custom claims update after the user signs out and signs back in.</p>
+      </div>
       <form class="admin-role-form" data-admin-role-form>
         <label>
           <span>User UID</span>
@@ -1145,14 +1559,518 @@ function teamView() {
         <button type="submit" class="admin-primary-button">${iconSvg('checkCircle')}<span>Save Role</span></button>
       </form>
     </section>
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading">
+        <h2>Admin Users</h2>
+        <span class="admin-muted">${data.loading ? 'Loading...' : `${data.items.length} shown`}</span>
+      </div>
+      ${adminTeamTable(data.items)}
+    </section>
   `
+}
+
+function adminData(key = '') {
+  return state.adminData[key] || { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' }
+}
+
+function adminPageHeader({ eyebrow = 'Admin', title = '', refreshLabel = 'Refresh' } = {}) {
+  return `
+    <header class="admin-page-header">
+      <div>
+        <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+        <h1>${escapeHtml(title)}</h1>
+      </div>
+      <button type="button" class="admin-icon-button" data-refresh-admin-section title="${escapeHtml(refreshLabel)}">${iconSvg('barChart')}</button>
+    </header>
+  `
+}
+
+function adminFilterControls(collection, filters = []) {
+  const data = adminData(collection)
+  return `
+    <div class="admin-segmented" role="group" aria-label="${escapeHtml(collection)} filters">
+      ${filters.map((filter) => `<button type="button" data-admin-collection="${collection}" data-admin-filter="${filter.key}" aria-pressed="${data.filter === filter.key}">${escapeHtml(filter.label)}</button>`).join('')}
+    </div>
+  `
+}
+
+function adminSearchForm(collection, placeholder = 'Search') {
+  const data = adminData(collection)
+  return `
+    <form class="admin-search-form" data-admin-search-form="${collection}">
+      <input data-admin-search="${collection}" value="${escapeHtml(data.search || '')}" placeholder="${escapeHtml(placeholder)}" autocomplete="off" />
+      <button type="submit" class="admin-secondary-button">Search</button>
+    </form>
+  `
+}
+
+function adminLoadingState(data, empty = 'No rows found.') {
+  if (data.loading) return '<article class="admin-empty-state">Loading admin data...</article>'
+  if (data.error) return `<article class="admin-empty-state"><strong>Could not load data.</strong><span>${escapeHtml(data.error)}</span></article>`
+  if (!data.loaded) return '<article class="admin-empty-state">Loading admin data...</article>'
+  if (!data.items?.length) return `<article class="admin-empty-state">${escapeHtml(empty)}</article>`
+  return ''
+}
+
+function adminBusyState(data) {
+  if (data.loading) return '<article class="admin-empty-state">Loading admin data...</article>'
+  if (data.error) return `<article class="admin-empty-state"><strong>Could not load data.</strong><span>${escapeHtml(data.error)}</span></article>`
+  if (!data.loaded) return '<article class="admin-empty-state">Loading admin data...</article>'
+  return ''
+}
+
+function filterAdminProducts(products = []) {
+  const data = adminData('products')
+  const search = String(data.search || '').trim().toLowerCase()
+  return products.filter((product) => {
+    if (search) {
+      const haystack = [product.id, product.title, product.artistName, product.artistId, product.productType, product.status].join(' ').toLowerCase()
+      if (!haystack.includes(search)) return false
+    }
+    if (data.filter === 'published') return product.status === 'published'
+    if (data.filter === 'review_pending') return product.status === 'review_pending' || product.reviewJobStatus === 'pending_manual_review'
+    if (data.filter === 'needs_changes') return product.status === 'needs_changes'
+    if (data.filter === 'rejected') return product.status === 'rejected'
+    if (data.filter === 'draft') return product.status === 'draft'
+    if (data.filter === 'archived') return ['archived', 'suspended'].includes(product.status)
+    if (data.filter === 'ai_failed') return ['ai_failed', 'failed_ai_auth'].includes(product.reviewJobStatus) || product.moderationStatus === 'ai_error'
+    if (data.filter === 'free') return product.isFree === true || Number(product.priceCents || 0) === 0
+    if (data.filter === 'paid') return Number(product.priceCents || 0) > 0
+    return true
+  })
+}
+
+function productAdminTable(products = []) {
+  if (!products.length) return '<article class="admin-empty-state">No products match this view.</article>'
+  return `
+    <div class="admin-data-table is-products" role="table" aria-label="Products">
+      <div class="admin-data-row is-header" role="row">
+        <span>Product</span><span>Creator</span><span>Status</span><span>Visibility</span><span>Type</span><span>Price</span><span>AI Status</span><span>Files</span><span>Updated</span><span>Actions</span>
+      </div>
+      ${products.map((product) => `
+        <article class="admin-data-row" role="row">
+          <span class="admin-product-cell">
+            <span class="admin-product-thumb">
+              ${safeImageUrl(product)
+                ? `<img src="${escapeHtml(safeImageUrl(product))}" alt="" loading="lazy" decoding="async" />`
+                : iconSvg('image')}
+            </span>
+            <span><strong>${escapeHtml(product.title || 'Untitled')}</strong><small>${escapeHtml(product.slug || product.id || '')}</small></span>
+          </span>
+          <span>${escapeHtml(product.artistName || product.artistDisplayName || product.artistId || 'Creator')}</span>
+          <span>${renderBadge(product.status || 'unknown', statusClass(product.status))}</span>
+          <span>${escapeHtml(product.visibility || '')}</span>
+          <span>${escapeHtml(product.productType || product.productKind || '')}</span>
+          <span>${escapeHtml(formatMoney(product.priceCents, product.currency))}</span>
+          <span>${escapeHtml(aiStatus(product).label)}</span>
+          <span>${Number(product.assetSummary?.totalFiles || 0)} · ${escapeHtml(formatBytes(product.assetSummary?.totalBytes || 0))}</span>
+          <span>${escapeHtml(formatDate(product.updatedAt || product.createdAt))}</span>
+          <span class="admin-row-actions">
+            <a class="admin-primary-link" href="${adminReviewRoute(product.id)}">Audit/View</a>
+            <a class="admin-secondary-link" href="/new-product.html?id=${encodeURIComponent(product.id)}">Edit</a>
+            <details class="admin-action-menu">
+              <summary>More</summary>
+              <div>
+                ${product.artistId ? `<a href="${ROUTES.adminUsers}/${encodeURIComponent(product.artistId)}">View Creator</a>` : ''}
+                <button type="button" disabled>Force Review</button>
+                <button type="button" disabled>Suspend</button>
+                <button type="button" data-copy-value="${escapeHtml(product.id || '')}">Copy Product ID</button>
+              </div>
+            </details>
+          </span>
+        </article>
+      `).join('')}
+    </div>
+  `
+}
+
+function productSummaryCards(products = []) {
+  const counts = {
+    total: products.length,
+    published: products.filter((product) => product.status === 'published').length,
+    review: products.filter((product) => product.status === 'review_pending' || product.reviewJobStatus === 'pending_manual_review').length,
+    changes: products.filter((product) => product.status === 'needs_changes').length,
+    rejected: products.filter((product) => product.status === 'rejected').length
+  }
+  return `
+    <section class="admin-metric-grid is-compact">
+      <article class="admin-metric"><span>Total loaded</span><strong>${counts.total}</strong></article>
+      <article class="admin-metric"><span>Published</span><strong>${counts.published}</strong></article>
+      <article class="admin-metric"><span>Review pending</span><strong>${counts.review}</strong></article>
+      <article class="admin-metric"><span>Needs changes</span><strong>${counts.changes}</strong></article>
+      <article class="admin-metric"><span>Rejected</span><strong>${counts.rejected}</strong></article>
+    </section>
+  `
+}
+
+function productsView() {
+  if (!can('listingEdit') && !can('productReview')) return permissionState('listingEdit')
+  const data = adminData('products')
+  const loading = adminLoadingState(data, 'No products found.')
+  const products = filterAdminProducts(data.items)
+  return `
+    ${adminPageHeader({ eyebrow: 'Catalog', title: 'Products', refreshLabel: 'Refresh products' })}
+    ${productSummaryCards(data.items)}
+    <section class="admin-review-tools">
+      ${adminSearchForm('products', 'Search product, creator, status')}
+      ${adminFilterControls('products', PRODUCT_ADMIN_FILTERS)}
+    </section>
+    ${loading || productAdminTable(products)}
+  `
+}
+
+function filterAdminUsers(users = []) {
+  const data = adminData('users')
+  const search = String(data.search || '').trim().toLowerCase()
+  return users.filter((user) => {
+    if (search) {
+      const haystack = [user.uid, user.displayName, user.username, user.email, user.role, user.adminRole].join(' ').toLowerCase()
+      if (!haystack.includes(search)) return false
+    }
+    if (data.filter === 'admins') return user.adminActive || Boolean(user.adminRole)
+    if (data.filter === 'creators') return Number(user.productCount || 0) > 0
+    if (data.filter === 'suspended') return user.suspended === true
+    if (data.filter === 'verified') return user.verified === true
+    if (data.filter === 'has_products') return Number(user.productCount || 0) > 0
+    if (data.filter === 'has_reports') return Number(user.reportCount || 0) > 0
+    return true
+  })
+}
+
+function usersTable(users = []) {
+  if (!users.length) return '<article class="admin-empty-state">No users match this view.</article>'
+  return `
+    <div class="admin-data-table is-users" role="table" aria-label="Users">
+      <div class="admin-data-row is-header" role="row">
+        <span>User</span><span>UID</span><span>Username</span><span>Role</span><span>Products</span><span>Reports</span><span>Created / Active</span><span>Actions</span>
+      </div>
+      ${users.map((user) => `
+        <article class="admin-data-row" role="row">
+          ${htmlCell(adminPersonCell(user, user.displayName || 'User', user.email || user.username || '', user.uid)).html}
+          <span class="admin-code-value">${escapeHtml(user.uid)}</span>
+          <span>${escapeHtml(user.username || '')}</span>
+          <span>${escapeHtml(user.adminRole || user.role || '')}</span>
+          <span>${Number(user.productCount || 0)}</span>
+          <span>${Number(user.reportCount || 0)}</span>
+          <span>${escapeHtml(formatDate(user.createdAt || user.updatedAt))}${user.lastActiveAt ? `<small>${escapeHtml(formatDate(user.lastActiveAt))}</small>` : ''}</span>
+          <span class="admin-row-actions">
+            <a class="admin-secondary-link" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">View History</a>
+            <a class="admin-secondary-link" href="${publicProfileRoute({ uid: user.uid, preview: true })}" target="_blank" rel="noreferrer">Public Profile</a>
+            <button type="button" class="admin-secondary-button" disabled>Add Note</button>
+            <button type="button" class="admin-secondary-button" disabled>Suspend</button>
+          </span>
+        </article>
+      `).join('')}
+    </div>
+  `
+}
+
+function selectedUserPanel() {
+  const uid = adminUserDetailUid()
+  const data = adminData('users')
+  if (!uid) return ''
+  if (data.loading) return '<section class="admin-section-slab"><h2>User History</h2><p class="admin-muted">Loading user profile...</p></section>'
+  const user = data.profile || data.items.find((item) => item.uid === uid)
+  return `
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading">
+        <h2>User History</h2>
+        <a href="${ROUTES.adminUsers}">Back to Users</a>
+      </div>
+      ${user ? renderKeyValueGrid([
+        renderField('UID', user.uid, { code: true }),
+        renderField('Display name', user.displayName),
+        renderField('Username', user.username),
+        renderField('Email', user.email),
+        renderField('Admin role', user.adminRole),
+        renderField('Products', Number(user.productCount || data.recentProducts?.length || 0)),
+        renderField('Reports', Number(user.reportCount || 0)),
+        renderDateField('Created at', user.createdAt),
+        renderDateField('Last active', user.lastActiveAt)
+      ]) : `<p class="admin-muted">No profile found for ${escapeHtml(uid)}.</p>`}
+      <h3>Recent products</h3>
+      ${data.recentProducts?.length ? productAdminTable(data.recentProducts) : '<p class="admin-muted">No recent products loaded for this creator.</p>'}
+    </section>
+  `
+}
+
+function usersView() {
+  if (!can('userRead') && !can('roleManage')) return permissionState('userRead')
+  const data = adminData('users')
+  const loading = adminLoadingState(data, 'No users found.')
+  const users = filterAdminUsers(data.items)
+  return `
+    ${adminPageHeader({ eyebrow: 'Accounts', title: 'Users', refreshLabel: 'Refresh users' })}
+    ${selectedUserPanel()}
+    <section class="admin-review-tools">
+      ${adminSearchForm('users', 'Search UID, username, name, email')}
+      ${adminFilterControls('users', USER_ADMIN_FILTERS)}
+    </section>
+    ${loading || usersTable(users)}
+  `
+}
+
+function reportsView() {
+  if (!can('admin') && !can('userModerate') && !can('productReview') && !can('orderSupport')) return permissionState('userModerate')
+  const data = adminData('reports')
+  const loading = adminBusyState(data)
+  const reports = data.items.filter((report) => {
+    if (data.filter === 'open') return !report.status || report.status === 'open'
+    if (data.filter === 'in_review') return report.status === 'in_review'
+    if (data.filter === 'resolved') return report.status === 'resolved'
+    if (data.filter === 'dismissed') return report.status === 'dismissed'
+    return report.type === data.filter || report.targetType === data.filter
+  })
+  return `
+    ${adminPageHeader({ eyebrow: 'Trust', title: 'Reports', refreshLabel: 'Refresh reports' })}
+    <section class="admin-review-tools">${adminFilterControls('reports', REPORT_ADMIN_FILTERS)}</section>
+    ${loading || adminSimpleTable('Reports', ['Type', 'Target', 'Reporter', 'Reason', 'Priority', 'Status', 'Created', 'Assigned', 'Actions'], reports.map((report) => [
+      report.type,
+      `${report.targetType || 'target'} ${report.targetId || ''}`.trim(),
+      report.reporterUid,
+      report.reason,
+      report.priority,
+      report.status,
+      formatDate(report.createdAt),
+      report.assignedTo,
+      htmlCell('<button type="button" class="admin-secondary-button" disabled>Open Report</button><button type="button" class="admin-secondary-button" disabled>Assign to Me</button>')
+    ]), {
+      className: 'is-reports',
+      emptyTitle: 'No active reports.',
+      emptyBody: 'Reports from users, products, and orders will appear here.'
+    })}
+  `
+}
+
+function ordersView() {
+  if (!can('orderSupport')) return permissionState('orderSupport')
+  const data = adminData('orders')
+  const loading = adminBusyState(data)
+  const orders = data.items.filter((order) => {
+    if (data.filter === 'paid') return order.paymentStatus === 'paid' || Number(order.amountCents || 0) > 0
+    if (data.filter === 'free') return Number(order.amountCents || 0) === 0
+    if (data.filter === 'refund_requested') return order.refundStatus === 'requested'
+    if (data.filter === 'refunded') return order.refundStatus === 'refunded'
+    if (data.filter === 'failed') return ['failed', 'canceled'].includes(order.paymentStatus)
+    if (data.filter === 'recent') return (Date.now() - new Date(order.createdAt || 0).getTime()) <= 30 * 24 * 60 * 60 * 1000
+    return true
+  })
+  const revenue = orders.reduce((sum, order) => sum + Number(order.amountCents || 0), 0)
+  return `
+    ${adminPageHeader({ eyebrow: 'Commerce', title: 'Orders', refreshLabel: 'Refresh orders' })}
+    <section class="admin-metric-grid">
+      <article class="admin-metric"><span>Total Revenue</span><strong>${escapeHtml(formatMoney(revenue, 'USD'))}</strong></article>
+      <article class="admin-metric"><span>Orders</span><strong>${orders.length}</strong></article>
+      <article class="admin-metric"><span>Refund / Failed</span><strong>${orders.filter((order) => order.refundStatus || order.paymentStatus === 'failed').length}</strong></article>
+    </section>
+    <section class="admin-review-tools">${adminFilterControls('orders', ORDER_ADMIN_FILTERS)}</section>
+    ${loading || adminSimpleTable('Orders', ['Order ID', 'Buyer', 'Products', 'Amount', 'Payment', 'Refund', 'Created', 'Actions'], orders.map((order) => [
+      order.id,
+      order.buyerUid || order.uid,
+      order.productTitles?.join(', ') || `${order.productCount || 0} product(s)`,
+      formatMoney(order.amountCents, order.currency),
+      order.paymentStatus,
+      order.refundStatus,
+      formatDate(order.createdAt),
+      htmlCell('<button type="button" class="admin-secondary-button" disabled>View Order</button><button type="button" class="admin-secondary-button" disabled>Open Stripe</button><button type="button" class="admin-secondary-button" disabled>Refund</button>')
+    ]), {
+      className: 'is-orders',
+      emptyTitle: 'No orders yet.',
+      emptyBody: 'Paid purchases, free claims, refunds, and entitlement issues will appear here.'
+    })}
+  `
+}
+
+function adminTeamTable(team = []) {
+  if (!team.length) return '<article class="admin-empty-state">No admin users loaded yet.</article>'
+  return `
+    <div class="admin-data-table is-team" role="table" aria-label="Team">
+      <div class="admin-data-row is-header" role="row">
+        <span>User</span><span>UID</span><span>Role</span><span>Permissions</span><span>Active</span><span>Added By</span><span>Updated</span><span>Actions</span>
+      </div>
+      ${team.map((member) => `
+        <article class="admin-data-row" role="row">
+          ${adminPersonCell(member, member.displayName || member.email || member.uid, member.email || '', member.uid)}
+          <span class="admin-code-value">${escapeHtml(member.uid)}</span>
+          <span>${renderBadge(member.role || 'admin')}</span>
+          <span>${renderBadgeList(Object.entries(member.permissions || {}).filter(([, value]) => value === true).map(([key]) => key), 'No permissions')}</span>
+          <span>${renderBadge(member.active ? 'Active' : 'Disabled', member.active ? 'published' : 'rejected')}</span>
+          <span class="admin-code-value">${escapeHtml(member.addedBy || member.updatedBy || '')}</span>
+          <span>${escapeHtml(formatDate(member.updatedAt || member.createdAt))}</span>
+          <span class="admin-row-actions">
+            <button type="button" class="admin-secondary-button" disabled>Change Role</button>
+            <button type="button" class="admin-secondary-button" disabled>Disable Admin</button>
+            <button type="button" class="admin-secondary-button" disabled>Activity</button>
+          </span>
+        </article>
+      `).join('')}
+    </div>
+  `
+}
+
+function logsView() {
+  if (!can('auditRead')) return permissionState('auditRead')
+  const data = adminData('logs')
+  const loading = adminBusyState(data)
+  return `
+    ${adminPageHeader({ eyebrow: 'Audit', title: 'Logs', refreshLabel: 'Refresh logs' })}
+    <section class="admin-section-slab">
+      <div class="admin-review-tools">
+        <input class="admin-inline-input" data-admin-log-search placeholder="Filter by action, actor, target" value="${escapeHtml(data.search || '')}" />
+        <span class="admin-muted">Newest admin actions. Date range and target filters are scaffolded for the next pass.</span>
+      </div>
+    </section>
+    ${loading || logsTable(data.items)}
+  `
+}
+
+function logsTable(logs = []) {
+  const search = String(state.adminData.logs.search || '').trim().toLowerCase()
+  const rows = logs.filter((log) => {
+    if (!search) return true
+    return [log.actorEmail, log.actorUid, log.action, log.targetType, log.targetId, log.reason, log.targetPath].join(' ').toLowerCase().includes(search)
+  })
+  return adminSimpleTable('Logs', ['Time', 'Actor', 'Action', 'Target Type', 'Target ID', 'Reason', 'Summary', 'Details'], rows.map((log) => [
+      formatDate(log.createdAt),
+      htmlCell(`<strong>${escapeHtml(log.actorEmail || 'Admin')}</strong><small class="admin-code-value">${escapeHtml(log.actorUid || '')}</small>`),
+      htmlCell(renderBadge(log.action || 'action')),
+      log.targetType,
+      htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetId || '')}</code>`),
+      log.reason,
+      htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetPath || '')}</code>`),
+      htmlCell('<button type="button" class="admin-secondary-button" disabled>View Details</button>')
+    ]), {
+      className: 'is-logs',
+      emptyTitle: 'No admin logs found.',
+      emptyBody: 'Admin role changes, review decisions, and settings changes will appear here.'
+    })
+}
+
+function settingsView() {
+  if (!can('admin')) return permissionState('admin')
+  const settings = state.settings.data || {}
+  const loading = state.settings.loading
+  return `
+    ${adminPageHeader({ eyebrow: 'Platform', title: 'Settings', refreshLabel: 'Refresh settings' })}
+    ${state.settings.error ? `<p class="admin-status is-error">${escapeHtml(state.settings.error)}</p>` : ''}
+    ${loading ? '<article class="admin-empty-state">Loading settings...</article>' : ''}
+    ${state.settings.updatedAt ? `<p class="admin-muted">Last updated ${escapeHtml(formatDate(state.settings.updatedAt))}${state.settings.updatedBy ? ` by ${escapeHtml(state.settings.updatedBy)}` : ''}.</p>` : ''}
+    <section class="admin-settings-grid">
+      ${SETTINGS_SECTIONS.map((section) => settingsCard(section, settings[section.key] || {})).join('')}
+    </section>
+    ${settingsDialog()}
+  `
+}
+
+function settingsCard(section, values = {}) {
+  return `
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading">
+        <h2>${escapeHtml(section.title)}</h2>
+        <button type="button" class="admin-secondary-button" data-edit-settings="${escapeHtml(section.key)}" ${can('roleManage') ? '' : 'disabled'}>Edit</button>
+      </div>
+      ${renderKeyValueGrid(section.fields.map(([key, label]) => renderField(label, formatSettingValue(values[key]))), { compact: true })}
+    </section>
+  `
+}
+
+function formatSettingValue(value) {
+  if (Array.isArray(value)) return value.join(', ')
+  if (value === true) return 'true'
+  if (value === false) return 'false'
+  if (value === null || value === undefined || value === '') return 'Not set'
+  return value
+}
+
+function settingsDialog() {
+  if (!state.settings.dialog.open) return ''
+  const section = SETTINGS_SECTIONS.find((item) => item.key === state.settings.dialog.section)
+  if (!section) return ''
+  const values = state.settings.data?.[section.key] || {}
+  const saving = state.settings.saving
+  return `
+    <div class="admin-modal-backdrop" role="presentation">
+      <section class="admin-decision-modal" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+        <header>
+          <h2 id="settings-modal-title">Edit ${escapeHtml(section.title)}</h2>
+          <button type="button" class="admin-icon-button" data-close-settings-dialog title="Close">${iconSvg('x')}</button>
+        </header>
+        <form data-settings-form="${escapeHtml(section.key)}">
+          ${section.fields.map(([key, label, type]) => settingsInput(key, label, type, values[key])).join('')}
+          <label>
+            <span>Reason</span>
+            <input data-settings-reason maxlength="1200" placeholder="Why this setting changed" ${saving ? 'disabled' : ''} />
+          </label>
+          <div class="admin-modal-actions">
+            <button type="button" class="admin-secondary-button" data-close-settings-dialog ${saving ? 'disabled' : ''}>Cancel</button>
+            <button type="submit" class="admin-primary-button" ${saving ? 'disabled' : ''}>${saving ? 'Saving...' : 'Save Settings'}</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `
+}
+
+function settingsInput(key, label, type, value) {
+  if (type === 'boolean') {
+    return `
+      <label class="admin-checkbox-field">
+        <input type="checkbox" data-settings-field="${escapeHtml(key)}" data-settings-type="${escapeHtml(type)}" ${value === true ? 'checked' : ''} />
+        <span>${escapeHtml(label)}</span>
+      </label>
+    `
+  }
+  if (type === 'textarea') {
+    return `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <textarea data-settings-field="${escapeHtml(key)}" data-settings-type="${escapeHtml(type)}" rows="4">${escapeHtml(value || '')}</textarea>
+      </label>
+    `
+  }
+  return `
+    <label>
+      <span>${escapeHtml(label)}</span>
+      <input data-settings-field="${escapeHtml(key)}" data-settings-type="${escapeHtml(type)}" value="${escapeHtml(Array.isArray(value) ? value.join(', ') : value ?? '')}" />
+    </label>
+  `
+}
+
+function adminSimpleTable(label = 'Rows', headers = [], rows = [], options = {}) {
+  return `
+    <div class="admin-data-table ${escapeHtml(options.className || '')}" role="table" aria-label="${escapeHtml(label)}">
+      <div class="admin-data-row is-header" role="row">
+        ${headers.map((header) => `<span>${escapeHtml(header)}</span>`).join('')}
+      </div>
+      ${rows.length ? rows.map((row) => `
+        <article class="admin-data-row" role="row">
+          ${row.map((cell) => `<span>${cell?.html ? cell.html : escapeHtml(cell)}</span>`).join('')}
+        </article>
+      `).join('') : `
+        <article class="admin-empty-state admin-table-empty">
+          <strong>${escapeHtml(options.emptyTitle || `No ${label.toLowerCase()} found.`)}</strong>
+          <span>${escapeHtml(options.emptyBody || 'Rows will appear here when data is available.')}</span>
+        </article>
+      `}
+    </div>
+  `
+}
+
+function htmlCell(html = '') {
+  return { html }
 }
 
 function render() {
   state.section = currentSectionKey()
   if (state.section === 'dashboard') return renderLayout(dashboardView())
   if (state.section === 'reviews') return renderLayout(reviewsView())
+  if (state.section === 'products') return renderLayout(productsView())
+  if (state.section === 'users') return renderLayout(usersView())
+  if (state.section === 'reports') return renderLayout(reportsView())
+  if (state.section === 'orders') return renderLayout(ordersView())
   if (state.section === 'team') return renderLayout(teamView())
+  if (state.section === 'logs') return renderLayout(logsView())
+  if (state.section === 'settings') return renderLayout(settingsView())
   return renderLayout(placeholderView(state.section))
 }
 
@@ -1182,6 +2100,78 @@ async function loadQueue({ silent = false } = {}) {
     state.loadingQueue = false
     render()
   }
+}
+
+async function loadAdminSectionData(sectionKey = state.section, { silent = false } = {}) {
+  const map = {
+    products: async () => {
+      const data = adminData('products')
+      const result = await listAdminProducts({ limitCount: 50, search: data.search })
+      state.adminData.products.items = result.products || []
+      await hydrateReviewMedia(state.adminData.products.items)
+    },
+    users: async () => {
+      const data = adminData('users')
+      const detailUid = adminUserDetailUid()
+      if (detailUid) {
+        const result = await getAdminUserProfile({ uid: detailUid })
+        state.adminData.users.profile = result.user || null
+        state.adminData.users.recentProducts = result.recentProducts || []
+        await hydrateReviewMedia(state.adminData.users.recentProducts)
+      }
+      const result = await listAdminUsers({ limitCount: 50, search: data.search, uid: detailUid || '' })
+      state.adminData.users.items = result.users || []
+    },
+    reports: async () => {
+      const result = await listAdminReports({ limitCount: 50 })
+      state.adminData.reports.items = result.reports || []
+    },
+    orders: async () => {
+      const result = await listAdminOrders({ limitCount: 50 })
+      state.adminData.orders.items = result.orders || []
+    },
+    team: async () => {
+      const result = await listAdminTeam({ limitCount: 50 })
+      state.adminData.team.items = result.team || []
+    },
+    logs: async () => {
+      const result = await listAdminLogs({ limitCount: 50 })
+      state.adminData.logs.items = result.logs || []
+    },
+    settings: async () => {
+      const result = await getAdminSettings()
+      state.settings.data = result.settings || {}
+      state.settings.updatedAt = result.updatedAt || null
+      state.settings.updatedBy = result.updatedBy || ''
+    }
+  }
+  if (!map[sectionKey]) return
+  const data = sectionKey === 'settings' ? state.settings : adminData(sectionKey)
+  if (!canLoadAdminSection(sectionKey)) return
+  data.loading = !silent
+  data.error = ''
+  render()
+  try {
+    await map[sectionKey]()
+    data.loaded = true
+  } catch (error) {
+    console.warn('[admin] section load failed', { sectionKey, code: error?.code, message: error?.message, details: error?.details })
+    data.error = error?.message || `Could not load ${sectionKey}.`
+  } finally {
+    data.loading = false
+    render()
+  }
+}
+
+function canLoadAdminSection(sectionKey = '') {
+  if (sectionKey === 'products') return can('listingEdit') || can('productReview')
+  if (sectionKey === 'users') return can('userRead') || can('roleManage')
+  if (sectionKey === 'reports') return can('admin') || can('userModerate') || can('productReview') || can('orderSupport')
+  if (sectionKey === 'orders') return can('orderSupport')
+  if (sectionKey === 'team') return can('roleManage')
+  if (sectionKey === 'logs') return can('auditRead')
+  if (sectionKey === 'settings') return can('admin')
+  return false
 }
 
 function closeDecisionDialog() {
@@ -1270,6 +2260,68 @@ async function submitRoleForm(form) {
   }
 }
 
+function closeSettingsDialog() {
+  state.settings.dialog = { open: false, section: '' }
+  state.settings.saving = false
+  render()
+}
+
+function openSettingsDialog(sectionKey = '') {
+  if (!can('roleManage')) return
+  const section = SETTINGS_SECTIONS.find((item) => item.key === sectionKey)
+  if (!section) return
+  state.settings.dialog = { open: true, section: section.key }
+  state.settings.error = ''
+  state.message = ''
+  render()
+  app.querySelector('[data-settings-field]')?.focus()
+}
+
+function parseSettingsValue(input) {
+  const type = input.getAttribute('data-settings-type') || 'string'
+  if (type === 'boolean') return input.checked === true
+  if (type === 'number') return Number(input.value || 0)
+  if (type === 'array') {
+    return String(input.value || '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+  return input.value || ''
+}
+
+async function submitSettingsForm(form) {
+  const section = form.getAttribute('data-settings-form') || ''
+  const values = {}
+  form.querySelectorAll('[data-settings-field]').forEach((input) => {
+    const key = input.getAttribute('data-settings-field') || ''
+    if (key) values[key] = parseSettingsValue(input)
+  })
+  state.settings.saving = true
+  state.settings.error = ''
+  state.message = ''
+  render()
+  try {
+    const result = await updateAdminSettings({
+      section,
+      values,
+      reason: form.querySelector('[data-settings-reason]')?.value || ''
+    })
+    state.settings.data = result.settings || state.settings.data
+    state.settings.loaded = true
+    state.settings.updatedAt = new Date().toISOString()
+    state.settings.updatedBy = state.currentUser?.uid || state.settings.updatedBy
+    state.settings.dialog = { open: false, section: '' }
+    state.message = `${SETTINGS_SECTIONS.find((item) => item.key === section)?.title || 'Settings'} saved.`
+  } catch (error) {
+    console.warn('[admin] settings update failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.settings.error = error?.message || 'Could not save settings.'
+  } finally {
+    state.settings.saving = false
+    render()
+  }
+}
+
 function navigateToReviewProduct(productId) {
   const target = adminReviewRoute(productId)
   if (window.location.pathname !== target) window.history.pushState({}, '', target)
@@ -1284,6 +2336,45 @@ function bindEvents() {
     render()
   })
   app.querySelector('[data-refresh-queue]')?.addEventListener('click', () => loadQueue())
+  app.querySelector('[data-refresh-admin-section]')?.addEventListener('click', () => loadAdminSectionData(state.section))
+  app.querySelectorAll('[data-admin-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const collection = button.getAttribute('data-admin-collection') || ''
+      const filter = button.getAttribute('data-admin-filter') || 'all'
+      if (!state.adminData[collection]) return
+      state.adminData[collection].filter = filter
+      render()
+    })
+  })
+  app.querySelectorAll('[data-admin-search-form]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const collection = form.getAttribute('data-admin-search-form') || ''
+      if (!state.adminData[collection]) return
+      state.adminData[collection].search = form.querySelector(`[data-admin-search="${collection}"]`)?.value || ''
+      loadAdminSectionData(collection)
+    })
+  })
+  app.querySelector('[data-admin-log-search]')?.addEventListener('input', (event) => {
+    state.adminData.logs.search = event.target.value || ''
+    const cursor = event.target.selectionStart
+    render()
+    const nextInput = app.querySelector('[data-admin-log-search]')
+    if (nextInput) {
+      nextInput.focus()
+      if (Number.isInteger(cursor)) nextInput.setSelectionRange(cursor, cursor)
+    }
+  })
+  app.querySelectorAll('[data-edit-settings]').forEach((button) => {
+    button.addEventListener('click', () => openSettingsDialog(button.getAttribute('data-edit-settings') || ''))
+  })
+  app.querySelectorAll('[data-close-settings-dialog]').forEach((button) => {
+    button.addEventListener('click', closeSettingsDialog)
+  })
+  app.querySelector('[data-settings-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitSettingsForm(event.currentTarget)
+  })
   app.querySelectorAll('[data-copy-value]').forEach((button) => {
     button.addEventListener('click', async () => {
       const value = button.getAttribute('data-copy-value') || ''
@@ -1295,6 +2386,12 @@ function bindEvents() {
       } catch {
         state.error = 'Could not copy the value from this browser context.'
       }
+      render()
+    })
+  })
+  app.querySelectorAll('[data-audit-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      setAuditTab(button.getAttribute('data-audit-tab') || 'listing')
       render()
     })
   })
@@ -1362,11 +2459,20 @@ async function init() {
   render()
   if (can('productReview') && ['dashboard', 'reviews'].includes(state.section)) {
     await loadQueue()
+  } else {
+    await loadAdminSectionData(state.section)
   }
 }
 
 window.addEventListener('popstate', () => {
-  if (state.claims.admin === true) render()
+  if (state.claims.admin === true) {
+    render()
+    if (['dashboard', 'reviews'].includes(currentSectionKey())) {
+      if (can('productReview') && !state.queueLoaded) loadQueue()
+    } else {
+      loadAdminSectionData(currentSectionKey(), { silent: true })
+    }
+  }
 })
 
 init()
