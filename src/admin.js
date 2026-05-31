@@ -2131,8 +2131,17 @@ function reportTargetLink(report = {}, target = null) {
 
 function reportDetailView(reportId = '') {
   const data = adminData('reports')
-  if (data.loading || !data.loaded) return '<article class="admin-empty-state">Loading report...</article>'
-  if (data.error) return `<article class="admin-empty-state"><strong>Could not load report.</strong><span>${escapeHtml(data.error)}</span></article>`
+  if (data.loading) return '<article class="admin-empty-state">Loading report...</article>'
+  if (data.error) {
+    return `
+      <article class="admin-empty-state">
+        <strong>Could not load report.</strong>
+        <span>${escapeHtml(data.error)}</span>
+        <a class="admin-primary-link" href="${ROUTES.adminReports}">Back to Reports</a>
+      </article>
+    `
+  }
+  if (!data.loaded) return '<article class="admin-empty-state">Loading report...</article>'
   const report = data.detail || data.items.find((item) => item.id === reportId)
   if (!report) {
     return `
@@ -2224,9 +2233,26 @@ function orderDetailView(orderId = '') {
   const data = adminData('orders')
   const order = data.detail || data.items.find((item) => item.id === orderId)
   const logs = Array.isArray(data.logs) ? data.logs : []
-  if (data.loading || !data.loaded) return '<article class="admin-empty-state">Loading order...</article>'
-  if (data.error) return `<article class="admin-empty-state"><strong>Could not load order.</strong><span>${escapeHtml(data.error)}</span></article>`
-  if (!order) return `<article class="admin-empty-state"><strong>Order not found.</strong><span>${escapeHtml(orderId)}</span></article>`
+  if (data.loading) return '<article class="admin-empty-state">Loading order...</article>'
+  if (data.error) {
+    return `
+      <article class="admin-empty-state">
+        <strong>Could not load order.</strong>
+        <span>${escapeHtml(data.error)}</span>
+        <a class="admin-primary-link" href="${ROUTES.adminOrders}">Back to Orders</a>
+      </article>
+    `
+  }
+  if (!data.loaded) return '<article class="admin-empty-state">Loading order...</article>'
+  if (!order) {
+    return `
+      <article class="admin-empty-state">
+        <strong>Order not found.</strong>
+        <span>${escapeHtml(orderId)}</span>
+        <a class="admin-primary-link" href="${ROUTES.adminOrders}">Back to Orders</a>
+      </article>
+    `
+  }
   const items = Array.isArray(order.items) ? order.items : []
   return `
     <header class="admin-page-header admin-hub-header">

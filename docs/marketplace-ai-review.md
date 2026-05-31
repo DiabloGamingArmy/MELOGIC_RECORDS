@@ -60,3 +60,15 @@ Every decision writes an audit event under `productModeration/{productId}/events
 - `reviewProductDecision` handles approve, return for changes, reject, and keep pending through Admin SDK.
 - `AUTO_APPROVE_PRODUCTS` defaults false.
 - Settings-driven AI moderation instructions are used by the backend and marked with `moderationInstructionsUsed`.
+
+## Required Secrets and Config
+
+- `GEMINI_API_KEY` or the configured Gemini API secret for product moderation.
+- Optional environment/config toggles for auto-approval must default to manual review unless deliberately enabled.
+- Admin-edited `productModerationInstructions` are stored in Firestore settings and are additive only.
+
+## Known Production Risks
+
+- If all configured Gemini moderation models fail, the product must remain `review_pending` / private with `moderationStatus: "ai_error"` for manual admin review.
+- Manual approval is the final publishing authority; do not treat AI pass/fail as a public publish signal unless auto-approval is intentionally configured and audited.
+- Full lifecycle smoke tests that approve or reject a live listing should use a disposable test product so public marketplace state is not polluted.

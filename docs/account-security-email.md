@@ -38,3 +38,16 @@ Melogic uses Firebase Authentication password reset emails for account recovery.
 
 - Password reset email delivery depends on Firebase Auth email templates and sender configuration.
 - 2FA controls are intentionally not interactive until the supported Firebase MFA flow is implemented.
+
+## Manual Test Checklist
+
+1. Request forgot-password from the public auth page and confirm the UI shows a generic success message.
+2. Open `/account/security` while signed in and confirm provider, email, MFA, and admin warning states match the account.
+3. Confirm account events load under both `/account/security` and Inbox -> System -> Account.
+4. Confirm Firestore rules allow users to read/update only their own `readAt` markers and block forged create/delete.
+
+## Deploy Notes
+
+- UI copy or route fixes require Hosting deploy.
+- Trusted event-writing changes require deploying the affected account/admin/product/report functions.
+- No secret values are required for password reset; Firebase Auth email template configuration lives in Firebase Console.

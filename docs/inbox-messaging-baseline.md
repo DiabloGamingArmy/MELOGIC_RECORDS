@@ -37,3 +37,15 @@ The inbox messaging framework baseline is **complete** and considered stable.
 - System notifications remain in `users/{uid}/systemNotifications`.
 - Account/security events are a separate read path from `users/{uid}/accountEvents`.
 - Users can mark account events read without creating/deleting event records.
+
+## Regression Checklist
+
+1. Open `/inbox` and confirm direct/group conversation lists still render.
+2. Open `/inbox?system=account` and confirm account events render without altering the core message thread state.
+3. Confirm read markers update for the signed-in user only.
+4. Confirm permission failures are logged as recoverable UI states, not broken page renders.
+
+## Known Production Risks
+
+- Account event delivery depends on trusted backend callables writing `users/{uid}/accountEvents`.
+- The messaging baseline should not be rewritten while adding marketplace or security notifications; add isolated system channels instead.

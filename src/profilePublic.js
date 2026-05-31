@@ -538,6 +538,12 @@ async function resolveUid(params) {
     if (decodedUsername) return (await getUidForUsername(decodedUsername)) || ''
   }
 
+  if (pathname.startsWith('/profiles/')) {
+    const encodedUid = pathname.slice('/profiles/'.length).split('/')[0]
+    const decodedProfile = decodeURIComponent(encodedUid || '').trim()
+    if (decodedProfile) return (await getUidForUsername(decodedProfile)) || decodedProfile
+  }
+
   return ''
 }
 
@@ -549,7 +555,9 @@ async function initPublicProfile() {
 
   if (!uid) return renderNotFound()
 
-  if (currentUser?.uid === uid && !previewMode) {
+  const pathname = String(window.location.pathname || '')
+  const isCanonicalPublicPath = pathname.startsWith('/u/') || pathname.startsWith('/profiles/')
+  if (currentUser?.uid === uid && !previewMode && !isCanonicalPublicPath) {
     window.location.assign(ROUTES.profile)
     return
   }

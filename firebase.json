@@ -247,6 +247,10 @@
         "destination": "/profile-public.html"
       },
       {
+        "source": "/profiles/**",
+        "destination": "/profile-public.html"
+      },
+      {
         "source": "/inbox",
         "destination": "/inbox.html"
       },
