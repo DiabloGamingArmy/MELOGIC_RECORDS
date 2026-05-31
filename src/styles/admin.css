@@ -210,6 +210,12 @@
   color: #8a1f2a;
 }
 
+.admin-status.is-info {
+  border-color: #9fc4e8;
+  background: #eef6ff;
+  color: #1f4f7c;
+}
+
 .admin-metric-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -961,6 +967,26 @@
   resize: vertical;
 }
 
+.admin-decision-modal select {
+  min-height: 38px;
+  border: 1px solid #c9d2dc;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17202a;
+  padding: 0 0.65rem;
+  font: inherit;
+}
+
+.admin-checkbox-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.admin-checkbox-row input {
+  width: 18px;
+  height: 18px;
+}
+
 .admin-top-toolbar {
   display: flex;
   justify-content: flex-end;
@@ -1420,8 +1446,14 @@
 }
 
 .admin-data-table.is-logs .admin-data-row {
-  min-width: 1120px;
-  grid-template-columns: minmax(150px, 0.8fr) minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(110px, 0.55fr) minmax(160px, 0.85fr) minmax(160px, 0.85fr) minmax(220px, 1.2fr) minmax(110px, 0.45fr);
+  min-width: 1240px;
+  grid-template-columns: minmax(150px, 0.72fr) minmax(190px, 0.92fr) minmax(210px, 0.9fr) minmax(120px, 0.52fr) minmax(180px, 0.76fr) minmax(190px, 0.82fr) minmax(230px, 1fr) minmax(128px, 0.48fr);
+}
+
+.admin-data-table.is-logs .review-badge {
+  width: fit-content;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .admin-data-table.is-order-items .admin-data-row {
@@ -1525,14 +1557,14 @@
   flex-wrap: wrap;
   gap: 0.35rem;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .admin-row-action-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  width: auto;
   min-height: 36px;
   border: 1px solid var(--admin-border-strong);
   border-radius: 7px;
@@ -1542,6 +1574,23 @@
   font-weight: 900;
   text-decoration: none;
   padding: 0 0.65rem;
+}
+
+.admin-product-action,
+.admin-table-action-main {
+  width: 128px;
+  max-width: 100%;
+  min-height: 36px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.admin-warning-list {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+  color: var(--admin-text);
 }
 
 .admin-row-actions .admin-secondary-link,
@@ -1645,6 +1694,19 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
+}
+
+.admin-overview-snapshot {
+  align-content: start;
+  min-height: 306px;
+}
+
+.admin-overview-snapshot .admin-slab-heading {
+  min-height: 42px;
+}
+
+.admin-overview-snapshot .admin-data-table {
+  min-height: 214px;
 }
 
 .admin-data-table.is-overview .admin-data-row {

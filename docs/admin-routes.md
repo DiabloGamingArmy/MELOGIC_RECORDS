@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- | --- |
 | `/admin` | `admin` | Presence, products, orders, reports, logs | `listActiveStaffPresence`, `listAdminProducts`, `listAdminOrders`, `listAdminReports`, `listAdminLogs` | View platform overview | No |
 | `/admin/reviews` | `productReview` | Products in review queue | `listMarketplaceReviewQueue` | Inspect review queue | No |
-| `/admin/reviews/{productId}` | `productReview` | Product detail and review metadata | `listMarketplaceReviewQueue`, `reviewProductDecision` | Approve, return, reject, keep pending | Yes |
+| `/admin/reviews/{productId}` | `productReview` for decisions; `listingEdit` can inspect read-only details | Product detail and review metadata | `listMarketplaceReviewQueue`, `listAdminProducts`, `reviewProductDecision` | Approve, return, reject, keep pending only when pending review | Yes |
 | `/admin/products` | `listingEdit` or `productReview` | Products | `listAdminProducts` | Browse product inventory | No |
 | `/admin/users` | `userRead` or `roleManage` | Profiles/users/adminUsers | `listAdminUsers` | Browse users | No |
 | `/admin/users/{uid}` | `userRead` or `roleManage` | Profile, user doc, products, account events | `getAdminUserProfile` | View Account Hub | No |
@@ -17,6 +17,7 @@
 | `/admin/team` | `roleManage` | Admin users | `listAdminTeam`, `setAdminUserRole` | Assign/remove roles | Yes |
 | `/admin/team/{uid}` | `roleManage` | Admin user and profile context | `listAdminTeam`, `getAdminUserProfile` | View role audit | No |
 | `/admin/logs` | `auditRead` | Admin logs | `listAdminLogs` | View audit logs | No |
+| `/admin/logs/{logId}` | `auditRead` | Admin log detail | `getAdminLog` | View log detail, open target, copy JSON | No |
 | `/admin/settings` | `admin`; edit requires `settingsManage` or `roleManage` | `platformConfig/current` | `getAdminSettings`, `updateAdminSettings` | Edit marketplace, agreements, AI moderation, upload limits, review policy | Yes |
 
 ## Account and Inbox Trust Routes
@@ -41,6 +42,8 @@
 - Detail routes include Back links where the current admin UI has a detail panel.
 - Admin-sensitive mutations go through callables and write `adminLogs`.
 - Missing or denied report/order detail records should render a clear error or not-found state instead of an indefinite loading shell.
+- Account Hub actions are explicit: Message opens Inbox DM flow, Add Note writes admin-only notes, and Suspend/Unsuspend writes account status plus audit/account events.
+- Unsupported commerce actions, such as Stripe refunds and manual entitlement grant/revoke, must remain disabled with clear titles until backend callables exist.
 
 ## Production Smoke Checklist
 

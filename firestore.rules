@@ -42,6 +42,30 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function userServerControlledKeys() {
+      return [
+        'accountStatus',
+        'suspended',
+        'suspendedAt',
+        'suspendedBy',
+        'unsuspendedAt',
+        'unsuspendedBy',
+        'suspensionReason',
+        'suspensionNote',
+        'suspensionDuration',
+        'suspensionUntil',
+        'unsuspensionReason'
+      ];
+    }
+
+    function userWriteAvoidsServerControlledFields() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(userServerControlledKeys());
+    }
+
+    function profileServerControlledKeys() {
+      return ['accountStatus', 'suspended'];
+    }
+
     function threadPath(threadId) {
       return /databases/$(database)/documents/threads/$(threadId);
     }
@@ -1140,7 +1164,12 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      allow read, write: if isOwner(uid);
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && !request.resource.data.keys().hasAny(userServerControlledKeys());
+      allow update: if isOwner(uid)
+        && userWriteAvoidsServerControlledFields();
+      allow delete: if false;
 
       match /entitlements/{productId} {
         allow read: if isOwner(uid);
@@ -1155,6 +1184,10 @@ service cloud.firestore {
       match /orders/{orderId} {
         allow read: if isOwner(uid);
         allow write: if false;
+      }
+
+      match /adminNotes/{noteId} {
+        allow read, write: if false;
       }
 
       match /savedProducts/{productId} {
@@ -1249,8 +1282,12 @@ service cloud.firestore {
     match /profiles/{uid} {
       allow read: if true;
 
-      allow create, update: if isOwner(uid)
-        && request.resource.data.uid == uid;
+      allow create: if isOwner(uid)
+        && request.resource.data.uid == uid
+        && !request.resource.data.keys().hasAny(profileServerControlledKeys());
+      allow update: if isOwner(uid)
+        && request.resource.data.uid == uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(profileServerControlledKeys());
 
       allow delete: if isOwner(uid);
     }

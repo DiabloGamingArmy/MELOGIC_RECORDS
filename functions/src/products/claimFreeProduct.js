@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
+const { writeAccountEvent } = require('../account/accountEvents')
 
 const db = admin.firestore()
 
@@ -66,30 +67,94 @@ exports.claimFreeProduct = onCall(
 
     const entitlementRef = db.doc(`users/${uid}/entitlements/${productId}`)
     const libraryRef = db.doc(`users/${uid}/libraryItems/${productId}`)
+    const orderRef = db.collection('orders').doc()
     const payload = productLibraryPayload({ uid, productId, product })
+    let createdClaim = false
 
     await db.runTransaction(async (tx) => {
       const [entitlementSnap, librarySnap] = await Promise.all([
         tx.get(entitlementRef),
         tx.get(libraryRef)
       ])
+      const alreadyActive = [entitlementSnap, librarySnap].some((snap) => snap.exists && (snap.data()?.status || 'active') === 'active')
+      if (alreadyActive) return
 
       tx.set(entitlementRef, {
         ...payload,
+        orderId: orderRef.id,
+        entitlementId: `${uid}_${productId}`,
         source: entitlementSnap.exists ? (entitlementSnap.data()?.source || payload.source) : payload.source,
+        grantedAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true })
       tx.set(libraryRef, {
         ...payload,
+        orderId: orderRef.id,
+        entitlementId: `${uid}_${productId}`,
+        acquiredAt: admin.firestore.FieldValue.serverTimestamp(),
         source: librarySnap.exists ? (librarySnap.data()?.source || payload.source) : payload.source,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true })
+      tx.set(orderRef, {
+        orderId: orderRef.id,
+        uid,
+        buyerUid: uid,
+        productIds: [productId],
+        productCount: 1,
+        itemCount: 1,
+        items: [{
+          productId,
+          slug: String(product.slug || ''),
+          title: String(product.title || 'Untitled product'),
+          artistId: String(product.artistId || ''),
+          artistName: String(product.artistName || product.artistDisplayName || 'Creator'),
+          priceCents: 0,
+          currency: String(product.currency || 'USD'),
+          quantity: 1,
+          productSnapshot: {
+            title: String(product.title || 'Untitled product'),
+            slug: String(product.slug || ''),
+            creatorName: String(product.artistName || product.artistDisplayName || 'Creator'),
+            coverPath: String(product.coverPath || product.thumbnailPath || ''),
+            coverURL: String(product.coverURL || product.thumbnailURL || ''),
+            productType: String(product.productType || product.productKind || 'Product'),
+            usageLicense: String(product.usageLicense || 'Standard License')
+          }
+        }],
+        source: 'free_claim',
+        status: 'paid',
+        paymentStatus: 'free_claim',
+        refundStatus: '',
+        amountTotalCents: 0,
+        amountCents: 0,
+        currency: String(product.currency || 'USD'),
+        livemode: false,
+        paymentSource: 'free_claim',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      })
+      createdClaim = true
     })
+
+    if (createdClaim) {
+      await writeAccountEvent(db, uid, {
+        type: 'order_created',
+        severity: 'success',
+        title: 'Product added to library',
+        message: `${String(product.title || 'Product')} was added to your library.`,
+        actorType: 'system',
+        source: 'free_claim',
+        path: '/account/library',
+        metadata: { orderId: orderRef.id, productId }
+      })
+    }
 
     return {
       status: 'active',
       productId,
-      alreadyOwned: false
+      orderId: createdClaim ? orderRef.id : '',
+      alreadyOwned: !createdClaim
     }
   }
 )

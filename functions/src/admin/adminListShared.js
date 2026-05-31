@@ -82,7 +82,10 @@ function profileSummary(docSnap, adminUser = null, accountData = {}) {
     roles,
     badges,
     verified,
-    suspended: raw.suspended === true,
+    suspended: raw.suspended === true || account.suspended === true || raw.accountStatus === 'suspended' || account.accountStatus === 'suspended',
+    accountStatus: cleanString(account.accountStatus || raw.accountStatus || (raw.suspended === true || account.suspended === true ? 'suspended' : 'active'), 80),
+    suspensionReason: cleanString(account.suspensionReason || raw.suspensionReason || '', 600),
+    suspensionUntil: serializeDate(account.suspensionUntil || raw.suspensionUntil),
     productCount: Math.max(0, Math.round(toNumber(stats.products || raw.productCount))),
     reportCount: Math.max(0, Math.round(toNumber(stats.reports || raw.reportCount))),
     createdAt: serializeDate(raw.createdAt || adminData.createdAt),
@@ -137,6 +140,7 @@ function reportSummary(docSnap) {
 function orderSummary(docSnap) {
   const raw = docSnap.data() || {}
   const lineItems = Array.isArray(raw.items) ? raw.items : Array.isArray(raw.products) ? raw.products : []
+  const rawProductIds = cleanStringList(raw.productIds || raw.productIDs || [], 25)
   const cleanItems = lineItems.slice(0, 25).map((item) => ({
     productId: cleanString(item?.productId || item?.id || '', 180),
     title: cleanString(item?.title || item?.productTitle || item?.productId || '', 180),
@@ -151,18 +155,22 @@ function orderSummary(docSnap) {
     buyerUid: cleanString(raw.buyerUid || raw.uid || raw.userId || '', 180),
     buyerEmail: cleanString(raw.buyerEmail || raw.email || '', 320),
     productCount: lineItems.length || Math.max(0, Math.round(toNumber(raw.productCount))),
-    productIds: cleanItems.map((item) => item.productId).filter(Boolean).slice(0, 25),
+    productIds: Array.from(new Set([...cleanItems.map((item) => item.productId), ...rawProductIds].filter(Boolean))).slice(0, 25),
     productTitles: cleanItems.map((item) => item.title).filter(Boolean).slice(0, 5),
     items: cleanItems,
-    amountCents: Math.max(0, Math.round(toNumber(raw.amountCents || raw.totalCents || raw.total || raw.amount_total))),
+    amountCents: Math.max(0, Math.round(toNumber(raw.amountCents || raw.amountTotalCents || raw.totalCents || raw.total || raw.amount_total))),
     currency: cleanString(raw.currency || 'USD', 12),
     paymentStatus: cleanString(raw.paymentStatus || raw.status || '', 80),
+    status: cleanString(raw.status || raw.paymentStatus || '', 80),
     refundStatus: cleanString(raw.refundStatus || '', 80),
     refundReason: cleanString(raw.refundReason || raw.refundNote || '', 600),
-    checkoutSessionId: cleanString(raw.checkoutSessionId || raw.sessionId || '', 180),
+    checkoutSessionId: cleanString(raw.checkoutSessionId || raw.stripeSessionId || raw.sessionId || '', 180),
     paymentIntentId: cleanString(raw.paymentIntentId || raw.stripePaymentIntentId || '', 180),
     stripeCustomerId: cleanString(raw.stripeCustomerId || raw.customerId || '', 180),
+    livemode: raw.livemode === true,
+    paymentSource: cleanString(raw.paymentSource || raw.source || (raw.stripeSessionId || raw.checkoutSessionId ? 'stripe_checkout' : ''), 120),
     supportNotes: cleanString(raw.supportNotes || raw.adminNotes || '', 900),
+    paidAt: serializeDate(raw.paidAt),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
   }

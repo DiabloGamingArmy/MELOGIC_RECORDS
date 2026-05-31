@@ -1,4 +1,4 @@
-import { collection, getDocs, query, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 import { getProductById } from './productService'
 
@@ -28,14 +28,26 @@ async function productPreview(productId = '') {
 
 function normalizeEntitlement(docSnap) {
   const data = docSnap.data() || {}
+  const snapshot = data.productSnapshot && typeof data.productSnapshot === 'object' ? data.productSnapshot : {}
   return {
     id: docSnap.id,
     productId: String(data.productId || docSnap.id || ''),
     source: String(data.source || ''),
+    status: String(data.status || 'active'),
     orderId: String(data.orderId || ''),
     license: String(data.license || data.licenseType || 'Standard License'),
+    acquiredAt: data.acquiredAt || data.claimedAt || data.createdAt || null,
     createdAt: data.createdAt || null,
-    updatedAt: data.updatedAt || null
+    updatedAt: data.updatedAt || null,
+    productSnapshot: {
+      title: String(snapshot.title || data.productTitle || ''),
+      slug: String(snapshot.slug || data.productSlug || ''),
+      creatorName: String(snapshot.creatorName || data.artistName || ''),
+      coverPath: String(snapshot.coverPath || data.coverPath || ''),
+      coverURL: String(snapshot.coverURL || data.coverURL || ''),
+      productType: String(snapshot.productType || data.productType || ''),
+      usageLicense: String(snapshot.usageLicense || data.license || '')
+    }
   }
 }
 
@@ -45,6 +57,7 @@ function normalizeSavedProduct(docSnap) {
     id: `saved-${docSnap.id}`,
     productId: String(data.productId || docSnap.id || ''),
     source: 'saved',
+    status: 'active',
     orderId: '',
     license: '',
     createdAt: data.createdAt || null,
@@ -55,16 +68,22 @@ function normalizeSavedProduct(docSnap) {
 function normalizeOrder(docSnap) {
   const data = docSnap.data() || {}
   const productIds = Array.isArray(data.productIds) ? data.productIds.map(String).filter(Boolean) : []
+  const items = Array.isArray(data.items) ? data.items : []
   return {
     id: docSnap.id,
     uid: String(data.uid || data.buyerId || ''),
     productIds,
+    items,
     status: String(data.status || data.paymentStatus || 'unknown'),
     paymentStatus: String(data.paymentStatus || data.status || 'unknown'),
+    refundStatus: String(data.refundStatus || ''),
     stripeSessionId: String(data.stripeSessionId || ''),
+    checkoutSessionId: String(data.checkoutSessionId || data.stripeSessionId || ''),
     paymentIntentId: String(data.paymentIntentId || ''),
-    amountTotalCents: Number(data.amountTotalCents || data.totalCents || 0),
+    amountTotalCents: Number(data.amountTotalCents || data.amountCents || data.totalCents || 0),
     currency: String(data.currency || 'usd').toUpperCase(),
+    livemode: data.livemode === true,
+    paymentSource: String(data.paymentSource || (data.stripeSessionId ? 'stripe_test' : '')),
     createdAt: data.createdAt || null,
     paidAt: data.paidAt || null,
     updatedAt: data.updatedAt || null
@@ -103,7 +122,14 @@ export async function listUserLibraryItems(uid = '') {
   if (libraryResult.status === 'fulfilled') rows.push(...libraryResult.value.docs.map(normalizeEntitlement))
   else console.warn('[accountCommerceService] library item read failed', libraryResult.reason?.message || libraryResult.reason)
 
-  const withProducts = await Promise.all(rows.map(async (row) => ({
+  const deduped = [...rows.reduce((map, row) => {
+    const key = row.source === 'saved' ? row.id : row.productId
+    const existing = map.get(key)
+    if (!existing || existing.source === 'saved' || row.source === 'purchase') map.set(key, row)
+    return map
+  }, new Map()).values()]
+
+  const withProducts = await Promise.all(deduped.map(async (row) => ({
     ...row,
     product: await productPreview(row.productId)
   })))
@@ -139,4 +165,27 @@ export async function listUserOrders(uid = '') {
   }))
 
   return sortAccountRowsByDate(orders)
+}
+
+export async function getUserOrder(uid = '', orderId = '') {
+  const userId = String(uid || '').trim()
+  const id = String(orderId || '').trim()
+  if (!db || !userId || !id || id.includes('/')) return null
+
+  const [topLevelSnap, nestedSnap] = await Promise.all([
+    getDoc(doc(db, 'orders', id)).catch(() => null),
+    getDoc(doc(db, 'users', userId, 'orders', id)).catch(() => null)
+  ])
+  const sourceSnap = topLevelSnap?.exists() ? topLevelSnap : nestedSnap?.exists() ? nestedSnap : null
+  if (!sourceSnap) return null
+  const order = normalizeOrder(sourceSnap)
+  if (order.uid && order.uid !== userId) return null
+  const products = await Promise.all(order.productIds.slice(0, 12).map(productPreview))
+  const libraryRows = await listUserLibraryItems(userId)
+  const libraryByProduct = new Map(libraryRows.map((row) => [row.productId, row]))
+  return {
+    ...order,
+    products: products.filter(Boolean),
+    libraryItems: order.productIds.map((productId) => libraryByProduct.get(productId)).filter(Boolean)
+  }
 }

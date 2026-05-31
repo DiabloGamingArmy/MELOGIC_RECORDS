@@ -21,17 +21,34 @@ function accountEventSummary(docSnap) {
   }
 }
 
+function adminNoteSummary(docSnap) {
+  const raw = docSnap.data() || {}
+  return {
+    noteId: cleanString(raw.noteId || docSnap.id, 180),
+    id: cleanString(raw.noteId || docSnap.id, 180),
+    uid: cleanString(raw.uid || '', 180),
+    note: cleanString(raw.note || '', 2400),
+    severity: cleanString(raw.severity || 'info', 40),
+    category: cleanString(raw.category || 'account', 80),
+    createdBy: cleanString(raw.createdBy || '', 180),
+    createdByEmail: cleanString(raw.createdByEmail || '', 320),
+    visibility: cleanString(raw.visibility || 'admin_only', 80),
+    createdAt: serializeDate(raw.createdAt)
+  }
+}
+
 const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const claims = assertAnyPermission(request, ['userRead', 'roleManage', 'productReview'])
   const uid = cleanString(request.data?.uid || '', 180)
   if (!uid || uid.includes('/')) throw new HttpsError('invalid-argument', 'A valid uid is required.')
 
-  const [profileSnap, userSnap, adminSnap, productsSnap, eventsSnap] = await Promise.all([
+  const [profileSnap, userSnap, adminSnap, productsSnap, eventsSnap, notesSnap] = await Promise.all([
     db().collection('profiles').doc(uid).get(),
     db().collection('users').doc(uid).get(),
     db().collection('adminUsers').doc(uid).get(),
     db().collection('products').where('artistId', '==', uid).limit(25).get(),
-    db().collection('users').doc(uid).collection('accountEvents').orderBy('createdAt', 'desc').limit(12).get()
+    db().collection('users').doc(uid).collection('accountEvents').orderBy('createdAt', 'desc').limit(12).get(),
+    db().collection('users').doc(uid).collection('adminNotes').orderBy('createdAt', 'desc').limit(25).get().catch(() => ({ docs: [] }))
   ])
 
   const source = profileSnap.exists ? profileSnap : userSnap
@@ -42,6 +59,7 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     adminUser: adminSnap.exists ? adminUserSummary(adminSnap) : null,
     recentProducts: productsSnap.docs.map(productSummary),
     accountEvents: eventsSnap.docs.map(accountEventSummary),
+    adminNotes: notesSnap.docs.map(adminNoteSummary),
     requester: { uid: claims.uid, role: claims.adminRole }
   }
 })
