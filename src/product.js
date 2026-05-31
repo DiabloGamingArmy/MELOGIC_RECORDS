@@ -3,7 +3,7 @@ import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { addToCart } from './data/cartService'
-import { getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
+import { createReport, getProductById, listProductFiles, listRecommendedProducts } from './data/productService'
 import { claimFreeProduct, createProductDownloadUrl, userOwnsProduct } from './data/entitlementService'
 import { getProductEngagementState, setProductEngagement } from './data/productEngagementService'
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
@@ -35,7 +35,18 @@ const state = {
   ,replyLoadErrors: {}
   ,openReviewMenuId: ''
   ,openReplyMenuKey: ''
+  ,productReport: { open: false, submitting: false, error: '', message: '' }
 }
+
+const PRODUCT_REPORT_REASONS = [
+  'Fraudulent or misleading',
+  'Download does not work',
+  'Product not as described',
+  'Stolen/copyrighted content',
+  'Unsafe or malicious file',
+  'Spam',
+  'Other'
+]
 
 function escapeHtml(value) {
   return String(value || '')
@@ -195,6 +206,40 @@ function renderState(title, body) {
     </main>
   `
   initShellChrome()
+}
+
+function productReportDialog(product = {}) {
+  if (!state.productReport.open) return ''
+  return `
+    <div class="dashboard-modal-backdrop" role="presentation">
+      <section class="dashboard-report-modal" role="dialog" aria-modal="true" aria-labelledby="product-report-title">
+        <header>
+          <h2 id="product-report-title">Report Product</h2>
+          <button type="button" class="dashboard-report-close" data-close-product-report aria-label="Close report modal">${iconSvg('x')}</button>
+        </header>
+        ${state.productReport.message ? `<p class="dashboard-report-success">${escapeHtml(state.productReport.message)}</p>` : `
+          <form data-product-report-form>
+            <label>
+              <span>Reason</span>
+              <select name="reason" required>
+                <option value="">Choose a reason</option>
+                ${PRODUCT_REPORT_REASONS.map((reason) => `<option value="${escapeHtml(reason)}">${escapeHtml(reason)}</option>`).join('')}
+              </select>
+            </label>
+            <label>
+              <span>Description</span>
+              <textarea name="description" maxlength="2000" rows="5" placeholder="Add details that can help marketplace staff review this report."></textarea>
+            </label>
+            ${state.productReport.error ? `<p class="dashboard-report-error">${escapeHtml(state.productReport.error)}</p>` : ''}
+            <div class="dashboard-report-actions">
+              <button type="button" class="button button-muted" data-close-product-report ${state.productReport.submitting ? 'disabled' : ''}>Cancel</button>
+              <button type="submit" class="button button-accent" ${state.productReport.submitting ? 'disabled' : ''}>${state.productReport.submitting ? 'Submitting...' : 'Submit Report'}</button>
+            </div>
+          </form>
+        `}
+      </section>
+    </div>
+  `
 }
 
 function renderSkeleton() {
@@ -924,6 +969,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-action-stack">
                 <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-product-primary-action ${state.isDraftPreview || userHasAccess ? 'disabled' : ''} ${state.isDraftPreview ? 'title="Disabled in marketplace preview."' : ''}>${escapeHtml(primaryActionLabel)}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
+                <button type="button" class="button button-muted" data-report-product ${state.isDraftPreview || isOwner ? 'disabled' : ''} title="${isOwner ? 'You cannot report your own product.' : 'Report this product'}">Report Product</button>
                 <div class="dashboard-action-icons-row">
                   <button type="button" class="dashboard-icon-action ${state.productEngagement.reaction === 'like' ? 'is-active' : ''}" data-product-reaction="like" aria-label="Like this product" title="Like" aria-pressed="${state.productEngagement.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em data-product-like-count>${Math.max(0, likeCount)}</em></button>
                   <button type="button" class="dashboard-icon-action ${state.productEngagement.reaction === 'dislike' ? 'is-active' : ''}" data-product-reaction="dislike" aria-label="Dislike this product" title="Dislike" aria-pressed="${state.productEngagement.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsDown')}</span><em data-product-dislike-count>${Math.max(0, dislikeCount)}</em></button>
@@ -933,6 +979,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 
               </div>
               <p class="dashboard-mini-note">Instant digital download</p>
+              ${state.productReport.message ? `<p class="dashboard-mini-note">${escapeHtml(state.productReport.message)}</p>` : ''}
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
               <p class="dashboard-mini-note">Created by ${escapeHtml(product.artistName)}</p>
             </article>
@@ -967,6 +1014,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
         </div>
       </section>
     </main>
+    ${productReportDialog(product)}
   `
 
   document.title = `Melogic | ${product.title}`
@@ -1028,6 +1076,75 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
       else if (navigator.clipboard) await navigator.clipboard.writeText(window.location.href)
       showActionMessage('Copied link')
     } catch {}
+  })
+
+  app.querySelector('[data-report-product]')?.addEventListener('click', () => {
+    if (state.isDraftPreview) return
+    if (!state.currentUser?.uid) {
+      window.location.assign(authRoute({ redirect: productRoute(product) }))
+      return
+    }
+    if (isOwner) {
+      showActionMessage('You cannot report your own product.')
+      return
+    }
+    state.productReport = { open: true, submitting: false, error: '', message: '' }
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+  })
+
+  app.querySelectorAll('[data-close-product-report]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.productReport = { ...state.productReport, open: false, submitting: false, error: '' }
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    })
+  })
+
+  app.querySelector('[data-product-report-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const form = event.currentTarget
+    const formData = new FormData(form)
+    const reason = String(formData.get('reason') || '').trim()
+    const description = String(formData.get('description') || '').trim()
+    if (!reason) {
+      state.productReport.error = 'Choose a reason before submitting.'
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+      return
+    }
+    if (reason === 'Other' && !description) {
+      state.productReport.error = 'Description is required when reason is Other.'
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+      return
+    }
+    state.productReport = { ...state.productReport, submitting: true, error: '' }
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try {
+      await createReport({
+        targetType: 'product',
+        targetId: product.id,
+        targetOwnerUid: product.artistId || '',
+        reason,
+        description,
+        sourcePath: productRoute(product),
+        metadata: {
+          title: product.title || '',
+          artistId: product.artistId || '',
+          status: product.status || '',
+          visibility: product.visibility || ''
+        }
+      })
+      state.productReport = { open: true, submitting: false, error: '', message: 'Thank you. Your report has been submitted.' }
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+      window.setTimeout(() => {
+        if (state.productReport.message) {
+          state.productReport = { ...state.productReport, open: false }
+          renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+        }
+      }, 1200)
+    } catch (error) {
+      console.warn('[product] report failed', { code: error?.code, message: error?.message, details: error?.details })
+      state.productReport = { ...state.productReport, submitting: false, error: error?.message || 'Could not submit this report.' }
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    }
   })
 
   app.querySelector('[data-review-form]')?.addEventListener('submit', async (event) => {

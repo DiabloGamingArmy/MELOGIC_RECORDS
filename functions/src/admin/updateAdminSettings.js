@@ -4,6 +4,28 @@ const { assertPermission, cleanString } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
 const { mergeSettings, sanitizeSettingsPatch, settingsRef } = require('./adminSettingsShared')
 
+function sellerAgreementVersionIsValid(version = '') {
+  return /^v[0-9]+$/.test(String(version || '').trim())
+}
+
+async function mirrorSellerAgreementSettings(actor = {}, sectionAfter = {}) {
+  const agreementId = cleanString(sectionAfter.sellerAgreementId || 'marketplace-product-seller-agreement', 180) || 'marketplace-product-seller-agreement'
+  const version = cleanString(sectionAfter.sellerAgreementVersion || 'v1', 40) || 'v1'
+  const storagePath = cleanString(sectionAfter.sellerAgreementPath || `agreements/${agreementId}/${version}.md`, 900)
+  await admin.firestore().collection('platformSettings').doc('marketplaceSellerAgreement').set({
+    enabled: true,
+    agreementId,
+    activeVersion: version,
+    title: 'Marketplace Product Seller Agreement',
+    storagePath,
+    format: 'markdown',
+    requiresSignature: true,
+    storageDiscoveryEnabled: true,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: actor.uid
+  }, { merge: true })
+}
+
 const updateAdminSettings = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const actor = assertPermission(request, 'roleManage')
   const patch = sanitizeSettingsPatch(request.data?.section || '', request.data?.values || {})
@@ -13,13 +35,28 @@ const updateAdminSettings = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   const beforeSnap = await ref.get()
   const before = mergeSettings(beforeSnap.exists ? beforeSnap.data() || {} : {})
   const sectionBefore = before[patch.section] || {}
-  const sectionAfter = { ...sectionBefore, ...patch.values }
+  const sectionAfter = {
+    ...sectionBefore,
+    ...patch.values,
+    ...(patch.section === 'agreements'
+      ? {
+          sellerAgreementUpdatedAt: new Date().toISOString(),
+          sellerAgreementUpdatedBy: actor.uid
+        }
+      : {})
+  }
+  if (patch.section === 'agreements' && !sellerAgreementVersionIsValid(sectionAfter.sellerAgreementVersion)) {
+    throw new HttpsError('invalid-argument', 'Version must use lowercase v followed by a number, such as v2.')
+  }
 
   await ref.set({
     [patch.section]: sectionAfter,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedBy: actor.uid
   }, { merge: true })
+  if (patch.section === 'agreements') {
+    await mirrorSellerAgreementSettings(actor, sectionAfter)
+  }
 
   const auditLogId = await writeAdminAuditLog({
     actorUid: actor.uid,

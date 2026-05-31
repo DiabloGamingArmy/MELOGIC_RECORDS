@@ -24,14 +24,26 @@ async function safeListCollection(collectionName = '', { orderBy = 'updatedAt', 
   }
 }
 
-function countMap(raw = {}) {
-  const counts = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
-  return Object.fromEntries(
-    Object.entries(counts)
-      .slice(0, 20)
-      .map(([key, value]) => [cleanString(key, 80), Math.max(0, Math.round(toNumber(value)))])
-      .filter(([key]) => Boolean(key))
-  )
+function safeSummaryValue(value, depth = 0) {
+  if (value === null || value === undefined) return value === undefined ? null : value
+  if (typeof value?.toDate === 'function') return serializeDate(value)
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value === 'string') return cleanString(value, 1200)
+  if (Array.isArray(value)) {
+    if (depth >= 3) return `[array:${value.length}]`
+    return value.slice(0, 30).map((item) => safeSummaryValue(item, depth + 1))
+  }
+  if (typeof value === 'object') {
+    if (depth >= 3) return '[object]'
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 50)
+        .map(([key, child]) => [cleanString(key, 120), safeSummaryValue(child, depth + 1)])
+        .filter(([key]) => Boolean(key))
+    )
+  }
+  return cleanString(String(value), 500)
 }
 
 function cleanStringList(value = [], maxItems = 20) {
@@ -100,14 +112,23 @@ function reportSummary(docSnap) {
   const raw = docSnap.data() || {}
   return {
     id: docSnap.id,
+    reportId: cleanString(raw.reportId || docSnap.id, 180),
     type: cleanString(raw.type || raw.reportType || raw.targetType || 'report', 80),
     targetType: cleanString(raw.targetType || '', 80),
     targetId: cleanString(raw.targetId || raw.productId || raw.uid || '', 180),
+    targetOwnerUid: cleanString(raw.targetOwnerUid || raw.ownerUid || raw.artistId || '', 180),
     reporterUid: cleanString(raw.reporterUid || raw.createdBy || raw.uid || '', 180),
     reason: cleanString(raw.reason || raw.summary || raw.description || '', 600),
+    description: cleanString(raw.description || '', 2000),
     priority: cleanString(raw.priority || 'normal', 80),
     status: cleanString(raw.status || 'open', 80),
+    sourcePath: cleanString(raw.sourcePath || '', 900),
+    metadata: safeSummaryValue(raw.metadata || {}),
     assignedTo: cleanString(raw.assignedTo || '', 180),
+    resolvedBy: cleanString(raw.resolvedBy || '', 180),
+    resolvedAt: serializeDate(raw.resolvedAt),
+    resolution: cleanString(raw.resolution || '', 1200),
+    adminNotes: cleanString(raw.adminNotes || raw.notes || '', 2400),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
   }
@@ -159,7 +180,10 @@ function logSummary(docSnap) {
     targetId: cleanString(raw.targetId || '', 180),
     targetPath: cleanString(raw.targetPath || '', 360),
     reason: cleanString(raw.reason || '', 900),
-    metadata: countMap(raw.metadata),
+    summary: cleanString(raw.summary || raw.message || '', 1200),
+    before: safeSummaryValue(raw.before || null),
+    after: safeSummaryValue(raw.after || null),
+    metadata: safeSummaryValue(raw.metadata || {}),
     createdAt: serializeDate(raw.createdAt)
   }
 }
@@ -174,5 +198,6 @@ module.exports = {
   profileSummary,
   reportSummary,
   safeListCollection,
+  safeSummaryValue,
   serializeDate
 }

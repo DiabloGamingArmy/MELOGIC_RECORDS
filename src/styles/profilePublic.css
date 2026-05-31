@@ -714,8 +714,75 @@ body {
     height: 24px;
   }
 
-  .public-verified-badge-icon {
+.public-verified-badge-icon {
     width: 16px;
     height: 16px;
   }
 }
+
+.public-report-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(5, 8, 16, .72);
+}
+
+.public-report-modal {
+  width: min(520px, 100%);
+  border: 1px solid rgba(120, 153, 220, .34);
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e8efff;
+  padding: 1rem;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .38);
+}
+
+.public-report-modal header,
+.public-report-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.public-report-modal h2 { margin: 0; }
+.public-report-close {
+  width: 40px;
+  height: 40px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(143, 166, 216, .32);
+  border-radius: 10px;
+  background: rgba(20, 30, 54, .92);
+  color: #e8efff;
+}
+
+.public-report-modal form,
+.public-report-modal label {
+  display: grid;
+  gap: .55rem;
+}
+
+.public-report-modal form { margin-top: .9rem; }
+.public-report-modal label span {
+  color: #aebfe8;
+  font-size: .84rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.public-report-modal select,
+.public-report-modal textarea {
+  width: 100%;
+  border: 1px solid rgba(122, 148, 209, .35);
+  border-radius: 10px;
+  background: rgba(8, 13, 25, .92);
+  color: #eff5ff;
+  padding: .7rem .75rem;
+}
+
+.public-report-success { color: #a7fff3; }
+.public-report-error { color: #ffd3de; }

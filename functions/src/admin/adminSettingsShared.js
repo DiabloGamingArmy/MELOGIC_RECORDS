@@ -4,14 +4,14 @@ const { cleanString } = require('./adminAuth')
 const DEFAULT_SETTINGS = {
   marketplace: {
     marketplaceEnabled: true,
-    manualReviewRequired: true,
-    requiredSellerAgreementVersion: 'v1'
+    manualReviewRequired: true
   },
   aiModeration: {
     productModerationModel: 'gemini-2.5-flash-lite',
     fallbackModels: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-flash-latest'],
     autoApproveProducts: false,
-    aiModerationEnabled: true
+    aiModerationEnabled: true,
+    productModerationInstructions: ''
   },
   uploadLimits: {
     coverMaxMb: 10,
@@ -22,7 +22,10 @@ const DEFAULT_SETTINGS = {
   },
   agreements: {
     sellerAgreementId: 'marketplace-product-seller-agreement',
-    sellerAgreementVersion: 'v1'
+    sellerAgreementVersion: 'v1',
+    sellerAgreementPath: 'legal/agreements/marketplace-product-seller-agreement/v1.md',
+    sellerAgreementUpdatedAt: '',
+    sellerAgreementUpdatedBy: ''
   },
   reviewPolicy: {
     passBehavior: 'Publish product publicly after approval.',
@@ -34,14 +37,14 @@ const DEFAULT_SETTINGS = {
 const SCHEMA = {
   marketplace: {
     marketplaceEnabled: 'boolean',
-    manualReviewRequired: 'boolean',
-    requiredSellerAgreementVersion: 'string'
+    manualReviewRequired: 'boolean'
   },
   aiModeration: {
     productModerationModel: 'string',
     fallbackModels: 'stringArray',
     autoApproveProducts: 'boolean',
-    aiModerationEnabled: 'boolean'
+    aiModerationEnabled: 'boolean',
+    productModerationInstructions: 'longString'
   },
   uploadLimits: {
     coverMaxMb: 'number',
@@ -52,7 +55,10 @@ const SCHEMA = {
   },
   agreements: {
     sellerAgreementId: 'string',
-    sellerAgreementVersion: 'string'
+    sellerAgreementVersion: 'string',
+    sellerAgreementPath: 'string',
+    sellerAgreementUpdatedAt: 'string',
+    sellerAgreementUpdatedBy: 'string'
   },
   reviewPolicy: {
     passBehavior: 'string',
@@ -85,6 +91,7 @@ function sanitizeByType(value, type) {
     }
     return value.map((item) => cleanString(item, 120)).filter(Boolean).slice(0, 12)
   }
+  if (type === 'longString') return cleanString(value || '', 4000)
   return cleanString(value || '', 1200)
 }
 
