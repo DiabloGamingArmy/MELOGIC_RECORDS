@@ -754,9 +754,9 @@ function dashboardView() {
         formatDate(report.createdAt)
       ]), 'No active reports.')}
       ${overviewSnapshotTable('Logs Snapshot', ROUTES.adminLogs, ['Actor', 'Action', 'Target', 'Time', 'Details'], overview.logs.slice(0, 5).map((log) => [
-        log.actorEmail || log.actorUid || 'Admin',
+        htmlCell(adminLogActorCell(log).html),
         humanLabel(log.action),
-        `${humanLabel(log.targetType)} ${log.targetId || ''}`.trim(),
+        htmlCell(adminLogTargetCell(log).html),
         formatDate(log.createdAt),
         htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminLogs}/${encodeURIComponent(log.id)}">View</a>`)
       ]), 'No admin logs loaded.')}
@@ -913,6 +913,26 @@ function renderBadgeList(items = [], empty = 'None') {
   const values = normalizeList(items)
   if (!values.length) return `<p class="admin-muted">${escapeHtml(empty)}</p>`
   return `<div class="admin-badge-list">${values.map((item) => renderBadge(item)).join('')}</div>`
+}
+
+function shortIdentifier(value = '') {
+  const raw = String(value || '').trim()
+  if (raw.length <= 14) return raw
+  return `${raw.slice(0, 6)}...${raw.slice(-4)}`
+}
+
+function adminLogActorCell(log = {}) {
+  const actor = log.actorSummary || {}
+  const primary = formatUsername(actor.username) || actor.displayName || actor.label || actor.name || shortIdentifier(log.actorUid) || log.actorEmail || 'System'
+  const secondary = actor.role || log.actorRole || shortIdentifier(log.actorUid) || (primary === log.actorEmail ? '' : log.actorEmail)
+  return htmlCell(`<strong>${escapeHtml(primary)}</strong>${secondary ? `<small class="admin-code-value">${escapeHtml(secondary)}</small>` : ''}`)
+}
+
+function adminLogTargetCell(log = {}) {
+  const target = log.targetSummary || {}
+  const primary = target.label || target.title || target.username || shortIdentifier(log.targetId) || 'Target'
+  const secondary = target.secondary || target.slug || ''
+  return htmlCell(`<strong>${escapeHtml(primary)}</strong>${secondary ? `<small class="admin-code-value">${escapeHtml(secondary)}</small>` : ''}`)
 }
 
 function initialsFor(name = '') {
@@ -1643,7 +1663,7 @@ function contentTextSection(product = {}) {
           <button type="button" role="tab" data-audit-tab="${tab.key}" aria-selected="${state.auditTab === tab.key}" tabindex="${state.auditTab === tab.key ? '0' : '-1'}">${escapeHtml(tab.label)}</button>
         `).join('')}
       </div>
-      <div class="admin-audit-tab-panel admin-audit-section-scroll is-text" role="tabpanel">
+      <div class="admin-audit-tab-panel admin-audit-section-scroll is-text" role="tabpanel" data-audit-tab-panel>
         ${auditTabContent(product)}
       </div>
     </section>
@@ -2599,14 +2619,13 @@ function logsTable(logs = []) {
     if (!search) return true
     return [log.actorEmail, log.actorUid, log.action, log.targetType, log.targetId, log.reason, log.targetPath].join(' ').toLowerCase().includes(search)
   })
-  return adminSimpleTable('Logs', ['Time', 'Actor', 'Action', 'Target Type', 'Target ID', 'Reason', 'Summary', 'Details'], rows.map((log) => [
+  return adminSimpleTable('Logs', ['Time', 'Actor', 'Action', 'Target Type', 'Target', 'Reason', 'Details'], rows.map((log) => [
       formatDate(log.createdAt),
-      htmlCell(`<strong>${escapeHtml(log.actorEmail || 'Admin')}</strong><small class="admin-code-value">${escapeHtml(log.actorUid || '')}</small>`),
+      adminLogActorCell(log),
       htmlCell(renderBadge(humanLabel(log.action || 'action'))),
       humanLabel(log.targetType),
-      htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetId || '')}</code>`),
+      adminLogTargetCell(log),
       log.reason,
-      htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetPath || '')}</code>`),
       htmlCell(`<a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminLogs}/${encodeURIComponent(log.id)}">View Details</a>`)
     ]), {
       className: 'is-logs',
@@ -3561,7 +3580,14 @@ function bindEvents() {
   app.querySelectorAll('[data-audit-tab]').forEach((button) => {
     button.addEventListener('click', () => {
       setAuditTab(button.getAttribute('data-audit-tab') || 'listing')
-      render()
+      app.querySelectorAll('[data-audit-tab]').forEach((tabButton) => {
+        const selected = tabButton.getAttribute('data-audit-tab') === state.auditTab
+        tabButton.setAttribute('aria-selected', String(selected))
+        tabButton.setAttribute('tabindex', selected ? '0' : '-1')
+      })
+      const product = productForId(reviewDetailProductId())
+      const panel = app.querySelector('[data-audit-tab-panel]')
+      if (product && panel) panel.innerHTML = auditTabContent(product)
     })
   })
   app.querySelectorAll('[data-audit-product]').forEach((link) => {

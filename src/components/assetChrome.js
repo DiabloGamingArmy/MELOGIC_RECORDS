@@ -3,6 +3,7 @@ import { signOutUser, subscribeToAuthState, waitForInitialAuthState } from '../f
 import { getCartItems, removeFromCart, subscribeToCart } from '../data/cartService'
 import { getAccessGateConfig, getBannerAlertConfig } from '../firebase/firestore'
 import { startPresenceTracking } from '../services/presenceService'
+import { applyCachedPreviewImage, loadCachedPreviewImage } from '../services/imagePreviewCache'
 import { ROUTES, authRoute } from '../utils/routes'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
@@ -37,7 +38,7 @@ export async function initNavBrandLogo() {
     '/assets/brand/melogic-logo-mark-glow.png'
   ].filter(Boolean)
 
-  const tryLoad = (url) => new Promise((resolve) => {
+  const tryLoad = async (url) => new Promise(async (resolve) => {
     let settled = false
     const finish = (ok) => {
       if (settled) return
@@ -54,7 +55,20 @@ export async function initNavBrandLogo() {
       { once: true }
     )
     brandLogo.addEventListener('error', () => finish(false), { once: true })
-    brandLogo.src = url
+    if (/^https?:\/\//i.test(url)) {
+      const cached = await loadCachedPreviewImage({
+        cacheKey: 'nav-brand-logo',
+        sourceUrl: url,
+        versionKey: url,
+        maxSize: 64
+      })
+      brandLogo.src = cached.previewUrl || url
+      cached.refresh.then((freshPreviewUrl) => {
+        if (freshPreviewUrl && brandLogo.isConnected) brandLogo.src = freshPreviewUrl
+      }).catch(() => {})
+    } else {
+      brandLogo.src = url
+    }
   })
 
   for (const logoUrl of logoCandidates) {
@@ -392,6 +406,13 @@ function initNavAuthState() {
     if (user?.photoURL) {
       profileAvatar.classList.add('has-photo')
       profileAvatar.style.backgroundImage = `url(\"${user.photoURL}\")`
+      applyCachedPreviewImage(profileAvatar, {
+        cacheKey: `nav-avatar:${user.uid}`,
+        sourceUrl: user.photoURL,
+        versionKey: user.photoURL,
+        maxSize: 64,
+        asBackground: true
+      }).catch(() => {})
       profileAvatar.setAttribute('aria-label', `${user.displayName || 'User'} profile image`)
     } else {
       profileAvatar.classList.remove('has-photo')

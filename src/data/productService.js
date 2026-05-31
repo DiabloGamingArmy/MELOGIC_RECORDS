@@ -20,6 +20,7 @@ import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STORAGE_PATHS } from '../config/storagePaths'
+import { getCachedStorageUrl } from '../services/pageMediaCache'
 
 let hasWarnedProductFetch = false
 let hasWarnedProductMedia = false
@@ -153,12 +154,15 @@ function toPriceLabel(product) {
 
 async function safeStorageUrl(path, fallback = '') {
   if (!path || !storage) return fallback
-  try {
-    return await getDownloadURL(ref(storage, path))
-  } catch (error) {
-    warnOnce('media', '[productService] Storage URL resolution failed.', error?.message || error)
-    return fallback
-  }
+  const resolved = await getCachedStorageUrl(path, async (storagePath) => {
+    try {
+      return await getDownloadURL(ref(storage, storagePath))
+    } catch (error) {
+      if (isDevelopmentRuntime) warnOnce('media', '[productService] Storage URL resolution failed.', { path: storagePath, code: error?.code, message: error?.message })
+      return ''
+    }
+  }, { scopeKey: `product-media:${String(path).split('/').slice(0, 2).join('/')}`, type: 'product-media' })
+  return resolved || fallback
 }
 
 export async function resolveProductMedia(product) {
@@ -564,6 +568,20 @@ export async function getProductById(productId) {
     return normalizeProduct(productId, raw, media)
   } catch (error) {
     warnOnce('fetch', '[productService] Failed to fetch product by id.', error?.message || error)
+    return null
+  }
+}
+
+export async function getProductShellById(productId) {
+  if (!db || !productId) return null
+
+  try {
+    const productRef = doc(db, FIRESTORE_COLLECTIONS.products, productId)
+    const snapshot = await getDoc(productRef)
+    if (!snapshot.exists()) return null
+    return normalizeProduct(productId, snapshot.data(), {})
+  } catch (error) {
+    warnOnce('fetch', '[productService] Failed to fetch product shell by id.', error?.message || error)
     return null
   }
 }
