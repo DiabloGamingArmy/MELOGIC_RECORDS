@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { assertPermission, cleanString } = require('./adminAuth')
 const { buildAdminAuditLogEntry } = require('./auditLog')
+const { writeAccountEventToBatch } = require('../account/accountEvents')
 const {
   buildDecisionUpdate,
   normalizeDecision,
@@ -53,6 +54,47 @@ function buildCreatorChangeNotification({ notificationId = '', productId = '', p
   }
 }
 
+function buildCreatorReviewEvent({ decision = '', productId = '', product = {}, reason = '', reviewerUid = '' } = {}) {
+  const productTitle = cleanString(product.title || 'Your product', 180)
+  if (decision === 'approve') {
+    return {
+      type: 'product_approved',
+      severity: 'success',
+      title: 'Product approved',
+      message: `${productTitle} was approved and published.`,
+      actorUid: reviewerUid,
+      actorType: 'admin',
+      source: 'marketplace-review',
+      path: `/products/${encodeURIComponent(product.slug || productId)}`,
+      metadata: { productId, decision }
+    }
+  }
+  if (decision === 'reject') {
+    return {
+      type: 'product_rejected',
+      severity: 'warning',
+      title: 'Product rejected',
+      message: `${productTitle} was rejected after review.${reason ? ` ${cleanString(reason, 300)}` : ''}`,
+      actorUid: reviewerUid,
+      actorType: 'admin',
+      source: 'marketplace-review',
+      path: `/products/edit?id=${encodeURIComponent(productId)}`,
+      metadata: { productId, decision, reason: cleanString(reason, 500) }
+    }
+  }
+  return {
+    type: 'product_returned',
+    severity: 'warning',
+    title: 'Product changes requested',
+    message: `${productTitle} needs changes before it can be approved.${reason ? ` ${cleanString(reason, 300)}` : ''}`,
+    actorUid: reviewerUid,
+    actorType: 'admin',
+    source: 'marketplace-review',
+    path: `/products/edit?id=${encodeURIComponent(productId)}`,
+    metadata: { productId, decision, reason: cleanString(reason, 500) }
+  }
+}
+
 const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const reviewer = assertPermission(request, 'productReview')
   const productId = normalizeProductId(request.data?.productId)
@@ -86,6 +128,7 @@ const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, a
   const notificationRef = decision === 'request_changes' && cleanString(product.artistId || '', 180)
     ? db().collection('users').doc(cleanString(product.artistId || '', 180)).collection('systemNotifications').doc()
     : null
+  const creatorUid = cleanString(product.artistId || '', 180)
   const now = admin.firestore.FieldValue.serverTimestamp()
   const batch = db().batch()
   batch.set(productRef, productUpdate, { merge: true })
@@ -128,6 +171,15 @@ const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, a
       notes
     }))
   }
+  const accountEventId = creatorUid
+    ? writeAccountEventToBatch(db(), batch, creatorUid, buildCreatorReviewEvent({
+      decision,
+      productId,
+      product,
+      reason,
+      reviewerUid: reviewer.uid
+    }))
+    : ''
   await batch.commit()
 
   return {
@@ -139,7 +191,8 @@ const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, a
     moderationStatus: productUpdate.moderationStatus || product.moderationStatus || '',
     reviewJobStatus: productUpdate.reviewJobStatus || product.reviewJobStatus || '',
     auditLogId: auditRef.id,
-    notificationId: notificationRef?.id || ''
+    notificationId: notificationRef?.id || '',
+    accountEventId
   }
 })
 

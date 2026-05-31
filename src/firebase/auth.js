@@ -8,6 +8,7 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
+  sendPasswordResetEmail,
   signOut,
   updateProfile
 } from 'firebase/auth'
@@ -65,6 +66,11 @@ export async function createAccountWithEmail(email, password) {
 export async function signInWithGoogle({ forceAccountSelect = false } = {}) {
   await authPersistenceReady
   return signInWithPopup(auth, forceAccountSelect ? googleProviderWithAccountSelect : googleProvider)
+}
+
+export async function sendPasswordReset(email) {
+  await authPersistenceReady
+  return sendPasswordResetEmail(auth, email)
 }
 
 export function signOutUser() {

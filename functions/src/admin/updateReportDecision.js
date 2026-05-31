@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { assertAnyPermission, cleanString } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
+const { writeAccountEvent } = require('../account/accountEvents')
 
 const ACTIONS = new Set(['assign_self', 'in_review', 'dismiss', 'resolve', 'action_taken'])
 
@@ -88,6 +89,26 @@ const updateReportDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
       notes
     }
   })
+  if (['dismiss', 'resolve', 'action_taken'].includes(action) && before.reporterUid) {
+    await writeAccountEvent(db(), before.reporterUid, {
+      type: 'report_resolved',
+      severity: action === 'action_taken' ? 'success' : 'info',
+      title: action === 'action_taken' ? 'Report action taken' : 'Report resolved',
+      message: action === 'dismiss'
+        ? 'Your report was reviewed and dismissed.'
+        : 'Your report was reviewed by the Melogic moderation team.',
+      actorUid: actor.uid,
+      actorType: 'admin',
+      source: 'admin-reports',
+      path: '',
+      metadata: {
+        reportId,
+        action,
+        targetType: before.targetType || '',
+        targetId: before.targetId || ''
+      }
+    })
+  }
 
   return {
     ok: true,

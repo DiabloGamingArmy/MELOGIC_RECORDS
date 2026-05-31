@@ -1,6 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
+const { writeAccountEvent } = require('../account/accountEvents')
 
 const TARGET_TYPES = new Set(['product', 'profile', 'user', 'order'])
 const PRODUCT_REASONS = new Set([
@@ -151,14 +152,20 @@ const createReport = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (req
   }
 
   await reportRef.set(payload)
-  await firestore.collection('users').doc(uid).collection('accountEvents').doc().set({
+  await writeAccountEvent(firestore, uid, {
     title: 'Report submitted',
     message: 'Your report was submitted.',
     type: 'report_submitted',
-    reportId: reportRef.id,
-    targetType,
-    targetId,
-    createdAt: now
+    severity: 'info',
+    actorUid: uid,
+    actorType: 'user',
+    source: 'reports',
+    path: sourcePath,
+    metadata: {
+      reportId: reportRef.id,
+      targetType,
+      targetId
+    }
   }).catch(() => null)
 
   return {

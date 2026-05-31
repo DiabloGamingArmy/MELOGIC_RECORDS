@@ -83,6 +83,11 @@
         "type": 301
       },
       {
+        "source": "/account-security.html",
+        "destination": "/account/security",
+        "type": 301
+      },
+      {
         "source": "/edit-profile.html",
         "destination": "/profile/edit",
         "type": 301
@@ -220,6 +225,10 @@
       {
         "source": "/profile/edit",
         "destination": "/edit-profile.html"
+      },
+      {
+        "source": "/account/security",
+        "destination": "/account-security.html"
       },
       {
         "source": "/profile/public",

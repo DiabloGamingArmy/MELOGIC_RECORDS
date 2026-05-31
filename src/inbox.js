@@ -41,11 +41,13 @@ import {
   updateThreadDetails
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
+import { markAccountEventRead, subscribeToAccountEvents } from './services/accountEvents'
 import { markSystemNotificationRead, subscribeToSystemNotifications } from './data/systemNotificationService'
 
 const app = document.querySelector('#app')
 
 const inboxFilters = ['Messages', 'Calls', 'Likes', 'Follows', 'Comments', 'Mentions', 'System']
+const initialSystemFilter = new URLSearchParams(window.location.search).get('system')
 
 const activityCopy = {
   Calls: {
@@ -92,7 +94,7 @@ const appState = {
   revealBlockedMessageIdsByThreadId: {},
   loadingMessageThreadId: '',
   optimisticMessagesByThreadId: {},
-  activeFilter: 'Messages',
+  activeFilter: initialSystemFilter ? 'System' : 'Messages',
   threadUnsubscribe: () => {},
   messageUnsubscribe: () => {},
   participantsUnsubscribe: () => {},
@@ -114,8 +116,10 @@ const appState = {
   warnedRealtimePermissions: {},
   warnedSystemPermissions: false,
   systemNotifications: [],
-  systemFilter: 'all',
+  accountEvents: [],
+  systemFilter: ['account', 'security'].includes(initialSystemFilter) ? initialSystemFilter : 'all',
   systemUnsubscribe: () => {},
+  accountEventsUnsubscribe: () => {},
   isChatSettingsOpen: false,
   chatSettingsError: '',
   isSavingChatSettings: false,
@@ -709,6 +713,7 @@ function clearRealtimeListeners() {
   appState.typingUnsubscribe()
   appState.blockedUsersUnsubscribe()
   appState.systemUnsubscribe()
+  appState.accountEventsUnsubscribe()
   appState.reactionUnsubscribe()
   appState.hiddenMessagesUnsubscribe()
   appState.threadUnsubscribe = () => {}
@@ -718,6 +723,7 @@ function clearRealtimeListeners() {
   appState.typingUnsubscribe = () => {}
   appState.blockedUsersUnsubscribe = () => {}
   appState.systemUnsubscribe = () => {}
+  appState.accountEventsUnsubscribe = () => {}
   appState.reactionUnsubscribe = () => {}
   appState.hiddenMessagesUnsubscribe = () => {}
   appState.threadsFallbackPending = false
@@ -1700,7 +1706,20 @@ function getFilterContentMarkup(filterName) {
       { key: 'security', label: 'Security' },
       { key: 'other', label: 'Other' }
     ]
-    const rows = appState.systemNotifications.filter((item) => appState.systemFilter === 'all' || item.type === appState.systemFilter)
+    const notificationRows = appState.systemNotifications
+      .filter((item) => appState.systemFilter === 'all' || item.type === appState.systemFilter)
+      .map((item) => ({ ...item, sourceCollection: 'systemNotifications', body: item.body || item.message || '' }))
+    const accountRows = appState.accountEvents
+      .filter((item) => ['all', 'account', 'security'].includes(appState.systemFilter))
+      .map((item) => ({
+        ...item,
+        sourceCollection: 'accountEvents',
+        body: item.message || '',
+        actionHref: item.path || '',
+        type: item.type || 'account'
+      }))
+    const rows = [...accountRows, ...notificationRows]
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
     return `
       <section class="activity-panel">
         <header class="panel-header activity-header">
@@ -1713,7 +1732,7 @@ function getFilterContentMarkup(filterName) {
         ${rows.length ? `
           <div class="system-notification-list">
             ${rows.map((item) => `
-              <article class="system-notification-card" data-system-id="${item.id}">
+              <article class="system-notification-card ${item.readAt ? '' : 'is-unread'}" ${item.sourceCollection === 'accountEvents' ? `data-account-event-id="${escapeHtml(item.id)}"` : `data-system-id="${escapeHtml(item.id)}"`}>
                 <p class="system-notification-title">${escapeHtml(item.title)}</p>
                 <p>${escapeHtml(item.body)}</p>
                 <small>${escapeHtml(formatThreadTimestamp(item.createdAt))} · ${escapeHtml(item.severity)}</small>
@@ -2733,6 +2752,13 @@ function bindSharedEvents() {
     })
   })
 
+  inboxRoot.querySelectorAll('[data-account-event-id]').forEach((card) => {
+    card.addEventListener('click', async () => {
+      if (!appState.user?.uid) return
+      await markAccountEventRead(appState.user.uid, card.getAttribute('data-account-event-id')).catch(() => {})
+    })
+  })
+
   const openCreateChatButton = inboxRoot.querySelector('[data-action="open-create-chat"]')
   if (openCreateChatButton) {
     openCreateChatButton.addEventListener('click', () => {
@@ -3364,6 +3390,22 @@ function startSystemNotificationSubscription() {
   )
 }
 
+function startAccountEventsSubscription() {
+  if (!appState.user?.uid) return
+  appState.accountEventsUnsubscribe()
+  appState.accountEventsUnsubscribe = subscribeToAccountEvents(
+    appState.user.uid,
+    (items) => {
+      appState.accountEvents = items
+      if (appState.activeFilter === 'System') renderSignedInState()
+    },
+    (error) => {
+      warnSystemPermission(error)
+    },
+    { limitCount: 100 }
+  )
+}
+
 function startBlockedUsersSubscription() {
   if (!appState.user?.uid) return
   // Private blockedUsers docs are per-account records; cross-account DM lockout comes from dmBlockState.
@@ -3500,5 +3542,6 @@ subscribeToAuthState(async (user) => {
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()
+  startAccountEventsSubscription()
   startBlockedUsersSubscription()
 })

@@ -750,9 +750,9 @@ function renderSettingsPage() {
           <ul class="settings-bullet-list">
             <li>Password status is managed by your auth provider.</li>
             <li>Signed in providers: ${providerIds.join(', ') || 'email/password'}</li>
-            <li>Sign out all devices is coming soon.</li>
+            <li>Account recovery and security activity live in the dedicated Security page.</li>
           </ul>
-          <button type="button" class="button button-muted is-coming-soon" disabled aria-disabled="true">Change Password (Soon)</button>
+          <a class="button button-muted" href="${ROUTES.accountSecurity}">Open Security</a>
         </div>
 
         <div class="settings-panel ${activeSection === 'notifications' ? 'is-active' : ''}" data-panel="notifications">
