@@ -349,7 +349,7 @@
 .review-card-media img {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   object-position: center;
   display: block;
 }
@@ -1383,7 +1383,8 @@
 }
 
 .admin-data-table.is-products .admin-data-row {
-  grid-template-columns: minmax(230px, 1.25fr) minmax(130px, 0.7fr) minmax(110px, 0.55fr) minmax(88px, 0.45fr) minmax(105px, 0.55fr) minmax(82px, 0.45fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) minmax(180px, 0.9fr);
+  min-width: 1430px;
+  grid-template-columns: minmax(220px, 1.35fr) minmax(150px, 0.9fr) minmax(120px, 0.6fr) minmax(95px, 0.5fr) minmax(130px, 0.7fr) minmax(90px, 0.45fr) minmax(120px, 0.65fr) minmax(95px, 0.5fr) minmax(130px, 0.75fr) minmax(170px, 0.8fr);
 }
 
 .admin-data-table.is-users .admin-data-row {
@@ -1400,6 +1401,15 @@
   grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(120px, 0.65fr) minmax(130px, 0.7fr) minmax(120px, 0.65fr) minmax(140px, 0.75fr) minmax(120px, 0.65fr) minmax(160px, 0.85fr);
 }
 
+.admin-data-table.is-logs .admin-data-row {
+  min-width: 1120px;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(180px, 1fr) minmax(150px, 0.8fr) minmax(110px, 0.55fr) minmax(160px, 0.85fr) minmax(160px, 0.85fr) minmax(220px, 1.2fr) minmax(110px, 0.45fr);
+}
+
+.admin-data-table.is-order-items .admin-data-row {
+  grid-template-columns: minmax(240px, 1.4fr) minmax(150px, 0.8fr) minmax(100px, 0.5fr) minmax(150px, 0.8fr) minmax(120px, 0.55fr);
+}
+
 .admin-data-row.is-header {
   background: var(--admin-card-subtle);
   color: var(--admin-muted);
@@ -1411,6 +1421,11 @@
 .admin-data-row span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.admin-data-row .review-badge,
+.admin-data-row .ai-pill {
+  white-space: nowrap;
 }
 
 .admin-data-row small {
@@ -1492,6 +1507,7 @@
   flex-wrap: wrap;
   gap: 0.35rem;
   align-items: center;
+  justify-content: flex-end;
 }
 
 .admin-row-actions .admin-secondary-link,
@@ -1589,6 +1605,42 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
+}
+
+.admin-hub-header {
+  align-items: center;
+}
+
+.admin-hub-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.8rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.admin-hub-title h1,
+.admin-hub-title p {
+  overflow-wrap: anywhere;
+}
+
+.admin-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.admin-back-link {
+  width: fit-content;
+  margin-bottom: 0.75rem;
+}
+
+.admin-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  align-items: start;
 }
 
 [data-admin-theme] .admin-sidebar,
@@ -1690,6 +1742,7 @@
   .admin-audit-layout,
   .admin-detail-grid,
   .admin-content-viewer-grid,
+  .admin-hub-grid,
   .review-preview-grid,
   .admin-role-form {
     grid-template-columns: 1fr;
@@ -1763,7 +1816,8 @@
   }
 
   .admin-search-form,
-  .admin-row-actions {
+  .admin-row-actions,
+  .admin-header-actions {
     display: grid;
   }
 
@@ -1773,7 +1827,8 @@
   .admin-data-table.is-reports .admin-data-row,
   .admin-data-table.is-orders .admin-data-row,
   .admin-data-table.is-team .admin-data-row,
-  .admin-data-table.is-logs .admin-data-row {
+  .admin-data-table.is-logs .admin-data-row,
+  .admin-data-table.is-order-items .admin-data-row {
     grid-template-columns: 1fr;
   }
 

@@ -7,6 +7,7 @@ const {
   mergeAdminClaims,
   normalizeRole,
   pickAdminClaims,
+  roleRank,
   stripAdminClaims
 } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
@@ -37,15 +38,54 @@ function adminUserMetadata({ uid = '', role = '', active = true, userRecord = nu
   }
 }
 
+async function assertOwnerWillRemain(uid = '') {
+  const owners = await db()
+    .collection('adminUsers')
+    .where('role', '==', 'owner')
+    .where('active', '==', true)
+    .limit(2)
+    .get()
+  const otherOwnerExists = owners.docs.some((doc) => doc.id !== uid)
+  if (!otherOwnerExists) {
+    throw new HttpsError('failed-precondition', 'The last owner cannot be removed or downgraded.')
+  }
+}
+
 const setAdminUserRole = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const actor = assertPermission(request, 'roleManage')
   const uid = normalizeUid(request.data?.uid)
   const requestedRole = normalizeRole(request.data?.role || '')
   const active = request.data?.active !== false && requestedRole !== 'remove'
   if (!requestedRole) throw new HttpsError('invalid-argument', 'A valid role is required.')
+  if (uid === actor.uid) {
+    throw new HttpsError('failed-precondition', 'You cannot change your own admin role.')
+  }
 
-  const userRecord = await admin.auth().getUser(uid)
+  const [userRecord, existingAdminUser] = await Promise.all([
+    admin.auth().getUser(uid),
+    db().collection('adminUsers').doc(uid).get()
+  ])
   const existingClaims = userRecord.customClaims || {}
+  const currentAdminData = existingAdminUser.exists ? existingAdminUser.data() || {} : {}
+  const actorRole = normalizeRole(actor.adminRole || '')
+  const currentTargetRole = normalizeRole(existingClaims.adminRole || currentAdminData.role || '')
+  const actorRank = roleRank(actorRole)
+  const targetRank = roleRank(currentTargetRole)
+  const requestedRank = active ? roleRank(requestedRole) : 0
+  const actorIsOwner = actorRole === 'owner'
+
+  if (!actorIsOwner) {
+    if (requestedRank >= actorRank) {
+      throw new HttpsError('permission-denied', 'You cannot assign a role equal to or higher than your own.')
+    }
+    if (targetRank >= actorRank) {
+      throw new HttpsError('permission-denied', 'You cannot manage a role equal to or higher than your own.')
+    }
+  }
+  if (currentTargetRole === 'owner' && (!active || requestedRole !== 'owner')) {
+    await assertOwnerWillRemain(uid)
+  }
+
   const nextClaims = active
     ? mergeAdminClaims(existingClaims, requestedRole, true)
     : stripAdminClaims(existingClaims)
@@ -54,7 +94,6 @@ const setAdminUserRole = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async 
   await admin.auth().setCustomUserClaims(uid, nextClaims)
 
   const adminUserRef = db().collection('adminUsers').doc(uid)
-  const existingAdminUser = await adminUserRef.get()
   await adminUserRef.set({
     ...(existingAdminUser.exists ? {} : { createdAt: admin.firestore.FieldValue.serverTimestamp() }),
     ...adminUserMetadata({ uid, role: requestedRole, active, userRecord, claims: active ? adminClaims : {} }),

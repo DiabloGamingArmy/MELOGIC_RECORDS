@@ -102,17 +102,32 @@ function reportSummary(docSnap) {
 function orderSummary(docSnap) {
   const raw = docSnap.data() || {}
   const lineItems = Array.isArray(raw.items) ? raw.items : Array.isArray(raw.products) ? raw.products : []
+  const cleanItems = lineItems.slice(0, 25).map((item) => ({
+    productId: cleanString(item?.productId || item?.id || '', 180),
+    title: cleanString(item?.title || item?.productTitle || item?.productId || '', 180),
+    creatorUid: cleanString(item?.creatorUid || item?.artistId || item?.sellerUid || '', 180),
+    entitlementId: cleanString(item?.entitlementId || '', 180),
+    entitlementStatus: cleanString(item?.entitlementStatus || item?.status || '', 80),
+    amountCents: Math.max(0, Math.round(toNumber(item?.amountCents || item?.priceCents || item?.amount)))
+  }))
   return {
     id: docSnap.id,
     uid: cleanString(raw.uid || raw.buyerUid || raw.userId || '', 180),
     buyerUid: cleanString(raw.buyerUid || raw.uid || raw.userId || '', 180),
+    buyerEmail: cleanString(raw.buyerEmail || raw.email || '', 320),
     productCount: lineItems.length || Math.max(0, Math.round(toNumber(raw.productCount))),
-    productTitles: lineItems.map((item) => cleanString(item?.title || item?.productTitle || item?.productId || '', 180)).filter(Boolean).slice(0, 5),
+    productIds: cleanItems.map((item) => item.productId).filter(Boolean).slice(0, 25),
+    productTitles: cleanItems.map((item) => item.title).filter(Boolean).slice(0, 5),
+    items: cleanItems,
     amountCents: Math.max(0, Math.round(toNumber(raw.amountCents || raw.totalCents || raw.total || raw.amount_total))),
     currency: cleanString(raw.currency || 'USD', 12),
     paymentStatus: cleanString(raw.paymentStatus || raw.status || '', 80),
     refundStatus: cleanString(raw.refundStatus || '', 80),
+    refundReason: cleanString(raw.refundReason || raw.refundNote || '', 600),
     checkoutSessionId: cleanString(raw.checkoutSessionId || raw.sessionId || '', 180),
+    paymentIntentId: cleanString(raw.paymentIntentId || raw.stripePaymentIntentId || '', 180),
+    stripeCustomerId: cleanString(raw.stripeCustomerId || raw.customerId || '', 180),
+    supportNotes: cleanString(raw.supportNotes || raw.adminNotes || '', 900),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
   }
