@@ -2,6 +2,7 @@ import { getStorageAssetUrl } from '../firebase/storageAssets'
 import { signOutUser, subscribeToAuthState, waitForInitialAuthState } from '../firebase/auth'
 import { getCartItems, removeFromCart, subscribeToCart } from '../data/cartService'
 import { getAccessGateConfig, getBannerAlertConfig } from '../firebase/firestore'
+import { startPresenceTracking } from '../services/presenceService'
 import { ROUTES, authRoute } from '../utils/routes'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
@@ -155,6 +156,7 @@ export async function initShellChrome() {
   syncNavOffset()
   window.addEventListener('resize', syncNavOffset, { passive: true })
   initNavAuthState()
+  startPresenceTracking()
   initCartDrawer()
   return initNavBrandLogo()
 }

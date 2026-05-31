@@ -163,6 +163,26 @@ main {
   margin: 0 auto;
 }
 
+.product-cover-frame,
+.admin-product-cover,
+.new-product-cover-preview,
+.profile-product-cover {
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  background: rgba(10, 15, 28, 0.82);
+}
+
+.product-cover-frame img,
+.admin-product-cover img,
+.new-product-cover-preview img,
+.profile-product-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  display: block;
+}
+
 .nav-inner {
   min-height: 4.25rem;
   display: flex;

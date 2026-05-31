@@ -1800,6 +1800,13 @@ export async function listAdminTeam({ limitCount = 50 } = {}) {
   return result?.data || { ok: false, team: [] }
 }
 
+export async function listActiveStaffPresence({ limitCount = 30 } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listActiveStaffPresence')
+  const result = await callable({ limit: limitCount })
+  return result?.data || { ok: false, staff: [] }
+}
+
 export async function getAdminSettings() {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'getAdminSettings')

@@ -20,6 +20,7 @@ import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
 import { ROUTES, productRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
+import { formatUsername } from './utils/format'
 import { sanitizeRichDescription, escapeHtml as escapeRichHtml } from './utils/richDescription'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
@@ -937,7 +938,7 @@ function refreshContributorResultsDom() {
   container.innerHTML = editorState.contributorUI.results.map((profile) => `
     <button type="button" data-add-contributor="${escapeHtml(profile.uid)}">
       <img class="contributor-avatar" src="${escapeHtml(profile.avatarURL || profile.photoURL || '')}" alt="" />
-      <span>${escapeHtml(profile.displayName || 'User')} @${escapeHtml(profile.username || '')}</span>
+      <span>${escapeHtml(profile.displayName || 'User')} ${escapeHtml(formatUsername(profile.username))}</span>
     </button>
   `).join('')
   bindContributorAddButtons(container)
@@ -1376,6 +1377,7 @@ function renderMediaUploadPanel() {
           <button type="button" class="media-upload-action-btn" data-pick-file="preview-video">Upload Video Preview</button>
           <button type="button" class="media-upload-action-btn marketplace-preview-btn" data-open-marketplace-preview>Marketplace Preview</button>
           <div class="cover-preview-block">${editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL ? `<img src="${escapeHtml(editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL)}" alt="Cover preview" /><button type="button" data-remove-cover>Remove cover</button>` : '<span>No cover selected</span>'}</div>
+          <p class="cover-ratio-note">Use a 1:1 square cover. Non-square images will be cropped in product cards.</p>
           <div class="gallery-thumb-scroller">${(editorState.mediaPreview.gallery || []).map((url, index) => `<div class="gallery-thumb"><img src="${escapeHtml(url)}" alt="Gallery image ${index + 1}" /><button type="button" data-remove-gallery="${index}" aria-label="Remove gallery image">×</button></div>`).join('')}</div>
           <input class="hidden-file" type="file" accept="image/*" data-cover-input />
           <input class="hidden-file" type="file" accept="image/*" multiple data-gallery-input />
@@ -1436,7 +1438,7 @@ function renderContributorsPanel() {
           ${editorState.contributorUI.results.map((profile) => `
             <button type=\"button\" data-add-contributor=\"${escapeHtml(profile.uid)}\">
               <img class=\"contributor-avatar\" src=\"${escapeHtml(profile.avatarURL || profile.photoURL || '')}\" alt=\"\" />
-              <span>${escapeHtml(profile.displayName || 'User')} @${escapeHtml(profile.username || '')}</span>
+              <span>${escapeHtml(profile.displayName || 'User')} ${escapeHtml(formatUsername(profile.username))}</span>
             </button>
           `).join('')}
         </div>
@@ -1449,7 +1451,7 @@ function renderContributorsPanel() {
               <img class=\"contributor-avatar\" src=\"${escapeHtml(row.avatarURL || '')}\" alt=\"\" />
               <div class=\"contributor-identity\">
                 <strong>${escapeHtml(row.displayName || 'Unknown')}</strong>
-                <p>@${escapeHtml(row.username || 'manual')}</p>
+                <p>${escapeHtml(formatUsername(row.username) || 'manual')}</p>
                 <p>${escapeHtml(row.uid || '')}</p>
               </div>
               <div><input type=\"text\" value=\"${escapeHtml(row.role || '')}\" data-contributor-role-edit=\"${escapeHtml(row.uid)}\" placeholder=\"Role\"/></div>

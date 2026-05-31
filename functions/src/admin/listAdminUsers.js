@@ -33,13 +33,15 @@ const listAdminUsers = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (r
       db().collection('users').doc(uid).get()
     ])
     const source = profileSnap.exists ? profileSnap : userSnap
-    const users = source.exists ? [profileSummary(source, adminUsers.get(uid))] : []
+    const users = source.exists ? [profileSummary(source, adminUsers.get(uid), userSnap.exists ? userSnap.data() || {} : {})] : []
     return { ok: true, users, total: users.length, requester: { uid: claims.uid, role: claims.adminRole } }
   }
 
   const snapshot = await safeListCollection('profiles', { orderBy: 'updatedAt', direction: 'desc', limit })
+  const accountSnaps = await Promise.all(snapshot.docs.map((docSnap) => db().collection('users').doc(docSnap.id).get()))
+  const accounts = new Map(accountSnaps.map((snap) => [snap.id, snap.exists ? snap.data() || {} : {}]))
   const users = snapshot.docs
-    .map((docSnap) => profileSummary(docSnap, adminUsers.get(docSnap.id)))
+    .map((docSnap) => profileSummary(docSnap, adminUsers.get(docSnap.id), accounts.get(docSnap.id) || {}))
     .filter((user) => userMatchesSearch(user, search))
     .slice(0, limit)
 

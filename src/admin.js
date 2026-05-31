@@ -5,6 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import {
   getAdminSettings,
   getAdminUserProfile,
+  listActiveStaffPresence,
   listAdminLogs,
   listAdminOrders,
   listAdminProducts,
@@ -18,6 +19,7 @@ import {
 } from './data/productService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
+import { formatUsername } from './utils/format'
 import { ROUTES, adminReviewRoute, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 
@@ -28,7 +30,7 @@ const SECTIONS = [
   { key: 'dashboard', route: ROUTES.admin, label: 'Overview', icon: 'barChart', permission: 'admin' },
   { key: 'reviews', route: ROUTES.adminReviews, label: 'Audits', icon: 'checkCircle', permission: 'productReview' },
   { key: 'products', route: ROUTES.adminProducts, label: 'Products', icon: 'package', permission: 'listingEdit' },
-  { key: 'users', route: ROUTES.adminUsers, label: 'Users', icon: 'messageCircle', permission: 'userRead' },
+  { key: 'users', route: ROUTES.adminUsers, label: 'Users', icon: 'user', permission: 'userRead' },
   { key: 'reports', route: ROUTES.adminReports, label: 'Reports', icon: 'alertCircle', permission: 'admin' },
   { key: 'orders', route: ROUTES.adminOrders, label: 'Orders', icon: 'shoppingCart', permission: 'orderSupport' },
   { key: 'team', route: ROUTES.adminTeam, label: 'Roles', icon: 'folderPlus', permission: 'roleManage' },
@@ -203,6 +205,16 @@ const state = {
   mediaByProductId: {},
   mediaRequests: {},
   auditTab: 'listing',
+  overview: {
+    loading: false,
+    loaded: false,
+    error: '',
+    products: [],
+    orders: [],
+    reports: [],
+    logs: [],
+    activeStaff: []
+  },
   adminData: {
     products: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
     users: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
@@ -643,6 +655,10 @@ function renderLayout(content) {
 function dashboardView() {
   const permissionCount = ['productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead']
     .filter((permission) => state.claims[permission] === true).length
+  const overview = state.overview
+  const overviewProducts = overview.products || []
+  const overviewOrders = overview.orders || []
+  const overviewReports = overview.reports || []
   return `
     <header class="admin-page-header">
       <div>
@@ -655,6 +671,19 @@ function dashboardView() {
       <article class="admin-metric"><span>Role</span><strong>${escapeHtml(state.claims.adminRole || 'admin')}</strong></article>
       <article class="admin-metric"><span>Audit Queue</span><strong>${state.queueLoaded ? state.products.length : '...'}</strong></article>
       <article class="admin-metric"><span>Permissions</span><strong>${permissionCount}</strong></article>
+      <article class="admin-metric"><span>Products Loaded</span><strong>${overview.loaded ? overviewProducts.length : '...'}</strong></article>
+      <article class="admin-metric"><span>Published Products</span><strong>${overview.loaded ? overviewProducts.filter((product) => product.status === 'published').length : '...'}</strong></article>
+      <article class="admin-metric"><span>Active Staff</span><strong>${overview.loaded ? overview.activeStaff.length : '...'}</strong></article>
+      <article class="admin-metric"><span>Orders</span><strong>${overview.loaded ? overviewOrders.length : '...'}</strong></article>
+      <article class="admin-metric"><span>Reports</span><strong>${overview.loaded ? overviewReports.length : '...'}</strong></article>
+    </section>
+    ${overview.error ? `<p class="admin-status is-error">${escapeHtml(overview.error)}</p>` : ''}
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading">
+        <h2>Active Staff</h2>
+        <span class="admin-muted">${overview.loading ? 'Loading...' : `${overview.activeStaff.length} active`}</span>
+      </div>
+      ${activeStaffStrip(overview.activeStaff)}
     </section>
     <section class="admin-section-slab">
       <div class="admin-slab-heading">
@@ -662,6 +691,72 @@ function dashboardView() {
         <a href="${ROUTES.adminReviews}">View all</a>
       </div>
       ${can('productReview') ? reviewQueueGrid(true) : permissionState('productReview')}
+    </section>
+    <section class="admin-overview-grid">
+      ${overviewSnapshotTable('Products Snapshot', ROUTES.adminProducts, ['Product', 'Creator', 'Status', 'Updated', 'Action'], overviewProducts.slice(0, 5).map((product) => [
+        htmlCell(`<strong>${escapeHtml(product.title || 'Untitled')}</strong><small>${escapeHtml(product.id || '')}</small>`),
+        product.artistName || product.artistDisplayName || product.artistId,
+        htmlCell(renderBadge(humanLabel(product.status || 'unknown'), statusClass(product.status))),
+        formatDate(product.updatedAt || product.createdAt),
+        htmlCell(`<a class="admin-row-action-button" href="${adminReviewRoute(product.id)}">Audit/View</a>`)
+      ]), 'No recent products loaded.')}
+      ${overviewSnapshotTable('Orders Snapshot', ROUTES.adminOrders, ['Order', 'Buyer', 'Amount', 'Status', 'Action'], overviewOrders.slice(0, 5).map((order) => [
+        htmlCell(`<span class="admin-code-value">${escapeHtml(order.id || '')}</span>`),
+        order.buyerEmail || order.buyerUid || order.uid,
+        formatMoney(order.amountCents, order.currency),
+        humanLabel(order.paymentStatus),
+        htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
+      ]), 'No recent orders loaded.')}
+      ${overviewSnapshotTable('Reports Snapshot', ROUTES.adminReports, ['Type', 'Target', 'Reason', 'Status', 'Created'], overviewReports.slice(0, 5).map((report) => [
+        humanLabel(report.type),
+        `${report.targetType || 'target'} ${report.targetId || ''}`.trim(),
+        report.reason,
+        humanLabel(report.status),
+        formatDate(report.createdAt)
+      ]), 'No active reports.')}
+      ${overviewSnapshotTable('Logs Snapshot', ROUTES.adminLogs, ['Actor', 'Action', 'Target', 'Time', 'Details'], overview.logs.slice(0, 5).map((log) => [
+        log.actorEmail || log.actorUid || 'Admin',
+        humanLabel(log.action),
+        `${humanLabel(log.targetType)} ${log.targetId || ''}`.trim(),
+        formatDate(log.createdAt),
+        htmlCell('<button type="button" class="admin-row-action-button" disabled>View</button>')
+      ]), 'No admin logs loaded.')}
+    </section>
+  `
+}
+
+function activeStaffStrip(staff = []) {
+  if (!staff.length) return '<article class="admin-empty-state">No staff currently active.</article>'
+  return `
+    <div class="admin-presence-strip" role="list" aria-label="Active staff">
+      ${staff.map((person) => `
+        <a class="admin-presence-person" href="${ROUTES.adminUsers}/${encodeURIComponent(person.uid)}" role="listitem">
+          <span class="admin-presence-avatar">
+            ${person.avatarURL || person.photoURL
+              ? `<img src="${escapeHtml(person.avatarURL || person.photoURL)}" alt="" loading="lazy" decoding="async" />`
+              : `<span>${escapeHtml(initialsFor(person.displayName || person.username || person.uid))}</span>`}
+            <span class="admin-presence-dot" aria-hidden="true"></span>
+          </span>
+          <strong>${escapeHtml(formatUsername(person.username) || person.displayName || 'Staff')}</strong>
+          <small>${escapeHtml(humanLabel(person.adminRole || person.roles?.[0] || 'staff'))}</small>
+        </a>
+      `).join('')}
+    </div>
+  `
+}
+
+function overviewSnapshotTable(title = '', href = '', headers = [], rows = [], empty = 'No data loaded.') {
+  return `
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading">
+        <h2>${escapeHtml(title)}</h2>
+        ${href ? `<a href="${href}">View all</a>` : ''}
+      </div>
+      ${adminSimpleTable(title, headers, rows, {
+        className: 'is-overview',
+        emptyTitle: empty,
+        emptyBody: 'This section will fill in as platform data is available.'
+      })}
     </section>
   `
 }
@@ -940,7 +1035,7 @@ function identityPanel(product = {}) {
         renderField('Artist ID', product.artistId, { code: true }),
         renderField('Artist name', product.artistName),
         renderField('Artist display name', product.artistDisplayName),
-        renderField('Artist username', product.artistUsername),
+        renderField('Artist username', formatUsername(product.artistUsername)),
         renderField('Artist profile path', product.artistProfilePath, { code: true }),
         renderField('Status', product.status),
         renderField('Visibility', product.visibility),
@@ -1099,7 +1194,7 @@ function creatorContextPanel(product = {}) {
         renderField('Artist ID', product.artistId, { code: true }),
         renderField('Artist name', product.artistName),
         renderField('Display name', product.artistDisplayName),
-        renderField('Username', product.artistUsername),
+        renderField('Username', formatUsername(product.artistUsername)),
         renderField('Profile path', product.artistProfilePath, { code: true }),
         renderField('Contributor count', Number(product.contributorCount || 0)),
         renderField('Contributor requests', Number(product.contributorRequestCount || 0))
@@ -1333,7 +1428,7 @@ function auditTabContent(product = {}) {
         renderField('Artist ID', product.artistId, { code: true }),
         renderField('Artist name', product.artistName),
         renderField('Display name', product.artistDisplayName),
-        renderField('Username', product.artistUsername),
+        renderField('Username', formatUsername(product.artistUsername)),
         renderField('Profile path', product.artistProfilePath, { code: true }),
         renderField('Contributor count', Number(product.contributorCount || 0)),
         renderField('Contributor requests', Number(product.contributorRequestCount || 0))
@@ -1746,17 +1841,7 @@ function productAdminTable(products = []) {
           <span>${Number(product.assetSummary?.totalFiles || 0)} · ${escapeHtml(formatBytes(product.assetSummary?.totalBytes || 0))}</span>
           <span>${escapeHtml(formatDate(product.updatedAt || product.createdAt))}</span>
           <span class="admin-row-actions">
-            <a class="admin-primary-link" href="${adminReviewRoute(product.id)}">Audit/View</a>
-            <a class="admin-secondary-link" href="/new-product.html?id=${encodeURIComponent(product.id)}">Edit</a>
-            <details class="admin-action-menu">
-              <summary>More</summary>
-              <div>
-                ${product.artistId ? `<a href="${ROUTES.adminUsers}/${encodeURIComponent(product.artistId)}">View Creator</a>` : ''}
-                <button type="button" disabled>Force Review</button>
-                <button type="button" disabled>Suspend</button>
-                <button type="button" data-copy-value="${escapeHtml(product.id || '')}">Copy Product ID</button>
-              </div>
-            </details>
+            <a class="admin-row-action-button" href="${adminReviewRoute(product.id)}">Audit/View</a>
           </span>
         </article>
       `).join('')}
@@ -1826,15 +1911,15 @@ function usersTable(users = []) {
       </div>
       ${users.map((user) => `
         <article class="admin-data-row" role="row">
-          ${htmlCell(adminPersonCell(user, user.displayName || 'User', user.email || user.username || '', user.uid)).html}
+          ${htmlCell(adminPersonCell(user, user.displayName || 'User', user.email || formatUsername(user.username) || '', user.uid)).html}
           <span class="admin-code-value">${escapeHtml(user.uid)}</span>
-          <span>${escapeHtml(user.username || '')}</span>
+          <span>${escapeHtml(formatUsername(user.username))}</span>
           <span>${escapeHtml(user.adminRole || user.role || '')}</span>
           <span>${Number(user.productCount || 0)}</span>
           <span>${Number(user.reportCount || 0)}</span>
           <span>${escapeHtml(formatDate(user.createdAt || user.updatedAt))}${user.lastActiveAt ? `<small>${escapeHtml(formatDate(user.lastActiveAt))}</small>` : ''}</span>
           <span class="admin-row-actions">
-            <a class="admin-secondary-link" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">View</a>
+            <a class="admin-row-action-button" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">View</a>
           </span>
         </article>
       `).join('')}
@@ -1857,7 +1942,7 @@ function selectedUserPanel() {
         <div>
           <p class="eyebrow">Account</p>
           <h1>Account Hub</h1>
-          <p>${escapeHtml(user?.displayName || user?.username || user?.email || uid)}</p>
+          <p>${escapeHtml(user?.displayName || formatUsername(user?.username) || user?.email || uid)}</p>
           <small class="admin-code-value">${escapeHtml(uid)}</small>
         </div>
       </div>
@@ -1884,7 +1969,7 @@ function selectedUserPanel() {
           ${renderKeyValueGrid([
             renderField('UID', user.uid, { code: true }),
             renderField('Display name', user.displayName),
-            renderField('Username', user.username),
+            renderField('Username', formatUsername(user.username)),
             renderField('Email', user.email),
             renderField('Role', humanLabel(user.role)),
             renderField('Admin role', humanLabel(user.adminRole || adminUser.role)),
@@ -1892,6 +1977,10 @@ function selectedUserPanel() {
             renderDateField('Created at', user.createdAt),
             renderDateField('Last active', user.lastActiveAt)
           ])}
+          <div class="admin-listing-taxonomy">
+            <div><h3>Account Roles</h3>${renderBadgeList((user.roles || []).map(humanLabel), 'No account roles')}</div>
+            <div><h3>Profile Badges</h3>${renderBadgeList((user.badges || []).map(humanLabel), 'No profile badges')}</div>
+          </div>
         </article>
         <article class="admin-section-slab">
           <div class="admin-slab-heading"><h2>Security / Activity</h2><span class="admin-muted">Read only</span></div>
@@ -2085,7 +2174,7 @@ function ordersView() {
       humanLabel(order.paymentStatus),
       humanLabel(order.refundStatus),
       formatDate(order.createdAt),
-      htmlCell(`<a class="admin-secondary-link" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">View</a>`)
+      htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
     ]), {
       className: 'is-orders',
       emptyTitle: 'No orders yet.',
@@ -2311,6 +2400,37 @@ async function loadQueue({ silent = false } = {}) {
       : 'Could not load the marketplace audit queue.'
   } finally {
     state.loadingQueue = false
+    render()
+  }
+}
+
+async function loadAdminOverview({ silent = false } = {}) {
+  if (!can('admin')) return
+  state.overview.loading = !silent
+  state.overview.error = ''
+  render()
+  try {
+    const [staffResult, productsResult, ordersResult, reportsResult, logsResult] = await Promise.all([
+      listActiveStaffPresence({ limitCount: 30 }).catch((error) => ({ error })),
+      (can('listingEdit') || can('productReview')) ? listAdminProducts({ limitCount: 12 }).catch((error) => ({ error })) : Promise.resolve({ products: [] }),
+      can('orderSupport') ? listAdminOrders({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ orders: [] }),
+      (can('admin') || can('userModerate') || can('productReview') || can('orderSupport')) ? listAdminReports({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ reports: [] }),
+      can('auditRead') ? listAdminLogs({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ logs: [] })
+    ])
+    const failures = [staffResult, productsResult, ordersResult, reportsResult, logsResult].filter((result) => result?.error)
+    state.overview.activeStaff = staffResult.staff || []
+    state.overview.products = productsResult.products || []
+    state.overview.orders = ordersResult.orders || []
+    state.overview.reports = reportsResult.reports || []
+    state.overview.logs = logsResult.logs || []
+    state.overview.loaded = true
+    state.overview.error = failures.length ? 'Some overview sections could not be loaded.' : ''
+    if (state.overview.products.length) await hydrateReviewMedia(state.overview.products)
+  } catch (error) {
+    console.warn('[admin] overview load failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.overview.error = error?.message || 'Could not load admin overview.'
+  } finally {
+    state.overview.loading = false
     render()
   }
 }
@@ -2556,7 +2676,10 @@ function bindEvents() {
     applyAdminTheme(state.theme === 'dark' ? 'light' : 'dark')
     render()
   })
-  app.querySelector('[data-refresh-queue]')?.addEventListener('click', () => loadQueue())
+  app.querySelector('[data-refresh-queue]')?.addEventListener('click', () => {
+    loadQueue()
+    if (state.section === 'dashboard') loadAdminOverview({ silent: true })
+  })
   app.querySelector('[data-refresh-admin-section]')?.addEventListener('click', () => loadAdminSectionData(state.section))
   app.querySelectorAll('[data-admin-filter]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -2678,7 +2801,10 @@ async function init() {
   }
   state.section = currentSectionKey()
   render()
-  if (can('productReview') && ['dashboard', 'reviews'].includes(state.section)) {
+  if (state.section === 'dashboard') {
+    if (can('productReview')) await loadQueue()
+    await loadAdminOverview()
+  } else if (can('productReview') && state.section === 'reviews') {
     await loadQueue()
   } else {
     await loadAdminSectionData(state.section)
@@ -2688,7 +2814,10 @@ async function init() {
 window.addEventListener('popstate', () => {
   if (state.claims.admin === true) {
     render()
-    if (['dashboard', 'reviews'].includes(currentSectionKey())) {
+    if (currentSectionKey() === 'dashboard') {
+      if (can('productReview') && !state.queueLoaded) loadQueue()
+      if (!state.overview.loaded) loadAdminOverview({ silent: true })
+    } else if (currentSectionKey() === 'reviews') {
       if (can('productReview') && !state.queueLoaded) loadQueue()
     } else {
       loadAdminSectionData(currentSectionKey(), { silent: true })

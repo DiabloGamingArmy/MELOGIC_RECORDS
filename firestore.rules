@@ -1120,6 +1120,13 @@ service cloud.firestore {
         && request.resource.data.collaboratorIds == resource.data.collaboratorIds
         && stageProjectDataValid(request.resource.data);
     }
+    match /presence/{userId} {
+      allow read: if signedIn();
+      allow create, update: if isOwner(userId)
+        && request.resource.data.uid == userId;
+      allow delete: if isOwner(userId);
+    }
+
     match /users/{uid} {
       allow read, write: if isOwner(uid);
 
