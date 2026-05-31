@@ -177,6 +177,15 @@ function assertPermission(request = {}, permission = '') {
   throw new HttpsError('permission-denied', 'This admin permission is required.')
 }
 
+function assertAnyPermission(request = {}, permissions = []) {
+  const claims = assertAdmin(request)
+  const allowed = Array.isArray(permissions) && permissions.length
+    ? permissions.some((permission) => permissionIsAllowed(claims, permission))
+    : true
+  if (allowed) return claims
+  throw new HttpsError('permission-denied', 'One of these admin permissions is required.')
+}
+
 function canManageRoles(claims = {}) {
   return permissionIsAllowed(claims, 'roleManage')
 }
@@ -202,6 +211,7 @@ module.exports = {
   PERMISSION_KEYS,
   ROLE_PERMISSIONS,
   assertAdmin,
+  assertAnyPermission,
   assertPermission,
   buildAdminClaims,
   canEditListings,
