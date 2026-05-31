@@ -75,6 +75,7 @@ export function normalizeMarketplaceSellerAgreement(raw = {}) {
     format: String(raw.format || fallback.format).trim().toLowerCase() || fallback.format,
     markdown: String(raw.markdown || raw.body || '').trim(),
     publicPath: String(raw.publicPath || '').trim(),
+    allowStorageFetch: raw.allowStorageFetch === true || raw.storageFetchEnabled === true,
     versionDiscoveryMode: String(raw.versionDiscoveryMode || raw.discoveryMode || '').trim().toLowerCase(),
     storageDiscoveryEnabled: raw.storageDiscoveryEnabled === true || raw.enableStorageDiscovery === true,
     effectiveAt: raw.effectiveAt || null,
@@ -258,7 +259,7 @@ export async function getLatestMarketplaceSellerAgreement() {
       storagePath: fallbackPath,
       activeVersion: fallbackVersion,
       versionDiscoverySource: 'platform-settings',
-      allowStorageFetch: storageDiscoveryEnabled(config)
+      allowStorageFetch: config.allowStorageFetch === true || storageDiscoveryEnabled(config)
     }
   }
 
