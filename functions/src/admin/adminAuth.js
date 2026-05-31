@@ -22,6 +22,9 @@ const ROLE_ALIASES = new Map([
   ['marketplace_reviewer', 'marketplaceReviewer'],
   ['marketplace-reviewer', 'marketplaceReviewer'],
   ['reviewer', 'marketplaceReviewer'],
+  ['listingeditor', 'listingEditor'],
+  ['listing_editor', 'listingEditor'],
+  ['listing-editor', 'listingEditor'],
   ['support', 'support'],
   ['auditor', 'auditor'],
   ['remove', 'remove'],
@@ -56,6 +59,15 @@ const ROLE_PERMISSIONS = {
     roleManage: false,
     auditRead: false
   },
+  listingEditor: {
+    productReview: false,
+    listingEdit: true,
+    userRead: false,
+    userModerate: false,
+    orderSupport: false,
+    roleManage: false,
+    auditRead: false
+  },
   support: {
     productReview: false,
     listingEdit: false,
@@ -76,6 +88,17 @@ const ROLE_PERMISSIONS = {
   }
 }
 
+const ROLE_RANKS = {
+  owner: 100,
+  admin: 80,
+  marketplaceReviewer: 50,
+  listingEditor: 45,
+  support: 40,
+  auditor: 20,
+  remove: 0,
+  '': 0
+}
+
 function cleanString(value = '', max = 240) {
   return String(value ?? '')
     .replace(/[\u0000-\u001F\u007F]/g, '')
@@ -92,6 +115,10 @@ function normalizeRole(value = '') {
 
 function rolePermissions(role = '') {
   return { ...(ROLE_PERMISSIONS[normalizeRole(role)] || {}) }
+}
+
+function roleRank(role = '') {
+  return ROLE_RANKS[normalizeRole(role)] || 0
 }
 
 function buildAdminClaims(role = '') {
@@ -210,6 +237,7 @@ module.exports = {
   ADMIN_CLAIM_KEYS,
   PERMISSION_KEYS,
   ROLE_PERMISSIONS,
+  ROLE_RANKS,
   assertAdmin,
   assertAnyPermission,
   assertPermission,
@@ -224,6 +252,7 @@ module.exports = {
   mergeAdminClaims,
   normalizeRole,
   pickAdminClaims,
+  roleRank,
   rolePermissions,
   stripAdminClaims
 }

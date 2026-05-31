@@ -1779,10 +1779,10 @@ export async function listAdminReports({ limitCount = 50 } = {}) {
   return result?.data || { ok: false, reports: [] }
 }
 
-export async function listAdminOrders({ limitCount = 50 } = {}) {
+export async function listAdminOrders({ limitCount = 50, orderId = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminOrders')
-  const result = await callable({ limit: limitCount })
+  const result = await callable({ limit: limitCount, orderId })
   return result?.data || { ok: false, orders: [] }
 }
 
