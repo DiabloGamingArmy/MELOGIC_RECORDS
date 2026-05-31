@@ -1769,7 +1769,21 @@ export async function getAdminUserProfile({ uid = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'getAdminUserProfile')
   const result = await callable({ uid })
-  return result?.data || { ok: false, user: null, recentProducts: [] }
+  return result?.data || { ok: false, user: null, recentProducts: [], adminNotes: [] }
+}
+
+export async function addAdminUserNote({ uid = '', note = '', severity = 'info', category = 'account' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'addAdminUserNote')
+  const result = await callable({ uid, note, severity, category })
+  return result?.data || { ok: false }
+}
+
+export async function setUserSuspension({ uid = '', suspended = true, reason = '', duration = 'indefinite', note = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'setUserSuspension')
+  const result = await callable({ uid, suspended, reason, duration, note })
+  return result?.data || { ok: false }
 }
 
 export async function listAdminReports({ limitCount = 50 } = {}) {
@@ -1804,7 +1818,7 @@ export async function getAdminOrder({ orderId = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'getAdminOrder')
   const result = await callable({ orderId })
-  return result?.data || { ok: false, order: null, logs: [] }
+  return result?.data || { ok: false, order: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [] }
 }
 
 export async function listAdminLogs({ limitCount = 50 } = {}) {
@@ -1812,6 +1826,13 @@ export async function listAdminLogs({ limitCount = 50 } = {}) {
   const callable = httpsCallable(functions, 'listAdminLogs')
   const result = await callable({ limit: limitCount })
   return result?.data || { ok: false, logs: [] }
+}
+
+export async function getAdminLog({ logId = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'getAdminLog')
+  const result = await callable({ logId })
+  return result?.data || { ok: false, log: null }
 }
 
 export async function listAdminTeam({ limitCount = 50 } = {}) {

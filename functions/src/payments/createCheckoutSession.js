@@ -97,8 +97,8 @@ exports.createCheckoutSession = onCall(
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
-      success_url: `${PUBLIC_SITE_URL.value()}/cart.html?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${PUBLIC_SITE_URL.value()}/cart.html?checkout=cancelled`,
+      success_url: `${PUBLIC_SITE_URL.value()}/account/library?purchase=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${PUBLIC_SITE_URL.value()}/cart?checkout=cancelled`,
       line_items: paidProducts.map(({ productId, product, priceCents }) => ({
         quantity: 1,
         price_data: {
@@ -114,6 +114,7 @@ exports.createCheckoutSession = onCall(
       })),
       metadata: {
         uid,
+        buyerUid: uid,
         productIds: JSON.stringify(paidProductIds),
         orderId: orderRef.id
       }
@@ -122,11 +123,25 @@ exports.createCheckoutSession = onCall(
 
     await orderRef.set({
       uid,
+      buyerUid: uid,
       productIds: paidProductIds,
+      orderId: orderRef.id,
+      items: paidProducts.map(({ productId, product, priceCents }) => ({
+        productId,
+        title: String(product.title || productId),
+        creatorUid: String(product.artistId || ''),
+        amountCents: priceCents,
+        entitlementStatus: 'pending'
+      })),
       status: 'checkout_created',
+      paymentStatus: 'checkout_created',
       stripeSessionId: session.id,
+      checkoutSessionId: session.id,
       amountTotalCents,
+      amountCents: amountTotalCents,
       currency,
+      livemode: session.livemode === true,
+      paymentSource: session.livemode === true ? 'stripe_live' : 'stripe_test',
       createdAt: now,
       updatedAt: now
     })

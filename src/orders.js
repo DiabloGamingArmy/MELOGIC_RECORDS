@@ -4,10 +4,10 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES } from './utils/routes'
-import { accountDateIso, listUserOrders } from './data/accountCommerceService'
+import { accountDateIso, getUserOrder, listUserOrders } from './data/accountCommerceService'
 
 const app = document.querySelector('#app')
-const state = { user: null, loading: true, error: '', orders: [], filter: 'lifetime' }
+const state = { user: null, loading: true, error: '', orders: [], detail: null, supportModal: '', filter: 'lifetime' }
 
 const filters = [
   { key: '7', label: '7 days', days: 7 },
@@ -55,6 +55,12 @@ function withinDays(order, days) {
 function visibleOrders() {
   const filter = filters.find((item) => item.key === state.filter) || filters[4]
   return state.orders.filter((order) => withinDays(order, filter.days))
+}
+
+function currentOrderId() {
+  const path = String(window.location.pathname || '')
+  if (!path.startsWith(`${ROUTES.orders}/`)) return ''
+  return decodeURIComponent(path.slice(`${ROUTES.orders}/`.length).split('/')[0] || '').trim()
 }
 
 function spentInDays(days) {
@@ -111,14 +117,77 @@ function renderOrdersTable() {
             <span>${escapeHtml(formatDate(order.paidAt || order.createdAt))}</span>
             <span><strong>${escapeHtml(productNames)}</strong><small>${escapeHtml(creatorNames || 'Seller details on product pages')}</small></span>
             <span>${money(order.amountTotalCents, order.currency)}</span>
-            <span>${escapeHtml(order.paymentStatus || order.status)}</span>
+            <span>${escapeHtml(order.paymentStatus || order.status)}${order.livemode === false ? '<small>Stripe Test Mode</small>' : ''}</span>
             <span class="account-action-links">
-              <a href="${ROUTES.support}?topic=download-problem&order=${encodeURIComponent(order.id)}">Download problem</a>
-              <a href="${ROUTES.support}?topic=refund&order=${encodeURIComponent(order.id)}">Refund</a>
+              <a href="${ROUTES.orders}/${encodeURIComponent(order.id)}">View Order</a>
             </span>
           </div>
         `
       }).join('')}
+    </div>
+  `
+}
+
+function renderOrderDetail() {
+  const order = state.detail
+  if (state.loading) return '<section class="account-panel"><div class="account-empty-inline">Loading order...</div></section>'
+  if (state.error) return `<section class="account-panel account-empty"><h1>Order unavailable</h1><p>${escapeHtml(state.error)}</p><a class="button button-muted" href="${ROUTES.orders}">Back to Orders</a></section>`
+  if (!order) return `<section class="account-panel account-empty"><h1>Order not found</h1><p>This order was not found for your account.</p><a class="button button-muted" href="${ROUTES.orders}">Back to Orders</a></section>`
+  const items = order.products.length ? order.products : order.productIds.map((productId) => ({ id: productId, title: productId }))
+  return `
+    <section class="account-panel">
+      <div class="account-heading">
+        <div>
+          <p class="eyebrow">Order Detail</p>
+          <h1>${escapeHtml(order.id)}</h1>
+          <p>${escapeHtml(formatDate(order.paidAt || order.createdAt))} - ${escapeHtml(order.paymentStatus || order.status)} - ${money(order.amountTotalCents, order.currency)}</p>
+          ${order.livemode === false ? '<span class="account-mode-badge">Stripe Test Mode</span>' : ''}
+        </div>
+        <a class="button button-muted" href="${ROUTES.orders}">Back to Orders</a>
+      </div>
+      <div class="account-summary-grid">
+        <article><span>Payment</span><strong>${escapeHtml(order.paymentStatus || order.status)}</strong></article>
+        <article><span>Refund</span><strong>${escapeHtml(order.refundStatus || 'None')}</strong></article>
+        <article><span>Products</span><strong>${order.productIds.length || items.length}</strong></article>
+        <article><span>Source</span><strong>${escapeHtml(order.paymentSource || 'Stripe checkout')}</strong></article>
+      </div>
+      <div class="account-detail-grid">
+        <article>
+          <h2>Line Items</h2>
+          ${items.map((product) => `<p><strong>${escapeHtml(product.title || product.id)}</strong><span>${escapeHtml(product.artistName || product.artistDisplayName || '')}</span></p>`).join('') || '<p>No product lines were stored on this order.</p>'}
+        </article>
+        <article>
+          <h2>Entitlement / Library</h2>
+          ${order.libraryItems.length ? order.libraryItems.map((item) => `<p><strong>${escapeHtml(item.productSnapshot?.title || item.productId)}</strong><span>${escapeHtml(item.status || 'active')} - ${escapeHtml(item.source || '')}</span></p>`).join('') : '<p>Library access records were not found for this order yet.</p>'}
+        </article>
+      </div>
+      <section class="account-support-panel">
+        <h2>Support Actions</h2>
+        <div>
+          <button type="button" class="account-row-action" data-order-support="refund">Request Refund</button>
+          <button type="button" class="account-row-action" data-order-support="problem">Report Problem</button>
+          <a href="${ROUTES.support}?topic=orders&order=${encodeURIComponent(order.id)}">Contact Support</a>
+        </div>
+      </section>
+      ${supportModal()}
+    </section>
+  `
+}
+
+function supportModal() {
+  if (!state.supportModal) return ''
+  const label = state.supportModal === 'refund' ? 'Request Refund' : 'Report Problem'
+  return `
+    <div class="account-modal-backdrop">
+      <section class="account-modal" role="dialog" aria-modal="true">
+        <h2>${label}</h2>
+        <p>${state.supportModal === 'refund' ? 'Refund requests are not connected to automatic Stripe refunds yet.' : 'Problem reports route through the support workflow.'}</p>
+        <label><span>Reason</span><textarea data-support-reason placeholder="Describe what happened."></textarea></label>
+        <div>
+          <button type="button" class="account-row-action" data-close-support-modal>Cancel</button>
+          <a class="account-row-action" href="${ROUTES.support}?topic=${state.supportModal === 'refund' ? 'refund' : 'download-problem'}&order=${encodeURIComponent(state.detail?.id || '')}">Continue to Support</a>
+        </div>
+      </section>
     </div>
   `
 }
@@ -155,13 +224,23 @@ function renderOrders() {
 
 function render() {
   document.title = 'Melogic | Orders'
-  app.innerHTML = `${navShell({ currentPage: 'profile' })}<main class="account-page"><div class="account-shell">${state.user ? renderOrders() : renderSignedOut()}</div></main>`
+  app.innerHTML = `${navShell({ currentPage: 'profile' })}<main class="account-page"><div class="account-shell">${state.user ? (currentOrderId() ? renderOrderDetail() : renderOrders()) : renderSignedOut()}</div></main>`
   initShellChrome()
   app.querySelectorAll('[data-order-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       state.filter = button.getAttribute('data-order-filter') || 'lifetime'
       render()
     })
+  })
+  app.querySelectorAll('[data-order-support]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.supportModal = button.getAttribute('data-order-support') || ''
+      render()
+    })
+  })
+  app.querySelector('[data-close-support-modal]')?.addEventListener('click', () => {
+    state.supportModal = ''
+    render()
   })
 }
 
@@ -177,7 +256,14 @@ async function loadOrders(user) {
   state.loading = true
   render()
   try {
-    state.orders = await listUserOrders(user.uid)
+    const orderId = currentOrderId()
+    if (orderId) {
+      state.detail = await getUserOrder(user.uid, orderId)
+      state.orders = []
+    } else {
+      state.orders = await listUserOrders(user.uid)
+      state.detail = null
+    }
   } catch (error) {
     console.error('[orders] load failed', error)
     state.error = 'Orders could not be loaded right now.'

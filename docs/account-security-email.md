@@ -22,6 +22,7 @@ Melogic uses Firebase Authentication password reset emails for account recovery.
 - Firestore rules block client create/delete for account events.
 - Admin Account Hub loads recent account events through `getAdminUserProfile`.
 - Admin accounts see a missing-2FA warning on `/account/security` while MFA remains scaffolded.
+- Admin suspension/unsuspension writes account events so the affected user can see critical account status changes.
 
 ### Scaffolded
 
@@ -31,7 +32,8 @@ Melogic uses Firebase Authentication password reset emails for account recovery.
 ### Pending
 
 - Full TOTP enrollment, disable, and recovery-code callable flow.
-- Account suspension/unsuspension event logging, once those admin actions are implemented.
+- Full account-status enforcement beyond the current stored suspension flag and account event.
+- Full enforcement of suspended-account restrictions across every product, report, checkout, and messaging edge.
 - Login-success logging is intentionally not enabled to avoid noisy writes.
 
 ### Known Risks
@@ -45,6 +47,7 @@ Melogic uses Firebase Authentication password reset emails for account recovery.
 2. Open `/account/security` while signed in and confirm provider, email, MFA, and admin warning states match the account.
 3. Confirm account events load under both `/account/security` and Inbox -> System -> Account.
 4. Confirm Firestore rules allow users to read/update only their own `readAt` markers and block forged create/delete.
+5. Confirm suspended users receive an `account_suspended` event and normal users cannot write suspension fields themselves.
 
 ## Deploy Notes
 

@@ -5,6 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import {
   getAdminSettings,
   getAdminOrder,
+  getAdminLog,
   getAdminReport,
   getAdminUserProfile,
   listActiveStaffPresence,
@@ -16,7 +17,9 @@ import {
   listAdminUsers,
   listMarketplaceReviewQueue,
   reviewProductDecision,
+  addAdminUserNote,
   setAdminUserRole,
+  setUserSuspension,
   updateReportDecision,
   updateAdminSettings,
   uploadSellerAgreementMarkdown
@@ -225,11 +228,11 @@ const state = {
   },
   adminData: {
     products: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
-    users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
+    users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], adminNotes: [], loading: false, loaded: false, error: '', filter: 'all', search: '', actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loaded: false, error: '', filter: 'open', actioning: '' },
-    orders: { items: [], detail: null, logs: [], loading: false, loaded: false, error: '', filter: 'all' },
+    orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loaded: false, error: '', filter: 'all' },
     team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
-    logs: { items: [], detailId: '', loading: false, loaded: false, error: '', filter: 'all', search: '' }
+    logs: { items: [], detail: null, detailId: '', loading: false, loaded: false, error: '', filter: 'all', search: '' }
   },
   settings: {
     data: {},
@@ -245,6 +248,11 @@ const state = {
     open: false,
     decision: '',
     productId: ''
+  },
+  userActionDialog: {
+    open: false,
+    type: '',
+    uid: ''
   }
 }
 
@@ -429,6 +437,13 @@ function selectedProduct() {
   const detailId = reviewDetailProductId()
   if (detailId) return productForId(detailId)
   return filteredProducts().find((product) => product.id === state.selectedId) || filteredProducts()[0] || state.products[0] || null
+}
+
+function isActionableReviewProduct(product = {}) {
+  return product.status === 'review_pending'
+    || product.reviewJobStatus === 'pending_manual_review'
+    || product.moderationStatus === 'pending'
+    || product.moderationStatus === 'review_pending'
 }
 
 function filteredProducts() {
@@ -771,7 +786,7 @@ function activeStaffStrip(staff = []) {
 
 function overviewSnapshotTable(title = '', href = '', headers = [], rows = [], empty = 'No data loaded.') {
   return `
-    <section class="admin-section-slab">
+    <section class="admin-section-slab admin-overview-snapshot">
       <div class="admin-slab-heading">
         <h2>${escapeHtml(title)}</h2>
         ${href ? `<a href="${href}">View all</a>` : ''}
@@ -949,6 +964,23 @@ function accountEventsList(events = []) {
             <small>${escapeHtml(formatDate(event.createdAt))} · ${escapeHtml(humanLabel(event.severity || 'info'))} · ${escapeHtml(event.source || 'system')}</small>
           </div>
           ${event.path ? `<a class="admin-secondary-link" href="${escapeHtml(event.path)}">Open</a>` : ''}
+        </article>
+      `).join('')}
+    </div>
+  `
+}
+
+function adminNotesList(notes = []) {
+  if (!notes.length) return '<article class="admin-empty-state">No admin notes for this account.</article>'
+  return `
+    <div class="admin-account-event-list">
+      ${notes.map((note) => `
+        <article class="admin-account-event">
+          <div>
+            <strong>${escapeHtml(humanLabel(note.category || 'account'))} · ${escapeHtml(humanLabel(note.severity || 'info'))}</strong>
+            <p>${escapeHtml(note.note || '')}</p>
+            <small>${escapeHtml(formatDate(note.createdAt))} · ${escapeHtml(note.createdByEmail || note.createdBy || 'Admin')}</small>
+          </div>
         </article>
       `).join('')}
     </div>
@@ -1619,6 +1651,7 @@ function contentTextSection(product = {}) {
 }
 
 function detailDecisionBar(product = {}) {
+  if (!can('productReview') || !isActionableReviewProduct(product)) return ''
   const busy = state.actionProductId === product.id
   return `
     <section class="admin-decision-bar" aria-label="Review decision actions">
@@ -1667,7 +1700,7 @@ function decisionDialog(product = {}) {
 }
 
 function reviewDetailView(productId) {
-  if (!can('productReview')) return permissionState('productReview')
+  if (!can('productReview') && !can('listingEdit')) return permissionState('productReview')
   const product = productForId(productId)
   if (!state.queueLoaded || state.loadingQueue) {
     return '<article class="admin-empty-state">Loading product review data...</article>'
@@ -1675,13 +1708,14 @@ function reviewDetailView(productId) {
   if (!product) {
     return `
       <article class="admin-empty-state">
-        <strong>Product is not in the current audit queue.</strong>
+        <strong>Product could not be loaded.</strong>
         <span>${escapeHtml(productId)}</span>
         <a class="admin-primary-link" href="${ROUTES.adminReviews}">Back to Audits</a>
       </article>
     `
   }
   const isPublic = product.status === 'published' && product.visibility === 'public'
+  const isActionable = isActionableReviewProduct(product)
   ensureDetailMedia(product.id)
   state.auditTab = auditTabFromHash()
   return `
@@ -1701,6 +1735,12 @@ function reviewDetailView(productId) {
         ${isPublic ? `<a class="admin-secondary-link" href="${productRoute(product)}" target="_blank" rel="noreferrer">${iconSvg('eye')}<span>Public Route</span></a>` : ''}
       </div>
     </header>
+    ${isActionable ? '' : `
+      <article class="admin-status is-info admin-readonly-audit">
+        <strong>Read-only product audit.</strong>
+        <span>This product is not currently pending review. Current state: ${escapeHtml(humanLabel(product.status || 'unknown'))} / ${escapeHtml(humanLabel(product.visibility || 'unknown'))}.</span>
+      </article>
+    `}
     ${contentViewerSection(product)}
     ${contentTextSection(product)}
     ${detailDecisionBar(product)}
@@ -1885,7 +1925,7 @@ function productAdminTable(products = []) {
           <span>${Number(product.assetSummary?.totalFiles || 0)} · ${escapeHtml(formatBytes(product.assetSummary?.totalBytes || 0))}</span>
           <span>${escapeHtml(formatDate(product.updatedAt || product.createdAt))}</span>
           <span class="admin-row-actions">
-            <a class="admin-row-action-button" href="${adminReviewRoute(product.id)}">Audit/View</a>
+            <a class="admin-row-action-button admin-product-action admin-table-action-main" href="${adminReviewRoute(product.id)}">Audit/View</a>
           </span>
         </article>
       `).join('')}
@@ -1963,7 +2003,7 @@ function usersTable(users = []) {
           <span>${Number(user.reportCount || 0)}</span>
           <span>${escapeHtml(formatDate(user.createdAt || user.updatedAt))}${user.lastActiveAt ? `<small>${escapeHtml(formatDate(user.lastActiveAt))}</small>` : ''}</span>
           <span class="admin-row-actions">
-            <a class="admin-row-action-button" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">View</a>
+            <a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">View</a>
           </span>
         </article>
       `).join('')}
@@ -1979,6 +2019,10 @@ function selectedUserPanel() {
   const user = data.profile || data.items.find((item) => item.uid === uid)
   const adminUser = data.adminUser || {}
   const publicProfile = publicProfileRoute({ uid, preview: true })
+  const isSelf = state.currentUser?.uid === uid
+  const canNote = can('userModerate') || can('orderSupport')
+  const canSuspend = can('userModerate')
+  const actioning = data.actioning || ''
   return `
     <header class="admin-page-header admin-hub-header">
       <div class="admin-hub-title">
@@ -1991,9 +2035,9 @@ function selectedUserPanel() {
         </div>
       </div>
       <div class="admin-header-actions">
-        <button type="button" class="admin-secondary-button" disabled title="Messaging from admin is not wired yet.">Message</button>
-        <button type="button" class="admin-secondary-button" disabled title="Suspension callable is not implemented yet.">${user?.suspended ? 'Unsuspend' : 'Suspend'}</button>
-        <button type="button" class="admin-secondary-button" disabled title="Admin notes callable is not implemented yet.">Add Note</button>
+        <button type="button" class="admin-secondary-button" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled title="You cannot open a direct message with yourself."' : ''}>Message</button>
+        <button type="button" class="admin-secondary-button ${user?.suspended ? '' : 'is-danger'}" data-admin-suspension-user="${escapeHtml(uid)}" ${!canSuspend || isSelf || actioning ? `disabled title="${escapeHtml(isSelf ? 'You cannot suspend your own account.' : canSuspend ? 'Account action in progress.' : 'User moderation permission is required.')}"` : ''}>${actioning === 'suspension' ? 'Saving...' : user?.suspended ? 'Unsuspend' : 'Suspend'}</button>
+        <button type="button" class="admin-secondary-button" data-admin-note-user="${escapeHtml(uid)}" ${!canNote || actioning ? `disabled title="${escapeHtml(canNote ? 'Account action in progress.' : 'User moderation or order support permission is required.')}"` : ''}>Add Note</button>
         <a class="admin-secondary-link" href="${publicProfile}" target="_blank" rel="noreferrer">Public Profile</a>
         <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh account">${iconSvg('barChart')}</button>
       </div>
@@ -2017,6 +2061,9 @@ function selectedUserPanel() {
             renderField('Email', user.email),
             renderField('Role', humanLabel(user.role)),
             renderField('Admin role', humanLabel(user.adminRole || adminUser.role)),
+            renderField('Account status', humanLabel(user.accountStatus || (user.suspended ? 'suspended' : 'active'))),
+            renderField('Suspension reason', user.suspensionReason, { wide: true }),
+            renderDateField('Suspension until', user.suspensionUntil),
             renderBooleanField('Verified', user.verified),
             renderDateField('Created at', user.createdAt),
             renderDateField('Last active', user.lastActiveAt)
@@ -2045,10 +2092,11 @@ function selectedUserPanel() {
       <section class="admin-hub-grid">
         <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Reports</h2></div><article class="admin-empty-state">No report detail data is loaded for this account yet.</article></article>
         <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Orders / Library</h2></div><article class="admin-empty-state">No order or entitlement detail data is loaded for this account yet.</article></article>
-        <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Admin Notes</h2><button type="button" class="admin-secondary-button" disabled>Add Note</button></div><article class="admin-empty-state">No admin notes are loaded for this account yet.</article></article>
+        <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Admin Notes</h2><button type="button" class="admin-secondary-button" data-admin-note-user="${escapeHtml(uid)}" ${!canNote ? 'disabled title="User moderation or order support permission is required."' : ''}>Add Note</button></div>${adminNotesList(data.adminNotes || [])}</article>
         <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Timeline / Logs</h2><a href="${ROUTES.adminLogs}" class="admin-secondary-link">Open Logs</a></div><article class="admin-empty-state">Role changes and admin actions are available in Logs.</article></article>
       </section>
-    ` : `<article class="admin-empty-state">No profile found for ${escapeHtml(uid)}.</article>`}
+      ${userActionDialog()}
+    ` : `<article class="admin-empty-state">No profile found for ${escapeHtml(uid)}.</article>${userActionDialog()}`}
   `
 }
 
@@ -2233,6 +2281,9 @@ function orderDetailView(orderId = '') {
   const data = adminData('orders')
   const order = data.detail || data.items.find((item) => item.id === orderId)
   const logs = Array.isArray(data.logs) ? data.logs : []
+  const entitlements = Array.isArray(data.entitlements) ? data.entitlements : []
+  const libraryItems = Array.isArray(data.libraryItems) ? data.libraryItems : []
+  const mismatchWarnings = Array.isArray(data.mismatchWarnings) ? data.mismatchWarnings : []
   if (data.loading) return '<article class="admin-empty-state">Loading order...</article>'
   if (data.error) {
     return `
@@ -2261,13 +2312,17 @@ function orderDetailView(orderId = '') {
         <h1>Order Hub</h1>
         <p>${escapeHtml(order.buyerEmail || order.buyerUid || order.uid || 'Unknown buyer')} · ${escapeHtml(formatMoney(order.amountCents, order.currency))} · ${escapeHtml(humanLabel(order.paymentStatus) || 'Unknown payment')}</p>
         <p class="admin-code-value">${escapeHtml(order.id)} · ${escapeHtml(humanLabel(order.refundStatus) || 'No refund')} · ${escapeHtml(formatDate(order.createdAt))}</p>
+        <div class="admin-heading-badges">
+          ${renderBadge(order.livemode ? 'Stripe Live Mode' : 'Stripe Test Mode', order.livemode ? 'pending' : 'published')}
+          ${renderBadge(humanLabel(order.paymentSource || 'stripe_checkout'))}
+        </div>
       </div>
       <div class="admin-header-actions">
         <button type="button" class="admin-secondary-button" disabled title="Stripe dashboard links are not wired yet.">Open Stripe</button>
         <button type="button" class="admin-secondary-button" disabled title="Refund callable is not implemented yet.">Refund</button>
         <button type="button" class="admin-secondary-button" disabled title="Manual entitlement grant is not implemented yet.">Grant Entitlement</button>
         <button type="button" class="admin-secondary-button" disabled title="Manual entitlement revoke is not implemented yet.">Revoke Entitlement</button>
-        <button type="button" class="admin-secondary-button" disabled title="Buyer messaging is not wired yet.">Message Buyer</button>
+        ${order.buyerUid ? `<a class="admin-secondary-link" href="${ROUTES.inbox}?start=${encodeURIComponent(order.buyerUid)}">Message Buyer</a>` : '<button type="button" class="admin-secondary-button" disabled title="No buyer UID is attached to this order.">Message Buyer</button>'}
         <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh order">${iconSvg('barChart')}</button>
       </div>
     </header>
@@ -2279,6 +2334,7 @@ function orderDetailView(orderId = '') {
       <article class="admin-metric"><span>Items</span><strong>${Number(order.productCount || items.length || 0)}</strong></article>
       <article class="admin-metric"><span>Created</span><strong>${escapeHtml(formatDate(order.createdAt))}</strong></article>
     </section>
+    ${mismatchWarnings.length ? `<section class="admin-section-slab"><div class="admin-slab-heading"><h2>Order Warnings</h2>${renderBadge('Needs Review', 'pending')}</div><ul class="admin-warning-list">${mismatchWarnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul></section>` : ''}
     <section class="admin-hub-grid">
       <article class="admin-section-slab">
         <div class="admin-slab-heading"><h2>Overview</h2>${renderBadge(humanLabel(order.paymentStatus) || 'Unknown')}</div>
@@ -2289,7 +2345,10 @@ function orderDetailView(orderId = '') {
           renderMoneyField('Amount', order.amountCents, order.currency),
           renderField('Currency', order.currency),
           renderField('Payment status', humanLabel(order.paymentStatus)),
+          renderField('Payment source', order.livemode ? 'Stripe Live Mode' : 'Stripe Test Mode'),
+          renderField('Order status', humanLabel(order.status)),
           renderField('Refund status', humanLabel(order.refundStatus)),
+          renderDateField('Paid at', order.paidAt),
           renderDateField('Created at', order.createdAt),
           renderDateField('Updated at', order.updatedAt)
         ])}
@@ -2301,6 +2360,7 @@ function orderDetailView(orderId = '') {
           renderField('Payment intent', order.paymentIntentId, { code: true }),
           renderField('Stripe customer', order.stripeCustomerId, { code: true }),
           renderField('Payment status', humanLabel(order.paymentStatus)),
+          renderField('Livemode', order.livemode ? 'Live' : 'Test'),
           renderMoneyField('Amount', order.amountCents, order.currency)
         ])}
       </article>
@@ -2317,11 +2377,35 @@ function orderDetailView(orderId = '') {
     </section>
     <section class="admin-hub-grid">
       <article class="admin-section-slab">
-        <div class="admin-slab-heading"><h2>Refund / Support</h2></div>
+        <div class="admin-slab-heading"><h2>Entitlements</h2><span class="admin-muted">${entitlements.filter((row) => row.exists).length} found</span></div>
+        ${adminSimpleTable('Entitlements', ['Product', 'Status', 'Source', 'Granted', 'Revoked'], entitlements.map((row) => [
+          htmlCell(`<strong>${escapeHtml(row.productSnapshot?.title || row.productId)}</strong><small class="admin-code-value">${escapeHtml(row.productId || '')}</small>`),
+          humanLabel(row.exists ? row.status : 'missing'),
+          humanLabel(row.source),
+          formatDate(row.createdAt),
+          formatDate(row.revokedAt)
+        ]), { className: 'is-order-items', emptyTitle: 'No entitlement rows.', emptyBody: 'No buyer entitlement records were found for the products on this order.' })}
+      </article>
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Library Access</h2><span class="admin-muted">${libraryItems.filter((row) => row.exists).length} found</span></div>
+        ${adminSimpleTable('Library Items', ['Product', 'Status', 'Source', 'Acquired', 'Order'], libraryItems.map((row) => [
+          htmlCell(`<strong>${escapeHtml(row.productSnapshot?.title || row.productId)}</strong><small class="admin-code-value">${escapeHtml(row.productId || '')}</small>`),
+          humanLabel(row.exists ? row.status : 'missing'),
+          humanLabel(row.source),
+          formatDate(row.createdAt),
+          row.orderId
+        ]), { className: 'is-order-items', emptyTitle: 'No library rows.', emptyBody: 'No buyer library item records were found for the products on this order.' })}
+      </article>
+    </section>
+    <section class="admin-hub-grid">
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Refund / Support</h2><span class="admin-muted">Scaffolded</span></div>
         ${renderKeyValueGrid([
           renderField('Refund status', humanLabel(order.refundStatus)),
           renderField('Refund reason', order.refundReason, { wide: true }),
-          renderField('Support notes', order.supportNotes, { wide: true })
+          renderField('Support notes', order.supportNotes, { wide: true }),
+          renderField('Refund action', 'Not connected yet. Do not issue Stripe refunds from this page.', { wide: true }),
+          renderField('Grant/Revoke action', 'Manual entitlement grant/revoke callables are pending.', { wide: true })
         ])}
       </article>
       <article class="admin-section-slab">
@@ -2369,7 +2453,7 @@ function ordersView() {
       humanLabel(order.paymentStatus),
       humanLabel(order.refundStatus),
       formatDate(order.createdAt),
-      htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
+      htmlCell(`<a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
     ]), {
       className: 'is-orders',
       emptyTitle: 'No orders yet.',
@@ -2395,7 +2479,7 @@ function adminTeamTable(team = []) {
           <span class="admin-code-value">${escapeHtml(member.addedBy || member.updatedBy || '')}</span>
           <span>${escapeHtml(formatDate(member.updatedAt || member.createdAt))}</span>
           <span class="admin-row-actions">
-            <a class="admin-row-action-button" href="${ROUTES.adminTeam}/${encodeURIComponent(member.uid)}">Audit/View</a>
+            <a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminTeam}/${encodeURIComponent(member.uid)}">Audit/View</a>
           </span>
         </article>
       `).join('')}
@@ -2496,6 +2580,7 @@ function logsView() {
   const data = adminData('logs')
   const loading = adminBusyState(data)
   const detailId = adminLogDetailId() || data.detailId
+  if (detailId) return logDetailView(detailId)
   return `
     ${adminPageHeader({ eyebrow: 'Audit', title: 'Logs', refreshLabel: 'Refresh logs' })}
     <section class="admin-section-slab">
@@ -2505,7 +2590,6 @@ function logsView() {
       </div>
     </section>
     ${loading || logsTable(data.items)}
-    ${logDetailModal(detailId)}
   `
 }
 
@@ -2523,12 +2607,97 @@ function logsTable(logs = []) {
       htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetId || '')}</code>`),
       log.reason,
       htmlCell(`<code class="admin-code-value">${escapeHtml(log.targetPath || '')}</code>`),
-      htmlCell(`<button type="button" class="admin-row-action-button" data-open-log-detail="${escapeHtml(log.id)}">View Details</button>`)
+      htmlCell(`<a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminLogs}/${encodeURIComponent(log.id)}">View Details</a>`)
     ]), {
       className: 'is-logs',
       emptyTitle: 'No admin logs found.',
       emptyBody: 'Admin role changes, review decisions, and settings changes will appear here.'
     })
+}
+
+function logDetailView(logId = '') {
+  const data = adminData('logs')
+  if (data.loading) return '<article class="admin-empty-state">Loading log detail...</article>'
+  if (data.error) {
+    return `
+      <article class="admin-empty-state">
+        <strong>Could not load log.</strong>
+        <span>${escapeHtml(data.error)}</span>
+        <a class="admin-primary-link" href="${ROUTES.adminLogs}">Back to Logs</a>
+      </article>
+    `
+  }
+  if (!data.loaded) return '<article class="admin-empty-state">Loading log detail...</article>'
+  const log = data.detail || data.items.find((item) => item.id === logId)
+  if (!log) {
+    return `
+      <article class="admin-empty-state">
+        <strong>Log not found.</strong>
+        <span>${escapeHtml(logId)}</span>
+        <a class="admin-primary-link" href="${ROUTES.adminLogs}">Back to Logs</a>
+      </article>
+    `
+  }
+  const targetHref = logTargetLink(log)
+  return `
+    <header class="admin-page-header admin-hub-header">
+      <div>
+        <p class="eyebrow">Audit</p>
+        <h1>Log Detail</h1>
+        <p>${escapeHtml(humanLabel(log.action || 'action'))} · ${escapeHtml(formatDate(log.createdAt))}</p>
+        <small class="admin-code-value">${escapeHtml(log.id)}</small>
+      </div>
+      <div class="admin-header-actions">
+        ${targetHref ? `<a class="admin-secondary-link" href="${targetHref}">Open Target</a>` : '<button type="button" class="admin-secondary-button" disabled title="No target route is known for this log.">Open Target</button>'}
+        <button type="button" class="admin-secondary-button" data-copy-value="${escapeHtml(log.id)}">Copy Log ID</button>
+        <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh log">${iconSvg('barChart')}</button>
+      </div>
+    </header>
+    <a class="admin-secondary-link admin-back-link" href="${ROUTES.adminLogs}">${iconSvg('arrowLeft')}<span>Back to Logs</span></a>
+    <section class="admin-hub-grid">
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Summary</h2>${renderBadge(humanLabel(log.action || 'action'))}</div>
+        ${renderKeyValueGrid([
+          renderField('Log ID', log.id, { code: true }),
+          renderDateField('Created at', log.createdAt),
+          renderField('Action', humanLabel(log.action)),
+          renderField('Actor', log.actorEmail || log.actorUid),
+          renderField('Actor UID', log.actorUid, { code: true }),
+          renderField('Actor role', humanLabel(log.actorRole)),
+          renderField('Target type', humanLabel(log.targetType)),
+          renderField('Target ID', log.targetId, { code: true }),
+          renderField('Target path', log.targetPath, { code: true }),
+          renderField('Reason', log.reason, { wide: true }),
+          renderField('Summary', log.summary, { wide: true })
+        ])}
+      </article>
+      <article class="admin-section-slab">
+        <div class="admin-slab-heading"><h2>Actor</h2>${log.actorUid ? `<a href="${ROUTES.adminUsers}/${encodeURIComponent(log.actorUid)}">Account Hub</a>` : ''}</div>
+        ${renderKeyValueGrid([
+          renderField('Actor email/name', log.actorEmail),
+          renderField('Actor UID', log.actorUid, { code: true }),
+          renderField('Actor role', humanLabel(log.actorRole))
+        ])}
+      </article>
+    </section>
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading"><h2>Target</h2>${targetHref ? `<a href="${targetHref}">Open Target</a>` : '<span class="admin-muted">No route available</span>'}</div>
+      ${renderKeyValueGrid([
+        renderField('Target type', humanLabel(log.targetType)),
+        renderField('Target ID', log.targetId, { code: true }),
+        renderField('Target path', log.targetPath, { code: true })
+      ])}
+    </section>
+    <section class="admin-hub-grid">
+      <details class="admin-section-slab admin-technical-details"><summary>Before</summary><pre class="admin-json-block">${escapeHtml(JSON.stringify(log.before || null, null, 2))}</pre></details>
+      <details class="admin-section-slab admin-technical-details"><summary>After</summary><pre class="admin-json-block">${escapeHtml(JSON.stringify(log.after || null, null, 2))}</pre></details>
+    </section>
+    <details class="admin-section-slab admin-technical-details">
+      <summary>Raw Log JSON</summary>
+      <button type="button" class="admin-secondary-button" data-copy-value="${escapeHtml(JSON.stringify(log, null, 2))}">Copy Raw JSON</button>
+      <pre class="admin-json-block">${escapeHtml(JSON.stringify(log, null, 2))}</pre>
+    </details>
+  `
 }
 
 function logTargetLink(log = {}) {
@@ -2590,6 +2759,60 @@ function logDetailModal(logId = '') {
       </section>
     </div>
   `
+}
+
+function userActionDialog() {
+  const dialog = state.userActionDialog || {}
+  if (!dialog.open || !dialog.uid) return ''
+  const user = state.adminData.users.profile || {}
+  const suspended = user.suspended === true
+  if (dialog.type === 'note') {
+    return `
+      <div class="admin-modal-backdrop" role="presentation">
+        <section class="admin-decision-modal" role="dialog" aria-modal="true" aria-labelledby="admin-note-title">
+          <header>
+            <h2 id="admin-note-title">Add Admin Note</h2>
+            <button type="button" class="admin-icon-button" data-close-user-action title="Close">${iconSvg('x')}</button>
+          </header>
+          <form data-admin-note-form>
+            <input type="hidden" data-note-uid value="${escapeHtml(dialog.uid)}" />
+            <label><span>Note</span><textarea data-note-body required maxlength="2400" placeholder="Write a concise internal note."></textarea></label>
+            <label><span>Severity</span><select data-note-severity><option value="info">Info</option><option value="warning">Warning</option><option value="critical">Critical</option></select></label>
+            <label><span>Category</span><select data-note-category><option value="account">Account</option><option value="support">Support</option><option value="moderation">Moderation</option><option value="security">Security</option><option value="marketplace">Marketplace</option></select></label>
+            <div class="admin-modal-actions">
+              <button type="button" class="admin-secondary-button" data-close-user-action>Cancel</button>
+              <button type="submit" class="admin-primary-link" ${state.adminData.users.actioning ? 'disabled' : ''}>${state.adminData.users.actioning === 'note' ? 'Saving...' : 'Save Note'}</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `
+  }
+  if (dialog.type === 'suspension') {
+    return `
+      <div class="admin-modal-backdrop" role="presentation">
+        <section class="admin-decision-modal" role="dialog" aria-modal="true" aria-labelledby="admin-suspension-title">
+          <header>
+            <h2 id="admin-suspension-title">${suspended ? 'Unsuspend Account' : 'Suspend Account'}</h2>
+            <button type="button" class="admin-icon-button" data-close-user-action title="Close">${iconSvg('x')}</button>
+          </header>
+          <form data-admin-suspension-form>
+            <input type="hidden" data-suspension-uid value="${escapeHtml(dialog.uid)}" />
+            <label><span>Reason</span><textarea data-suspension-reason required maxlength="1200" placeholder="Required reason for the account action."></textarea></label>
+            ${suspended ? '' : '<label><span>Duration</span><select data-suspension-duration><option value="indefinite">Indefinite</option><option value="24h">24 hours</option><option value="7d">7 days</option><option value="30d">30 days</option></select></label>'}
+            <label><span>Internal note</span><textarea data-suspension-note maxlength="1200" placeholder="Optional internal context."></textarea></label>
+            ${suspended ? '' : '<label class="admin-checkbox-row"><input type="checkbox" data-suspension-confirm required /><span>I understand this may restrict this account.</span></label>'}
+            <p class="admin-muted">Suspension status is stored now. Enforcement hooks for every product, report, and messaging edge remain a separate hardening item.</p>
+            <div class="admin-modal-actions">
+              <button type="button" class="admin-secondary-button" data-close-user-action>Cancel</button>
+              <button type="submit" class="admin-primary-link ${suspended ? '' : 'is-danger'}" ${state.adminData.users.actioning ? 'disabled' : ''}>${state.adminData.users.actioning === 'suspension' ? 'Saving...' : suspended ? 'Unsuspend Account' : 'Suspend Account'}</button>
+            </div>
+          </form>
+        </section>
+      </div>
+    `
+  }
+  return ''
 }
 
 function settingsView() {
@@ -2734,17 +2957,28 @@ function render() {
 }
 
 async function loadQueue({ silent = false } = {}) {
-  if (!can('productReview')) return
+  const detailId = reviewDetailProductId()
+  const canLoadQueue = can('productReview')
+  const canLoadReadOnlyDetail = can('listingEdit') && Boolean(detailId)
+  if (!canLoadQueue && !canLoadReadOnlyDetail) return
   state.loadingQueue = !silent
   state.error = ''
   render()
   try {
-    const result = await listMarketplaceReviewQueue({ limitCount: 100 })
-    state.products = result.products || []
+    if (canLoadQueue) {
+      const result = await listMarketplaceReviewQueue({ limitCount: 100 })
+      state.products = result.products || []
+    } else {
+      state.products = []
+    }
+    if (detailId && !state.products.some((product) => product.id === detailId)) {
+      const detailResult = await listAdminProducts({ productId: detailId }).catch((error) => ({ error, products: [] }))
+      const detailProduct = detailResult.products?.[0]
+      if (detailProduct) state.products = [detailProduct, ...state.products]
+    }
     state.queueLoaded = true
     await hydrateReviewMedia(state.products, { detailProductId: reviewDetailProductId() })
     const visible = filteredProducts()
-    const detailId = reviewDetailProductId()
     if (detailId) {
       state.selectedId = detailId
     } else if (!visible.some((product) => product.id === state.selectedId)) {
@@ -2809,12 +3043,14 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.adminUser = result.adminUser || null
         state.adminData.users.recentProducts = result.recentProducts || []
         state.adminData.users.accountEvents = result.accountEvents || []
+        state.adminData.users.adminNotes = result.adminNotes || []
         await hydrateReviewMedia(state.adminData.users.recentProducts)
       } else {
         state.adminData.users.profile = null
         state.adminData.users.adminUser = null
         state.adminData.users.recentProducts = []
         state.adminData.users.accountEvents = []
+        state.adminData.users.adminNotes = []
       }
       const result = await listAdminUsers({ limitCount: 50, search: data.search, uid: detailUid || '' })
       state.adminData.users.items = result.users || []
@@ -2841,12 +3077,18 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         const result = await getAdminOrder({ orderId })
         state.adminData.orders.detail = result.order || null
         state.adminData.orders.logs = result.logs || []
+        state.adminData.orders.entitlements = result.entitlements || []
+        state.adminData.orders.libraryItems = result.libraryItems || []
+        state.adminData.orders.mismatchWarnings = result.mismatchWarnings || []
         state.adminData.orders.items = result.order ? [result.order] : []
       } else {
         const result = await listAdminOrders({ limitCount: 50 })
         state.adminData.orders.items = result.orders || []
         state.adminData.orders.detail = null
         state.adminData.orders.logs = []
+        state.adminData.orders.entitlements = []
+        state.adminData.orders.libraryItems = []
+        state.adminData.orders.mismatchWarnings = []
       }
     },
     team: async () => {
@@ -2865,8 +3107,18 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       }
     },
     logs: async () => {
-      const result = await listAdminLogs({ limitCount: 50 })
-      state.adminData.logs.items = result.logs || []
+      const logId = adminLogDetailId()
+      if (logId) {
+        const result = await getAdminLog({ logId })
+        state.adminData.logs.detail = result.log || null
+        state.adminData.logs.detailId = logId
+        state.adminData.logs.items = result.log ? [result.log] : []
+      } else {
+        const result = await listAdminLogs({ limitCount: 50 })
+        state.adminData.logs.items = result.logs || []
+        state.adminData.logs.detail = null
+        state.adminData.logs.detailId = ''
+      }
     },
     settings: async () => {
       const result = await getAdminSettings()
@@ -3112,6 +3364,90 @@ async function handleReportAction(action = '') {
   }
 }
 
+function openUserActionDialog(type = '', uid = '') {
+  if (!uid || !['note', 'suspension'].includes(type)) return
+  state.userActionDialog = { open: true, type, uid }
+  state.error = ''
+  state.message = ''
+  render()
+  app.querySelector(type === 'note' ? '[data-note-body]' : '[data-suspension-reason]')?.focus()
+}
+
+function closeUserActionDialog() {
+  state.userActionDialog = { open: false, type: '', uid: '' }
+  state.adminData.users.actioning = ''
+  render()
+}
+
+function openAdminMessage(uid = '') {
+  const targetUid = String(uid || '').trim()
+  if (!targetUid) return
+  if (targetUid === state.currentUser?.uid) {
+    state.error = 'You cannot open a direct message with yourself.'
+    render()
+    return
+  }
+  window.location.assign(`${ROUTES.inbox}?start=${encodeURIComponent(targetUid)}`)
+}
+
+async function submitAdminNote(form) {
+  const uid = form.querySelector('[data-note-uid]')?.value || ''
+  const note = form.querySelector('[data-note-body]')?.value || ''
+  const severity = form.querySelector('[data-note-severity]')?.value || 'info'
+  const category = form.querySelector('[data-note-category]')?.value || 'account'
+  if (!note.trim()) {
+    state.error = 'Admin note is required.'
+    render()
+    return
+  }
+  state.adminData.users.actioning = 'note'
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    const result = await addAdminUserNote({ uid, note, severity, category })
+    state.adminData.users.adminNotes = [result.note, ...(state.adminData.users.adminNotes || [])].filter(Boolean)
+    state.userActionDialog = { open: false, type: '', uid: '' }
+    state.message = 'Admin note saved.'
+    await loadAdminSectionData('users', { silent: true })
+  } catch (error) {
+    console.warn('[admin] add note failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = error?.message || 'Could not save admin note.'
+  } finally {
+    state.adminData.users.actioning = ''
+    render()
+  }
+}
+
+async function submitUserSuspension(form) {
+  const uid = form.querySelector('[data-suspension-uid]')?.value || ''
+  const reason = form.querySelector('[data-suspension-reason]')?.value || ''
+  const duration = form.querySelector('[data-suspension-duration]')?.value || 'indefinite'
+  const note = form.querySelector('[data-suspension-note]')?.value || ''
+  const currentlySuspended = state.adminData.users.profile?.suspended === true
+  if (!reason.trim()) {
+    state.error = 'A reason is required.'
+    render()
+    return
+  }
+  state.adminData.users.actioning = 'suspension'
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    const result = await setUserSuspension({ uid, suspended: !currentlySuspended, reason, duration, note })
+    state.userActionDialog = { open: false, type: '', uid: '' }
+    state.message = result.suspended ? 'Account suspended.' : 'Account unsuspended.'
+    await loadAdminSectionData('users', { silent: true })
+  } catch (error) {
+    console.warn('[admin] suspension update failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = error?.message || 'Could not update suspension status.'
+  } finally {
+    state.adminData.users.actioning = ''
+    render()
+  }
+}
+
 function navigateToReviewProduct(productId) {
   const target = adminReviewRoute(productId)
   if (window.location.pathname !== target) window.history.pushState({}, '', target)
@@ -3174,6 +3510,26 @@ function bindEvents() {
       if (window.location.pathname.startsWith(`${ROUTES.adminLogs}/`)) window.history.pushState({}, '', ROUTES.adminLogs)
       render()
     })
+  })
+  app.querySelectorAll('[data-admin-message-user]').forEach((button) => {
+    button.addEventListener('click', () => openAdminMessage(button.getAttribute('data-admin-message-user') || ''))
+  })
+  app.querySelectorAll('[data-admin-note-user]').forEach((button) => {
+    button.addEventListener('click', () => openUserActionDialog('note', button.getAttribute('data-admin-note-user') || ''))
+  })
+  app.querySelectorAll('[data-admin-suspension-user]').forEach((button) => {
+    button.addEventListener('click', () => openUserActionDialog('suspension', button.getAttribute('data-admin-suspension-user') || ''))
+  })
+  app.querySelectorAll('[data-close-user-action]').forEach((button) => {
+    button.addEventListener('click', closeUserActionDialog)
+  })
+  app.querySelector('[data-admin-note-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitAdminNote(event.currentTarget)
+  })
+  app.querySelector('[data-admin-suspension-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitUserSuspension(event.currentTarget)
   })
   app.querySelectorAll('[data-report-action]').forEach((button) => {
     button.addEventListener('click', () => handleReportAction(button.getAttribute('data-report-action') || ''))
@@ -3273,7 +3629,7 @@ async function init() {
   if (state.section === 'dashboard') {
     if (can('productReview')) await loadQueue()
     await loadAdminOverview()
-  } else if (can('productReview') && state.section === 'reviews') {
+  } else if ((can('productReview') || can('listingEdit')) && state.section === 'reviews') {
     await loadQueue()
   } else {
     await loadAdminSectionData(state.section)
@@ -3287,7 +3643,7 @@ window.addEventListener('popstate', () => {
       if (can('productReview') && !state.queueLoaded) loadQueue()
       if (!state.overview.loaded) loadAdminOverview({ silent: true })
     } else if (currentSectionKey() === 'reviews') {
-      if (can('productReview') && !state.queueLoaded) loadQueue()
+      if ((can('productReview') || can('listingEdit')) && !state.queueLoaded) loadQueue()
     } else {
       loadAdminSectionData(currentSectionKey(), { silent: true })
     }

@@ -94,12 +94,22 @@
       },
       {
         "source": "/library.html",
-        "destination": "/library",
+        "destination": "/account/library",
         "type": 301
       },
       {
         "source": "/orders.html",
-        "destination": "/orders",
+        "destination": "/account/orders",
+        "type": 301
+      },
+      {
+        "source": "/library",
+        "destination": "/account/library",
+        "type": 301
+      },
+      {
+        "source": "/orders",
+        "destination": "/account/orders",
         "type": 301
       },
       {
@@ -229,6 +239,18 @@
       {
         "source": "/account/security",
         "destination": "/account-security.html"
+      },
+      {
+        "source": "/account/library",
+        "destination": "/library.html"
+      },
+      {
+        "source": "/account/orders",
+        "destination": "/orders.html"
+      },
+      {
+        "source": "/account/orders/**",
+        "destination": "/orders.html"
       },
       {
         "source": "/profile/public",
