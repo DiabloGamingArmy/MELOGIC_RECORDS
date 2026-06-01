@@ -238,6 +238,122 @@ export function createDefaultStagePlan({ id = '', name = 'Blank Stage', version 
   }
 }
 
+function positionedObject(id, name, category, position, dimensions, metadata = {}) {
+  return {
+    id,
+    kind: metadata.kind || metadata.type || category,
+    type: metadata.type || category,
+    category,
+    name,
+    position,
+    rotation: { x: 0, y: 0, z: 0 },
+    dimensions,
+    label: name,
+    locked: false,
+    protected: false,
+    selectable: true,
+    visible: true,
+    notes: metadata.notes || '',
+    metadata
+  }
+}
+
+function applyStageDimensions(plan, { width, depth, deckHeight = 4, unit = 'ft' } = {}) {
+  plan.stageDimensions = { width, depth, deckHeight, unit }
+  const deck = plan.objects.find((object) => object.id === 'stage-deck')
+  if (deck) {
+    deck.dimensions = { ...(deck.dimensions || {}), width, depth, height: Math.max(0.2, deckHeight * 0.25) }
+    deck.position = { ...(deck.position || {}), y: Math.max(0.1, deckHeight * 0.125) }
+  }
+}
+
+function audioInput(channel, source, micDi = '', location = '', monitor = '') {
+  return { id: `in-${channel}`, channel, source, micDi, stand: micDi.includes('DI') ? 'N/A' : 'Boom', patch: '', monitor, monitorSend: monitor, location, stageLocation: location, linkedObjectId: '', notes: '' }
+}
+
+function fixture(id, label, position, address = 1, type = 'LED PAR') {
+  return { id, label, name: label, type, fixtureType: type, mode: 'Standard', universe: 1, address, position, rotation: { x: 0, y: 0, z: 0 }, beamAngle: 32, color: '#61dcff', target: 'Stage center', linkedObjectId: '', trussAssignment: '', visible: true, notes: '' }
+}
+
+export function createStageTemplatePlan({ id = '', name = 'Blank Stage', stageType = 'Blank Stage', version = 1 } = {}) {
+  const plan = createDefaultStagePlan({ id, name, version })
+  plan.stageType = stageType
+  plan.venue = { ...plan.venue, name: stageType, roomType: stageType }
+
+  if (stageType === 'Band Performance') {
+    applyStageDimensions(plan, { width: 32, depth: 24, deckHeight: 4 })
+    plan.objects.push(
+      positionedObject('drum-riser', 'Drum Riser', 'backline', { x: 0, y: 1.5, z: -6 }, { width: 8, depth: 8, height: 1 }, { type: 'drum-riser' }),
+      positionedObject('lead-vocal', 'Lead Vocal Mic', 'audio', { x: 0, y: 2.4, z: 7 }, { width: 0.5, depth: 0.5, height: 4.5 }, { type: 'microphone' }),
+      positionedObject('guitar-amp', 'Guitar Amp', 'backline', { x: -7, y: 2, z: -2 }, { width: 2.4, depth: 1.2, height: 2.2 }, { type: 'guitar-amp' }),
+      positionedObject('bass-di', 'Bass DI', 'audio', { x: 7, y: 1.2, z: -2 }, { width: 1, depth: 0.8, height: 0.4 }, { type: 'bass-di' }),
+      positionedObject('wedge-lead', 'Lead Vocal Wedge', 'audio', { x: 0, y: 1.3, z: 10 }, { width: 2.2, depth: 1.4, height: 0.8 }, { type: 'wedge-monitor' })
+    )
+    plan.audioInputs = [
+      audioInput(1, 'Kick', 'Beta 52', 'Drums', 'Mix 1'),
+      audioInput(2, 'Snare', 'SM57', 'Drums', 'Mix 1'),
+      audioInput(3, 'Guitar Amp', 'SM57', 'USL', 'Mix 2'),
+      audioInput(4, 'Bass DI', 'DI', 'USR', 'Mix 2'),
+      audioInput(5, 'Lead Vocal', 'Wireless Handheld', 'DSC', 'Mix 1')
+    ]
+  } else if (stageType === 'DJ / EDM Stage') {
+    applyStageDimensions(plan, { width: 36, depth: 20, deckHeight: 5 })
+    plan.objects.push(
+      positionedObject('dj-booth', 'DJ Booth', 'backline', { x: 0, y: 2, z: -2 }, { width: 10, depth: 3, height: 3 }, { type: 'dj-booth' }),
+      positionedObject('led-wall', 'LED Wall', 'video', { x: 0, y: 5, z: -10.5 }, { width: 18, depth: 0.4, height: 8 }, { type: 'led-wall' }),
+      positionedObject('sub-left', 'Subwoofer Left', 'audio', { x: -7, y: 1, z: 10 }, { width: 3, depth: 2.5, height: 1.4 }, { type: 'subwoofer' }),
+      positionedObject('sub-right', 'Subwoofer Right', 'audio', { x: 7, y: 1, z: 10 }, { width: 3, depth: 2.5, height: 1.4 }, { type: 'subwoofer' })
+    )
+    plan.audioInputs = [audioInput(1, 'DJ Left', 'DI', 'Booth'), audioInput(2, 'DJ Right', 'DI', 'Booth'), audioInput(3, 'MC Mic', 'Wireless Handheld', 'DSC')]
+    plan.fixtures = [fixture('fx-1', 'Mover Left', { x: -10, y: 8, z: -8 }, 1, 'Moving Head'), fixture('fx-2', 'Mover Right', { x: 10, y: 8, z: -8 }, 25, 'Moving Head')]
+    plan.video = [{ id: 'vid-1', label: 'LED Wall', name: 'LED Wall', type: 'led-wall', dimensions: { width: 18, depth: 0.4, height: 8 }, width: 18, height: 8, position: { x: 0, y: 5, z: -10.5 }, inputSource: 'VJ Playback', aspectRatio: '16:9', resolution: '1920x1080', linkedObjectId: 'led-wall', notes: '' }]
+  } else if (stageType === 'Church Service') {
+    applyStageDimensions(plan, { width: 40, depth: 24, deckHeight: 3 })
+    plan.objects.push(
+      positionedObject('lectern', 'Lectern', 'backline', { x: 0, y: 2.1, z: 4 }, { width: 2.2, depth: 1.4, height: 3 }, { type: 'lectern' }),
+      positionedObject('keys', 'Keys', 'backline', { x: -9, y: 1.4, z: -2 }, { width: 5, depth: 2, height: 1.4 }, { type: 'keyboard' }),
+      positionedObject('choir-riser', 'Choir Riser', 'backline', { x: 0, y: 1.7, z: -8 }, { width: 22, depth: 5, height: 1.4 }, { type: 'riser' }),
+      positionedObject('camera-center', 'Center Camera', 'video', { x: 0, y: 2, z: 20 }, { width: 1, depth: 1, height: 2 }, { type: 'camera' })
+    )
+    plan.audioInputs = [audioInput(1, 'Pastor Mic', 'Wireless Lav', 'Lectern'), audioInput(2, 'Lectern Mic', 'Gooseneck', 'Lectern'), audioInput(3, 'Keys L', 'DI', 'USL'), audioInput(4, 'Keys R', 'DI', 'USL'), audioInput(5, 'Choir L', 'Condenser', 'Choir'), audioInput(6, 'Choir R', 'Condenser', 'Choir')]
+    plan.video = [{ id: 'vid-1', label: 'Program Camera', name: 'Program Camera', type: 'camera', dimensions: { width: 1, depth: 1, height: 2 }, width: 1, height: 2, position: { x: 0, y: 2, z: 20 }, inputSource: 'Camera 1', aspectRatio: '16:9', resolution: '1080p', linkedObjectId: 'camera-center', notes: '' }]
+  } else if (stageType === 'School Auditorium') {
+    applyStageDimensions(plan, { width: 36, depth: 22, deckHeight: 3 })
+    plan.objects.push(
+      positionedObject('podium', 'Podium', 'backline', { x: 0, y: 2, z: 5 }, { width: 2, depth: 1.4, height: 3 }, { type: 'podium' }),
+      positionedObject('choir-risers', 'Choir Risers', 'backline', { x: 0, y: 1.7, z: -6 }, { width: 24, depth: 6, height: 1.2 }, { type: 'riser' }),
+      positionedObject('projector-screen', 'Projection Screen', 'video', { x: 0, y: 5, z: -10.5 }, { width: 14, depth: 0.35, height: 7 }, { type: 'screen' })
+    )
+    plan.audioInputs = [audioInput(1, 'Podium Mic', 'Gooseneck', 'DSC'), audioInput(2, 'Playback L', 'DI', 'FOH'), audioInput(3, 'Playback R', 'DI', 'FOH')]
+  } else if (stageType === 'Livestream Setup') {
+    applyStageDimensions(plan, { width: 24, depth: 18, deckHeight: 1 })
+    plan.objects.push(
+      positionedObject('host-desk', 'Host Desk', 'backline', { x: 0, y: 1.3, z: 1 }, { width: 8, depth: 2.4, height: 2 }, { type: 'desk' }),
+      positionedObject('key-light-left', 'Key Light Left', 'lighting', { x: -6, y: 6, z: 6 }, { width: 1, depth: 1, height: 1 }, { type: 'soft-light' }),
+      positionedObject('key-light-right', 'Key Light Right', 'lighting', { x: 6, y: 6, z: 6 }, { width: 1, depth: 1, height: 1 }, { type: 'soft-light' }),
+      positionedObject('camera-a', 'Camera A', 'video', { x: 0, y: 1.7, z: 10 }, { width: 1, depth: 1, height: 2 }, { type: 'camera' }),
+      positionedObject('background', 'Background Wall', 'video', { x: 0, y: 3, z: -7.5 }, { width: 16, depth: 0.3, height: 7 }, { type: 'backdrop' })
+    )
+    plan.audioInputs = [audioInput(1, 'Host Lav', 'Wireless Lav', 'Desk'), audioInput(2, 'Guest Lav', 'Wireless Lav', 'Desk')]
+    plan.video = [{ id: 'vid-1', label: 'Camera A', name: 'Camera A', type: 'camera', dimensions: { width: 1, depth: 1, height: 2 }, width: 1, height: 2, position: { x: 0, y: 1.7, z: 10 }, inputSource: 'Camera A', aspectRatio: '16:9', resolution: '1080p', linkedObjectId: 'camera-a', notes: '' }]
+  } else if (stageType === 'Festival Stage') {
+    applyStageDimensions(plan, { width: 60, depth: 40, deckHeight: 5 })
+    plan.objects.push(
+      positionedObject('main-truss', 'Upstage Truss', 'rigging', { x: 0, y: 10, z: -16 }, { width: 44, depth: 0.5, height: 0.5 }, { type: 'truss' }),
+      positionedObject('led-wall', 'Center LED Wall', 'video', { x: 0, y: 7, z: -18.5 }, { width: 28, depth: 0.4, height: 12 }, { type: 'led-wall' }),
+      positionedObject('drum-riser', 'Drum Riser', 'backline', { x: 0, y: 1.8, z: -8 }, { width: 10, depth: 8, height: 1.2 }, { type: 'riser' }),
+      positionedObject('foh', 'FOH Position', 'venue', { x: 0, y: 0.2, z: 42 }, { width: 8, depth: 6, height: 0.2 }, { type: 'foh-position' })
+    )
+    plan.fixtures = [fixture('fx-1', 'Mover 1', { x: -18, y: 10, z: -16 }, 1, 'Moving Head'), fixture('fx-2', 'Mover 2', { x: -6, y: 10, z: -16 }, 25, 'Moving Head'), fixture('fx-3', 'Mover 3', { x: 6, y: 10, z: -16 }, 49, 'Moving Head'), fixture('fx-4', 'Mover 4', { x: 18, y: 10, z: -16 }, 73, 'Moving Head')]
+    plan.rigging = [{ id: 'rig-1', label: 'Upstage truss', name: 'Upstage truss', type: 'truss', position: { x: 0, y: 10, z: -16 }, height: 10, length: 44, span: 44, qualifiedOnly: true, linkedObjectId: 'main-truss', notes: 'Load calculations required by qualified rigger.' }]
+    plan.audioInputs = [audioInput(1, 'Kick', 'Beta 52', 'Drums'), audioInput(2, 'Snare', 'SM57', 'Drums'), audioInput(3, 'Guitar L', 'SM57', 'SL'), audioInput(4, 'Guitar R', 'SM57', 'SR'), audioInput(5, 'Bass DI', 'DI', 'SR'), audioInput(6, 'Lead Vocal', 'Wireless Handheld', 'DSC')]
+  }
+
+  plan.updatedAt = nowIso()
+  plan.warnings = getStagePlanWarnings(plan)
+  return normalizeStagePlan(plan)
+}
+
 export function normalizeStagePlan(raw = {}) {
   const source = raw.plan && typeof raw.plan === 'object' ? { ...raw.plan, id: raw.id || raw.plan.id, name: raw.name || raw.title || raw.plan.name } : raw
   const legacyStageDimensions = raw.stage && typeof raw.stage === 'object'

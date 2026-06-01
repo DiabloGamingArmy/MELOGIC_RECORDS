@@ -1,7 +1,7 @@
 import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
-import { createDefaultStagePlan, normalizeStagePlan } from '../stage/stagePlanModel'
+import { createStageTemplatePlan, normalizeStagePlan } from '../stage/stagePlanModel'
 
 export const STAGE_PROJECTS_COLLECTION = FIRESTORE_COLLECTIONS.stageProjects || 'stageProjects'
 
@@ -173,7 +173,7 @@ export async function getStageProject(projectId) {
 function buildStageProjectPayload(user, input = {}, planInput = null) {
   const title = String(input.title || planInput?.title || planInput?.name || '').trim().slice(0, 120) || 'Untitled Stage Plan'
   const stageType = String(input.stageType || planInput?.stageType || '').trim() || 'Blank Stage'
-  const plan = normalizeStagePlan(planInput || createDefaultStagePlan({ name: title, version: 1 }))
+  const plan = normalizeStagePlan(planInput || createStageTemplatePlan({ name: title, stageType, version: 1 }))
   plan.title = title
   plan.name = title
   plan.stageType = stageType
@@ -228,25 +228,14 @@ function buildStageProjectPayload(user, input = {}, planInput = null) {
 export async function createStageProject(user, input = {}) {
   if (!user?.uid) throw new Error('A signed-in user is required.')
   const payload = buildStageProjectPayload(user, input)
-  const ref = await addDoc(collection(db, STAGE_PROJECTS_COLLECTION), payload)
-  setDoc(doc(db, 'users', user.uid, 'stageProjectIndex', ref.id), {
-    projectId: ref.id,
-    title: payload.title,
-    ownerId: user.uid,
-    visibility: 'private',
-    type: 'stage-plan',
-    stageType: payload.stageType,
-    updatedAt: serverTimestamp(),
-    lastOpenedAt: serverTimestamp(),
-    createdAt: serverTimestamp()
-  }).catch((e) => console.error('[stageProjectService] index write failed', e))
-  return { id: ref.id, ...normalizeStageProject(ref.id, payload) }
-}
-
-export async function createStageProjectFromPlan(user, planInput, input = {}) {
-  if (!user?.uid) throw new Error('A signed-in user is required.')
-  const payload = buildStageProjectPayload(user, input, planInput)
-  const ref = await addDoc(collection(db, STAGE_PROJECTS_COLLECTION), payload)
+  let ref
+  try {
+    ref = await addDoc(collection(db, STAGE_PROJECTS_COLLECTION), payload)
+  } catch (error) {
+    error.stageCreateStep = 'stageProjects'
+    error.collectionPath = STAGE_PROJECTS_COLLECTION
+    throw error
+  }
   await setDoc(doc(db, 'users', user.uid, 'stageProjectIndex', ref.id), {
     projectId: ref.id,
     title: payload.title,
@@ -257,6 +246,47 @@ export async function createStageProjectFromPlan(user, planInput, input = {}) {
     updatedAt: serverTimestamp(),
     lastOpenedAt: serverTimestamp(),
     createdAt: serverTimestamp()
+  }).catch((error) => {
+    console.warn('[stageProjectService] index write failed', {
+      code: error?.code || '',
+      message: error?.message || String(error || ''),
+      uid: user.uid,
+      projectId: ref.id,
+      collectionPath: `users/${user.uid}/stageProjectIndex`
+    })
+  })
+  return { id: ref.id, ...normalizeStageProject(ref.id, payload) }
+}
+
+export async function createStageProjectFromPlan(user, planInput, input = {}) {
+  if (!user?.uid) throw new Error('A signed-in user is required.')
+  const payload = buildStageProjectPayload(user, input, planInput)
+  let ref
+  try {
+    ref = await addDoc(collection(db, STAGE_PROJECTS_COLLECTION), payload)
+  } catch (error) {
+    error.stageCreateStep = 'stageProjects'
+    error.collectionPath = STAGE_PROJECTS_COLLECTION
+    throw error
+  }
+  await setDoc(doc(db, 'users', user.uid, 'stageProjectIndex', ref.id), {
+    projectId: ref.id,
+    title: payload.title,
+    ownerId: user.uid,
+    visibility: 'private',
+    type: 'stage-plan',
+    stageType: payload.stageType,
+    updatedAt: serverTimestamp(),
+    lastOpenedAt: serverTimestamp(),
+    createdAt: serverTimestamp()
+  }).catch((error) => {
+    console.warn('[stageProjectService] index write failed', {
+      code: error?.code || '',
+      message: error?.message || String(error || ''),
+      uid: user.uid,
+      projectId: ref.id,
+      collectionPath: `users/${user.uid}/stageProjectIndex`
+    })
   })
   return { id: ref.id, ...normalizeStageProject(ref.id, payload) }
 }

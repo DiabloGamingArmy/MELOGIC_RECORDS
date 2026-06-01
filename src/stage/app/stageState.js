@@ -2,12 +2,15 @@ import { STORAGE_PATHS } from '../../config/storagePaths'
 import { getStagePlanWarnings } from '../stagePlanModel'
 
 export const sidebarItems = ['My Projects', 'Templates', 'Asset Library', 'Shared With Me', 'Exports', 'Learn']
-export const stageTypes = ['Blank Stage', 'Small Club', 'Festival', 'Worship/Church', 'Livestream Room', 'School Auditorium']
+export const stageTypes = ['Blank Stage', 'Band Performance', 'DJ / EDM Stage', 'Church Service', 'School Auditorium', 'Livestream Setup', 'Festival Stage']
 export const templateCards = [
-  { key: 'small-club', title: 'Small Club', subtitle: 'Quick-start layout', type: 'Small Club', icon: 'club' },
-  { key: 'festival-stage', title: 'Festival Stage', subtitle: 'Quick-start layout', type: 'Festival', icon: 'festival' },
-  { key: 'worship-stage', title: 'Worship Stage', subtitle: 'Quick-start layout', type: 'Worship/Church', icon: 'worship' },
-  { key: 'livestream-room', title: 'Livestream Room', subtitle: 'Quick-start layout', type: 'Livestream Room', icon: 'livestream' }
+  { key: 'blank-stage', title: 'Blank Stage', subtitle: 'Clean stage, PA, and deck to shape from scratch.', type: 'Blank Stage', icon: 'blank' },
+  { key: 'band-performance', title: 'Band Performance', subtitle: 'Backline, wedges, vocal mic, and starter input list.', type: 'Band Performance', icon: 'band' },
+  { key: 'dj-edm-stage', title: 'DJ / EDM Stage', subtitle: 'DJ booth, subs, movers, and LED wall cues.', type: 'DJ / EDM Stage', icon: 'dj' },
+  { key: 'church-service', title: 'Church Service', subtitle: 'Lectern, choir riser, cameras, and worship inputs.', type: 'Church Service', icon: 'worship' },
+  { key: 'school-auditorium', title: 'School Auditorium', subtitle: 'Podium, risers, projection, and simple playback.', type: 'School Auditorium', icon: 'school' },
+  { key: 'livestream-setup', title: 'Livestream Setup', subtitle: 'Host desk, key lights, camera, and background wall.', type: 'Livestream Setup', icon: 'livestream' },
+  { key: 'festival-stage', title: 'Festival Stage', subtitle: 'Large deck, truss, LED wall, FOH, and fixtures.', type: 'Festival Stage', icon: 'festival' }
 ]
 
 export const stageIconPath = (group, name) => STORAGE_PATHS.stageProdIcon(group, name)
@@ -200,6 +203,9 @@ export function getStageTypeClass(stageType = '') {
   const t = String(stageType || '').toLowerCase()
   if (t.includes('festival')) return 'festival'
   if (t.includes('worship') || t.includes('church')) return 'worship'
+  if (t.includes('school')) return 'school'
+  if (t.includes('dj') || t.includes('edm')) return 'dj'
+  if (t.includes('band')) return 'band'
   if (t.includes('live')) return 'livestream'
   if (t.includes('club')) return 'club'
   return 'blank'

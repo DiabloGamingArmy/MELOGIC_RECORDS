@@ -999,9 +999,14 @@ service cloud.firestore {
       return value in [
         'Blank Stage',
         'Small Club',
+        'Band Performance',
+        'DJ / EDM Stage',
+        'Church Service',
         'Festival',
+        'Festival Stage',
         'Worship/Church',
         'Livestream Room',
+        'Livestream Setup',
         'School Auditorium'
       ];
     }
@@ -1137,8 +1142,8 @@ service cloud.firestore {
         && (!('annotations' in data) || (data.annotations is list && data.annotations.size() <= 500))
         && (!('venue' in data) || data.venue is map)
         && (!('exportSettings' in data) || data.exportSettings is map)
-        && (!('plan' in data) || stagePlanValid(data.plan))
-        && (!('editorState' in data) || stageEditorStateValid(data.editorState));
+        && (!('plan' in data) || data.plan is map)
+        && (!('editorState' in data) || data.editorState is map);
     }
 
     function stageProjectCreateIsValid() {
@@ -1655,7 +1660,7 @@ service cloud.firestore {
 
     match /stageProjects/{projectId} {
       allow get: if isStageOwnerResource() || isStageCollaboratorResource();
-      allow list: if signedIn();
+      allow list: if isStageOwnerResource() || isStageCollaboratorResource();
       allow create: if stageProjectCreateIsValid();
       allow update: if isStageOwnerResource() && stageProjectUpdateIsValid();
       allow delete: if isStageOwnerResource();

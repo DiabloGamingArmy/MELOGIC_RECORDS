@@ -8,7 +8,7 @@
       "http://127.0.0.1:5173",
       "http://localhost:3000"
     ],
-    "method": ["GET", "HEAD"],
+    "method": ["GET", "HEAD", "OPTIONS"],
     "responseHeader": ["Content-Type", "Access-Control-Allow-Origin", "x-goog-meta-*"],
     "maxAgeSeconds": 3600
   }
