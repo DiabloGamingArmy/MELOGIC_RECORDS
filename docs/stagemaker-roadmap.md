@@ -56,3 +56,21 @@ Known limitations:
 - The media cache does not persist across full page reloads.
 - Some visual object changes such as color/visibility/lock still refresh the viewport scene because those affect rendered mesh state.
 - Property popups intentionally cover core object fields only; production metadata editors remain in their existing tabs.
+
+## Phase 5: Export / Blueprint Readiness
+
+Status: implemented as a printable frontend blueprint preview.
+
+- The editor export action opens a StageMaker Blueprint preview with project title, metadata, stage dimensions, generated timestamp, last updated timestamp, and units.
+- The blueprint visual is a static top-view SVG generated from StagePlan data, so editor overlays, selection handles, gizmos, and hover UI do not appear in export.
+- Export options include grid, object labels, equipment list, notes, hidden objects, category grouping, and paper orientation.
+- Equipment rows include object number, name, category, type, position, size, rotation, and notes with safe fallbacks instead of undefined/null values.
+- Export categories normalize existing objects into staging, audio, lighting, video, camera, rigging, power, notes, and miscellaneous.
+- Print CSS hides editor chrome and presents a white, letter-paper-friendly layout for browser Print / Save PDF.
+- The preview uses the loaded project state in memory and does not reload the project from Firestore.
+
+Known limitations:
+
+- Browser Print / Save PDF is used; server-side PDF generation is not implemented.
+- CSV equipment list, patch sheet export, and public blueprint links remain future phases.
+- Page numbering is browser-dependent through print CSS.
