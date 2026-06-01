@@ -281,6 +281,18 @@
         "destination": "/community.html"
       },
       {
+        "source": "/community/communities",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/community/create",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/community/c/**",
+        "destination": "/community.html"
+      },
+      {
         "source": "/community/post/**",
         "destination": "/community.html"
       },

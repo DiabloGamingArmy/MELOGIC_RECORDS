@@ -11,6 +11,7 @@ function matchesFilter(report = {}, filter = '') {
   if (filter === 'product') return report.targetType === 'product' || report.type === 'product'
   if (filter === 'user') return ['user', 'profile'].includes(report.targetType) || ['user', 'profile'].includes(report.type)
   if (filter === 'order') return report.targetType === 'order' || report.type === 'order'
+  if (filter === 'community') return report.targetType === 'community' || report.type === 'community'
   if (filter === 'community_post') return report.targetType === 'community_post' || report.type === 'community_post'
   return true
 }
@@ -56,6 +57,20 @@ async function enrichReport(report = {}) {
           status: cleanString(post.status || '', 80),
           visibility: cleanString(post.visibility || '', 80),
           type: cleanString(post.type || 'community_post', 80)
+        }
+      }
+      if (report.targetType === 'community' && report.targetId) {
+        const communitySnap = await db().collection('communities').doc(report.targetId).get()
+        if (!communitySnap.exists) return null
+        const community = communitySnap.data() || {}
+        return {
+          id: communitySnap.id,
+          title: cleanString(community.name || community.slug || 'Community', 180),
+          slug: cleanString(community.slug || communitySnap.id, 80),
+          ownerUid: cleanString(community.ownerUid || '', 180),
+          status: cleanString(community.status || '', 80),
+          visibility: cleanString(community.visibility || '', 80),
+          type: 'community'
         }
       }
       return null

@@ -1204,6 +1204,11 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /focusedCommunities/{communityId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /studioProjectIndex/{projectId} {
         allow read: if isOwner(uid);
 
@@ -1683,6 +1688,47 @@ service cloud.firestore {
     match /adminLogs/{logId} {
       allow read: if hasAuditReadClaim() || hasRoleManageClaim();
       allow write: if false;
+    }
+
+    match /communities/{communityId} {
+      allow read: if resource.data.status == 'active'
+        && resource.data.visibility == 'public';
+      allow create: if false;
+      allow update: if signedIn()
+        && (
+          (
+            (resource.data.ownerUid == request.auth.uid
+              || (resource.data.moderatorIds is list && request.auth.uid in resource.data.moderatorIds))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'name',
+              'description',
+              'category',
+              'iconURL',
+              'bannerURL',
+              'postingMode',
+              'updatedAt'
+            ])
+          )
+          || (
+            hasUserModerateClaim()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'name',
+              'description',
+              'category',
+              'iconURL',
+              'bannerURL',
+              'postingMode',
+              'status',
+              'visibility',
+              'moderationStatus',
+              'moderationReason',
+              'moderatedAt',
+              'moderatedBy',
+              'updatedAt'
+            ])
+          )
+        );
+      allow delete: if hasUserModerateClaim();
     }
 
     match /communityPosts/{postId} {

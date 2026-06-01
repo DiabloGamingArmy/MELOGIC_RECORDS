@@ -25,6 +25,9 @@ export const ROUTES = {
   adminSettings: '/admin/settings',
   adminMarketplaceReview: '/admin/reviews',
   community: '/community',
+  communityCommunities: '/community/communities',
+  communityCreate: '/community/create',
+  communitySlug: '/community/c',
   communityPost: '/community/post',
   live: '/live',
   forms: '/forms',
@@ -138,6 +141,11 @@ export function productRoute(productOrId = '') {
 export function communityPostRoute(postId = '') {
   const id = String(postId || '').trim()
   return id ? `${ROUTES.communityPost}/${encodeURIComponent(id)}` : ROUTES.community
+}
+
+export function communityRoute(slug = '') {
+  const clean = String(slug || '').trim()
+  return clean ? `${ROUTES.communitySlug}/${encodeURIComponent(clean)}` : ROUTES.communityCommunities
 }
 
 export function adminReviewRoute(productId = '') {
