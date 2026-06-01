@@ -4,6 +4,7 @@ import {
   deleteSelectedStageObject,
   duplicateSelectedStageObject,
   findStageObject,
+  isSimpleEditableStageObject,
   moveSelectedStageObject,
   redoStageEdit,
   resetSelectedStageObjectRotation,
@@ -71,6 +72,39 @@ export function bindStageEditorEventsOnce(context) {
     if (notice) showStageNotice?.(notice)
   }
 
+  const setStageInteractionMode = (mode = 'object', notice = '') => {
+    const next = mode === 'edit' ? 'edit' : 'object'
+    if (next === 'edit') {
+      const object = findStageObject()
+      if (!object) {
+        showStageNotice?.('Select an object to enter Edit Mode.')
+        return false
+      }
+      if (object.locked) {
+        showStageNotice?.('Unlock this object before editing.')
+        return false
+      }
+      if (!isSimpleEditableStageObject(object)) {
+        showStageNotice?.('Edit Mode is not available for this object type yet.')
+        return false
+      }
+    }
+    state.stageInteractionMode = next
+    localStorage.setItem('stageInteractionMode', state.stageInteractionMode)
+    getViewportController()?.update?.({ interactionMode: state.stageInteractionMode })
+    updateViewportControlUI?.()
+    queueEditorStateSave?.()
+    if (notice) showStageNotice?.(notice)
+    return true
+  }
+
+  const ensureObjectModeForSelection = () => {
+    if (state.stageInteractionMode !== 'edit') return
+    const object = findStageObject()
+    if (isSimpleEditableStageObject(object)) return
+    setStageInteractionMode('object', object?.locked ? 'Unlock this object before editing.' : 'Edit Mode is not available for this object type yet.')
+  }
+
   const syncObjectTransformCache = () => {
     const object = findStageObject()
     if (!object) return
@@ -91,7 +125,7 @@ export function bindStageEditorEventsOnce(context) {
   const syncObjectSurfaces = ({ refreshViewport = false, save = true, notice = '' } = {}) => {
     syncObjectTransformCache()
     if (refreshViewport) refreshStageViewport?.()
-    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
+    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
     updateStageInspectorSelection?.()
     updateInspectorUI?.()
     updateEditorModeUI?.()
@@ -257,7 +291,8 @@ export function bindStageEditorEventsOnce(context) {
     const focusObject = e.target.closest('[data-focus-object]')
     if (focusObject) {
       setSelectedStageObjects([focusObject.dataset.focusObject || state.selectedEditorObject], focusObject.dataset.focusObject || state.selectedEditorObject)
-      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects })
+      ensureObjectModeForSelection()
+      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, interactionMode: state.stageInteractionMode })
       getViewportController()?.focusSelected?.()
       updateStageInspectorSelection()
       updateInspectorUI()
@@ -269,7 +304,8 @@ export function bindStageEditorEventsOnce(context) {
     const selectObject = e.target.closest('[data-select-object]')
     if (selectObject) {
       setSelectedStageObjects([selectObject.dataset.selectObject || state.selectedEditorObject], selectObject.dataset.selectObject || state.selectedEditorObject)
-      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects })
+      ensureObjectModeForSelection()
+      getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, interactionMode: state.stageInteractionMode })
       updateStageInspectorSelection()
       updateInspectorUI()
       updateEditorModeUI()
@@ -357,7 +393,8 @@ export function bindStageEditorEventsOnce(context) {
     const objectId = row?.dataset?.selectObject || ''
     if (!objectId) return
     setSelectedStageObjects([objectId], objectId)
-    getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects })
+    ensureObjectModeForSelection()
+    getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, interactionMode: state.stageInteractionMode })
     getViewportController()?.focusSelected?.()
     updateStageInspectorSelection?.()
     updateInspectorUI?.()
@@ -422,8 +459,9 @@ export function bindStageEditorEventsOnce(context) {
     const existing = state.editorObjectTransforms[key] || {}
     const v = f.type === 'number' ? Number(f.value) : f.type === 'checkbox' ? !!f.checked : f.value
     updateSelectedStageObjectField(f.dataset.transformField, v)
+    ensureObjectModeForSelection()
     state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [f.dataset.transformField]: v } }
-    getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
+    getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
     if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(f.dataset.transformField)) {
       refreshStageViewport?.()
     }
@@ -466,8 +504,9 @@ export function bindStageEditorEventsOnce(context) {
       const existing = state.editorObjectTransforms[key] || {}
       const v = changedTransform.type === 'number' ? Number(changedTransform.value) : changedTransform.type === 'checkbox' ? !!changedTransform.checked : changedTransform.value
       updateSelectedStageObjectField(changedTransform.dataset.transformField, v)
+      ensureObjectModeForSelection()
       state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [changedTransform.dataset.transformField]: v } }
-      getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode })
+      getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
       if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
       updateEditorModeUI()
       updateViewportControlUI()
@@ -600,7 +639,8 @@ export function bindStageEditorEventsOnce(context) {
       const key = e.key.toLowerCase()
       if (e.key === 'Tab') {
         e.preventDefault()
-        showStageNotice?.('Edit Mode coming in Phase 3.')
+        if (state.stageInteractionMode === 'edit') setStageInteractionMode('object', 'Object Mode.')
+        else setStageInteractionMode('edit', 'Edit Mode.')
         return
       }
       if (e.key === 'Escape') {

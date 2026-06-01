@@ -145,6 +145,7 @@ export const state = {
   activeLibraryCategory: 'all',
   objectLibrarySearch: '',
   editorToolMode: localStorage.getItem('stageEditorToolMode') || 'pan',
+  stageInteractionMode: localStorage.getItem('stageInteractionMode') || 'object',
   selectedEditorObject: 'stage-deck',
   selectedEditorObjects: ['stage-deck'],
   editorObjectTransforms: {},
@@ -395,6 +396,54 @@ export function addStageAssetToPlan(assetId, overrides = {}) {
 
 export function findStageObject(objectId = state.selectedEditorObject) {
   return (state.editorProject?.objects || []).find((object) => object.id === objectId || object.key === objectId)
+}
+
+export function isSimpleEditableStageObject(object = findStageObject()) {
+  if (!object || object.locked) return false
+  const dimensions = object.dimensions || {}
+  const hasEditableFootprint = Number.isFinite(Number(dimensions.width)) && Number.isFinite(Number(dimensions.depth))
+  if (!hasEditableFootprint) return false
+  const descriptor = [
+    object.id,
+    object.key,
+    object.type,
+    object.kind,
+    object.category,
+    object.layer,
+    object.label,
+    object.name
+  ].map((value) => String(value || '').toLowerCase()).join(' ')
+  const unsupported = [
+    'speaker',
+    'subwoofer',
+    'microphone',
+    ' mic',
+    'camera',
+    'fixture',
+    'moving-head',
+    'light',
+    'truss',
+    'led-wall',
+    'screen',
+    'power',
+    'road-case',
+    'group',
+    'linked'
+  ]
+  if (unsupported.some((token) => descriptor.includes(token))) return false
+  return [
+    'stage-deck',
+    'primitive-rectangle',
+    'primitive-square',
+    'primitive-cube',
+    'rectangle',
+    'square',
+    'box',
+    'cube',
+    'deck',
+    'platform',
+    'booth'
+  ].some((token) => descriptor.includes(token))
 }
 
 export function normalizeSelectedStageObjectIds(ids = state.selectedEditorObjects) {

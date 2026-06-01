@@ -10,7 +10,7 @@ import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
 import { renderDashboard } from './stage/app/stageDashboard'
 import { renderEditor, renderStageTabbar } from './stage/app/stageEditorRender'
-import { editorTitleStamp, getCurrentStageProjectId, moveSelectedStageObject, projectDate, setSelectedStageObjects, stageIconPath, stageTypes, state, updateSelectedStageObjectField } from './stage/app/stageState'
+import { editorTitleStamp, getCurrentStageProjectId, isSimpleEditableStageObject, moveSelectedStageObject, projectDate, setSelectedStageObjects, stageIconPath, stageTypes, state, updateSelectedStageObjectField } from './stage/app/stageState'
 import { renderExportPreview } from './stage/export/exportPreview'
 import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspector/inspectorTabs'
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
@@ -80,6 +80,7 @@ function buildEditorStateSnapshot() {
     activeLibraryCategory: state.activeLibraryCategory,
     objectLibrarySearch: state.objectLibrarySearch,
     editorToolMode: state.editorToolMode,
+    stageInteractionMode: state.stageInteractionMode,
     activeEditorMode: normalizeEditorMode(state.activeEditorMode),
     activeInspectorTab: state.activeInspectorTab,
     activeDataTab: state.activeDataTab,
@@ -107,6 +108,7 @@ function applyEditorStateSnapshot(editorState = {}) {
   state.activeLibraryCategory = editorState.activeLibraryCategory || state.activeLibraryCategory
   state.objectLibrarySearch = typeof editorState.objectLibrarySearch === 'string' ? editorState.objectLibrarySearch : state.objectLibrarySearch
   state.editorToolMode = editorState.editorToolMode || state.editorToolMode
+  state.stageInteractionMode = editorState.stageInteractionMode === 'edit' ? 'edit' : 'object'
   state.activeEditorMode = normalizeEditorMode(editorState.activeEditorMode || state.activeEditorMode)
   state.activeInspectorTab = editorState.activeInspectorTab || state.activeInspectorTab
   state.activeDataTab = editorState.activeDataTab || state.activeDataTab
@@ -134,6 +136,13 @@ function ensureValidEditorSelection() {
     const first = state.editorProject.objects.find((object) => object.id === 'stage-deck') || state.editorProject.objects[0]
     setSelectedStageObjects([first.id], first.id)
   }
+  if (state.stageInteractionMode === 'edit' && !isSimpleEditableStageObject(findStageObjectLocal())) {
+    state.stageInteractionMode = 'object'
+  }
+}
+
+function findStageObjectLocal() {
+  return (state.editorProject?.objects || []).find((object) => object.id === state.selectedEditorObject || object.key === state.selectedEditorObject)
 }
 
 function restoreLocalEditorState(projectId = state.projectId) {
@@ -198,8 +207,10 @@ function initStageEditorViewport() {
     selectedObjectKeys: state.selectedEditorObjects,
     objectTransforms: state.editorObjectTransforms,
     toolMode: state.editorToolMode,
+    interactionMode: state.stageInteractionMode,
     onSelectObjects: (keys = [], primary = '') => {
       setSelectedStageObjects(keys, primary)
+      ensureInteractionModeMatchesSelection()
       updateStageInspectorSelection()
       updateInspectorUI()
       updateEditorModeUI()
@@ -209,6 +220,7 @@ function initStageEditorViewport() {
     onSelectObject: (key) => {
       if (state.selectedEditorObject === key) return
       setSelectedStageObjects([key], key)
+      ensureInteractionModeMatchesSelection()
       updateStageInspectorSelection()
       updateInspectorUI()
       updateEditorModeUI()
@@ -458,8 +470,17 @@ function selectedViewportObject() {
   return (state.editorProject?.objects || []).find((object) => object.id === state.selectedEditorObject || object.key === state.selectedEditorObject)
 }
 
+function ensureInteractionModeMatchesSelection() {
+  if (state.stageInteractionMode !== 'edit') return
+  if (isSimpleEditableStageObject(selectedViewportObject())) return
+  state.stageInteractionMode = 'object'
+  try { localStorage.setItem('stageInteractionMode', state.stageInteractionMode) } catch {}
+  stageViewportController?.update?.({ interactionMode: state.stageInteractionMode })
+}
+
 function viewportHintText() {
   const selected = selectedViewportObject()
+  if (state.stageInteractionMode === 'edit') return 'Edit Mode: drag corner or edge handles to resize. Tab returns to Object Mode.'
   if (selected?.locked) return 'Selected object is locked. Unlock it in Properties before moving.'
   if (state.editorToolMode === 'pan') return 'Pan: drag to move camera · wheel zoom'
   if (state.editorToolMode === 'select') return 'Select: click object · drag box to select'
@@ -494,6 +515,12 @@ function updateViewportControlUI() {
   if (measure) measure.classList.toggle('is-active', state.measureModeEnabled)
   const toolStatus = app.querySelector('[data-stage-tool-status]')
   if (toolStatus) toolStatus.textContent = `Tool: ${state.editorToolMode.charAt(0).toUpperCase()}${state.editorToolMode.slice(1)}`
+  const modeStatus = app.querySelector('[data-stage-mode-status]')
+  if (modeStatus) {
+    const edit = state.stageInteractionMode === 'edit'
+    modeStatus.textContent = edit ? 'Edit Mode' : 'Object Mode'
+    modeStatus.classList.toggle('is-edit', edit)
+  }
   app.querySelectorAll('[data-render-mode]').forEach((el) => el.classList.toggle('is-active', (el.dataset.renderMode || '') === state.renderMode))
   const hint = app.querySelector('.stage-viewport-status-stack .stage-three-hint')
   if (hint) hint.textContent = viewportHintText()

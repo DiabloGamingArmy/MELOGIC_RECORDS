@@ -72,6 +72,7 @@ export function mountStageThreeViewport(container, options = {}) {
     let currentViewMode = options.viewportMode || 'perspective3d'
     let currentRenderMode = options.renderMode || 'technical'
     let currentToolMode = options.toolMode || 'select'
+    let currentInteractionMode = options.interactionMode === 'edit' ? 'edit' : 'object'
     let currentShowBeams = options.showBeams !== false
     let currentShowLabels = options.showLabels !== false
     let currentSnapEnabled = options.snapEnabled !== false
@@ -264,6 +265,35 @@ export function mountStageThreeViewport(container, options = {}) {
     const initialSelectedKeys = (Array.isArray(options.selectedObjectKeys) && options.selectedObjectKeys.length ? options.selectedObjectKeys : [options.selectedObjectKey]).filter((key) => key && objects[key])
     let selectedKeys = [...new Set(initialSelectedKeys)]
     let selectedKey = selectedKeys[0] || (objects[options.selectedObjectKey] ? options.selectedObjectKey : objects['stage-deck'] ? 'stage-deck' : Object.keys(objects)[0] || '')
+    const editGroup = new THREE.Group()
+    editGroup.renderOrder = 70
+    scene.add(editGroup)
+    const editPickables = []
+    let editFrame = null
+    const editHandleDefs = [
+      ['corner-nw', -1, -1],
+      ['edge-n', 0, -1],
+      ['corner-ne', 1, -1],
+      ['edge-e', 1, 0],
+      ['corner-se', 1, 1],
+      ['edge-s', 0, 1],
+      ['corner-sw', -1, 1],
+      ['edge-w', -1, 0]
+    ]
+    const editDrag = {
+      active: false,
+      pointerId: 0,
+      key: '',
+      handle: '',
+      xSign: 0,
+      zSign: 0,
+      startX: 0,
+      startY: 0,
+      startPosition: new THREE.Vector3(),
+      startDimensions: { width: 1, height: 1, depth: 1 },
+      startRotationY: 0,
+      liveTransform: null
+    }
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
     let hoveredGizmoHandle = null
@@ -390,6 +420,83 @@ export function mountStageThreeViewport(container, options = {}) {
       const depth = Math.max(0.05, Number(dims.depth ?? currentObjectDimensions(key).depth))
       obj.scale.set(width / Math.max(0.05, Number(base[0] || 1)), height / Math.max(0.05, Number(base[1] || 1)), depth / Math.max(0.05, Number(base[2] || 1)))
     }
+    const objectSupportsEditMode = (key = selectedKey) => {
+      const meta = objectMeta[key] || {}
+      const target = objects[key]
+      if (!target || target.userData?.stageLocked) return false
+      const dims = currentObjectDimensions(key)
+      if (!Number.isFinite(dims.width) || !Number.isFinite(dims.depth)) return false
+      const descriptor = [key, meta.label, meta.type, meta.category].map((value) => String(value || '').toLowerCase()).join(' ')
+      const unsupported = ['speaker', 'subwoofer', 'microphone', ' mic', 'camera', 'fixture', 'moving-head', 'light', 'truss', 'led-wall', 'screen', 'power', 'road-case', 'group', 'linked']
+      if (unsupported.some((token) => descriptor.includes(token))) return false
+      return ['stage-deck', 'primitive-rectangle', 'primitive-square', 'primitive-cube', 'rectangle', 'square', 'box', 'cube', 'deck', 'platform', 'booth'].some((token) => descriptor.includes(token))
+    }
+    const disposeEditOverlay = () => {
+      editGroup.children.forEach((child) => {
+        child.geometry?.dispose?.()
+        const material = child.material
+        if (Array.isArray(material)) material.forEach((m) => m?.dispose?.())
+        else material?.dispose?.()
+      })
+      editGroup.clear()
+      editPickables.length = 0
+      editFrame = null
+    }
+    const editHandleScale = (target) => {
+      const distance = camera.position.distanceTo(target.position)
+      return camera.isOrthographicCamera ? 0.34 / Math.max(0.45, Number(camera.zoom || 1)) : Math.max(0.22, Math.min(0.62, distance / 52))
+    }
+    const updateEditOverlay = () => {
+      disposeEditOverlay()
+      const target = objects[selectedKey]
+      const show = currentInteractionMode === 'edit' && selectedKeys.length === 1 && objectSupportsEditMode(selectedKey)
+      editGroup.visible = show
+      if (!show || !target) return
+      const dims = currentObjectDimensions(selectedKey)
+      const height = Math.max(0.1, dims.height)
+      const frameGeometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(dims.width, height, dims.depth))
+      editFrame = new THREE.LineSegments(frameGeometry, new THREE.LineBasicMaterial({ color: '#ffd66b', transparent: true, opacity: 0.98, depthTest: false, depthWrite: false }))
+      editFrame.position.copy(target.position)
+      editFrame.rotation.copy(target.rotation)
+      editFrame.renderOrder = 72
+      editGroup.add(editFrame)
+      const handleSize = editHandleScale(target)
+      const handleMaterial = new THREE.MeshBasicMaterial({ color: '#ffe39b', transparent: true, opacity: 0.98, depthTest: false, depthWrite: false })
+      const edgeMaterial = new THREE.MeshBasicMaterial({ color: '#6ffff0', transparent: true, opacity: 0.92, depthTest: false, depthWrite: false })
+      editHandleDefs.forEach(([handle, xSign, zSign]) => {
+        const material = xSign && zSign ? handleMaterial.clone() : edgeMaterial.clone()
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material)
+        const local = new THREE.Vector3((dims.width / 2) * xSign, height / 2 + handleSize * 0.8, (dims.depth / 2) * zSign)
+        mesh.position.copy(local.applyEuler(target.rotation).add(target.position))
+        mesh.scale.setScalar(handleSize)
+        mesh.userData.editHandle = handle
+        mesh.userData.editXSign = xSign
+        mesh.userData.editZSign = zSign
+        mesh.renderOrder = 74
+        editGroup.add(mesh)
+        editPickables.push(mesh)
+      })
+    }
+    const restoreEditDragStart = () => {
+      const target = objects[editDrag.key]
+      if (!target) return
+      target.position.copy(editDrag.startPosition)
+      applyObjectDimensions(editDrag.key, editDrag.startDimensions)
+      updateEditOverlay()
+      boxHelpers.forEach((helper) => helper.update())
+      selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+      renderer.render(scene, camera)
+    }
+    const cancelEditDrag = () => {
+      if (!editDrag.active) return false
+      restoreEditDragStart()
+      editDrag.active = false
+      editDrag.liveTransform = null
+      controls.enabled = true
+      container.style.cursor = ''
+      setTransformReadout('')
+      return true
+    }
     const setGizmoHandleState = (tool = currentToolMode, locked = false) => {
       gizmoPickables.forEach((handle) => {
         const active = handle.userData.gizmoTool === tool
@@ -415,14 +522,17 @@ export function mountStageThreeViewport(container, options = {}) {
       selectedLabel = null
       if (!target) {
         gizmo.visible = false
+        updateEditOverlay()
         setTransformReadout('')
         return
       }
-      gizmo.visible = ['move', 'rotate', 'scale'].includes(currentToolMode)
+      gizmo.visible = currentInteractionMode === 'object' && ['move', 'rotate', 'scale'].includes(currentToolMode)
       gizmo.position.copy(target.position)
       setGizmoHandleState(currentToolMode, !!target.userData.stageLocked)
       updateGizmoScale()
-      if (target.userData.stageLocked && ['move', 'rotate', 'scale'].includes(currentToolMode)) setTransformReadout('Selected object is locked.')
+      updateEditOverlay()
+      if (currentInteractionMode === 'edit' && !objectSupportsEditMode(selectedKey)) setTransformReadout(target.userData.stageLocked ? 'Unlock this object before editing.' : 'Edit Mode is not available for this object type yet.')
+      else if (target.userData.stageLocked && ['move', 'rotate', 'scale'].includes(currentToolMode)) setTransformReadout('Selected object is locked.')
       else if (!drag.active) setTransformReadout('')
       selectedKeys.forEach((key, index) => {
         const object = objects[key]
@@ -509,6 +619,7 @@ export function mountStageThreeViewport(container, options = {}) {
       target.rotation.y = THREE.MathUtils.degToRad(drag.startRotY || 0)
       applyObjectDimensions(drag.key, drag.startDimensions)
       gizmo.position.copy(target.position)
+      updateEditOverlay()
       boxHelpers.forEach((helper) => helper.update())
       selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
       renderer.render(scene, camera)
@@ -518,6 +629,7 @@ export function mountStageThreeViewport(container, options = {}) {
         hideMarquee()
         return true
       }
+      if (cancelEditDrag()) return true
       if (!drag.active) return false
       restoreDragStart()
       drag.active = false
@@ -541,6 +653,7 @@ export function mountStageThreeViewport(container, options = {}) {
       if (objects[selectedKey]) {
         gizmo.position.copy(objects[selectedKey].position)
         updateGizmoScale()
+        updateEditOverlay()
         boxHelpers.forEach((helper) => helper.update())
         selectedLabel?.position.set(objects[selectedKey].position.x, objects[selectedKey].position.y + 1.8, objects[selectedKey].position.z)
       }
@@ -550,9 +663,38 @@ export function mountStageThreeViewport(container, options = {}) {
     const onPointerDown = (event) => {
       pointerToNdc(event)
       raycaster.setFromCamera(pointer, camera)
+      const editHit = currentInteractionMode === 'edit'
+        ? raycaster.intersectObjects(editPickables, true).find((h) => h.object?.visible && h.object?.userData?.editHandle)
+        : null
       const gizmoHit = raycaster.intersectObjects(gizmoPickables, true).find((h) => h.object?.visible && h.object?.userData?.gizmoTool)
       const hit = raycaster.intersectObjects(pickables, true).find((h) => h.object?.userData?.objectKey || h.object?.parent?.userData?.objectKey)
       const pointerHitKey = hit ? (hit.object.userData.objectKey || hit.object.parent.userData.objectKey) : ''
+      if (editHit && selectedKey && objects[selectedKey] && objectSupportsEditMode(selectedKey)) {
+        const target = objects[selectedKey]
+        editDrag.active = true
+        editDrag.pointerId = event.pointerId
+        editDrag.key = selectedKey
+        editDrag.handle = editHit.object.userData.editHandle || ''
+        editDrag.xSign = Number(editHit.object.userData.editXSign || 0)
+        editDrag.zSign = Number(editHit.object.userData.editZSign || 0)
+        editDrag.startX = event.clientX
+        editDrag.startY = event.clientY
+        editDrag.startPosition.copy(target.position)
+        editDrag.startDimensions = currentObjectDimensions(selectedKey)
+        editDrag.startRotationY = target.rotation.y || 0
+        editDrag.liveTransform = null
+        controls.enabled = false
+        container.style.cursor = 'grabbing'
+        setTransformReadout(`Edit resize: ${editDrag.handle.replace('-', ' ')}`)
+        event.preventDefault()
+        event.stopImmediatePropagation?.()
+        renderer.domElement.setPointerCapture?.(event.pointerId)
+        return
+      }
+      if (currentInteractionMode === 'edit') {
+        if (!objectSupportsEditMode(selectedKey)) setTransformReadout(objects[selectedKey]?.userData?.stageLocked ? 'Unlock this object before editing.' : 'Edit Mode is not available for this object type yet.')
+        return
+      }
       if (currentToolMode === 'pan') return
       if (currentToolMode === 'select') {
         marquee.active = true
@@ -648,7 +790,51 @@ export function mountStageThreeViewport(container, options = {}) {
         event.preventDefault()
         return
       }
+      if (editDrag.active) {
+        const target = objects[editDrag.key]
+        if (!target) return
+        const dx = event.clientX - editDrag.startX
+        const dy = event.clientY - editDrag.startY
+        const unit = 0.06
+        const rawWidthDelta = editDrag.xSign ? editDrag.xSign * dx * unit : 0
+        const rawDepthDelta = editDrag.zSign ? editDrag.zSign * dy * unit : 0
+        let nextWidth = Math.max(0.5, editDrag.startDimensions.width + rawWidthDelta)
+        let nextDepth = Math.max(0.5, editDrag.startDimensions.depth + rawDepthDelta)
+        if (currentSnapEnabled && currentSnapInterval > 0) {
+          nextWidth = Math.max(0.5, snapNumber(nextWidth))
+          nextDepth = Math.max(0.5, snapNumber(nextDepth))
+        }
+        const appliedWidthDelta = nextWidth - editDrag.startDimensions.width
+        const appliedDepthDelta = nextDepth - editDrag.startDimensions.depth
+        const xAxis = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), editDrag.startRotationY)
+        const zAxis = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), editDrag.startRotationY)
+        const nextPosition = editDrag.startPosition.clone()
+        if (editDrag.xSign) nextPosition.add(xAxis.multiplyScalar((editDrag.xSign * appliedWidthDelta) / 2))
+        if (editDrag.zSign) nextPosition.add(zAxis.multiplyScalar((editDrag.zSign * appliedDepthDelta) / 2))
+        if (currentSnapEnabled && currentSnapInterval > 0) {
+          nextPosition.x = snapNumber(nextPosition.x)
+          nextPosition.z = snapNumber(nextPosition.z)
+        }
+        target.position.copy(nextPosition)
+        const nextDimensions = { ...editDrag.startDimensions, width: nextWidth, depth: nextDepth, height: Math.max(0.1, editDrag.startDimensions.height) }
+        applyObjectDimensions(editDrag.key, nextDimensions)
+        editDrag.liveTransform = { x: target.position.x, y: target.position.y, z: target.position.z, ...nextDimensions }
+        updateEditOverlay()
+        boxHelpers.forEach((helper) => helper.update())
+        selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+        setTransformReadout(describeTransform(target, editDrag.liveTransform))
+        renderer.render(scene, camera)
+        event.preventDefault()
+        return
+      }
       if (!drag.active) {
+        if (currentInteractionMode === 'edit') {
+          pointerToNdc(event)
+          raycaster.setFromCamera(pointer, camera)
+          const hit = raycaster.intersectObjects(editPickables, true).find((h) => h.object?.visible && h.object?.userData?.editHandle)
+          container.style.cursor = hit ? 'grab' : ''
+          return
+        }
         if (['move', 'rotate', 'scale'].includes(currentToolMode) && gizmo.visible) {
           pointerToNdc(event)
           raycaster.setFromCamera(pointer, camera)
@@ -733,6 +919,21 @@ export function mountStageThreeViewport(container, options = {}) {
         renderer.render(scene, camera)
         return
       }
+      if (editDrag.active) {
+        const target = objects[editDrag.key]
+        editDrag.active = false
+        controls.enabled = true
+        renderer.domElement.releasePointerCapture?.(event.pointerId || editDrag.pointerId)
+        if (target) {
+          const transform = editDrag.liveTransform || { x: target.position.x, y: target.position.y, z: target.position.z, ...currentObjectDimensions(editDrag.key) }
+          options.onTransformObject?.(editDrag.key, transform)
+        }
+        editDrag.liveTransform = null
+        container.style.cursor = ''
+        setTransformReadout('')
+        updateEditOverlay()
+        return
+      }
       if (!drag.active) return
       const target = objects[drag.key]
       drag.active = false
@@ -756,6 +957,11 @@ export function mountStageThreeViewport(container, options = {}) {
       if (event.key === 'Escape' && drag.active) {
         event.preventDefault()
         cancelTransform()
+        return
+      }
+      if (event.key === 'Escape' && editDrag.active) {
+        event.preventDefault()
+        cancelEditDrag()
         return
       }
       if (event.key === 'Escape' && marquee.active) {
@@ -836,6 +1042,10 @@ export function mountStageThreeViewport(container, options = {}) {
         currentToolMode = nextOptions.toolMode || 'select'
         syncSelection()
       }
+      if (typeof nextOptions.interactionMode === 'string') {
+        currentInteractionMode = nextOptions.interactionMode === 'edit' ? 'edit' : 'object'
+        syncSelection()
+      }
       if (nextOptions.renderMode) {
         currentRenderMode = nextOptions.renderMode
       }
@@ -845,6 +1055,7 @@ export function mountStageThreeViewport(container, options = {}) {
       if (Array.isArray(nextOptions.selectedObjectKeys)) setSelectedKeys(nextOptions.selectedObjectKeys, { notify: false, primary: nextOptions.selectedObjectKey })
       else if (typeof nextOptions.selectedObjectKey === 'string') setSelectedKey(nextOptions.selectedObjectKey, { notify: false })
       updateGizmoScale()
+      updateEditOverlay()
       renderer.render(scene, camera)
       writeStatus('Updated viewport options')
     }
