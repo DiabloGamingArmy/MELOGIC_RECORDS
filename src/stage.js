@@ -492,6 +492,8 @@ function updateViewportControlUI() {
   }
   const measure = app.querySelector('[data-toggle-measure]')
   if (measure) measure.classList.toggle('is-active', state.measureModeEnabled)
+  const toolStatus = app.querySelector('[data-stage-tool-status]')
+  if (toolStatus) toolStatus.textContent = `Tool: ${state.editorToolMode.charAt(0).toUpperCase()}${state.editorToolMode.slice(1)}`
   app.querySelectorAll('[data-render-mode]').forEach((el) => el.classList.toggle('is-active', (el.dataset.renderMode || '') === state.renderMode))
   const hint = app.querySelector('.stage-viewport-status-stack .stage-three-hint')
   if (hint) hint.textContent = viewportHintText()
@@ -567,6 +569,7 @@ function bindEditorEvents() {
     updateStageInspectorSelection,
     updateViewportControlUI,
     queueEditorStateSave,
+    flushStagePlanSave,
     refreshStageViewport,
     loadEditorProject,
     saveCurrentPlanAsNew

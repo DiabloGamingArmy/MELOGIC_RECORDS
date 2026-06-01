@@ -225,9 +225,40 @@ export function mountStageThreeViewport(container, options = {}) {
     beams.visible = currentShowBeams && currentRenderMode !== 'simple' && currentRenderMode !== 'export-clean'
     scene.add(beams)
 
-    const gizmo = new THREE.Group(); scene.add(gizmo)
-    const addArrow = (dir, color) => gizmo.add(new THREE.ArrowHelper(dir, new THREE.Vector3(), 2.2, color, 0.45, 0.25))
-    addArrow(new THREE.Vector3(1, 0, 0), '#ff6f6f'); addArrow(new THREE.Vector3(0, 1, 0), '#7cff87'); addArrow(new THREE.Vector3(0, 0, 1), '#5bc7ff')
+    const gizmo = new THREE.Group(); gizmo.renderOrder = 50; scene.add(gizmo)
+    const gizmoPickables = []
+    const gizmoMaterial = (color, opacity = 0.95) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false })
+    const addGizmoPart = (mesh, { tool, axis, handle, disabled = false } = {}) => {
+      mesh.userData.gizmoTool = tool
+      mesh.userData.gizmoAxis = axis
+      mesh.userData.gizmoHandle = handle || `${tool}-${axis}`
+      mesh.userData.gizmoDisabled = disabled
+      mesh.renderOrder = 60
+      gizmo.add(mesh)
+      gizmoPickables.push(mesh)
+      return mesh
+    }
+    const arrowShaft = (axis, color) => {
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 1.25, 12), gizmoMaterial(color))
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.38, 16), gizmoMaterial(color))
+      if (axis === 'x') { shaft.rotation.z = -Math.PI / 2; shaft.position.x = 0.72; head.rotation.z = -Math.PI / 2; head.position.x = 1.48 }
+      if (axis === 'y') { shaft.position.y = 0.72; head.position.y = 1.48 }
+      if (axis === 'z') { shaft.rotation.x = Math.PI / 2; shaft.position.z = 0.72; head.rotation.x = Math.PI / 2; head.position.z = 1.48 }
+      addGizmoPart(shaft, { tool: 'move', axis, handle: `move-${axis}-shaft` })
+      addGizmoPart(head, { tool: 'move', axis, handle: `move-${axis}-head` })
+    }
+    arrowShaft('x', '#ff6f6f'); arrowShaft('y', '#7cff87'); arrowShaft('z', '#5bc7ff')
+    ;['x', 'y', 'z'].forEach((axis) => {
+      const colors = { x: '#ff9a9a', y: '#a8ffae', z: '#9bd8ff' }
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.28), gizmoMaterial(colors[axis]))
+      if (axis === 'x') box.position.x = 1.55
+      if (axis === 'y') box.position.y = 1.55
+      if (axis === 'z') box.position.z = 1.55
+      addGizmoPart(box, { tool: 'scale', axis, handle: `scale-${axis}` })
+    })
+    const rotateRing = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.035, 10, 72), gizmoMaterial('#ffd36b'))
+    rotateRing.rotation.x = Math.PI / 2
+    addGizmoPart(rotateRing, { tool: 'rotate', axis: 'y', handle: 'rotate-yaw' })
     let boxHelpers = []
     let selectedLabel = null
     const initialSelectedKeys = (Array.isArray(options.selectedObjectKeys) && options.selectedObjectKeys.length ? options.selectedObjectKeys : [options.selectedObjectKey]).filter((key) => key && objects[key])
@@ -235,15 +266,21 @@ export function mountStageThreeViewport(container, options = {}) {
     let selectedKey = selectedKeys[0] || (objects[options.selectedObjectKey] ? options.selectedObjectKey : objects['stage-deck'] ? 'stage-deck' : Object.keys(objects)[0] || '')
 
     const raycaster = new THREE.Raycaster(); const pointer = new THREE.Vector2()
+    let hoveredGizmoHandle = null
     const drag = {
       active: false,
       mode: '',
       key: '',
       pointerId: 0,
+      axis: '',
+      startY: 0,
       startX: 0,
       startRotY: 0,
+      startPosition: new THREE.Vector3(),
+      startDimensions: { width: 1, height: 1, depth: 1 },
       startScale: new THREE.Vector3(1, 1, 1),
       startSize: [1, 1, 1],
+      liveTransform: null,
       scaleFactor: 1,
       plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), 0),
       offset: new THREE.Vector3(),
@@ -324,6 +361,49 @@ export function mountStageThreeViewport(container, options = {}) {
       boxHelpers.forEach((helper) => helper.removeFromParent())
       boxHelpers = []
     }
+    const transformReadout = document.createElement('div')
+    transformReadout.className = 'stage-transform-readout'
+    transformReadout.hidden = true
+    container.appendChild(transformReadout)
+    const setTransformReadout = (message = '') => {
+      transformReadout.textContent = message
+      transformReadout.hidden = !message
+    }
+    const currentObjectDimensions = (key = selectedKey) => {
+      const meta = objectMeta[key] || {}
+      const obj = objects[key]
+      const base = meta.size || [1, 1, 1]
+      const scale = obj?.scale || { x: 1, y: 1, z: 1 }
+      return {
+        width: Math.max(0.05, Number(base[0] || 1) * Number(scale.x || 1)),
+        height: Math.max(0.05, Number(base[1] || 1) * Number(scale.y || 1)),
+        depth: Math.max(0.05, Number(base[2] || 1) * Number(scale.z || 1))
+      }
+    }
+    const applyObjectDimensions = (key, dims = {}) => {
+      const obj = objects[key]
+      const meta = objectMeta[key] || {}
+      const base = meta.size || [1, 1, 1]
+      if (!obj) return
+      const width = Math.max(0.05, Number(dims.width ?? currentObjectDimensions(key).width))
+      const height = Math.max(0.05, Number(dims.height ?? currentObjectDimensions(key).height))
+      const depth = Math.max(0.05, Number(dims.depth ?? currentObjectDimensions(key).depth))
+      obj.scale.set(width / Math.max(0.05, Number(base[0] || 1)), height / Math.max(0.05, Number(base[1] || 1)), depth / Math.max(0.05, Number(base[2] || 1)))
+    }
+    const setGizmoHandleState = (tool = currentToolMode, locked = false) => {
+      gizmoPickables.forEach((handle) => {
+        const active = handle.userData.gizmoTool === tool
+        handle.visible = ['move', 'rotate', 'scale'].includes(tool) && active
+        if (handle.material) handle.material.opacity = locked ? 0.32 : handle === hoveredGizmoHandle ? 1 : active ? 0.82 : 0
+      })
+    }
+    const updateGizmoScale = () => {
+      const target = objects[selectedKey]
+      if (!target || !gizmo.visible) return
+      const distance = camera.position.distanceTo(target.position)
+      const scale = camera.isOrthographicCamera ? 1 / Math.max(0.45, Number(camera.zoom || 1)) : Math.max(0.65, Math.min(2.3, distance / 20))
+      gizmo.scale.setScalar(scale)
+    }
     const syncSelection = () => {
       pickables.forEach((m) => {
         const active = selectedKeys.includes(m.userData.objectKey)
@@ -335,10 +415,15 @@ export function mountStageThreeViewport(container, options = {}) {
       selectedLabel = null
       if (!target) {
         gizmo.visible = false
+        setTransformReadout('')
         return
       }
-      gizmo.visible = currentToolMode === 'move' && !target.userData.stageLocked
+      gizmo.visible = ['move', 'rotate', 'scale'].includes(currentToolMode)
       gizmo.position.copy(target.position)
+      setGizmoHandleState(currentToolMode, !!target.userData.stageLocked)
+      updateGizmoScale()
+      if (target.userData.stageLocked && ['move', 'rotate', 'scale'].includes(currentToolMode)) setTransformReadout('Selected object is locked.')
+      else if (!drag.active) setTransformReadout('')
       selectedKeys.forEach((key, index) => {
         const object = objects[key]
         if (!object) return
@@ -411,6 +496,39 @@ export function mountStageThreeViewport(container, options = {}) {
     }
 
     const focusSelected = () => selectedKey ? frameBox(objectBox(selectedKey)) : frameAll()
+    const describeTransform = (target, transform = {}) => {
+      if (!target) return ''
+      if ([transform.width, transform.height, transform.depth].some(Number.isFinite)) return `Size: ${formatNum(transform.width, 1)} x ${formatNum(transform.depth, 1)} x ${formatNum(transform.height, 1)}`
+      if (Number.isFinite(transform.rotY)) return `Rotation: ${formatNum(transform.rotY, 0)} deg`
+      return `X: ${formatNum(target.position.x, 1)} / Y: ${formatNum(target.position.y, 1)} / Z: ${formatNum(target.position.z, 1)}`
+    }
+    const restoreDragStart = () => {
+      const target = objects[drag.key]
+      if (!target) return
+      target.position.copy(drag.startPosition)
+      target.rotation.y = THREE.MathUtils.degToRad(drag.startRotY || 0)
+      applyObjectDimensions(drag.key, drag.startDimensions)
+      gizmo.position.copy(target.position)
+      boxHelpers.forEach((helper) => helper.update())
+      selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+      renderer.render(scene, camera)
+    }
+    const cancelTransform = () => {
+      if (marquee.active) {
+        hideMarquee()
+        return true
+      }
+      if (!drag.active) return false
+      restoreDragStart()
+      drag.active = false
+      drag.mode = ''
+      drag.axis = ''
+      drag.liveTransform = null
+      controls.enabled = true
+      container.style.cursor = ''
+      setTransformReadout('')
+      return true
+    }
 
     const applyObjectTransforms = (transforms = {}) => {
       Object.entries(transforms).forEach(([k, t]) => {
@@ -418,9 +536,11 @@ export function mountStageThreeViewport(container, options = {}) {
         if (!obj || !t) return
         obj.position.set(t.x ?? obj.position.x, t.y ?? obj.position.y, t.z ?? obj.position.z)
         if (Number.isFinite(t.rotY)) obj.rotation.y = THREE.MathUtils.degToRad(t.rotY)
+        if ([t.width, t.height, t.depth].some(Number.isFinite)) applyObjectDimensions(k, t)
       })
       if (objects[selectedKey]) {
         gizmo.position.copy(objects[selectedKey].position)
+        updateGizmoScale()
         boxHelpers.forEach((helper) => helper.update())
         selectedLabel?.position.set(objects[selectedKey].position.x, objects[selectedKey].position.y + 1.8, objects[selectedKey].position.z)
       }
@@ -430,6 +550,7 @@ export function mountStageThreeViewport(container, options = {}) {
     const onPointerDown = (event) => {
       pointerToNdc(event)
       raycaster.setFromCamera(pointer, camera)
+      const gizmoHit = raycaster.intersectObjects(gizmoPickables, true).find((h) => h.object?.visible && h.object?.userData?.gizmoTool)
       const hit = raycaster.intersectObjects(pickables, true).find((h) => h.object?.userData?.objectKey || h.object?.parent?.userData?.objectKey)
       const pointerHitKey = hit ? (hit.object.userData.objectKey || hit.object.parent.userData.objectKey) : ''
       if (currentToolMode === 'pan') return
@@ -450,6 +571,35 @@ export function mountStageThreeViewport(container, options = {}) {
         renderer.domElement.setPointerCapture?.(event.pointerId)
         return
       }
+      if (gizmoHit && selectedKey && objects[selectedKey]) {
+        const target = objects[selectedKey]
+        if (target.userData?.stageLocked) {
+          setTransformReadout('Selected object is locked.')
+          event.preventDefault()
+          event.stopImmediatePropagation?.()
+          return
+        }
+        drag.active = true
+        drag.mode = gizmoHit.object.userData.gizmoTool || currentToolMode
+        drag.axis = gizmoHit.object.userData.gizmoAxis || ''
+        drag.key = selectedKey
+        drag.pointerId = event.pointerId
+        drag.startX = event.clientX
+        drag.startY = event.clientY
+        drag.startPosition.copy(target.position)
+        drag.startRotY = THREE.MathUtils.radToDeg(target.rotation.y || 0)
+        drag.startDimensions = currentObjectDimensions(selectedKey)
+        drag.startScale.copy(target.scale || new THREE.Vector3(1, 1, 1))
+        drag.startSize = objectMeta[selectedKey]?.size || [1, 1, 1]
+        drag.liveTransform = null
+        controls.enabled = false
+        container.style.cursor = 'grabbing'
+        setTransformReadout(`${drag.mode.charAt(0).toUpperCase()}${drag.mode.slice(1)} ${drag.axis.toUpperCase()}`)
+        event.preventDefault()
+        event.stopImmediatePropagation?.()
+        renderer.domElement.setPointerCapture?.(event.pointerId)
+        return
+      }
       if (!hit && !['move', 'rotate', 'scale'].includes(currentToolMode)) return
       let hitKey = hit ? (hit.object.userData.objectKey || hit.object.parent.userData.objectKey) : selectedKey
       if (!hitKey || !objects[hitKey]) return
@@ -463,12 +613,17 @@ export function mountStageThreeViewport(container, options = {}) {
       if (!target || target.userData?.stageLocked || !['move', 'rotate', 'scale'].includes(currentToolMode)) return
       drag.active = true
       drag.mode = currentToolMode
+      drag.axis = currentToolMode === 'move' ? 'free' : currentToolMode === 'rotate' ? 'y' : 'uniform'
       drag.key = hitKey
       drag.pointerId = event.pointerId
       drag.startX = event.clientX
+      drag.startY = event.clientY
+      drag.startPosition.copy(target.position)
       drag.startRotY = THREE.MathUtils.radToDeg(target.rotation.y || 0)
+      drag.startDimensions = currentObjectDimensions(hitKey)
       drag.startScale.copy(target.scale || new THREE.Vector3(1, 1, 1))
       drag.startSize = objectMeta[hitKey]?.size || [1, 1, 1]
+      drag.liveTransform = null
       drag.scaleFactor = 1
       if (currentToolMode === 'move') {
         drag.plane.set(new THREE.Vector3(0, 1, 0), -target.position.y)
@@ -476,6 +631,7 @@ export function mountStageThreeViewport(container, options = {}) {
         drag.offset.copy(target.position).sub(drag.point)
       }
       controls.enabled = false
+      container.style.cursor = 'grabbing'
       event.preventDefault()
       event.stopImmediatePropagation?.()
       renderer.domElement.setPointerCapture?.(event.pointerId)
@@ -492,27 +648,65 @@ export function mountStageThreeViewport(container, options = {}) {
         event.preventDefault()
         return
       }
-      if (!drag.active) return
+      if (!drag.active) {
+        if (['move', 'rotate', 'scale'].includes(currentToolMode) && gizmo.visible) {
+          pointerToNdc(event)
+          raycaster.setFromCamera(pointer, camera)
+          const hit = raycaster.intersectObjects(gizmoPickables, true).find((h) => h.object?.visible && h.object?.userData?.gizmoTool)
+          hoveredGizmoHandle = hit?.object || null
+          container.style.cursor = hoveredGizmoHandle ? 'grab' : ''
+          const selectedTarget = objects[selectedKey]
+          setGizmoHandleState(currentToolMode, !!selectedTarget?.userData?.stageLocked)
+        }
+        return
+      }
       const target = objects[drag.key]
       if (!target) return
       pointerToNdc(event)
       raycaster.setFromCamera(pointer, camera)
       if (drag.mode === 'move') {
-        if (!raycaster.ray.intersectPlane(drag.plane, drag.point)) return
-        target.position.x = snapNumber(drag.point.x + drag.offset.x)
-        target.position.z = snapNumber(drag.point.z + drag.offset.z)
+        if (drag.axis === 'x' || drag.axis === 'y' || drag.axis === 'z') {
+          const delta = drag.axis === 'y' ? -(event.clientY - drag.startY) * 0.04 : (event.clientX - drag.startX) * 0.05
+          target.position.copy(drag.startPosition)
+          target.position[drag.axis] = drag.axis === 'y' ? drag.startPosition.y + delta : snapNumber(drag.startPosition[drag.axis] + delta)
+        } else {
+          if (!raycaster.ray.intersectPlane(drag.plane, drag.point)) return
+          target.position.x = snapNumber(drag.point.x + drag.offset.x)
+          target.position.z = snapNumber(drag.point.z + drag.offset.z)
+        }
+        drag.liveTransform = { x: target.position.x, y: target.position.y, z: target.position.z }
       }
       if (drag.mode === 'rotate') {
         const nextRot = drag.startRotY + ((event.clientX - drag.startX) * 0.35)
-        target.rotation.y = THREE.MathUtils.degToRad(snapNumber(nextRot))
+        const snappedRot = currentSnapEnabled ? Math.round(nextRot / 5) * 5 : nextRot
+        target.rotation.y = THREE.MathUtils.degToRad(snappedRot)
+        drag.liveTransform = { rotY: snappedRot }
       }
       if (drag.mode === 'scale') {
-        drag.scaleFactor = Math.max(0.2, Math.min(4, 1 + ((event.clientX - drag.startX) / 180)))
-        target.scale.set(drag.startScale.x * drag.scaleFactor, drag.startScale.y * drag.scaleFactor, drag.startScale.z * drag.scaleFactor)
+        const pixelDelta = drag.axis === 'y' ? -(event.clientY - drag.startY) : (event.clientX - drag.startX)
+        const unitDelta = pixelDelta * 0.045
+        const nextDims = { ...drag.startDimensions }
+        if (drag.axis === 'x') nextDims.width = Math.max(0.05, drag.startDimensions.width + unitDelta)
+        else if (drag.axis === 'y') nextDims.height = Math.max(0.05, drag.startDimensions.height + unitDelta)
+        else if (drag.axis === 'z') nextDims.depth = Math.max(0.05, drag.startDimensions.depth + unitDelta)
+        else {
+          drag.scaleFactor = Math.max(0.2, Math.min(4, 1 + ((event.clientX - drag.startX) / 180)))
+          nextDims.width = Math.max(0.05, drag.startDimensions.width * drag.scaleFactor)
+          nextDims.height = Math.max(0.05, drag.startDimensions.height * drag.scaleFactor)
+          nextDims.depth = Math.max(0.05, drag.startDimensions.depth * drag.scaleFactor)
+        }
+        if (currentSnapEnabled && currentSnapInterval > 0) {
+          nextDims.width = Math.max(0.05, snapNumber(nextDims.width))
+          nextDims.depth = Math.max(0.05, snapNumber(nextDims.depth))
+        }
+        applyObjectDimensions(drag.key, nextDims)
+        drag.liveTransform = nextDims
       }
       gizmo.position.copy(target.position)
+      updateGizmoScale()
       boxHelpers.forEach((helper) => helper.update())
       selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+      setTransformReadout(describeTransform(target, drag.liveTransform || {}))
       renderer.render(scene, camera)
     }
     const onPointerUp = (event) => {
@@ -546,19 +740,24 @@ export function mountStageThreeViewport(container, options = {}) {
       renderer.domElement.releasePointerCapture?.(event.pointerId || drag.pointerId)
       if (target) {
         const transform = drag.mode === 'rotate'
-          ? { rotY: THREE.MathUtils.radToDeg(target.rotation.y || 0) }
+          ? { rotY: drag.liveTransform?.rotY ?? THREE.MathUtils.radToDeg(target.rotation.y || 0) }
           : drag.mode === 'scale'
-            ? {
-                width: Math.max(0.05, Number(drag.startSize[0] || 1) * drag.scaleFactor),
-                height: Math.max(0.05, Number(drag.startSize[1] || 1) * drag.scaleFactor),
-                depth: Math.max(0.05, Number(drag.startSize[2] || 1) * drag.scaleFactor)
-              }
+            ? (drag.liveTransform || currentObjectDimensions(drag.key))
             : { x: target.position.x, y: target.position.y, z: target.position.z }
         options.onTransformObject?.(drag.key, transform)
       }
       drag.mode = ''
+      drag.axis = ''
+      drag.liveTransform = null
+      container.style.cursor = ''
+      setTransformReadout('')
     }
     const onKeyDown = (event) => {
+      if (event.key === 'Escape' && drag.active) {
+        event.preventDefault()
+        cancelTransform()
+        return
+      }
       if (event.key === 'Escape' && marquee.active) {
         event.preventDefault()
         hideMarquee()
@@ -623,7 +822,7 @@ export function mountStageThreeViewport(container, options = {}) {
     let raf = 0
     let disposed = false
     let loggedFirstRender = false
-    const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); if (!loggedFirstRender) { loggedFirstRender = true; console.info('[stageThreeViewport] first render complete'); writeStatus() } }
+    const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); updateGizmoScale(); renderer.render(scene, camera); if (!loggedFirstRender) { loggedFirstRender = true; console.info('[stageThreeViewport] first render complete'); writeStatus() } }
     animate()
 
     const update = (nextOptions = {}) => {
@@ -645,6 +844,7 @@ export function mountStageThreeViewport(container, options = {}) {
       if (nextOptions.objectTransforms) applyObjectTransforms(nextOptions.objectTransforms)
       if (Array.isArray(nextOptions.selectedObjectKeys)) setSelectedKeys(nextOptions.selectedObjectKeys, { notify: false, primary: nextOptions.selectedObjectKey })
       else if (typeof nextOptions.selectedObjectKey === 'string') setSelectedKey(nextOptions.selectedObjectKey, { notify: false })
+      updateGizmoScale()
       renderer.render(scene, camera)
       writeStatus('Updated viewport options')
     }
@@ -667,7 +867,7 @@ export function mountStageThreeViewport(container, options = {}) {
       console.info('[stageThreeViewport] disposed')
     }
 
-    return { dispose, update, focusSelected, frameAll }
+    return { dispose, update, focusSelected, frameAll, cancelTransform }
   } catch (error) {
     console.error('[stageThreeViewport] mount failed', error)
     container.classList.add('is-three-error')
