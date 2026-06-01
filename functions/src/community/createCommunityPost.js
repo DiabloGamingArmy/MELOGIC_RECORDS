@@ -1,6 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
+const { cleanSlug, seedOfficialCommunities } = require('./communityShared')
 
 const POST_TYPES = new Set(['text', 'product_share'])
 
@@ -61,6 +62,40 @@ async function buildProductSnapshot(productId = '') {
   }
 }
 
+async function resolveCommunityForPost({ communityId = '', communitySlug = '', uid = '' } = {}) {
+  const id = cleanString(communityId || cleanSlug(communitySlug), 180)
+  if (!id) return { communityId: '', communitySlug: '' }
+  if (id.includes('/')) throw new HttpsError('invalid-argument', 'A valid community id is required.')
+
+  await seedOfficialCommunities()
+
+  const communityRef = db().collection('communities').doc(id)
+  const communitySnap = await communityRef.get()
+  if (!communitySnap.exists) throw new HttpsError('not-found', 'Community not found.')
+  const community = communitySnap.data() || {}
+  if (community.status !== 'active' || community.visibility !== 'public') {
+    throw new HttpsError('failed-precondition', 'This community is not available for posting.')
+  }
+
+  const postingMode = cleanString(community.postingMode || 'open', 40)
+  const isModerator = community.ownerUid === uid || (Array.isArray(community.moderatorIds) && community.moderatorIds.includes(uid))
+  if (postingMode === 'moderators_only' && !isModerator) {
+    throw new HttpsError('permission-denied', 'Only moderators can post in this community.')
+  }
+  if (postingMode === 'focused_only' || postingMode === 'members_only') {
+    const focusSnap = await db().collection('users').doc(uid).collection('focusedCommunities').doc(communitySnap.id).get()
+    if (!focusSnap.exists && !isModerator) {
+      throw new HttpsError('permission-denied', 'Focus this community before posting.')
+    }
+  }
+
+  return {
+    communityId: communitySnap.id,
+    communitySlug: cleanString(community.slug || communitySnap.id, 80),
+    communityName: cleanString(community.name || community.slug || communitySnap.id, 120)
+  }
+}
+
 const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const uid = cleanString(request.auth?.uid || '', 180)
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.')
@@ -76,11 +111,16 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     throw new HttpsError('invalid-argument', 'Choose a product to share.')
   }
 
-  const [author, productLink] = await Promise.all([
+  const [author, productLink, community] = await Promise.all([
     loadAuthorSnapshot(uid),
     type === 'product_share'
       ? buildProductSnapshot(request.data?.linkedProductId || '')
-      : Promise.resolve({ linkedProductId: '', linkedProductSnapshot: {} })
+      : Promise.resolve({ linkedProductId: '', linkedProductSnapshot: {} }),
+    resolveCommunityForPost({
+      communityId: request.data?.communityId || '',
+      communitySlug: request.data?.communitySlug || '',
+      uid
+    })
   ])
 
   const postRef = db().collection('communityPosts').doc()
@@ -92,8 +132,9 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     type,
     title,
     body,
-    communityId: '',
-    communitySlug: '',
+    communityId: community.communityId,
+    communitySlug: community.communitySlug,
+    communityName: community.communityName || '',
     ...productLink,
     mediaPaths: [],
     tags,
@@ -112,7 +153,15 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     updatedAt: now
   }
 
-  await postRef.set(payload)
+  const batch = db().batch()
+  batch.set(postRef, payload)
+  if (community.communityId) {
+    batch.set(db().collection('communities').doc(community.communityId), {
+      postCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: now
+    }, { merge: true })
+  }
+  await batch.commit()
   return { ok: true, postId: postRef.id, post: { ...payload, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } }
 })
 

@@ -156,6 +156,7 @@ function renderSignedInState(user, storedProfile = null) {
         <button type="button" class="profile-tab is-active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
         <button type="button" class="profile-tab" data-tab="activity" role="tab" aria-selected="false">Activity</button>
         <button type="button" class="profile-tab" data-tab="library" role="tab" aria-selected="false">Library</button>
+        <button type="button" class="profile-tab" data-tab="communities" role="tab" aria-selected="false">Communities</button>
         <button type="button" class="profile-tab" data-tab="creator" role="tab" aria-selected="false">Creator</button>
       </div>
 
@@ -184,6 +185,16 @@ function renderSignedInState(user, storedProfile = null) {
           <article><h4>Purchases</h4><p>Catalog receipts and downloads appear here.</p></article>
           <article><h4>Saved for later</h4><p>Bookmark packs and tools for later sessions.</p></article>
           <article><h4>Download history</h4><p>Track file versions and re-download links.</p></article>
+        </div>
+      </div>
+
+      <div class="profile-tab-content" data-panel="communities">
+        <h3>Focused Communities</h3>
+        <p class="muted">Focused communities and recent community posts will appear here as the Community system grows.</p>
+        <div class="profile-mini-grid">
+          <article><h4>Focused</h4><p>Communities you focus will be summarized here.</p></article>
+          <article><h4>Recent Posts</h4><p>Your latest community posts will be connected in a later pass.</p></article>
+          <article><h4>Discover</h4><p><a href="${ROUTES.communityCommunities}">Browse Melogic communities</a></p></article>
         </div>
       </div>
 
