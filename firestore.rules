@@ -995,6 +995,10 @@ service cloud.firestore {
         && request.auth.uid in resource.data.collaboratorIds;
     }
 
+    function isPublicStageProjectResource() {
+      return resource.data.visibility == 'public';
+    }
+
     function stageTypeValid(value) {
       return value in [
         'Blank Stage',
@@ -1664,8 +1668,8 @@ service cloud.firestore {
     }
 
     match /stageProjects/{projectId} {
-      allow get: if isStageOwnerResource() || isStageCollaboratorResource();
-      allow list: if isStageOwnerResource() || isStageCollaboratorResource();
+      allow get: if isPublicStageProjectResource() || isStageOwnerResource() || isStageCollaboratorResource();
+      allow list: if isPublicStageProjectResource() || isStageOwnerResource() || isStageCollaboratorResource();
       allow create: if stageProjectCreateIsValid();
       allow update: if isStageOwnerResource() && stageProjectUpdateIsValid();
       allow delete: if isStageOwnerResource();

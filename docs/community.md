@@ -239,10 +239,18 @@ Done in phase 3:
 - account event notifications for post likes, comments, replies, and comment likes
 - admin report links for community comments
 
+Done in phase 4:
+
+- public profile tabs for Posts, Products, Stage Plans, About, and Communities
+- profile Posts tab loads only `published/public` community posts by the profile owner
+- profile Communities tab shows public communities the creator owns or moderates
+- profile Stage Plans tab is public-safe and only reads StageMaker plans explicitly marked `visibility: public`
+- profile header shows public-safe creator stats without scanning private data
+- community post profile cards link to `/community/post/{postId}`
+
 Deferred:
 
 - creator follow feed
-- profile integration
 - stories
 - FYP scoring
 - full community moderation dashboard
