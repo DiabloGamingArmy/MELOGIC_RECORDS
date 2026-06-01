@@ -186,7 +186,8 @@ function renderProduct(product, recommendations = []) {
 
   const listingThumbnailURL = product.thumbnailURL || product.coverURL || ''
   const typeLabel = product.productType || 'Product'
-  const creatorHref = product.artistUid ? publicProfileRoute({ uid: product.artistUid }) : ROUTES.profile
+  const creatorId = product.artistId || product.artistUid || ''
+  const creatorHref = creatorId ? publicProfileRoute({ uid: creatorId }) : ROUTES.profile
   const likeCount = product.likeCount ?? product.counts?.likes ?? 0
   const dislikeCount = product.counts?.dislikes ?? 0
   const artistDisplayName = product.artistDisplayName || product.artistName || 'Creator'

@@ -102,12 +102,11 @@ export function authRoute({ redirect } = {}) {
 }
 
 export function publicProfileRoute({ uid, username, preview } = {}) {
-  const params = new URLSearchParams()
-  if (uid) params.set('uid', String(uid))
-  else if (username) params.set('username', String(username))
-  if (preview && uid) params.set('preview', 'public')
-  const query = params.toString()
-  return query ? `${ROUTES.profilePublic}?${query}` : ROUTES.profilePublic
+  const identifier = String(uid || username || '').trim()
+  if (!identifier) return ROUTES.profilePublic
+
+  const route = `/profiles/${encodeURIComponent(identifier)}`
+  return preview && uid ? `${route}?preview=public` : route
 }
 
 export function usernameProfileRoute(username = '') {

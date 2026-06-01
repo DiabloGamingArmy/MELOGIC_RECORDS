@@ -85,8 +85,9 @@ function normalizeSearchTokens(value) {
 }
 
 function productCardMarkup(product) {
-  const artistHref = product.artistUid
-    ? publicProfileRoute({ uid: product.artistUid })
+  const artistId = product.artistId || product.artistUid || product.uid || ''
+  const artistHref = artistId
+    ? publicProfileRoute({ uid: artistId })
     : (product.artistUsername ? usernameProfileRoute(product.artistUsername) : ROUTES.profilePublic)
   const tags = product.genres?.length
     ? product.genres.map((genre) => `#${escapeHtml(String(genre).replace(/\s+/g, ''))}`).join(' · ')
