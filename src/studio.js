@@ -141,7 +141,7 @@ function mixedProjects() {
 }
 
 function renderDemoCards(items = []) {
-  return `<div class="studio-explore-row">${items.map((item) => `
+  return `<div class="studio-card-grid studio-explore-row">${items.map((item) => `
     <button type="button" class="studio-explore-card is-placeholder" data-placeholder-demo aria-disabled="true">
       <div class="studio-cover-placeholder ${item.tool === 'Stagemaker' ? 'is-stage-demo' : ''}"></div>
       <div class="studio-explore-copy">
@@ -158,9 +158,9 @@ function renderRecentList(projects = [], kind = 'daw') {
     return `<p class="studio-recents-empty">${kind === 'stage' ? 'Recent stage projects will appear here once you open a Stagemaker project.' : 'Recent projects will appear here once you open a project.'}</p>`
   }
   const attr = kind === 'stage' ? 'data-open-stage-project' : 'data-open-daw-project'
-  return `<div class="studio-recent-list">${projects.map((project) => `
+  return `<div class="studio-card-grid studio-recent-list">${projects.map((project) => `
     <button class="studio-recent-item" ${attr}="${project.id}" type="button">
-      <strong>${project.title}</strong>
+      <span class="studio-card-topline"><strong>${project.title}</strong><span class="studio-badge">${ownerBadge(project)}</span></span>
       <span>${kind === 'stage' ? stageSubtitle(project) : dawSubtitle(project)} - ${fmtDate(project)}</span>
     </button>
   `).join('')}</div>`
@@ -183,12 +183,15 @@ function renderMixedProjectRows(projects = []) {
     const attr = isStage ? 'data-open-stage-project' : 'data-open-daw-project'
     return `
       <article class="studio-project-row">
+        <div class="studio-card-topline">
+          <span class="studio-card-kicker">${project.studioTool}</span>
+          <span class="studio-badge">${ownerBadge(project)}</span>
+        </div>
         <button class="studio-project-open" ${attr}="${project.id}" type="button">
           <h4>${project.title}</h4>
           <p>${isStage ? stageSubtitle(project) : dawSubtitle(project)}</p>
           <small>${project.studioTool} - ${fmtDate(project)}</small>
         </button>
-        <span class="studio-badge">${ownerBadge(project)}</span>
       </article>
     `
   }).join('')}</div>`
@@ -205,12 +208,15 @@ function renderProjectArea(kind = 'daw') {
   const attr = kind === 'stage' ? 'data-open-stage-project' : 'data-open-daw-project'
   return `<div class="studio-project-grid">${source.projects.map((project) => `
     <article class="studio-project-row">
+      <div class="studio-card-topline">
+        <span class="studio-card-kicker">${kind === 'stage' ? 'Stagemaker' : 'DAW'}</span>
+        <span class="studio-badge">${ownerBadge(project)}</span>
+      </div>
       <button class="studio-project-open" ${attr}="${project.id}" type="button">
         <h4>${project.title}</h4>
         <p>${kind === 'stage' ? stageSubtitle(project) : dawSubtitle(project)}</p>
         <small>${fmtDate(project)}</small>
       </button>
-      <span class="studio-badge">${ownerBadge(project)}</span>
     </article>
   `).join('')}</div>`
 }
