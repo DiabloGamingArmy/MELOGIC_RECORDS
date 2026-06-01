@@ -549,7 +549,9 @@ body:has(.stage-editor-app){overflow:hidden}
 .stage-viewport-tool-modes{padding-right:5px;border-right:1px solid rgba(255,255,255,.09)}
 .stage-viewport-tools .stage-tool-mode{background:#111824;border-color:rgba(255,255,255,.12);color:#b9c9e8}
 .stage-viewport-tools .stage-tool-mode.is-active{border-color:var(--stage-accent);background:rgba(34,184,181,.18);color:#e7ffff}
-.stage-tool-status{height:24px;display:inline-flex;align-items:center;padding:0 8px;border-left:1px solid rgba(255,255,255,.1);color:#a9deda;font-size:10px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.stage-tool-status,.stage-mode-status{height:24px;display:inline-flex;align-items:center;padding:0 8px;border-left:1px solid rgba(255,255,255,.1);color:#a9deda;font-size:10px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.stage-mode-status{border:1px solid rgba(106,126,160,.3);border-radius:999px;background:rgba(255,255,255,.035);color:#cfe0ff}
+.stage-mode-status.is-edit{border-color:rgba(255,214,107,.55);background:rgba(255,214,107,.13);color:#ffe39b}
 .stage-viewport-status-stack{position:absolute;left:10px;bottom:12px;z-index:7;display:grid;gap:5px;max-width:min(520px,calc(100% - 360px));pointer-events:none}
 .stage-viewport-status-stack .stage-three-hint,.stage-viewport-status-stack .stage-three-load-warning{position:static;left:auto;bottom:auto;max-width:none;margin:0}
 .stage-viewport-status-stack .stage-three-hint{padding:5px 8px;border-radius:4px;background:rgba(8,12,20,.78);border:1px solid rgba(106,126,160,.28);color:rgba(218,230,255,.78);font-size:10.5px;line-height:1.2}

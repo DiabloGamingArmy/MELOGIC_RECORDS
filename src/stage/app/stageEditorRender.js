@@ -3,7 +3,7 @@ import { renderBottomSplit } from '../bottomPanel/bottomPanel'
 import { renderExportPreview } from '../export/exportPreview'
 import { renderInspectorTabs } from '../inspector/inspectorTabs'
 import { renderLeftPanelBySection } from '../panels/leftPanels'
-import { editorModes, editorRailItems, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, projectDate, projectLoadLabel, selectedStageObjects, stageIconPath, state } from './stageState'
+import { editorModes, editorRailItems, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, isSimpleEditableStageObject, projectDate, projectLoadLabel, selectedStageObjects, stageIconPath, state } from './stageState'
 
 function renderEditorState(title, body) {
   return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>${title}</h2>${body}<a href="${ROUTES.studioStagemaker}" class="stage-back-link">Back to Stagemaker Projects</a></section></main>`
@@ -25,12 +25,17 @@ function renderViewport() {
   const selected = findStageObject()
   const selectedObjects = selectedStageObjects()
   const locked = !!selected?.locked
+  const editMode = state.stageInteractionMode === 'edit'
   const selectedStatus = selectedObjects.length > 1
     ? `Selected: ${selectedObjects.length} objects · primary ${selected?.label || selected?.name || selected?.id || 'object'}`
     : selected
     ? `Selected: ${selected.label || selected.name || selected.id} · ${selected.category || selected.type || 'object'} · ${locked ? 'locked' : 'unlocked'}`
     : 'No object selected'
-  const hint = locked
+  const hint = editMode
+    ? isSimpleEditableStageObject(selected)
+      ? 'Edit Mode: drag corner or edge handles to resize. Tab returns to Object Mode.'
+      : 'Edit Mode is not available for this selected object.'
+    : locked
     ? 'Selected object is locked. Unlock it in Properties before moving.'
     : state.editorToolMode === 'pan'
       ? 'Pan: drag to move camera · wheel zoom'
@@ -50,7 +55,7 @@ function renderViewport() {
   const loadWarning = !['loaded', 'loading'].includes(state.projectLoadStatus)
     ? `<div class="stage-three-load-warning">${state.projectLoadMessage || `${projectLoadLabel()}: editing local/fallback stage.`}</div>`
     : ''
-  return `<section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><div class="stage-viewport-tool-modes">${toolButtons}</div><div class="stage-viewport-tool-toggles"><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-focus-selected title="Focus selected object (F)">Focus</button><button type="button" data-frame-all title="Frame full stage (A)">Frame All</button><button type="button" data-toggle-measure class="${state.measureModeEnabled ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div><span class="stage-tool-status" data-stage-tool-status>Tool: ${state.editorToolMode.charAt(0).toUpperCase()}${state.editorToolMode.slice(1)}</span></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${viewButtons}</div></div><div class="stage-viewport-status-stack">${loadWarning}<div class="stage-three-hint">${hint}</div></div><div class="stage-viewport-selected-pill">${selectedStatus}</div></div></div></section>`
+  return `<section class="stage-editor-workspace"><div class="stage-editor-viewport"><div class="stage-editor-canvas"><div class="stage-three-viewport" data-stage-three-viewport tabindex="0"></div><div class="stage-viewport-overlay"><div class="stage-viewport-tools"><span>TOOLS:</span><div class="stage-viewport-tool-modes">${toolButtons}</div><div class="stage-viewport-tool-toggles"><button type="button" data-toggle-beam class="${state.beamPreviewEnabled ? 'is-active' : ''}">Beam</button><button type="button" data-toggle-grid class="${state.gridEnabled ? 'is-active' : ''}">Grid ${state.gridEnabled ? 'On' : 'Off'}</button><button type="button" data-toggle-snap class="${state.snapEnabled ? 'is-active' : ''}">Snap ${state.snapEnabled ? 'On' : 'Off'}</button><button type="button" data-focus-selected title="Focus selected object (F)">Focus</button><button type="button" data-frame-all title="Frame full stage (A)">Frame All</button><button type="button" data-toggle-measure class="${state.measureModeEnabled ? 'is-active' : ''}" title="Measurement is preview mode only">Measure</button></div><span class="stage-tool-status" data-stage-tool-status>Tool: ${state.editorToolMode.charAt(0).toUpperCase()}${state.editorToolMode.slice(1)}</span><span class="stage-mode-status ${editMode ? 'is-edit' : ''}" data-stage-mode-status>${editMode ? 'Edit Mode' : 'Object Mode'}</span></div><div class="stage-viewport-view-modes"><span>VIEW MODE:</span>${viewButtons}</div></div><div class="stage-viewport-status-stack">${loadWarning}<div class="stage-three-hint">${hint}</div></div><div class="stage-viewport-selected-pill">${selectedStatus}</div></div></div></section>`
 }
 
 function renderBottomPanel() {
