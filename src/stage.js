@@ -409,7 +409,7 @@ function updateStageAppMenu() {
   const existing = left.querySelector('[data-stage-app-menu-panel]')
   existing?.remove()
   if (!state.stageAppMenuOpen) return
-  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.studioStagemaker}">Stagemaker Projects</a><a href="${ROUTES.studio}">Studio Hub</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button><label class="stage-menu-check"><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}> Show site-wide header</label></div>`)
+  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.studioStagemaker}">Back to StageMaker</a><a href="${ROUTES.studio}">Back to Studio</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button><label class="stage-menu-check"><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}> Show site-wide header</label></div>`)
 }
 
 function updateExportPreview() {

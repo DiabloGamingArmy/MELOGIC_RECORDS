@@ -21,6 +21,7 @@ import {
 } from './data/stageProjectService'
 import { studioSidebar } from './components/studioShell'
 import { initStudioBrandLogo } from './components/studioBrandLogo'
+import { stageTypes, templateCards } from './stage/app/stageState'
 
 const app = document.querySelector('#app')
 
@@ -54,6 +55,15 @@ const moduleCards = [
   { title: 'Demos', href: ROUTES.studioDemos, body: 'Explore example sessions and production references.' },
   { title: 'Tutorials', href: ROUTES.studioTutorials, body: 'Learn the tools and workflows inside Melogic Studio.' },
   { title: 'Release Builder', href: '#', body: 'Future release prep, assets, checklists, and distribution handoff.', placeholder: true }
+]
+
+const stageToolCards = [
+  { title: 'Blueprint Export', body: 'Export stage plots and production-ready summaries for load-in.' },
+  { title: 'Input Lists', body: 'Track sources, mic/DI choices, monitor sends, and patch notes.' },
+  { title: 'Equipment Library', body: 'Place backline, audio, lighting, rigging, video, and venue assets.' },
+  { title: 'Collaboration', body: 'Keep project ownership and shared plans in the Studio workspace.' },
+  { title: 'Sharing', body: 'Prepare plans for production handoff without exposing private drafts.' },
+  { title: 'Technical Notes', body: 'Capture safety notes, compatibility details, and show-day reminders.' }
 ]
 
 const state = {
@@ -104,6 +114,19 @@ function stageSubtitle(project = {}) {
   const depth = dims.depth || project.stage?.depth || 20
   const unit = dims.unit || project.stage?.unit || 'ft'
   return `${project.stageType || 'Blank Stage'} - ${width}x${depth} ${unit}`
+}
+
+function stageProjectMeta(project = {}) {
+  const dims = project.stageDimensions || project.stage || {}
+  const width = dims.width || project.stage?.width || 32
+  const depth = dims.depth || project.stage?.depth || 20
+  const unit = dims.unit || project.stage?.unit || 'ft'
+  return {
+    stageType: project.stageType || 'Blank Stage',
+    dimensions: `${width}x${depth} ${unit}`,
+    updated: fmtDate(project),
+    role: ownerBadge(project)
+  }
 }
 
 function taggedProjects(kind, projects = []) {
@@ -192,6 +215,57 @@ function renderProjectArea(kind = 'daw') {
   `).join('')}</div>`
 }
 
+function renderStageProjectGrid(projects = [], emptyMessage = 'No stage plans yet. Start with a template or create a blank stage.') {
+  if (!projects.length) {
+    return `<div class="studio-projects-empty studio-stage-empty"><p class="studio-projects-empty-title">${esc(emptyMessage)}</p><p>StageMaker plans you own or collaborate on will appear here.</p></div>`
+  }
+
+  return `<div class="studio-stage-project-grid">${projects.map((project) => {
+    const meta = stageProjectMeta(project)
+    return `
+      <article class="studio-stage-project-card">
+        <div class="studio-stage-card-topline">
+          <span class="studio-stage-card-kicker">${esc(meta.stageType)}</span>
+          <span class="studio-badge">${esc(meta.role)}</span>
+        </div>
+        <button class="studio-stage-project-open" data-open-stage-project="${esc(project.id)}" type="button">
+          <h3>${esc(project.title || 'Untitled Stage Plan')}</h3>
+          <p>${esc(meta.dimensions)}</p>
+          <small>Updated ${esc(meta.updated)}</small>
+        </button>
+      </article>
+    `
+  }).join('')}</div>`
+}
+
+function renderStageProjectArea(projects = state.stage.projects, emptyMessage) {
+  if (state.stage.loading) return '<p class="studio-recents-empty">Loading stage plans...</p>'
+  if (state.stage.error) return `<p class="studio-recents-empty">${esc(state.stage.error)}</p>`
+  return renderStageProjectGrid(projects, emptyMessage)
+}
+
+function renderStageTemplateCards() {
+  return `<div class="studio-stage-template-grid">${templateCards.map((tpl) => `
+    <article class="studio-stage-template-card">
+      <div class="studio-stage-template-thumb studio-stage-template-thumb--${esc(tpl.icon)}" aria-hidden="true"></div>
+      <div class="studio-stage-template-copy">
+        <h3>${esc(tpl.title)}</h3>
+        <p>${esc(tpl.subtitle)}</p>
+      </div>
+      <button class="studio-stage-template-button" data-use-stage-template="${esc(tpl.type)}" type="button">Create</button>
+    </article>
+  `).join('')}</div>`
+}
+
+function renderStageTools() {
+  return `<div class="studio-module-grid studio-stage-tools-grid">${stageToolCards.map((card) => `
+    <article class="studio-module-tile studio-stage-tool-tile">
+      <strong>${esc(card.title)}</strong>
+      <span>${esc(card.body)}</span>
+    </article>
+  `).join('')}</div>`
+}
+
 function renderProjectsPanel(kind = 'daw') {
   return `<section class="studio-projects-panel"><header class="studio-projects-toolbar"><button class="studio-folder-button" type="button" data-placeholder-demo>NEW FOLDER</button><button class="studio-toolbar-icon" type="button" aria-label="Search projects" data-tooltip="Search" data-placeholder-demo><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Filter projects" data-tooltip="Filters" data-placeholder-demo><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 10h4"/><path d="M18 16h4"/></svg></button><button class="studio-toolbar-icon" type="button" aria-label="Project options" data-tooltip="More" data-placeholder-demo><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button></header><div class="studio-projects-body">${renderProjectArea(kind)}</div></section>`
 }
@@ -255,16 +329,32 @@ function renderDaw() {
 function renderStagemaker() {
   return `
     <section class="studio-main">
-      <div class="studio-top-actions">
-        <a class="studio-action-button" data-action="new-project" data-new-stage-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">NEW STAGE PROJECT <span>${icon('plus')}</span></a>
-        <a class="studio-action-button" data-action="start-collab" data-start-collab href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">START COLLAB <span>${icon('user')}</span></a>
-      </div>
-      <div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      <section class="studio-hub-hero studio-stage-hero">
+        <div>
+          <p class="eyebrow">Studio Module</p>
+          <h1>StageMaker</h1>
+          <p>Plan stages, input lists, camera plots, lighting layouts, and export-ready blueprints.</p>
+        </div>
+        <div class="studio-hub-actions">
+          <a class="button button-accent" data-new-stage-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">New Stage Plan</a>
+          <a class="button button-muted" href="#stage-templates">View Templates</a>
+        </div>
+      </section>
+
+      <div id="stage-recents" class="studio-section-heading"><h2>CONTINUE WORKING</h2><span class="studio-section-line studio-section-line--recents"></span></div>
+      ${state.stage.loading ? '<p class="studio-recents-empty">Loading recent stage plans...</p>' : renderStageProjectGrid(state.stage.recentProjects, 'Recent stage plans will appear here once you open a StageMaker project.')}
+
+      <div id="stage-templates" class="studio-section-heading"><h2>STAGEMAKER TEMPLATES</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      ${renderStageTemplateCards()}
+
+      <div class="studio-section-heading"><h2>DEMO STAGE PLANS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       ${renderDemoCards(stageDemos)}
-      <div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>
-      ${renderRecentList(state.stage.recentProjects, 'stage')}
-      <div class="studio-section-heading"><h2>PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div>
-      ${renderProjectsPanel('stage')}
+
+      <div class="studio-section-heading"><h2>MY STAGE PLANS</h2><span class="studio-section-line studio-section-line--projects"></span></div>
+      <section class="studio-projects-panel studio-stage-projects-panel"><div class="studio-projects-body">${renderStageProjectArea(state.stage.projects)}</div></section>
+
+      <div class="studio-section-heading"><h2>STAGEMAKER TOOLS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      ${renderStageTools()}
       <div data-studio-modal-root></div>
     </section>
   `
@@ -348,7 +438,7 @@ function openStageProject(projectId) {
   window.location.href = stageProjectRoute(projectId)
 }
 
-function renderCreateModal(kind = 'daw', loading = false, initialTitle = '') {
+function renderCreateModal(kind = 'daw', loading = false, initialTitle = '', selectedStageType = 'Blank Stage') {
   const root = app.querySelector('[data-studio-modal-root]')
   if (!root) return
   const isStage = kind === 'stage'
@@ -356,7 +446,10 @@ function renderCreateModal(kind = 'daw', loading = false, initialTitle = '') {
     root.innerHTML = `<div class="studio-modal"><div class="studio-modal-panel"><h3>Creating ${isStage ? 'stage plan' : 'project'}...</h3></div></div>`
     return
   }
-  root.innerHTML = `<div class="studio-modal" data-modal-backdrop><form class="studio-modal-panel" data-create-form data-create-kind="${kind}"><h3>${isStage ? 'New Stage Project' : 'New Project'}</h3><div class="studio-modal-field"><label for="studio-project-name">Project name</label><input id="studio-project-name" name="title" maxlength="120" placeholder="${isStage ? 'Name your stage plan' : 'Name your project'}" value="${esc(initialTitle)}" required /></div>${state.createError ? `<p class="studio-form-error">${esc(state.createError)}</p>` : ''}<div class="studio-modal-actions"><button class="button" type="submit">${isStage ? 'Create Stage Plan' : 'Create Project'}</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
+  const stageTypeField = isStage
+    ? `<div class="studio-modal-field"><label for="studio-stage-type">Starting format</label><select id="studio-stage-type" name="stageType">${stageTypes.map((type) => `<option value="${esc(type)}" ${type === selectedStageType ? 'selected' : ''}>${esc(type)}</option>`).join('')}</select></div>`
+    : ''
+  root.innerHTML = `<div class="studio-modal" data-modal-backdrop><form class="studio-modal-panel" data-create-form data-create-kind="${kind}"><h3>${isStage ? 'New Stage Plan' : 'New Project'}</h3><div class="studio-modal-field"><label for="studio-project-name">Project name</label><input id="studio-project-name" name="title" maxlength="120" placeholder="${isStage ? 'Name your stage plan' : 'Name your project'}" value="${esc(initialTitle)}" required /></div>${stageTypeField}${state.createError ? `<p class="studio-form-error">${esc(state.createError)}</p>` : ''}<div class="studio-modal-actions"><button class="button" type="submit">${isStage ? 'Create Stage Plan' : 'Create Project'}</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
   const close = () => { root.innerHTML = ''; document.removeEventListener('keydown', onKeydown) }
   const onKeydown = (e) => e.key === 'Escape' && close()
   document.addEventListener('keydown', onKeydown)
@@ -365,11 +458,13 @@ function renderCreateModal(kind = 'daw', loading = false, initialTitle = '') {
   root.querySelector('[data-create-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     state.createError = ''
-    const title = String(new FormData(e.currentTarget).get('title') || '').trim()
-    renderCreateModal(kind, true, title)
+    const formData = new FormData(e.currentTarget)
+    const title = String(formData.get('title') || '').trim()
+    const stageType = stageTypes.includes(String(formData.get('stageType') || '')) ? String(formData.get('stageType')) : 'Blank Stage'
+    renderCreateModal(kind, true, title, stageType)
     try {
       if (isStage) {
-        const project = await createStageProject(state.user, { title })
+        const project = await createStageProject(state.user, { title, stageType })
         window.location.href = stageProjectRoute(project.id)
       } else {
         const project = await createStudioProject(state.user, { title })
@@ -389,7 +484,7 @@ function renderCreateModal(kind = 'daw', loading = false, initialTitle = '') {
         console.error('[studio]', error)
         state.createError = 'Could not create project right now.'
       }
-      renderCreateModal(kind, false, title)
+      renderCreateModal(kind, false, title, stageType)
     }
   })
 }
@@ -407,6 +502,15 @@ function bind() {
     state.createError = ''
     renderCreateModal('stage')
   })
+  app.querySelectorAll('[data-use-stage-template]').forEach((el) => el.addEventListener('click', (e) => {
+    e.preventDefault()
+    if (!state.user) {
+      window.location.href = authRoute({ redirect: ROUTES.studioStagemaker })
+      return
+    }
+    state.createError = ''
+    renderCreateModal('stage', false, '', el.dataset.useStageTemplate || 'Blank Stage')
+  }))
   app.querySelectorAll('[data-open-daw-project]').forEach((el) => el.addEventListener('click', () => openDawProject(el.dataset.openDawProject)))
   app.querySelectorAll('[data-open-stage-project]').forEach((el) => el.addEventListener('click', () => openStageProject(el.dataset.openStageProject)))
   app.querySelectorAll('[data-placeholder-demo]').forEach((el) => {
