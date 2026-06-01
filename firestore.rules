@@ -1781,6 +1781,50 @@ service cloud.firestore {
         allow read: if signedIn() && request.auth.uid == uid;
         allow write: if false;
       }
+
+      match /comments/{commentId} {
+        allow read: if resource.data.status == 'visible'
+          && get(/databases/$(database)/documents/communityPosts/$(postId)).data.status == 'published'
+          && get(/databases/$(database)/documents/communityPosts/$(postId)).data.visibility == 'public';
+        allow create: if false;
+        allow update: if signedIn()
+          && (
+            (
+              resource.data.authorUid == request.auth.uid
+              && request.resource.data.authorUid == resource.data.authorUid
+              && request.resource.data.postId == resource.data.postId
+              && request.resource.data.parentCommentId == resource.data.parentCommentId
+              && request.resource.data.createdAt == resource.data.createdAt
+              && request.resource.data.replyCount == resource.data.replyCount
+              && request.resource.data.likeCount == resource.data.likeCount
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status',
+                'body',
+                'deletedAt',
+                'deletedBy',
+                'updatedAt'
+              ])
+              && request.resource.data.status == 'deleted'
+            )
+            || (
+              hasUserModerateClaim()
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status',
+                'moderationStatus',
+                'moderationReason',
+                'moderatedAt',
+                'moderatedBy',
+                'updatedAt'
+              ])
+            )
+          );
+        allow delete: if false;
+
+        match /likes/{uid} {
+          allow read: if signedIn() && request.auth.uid == uid;
+          allow write: if false;
+        }
+      }
     }
 
     match /reports/{reportId} {

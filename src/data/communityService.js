@@ -77,6 +77,28 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
   }
 }
 
+export function normalizeCommunityComment(docSnapOrData = {}, explicitId = '') {
+  const raw = typeof docSnapOrData.data === 'function' ? docSnapOrData.data() || {} : docSnapOrData || {}
+  const id = explicitId || docSnapOrData.id || raw.commentId || ''
+  return {
+    commentId: id,
+    id,
+    postId: raw.postId || '',
+    authorUid: raw.authorUid || '',
+    authorDisplayName: raw.authorDisplayName || 'Melogic Creator',
+    authorUsername: raw.authorUsername || '',
+    authorAvatarURL: raw.authorAvatarURL || '',
+    body: raw.body || '',
+    parentCommentId: raw.parentCommentId || '',
+    replyCount: Math.max(0, Number(raw.replyCount || 0)),
+    likeCount: Math.max(0, Number(raw.likeCount || 0)),
+    reportCount: Math.max(0, Number(raw.reportCount || 0)),
+    status: raw.status || 'visible',
+    createdAt: serializeDate(raw.createdAt),
+    updatedAt: serializeDate(raw.updatedAt)
+  }
+}
+
 async function queryWithIndexFallback(primaryConstraints, fallbackConstraints, normalize, filter = null, sorter = null) {
   try {
     const snapshot = await getDocs(query(collection(db, normalize === normalizeCommunity ? COMMUNITY_COLLECTION : POST_COLLECTION), ...primaryConstraints))
@@ -196,8 +218,51 @@ export async function getCommunityPostViewerState(postId = '', uid = '') {
   return { liked: Boolean(likeSnap?.exists?.()), saved: Boolean(saveSnap?.exists?.()) }
 }
 
+export async function listCommunityComments(postId = '', limitCount = 120) {
+  const id = String(postId || '').trim()
+  if (!id) return []
+  const commentsRef = collection(db, POST_COLLECTION, id, 'comments')
+  try {
+    const snapshot = await getDocs(query(commentsRef, where('status', '==', 'visible'), orderBy('createdAt', 'asc'), limit(limitCount)))
+    return snapshot.docs.map((docSnap) => normalizeCommunityComment(docSnap))
+  } catch (error) {
+    if (!String(error?.message || '').includes('requires an index')) throw error
+    const snapshot = await getDocs(query(commentsRef, where('status', '==', 'visible'), limit(limitCount)))
+    return snapshot.docs
+      .map((docSnap) => normalizeCommunityComment(docSnap))
+      .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
+  }
+}
+
+export async function getCommunityCommentViewerState(postId = '', commentId = '', uid = '') {
+  const cleanPostId = String(postId || '').trim()
+  const cleanCommentId = String(commentId || '').trim()
+  const viewerUid = String(uid || '').trim()
+  if (!cleanPostId || !cleanCommentId || !viewerUid) return { liked: false }
+  const likeSnap = await getDoc(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'likes', viewerUid)).catch(() => null)
+  return { liked: Boolean(likeSnap?.exists?.()) }
+}
+
 export async function createCommunityPost(payload = {}) {
   const callable = httpsCallable(functions, 'createCommunityPost')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function createCommunityComment(payload = {}) {
+  const callable = httpsCallable(functions, 'createCommunityComment')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function deleteCommunityComment(payload = {}) {
+  const callable = httpsCallable(functions, 'deleteCommunityComment')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function toggleCommunityCommentLike(payload = {}) {
+  const callable = httpsCallable(functions, 'toggleCommunityCommentLike')
   const result = await callable(payload)
   return result?.data || { ok: false }
 }

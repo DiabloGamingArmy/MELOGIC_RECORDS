@@ -1,6 +1,8 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
+const { writeAccountEventToBatch } = require('../account/accountEvents')
+const { loadAuthorSnapshot } = require('./communityCommentShared')
 
 function requireAuth(request) {
   const uid = cleanString(request.auth?.uid || '', 180)
@@ -34,6 +36,7 @@ async function togglePostState(request, kind = 'like') {
   const childName = kind === 'save' ? 'saves' : 'likes'
   const countKey = kind === 'save' ? 'saves' : 'likes'
   const stateRef = postRef.collection(childName).doc(uid)
+  const author = kind === 'like' ? await loadAuthorSnapshot(uid) : null
 
   return admin.firestore().runTransaction(async (tx) => {
     const post = await assertPublicPost(tx, postRef)
@@ -51,6 +54,19 @@ async function togglePostState(request, kind = 'like') {
       score: nextCount(post.score, kind === 'like' ? delta : 0),
       updatedAt: now
     }, { merge: true })
+
+    if (kind === 'like' && active && post.authorUid && post.authorUid !== uid) {
+      writeAccountEventToBatch(admin.firestore(), tx, post.authorUid, {
+        type: 'community_post_like',
+        title: 'Your post got a like',
+        message: `${author?.authorDisplayName || 'A creator'} liked your community post.`,
+        actorUid: uid,
+        actorType: 'user',
+        source: 'community',
+        path: `/community/post/${postRef.id}`,
+        metadata: { postId: postRef.id }
+      })
+    }
 
     return {
       ok: true,

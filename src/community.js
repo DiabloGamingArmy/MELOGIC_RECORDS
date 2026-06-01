@@ -6,16 +6,22 @@ import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './compo
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { createReport } from './data/productService'
 import {
+  createCommunityComment,
   createCommunityPost,
   createCommunity,
+  deleteCommunityComment,
+  getCommunityCommentViewerState,
   getCommunityBySlug,
   getCommunityFocusState,
   getCommunityPost,
   getCommunityPostViewerState,
+  listCommunityComments,
   listCommunities,
   listCommunityPosts,
+  normalizeCommunityComment,
   normalizeCommunityPost,
   recordCommunityPostShare,
+  toggleCommunityCommentLike,
   toggleCommunityFocus,
   toggleCommunityPostLike,
   toggleCommunityPostSave
@@ -89,13 +95,24 @@ const state = {
   },
   report: {
     open: false,
+    targetType: 'community_post',
     postId: '',
+    commentId: '',
     reason: REPORT_REASONS[0],
     description: '',
     submitting: false,
     error: '',
     message: ''
   },
+  comments: [],
+  commentViewerState: {},
+  commentsLoading: false,
+  commentsError: '',
+  commentDraft: '',
+  replyDrafts: {},
+  replyComposerFor: '',
+  commentSubmitting: false,
+  commentActionError: '',
   detailPostId: parseDetailPostId()
 }
 
@@ -270,8 +287,86 @@ function postCard(post, { detail = false } = {}) {
         <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>${formatCount(post.counts.shares)}</span></button>
         <button type="button" data-community-report="${escapeHtml(post.postId)}">${iconSvg('alertCircle')} <span>Report</span></button>
       </footer>
-      ${detail ? '<section class="community-comments-placeholder"><h3>Comments</h3><p>Comments are coming next.</p></section>' : ''}
+      ${detail ? renderComments(post) : ''}
     </article>
+  `
+}
+
+function renderCommentComposer({ parentCommentId = '' } = {}) {
+  if (!state.currentUser) {
+    return `
+      <section class="community-comment-composer">
+        <p>Sign in to join the conversation.</p>
+        <a class="button button-accent" href="${authRoute({ redirect: window.location.pathname })}">Sign In</a>
+      </section>
+    `
+  }
+  const isReply = Boolean(parentCommentId)
+  const body = isReply ? state.replyDrafts[parentCommentId] || '' : state.commentDraft
+  return `
+    <form class="community-comment-composer" ${isReply ? `data-community-reply-form="${escapeHtml(parentCommentId)}"` : 'data-community-comment-form'}>
+      <label>
+        <span>${isReply ? 'Reply' : 'Comment'}</span>
+        <textarea name="body" maxlength="2000" rows="${isReply ? '3' : '4'}" placeholder="${isReply ? 'Write a reply...' : 'Start the conversation...'}">${escapeHtml(body)}</textarea>
+      </label>
+      <div class="community-comment-form-actions">
+        <span>${Math.max(0, 2000 - body.length)} characters left</span>
+        ${isReply ? `<button type="button" class="button button-muted" data-cancel-reply-composer="${escapeHtml(parentCommentId)}">Cancel</button>` : ''}
+        <button type="submit" class="button button-accent" ${state.commentSubmitting ? 'disabled' : ''}>${state.commentSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post Comment'}</button>
+      </div>
+    </form>
+  `
+}
+
+function commentCard(comment, replies = []) {
+  const viewer = state.commentViewerState[comment.commentId] || {}
+  const isOwn = state.currentUser?.uid && state.currentUser.uid === comment.authorUid
+  const authorHref = comment.authorUid ? publicProfileRoute({ uid: comment.authorUid }) : ROUTES.profilePublic
+  const canReply = !comment.parentCommentId
+  return `
+    <article class="community-comment-card ${comment.parentCommentId ? 'is-reply' : ''}" data-comment-id="${escapeHtml(comment.commentId)}">
+      <header class="community-comment-header">
+        <a class="community-author" href="${authorHref}">
+          <span class="community-avatar">${postAvatar(comment)}</span>
+          <span>
+            <strong>${escapeHtml(comment.authorDisplayName || 'Melogic Creator')}</strong>
+            <em>${escapeHtml(formatUsername(comment.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(comment.createdAt))}</em>
+          </span>
+        </a>
+      </header>
+      <p class="community-comment-body">${escapeHtml(comment.body)}</p>
+      <footer class="community-comment-actions">
+        <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-comment-like="${escapeHtml(comment.commentId)}">${iconSvg('thumbsUp')} <span>${formatCount(comment.likeCount)}</span></button>
+        ${canReply ? `<button type="button" data-toggle-reply-composer="${escapeHtml(comment.commentId)}">${iconSvg('messageCircle')} <span>Reply</span></button>` : ''}
+        <button type="button" data-community-comment-report="${escapeHtml(comment.commentId)}">${iconSvg('alertCircle')} <span>Report</span></button>
+        ${isOwn ? `<button type="button" data-community-comment-delete="${escapeHtml(comment.commentId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
+      </footer>
+      ${state.replyComposerFor === comment.commentId ? renderCommentComposer({ parentCommentId: comment.commentId }) : ''}
+      ${replies.length ? `<div class="community-comment-replies">${replies.map((reply) => commentCard(reply)).join('')}</div>` : ''}
+    </article>
+  `
+}
+
+function renderComments(post) {
+  const topLevel = state.comments.filter((comment) => !comment.parentCommentId)
+  const repliesByParent = state.comments.reduce((map, comment) => {
+    if (!comment.parentCommentId) return map
+    if (!map[comment.parentCommentId]) map[comment.parentCommentId] = []
+    map[comment.parentCommentId].push(comment)
+    return map
+  }, {})
+  return `
+    <section class="community-comments" aria-labelledby="community-comments-title">
+      <div class="community-comments-heading">
+        <div>
+          <h3 id="community-comments-title">Comments</h3>
+          <p>${formatCount(post.counts.comments)} comment${Number(post.counts.comments) === 1 ? '' : 's'}</p>
+        </div>
+      </div>
+      ${state.commentActionError ? `<p class="community-error">${escapeHtml(state.commentActionError)}</p>` : ''}
+      ${renderCommentComposer()}
+      ${state.commentsLoading ? '<p class="community-comments-state">Loading comments...</p>' : state.commentsError ? `<p class="community-error">${escapeHtml(state.commentsError)}</p>` : topLevel.length ? `<div class="community-comment-list">${topLevel.map((comment) => commentCard(comment, repliesByParent[comment.commentId] || [])).join('')}</div>` : '<p class="community-comments-empty">No comments yet. Start the conversation.</p>'}
+    </section>
   `
 }
 
@@ -396,11 +491,12 @@ function renderCommunitiesView() {
 
 function renderReportModal() {
   if (!state.report.open) return ''
+  const isCommentReport = state.report.targetType === 'community_comment'
   return `
     <div class="community-modal-backdrop">
       <section class="community-report-modal" role="dialog" aria-modal="true" aria-labelledby="community-report-title">
         <header>
-          <h2 id="community-report-title">Report Post</h2>
+          <h2 id="community-report-title">Report ${isCommentReport ? 'Comment' : 'Post'}</h2>
           <button type="button" data-close-community-report aria-label="Close report modal">${iconSvg('x')}</button>
         </header>
         ${state.report.message ? `<p class="community-success">${escapeHtml(state.report.message)}</p>` : `
@@ -580,6 +676,35 @@ async function loadViewerState() {
   state.viewerState = Object.fromEntries(entries)
 }
 
+async function loadCommentViewerState() {
+  if (!state.currentUser?.uid || !state.detailPostId || !state.comments.length) {
+    state.commentViewerState = {}
+    return
+  }
+  const entries = await Promise.all(state.comments.map(async (comment) => [
+    comment.commentId,
+    await getCommunityCommentViewerState(state.detailPostId, comment.commentId, state.currentUser.uid)
+  ]))
+  state.commentViewerState = Object.fromEntries(entries)
+}
+
+async function loadComments({ renderAfter = true } = {}) {
+  if (!state.detailPostId) return
+  state.commentsLoading = true
+  state.commentsError = ''
+  if (renderAfter) render()
+  try {
+    state.comments = await listCommunityComments(state.detailPostId)
+    await loadCommentViewerState()
+  } catch (error) {
+    console.warn('[community] comments load failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.commentsError = error?.message || 'Comments could not be loaded.'
+  } finally {
+    state.commentsLoading = false
+    if (renderAfter) render()
+  }
+}
+
 async function loadCommunityFocusState() {
   if (!state.currentUser?.uid || !state.communities.length) {
     state.communityFocus = {}
@@ -620,6 +745,9 @@ async function loadCommunity() {
     if (state.detailPostId) {
       const post = await getCommunityPost(state.detailPostId)
       state.posts = post ? [post] : []
+      state.comments = []
+      state.commentViewerState = {}
+      if (post) await loadComments({ renderAfter: false })
     } else if (state.view.type === 'communities') {
       state.loading = false
       await loadCommunities()
@@ -752,6 +880,127 @@ async function handleShare(postId) {
   render()
 }
 
+function updateCommentCount(commentId, patch = {}) {
+  state.comments = state.comments.map((comment) => comment.commentId === commentId ? normalizeCommunityComment({ ...comment, ...patch }, commentId) : comment)
+}
+
+function updateDetailCommentCount(delta = 0, absoluteValue = null) {
+  const post = state.posts[0]
+  if (!post) return
+  const current = Number(post.counts?.comments || 0)
+  const next = absoluteValue === null ? Math.max(0, current + delta) : Math.max(0, Number(absoluteValue || 0))
+  updatePostCounts(post.postId, { comments: next })
+}
+
+async function handleCommentSubmit(event) {
+  event.preventDefault()
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  const formData = new FormData(event.currentTarget)
+  const body = String(formData.get('body') || '').trim()
+  state.commentDraft = body
+  state.commentActionError = ''
+  if (!body) {
+    state.commentActionError = 'Comment body is required.'
+    render()
+    return
+  }
+  state.commentSubmitting = true
+  render()
+  try {
+    const result = await createCommunityComment({ postId: state.detailPostId, body })
+    const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
+    state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
+    state.commentViewerState[comment.commentId] = { liked: false }
+    state.commentDraft = ''
+    state.commentSubmitting = false
+    updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount || 0)))
+    render()
+  } catch (error) {
+    console.warn('[community] create comment failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.commentSubmitting = false
+    state.commentActionError = error?.message || 'Could not post this comment.'
+    render()
+  }
+}
+
+async function handleReplySubmit(event, parentCommentId = '') {
+  event.preventDefault()
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  const formData = new FormData(event.currentTarget)
+  const body = String(formData.get('body') || '').trim()
+  state.replyDrafts = { ...state.replyDrafts, [parentCommentId]: body }
+  state.commentActionError = ''
+  if (!body) {
+    state.commentActionError = 'Reply body is required.'
+    render()
+    return
+  }
+  state.commentSubmitting = true
+  render()
+  try {
+    const result = await createCommunityComment({ postId: state.detailPostId, parentCommentId, body })
+    const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
+    state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
+    state.commentViewerState[comment.commentId] = { liked: false }
+    state.replyDrafts = { ...state.replyDrafts, [parentCommentId]: '' }
+    state.replyComposerFor = ''
+    state.commentSubmitting = false
+    updateCommentCount(parentCommentId, { replyCount: (state.comments.find((item) => item.commentId === parentCommentId)?.replyCount || 0) + 1 })
+    updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount || 0)))
+    render()
+  } catch (error) {
+    console.warn('[community] create reply failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.commentSubmitting = false
+    state.commentActionError = error?.message || 'Could not post this reply.'
+    render()
+  }
+}
+
+async function handleCommentLike(commentId = '') {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  try {
+    const result = await toggleCommunityCommentLike({ postId: state.detailPostId, commentId })
+    state.commentViewerState[commentId] = { liked: Boolean(result.active) }
+    if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
+    render()
+  } catch (error) {
+    console.warn('[community] comment like failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.commentActionError = error?.message || 'Could not update this comment.'
+    render()
+  }
+}
+
+async function handleCommentDelete(commentId = '') {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  try {
+    const comment = state.comments.find((item) => item.commentId === commentId)
+    const result = await deleteCommunityComment({ postId: state.detailPostId, commentId })
+    state.comments = state.comments.filter((item) => item.commentId !== commentId && item.parentCommentId !== commentId)
+    if (comment?.parentCommentId) {
+      updateCommentCount(comment.parentCommentId, { replyCount: Math.max(0, (state.comments.find((item) => item.commentId === comment.parentCommentId)?.replyCount || 0) - 1) })
+    }
+    if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount)))
+    else updateDetailCommentCount(0, state.comments.length)
+    render()
+  } catch (error) {
+    console.warn('[community] comment delete failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.commentActionError = error?.message || 'Could not delete this comment.'
+    render()
+  }
+}
+
 async function handleToggleFocus(communityId) {
   if (!state.currentUser) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
@@ -801,7 +1050,16 @@ function openReport(postId) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  state.report = { open: true, postId, reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
+  state.report = { open: true, targetType: 'community_post', postId, commentId: '', reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
+  render()
+}
+
+function openCommentReport(commentId) {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  state.report = { open: true, targetType: 'community_comment', postId: state.detailPostId, commentId, reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
   render()
 }
 
@@ -809,9 +1067,11 @@ async function handleReportSubmit(event) {
   event.preventDefault()
   const formData = new FormData(event.currentTarget)
   const post = state.posts.find((item) => item.postId === state.report.postId)
+  const comment = state.comments.find((item) => item.commentId === state.report.commentId)
   const reason = String(formData.get('reason') || '').trim()
   const description = String(formData.get('description') || '').trim()
   if (!post) return
+  if (state.report.targetType === 'community_comment' && !comment) return
   if (reason === 'Other' && !description) {
     state.report.error = 'Description is required when reason is Other.'
     render()
@@ -820,14 +1080,17 @@ async function handleReportSubmit(event) {
   state.report = { ...state.report, reason, description, submitting: true, error: '' }
   render()
   try {
+    const targetType = state.report.targetType === 'community_comment' ? 'community_comment' : 'community_post'
     await createReport({
-      targetType: 'community_post',
-      targetId: post.postId,
-      targetOwnerUid: post.authorUid,
+      targetType,
+      targetId: targetType === 'community_comment' ? comment.commentId : post.postId,
+      targetOwnerUid: targetType === 'community_comment' ? comment.authorUid : post.authorUid,
       reason,
       description,
       sourcePath: window.location.pathname,
-      metadata: { postTitle: post.title, postType: post.type }
+      metadata: targetType === 'community_comment'
+        ? { postId: post.postId, commentId: comment.commentId }
+        : { postTitle: post.title, postType: post.type }
     })
     state.report = { ...state.report, submitting: false, message: 'Thank you. Your report has been submitted.' }
     render()
@@ -876,6 +1139,23 @@ function bindEvents() {
   app.querySelectorAll('[data-community-save]').forEach((button) => button.addEventListener('click', () => handleSave(button.getAttribute('data-community-save'))))
   app.querySelectorAll('[data-community-share]').forEach((button) => button.addEventListener('click', () => handleShare(button.getAttribute('data-community-share'))))
   app.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', () => openReport(button.getAttribute('data-community-report'))))
+  app.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
+  app.querySelectorAll('[data-community-reply-form]').forEach((form) => {
+    form.addEventListener('submit', (event) => handleReplySubmit(event, form.getAttribute('data-community-reply-form') || ''))
+  })
+  app.querySelectorAll('[data-toggle-reply-composer]').forEach((button) => button.addEventListener('click', () => {
+    state.replyComposerFor = button.getAttribute('data-toggle-reply-composer') || ''
+    state.commentActionError = ''
+    render()
+  }))
+  app.querySelectorAll('[data-cancel-reply-composer]').forEach((button) => button.addEventListener('click', () => {
+    const parentCommentId = button.getAttribute('data-cancel-reply-composer') || ''
+    state.replyComposerFor = state.replyComposerFor === parentCommentId ? '' : state.replyComposerFor
+    render()
+  }))
+  app.querySelectorAll('[data-community-comment-like]').forEach((button) => button.addEventListener('click', () => handleCommentLike(button.getAttribute('data-community-comment-like'))))
+  app.querySelectorAll('[data-community-comment-delete]').forEach((button) => button.addEventListener('click', () => handleCommentDelete(button.getAttribute('data-community-comment-delete'))))
+  app.querySelectorAll('[data-community-comment-report]').forEach((button) => button.addEventListener('click', () => openCommentReport(button.getAttribute('data-community-comment-report'))))
   app.querySelectorAll('[data-close-community-report]').forEach((button) => {
     button.addEventListener('click', () => {
       state.report = { ...state.report, open: false, submitting: false, error: '' }
@@ -892,5 +1172,5 @@ waitForInitialAuthState().then((user) => {
 })
 subscribeToAuthState((user) => {
   state.currentUser = user
-  loadViewerState().then(render).catch(() => render())
+  Promise.all([loadViewerState(), loadCommentViewerState()]).then(render).catch(() => render())
 })

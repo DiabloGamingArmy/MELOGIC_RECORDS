@@ -95,6 +95,7 @@ const REPORT_ADMIN_FILTERS = [
   { key: 'order', label: 'Order Reports' },
   { key: 'community', label: 'Communities' },
   { key: 'community_post', label: 'Community Posts' },
+  { key: 'community_comment', label: 'Community Comments' },
   { key: 'resolved', label: 'Resolved' },
   { key: 'dismissed', label: 'Dismissed' }
 ]
@@ -2206,6 +2207,10 @@ function reportTargetLink(report = {}, target = null) {
   if (targetType === 'order' && targetId) return `<a class="admin-secondary-link" href="${ROUTES.adminOrders}/${encodeURIComponent(targetId)}">Open Order Audit</a>`
   if (targetType === 'community' && targetId) return `<a class="admin-secondary-link" href="${ROUTES.communitySlug}/${encodeURIComponent(target?.slug || targetId)}" target="_blank" rel="noreferrer">Open Community</a>`
   if (targetType === 'community_post' && targetId) return `<a class="admin-secondary-link" href="${ROUTES.communityPost}/${encodeURIComponent(targetId)}" target="_blank" rel="noreferrer">Open Community Post</a>`
+  if (targetType === 'community_comment' && targetId) {
+    const postId = target?.postId || report.metadata?.postId || ''
+    if (postId) return `<a class="admin-secondary-link" href="${ROUTES.communityPost}/${encodeURIComponent(postId)}" target="_blank" rel="noreferrer">Open Comment Thread</a>`
+  }
   if (target?.id) return `<span class="admin-muted">${escapeHtml(target.id)}</span>`
   return '<span class="admin-muted">No target route available.</span>'
 }
