@@ -15,7 +15,7 @@ function renderMenubar(title, stamp) {
 
 function renderRail() {
   const railItems = editorRailItems.map((item) => `<button type="button" class="${state.activeStageSection === item.key ? 'is-active' : ''}" data-rail-section="${item.key}" title="${item.label}"><span class="stage-rail-icon" data-stage-icon-path="${item.icon}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">◈</span></span><small>${item.label}</small></button>`).join('')
-  return `<nav class="stage-editor-rail" aria-label="Editor tools">${railItems}<a class="stage-back-link" href="${ROUTES.studioStagemaker}"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Exit</small></a></nav>`
+  return `<nav class="stage-editor-rail" aria-label="Editor tools">${railItems}<a class="stage-back-link" href="${ROUTES.studioStagemaker}" aria-label="Back to StageMaker" title="Back to StageMaker"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Back</small></a></nav>`
 }
 
 function renderViewport() {
