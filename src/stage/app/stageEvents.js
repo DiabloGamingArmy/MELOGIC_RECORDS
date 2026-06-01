@@ -58,8 +58,18 @@ export function bindStageEditorEventsOnce(context) {
     updateStageInspectorSelection,
     updateViewportControlUI,
     loadEditorProject,
-    saveCurrentPlanAsNew
+    saveCurrentPlanAsNew,
+    flushStagePlanSave
   } = context
+
+  const setEditorToolMode = (tool = 'select', notice = '') => {
+    state.editorToolMode = tool
+    localStorage.setItem('stageEditorToolMode', state.editorToolMode)
+    getViewportController()?.update?.({ toolMode: state.editorToolMode })
+    updateViewportControlUI()
+    queueEditorStateSave?.()
+    if (notice) showStageNotice?.(notice)
+  }
 
   const syncObjectTransformCache = () => {
     const object = findStageObject()
@@ -134,11 +144,7 @@ export function bindStageEditorEventsOnce(context) {
     if (mode) { state.activeEditorMode = mode.dataset.editorMode || 'entities'; updateEditorModeUI(); queueEditorStateSave?.(); return }
     const toolMode = e.target.closest('[data-tool-mode]')
     if (toolMode) {
-      state.editorToolMode = toolMode.dataset.toolMode || 'select'
-      localStorage.setItem('stageEditorToolMode', state.editorToolMode)
-      getViewportController()?.update?.({ toolMode: state.editorToolMode })
-      updateViewportControlUI()
-      queueEditorStateSave?.()
+      setEditorToolMode(toolMode.dataset.toolMode || 'select')
       return
     }
     const addAsset = e.target.closest('[data-add-stage-asset]')
@@ -591,6 +597,24 @@ export function bindStageEditorEventsOnce(context) {
     const tag = e.target?.tagName?.toLowerCase?.()
     const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable
     if (!typing && !e.defaultPrevented) {
+      const key = e.key.toLowerCase()
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        showStageNotice?.('Edit Mode coming in Phase 3.')
+        return
+      }
+      if (e.key === 'Escape') {
+        const cancelled = getViewportController()?.cancelTransform?.()
+        if (cancelled) {
+          showStageNotice?.('Transform cancelled.')
+          return
+        }
+      }
+      if ((e.metaKey || e.ctrlKey) && key === 's') {
+        e.preventDefault()
+        Promise.resolve(flushStagePlanSave?.()).then(() => showStageNotice?.('Stage plan saved.')).catch(() => showStageNotice?.('Save failed. See status.'))
+        return
+      }
       const nudgeBase = e.shiftKey ? 2 : e.altKey ? 0.25 : state.snapEnabled ? state.snapInterval : 0.5
       const axis = { ArrowLeft: ['x', -nudgeBase], ArrowRight: ['x', nudgeBase], ArrowUp: ['z', -nudgeBase], ArrowDown: ['z', nudgeBase], PageUp: ['y', nudgeBase], PageDown: ['y', -nudgeBase] }[e.key]
       if (axis) {
@@ -611,28 +635,29 @@ export function bindStageEditorEventsOnce(context) {
         syncObjectSurfaces({ refreshViewport: true, save: !!copy, notice: copy ? `Duplicated ${copy.label || copy.name}.` : 'Select an object to duplicate.' })
         return
       }
+      const toolShortcut = { v: 'select', h: 'pan', g: 'move', m: 'move', r: 'rotate', s: 'scale' }[key]
+      if (toolShortcut && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        const labels = { select: 'Select tool', pan: 'Pan tool', move: 'Move tool', rotate: 'Rotate tool', scale: 'Scale tool' }
+        setEditorToolMode(toolShortcut, labels[toolShortcut])
+        return
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         const deleted = deleteSelectedStageObject()
         syncObjectSurfaces({ refreshViewport: true, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
         return
       }
-      if (e.key.toLowerCase() === 'f') {
+      if (key === 'f') {
         e.preventDefault()
         getViewportController()?.focusSelected?.()
         showStageNotice?.('Focused selected object.')
         return
       }
-      if (e.key.toLowerCase() === 'a') {
+      if (key === 'a') {
         e.preventDefault()
         getViewportController()?.frameAll?.()
         showStageNotice?.('Framed full stage.')
-        return
-      }
-      if (e.key.toLowerCase() === 'r') {
-        e.preventDefault()
-        const rotated = rotateSelectedStageObject(e.shiftKey ? -15 : 15)
-        syncObjectSurfaces({ save: rotated, notice: rotated ? 'Rotated selected object.' : 'Locked object cannot rotate.' })
         return
       }
     }
