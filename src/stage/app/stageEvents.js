@@ -486,6 +486,8 @@ export function bindStageEditorEventsOnce(context) {
     if (openExport) { state.showExportPreview = true; updateExportPreview(); return }
     const closeExport = e.target.closest('[data-close-export]')
     if (closeExport) { state.showExportPreview = false; updateExportPreview(); return }
+    const printExport = e.target.closest('[data-print-export]')
+    if (printExport) { window.print(); return }
     const exportJson = e.target.closest('[data-export-json]')
     if (exportJson) {
       downloadText(`${state.editorProject?.title || 'stage-plan'}.json`.replace(/[^a-z0-9._-]+/gi, '-'), JSON.stringify(state.editorProject || {}, null, 2), 'application/json')
@@ -497,6 +499,16 @@ export function bindStageEditorEventsOnce(context) {
       const svg = app.querySelector('[data-stage-plot-svg]')?.outerHTML || ''
       if (!svg) showStageNotice?.('No stage plot SVG available.')
       else downloadText(`${state.editorProject?.title || 'stage-plot'}.svg`.replace(/[^a-z0-9._-]+/gi, '-'), svg, 'image/svg+xml')
+      return
+    }
+    const exportOption = e.target.closest('[data-export-option]')
+    if (exportOption) {
+      const key = exportOption.dataset.exportOption || ''
+      state.exportPreviewOptions = { ...(state.exportPreviewOptions || {}) }
+      if (exportOption.type === 'checkbox') state.exportPreviewOptions[key] = !!exportOption.checked
+      else state.exportPreviewOptions[key] = exportOption.value
+      updateExportPreview()
+      queueEditorStateSave?.()
       return
     }
     const snap = e.target.closest('[data-toggle-snap]')
