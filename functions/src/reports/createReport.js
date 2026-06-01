@@ -3,7 +3,7 @@ const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
 const { writeAccountEvent } = require('../account/accountEvents')
 
-const TARGET_TYPES = new Set(['product', 'profile', 'user', 'order', 'community', 'community_post'])
+const TARGET_TYPES = new Set(['product', 'profile', 'user', 'order', 'community', 'community_post', 'community_comment'])
 const PRODUCT_REASONS = new Set([
   'Fraudulent or misleading',
   'Download does not work',
@@ -37,6 +37,7 @@ const COMMUNITY_POST_REASONS = new Set([
   'Inappropriate content',
   'Other'
 ])
+const COMMUNITY_COMMENT_REASONS = COMMUNITY_POST_REASONS
 const COMMUNITY_REASONS = new Set([
   'Spam',
   'Harassment or abuse',
@@ -57,6 +58,7 @@ function reasonSetForType(targetType = '') {
   if (targetType === 'order') return ORDER_REASONS
   if (targetType === 'community') return COMMUNITY_REASONS
   if (targetType === 'community_post') return COMMUNITY_POST_REASONS
+  if (targetType === 'community_comment') return COMMUNITY_COMMENT_REASONS
   return new Set()
 }
 
@@ -89,7 +91,7 @@ function sanitizeMetadata(value = {}, depth = 0) {
   )
 }
 
-async function resolveTargetOwner(targetType = '', targetId = '', suppliedOwner = '') {
+async function resolveTargetOwner(targetType = '', targetId = '', suppliedOwner = '', requestData = {}) {
   const firestore = db()
   if (targetType === 'product') {
     const snap = await firestore.collection('products').doc(targetId).get()
@@ -114,6 +116,15 @@ async function resolveTargetOwner(targetType = '', targetId = '', suppliedOwner 
     if (!snap.exists) throw new HttpsError('not-found', 'The reported community could not be found.')
     return cleanString(snap.data()?.ownerUid || suppliedOwner || '', 180)
   }
+  if (targetType === 'community_comment') {
+    const postId = cleanString(requestData?.postId || '', 180)
+    const metadataPostId = cleanString(requestData?.metadata?.postId || '', 180)
+    const resolvedPostId = postId || metadataPostId
+    if (!resolvedPostId || resolvedPostId.includes('/')) return cleanString(suppliedOwner || '', 180)
+    const snap = await firestore.collection('communityPosts').doc(resolvedPostId).collection('comments').doc(targetId).get()
+    if (!snap.exists) throw new HttpsError('not-found', 'The reported community comment could not be found.')
+    return cleanString(snap.data()?.authorUid || suppliedOwner || '', 180)
+  }
   return cleanString(suppliedOwner || '', 180)
 }
 
@@ -135,9 +146,12 @@ const createReport = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (req
   if ((targetType === 'profile' || targetType === 'user') && targetId === uid) {
     throw new HttpsError('failed-precondition', 'You cannot report your own profile.')
   }
-  const targetOwnerUid = await resolveTargetOwner(targetType, targetId, request.data?.targetOwnerUid || '')
+  const targetOwnerUid = await resolveTargetOwner(targetType, targetId, request.data?.targetOwnerUid || '', request.data || {})
   if (targetType === 'community_post' && targetOwnerUid === uid) {
     throw new HttpsError('failed-precondition', 'You cannot report your own post.')
+  }
+  if (targetType === 'community_comment' && targetOwnerUid === uid) {
+    throw new HttpsError('failed-precondition', 'You cannot report your own comment.')
   }
   if (targetType === 'community' && targetOwnerUid === uid) {
     throw new HttpsError('failed-precondition', 'You cannot report your own community.')
@@ -191,6 +205,15 @@ const createReport = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (req
       'counts.reports': admin.firestore.FieldValue.increment(1),
       updatedAt: now
     }, { merge: true }).catch(() => null)
+  }
+  if (targetType === 'community_comment') {
+    const reportPostId = cleanString(request.data?.postId || request.data?.metadata?.postId || '', 180)
+    if (reportPostId && !reportPostId.includes('/')) {
+      await firestore.collection('communityPosts').doc(reportPostId).collection('comments').doc(targetId).set({
+        reportCount: admin.firestore.FieldValue.increment(1),
+        updatedAt: now
+      }, { merge: true }).catch(() => null)
+    }
   }
   if (targetType === 'community') {
     await firestore.collection('communities').doc(targetId).set({

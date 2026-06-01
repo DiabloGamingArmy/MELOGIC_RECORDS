@@ -13,6 +13,7 @@ function matchesFilter(report = {}, filter = '') {
   if (filter === 'order') return report.targetType === 'order' || report.type === 'order'
   if (filter === 'community') return report.targetType === 'community' || report.type === 'community'
   if (filter === 'community_post') return report.targetType === 'community_post' || report.type === 'community_post'
+  if (filter === 'community_comment') return report.targetType === 'community_comment' || report.type === 'community_comment'
   return true
 }
 
@@ -57,6 +58,21 @@ async function enrichReport(report = {}) {
           status: cleanString(post.status || '', 80),
           visibility: cleanString(post.visibility || '', 80),
           type: cleanString(post.type || 'community_post', 80)
+        }
+      }
+      if (report.targetType === 'community_comment' && report.targetId) {
+        const postId = cleanString(report.metadata?.postId || String(report.sourcePath || '').split('/community/post/')[1]?.split('/')[0] || '', 180)
+        if (!postId || postId.includes('/')) return null
+        const commentSnap = await db().collection('communityPosts').doc(postId).collection('comments').doc(report.targetId).get()
+        if (!commentSnap.exists) return null
+        const comment = commentSnap.data() || {}
+        return {
+          id: commentSnap.id,
+          postId,
+          title: cleanString(comment.body || 'Community comment', 180),
+          authorUid: cleanString(comment.authorUid || '', 180),
+          status: cleanString(comment.status || '', 80),
+          type: 'community_comment'
         }
       }
       if (report.targetType === 'community' && report.targetId) {
