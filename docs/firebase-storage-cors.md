@@ -1,6 +1,6 @@
-# Firebase Storage CORS for Marketplace Seller Agreement
+# Firebase Storage CORS for Browser Asset Reads
 
-The Marketplace Seller Agreement Markdown may be loaded in-browser from Firebase Storage. The product editor also has a same-origin fallback at:
+The Marketplace Seller Agreement Markdown, public brand assets, avatars, and StageMaker/Studio images may be loaded in-browser from Firebase Storage. The product editor also has a same-origin fallback at:
 
 `public/legal/agreements/marketplace-product-seller-agreement/v1.md`
 
@@ -35,7 +35,7 @@ Current expected contents:
       "http://127.0.0.1:5173",
       "http://localhost:3000"
     ],
-    "method": ["GET", "HEAD"],
+    "method": ["GET", "HEAD", "OPTIONS"],
     "responseHeader": ["Content-Type", "Access-Control-Allow-Origin", "x-goog-meta-*"],
     "maxAgeSeconds": 3600
   }
@@ -87,7 +87,7 @@ Only enable browser-side Storage version discovery if bucket CORS has been appli
 ## Operator Runbook
 
 1. Verify the bucket name in Firebase Console / Storage.
-2. Review `firebase-storage-cors.json`; it should include `https://melogicrecords.studio`, `https://melogic-records.web.app`, `https://melogic-records.firebaseapp.com`, and localhost development origins.
+2. Review `firebase-storage-cors.json`; it should include `https://melogicrecords.studio`, `https://melogic-records.web.app`, `https://melogic-records.firebaseapp.com`, and localhost development origins with `GET`, `HEAD`, and `OPTIONS`.
 3. Apply with `gsutil cors set firebase-storage-cors.json gs://melogic-records.firebasestorage.app` or `gcloud storage buckets update gs://melogic-records.firebasestorage.app --cors-file=firebase-storage-cors.json`.
 4. Verify with `gsutil cors get gs://melogic-records.firebasestorage.app` or `npm run storage:cors:get`.
 5. Remember that `firebase deploy` does not apply bucket CORS.

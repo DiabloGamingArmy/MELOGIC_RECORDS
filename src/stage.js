@@ -5,7 +5,7 @@ import { navShell } from './components/navShell'
 import { waitForInitialAuthState, subscribeToAuthState, subscribeToIdToken } from './firebase/auth'
 import { authRoute, ROUTES, stageProjectRoute } from './utils/routes'
 import { getStorageAssetCandidates } from './firebase/storageAssets'
-import { classifyStageProjectError, createStageProject, createStageProjectFromPlan, getStageProject, isValidStageProjectId, listAccessibleStageProjects, saveStageProjectEditorState, saveStageProjectPlan, sortStageProjectsByActivity, stageProjectPath, touchStageProject } from './data/stageProjectService'
+import { STAGE_PROJECTS_COLLECTION, classifyStageProjectError, createStageProject, createStageProjectFromPlan, getStageProject, isValidStageProjectId, listAccessibleStageProjects, saveStageProjectEditorState, saveStageProjectPlan, sortStageProjectsByActivity, stageProjectPath, touchStageProject } from './data/stageProjectService'
 import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
 import { renderDashboard } from './stage/app/stageDashboard'
@@ -31,6 +31,16 @@ let lastLoadedProjectId = ''
 let lastLoadedAuthUid = ''
 const loggedProjectLoadFailures = new Set()
 const authRecoverableProjectStatuses = new Set(['auth-restoring', 'unauthenticated', 'permission-denied', 'fallback-local', 'fallback-default', 'not-found', 'network-error', 'rules-error'])
+
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+
+function stageCreateErrorMessage(error) {
+  const kind = classifyStageProjectError(error, state.user)
+  if (kind === 'unauthenticated') return 'Please sign in to create a stage plan.'
+  if (kind === 'permission-denied') return 'Stage creation is blocked by Firestore permissions. Your work was not saved to the cloud.'
+  if (kind === 'network-error') return 'Network/Firebase connection failed. Try again.'
+  return 'Could not create stage plan.'
+}
 
 function canonicalizeLegacyStageRoute() {
   const pathname = window.location.pathname || ''
@@ -608,28 +618,37 @@ function onModalEscape(e) {
   if (e.key === 'Escape') closeModal()
 }
 
-function renderCreateModal(loading = false, selectedStageType = 'Blank Stage') {
+function renderCreateModal(loading = false, selectedStageType = 'Blank Stage', initialTitle = '') {
   const root = app.querySelector('[data-stage-modal-root]')
   if (!root) return
   if (loading) {
     root.innerHTML = '<div class="stage-modal"><div class="stage-modal-panel"><h3>Creating stage plan...</h3></div></div>'
     return
   }
-  root.innerHTML = `<div class="stage-modal" data-modal-backdrop><form class="stage-modal-panel" data-stage-create-form><h3>New Stage Plan</h3><p class="stage-modal-help">Choose a starting format. You can change dimensions later.</p><div class="stage-modal-field"><label for="stage-project-name">Project name</label><input id="stage-project-name" name="title" required maxlength="120" placeholder="Name your stage plan" /></div><div class="stage-modal-field"><label for="stage-type">Stage type</label><select id="stage-type" name="stageType">${stageTypes.map((t) => `<option value="${t}" ${t === selectedStageType ? 'selected' : ''}>${t}</option>`).join('')}</select></div>${state.createError ? `<p class="stage-form-error">${state.createError}</p>` : ''}<div class="stage-modal-actions"><button class="button" type="submit">Create Stage Plan</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
+  root.innerHTML = `<div class="stage-modal" data-modal-backdrop><form class="stage-modal-panel" data-stage-create-form><h3>New Stage Plan</h3><p class="stage-modal-help">Choose a starting format. You can change dimensions later.</p><div class="stage-modal-field"><label for="stage-project-name">Project name</label><input id="stage-project-name" name="title" required maxlength="120" placeholder="Name your stage plan" value="${esc(initialTitle)}" /></div><div class="stage-modal-field"><label for="stage-type">Stage type</label><select id="stage-type" name="stageType">${stageTypes.map((t) => `<option value="${esc(t)}" ${t === selectedStageType ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></div>${state.createError ? `<p class="stage-form-error">${esc(state.createError)}</p>` : ''}<div class="stage-modal-actions"><button class="button" type="submit">Create Stage Plan</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
   document.addEventListener('keydown', onModalEscape)
   root.querySelector('[data-modal-backdrop]')?.addEventListener('click', (e) => e.target === e.currentTarget && closeModal())
   root.querySelector('[data-close-modal]')?.addEventListener('click', closeModal)
   root.querySelector('[data-stage-create-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     state.createError = ''
-    renderCreateModal(true, selectedStageType)
+    const fd = new FormData(e.currentTarget)
+    const title = String(fd.get('title') || '').trim()
+    const stageType = String(fd.get('stageType') || selectedStageType || 'Blank Stage').trim()
+    renderCreateModal(true, stageType, title)
     try {
-      const fd = new FormData(e.currentTarget)
-      const project = await createStageProject(state.user, { title: fd.get('title'), stageType: fd.get('stageType') })
+      const project = await createStageProject(state.user, { title, stageType })
       window.location.href = stageProjectRoute(project.id)
-    } catch {
-      state.createError = 'Could not create stage plan right now.'
-      renderCreateModal(false, selectedStageType)
+    } catch (error) {
+      console.warn('[stage] create project failed', {
+        code: error?.code || error?.name || '',
+        message: error?.message || String(error || ''),
+        uid: state.user?.uid || null,
+        collectionPath: error?.collectionPath || STAGE_PROJECTS_COLLECTION,
+        step: error?.stageCreateStep || 'create-stage-project'
+      })
+      state.createError = stageCreateErrorMessage(error)
+      renderCreateModal(false, stageType, title)
     }
   })
 }

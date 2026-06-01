@@ -12,6 +12,8 @@ import {
   touchStudioProject
 } from './data/studioProjectService'
 import {
+  STAGE_PROJECTS_COLLECTION,
+  classifyStageProjectError,
   createStageProject,
   listAccessibleStageProjects,
   sortStageProjectsByActivity,
@@ -21,6 +23,16 @@ import { studioSidebar } from './components/studioShell'
 import { initStudioBrandLogo } from './components/studioBrandLogo'
 
 const app = document.querySelector('#app')
+
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+
+function stageCreateErrorMessage(error, user) {
+  const kind = classifyStageProjectError(error, user)
+  if (kind === 'unauthenticated') return 'Please sign in to create a stage plan.'
+  if (kind === 'permission-denied') return 'Stage creation is blocked by Firestore permissions. Your work was not saved to the cloud.'
+  if (kind === 'network-error') return 'Network/Firebase connection failed. Try again.'
+  return 'Could not create stage plan.'
+}
 
 const dawDemos = [
   { title: 'WILDFLOWER', artist: 'Billie Eilish', year: '2024', tool: 'DAW' },
@@ -336,7 +348,7 @@ function openStageProject(projectId) {
   window.location.href = stageProjectRoute(projectId)
 }
 
-function renderCreateModal(kind = 'daw', loading = false) {
+function renderCreateModal(kind = 'daw', loading = false, initialTitle = '') {
   const root = app.querySelector('[data-studio-modal-root]')
   if (!root) return
   const isStage = kind === 'stage'
@@ -344,7 +356,7 @@ function renderCreateModal(kind = 'daw', loading = false) {
     root.innerHTML = `<div class="studio-modal"><div class="studio-modal-panel"><h3>Creating ${isStage ? 'stage plan' : 'project'}...</h3></div></div>`
     return
   }
-  root.innerHTML = `<div class="studio-modal" data-modal-backdrop><form class="studio-modal-panel" data-create-form data-create-kind="${kind}"><h3>${isStage ? 'New Stage Project' : 'New Project'}</h3><div class="studio-modal-field"><label for="studio-project-name">Project name</label><input id="studio-project-name" name="title" maxlength="120" placeholder="${isStage ? 'Name your stage plan' : 'Name your project'}" required /></div>${state.createError ? `<p class="studio-form-error">${state.createError}</p>` : ''}<div class="studio-modal-actions"><button class="button" type="submit">${isStage ? 'Create Stage Plan' : 'Create Project'}</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
+  root.innerHTML = `<div class="studio-modal" data-modal-backdrop><form class="studio-modal-panel" data-create-form data-create-kind="${kind}"><h3>${isStage ? 'New Stage Project' : 'New Project'}</h3><div class="studio-modal-field"><label for="studio-project-name">Project name</label><input id="studio-project-name" name="title" maxlength="120" placeholder="${isStage ? 'Name your stage plan' : 'Name your project'}" value="${esc(initialTitle)}" required /></div>${state.createError ? `<p class="studio-form-error">${esc(state.createError)}</p>` : ''}<div class="studio-modal-actions"><button class="button" type="submit">${isStage ? 'Create Stage Plan' : 'Create Project'}</button><button class="button button-muted" type="button" data-close-modal>Cancel</button></div></form></div>`
   const close = () => { root.innerHTML = ''; document.removeEventListener('keydown', onKeydown) }
   const onKeydown = (e) => e.key === 'Escape' && close()
   document.addEventListener('keydown', onKeydown)
@@ -353,9 +365,9 @@ function renderCreateModal(kind = 'daw', loading = false) {
   root.querySelector('[data-create-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     state.createError = ''
-    renderCreateModal(kind, true)
+    const title = String(new FormData(e.currentTarget).get('title') || '').trim()
+    renderCreateModal(kind, true, title)
     try {
-      const title = new FormData(e.currentTarget).get('title')
       if (isStage) {
         const project = await createStageProject(state.user, { title })
         window.location.href = stageProjectRoute(project.id)
@@ -364,9 +376,20 @@ function renderCreateModal(kind = 'daw', loading = false) {
         window.location.href = studioProjectRoute(project.id)
       }
     } catch (error) {
-      console.error('[studio]', error)
-      state.createError = isStage ? 'Could not create stage project right now.' : 'Could not create project right now.'
-      renderCreateModal(kind, false)
+      if (isStage) {
+        console.warn('[stage] create project failed', {
+          code: error?.code || error?.name || '',
+          message: error?.message || String(error || ''),
+          uid: state.user?.uid || null,
+          collectionPath: error?.collectionPath || STAGE_PROJECTS_COLLECTION,
+          step: error?.stageCreateStep || 'create-stage-project'
+        })
+        state.createError = stageCreateErrorMessage(error, state.user)
+      } else {
+        console.error('[studio]', error)
+        state.createError = 'Could not create project right now.'
+      }
+      renderCreateModal(kind, false, title)
     }
   })
 }

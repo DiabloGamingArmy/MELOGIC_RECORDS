@@ -318,7 +318,7 @@
       },
       {
         "source": "/studio/stagemaker",
-        "destination": "/studio.html"
+        "destination": "/stage.html"
       },
       {
         "source": "/studio/stagemaker/**",
