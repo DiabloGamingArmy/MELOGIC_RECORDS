@@ -38,3 +38,21 @@ Known limitations:
 - This is not vertex, edge, face, or arbitrary mesh editing.
 - Edit handles are tuned first for top/planning views; 3D and isometric views are usable but still screen-space based.
 - Height editing is intentionally left to the existing scale tool and Properties panel until a reliable height handle is designed.
+
+## Phase 4: Editor Polish, Media Cache, and Property Popups
+
+Status: implemented as a StageMaker editor stability pass.
+
+- StageMaker icon hydration is now callable after each targeted editor panel render instead of depending on one initial pass or a sidebar click.
+- Stage icon URL resolution uses the page-session media cache with a project/editor scope, so repeated small UI actions do not repeatedly resolve the same Storage paths.
+- `pageMediaCache` remains in-memory for the current page session. It stores URL status metadata, not large blobs, marks missing paths, and can clear per editor/project scope.
+- Selected object property values now open focused edit popups for position, size, rotation, visibility, lock state, label, and layer.
+- Property popup changes update the selected object, viewport transform cache, inspector, object table, dirty/save state, and persisted StagePlan without a full project reload.
+- Object table scroll position is captured and restored around table re-renders so row selection and property edits do not jump horizontal or vertical scroll back to zero.
+- Inspector fields, property values, and object table rows have slightly more spacing and larger controls while keeping the editor dense.
+
+Known limitations:
+
+- The media cache does not persist across full page reloads.
+- Some visual object changes such as color/visibility/lock still refresh the viewport scene because those affect rendered mesh state.
+- Property popups intentionally cover core object fields only; production metadata editors remain in their existing tabs.

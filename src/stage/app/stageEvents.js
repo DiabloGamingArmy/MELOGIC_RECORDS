@@ -10,6 +10,7 @@ import {
   resetSelectedStageObjectRotation,
   rotateSelectedStageObject,
   setSelectedStageObjects,
+  stageLayers,
   state,
   undoStageEdit,
   updateSelectedStageObjectField,
@@ -62,6 +63,17 @@ export function bindStageEditorEventsOnce(context) {
     saveCurrentPlanAsNew,
     flushStagePlanSave
   } = context
+
+  const esc = (value = '') => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+  const propertyEditorTitles = {
+    position: 'Edit Position',
+    size: 'Edit Size',
+    rotation: 'Edit Rotation',
+    visible: 'Edit Visibility',
+    locked: 'Edit Lock State',
+    label: 'Edit Label',
+    layer: 'Edit Layer'
+  }
 
   const setEditorToolMode = (tool = 'select', notice = '') => {
     state.editorToolMode = tool
@@ -134,6 +146,111 @@ export function bindStageEditorEventsOnce(context) {
     if (save) queueStagePlanSave?.()
   }
 
+  const renderPropertyEditorFields = (kind, object) => {
+    const position = object.position || {}
+    const dimensions = object.dimensions || {}
+    const rotation = object.rotation || {}
+    if (kind === 'position') {
+      return `<div class="stage-property-popover-grid"><label>X<input name="x" type="number" step="0.1" value="${Number(position.x || 0)}"></label><label>Y<input name="y" type="number" step="0.1" value="${Number(position.y || 0)}"></label><label>Z<input name="z" type="number" step="0.1" value="${Number(position.z || 0)}"></label></div>`
+    }
+    if (kind === 'size') {
+      return `<div class="stage-property-popover-grid"><label>Width<input name="width" type="number" min="0.5" step="0.1" value="${Number(dimensions.width || 1)}"></label><label>Depth<input name="depth" type="number" min="0.5" step="0.1" value="${Number(dimensions.depth || 1)}"></label><label>Height<input name="height" type="number" min="0.1" step="0.1" value="${Number(dimensions.height || 1)}"></label></div>`
+    }
+    if (kind === 'rotation') {
+      return `<div class="stage-property-popover-grid"><label>Rotation<input name="rotY" type="number" step="1" value="${Number(rotation.y || 0)}"></label></div>`
+    }
+    if (kind === 'visible') {
+      return `<label class="stage-property-popover-check"><input name="visible" type="checkbox" ${object.visible === false ? '' : 'checked'}> Visible</label>`
+    }
+    if (kind === 'locked') {
+      return `<label class="stage-property-popover-check"><input name="locked" type="checkbox" ${object.locked ? 'checked' : ''}> Locked</label>`
+    }
+    if (kind === 'label') {
+      return `<label>Label<input name="label" type="text" maxlength="120" value="${esc(object.label || object.name || '')}"></label>`
+    }
+    if (kind === 'layer') {
+      const current = object.layer || object.category || 'stage'
+      return `<label>Layer<select name="layer">${stageLayers.map((layer) => `<option value="${layer}" ${current === layer ? 'selected' : ''}>${layer}</option>`).join('')}</select></label>`
+    }
+    return ''
+  }
+
+  const closePropertyEditor = () => app.querySelector('[data-stage-property-editor]')?.remove()
+
+  const applyPropertyEditor = (form, kind) => {
+    const object = findStageObject()
+    if (!object) return false
+    const data = new FormData(form)
+    const key = state.selectedEditorObject
+    const existing = state.editorObjectTransforms[key] || {}
+    const transform = {}
+    const numeric = (field, fallback, min = -Infinity) => {
+      const value = Number(data.get(field))
+      if (!Number.isFinite(value)) throw new Error('Enter a valid number.')
+      return Math.max(min, value ?? fallback)
+    }
+    if (kind === 'position') {
+      transform.x = numeric('x', object.position?.x || 0)
+      transform.y = numeric('y', object.position?.y || 0)
+      transform.z = numeric('z', object.position?.z || 0)
+      moveSelectedStageObject({ x: transform.x, y: transform.y, z: transform.z }, { absolute: true })
+    } else if (kind === 'size') {
+      transform.width = numeric('width', object.dimensions?.width || 1, 0.5)
+      transform.depth = numeric('depth', object.dimensions?.depth || 1, 0.5)
+      transform.height = numeric('height', object.dimensions?.height || 1, 0.1)
+      ;['width', 'depth', 'height'].forEach((field) => updateSelectedStageObjectField(field, transform[field]))
+    } else if (kind === 'rotation') {
+      transform.rotY = numeric('rotY', object.rotation?.y || 0)
+      updateSelectedStageObjectField('rotY', transform.rotY)
+    } else if (kind === 'visible') {
+      transform.visible = data.get('visible') === 'on'
+      updateSelectedStageObjectField('visible', transform.visible)
+    } else if (kind === 'locked') {
+      transform.locked = data.get('locked') === 'on'
+      updateSelectedStageObjectField('locked', transform.locked)
+      ensureObjectModeForSelection()
+    } else if (kind === 'label') {
+      transform.label = String(data.get('label') || '').trim() || object.id || 'Stage Object'
+      updateSelectedStageObjectField('label', transform.label)
+    } else if (kind === 'layer') {
+      transform.layer = String(data.get('layer') || object.layer || object.category || 'stage')
+      updateSelectedStageObjectField('layer', transform.layer)
+    }
+    state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: { ...existing, ...transform } }
+    getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
+    updateStageInspectorSelection?.()
+    updateInspectorUI?.()
+    updateEditorModeUI?.()
+    updateViewportControlUI?.()
+    queueStagePlanSave?.()
+    return true
+  }
+
+  const openPropertyEditor = (kind = '') => {
+    const object = findStageObject()
+    const safeKind = propertyEditorTitles[kind] ? kind : ''
+    if (!object || !safeKind) {
+      showStageNotice?.('Select an object to edit.')
+      return
+    }
+    closePropertyEditor()
+    app.querySelector('[data-stage-editor-app]')?.insertAdjacentHTML('beforeend', `<div class="stage-property-popover-backdrop" data-stage-property-editor><form class="stage-property-popover" data-stage-property-editor-form data-kind="${safeKind}"><header><h3>${propertyEditorTitles[safeKind]}</h3><button type="button" data-close-property-editor aria-label="Cancel">×</button></header><div class="stage-property-popover-body">${renderPropertyEditorFields(safeKind, object)}<p class="stage-property-popover-error" data-property-editor-error hidden></p></div><footer><button type="button" data-close-property-editor>Cancel</button><button type="submit">Apply</button></footer></form></div>`)
+    const form = app.querySelector('[data-stage-property-editor-form]')
+    form?.querySelector('input, select, textarea')?.focus?.()
+    form?.addEventListener('submit', (event) => {
+      event.preventDefault()
+      const error = form.querySelector('[data-property-editor-error]')
+      try {
+        if (applyPropertyEditor(form, safeKind)) closePropertyEditor()
+      } catch (err) {
+        if (error) {
+          error.textContent = err?.message || 'Value could not be applied.'
+          error.hidden = false
+        }
+      }
+    })
+  }
+
   const downloadText = (filename, text, type) => {
     const blob = new Blob([text], { type })
     const url = URL.createObjectURL(blob)
@@ -179,6 +296,18 @@ export function bindStageEditorEventsOnce(context) {
     const toolMode = e.target.closest('[data-tool-mode]')
     if (toolMode) {
       setEditorToolMode(toolMode.dataset.toolMode || 'select')
+      return
+    }
+    const propertyEditor = e.target.closest('[data-open-property-editor]')
+    if (propertyEditor) {
+      e.preventDefault()
+      openPropertyEditor(propertyEditor.dataset.openPropertyEditor || '')
+      return
+    }
+    const closeEditor = e.target.closest('[data-close-property-editor]')
+    if (closeEditor) {
+      e.preventDefault()
+      closePropertyEditor()
       return
     }
     const addAsset = e.target.closest('[data-add-stage-asset]')
@@ -462,7 +591,7 @@ export function bindStageEditorEventsOnce(context) {
     ensureObjectModeForSelection()
     state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [f.dataset.transformField]: v } }
     getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
-    if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(f.dataset.transformField)) {
+    if (['label', 'visible', 'locked', 'color'].includes(f.dataset.transformField)) {
       refreshStageViewport?.()
     }
     updateEditorModeUI()
@@ -507,7 +636,7 @@ export function bindStageEditorEventsOnce(context) {
       ensureObjectModeForSelection()
       state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [changedTransform.dataset.transformField]: v } }
       getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
-      if (['label', 'visible', 'locked', 'notes', 'layer', 'color', 'width', 'depth', 'height'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
+      if (['label', 'visible', 'locked', 'color'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
       updateEditorModeUI()
       updateViewportControlUI()
       queueStagePlanSave?.()
@@ -644,6 +773,11 @@ export function bindStageEditorEventsOnce(context) {
         return
       }
       if (e.key === 'Escape') {
+        if (app.querySelector('[data-stage-property-editor]')) {
+          e.preventDefault()
+          closePropertyEditor()
+          return
+        }
         const cancelled = getViewportController()?.cancelTransform?.()
         if (cancelled) {
           showStageNotice?.('Transform cancelled.')

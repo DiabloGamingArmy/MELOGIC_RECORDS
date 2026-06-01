@@ -5,6 +5,7 @@ import { navShell } from './components/navShell'
 import { waitForInitialAuthState, subscribeToAuthState, subscribeToIdToken } from './firebase/auth'
 import { authRoute, ROUTES, stageProjectRoute } from './utils/routes'
 import { getStorageAssetCandidates } from './firebase/storageAssets'
+import { clearPageMediaCache } from './services/pageMediaCache'
 import { STAGE_PROJECTS_COLLECTION, classifyStageProjectError, createStageProject, createStageProjectFromPlan, getStageProject, isValidStageProjectId, listAccessibleStageProjects, saveStageProjectEditorState, saveStageProjectPlan, sortStageProjectsByActivity, stageProjectPath, touchStageProject } from './data/stageProjectService'
 import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
@@ -23,6 +24,7 @@ let stageViewportController = null
 let stageEditorMounted = false
 let stageIconHydrationPromise = null
 let stageViewportMountedForProjectId = ''
+let stageMediaCacheScope = ''
 let stageNoticeTimer = 0
 let editorSaveTimer = 0
 let planSaveTimer = 0
@@ -380,7 +382,7 @@ async function hydrateStageIcons() {
     node.dataset.iconHydrated = 'true'
     const img = node.querySelector('img')
     if (!img) return
-    const candidates = await getStorageAssetCandidates(path, { warnOnFail: false })
+    const candidates = await getStorageAssetCandidates(path, { warnOnFail: false, scopeKey: stageMediaCacheScope || `stage-editor:${state.projectId || 'global'}`, type: 'stage-icon' })
     const fallback = node.querySelector('.stage-rail-fallback, .stage-object-fallback-icon, span:not([class])')
     let index = 0
     const showFallback = () => {
@@ -407,12 +409,12 @@ async function hydrateStageIcons() {
 
 function hydrateStageIconsOnce() {
   if (stageIconHydrationPromise) return stageIconHydrationPromise
-  stageIconHydrationPromise = hydrateStageIcons()
+  stageIconHydrationPromise = hydrateStageIcons().finally(() => { stageIconHydrationPromise = null })
   return stageIconHydrationPromise
 }
 
 function refreshStageIcons() {
-  hydrateStageIcons().catch(() => {})
+  window.requestAnimationFrame?.(() => hydrateStageIconsOnce().catch(() => {}))
 }
 
 function updateStageAppMenu() {
@@ -457,6 +459,22 @@ function updateLeftPanelUI() {
   current.outerHTML = renderLeftPanelBySection(title, stamp)
   updateLibraryActiveState()
   refreshStageIcons()
+}
+
+function captureTableScroll() {
+  const wrap = app.querySelector('.stage-object-table-wrap')
+  if (!wrap) return null
+  return { left: wrap.scrollLeft, top: wrap.scrollTop }
+}
+
+function restoreTableScroll(snapshot) {
+  if (!snapshot) return
+  window.requestAnimationFrame?.(() => {
+    const wrap = app.querySelector('.stage-object-table-wrap')
+    if (!wrap) return
+    wrap.scrollLeft = snapshot.left || 0
+    wrap.scrollTop = snapshot.top || 0
+  })
 }
 
 function updateInspectorUI() {
@@ -535,6 +553,7 @@ function updateViewportControlUI() {
 }
 
 function updateEditorModeUI() {
+  const tableScroll = captureTableScroll()
   app.querySelectorAll('[data-editor-mode]').forEach((el) => {
     const active = (el.dataset.editorMode || '') === state.activeEditorMode
     el.classList.toggle('is-active', active)
@@ -543,6 +562,7 @@ function updateEditorModeUI() {
   const root = app.querySelector('[data-stage-mode-root]')
   if (!root) return
   root.innerHTML = renderBottomSplit()
+  restoreTableScroll(tableScroll)
 }
 
 function updateStageTabsUI() {
@@ -605,6 +625,8 @@ function bindEditorEvents() {
 
 function renderApp() {
   if (!state.projectId) {
+    if (stageMediaCacheScope) clearPageMediaCache(stageMediaCacheScope)
+    stageMediaCacheScope = ''
     disposeViewportController()
     stageEditorMounted = false
     stageIconHydrationPromise = null
@@ -614,12 +636,15 @@ function renderApp() {
     return
   }
   const mounted = app.querySelector('[data-stage-editor-app]')
+  const nextCacheScope = `stage-editor:${state.projectId}`
+  if (stageMediaCacheScope && stageMediaCacheScope !== nextCacheScope) clearPageMediaCache(stageMediaCacheScope)
+  stageMediaCacheScope = nextCacheScope
   if (!stageEditorMounted || !mounted) {
     app.innerHTML = `<div data-stage-global-header-wrapper ${state.showStageGlobalHeader ? '' : 'hidden'}>${navShell({ currentPage: 'studio' })}</div>${renderEditor()}`
     initShellChrome()
     bindEditorEvents()
     ensureStageViewportMounted()
-    hydrateStageIconsOnce()
+    refreshStageIcons()
     stageEditorMounted = true
     updateEditorProjectHeader()
     updateSaveStatusUI()

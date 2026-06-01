@@ -26,6 +26,8 @@ export function rememberMissingStoragePath(path = '', { scopeKey = DEFAULT_SCOPE
   })
 }
 
+export const markMissingStoragePath = rememberMissingStoragePath
+
 export async function getCachedStorageUrl(path = '', resolverFn, { scopeKey = DEFAULT_SCOPE, type = 'storage' } = {}) {
   const key = normalizedKey(path)
   if (!key || typeof resolverFn !== 'function') return ''
@@ -86,6 +88,10 @@ export function clearPageMediaCache(scopeKey = '') {
     return
   }
   cacheByScope.clear()
+}
+
+export function clearAllPageMediaCache() {
+  clearPageMediaCache()
 }
 
 window.addEventListener?.('pagehide', () => clearPageMediaCache())
