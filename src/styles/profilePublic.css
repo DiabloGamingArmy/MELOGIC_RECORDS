@@ -186,6 +186,37 @@ body {
   margin-top: 0.85rem;
 }
 
+.public-header-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+}
+
+.public-header-stats span {
+  min-width: 84px;
+  border: 1px solid rgba(152, 181, 212, 0.25);
+  border-radius: 12px;
+  background: rgba(10, 15, 28, 0.5);
+  padding: 0.45rem 0.58rem;
+}
+
+.public-header-stats strong,
+.public-header-stats em {
+  display: block;
+}
+
+.public-header-stats strong {
+  color: #f7fbff;
+  font-size: 1rem;
+}
+
+.public-header-stats em {
+  color: #a7bdd7;
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
 .public-hero-btn-primary,
 .public-hero-btn-outline {
   border-radius: 999px;
@@ -337,6 +368,12 @@ body {
   gap: 0.8rem;
 }
 
+.public-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
 .public-product-card {
   border-radius: 16px;
   border: 1px solid rgba(122, 154, 187, 0.24);
@@ -355,6 +392,129 @@ body {
 .public-product-body h4 { margin: 0.35rem 0 0; color: #ecf5ff; }
 .public-product-artist, .public-product-tags { margin: 0.35rem 0 0; color: #aabbd2; font-size: 0.88rem; }
 .public-product-actions { margin-top: 0.65rem; display: flex; gap: 0.45rem; flex-wrap: wrap; }
+
+.public-community-post-card,
+.public-stage-card,
+.public-community-card,
+.public-about-panel,
+.public-content-note {
+  border-radius: 16px;
+  border: 1px solid rgba(122, 154, 187, 0.24);
+  background: var(--public-glass);
+  padding: 1rem;
+  min-height: 180px;
+}
+
+.public-community-post-link,
+.public-stage-link,
+.public-community-card a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.public-content-kicker {
+  display: block;
+  color: #86dff0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.public-community-post-card h4,
+.public-stage-card h4,
+.public-about-panel h3 {
+  margin: 0.45rem 0 0;
+  color: #ecf5ff;
+}
+
+.public-community-post-card p,
+.public-stage-card p,
+.public-community-card p,
+.public-about-panel p,
+.public-content-note p {
+  color: #aabbd2;
+  line-height: 1.55;
+}
+
+.public-community-post-meta,
+.public-community-stats span {
+  color: #d2e8ff;
+  font-size: 0.84rem;
+}
+
+.public-stage-thumb {
+  display: block;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 0.75rem;
+  border-radius: 12px;
+  background:
+    linear-gradient(90deg, rgba(85, 215, 220, 0.28) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(108, 120, 255, 0.22) 1px, transparent 1px),
+    radial-gradient(circle at 32% 28%, rgba(85, 215, 220, 0.36), rgba(8, 12, 23, 0.94) 62%);
+  background-size: 18px 18px, 18px 18px, cover;
+}
+
+.public-community-card a {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.public-community-card strong,
+.public-community-card em {
+  display: block;
+}
+
+.public-community-card em {
+  color: #aabbd2;
+  font-style: normal;
+  margin-top: 0.15rem;
+}
+
+.public-community-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: rgba(85, 215, 220, 0.15);
+  color: #a8f1ff;
+  font-weight: 900;
+  flex: 0 0 auto;
+}
+
+.public-community-stats {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.public-about-panel dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+  margin: 1rem 0 0;
+}
+
+.public-about-panel dl div {
+  border: 1px solid rgba(122, 154, 187, 0.2);
+  border-radius: 12px;
+  padding: 0.7rem;
+  background: rgba(5, 9, 18, 0.45);
+}
+
+.public-about-panel dt {
+  color: var(--public-muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.public-about-panel dd {
+  margin: 0.3rem 0 0;
+  color: #f7fbff;
+}
 
 .public-load-more-wrap {
   margin-top: 1rem;
@@ -514,7 +674,8 @@ body {
 }
 
 @media (max-width: 1200px) {
-  .public-products-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .public-products-grid,
+  .public-profile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 980px) {
@@ -545,7 +706,9 @@ body {
 
 @media (max-width: 640px) {
   .public-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .public-products-grid { grid-template-columns: 1fr; }
+  .public-products-grid,
+  .public-profile-grid,
+  .public-about-panel dl { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/profilePublic.css'
-import { collection, getDocs, limit, query, where } from 'firebase/firestore'
+import { collection, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -9,7 +9,7 @@ import { createReport } from './data/productService'
 import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
-import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath, productRoute } from './utils/routes'
+import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath, productRoute, stageProjectRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
 
 const app = document.querySelector('#app')
@@ -39,18 +39,19 @@ const BADGE_CONFIG = {
 }
 
 const CATEGORY_CONFIG = [
+  { key: 'posts', label: 'Posts', defaultCount: 0 },
   { key: 'products', label: 'Products', defaultCount: 0 },
-  { key: 'savedItems', label: 'Saved Items', defaultCount: 12 },
-  { key: 'comments', label: 'Comments', defaultCount: 4 },
-  { key: 'likes', label: 'Likes', defaultCount: 18 },
-  { key: 'downloads', label: 'Downloads', defaultCount: 3 }
+  { key: 'stagePlans', label: 'Stage Plans', defaultCount: 0 },
+  { key: 'about', label: 'About', defaultCount: 0 },
+  { key: 'communities', label: 'Communities', defaultCount: 0 }
 ]
 
 const EMPTY_COPY = {
-  savedItems: 'Saved items will appear here.',
-  comments: 'Public comments will appear here.',
-  likes: 'Liked items will appear here.',
-  downloads: 'Public download stats will appear here.'
+  posts: 'No public community posts yet.',
+  products: 'No public products yet.',
+  stagePlans: 'No public stage plans yet.',
+  about: 'No additional public profile details yet.',
+  communities: 'No public communities yet.'
 }
 
 const uiState = {
@@ -60,6 +61,9 @@ const uiState = {
   currentUser: null,
   previewMode: false,
   productsByUid: new Map(),
+  postsByUid: new Map(),
+  stagePlansByUid: new Map(),
+  communitiesByUid: new Map(),
   parallaxBound: false,
   marqueeTicker: null,
   badgeUrls: {},
@@ -125,11 +129,15 @@ function badgeIconMarkup(key, extraClass = '') {
 function getStats(profile = {}) {
   const stats = profile.stats || {}
   return {
-    products: stats.products ?? profile.productsCount ?? 0,
-    savedItems: stats.savedItems ?? profile.savedCount ?? 12,
-    comments: stats.comments ?? profile.commentsCount ?? 4,
-    likes: stats.likes ?? profile.likesCount ?? 18,
-    downloads: stats.downloads ?? profile.downloadsCount ?? 3
+    followers: stats.followers ?? profile.followersCount ?? profile.followerCount ?? 0,
+    following: stats.following ?? profile.followingCount ?? 0,
+    posts: stats.posts ?? profile.postsCount ?? uiState.postsByUid.get(profile.uid || '')?.length ?? 0,
+    products: stats.products ?? profile.productsCount ?? uiState.productsByUid.get(profile.uid || '')?.length ?? 0,
+    downloads: stats.downloads ?? profile.downloadsCount ?? 0,
+    focusedCommunities: stats.focusedCommunities ?? profile.focusedCommunitiesCount ?? profile.communityFocusCount ?? 0,
+    stagePlans: stats.stagePlans ?? profile.stagePlansCount ?? uiState.stagePlansByUid.get(profile.uid || '')?.length ?? 0,
+    communities: stats.communities ?? profile.communitiesCount ?? uiState.communitiesByUid.get(profile.uid || '')?.length ?? 0,
+    about: profile.bio ? 1 : 0
   }
 }
 
@@ -160,6 +168,125 @@ async function loadPublicProductsForArtist(uid) {
   const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
   uiState.productsByUid.set(uid, rows)
   return rows
+}
+
+function serializeDate(value) {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  if (typeof value.toDate === 'function') return value.toDate().toISOString()
+  if (value instanceof Date) return value.toISOString()
+  return ''
+}
+
+async function loadPublicCommunityPostsForAuthor(uid) {
+  if (!uid || !db) return []
+  if (uiState.postsByUid.has(uid)) return uiState.postsByUid.get(uid)
+  const postsRef = collection(db, 'communityPosts')
+  const postsQuery = query(
+    postsRef,
+    where('authorUid', '==', uid),
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public'),
+    orderBy('createdAt', 'desc'),
+    limit(40)
+  )
+  const snap = await getDocs(postsQuery).catch(async (error) => {
+    if (!String(error?.message || '').includes('requires an index') && !String(error?.code || '').includes('failed-precondition')) throw error
+    return getDocs(query(
+      postsRef,
+      where('status', '==', 'published'),
+      where('visibility', '==', 'public'),
+      orderBy('createdAt', 'desc'),
+      limit(80)
+    ))
+  })
+  const rows = snap.docs
+    .map((docSnap) => ({ id: docSnap.id, postId: docSnap.id, ...(docSnap.data() || {}) }))
+    .filter((post) => post.authorUid === uid)
+  uiState.postsByUid.set(uid, rows)
+  return rows
+}
+
+async function loadPublicStagePlansForOwner(uid) {
+  if (!uid || !db) return []
+  if (uiState.stagePlansByUid.has(uid)) return uiState.stagePlansByUid.get(uid)
+  const stageRef = collection(db, 'stageProjects')
+  const stageQuery = query(
+    stageRef,
+    where('ownerId', '==', uid),
+    where('visibility', '==', 'public'),
+    limit(30)
+  )
+  const snap = await getDocs(stageQuery).catch((error) => {
+    if (String(error?.code || '').includes('permission-denied')) return { docs: [] }
+    throw error
+  })
+  const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+    .filter((plan) => !plan.status || ['published', 'public', 'active'].includes(String(plan.status || '').toLowerCase()))
+    .sort((a, b) => new Date(serializeDate(b.updatedAt || b.createdAt) || 0).getTime() - new Date(serializeDate(a.updatedAt || a.createdAt) || 0).getTime())
+  uiState.stagePlansByUid.set(uid, rows)
+  return rows
+}
+
+async function loadPublicCommunitiesForProfile(uid) {
+  if (!uid || !db) return []
+  if (uiState.communitiesByUid.has(uid)) return uiState.communitiesByUid.get(uid)
+  const communitiesRef = collection(db, 'communities')
+  const [ownedSnap, moderatedSnap] = await Promise.all([
+    getDocs(query(
+      communitiesRef,
+      where('ownerUid', '==', uid),
+      where('status', '==', 'active'),
+      where('visibility', '==', 'public'),
+      limit(30)
+    )).catch((error) => {
+      if (String(error?.message || '').includes('requires an index')) return { docs: [] }
+      throw error
+    }),
+    getDocs(query(
+      communitiesRef,
+      where('moderatorIds', 'array-contains', uid),
+      where('status', '==', 'active'),
+      where('visibility', '==', 'public'),
+      limit(30)
+    )).catch((error) => {
+      if (String(error?.message || '').includes('requires an index')) return { docs: [] }
+      throw error
+    })
+  ])
+  const byId = new Map()
+  ;[...ownedSnap.docs, ...moderatedSnap.docs].forEach((docSnap) => {
+    byId.set(docSnap.id, { id: docSnap.id, communityId: docSnap.id, ...(docSnap.data() || {}) })
+  })
+  const rows = [...byId.values()].sort((a, b) => String(a.name || a.slug || '').localeCompare(String(b.name || b.slug || '')))
+  uiState.communitiesByUid.set(uid, rows)
+  return rows
+}
+
+async function buildPublicProfileFallback(uid) {
+  const [posts, products] = await Promise.all([
+    loadPublicCommunityPostsForAuthor(uid).catch(() => []),
+    loadPublicProductsForArtist(uid).catch(() => [])
+  ])
+  const post = posts[0] || {}
+  const product = products[0] || {}
+  const displayName = post.authorDisplayName || product.artistDisplayName || product.artistName || ''
+  if (!displayName) return null
+  return {
+    uid,
+    displayName,
+    username: post.authorUsername || product.artistUsername || '',
+    usernameLower: String(post.authorUsername || product.artistUsername || '').toLowerCase(),
+    avatarURL: post.authorAvatarURL || product.artistAvatarURL || product.artistPhotoURL || '',
+    photoURL: post.authorAvatarURL || product.artistPhotoURL || '',
+    bio: '',
+    roleLabel: 'Creator',
+    stats: {
+      posts: posts.length,
+      products: products.length
+    },
+    publicProfileFallback: true
+  }
 }
 
 function renderNotFound() {
@@ -295,34 +422,110 @@ function productCardMarkup(product, displayName) {
   `
 }
 
-function renderCategorySection(profile) {
+function formatTime(value = '') {
+  if (!value) return 'Recently'
+  const date = new Date(serializeDate(value))
+  if (Number.isNaN(date.getTime())) return 'Recently'
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })
+}
+
+function communityPostCardMarkup(post) {
+  const title = post.title || 'Community post'
+  const body = String(post.body || '').slice(0, 220)
+  const href = `${ROUTES.communityPost}/${encodeURIComponent(post.postId || post.id)}`
+  const community = post.communitySlug ? `c/${post.communitySlug}` : 'Community'
+  return `
+    <article class="public-community-post-card">
+      <a href="${href}" class="public-community-post-link">
+        <span class="public-content-kicker">${escapeHtml(community)} · ${escapeHtml(formatTime(post.createdAt))}</span>
+        <h4>${escapeHtml(title)}</h4>
+        <p>${escapeHtml(body)}${String(post.body || '').length > body.length ? '...' : ''}</p>
+        <span class="public-community-post-meta">${Number(post.counts?.likes || 0)} likes · ${Number(post.counts?.comments || 0)} comments</span>
+      </a>
+    </article>
+  `
+}
+
+function stagePlanCardMarkup(plan) {
+  const title = plan.title || plan.name || 'Untitled Stage Plan'
+  const stageType = plan.stageType || plan.type || 'Stage plan'
+  return `
+    <article class="public-stage-card">
+      <a href="${stageProjectRoute(plan.id)}" class="public-stage-link">
+        <span class="public-stage-thumb" aria-hidden="true"></span>
+        <span class="public-content-kicker">${escapeHtml(stageType)} · ${escapeHtml(formatTime(plan.updatedAt || plan.createdAt))}</span>
+        <h4>${escapeHtml(title)}</h4>
+        <p>${escapeHtml(String(plan.venue || plan.notes || 'Public StageMaker plan.').slice(0, 150))}</p>
+      </a>
+    </article>
+  `
+}
+
+function communityCardMarkup(community) {
+  const name = community.name || community.slug || 'Community'
+  const slug = community.slug || community.communityId || community.id
+  return `
+    <article class="public-community-card">
+      <a href="${ROUTES.communitySlug}/${encodeURIComponent(slug)}">
+        <span class="public-community-icon">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>
+        <span>
+          <strong>${escapeHtml(name)}</strong>
+          <em>c/${escapeHtml(slug)} · ${escapeHtml(community.category || 'Community')}</em>
+        </span>
+      </a>
+      <p>${escapeHtml(community.description || 'A public Melogic creator community.')}</p>
+      <div class="public-community-stats"><span>${Number(community.focusCount || 0)} focused</span><span>${Number(community.postCount || 0)} posts</span></div>
+    </article>
+  `
+}
+
+function renderAboutSection(profile) {
   const displayName = profile.displayName || 'Melogic Creator'
-  if (uiState.activeCategory !== 'products') {
-    return `
-      <section class="public-content-section">
-        <article class="public-content-empty"><p>${EMPTY_COPY[uiState.activeCategory]}</p></article>
-      </section>
-    `
-  }
-
-  const products = uiState.productsByUid.get(profile.uid || '') || []
-  if (!products.length) {
-    return `
-      <section class="public-content-section">
-        <article class="public-content-empty"><p>No public products yet.</p></article>
-      </section>
-    `
-  }
-
-  const visible = products.slice(0, uiState.visibleCount)
+  const bio = profile.bio || 'No bio has been added yet.'
+  const username = formatUsername(profile.username || profile.usernameLower) || 'No username'
+  const roleLabel = profile.roleLabel || 'Creator'
   return `
     <section class="public-content-section">
-      <div class="public-products-grid">
-        ${visible.map((product) => productCardMarkup(product, displayName)).join('')}
-      </div>
-      ${uiState.visibleCount < products.length ? '<div class="public-load-more-wrap"><button type="button" class="button button-muted" data-load-more>Load more</button></div>' : ''}
+      <article class="public-about-panel">
+        <h3>About ${escapeHtml(displayName)}</h3>
+        <p>${escapeHtml(bio)}</p>
+        <dl>
+          <div><dt>Username</dt><dd>${escapeHtml(username)}</dd></div>
+          <div><dt>Role</dt><dd>${escapeHtml(roleLabel)}</dd></div>
+        </dl>
+      </article>
     </section>
   `
+}
+
+function renderCategorySection(profile) {
+  const displayName = profile.displayName || 'Melogic Creator'
+  const renderEmpty = () => `<section class="public-content-section"><article class="public-content-empty"><p>${EMPTY_COPY[uiState.activeCategory]}</p></article></section>`
+  if (uiState.activeCategory === 'about') return renderAboutSection(profile)
+  if (uiState.activeCategory === 'posts') {
+    const posts = uiState.postsByUid.get(profile.uid || '') || []
+    if (!posts.length) return renderEmpty()
+    const visible = posts.slice(0, uiState.visibleCount)
+    return `<section class="public-content-section"><div class="public-profile-grid">${visible.map(communityPostCardMarkup).join('')}</div>${uiState.visibleCount < posts.length ? '<div class="public-load-more-wrap"><button type="button" class="button button-muted" data-load-more>Load more</button></div>' : ''}</section>`
+  }
+  if (uiState.activeCategory === 'products') {
+    const products = uiState.productsByUid.get(profile.uid || '') || []
+    if (!products.length) return renderEmpty()
+    const visible = products.slice(0, uiState.visibleCount)
+    return `<section class="public-content-section"><div class="public-products-grid">${visible.map((product) => productCardMarkup(product, displayName)).join('')}</div>${uiState.visibleCount < products.length ? '<div class="public-load-more-wrap"><button type="button" class="button button-muted" data-load-more>Load more</button></div>' : ''}</section>`
+  }
+  if (uiState.activeCategory === 'stagePlans') {
+    const plans = uiState.stagePlansByUid.get(profile.uid || '') || []
+    if (!plans.length) return renderEmpty()
+    const visible = plans.slice(0, uiState.visibleCount)
+    return `<section class="public-content-section"><div class="public-profile-grid">${visible.map(stagePlanCardMarkup).join('')}</div>${uiState.visibleCount < plans.length ? '<div class="public-load-more-wrap"><button type="button" class="button button-muted" data-load-more>Load more</button></div>' : ''}</section>`
+  }
+  if (uiState.activeCategory === 'communities') {
+    const communities = uiState.communitiesByUid.get(profile.uid || '') || []
+    if (!communities.length) return renderEmpty()
+    return `<section class="public-content-section"><div class="public-profile-grid">${communities.map(communityCardMarkup).join('')}</div><article class="public-content-note"><p>Focused communities stay private unless the creator opts into a public focus list. This tab shows public communities they own or moderate.</p></article></section>`
+  }
+  return renderEmpty()
 }
 
 function renderFeaturedSection(profile, displayName) {
@@ -419,6 +622,14 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   const roles = getProfileRoles(profile)
   const hasVerified = roles.includes('verified')
   const profileBadgeKeys = ['founder', 'moderator', 'beta', 'pro'].filter((key) => roles.includes(key))
+  const headerStats = [
+    ['Followers', stats.followers],
+    ['Following', stats.following],
+    ['Posts', stats.posts],
+    ['Products', stats.products],
+    ['Downloads', stats.downloads],
+    ['Focused', stats.focusedCommunities]
+  ]
 
   const isSignedIn = Boolean(currentUser?.uid)
   const isSelfPreview = Boolean(previewMode && currentUser?.uid === uid)
@@ -451,6 +662,9 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
             <p class="public-handle"><span>${escapeHtml(username || 'No username')}</span>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</p>
             <p class="public-role">${escapeHtml(roleLabel)}</p>
             <div class="public-badge-row" aria-label="Profile badges">${profileBadgeKeys.map((key) => badgeIconMarkup(key)).join('') || '<span class="public-badge-empty">No badges yet</span>'}</div>
+            <div class="public-header-stats" aria-label="Creator stats">
+              ${headerStats.map(([label, value]) => `<span><strong>${Number(value || 0)}</strong><em>${escapeHtml(label)}</em></span>`).join('')}
+            </div>
             <div class="public-actions">${actionsMarkup}</div>
           </div>
         </div>
@@ -474,7 +688,7 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
         ${CATEGORY_CONFIG.map((item) => `
           <button type="button" class="public-stat-card ${uiState.activeCategory === item.key ? 'is-active' : ''}" data-category="${item.key}" aria-pressed="${uiState.activeCategory === item.key ? 'true' : 'false'}">
             <span class="public-stat-label">${item.label.toUpperCase()}</span>
-            <strong>${stats[item.key] ?? item.defaultCount}</strong>
+            <strong>${item.key === 'about' ? '' : (stats[item.key] ?? item.defaultCount)}</strong>
           </button>
         `).join('')}
       </section>
@@ -492,6 +706,12 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
       uiState.visibleCount = 8
       if (nextCategory === 'products') {
         await loadPublicProductsForArtist(profile.uid || '')
+      } else if (nextCategory === 'posts') {
+        await loadPublicCommunityPostsForAuthor(profile.uid || '')
+      } else if (nextCategory === 'stagePlans') {
+        await loadPublicStagePlansForOwner(profile.uid || '')
+      } else if (nextCategory === 'communities') {
+        await loadPublicCommunitiesForProfile(profile.uid || '')
       }
       renderPublicProfile(uiState.profile, uiState.currentUser, uiState.previewMode)
     })
@@ -559,16 +779,21 @@ async function initPublicProfile() {
     return
   }
 
-  const profile = await getPublicProfile(uid)
+  const profile = await getPublicProfile(uid) || await buildPublicProfileFallback(uid)
   if (!profile) return renderNotFound()
 
-  await loadPublicProductsForArtist(uid)
+  await Promise.all([
+    loadPublicCommunityPostsForAuthor(uid),
+    loadPublicProductsForArtist(uid),
+    loadPublicStagePlansForOwner(uid),
+    loadPublicCommunitiesForProfile(uid)
+  ])
   uiState.badgeUrls = await loadBadgeAssetUrls()
 
   uiState.profile = profile
   uiState.currentUser = currentUser
   uiState.previewMode = Boolean(currentUser?.uid === uid && previewMode)
-  uiState.activeCategory = 'products'
+  uiState.activeCategory = 'posts'
   uiState.visibleCount = 8
 
   renderPublicProfile(profile, currentUser, uiState.previewMode)
