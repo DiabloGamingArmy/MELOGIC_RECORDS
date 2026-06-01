@@ -93,6 +93,7 @@ const REPORT_ADMIN_FILTERS = [
   { key: 'product', label: 'Product Reports' },
   { key: 'user', label: 'User Reports' },
   { key: 'order', label: 'Order Reports' },
+  { key: 'community_post', label: 'Community Posts' },
   { key: 'resolved', label: 'Resolved' },
   { key: 'dismissed', label: 'Dismissed' }
 ]
@@ -2202,6 +2203,7 @@ function reportTargetLink(report = {}, target = null) {
   if (targetType === 'product' && targetId) return `<a class="admin-secondary-link" href="${adminReviewRoute(targetId)}">Audit/View Product</a>`
   if (['profile', 'user'].includes(targetType) && targetId) return `<a class="admin-secondary-link" href="${ROUTES.adminUsers}/${encodeURIComponent(targetId)}">Open Account Hub</a>`
   if (targetType === 'order' && targetId) return `<a class="admin-secondary-link" href="${ROUTES.adminOrders}/${encodeURIComponent(targetId)}">Open Order Audit</a>`
+  if (targetType === 'community_post' && targetId) return `<a class="admin-secondary-link" href="${ROUTES.communityPost}/${encodeURIComponent(targetId)}" target="_blank" rel="noreferrer">Open Community Post</a>`
   if (target?.id) return `<span class="admin-muted">${escapeHtml(target.id)}</span>`
   return '<span class="admin-muted">No target route available.</span>'
 }
