@@ -3,7 +3,7 @@ const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
 const { writeAccountEvent } = require('../account/accountEvents')
 
-const TARGET_TYPES = new Set(['product', 'profile', 'user', 'order'])
+const TARGET_TYPES = new Set(['product', 'profile', 'user', 'order', 'community_post'])
 const PRODUCT_REASONS = new Set([
   'Fraudulent or misleading',
   'Download does not work',
@@ -29,6 +29,14 @@ const ORDER_REASONS = new Set([
   'Fraudulent or misleading',
   'Other'
 ])
+const COMMUNITY_POST_REASONS = new Set([
+  'Spam',
+  'Harassment or abuse',
+  'Misleading content',
+  'Stolen/copyrighted content',
+  'Inappropriate content',
+  'Other'
+])
 
 function db() {
   return admin.firestore()
@@ -39,6 +47,7 @@ function reasonSetForType(targetType = '') {
   if (targetType === 'profile') return PROFILE_REASONS
   if (targetType === 'user') return USER_REASONS
   if (targetType === 'order') return ORDER_REASONS
+  if (targetType === 'community_post') return COMMUNITY_POST_REASONS
   return new Set()
 }
 
@@ -86,6 +95,11 @@ async function resolveTargetOwner(targetType = '', targetId = '', suppliedOwner 
     const snap = await firestore.collection('orders').doc(targetId).get()
     if (snap.exists) return cleanString(snap.data()?.buyerUid || snap.data()?.uid || suppliedOwner || '', 180)
   }
+  if (targetType === 'community_post') {
+    const snap = await firestore.collection('communityPosts').doc(targetId).get()
+    if (!snap.exists) throw new HttpsError('not-found', 'The reported community post could not be found.')
+    return cleanString(snap.data()?.authorUid || suppliedOwner || '', 180)
+  }
   return cleanString(suppliedOwner || '', 180)
 }
 
@@ -108,6 +122,9 @@ const createReport = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (req
     throw new HttpsError('failed-precondition', 'You cannot report your own profile.')
   }
   const targetOwnerUid = await resolveTargetOwner(targetType, targetId, request.data?.targetOwnerUid || '')
+  if (targetType === 'community_post' && targetOwnerUid === uid) {
+    throw new HttpsError('failed-precondition', 'You cannot report your own post.')
+  }
 
   const firestore = db()
   const duplicateId = `${safeIdPart(targetType)}_${safeIdPart(targetId)}_${safeIdPart(uid)}`
@@ -152,6 +169,12 @@ const createReport = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (req
   }
 
   await reportRef.set(payload)
+  if (targetType === 'community_post') {
+    await firestore.collection('communityPosts').doc(targetId).set({
+      'counts.reports': admin.firestore.FieldValue.increment(1),
+      updatedAt: now
+    }, { merge: true }).catch(() => null)
+  }
   await writeAccountEvent(firestore, uid, {
     title: 'Report submitted',
     message: 'Your report was submitted.',

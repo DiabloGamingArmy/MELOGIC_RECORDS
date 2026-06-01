@@ -1685,6 +1685,58 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /communityPosts/{postId} {
+      allow read: if resource.data.status == 'published'
+        && resource.data.visibility == 'public';
+
+      allow create: if false;
+      allow update: if signedIn()
+        && (
+          (
+            resource.data.authorUid == request.auth.uid
+            && request.resource.data.authorUid == resource.data.authorUid
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.counts == resource.data.counts
+            && request.resource.data.official == resource.data.official
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'title',
+              'body',
+              'tags',
+              'updatedAt'
+            ])
+          )
+          || (
+            hasUserModerateClaim()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status',
+              'visibility',
+              'moderationStatus',
+              'moderationReason',
+              'moderatedAt',
+              'moderatedBy',
+              'updatedAt'
+            ])
+          )
+        );
+      allow delete: if signedIn()
+        && (resource.data.authorUid == request.auth.uid || hasUserModerateClaim());
+
+      match /likes/{uid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow write: if false;
+      }
+
+      match /saves/{uid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow write: if false;
+      }
+
+      match /shares/{uid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow write: if false;
+      }
+    }
+
     match /reports/{reportId} {
       allow read: if canReadReportsClaim();
       allow write: if false;

@@ -11,6 +11,7 @@ function matchesFilter(report = {}, filter = '') {
   if (filter === 'product') return report.targetType === 'product' || report.type === 'product'
   if (filter === 'user') return ['user', 'profile'].includes(report.targetType) || ['user', 'profile'].includes(report.type)
   if (filter === 'order') return report.targetType === 'order' || report.type === 'order'
+  if (filter === 'community_post') return report.targetType === 'community_post' || report.type === 'community_post'
   return true
 }
 
@@ -43,6 +44,19 @@ async function enrichReport(report = {}) {
       if (report.targetType === 'order' && report.targetId) {
         const orderSnap = await db().collection('orders').doc(report.targetId).get()
         return orderSnap.exists ? orderSummary(orderSnap) : null
+      }
+      if (report.targetType === 'community_post' && report.targetId) {
+        const postSnap = await db().collection('communityPosts').doc(report.targetId).get()
+        if (!postSnap.exists) return null
+        const post = postSnap.data() || {}
+        return {
+          id: postSnap.id,
+          title: cleanString(post.title || post.body || 'Community post', 180),
+          authorUid: cleanString(post.authorUid || '', 180),
+          status: cleanString(post.status || '', 80),
+          visibility: cleanString(post.visibility || '', 80),
+          type: cleanString(post.type || 'community_post', 80)
+        }
       }
       return null
     })().catch(() => null)

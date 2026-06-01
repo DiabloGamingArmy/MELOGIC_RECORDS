@@ -281,6 +281,10 @@
         "destination": "/community.html"
       },
       {
+        "source": "/community/post/**",
+        "destination": "/community.html"
+      },
+      {
         "source": "/live",
         "destination": "/live.html"
       },
