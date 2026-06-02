@@ -14,6 +14,7 @@ function matchesFilter(report = {}, filter = '') {
   if (filter === 'community') return report.targetType === 'community' || report.type === 'community'
   if (filter === 'community_post') return report.targetType === 'community_post' || report.type === 'community_post'
   if (filter === 'community_comment') return report.targetType === 'community_comment' || report.type === 'community_comment'
+  if (filter === 'community_story') return report.targetType === 'community_story' || report.type === 'community_story'
   return true
 }
 
@@ -73,6 +74,19 @@ async function enrichReport(report = {}) {
           authorUid: cleanString(comment.authorUid || '', 180),
           status: cleanString(comment.status || '', 80),
           type: 'community_comment'
+        }
+      }
+      if (report.targetType === 'community_story' && report.targetId) {
+        const storySnap = await db().collection('communityStories').doc(report.targetId).get()
+        if (!storySnap.exists) return null
+        const story = storySnap.data() || {}
+        return {
+          id: storySnap.id,
+          title: cleanString(story.text || `${story.mediaType || 'Story'} story`, 180),
+          authorUid: cleanString(story.authorUid || '', 180),
+          status: cleanString(story.status || '', 80),
+          visibility: cleanString(story.visibility || '', 80),
+          type: 'community_story'
         }
       }
       if (report.targetType === 'community' && report.targetId) {

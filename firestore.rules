@@ -1694,6 +1694,121 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    function communityStoryKeysAllowed() {
+      return request.resource.data.keys().hasOnly([
+        'storyId',
+        'authorUid',
+        'authorDisplayName',
+        'authorUsername',
+        'authorAvatarURL',
+        'mediaType',
+        'text',
+        'mediaPath',
+        'background',
+        'linkedPostId',
+        'linkedProductId',
+        'expiresAt',
+        'createdAt',
+        'updatedAt',
+        'viewCount',
+        'reportCount',
+        'status',
+        'visibility'
+      ]);
+    }
+
+    function communityStoryCreateIsValid(storyId) {
+      return signedIn()
+        && communityStoryKeysAllowed()
+        && request.resource.data.storyId == storyId
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.authorDisplayName is string
+        && request.resource.data.authorDisplayName.size() <= 120
+        && request.resource.data.authorUsername is string
+        && request.resource.data.authorUsername.size() <= 60
+        && request.resource.data.authorAvatarURL is string
+        && request.resource.data.authorAvatarURL.size() <= 900
+        && request.resource.data.mediaType in ['text', 'image']
+        && request.resource.data.text is string
+        && request.resource.data.text.size() <= 500
+        && request.resource.data.mediaPath is string
+        && request.resource.data.mediaPath.size() <= 900
+        && request.resource.data.background in ['aurora', 'midnight', 'sunset', 'stage', 'mono', '']
+        && request.resource.data.linkedPostId is string
+        && request.resource.data.linkedPostId.size() <= 180
+        && request.resource.data.linkedProductId is string
+        && request.resource.data.linkedProductId.size() <= 180
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.viewCount == 0
+        && request.resource.data.reportCount == 0
+        && request.resource.data.status == 'active'
+        && request.resource.data.visibility == 'public'
+        && (
+          (
+            request.resource.data.mediaType == 'text'
+            && request.resource.data.text.size() > 0
+            && request.resource.data.mediaPath == ''
+          )
+          || (
+            request.resource.data.mediaType == 'image'
+            && request.resource.data.mediaPath.matches('communityStories/' + request.auth.uid + '/' + storyId + '/.*')
+          )
+        );
+    }
+
+    function communityStoryOwnerDeleteIsSafe() {
+      return signedIn()
+        && resource.data.authorUid == request.auth.uid
+        && request.resource.data.authorUid == resource.data.authorUid
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.viewCount == resource.data.viewCount
+        && request.resource.data.reportCount == resource.data.reportCount
+        && request.resource.data.status == 'deleted'
+        && request.resource.data.deletedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'deletedAt',
+          'deletedBy',
+          'updatedAt'
+        ]);
+    }
+
+    function communityStoryAdminUpdateIsSafe() {
+      return hasUserModerateClaim()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'moderationStatus',
+          'moderationReason',
+          'moderatedAt',
+          'moderatedBy',
+          'updatedAt'
+        ]);
+    }
+
+    match /communityStories/{storyId} {
+      allow read: if (
+          resource.data.status == 'active'
+          && resource.data.visibility == 'public'
+          && resource.data.expiresAt > request.time
+        )
+        || (signedIn() && resource.data.authorUid == request.auth.uid)
+        || hasUserModerateClaim();
+      allow create: if communityStoryCreateIsValid(storyId);
+      allow update: if communityStoryOwnerDeleteIsSafe() || communityStoryAdminUpdateIsSafe();
+      allow delete: if signedIn()
+        && (resource.data.authorUid == request.auth.uid || hasUserModerateClaim());
+
+      match /views/{uid} {
+        allow read: if signedIn()
+          && (
+            get(/databases/$(database)/documents/communityStories/$(storyId)).data.authorUid == request.auth.uid
+            || hasUserModerateClaim()
+          );
+        allow write: if false;
+      }
+    }
+
     match /communities/{communityId} {
       allow read: if resource.data.status == 'active'
         && resource.data.visibility == 'public';

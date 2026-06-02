@@ -8,6 +8,8 @@ Create -> Share -> Feedback -> Notifications -> Return -> Create Again
 
 The current goal is a clean public feed where creators can publish text posts, share public products, react to posts, save useful posts, comment, reply once, receive notifications, share links, and report unsafe content.
 
+Phase 5 adds lightweight creator Stories. The story rail and viewer borrow the simple rail pattern from the older Nexera home feed, especially its horizontal "Your Story" + creator updates treatment, without importing Nexera globals, auth, routing, or data stores.
+
 ## Routes
 
 - `/community` - Community feed, composer, tabs, side panels.
@@ -15,6 +17,35 @@ The current goal is a clean public feed where creators can publish text posts, s
 - `/community/c/{communitySlug}` - Community detail feed and scoped composer.
 - `/community/create` - Opens the community browser with the create community panel.
 - `/community/post/{postId}` - Full post detail with post actions, comments, one-level replies, comment likes, and comment reporting.
+
+## Story Schema
+
+Stories are stored in `communityStories/{storyId}`. Story images are uploaded to `communityStories/{uid}/{storyId}/{fileName}`.
+
+```js
+{
+  storyId,
+  authorUid,
+  authorDisplayName,
+  authorUsername,
+  authorAvatarURL,
+  mediaType: 'text' | 'image',
+  text,
+  mediaPath,
+  background: 'aurora' | 'midnight' | 'sunset' | 'stage' | 'mono',
+  linkedPostId: '',
+  linkedProductId: '',
+  expiresAt,
+  createdAt,
+  updatedAt,
+  viewCount: 0,
+  reportCount: 0,
+  status: 'active',
+  visibility: 'public'
+}
+```
+
+Stories expire after 24 hours. The MVP supports text and image stories only; video, livestreams, and editing tools are intentionally deferred.
 
 ## Community Schema
 
@@ -99,6 +130,8 @@ Posts are stored in `communityPosts/{postId}`:
 - Comments go through `createCommunityComment`.
 - Comment deletion goes through `deleteCommunityComment`; owner/admin checks are enforced server-side.
 - Comment likes go through `toggleCommunityCommentLike` and are mirrored at `communityPosts/{postId}/comments/{commentId}/likes/{uid}`.
+- Stories go through `createCommunityStory`, `deleteCommunityStory`, and `recordCommunityStoryView`.
+- Story reports reuse `createReport` with `targetType: 'community_story'`.
 
 ## Comment Schema
 
@@ -185,6 +218,7 @@ Comment reports use:
 ```
 
 `targetType: 'community'` reports link to `/community/c/{slug}`. `targetType: 'community_post'` reports link to `/community/post/{postId}`. `targetType: 'community_comment'` reports link to the parent post thread.
+`targetType: 'community_story'` reports link to `/community?story={storyId}`.
 
 ## Rules And Indexes
 
@@ -194,6 +228,8 @@ Visible comments on published public posts are publicly readable. Direct client 
 
 Community rules allow public reads for `active/public` communities. Direct client creation and focus writes are blocked because Admin SDK callables own those writes. Community owners/moderators can update basic fields; user moderators can hide/suspend communities.
 
+Story rules allow public reads for `active/public` stories whose `expiresAt` is still in the future. Signed-in users may create tightly-shaped own stories, but the production UI uses callables so author identity, expiration, counters, and status stay server-controlled. Owner/admin delete/hide paths are narrow. Storage rules allow signed-in users to upload image stories only under `communityStories/{uid}/{storyId}`.
+
 Indexes added:
 
 - `communityPosts`: `status ASC`, `visibility ASC`, `createdAt DESC`
@@ -201,6 +237,7 @@ Indexes added:
 - `communityPosts`: `communitySlug ASC`, `status ASC`, `visibility ASC`, `createdAt DESC`
 - `comments`: `status ASC`, `createdAt ASC`
 - `comments`: `parentCommentId ASC`, `createdAt ASC`
+- `communityStories`: `status ASC`, `visibility ASC`, `expiresAt ASC`
 - `communities`: `status ASC`, `visibility ASC`, `updatedAt DESC`
 - `communities`: `category ASC`, `status ASC`, `visibility ASC`, `updatedAt DESC`
 
@@ -248,9 +285,20 @@ Done in phase 4:
 - profile header shows public-safe creator stats without scanning private data
 - community post profile cards link to `/community/post/{postId}`
 
+Done in phase 5:
+
+- `/community` story rail
+- text story composer
+- image story upload/composer
+- story viewer
+- unique signed-in story view count path
+- story reports through Admin Reports
+- story Firestore/Storage rules and indexes
+- Nexera story rail visual reference ported into the Melogic Community shell
+
 Deferred:
 
 - creator follow feed
-- stories
+- video stories and live streams
 - FYP scoring
 - full community moderation dashboard

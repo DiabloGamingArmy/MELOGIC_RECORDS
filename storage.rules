@@ -176,6 +176,13 @@ service firebase.storage {
       allow write: if signedIn() && request.auth.uid == uid;
     }
 
+    match /communityStories/{uid}/{storyId}/{fileName} {
+      allow read: if true;
+      allow write: if signedIn()
+        && request.auth.uid == uid
+        && isImageUpload(10 * 1024 * 1024);
+    }
+
     match /products/{productId}/thumbnails/{fileName} {
       allow read: if true;
       allow write: if isProductOwner(productId) && isImageUpload(5 * 1024 * 1024);

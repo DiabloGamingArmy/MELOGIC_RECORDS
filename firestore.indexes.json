@@ -151,6 +151,15 @@
       ]
     },
     {
+      "collectionGroup": "communityStories",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "visibility", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "stageProjects",
       "queryScope": "COLLECTION",
       "fields": [
