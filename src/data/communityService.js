@@ -198,6 +198,16 @@ export async function getCommunityFocusState(communityId = '', uid = '') {
   return Boolean(snap?.exists?.())
 }
 
+export async function listFocusedCommunityIds(uid = '', limitCount = 50) {
+  const viewerUid = String(uid || '').trim()
+  if (!viewerUid) return []
+  const snapshot = await getDocs(query(collection(db, 'users', viewerUid, 'focusedCommunities'), limit(limitCount))).catch(() => null)
+  if (!snapshot) return []
+  return snapshot.docs
+    .map((docSnap) => docSnap.id || docSnap.data()?.communityId || '')
+    .filter((id) => id && !id.includes('/'))
+}
+
 export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', limitCount = 25 } = {}) {
   const constraints = [
     where('status', '==', 'published'),
@@ -221,6 +231,36 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
     (post) => (!communitySlug || post.communitySlug === communitySlug) && (tab !== 'official' || post.official),
     (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
   )
+}
+
+export async function listFocusedCommunityPosts(uid = '', limitCount = 25) {
+  const focusedCommunityIds = await listFocusedCommunityIds(uid, 50)
+  if (!focusedCommunityIds.length) return []
+
+  const chunks = []
+  for (let index = 0; index < focusedCommunityIds.length; index += 10) {
+    chunks.push(focusedCommunityIds.slice(index, index + 10))
+  }
+
+  try {
+    const snapshots = await Promise.all(chunks.map((ids) => getDocs(query(
+      collection(db, POST_COLLECTION),
+      where('communityId', 'in', ids),
+      where('status', '==', 'published'),
+      where('visibility', '==', 'public'),
+      orderBy('createdAt', 'desc'),
+      limit(limitCount)
+    ))))
+    const posts = snapshots
+      .flatMap((snapshot) => snapshot.docs.map((docSnap) => normalizeCommunityPost(docSnap)))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+    return posts.slice(0, limitCount)
+  } catch (error) {
+    if (!String(error?.message || '').includes('requires an index')) throw error
+    const focusedSet = new Set(focusedCommunityIds)
+    const posts = await listCommunityPosts({ limitCount: Math.max(100, limitCount * 4) })
+    return posts.filter((post) => focusedSet.has(post.communityId)).slice(0, limitCount)
+  }
 }
 
 export async function getCommunityPost(postId = '') {
