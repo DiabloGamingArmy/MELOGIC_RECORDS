@@ -10,9 +10,29 @@ The current goal is a clean public feed where creators can publish text posts, s
 
 Phase 5 adds lightweight creator Stories. The story rail and viewer borrow the simple rail pattern from the older Nexera home feed, especially its horizontal "Your Story" + creator updates treatment, without importing Nexera globals, auth, routing, or data stores.
 
+## Visual Phase A
+
+The `/community` homepage uses a Nexara-inspired social layout adapted to the Melogic app shell:
+
+- A compact full-width topic bar sits directly below the global site header.
+- The topic bar exposes For You, Focused, real public communities when available, and honest placeholder topic chips when community data has not loaded.
+- A standalone stories row sits below the topic bar with Melogic gradient story rings.
+- The old inline "Share something" composer is hidden by default.
+- Post creation now opens a modal with Text Post, Share Product, title, body, community destination, tags, Publish, and Cancel.
+- The homepage body is a three-column layout: left navigation, center feed, and right rail.
+- Feed cards use a cleaner social action row for Like, Comment, Save, Share, and Report.
+
+Phase A placeholders:
+
+- `Your Story`, `test1`, `test2`, and `test3` show the future story interaction with a coming-soon toast.
+- Real story upload is not exposed from the homepage visual row in this pass.
+- Live streams remain deferred.
+- Advanced For You scoring remains deferred.
+- The Creator History / This Day in History rail card is a designed placeholder for a later data source.
+
 ## Routes
 
-- `/community` - Community feed, composer, tabs, side panels.
+- `/community` - Nexara-inspired community homepage with topic bar, stories row, modal composer, feed, and side rails.
 - `/community/communities` - Community browser with search, category filters, and focus controls.
 - `/community/c/{communitySlug}` - Community detail feed and scoped composer.
 - `/community/create` - Opens the community browser with the create community panel.

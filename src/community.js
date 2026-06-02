@@ -39,11 +39,11 @@ import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
-const FEED_TABS = [
-  { id: 'for-you', label: 'For You' },
-  { id: 'following', label: 'Focused' },
-  { id: 'new', label: 'New' },
-  { id: 'official', label: 'Official' }
+const FALLBACK_TOPIC_LABELS = ['Serum', 'Vital', 'Ableton', 'Logic', 'Dubstep', 'Mixing', 'StageMaker', 'Sample Packs', 'Vocals', 'Feedback']
+const DUMMY_STORIES = [
+  { id: 'test1', label: 'test1', initials: 'T1' },
+  { id: 'test2', label: 'test2', initials: 'T2' },
+  { id: 'test3', label: 'test3', initials: 'T3' }
 ]
 const REPORT_REASONS = [
   'Spam',
@@ -71,6 +71,9 @@ const POSTING_MODES = [
 const state = {
   currentUser: null,
   activeTab: 'for-you',
+  activeCommunityId: '',
+  activeCommunitySlug: '',
+  activeTopicLabel: 'For You',
   view: parseCommunityView(),
   community: null,
   communities: [],
@@ -107,6 +110,7 @@ const state = {
   error: '',
   message: '',
   composer: {
+    open: false,
     type: 'text',
     title: '',
     body: '',
@@ -229,44 +233,75 @@ function storyAvatar(story) {
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
-function renderStoryRail() {
-  const createMarkup = state.currentUser ? `
-    <button type="button" class="community-story-item is-create" data-open-story-composer>
-      <span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span>
-      <strong>Your Story</strong>
-      <small>Create</small>
-    </button>
-  ` : `
-    <a class="community-story-item is-create" href="${authRoute({ redirect: window.location.pathname })}">
-      <span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span>
-      <strong>Your Story</strong>
-      <small>Sign in</small>
-    </a>
+function activeFeedTitle() {
+  if (state.activeTab === 'following') return 'Focused'
+  if (state.activeTab === 'community') return state.activeTopicLabel || 'Community'
+  if (state.activeTab === 'placeholder') return state.activeTopicLabel || 'Community'
+  if (state.activeTab === 'official') return 'Official'
+  if (state.activeTab === 'new') return 'New'
+  return 'For You'
+}
+
+function visibleTopicCommunities() {
+  return state.communities
+    .filter((community) => community.status === 'active' && community.visibility === 'public')
+    .slice(0, 18)
+}
+
+function renderTopicBar() {
+  const communities = visibleTopicCommunities()
+  const communityPills = communities.length
+    ? communities.map((community) => `
+      <button type="button" class="community-topic-pill ${state.activeTab === 'community' && state.activeCommunityId === community.communityId ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(community.communityId)}" data-topic-community-slug="${escapeHtml(community.slug)}" data-topic-community-label="${escapeHtml(community.name)}">
+        ${escapeHtml(community.name)}
+      </button>
+    `).join('')
+    : FALLBACK_TOPIC_LABELS.map((label) => `
+      <button type="button" class="community-topic-pill is-placeholder ${state.activeTab === 'placeholder' && state.activeTopicLabel === label ? 'is-active' : ''}" data-topic-placeholder="${escapeHtml(label)}">
+        ${escapeHtml(label)}
+      </button>
+    `).join('')
+
+  return `
+    <section class="community-topic-bar" aria-label="Community topics">
+      <button type="button" class="community-topic-arrow is-left" data-topic-scroll="-1" aria-label="Scroll topics left">${iconSvg('arrowLeft')}</button>
+      <div class="community-topic-scroll" data-community-topic-scroll>
+        <button type="button" class="community-topic-pill ${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
+        <button type="button" class="community-topic-pill ${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Focused</button>
+        <span class="community-topic-divider" aria-hidden="true"></span>
+        ${communityPills}
+      </div>
+      <button type="button" class="community-topic-arrow is-right" data-topic-scroll="1" aria-label="Scroll topics right">${iconSvg('chevronRight')}</button>
+    </section>
   `
-  const storyItems = state.stories.map((story) => `
+}
+
+function renderStoriesRow() {
+  const placeholderItems = DUMMY_STORIES.map((story) => `
+    <button type="button" class="community-story-item is-placeholder" data-story-coming-soon="${escapeHtml(story.label)}">
+      <span class="community-story-ring"><span class="community-story-avatar">${escapeHtml(story.initials)}</span></span>
+      <strong>${escapeHtml(story.label)}</strong>
+    </button>
+  `).join('')
+  const realStoryItems = state.stories.slice(0, 12).map((story) => `
     <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
-      <span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''}">
+      <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''}">
         ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="lazy" />` : storyAvatar(story)}
-      </span>
-      <strong>${escapeHtml(story.authorDisplayName || 'Creator')}</strong>
-      <small>${escapeHtml(storyExpiresLabel(story.expiresAt))}</small>
+      </span></span>
+      <strong>${escapeHtml(story.authorDisplayName || story.authorUsername || 'Creator')}</strong>
     </button>
   `).join('')
 
   return `
-    <section class="community-story-rail community-panel" aria-labelledby="community-stories-title">
-      <div class="community-story-heading">
-        <div>
-          <p class="eyebrow">Stories</p>
-          <h2 id="community-stories-title">Creator updates</h2>
-        </div>
-        <span>${state.storiesLoading ? 'Loading...' : `${formatCount(state.stories.length)} active`}</span>
-      </div>
-      ${state.storiesError ? `<p class="community-error">${escapeHtml(state.storiesError)}</p>` : ''}
-      <div class="community-story-row" aria-label="Community stories">
-        ${createMarkup}
-        ${state.storiesLoading ? '<span class="community-story-empty">Loading stories...</span>' : storyItems || '<span class="community-story-empty">No stories yet.</span>'}
-      </div>
+    <section class="community-stories-row" aria-label="Community stories">
+      <button type="button" class="community-story-item is-create" data-story-coming-soon="Your Story">
+        <span class="community-story-ring"><span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span></span>
+        <strong>Your Story</strong>
+      </button>
+      ${placeholderItems}
+      ${realStoryItems}
+      ${state.storiesLoading ? '<span class="community-story-empty">Loading stories...</span>' : ''}
+      ${state.storiesError ? `<span class="community-story-empty">${escapeHtml(state.storiesError)}</span>` : ''}
     </section>
   `
 }
@@ -361,73 +396,92 @@ function renderStoryViewerModal() {
 
 function currentComposerCommunity() {
   if (state.view.type === 'community' && state.community?.communityId) return state.community
+  if (state.activeTab === 'community' && state.activeCommunityId) {
+    return state.communities.find((community) => community.communityId === state.activeCommunityId) || null
+  }
   if (state.composer.communityId) {
     return state.communities.find((community) => community.communityId === state.composer.communityId) || null
   }
   return null
 }
 
-function renderComposer() {
+function renderComposerModal() {
+  if (!state.composer.open) return ''
   if (!state.currentUser) {
     return `
-      <section class="community-composer community-panel">
-        <h2>Share with the community</h2>
-        <p>Sign in to post.</p>
-        <a class="button button-accent" href="${authRoute({ redirect: window.location.pathname })}">Sign In</a>
-      </section>
+      <div class="community-modal-backdrop">
+        <section class="community-composer-modal" role="dialog" aria-modal="true" aria-labelledby="community-composer-title">
+          <header>
+            <div>
+              <p class="eyebrow">Post</p>
+              <h2 id="community-composer-title">Sign in to post</h2>
+            </div>
+            <button type="button" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
+          </header>
+          <p class="community-modal-copy">Join Melogic to post in the community, focus spaces, and reply to creators.</p>
+          <div class="community-form-actions">
+            <button type="button" class="button button-muted" data-close-community-composer>Cancel</button>
+            <a class="button button-accent" href="${authRoute({ redirect: window.location.pathname })}">Sign In</a>
+          </div>
+        </section>
+      </div>
     `
   }
 
   return `
-    <section class="community-composer community-panel" aria-labelledby="community-composer-title">
-      <div class="community-panel-heading">
-        <div>
-          <p class="eyebrow">Create</p>
-          <h2 id="community-composer-title">Share something</h2>
-        </div>
+    <div class="community-modal-backdrop">
+      <section class="community-composer-modal" role="dialog" aria-modal="true" aria-labelledby="community-composer-title">
+        <header>
+          <div>
+            <p class="eyebrow">Create</p>
+            <h2 id="community-composer-title">New Post</h2>
+          </div>
+          <button type="button" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
+        </header>
         <div class="community-type-toggle" role="group" aria-label="Post type">
-          <button type="button" data-post-type="text" class="${state.composer.type === 'text' ? 'is-active' : ''}">Text Post</button>
-          <button type="button" data-post-type="product_share" class="${state.composer.type === 'product_share' ? 'is-active' : ''}">Share Product</button>
+          <button type="button" data-post-type="text" class="${state.composer.type === 'text' ? 'is-active' : ''}">${iconSvg('fileText')} <span>Text Post</span></button>
+          <button type="button" data-post-type="product_share" class="${state.composer.type === 'product_share' ? 'is-active' : ''}">${iconSvg('package')} <span>Share Product</span></button>
         </div>
-      </div>
-      <form data-community-composer-form>
-        <label>
-          <span>Title</span>
-          <input name="title" maxlength="120" value="${escapeHtml(state.composer.title)}" placeholder="Optional headline" />
-        </label>
-        <label>
-          <span>Body</span>
-          <textarea name="body" maxlength="2000" rows="5" placeholder="Share an update, question, or idea.">${escapeHtml(state.composer.body)}</textarea>
-        </label>
-        ${state.composer.type === 'product_share' ? `
+        <form data-community-composer-form>
           <label>
-            <span>Product ID</span>
-            <input name="linkedProductId" maxlength="180" value="${escapeHtml(state.composer.linkedProductId)}" placeholder="Paste a published product ID" />
+            <span>Title</span>
+            <input name="title" maxlength="120" value="${escapeHtml(state.composer.title)}" placeholder="Optional headline" />
           </label>
-        ` : ''}
-        ${state.view.type === 'community' && state.community ? `
-          <input type="hidden" name="communityId" value="${escapeHtml(state.community.communityId)}" />
-          <p class="community-context-note">Posting to <a href="${communityRoute(state.community.slug)}">c/${escapeHtml(state.community.slug)}</a></p>
-        ` : `
           <label>
-            <span>Community</span>
-            <select name="communityId">
-              <option value="">General feed</option>
-              ${state.communities.map((community) => `<option value="${escapeHtml(community.communityId)}" ${state.composer.communityId === community.communityId ? 'selected' : ''}>c/${escapeHtml(community.slug)} · ${escapeHtml(community.name)}</option>`).join('')}
-            </select>
+            <span>Body</span>
+            <textarea name="body" maxlength="2000" rows="5" placeholder="Share an update, question, or idea.">${escapeHtml(state.composer.body)}</textarea>
           </label>
-        `}
-        <label>
-          <span>Tags</span>
-          <input name="tags" maxlength="160" value="${escapeHtml(state.composer.tags)}" placeholder="beats, feedback, release" />
-        </label>
-        ${state.composer.error ? `<p class="community-error">${escapeHtml(state.composer.error)}</p>` : ''}
-        <div class="community-form-actions">
-          <span>${Math.max(0, 2000 - state.composer.body.length)} characters left</span>
-          <button type="submit" class="button button-accent" ${state.composer.submitting ? 'disabled' : ''}>${state.composer.submitting ? 'Publishing...' : 'Publish'}</button>
-        </div>
-      </form>
-    </section>
+          ${state.composer.type === 'product_share' ? `
+            <label>
+              <span>Product ID</span>
+              <input name="linkedProductId" maxlength="180" value="${escapeHtml(state.composer.linkedProductId)}" placeholder="Paste a published product ID" />
+            </label>
+          ` : ''}
+          ${state.view.type === 'community' && state.community ? `
+            <input type="hidden" name="communityId" value="${escapeHtml(state.community.communityId)}" />
+            <p class="community-context-note">Posting to <a href="${communityRoute(state.community.slug)}">c/${escapeHtml(state.community.slug)}</a></p>
+          ` : `
+            <label>
+              <span>Community destination</span>
+              <select name="communityId">
+                <option value="">General feed</option>
+                ${state.communities.map((community) => `<option value="${escapeHtml(community.communityId)}" ${state.composer.communityId === community.communityId ? 'selected' : ''}>${escapeHtml(community.name)} · c/${escapeHtml(community.slug)}</option>`).join('')}
+              </select>
+            </label>
+          `}
+          <label>
+            <span>Tags</span>
+            <input name="tags" maxlength="160" value="${escapeHtml(state.composer.tags)}" placeholder="beats, feedback, release" />
+          </label>
+          ${state.composer.error ? `<p class="community-error">${escapeHtml(state.composer.error)}</p>` : ''}
+          <div class="community-form-actions">
+            <span>${Math.max(0, 2000 - state.composer.body.length)} characters left</span>
+            <button type="button" class="button button-muted" data-close-community-composer ${state.composer.submitting ? 'disabled' : ''}>Cancel</button>
+            <button type="submit" class="button button-accent" ${state.composer.submitting ? 'disabled' : ''}>${state.composer.submitting ? 'Publishing...' : 'Publish'}</button>
+          </div>
+        </form>
+      </section>
+    </div>
   `
 }
 
@@ -452,7 +506,7 @@ function postCard(post, { detail = false } = {}) {
   const body = detail ? post.body : post.body.slice(0, 640)
   const authorHref = post.authorUid ? publicProfileRoute({ uid: post.authorUid }) : ROUTES.profilePublic
   return `
-    <article class="community-post-card" data-post-id="${escapeHtml(post.postId)}">
+    <article class="community-post-card" data-post-id="${escapeHtml(post.postId)}" data-post-href="${communityPostRoute(post.postId)}">
       <header class="community-post-header">
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar">${postAvatar(post)}</span>
@@ -471,10 +525,10 @@ function postCard(post, { detail = false } = {}) {
       ${linkedProductMarkup(post)}
       ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<span>#${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
       <footer class="community-post-actions">
-        <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>${formatCount(post.counts.likes)}</span></button>
-        <a href="${communityPostRoute(post.postId)}">${iconSvg('messageCircle')} <span>${formatCount(post.counts.comments)}</span></a>
-        <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>${formatCount(post.counts.saves)}</span></button>
-        <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>${formatCount(post.counts.shares)}</span></button>
+        <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
+        <a href="${communityPostRoute(post.postId)}">${iconSvg('messageCircle')} <span>Comment</span><em>${formatCount(post.counts.comments)}</em></a>
+        <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
+        <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
         <button type="button" data-community-report="${escapeHtml(post.postId)}">${iconSvg('alertCircle')} <span>Report</span></button>
       </footer>
       ${detail ? renderComments(post) : ''}
@@ -562,6 +616,8 @@ function renderComments(post) {
 
 function emptyCopy() {
   if (state.activeTab === 'following') return state.currentUser ? 'Focus communities to build this feed.' : 'Sign in to focus communities.'
+  if (state.activeTab === 'community') return `No posts in ${state.activeTopicLabel || 'this community'} yet.`
+  if (state.activeTab === 'placeholder') return `${state.activeTopicLabel || 'This topic'} is a placeholder space for now. Browse real communities or create a post in the general feed.`
   if (state.activeTab === 'official') return 'No official posts yet.'
   return 'No posts yet. Be the first to share something.'
 }
@@ -713,18 +769,74 @@ function renderReportModal() {
   `
 }
 
-function renderSidebar() {
+function renderLeftNav() {
+  const navItems = [
+    { label: 'Home', icon: 'home', href: ROUTES.community },
+    { label: 'For You', icon: 'star', tab: 'for-you', active: state.activeTab === 'for-you' },
+    { label: 'Focused', icon: 'eye', tab: 'following', active: state.activeTab === 'following' },
+    { label: 'Communities', icon: 'folder', href: ROUTES.communityCommunities },
+    { label: 'My Posts', icon: 'fileText', action: 'My Posts' },
+    { label: 'Saved', icon: 'bookmark', action: 'Saved posts' },
+    { label: 'Products', icon: 'package', href: ROUTES.products },
+    { label: 'Stage Plans', icon: 'music', href: ROUTES.studioStagemaker }
+  ]
   return `
-    <aside class="community-sidebar">
-      <section class="community-panel">
+    <aside class="community-left-nav" aria-label="Community navigation">
+      <button type="button" class="community-left-post-button" data-open-community-composer>${iconSvg('folderPlus')} <span>Post</span></button>
+      <nav>
+        ${navItems.map((item) => item.href ? `
+          <a class="${item.active ? 'is-active' : ''}" href="${item.href}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></a>
+        ` : item.tab ? `
+          <button type="button" class="${item.active ? 'is-active' : ''}" data-community-tab="${escapeHtml(item.tab)}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></button>
+        ` : `
+          <button type="button" data-community-nav-stub="${escapeHtml(item.action)}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></button>
+        `).join('')}
+      </nav>
+    </aside>
+  `
+}
+
+function trendingTags() {
+  const counts = state.posts.reduce((map, post) => {
+    ;(post.tags || []).forEach((tag) => {
+      const clean = String(tag || '').replace(/^#/, '').trim().toLowerCase()
+      if (clean) map.set(clean, (map.get(clean) || 0) + 1)
+    })
+    return map
+  }, new Map())
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+}
+
+function renderSidebar() {
+  const suggested = visibleTopicCommunities().slice(0, 4)
+  const tags = trendingTags()
+  return `
+    <aside class="community-right-rail community-sidebar">
+      <section class="community-rail-card">
         <h2>Suggested Communities</h2>
-        <p>Creator spaces are coming in a later phase.</p>
+        ${suggested.length ? `
+          <div class="community-suggested-list">
+            ${suggested.map((community) => `
+              <a href="${communityRoute(community.slug)}">
+                <span>${escapeHtml(community.name.slice(0, 1).toUpperCase())}</span>
+                <strong>${escapeHtml(community.name)}</strong>
+                <em>${formatCount(community.focusCount)} focused</em>
+              </a>
+            `).join('')}
+          </div>
+        ` : '<p>Communities will appear here as creators focus spaces.</p>'}
       </section>
-      <section class="community-panel">
+      <section class="community-rail-card">
         <h2>Trending Tags</h2>
-        <p>Tags will populate once posts start moving.</p>
+        ${tags.length ? `<div class="community-trending-tags">${tags.map(([tag, count]) => `<span>#${escapeHtml(tag)} <em>${formatCount(count)}</em></span>`).join('')}</div>` : '<p>Tags will populate once posts start moving.</p>'}
       </section>
-      <section class="community-panel">
+      <section class="community-rail-card">
+        <h2>Creator History</h2>
+        <p>This Day in History will connect to a richer music and creator-history source in a later phase.</p>
+      </section>
+      <section class="community-rail-card">
         <h2>Guidelines</h2>
         <p>Share work, give useful feedback, and respect creator ownership.</p>
       </section>
@@ -780,7 +892,8 @@ function renderCommunityDetail() {
       </section>
       <div class="community-layout">
         <div class="community-main">
-          ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading community...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : community ? `${renderComposer()}${renderFeed()}` : '<section class="community-feed-state community-panel">This community is not available.</section>'}
+          ${community ? renderFeedToolbar() : ''}
+          ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading community...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : community ? renderFeed() : '<section class="community-feed-state community-panel">This community is not available.</section>'}
         </div>
         <aside class="community-sidebar">
           <section class="community-panel">
@@ -797,6 +910,7 @@ function renderCommunityDetail() {
           </section>
         </aside>
       </div>
+      ${renderComposerModal()}
       ${renderStoryComposerModal()}
       ${renderStoryViewerModal()}
       ${renderReportModal()}
@@ -810,6 +924,29 @@ function hydrateShell() {
     return false
   })
   createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise: Promise.resolve(true) })
+}
+
+function renderFeedToolbar() {
+  const title = state.view.type === 'community' && state.community ? state.community.name : activeFeedTitle()
+  const subtitle = state.view.type === 'community' && state.community
+    ? `Posts in c/${state.community.slug}.`
+    : state.activeTab === 'following'
+    ? 'Posts from communities you focus.'
+    : state.activeTab === 'community'
+      ? 'Posts from this community.'
+      : state.activeTab === 'placeholder'
+        ? 'This is a placeholder topic until the real community exists.'
+        : 'Fresh creator updates from across Melogic.'
+  return `
+    <section class="community-feed-toolbar" aria-label="Feed controls">
+      <div>
+        <p class="eyebrow">Community</p>
+        <h1>${escapeHtml(title)}</h1>
+        <p>${escapeHtml(subtitle)}</p>
+      </div>
+      <button type="button" class="button button-accent" data-open-community-composer>${iconSvg('folderPlus')} <span>Post</span></button>
+    </section>
+  `
 }
 
 function render() {
@@ -837,26 +974,18 @@ function render() {
     ${renderPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
     <main class="community-page">
-      <section class="community-hero">
-        <div>
-          <p class="eyebrow">Melogic Community</p>
-          <h1>Community</h1>
-          <p>Explore, create, share, distribute, and earn with creators building on Melogic.</p>
-        </div>
-        <a class="button button-accent" href="${ROUTES.communityCommunities}">Browse Communities</a>
-      </section>
-      <div class="community-layout">
+      ${renderTopicBar()}
+      ${renderStoriesRow()}
+      ${state.message ? `<p class="community-toast">${escapeHtml(state.message)}</p>` : ''}
+      <div class="community-layout is-home">
+        ${renderLeftNav()}
         <div class="community-main">
-          ${renderStoryRail()}
-          ${renderComposer()}
-          ${state.message ? `<p class="community-toast">${escapeHtml(state.message)}</p>` : ''}
-          <nav class="community-tabs" aria-label="Community feed tabs">
-            ${FEED_TABS.map((tab) => `<button type="button" data-community-tab="${tab.id}" class="${state.activeTab === tab.id ? 'is-active' : ''}">${tab.label}</button>`).join('')}
-          </nav>
+          ${renderFeedToolbar()}
           ${renderFeed()}
         </div>
         ${renderSidebar()}
       </div>
+      ${renderComposerModal()}
       ${renderStoryComposerModal()}
       ${renderStoryViewerModal()}
       ${renderReportModal()}
@@ -987,6 +1116,23 @@ async function loadCommunity() {
       state.communities = community ? [community] : []
       await loadCommunityFocusState()
       state.communityFilters.loading = false
+    } else if (state.activeTab === 'placeholder') {
+      if (!state.communities.length) {
+        state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
+        await loadCommunityFocusState()
+      }
+      await loadStories()
+      state.posts = []
+    } else if (state.activeTab === 'community' && state.activeCommunitySlug) {
+      if (!state.communities.length) {
+        state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
+        await loadCommunityFocusState()
+      }
+      const [posts] = await Promise.all([
+        listCommunityPosts({ communitySlug: state.activeCommunitySlug, limitCount: 25 }),
+        loadStories()
+      ])
+      state.posts = posts
     } else if (state.activeTab === 'following') {
       if (!state.communities.length) {
         state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
@@ -1070,7 +1216,7 @@ async function handleComposerSubmit(event) {
     if (state.community?.communityId === post.communityId) {
       state.community = { ...state.community, postCount: state.community.postCount + 1 }
     }
-    state.composer = { type: 'text', title: '', body: '', linkedProductId: '', communityId: state.view.type === 'community' ? state.community?.communityId || '' : '', tags: '', submitting: false, error: '' }
+    state.composer = { open: false, type: 'text', title: '', body: '', linkedProductId: '', communityId: state.view.type === 'community' ? state.community?.communityId || '' : '', tags: '', submitting: false, error: '' }
     state.message = 'Post published.'
     render()
     window.setTimeout(() => {
@@ -1265,6 +1411,75 @@ async function handleToggleFocus(communityId) {
     state.message = error?.message || 'Could not update focus.'
     render()
   }
+}
+
+function openCommunityComposer() {
+  state.composer = {
+    ...state.composer,
+    open: true,
+    communityId: state.view.type === 'community'
+      ? state.community?.communityId || ''
+      : state.activeTab === 'community'
+        ? state.activeCommunityId
+        : state.composer.communityId,
+    submitting: false,
+    error: ''
+  }
+  render()
+}
+
+function closeCommunityComposer() {
+  state.composer = { ...state.composer, open: false, submitting: false, error: '' }
+  render()
+}
+
+function showCommunityToast(message = '') {
+  state.message = message
+  render()
+  window.setTimeout(() => {
+    if (state.message === message) {
+      state.message = ''
+      render()
+    }
+  }, 2800)
+}
+
+function selectTopicTab(tab = 'for-you') {
+  state.activeTab = tab === 'following' ? 'following' : tab === 'new' ? 'new' : tab === 'official' ? 'official' : 'for-you'
+  state.activeCommunityId = ''
+  state.activeCommunitySlug = ''
+  state.activeTopicLabel = state.activeTab === 'following' ? 'Focused' : state.activeTab === 'new' ? 'New' : state.activeTab === 'official' ? 'Official' : 'For You'
+  loadCommunity()
+}
+
+function selectTopicCommunity({ communityId = '', slug = '', label = '' } = {}) {
+  state.activeTab = 'community'
+  state.activeCommunityId = communityId
+  state.activeCommunitySlug = slug
+  state.activeTopicLabel = label || slug || 'Community'
+  state.composer = { ...state.composer, communityId }
+  loadCommunity()
+}
+
+function selectPlaceholderTopic(label = '') {
+  state.activeTab = 'placeholder'
+  state.activeCommunityId = ''
+  state.activeCommunitySlug = ''
+  state.activeTopicLabel = label || 'Community'
+  state.posts = []
+  showCommunityToast(`${state.activeTopicLabel} is a placeholder topic for now.`)
+  loadCommunity()
+}
+
+function updateTopicArrowState() {
+  const scroller = app?.querySelector('[data-community-topic-scroll]')
+  if (!scroller) return
+  const left = app.querySelector('[data-topic-scroll="-1"]')
+  const right = app.querySelector('[data-topic-scroll="1"]')
+  const atStart = scroller.scrollLeft <= 4
+  const atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 4
+  left?.toggleAttribute('disabled', atStart)
+  right?.toggleAttribute('disabled', atEnd)
 }
 
 async function handleCreateCommunitySubmit(event) {
@@ -1494,9 +1709,39 @@ async function handleReportSubmit(event) {
 function bindEvents() {
   app.querySelectorAll('[data-community-tab]').forEach((button) => {
     button.addEventListener('click', () => {
-      state.activeTab = button.getAttribute('data-community-tab') || 'for-you'
-      loadCommunity()
+      selectTopicTab(button.getAttribute('data-community-tab') || 'for-you')
     })
+  })
+  app.querySelectorAll('[data-topic-community-id]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectTopicCommunity({
+        communityId: button.getAttribute('data-topic-community-id') || '',
+        slug: button.getAttribute('data-topic-community-slug') || '',
+        label: button.getAttribute('data-topic-community-label') || ''
+      })
+    })
+  })
+  app.querySelectorAll('[data-topic-placeholder]').forEach((button) => {
+    button.addEventListener('click', () => selectPlaceholderTopic(button.getAttribute('data-topic-placeholder') || 'Community'))
+  })
+  app.querySelectorAll('[data-topic-scroll]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const scroller = app.querySelector('[data-community-topic-scroll]')
+      if (!scroller) return
+      const direction = Number(button.getAttribute('data-topic-scroll') || 1)
+      scroller.scrollBy({ left: direction * Math.max(220, scroller.clientWidth * 0.65), behavior: 'smooth' })
+      window.setTimeout(updateTopicArrowState, 260)
+    })
+  })
+  app.querySelector('[data-community-topic-scroll]')?.addEventListener('scroll', updateTopicArrowState, { passive: true })
+  updateTopicArrowState()
+  app.querySelectorAll('[data-open-community-composer]').forEach((button) => button.addEventListener('click', openCommunityComposer))
+  app.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
+  app.querySelectorAll('[data-story-coming-soon]').forEach((button) => {
+    button.addEventListener('click', () => showCommunityToast('Stories are coming soon.'))
+  })
+  app.querySelectorAll('[data-community-nav-stub]').forEach((button) => {
+    button.addEventListener('click', () => showCommunityToast(`${button.getAttribute('data-community-nav-stub')} is coming in a later community pass.`))
   })
   app.querySelectorAll('[data-post-type]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1504,7 +1749,6 @@ function bindEvents() {
       render()
     })
   })
-  app.querySelector('[data-open-story-composer]')?.addEventListener('click', openStoryComposer)
   app.querySelectorAll('[data-story-media-type]').forEach((button) => {
     button.addEventListener('click', () => {
       state.storyComposer = {
