@@ -124,6 +124,7 @@ Posts are stored in `communityPosts/{postId}`:
 - Post creation goes through `createCommunityPost`.
 - Community creation goes through `createCommunity` and is limited during first launch to admin/beta/verified/pro users.
 - Community focus goes through `toggleCommunityFocus`.
+- The Focused feed loads recent public posts from `users/{uid}/focusedCommunities`.
 - Likes go through `toggleCommunityPostLike` and are mirrored at `communityPosts/{postId}/likes/{uid}`.
 - Saves go through `toggleCommunityPostSave` and are mirrored at `communityPosts/{postId}/saves/{uid}`.
 - Shares copy `/community/post/{postId}`. Signed-in shares also call `recordCommunityPostShare`.
@@ -235,6 +236,7 @@ Indexes added:
 - `communityPosts`: `status ASC`, `visibility ASC`, `createdAt DESC`
 - `communityPosts`: `status ASC`, `visibility ASC`, `official ASC`, `createdAt DESC`
 - `communityPosts`: `communitySlug ASC`, `status ASC`, `visibility ASC`, `createdAt DESC`
+- `communityPosts`: `communityId ASC`, `status ASC`, `visibility ASC`, `createdAt DESC`
 - `comments`: `status ASC`, `createdAt ASC`
 - `comments`: `parentCommentId ASC`, `createdAt ASC`
 - `communityStories`: `status ASC`, `visibility ASC`, `expiresAt ASC`
@@ -261,6 +263,7 @@ Done in phase 2:
 - official starter community seed callable
 - community detail routes
 - focus/unfocus callable and UI
+- Focused feed backed by the viewer's focused communities
 - create community callable and UI
 - community-scoped composer/feed
 - community labels on post cards

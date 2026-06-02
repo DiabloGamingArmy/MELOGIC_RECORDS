@@ -19,6 +19,7 @@ import {
   getCommunityPostViewerState,
   listCommunityComments,
   listCommunities,
+  listFocusedCommunityPosts,
   listCommunityPosts,
   listCommunityStories,
   newCommunityStoryId,
@@ -40,7 +41,7 @@ import { iconSvg } from './utils/icons'
 const app = document.querySelector('#app')
 const FEED_TABS = [
   { id: 'for-you', label: 'For You' },
-  { id: 'following', label: 'Following' },
+  { id: 'following', label: 'Focused' },
   { id: 'new', label: 'New' },
   { id: 'official', label: 'Official' }
 ]
@@ -560,7 +561,7 @@ function renderComments(post) {
 }
 
 function emptyCopy() {
-  if (state.activeTab === 'following') return 'Follow creators to build your feed.'
+  if (state.activeTab === 'following') return state.currentUser ? 'Focus communities to build this feed.' : 'Sign in to focus communities.'
   if (state.activeTab === 'official') return 'No official posts yet.'
   return 'No posts yet. Be the first to share something.'
 }
@@ -987,8 +988,15 @@ async function loadCommunity() {
       await loadCommunityFocusState()
       state.communityFilters.loading = false
     } else if (state.activeTab === 'following') {
-      state.posts = []
-      await loadStories()
+      if (!state.communities.length) {
+        state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
+        await loadCommunityFocusState()
+      }
+      const [posts] = await Promise.all([
+        state.currentUser?.uid ? listFocusedCommunityPosts(state.currentUser.uid, 25) : Promise.resolve([]),
+        loadStories()
+      ])
+      state.posts = posts
     } else {
       if (!state.communities.length) {
         state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
@@ -1051,7 +1059,13 @@ async function handleComposerSubmit(event) {
       tags: tags.split(/[,\s]+/).filter(Boolean)
     })
     const post = normalizeCommunityPost(result.post || {}, result.postId)
-    state.posts = state.activeTab === 'following' ? [post] : [post, ...state.posts.filter((item) => item.postId !== post.postId)]
+    if (state.activeTab === 'following') {
+      state.posts = post.communityId && state.communityFocus[post.communityId]
+        ? [post, ...state.posts.filter((item) => item.postId !== post.postId)]
+        : state.posts
+    } else {
+      state.posts = [post, ...state.posts.filter((item) => item.postId !== post.postId)]
+    }
     state.viewerState[post.postId] = { liked: false, saved: false }
     if (state.community?.communityId === post.communityId) {
       state.community = { ...state.community, postCount: state.community.postCount + 1 }
@@ -1240,6 +1254,10 @@ async function handleToggleFocus(communityId) {
     state.communities = state.communities.map((community) => community.communityId === communityId ? { ...community, focusCount: Number(result.focusCount ?? community.focusCount) } : community)
     if (state.community?.communityId === communityId) {
       state.community = { ...state.community, focusCount: Number(result.focusCount ?? state.community.focusCount) }
+    }
+    if (state.view.type === 'feed' && state.activeTab === 'following') {
+      await loadCommunity()
+      return
     }
     render()
   } catch (error) {
