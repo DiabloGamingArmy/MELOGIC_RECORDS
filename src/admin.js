@@ -96,6 +96,7 @@ const REPORT_ADMIN_FILTERS = [
   { key: 'community', label: 'Communities' },
   { key: 'community_post', label: 'Community Posts' },
   { key: 'community_comment', label: 'Community Comments' },
+  { key: 'community_story', label: 'Community Stories' },
   { key: 'resolved', label: 'Resolved' },
   { key: 'dismissed', label: 'Dismissed' }
 ]
@@ -2211,6 +2212,7 @@ function reportTargetLink(report = {}, target = null) {
     const postId = target?.postId || report.metadata?.postId || ''
     if (postId) return `<a class="admin-secondary-link" href="${ROUTES.communityPost}/${encodeURIComponent(postId)}" target="_blank" rel="noreferrer">Open Comment Thread</a>`
   }
+  if (targetType === 'community_story' && targetId) return `<a class="admin-secondary-link" href="${ROUTES.community}?story=${encodeURIComponent(targetId)}" target="_blank" rel="noreferrer">Open Community Stories</a>`
   if (target?.id) return `<span class="admin-muted">${escapeHtml(target.id)}</span>`
   return '<span class="admin-muted">No target route available.</span>'
 }

@@ -1,10 +1,13 @@
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, Timestamp, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
+import { storage } from '../firebase/storage'
 
 const POST_COLLECTION = 'communityPosts'
 const COMMUNITY_COLLECTION = 'communities'
+const STORY_COLLECTION = 'communityStories'
 
 function serializeDate(value) {
   if (!value) return ''
@@ -96,6 +99,33 @@ export function normalizeCommunityComment(docSnapOrData = {}, explicitId = '') {
     status: raw.status || 'visible',
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
+  }
+}
+
+export function normalizeCommunityStory(docSnapOrData = {}, explicitId = '') {
+  const raw = typeof docSnapOrData.data === 'function' ? docSnapOrData.data() || {} : docSnapOrData || {}
+  const id = explicitId || docSnapOrData.id || raw.storyId || ''
+  return {
+    storyId: id,
+    id,
+    authorUid: raw.authorUid || '',
+    authorDisplayName: raw.authorDisplayName || 'Melogic Creator',
+    authorUsername: raw.authorUsername || '',
+    authorAvatarURL: raw.authorAvatarURL || '',
+    mediaType: raw.mediaType === 'image' ? 'image' : 'text',
+    text: raw.text || '',
+    mediaPath: raw.mediaPath || '',
+    mediaURL: raw.mediaURL || '',
+    background: raw.background || 'aurora',
+    linkedPostId: raw.linkedPostId || '',
+    linkedProductId: raw.linkedProductId || '',
+    expiresAt: serializeDate(raw.expiresAt),
+    createdAt: serializeDate(raw.createdAt),
+    updatedAt: serializeDate(raw.updatedAt),
+    viewCount: Math.max(0, Number(raw.viewCount || 0)),
+    reportCount: Math.max(0, Number(raw.reportCount || 0)),
+    status: raw.status || 'active',
+    visibility: raw.visibility || 'public'
   }
 }
 
@@ -243,6 +273,76 @@ export async function getCommunityCommentViewerState(postId = '', commentId = ''
   return { liked: Boolean(likeSnap?.exists?.()) }
 }
 
+export function newCommunityStoryId() {
+  return doc(collection(db, STORY_COLLECTION)).id
+}
+
+function storyIsNotExpired(story) {
+  const expiresMs = new Date(story.expiresAt || 0).getTime()
+  return Number.isFinite(expiresMs) && expiresMs > Date.now()
+}
+
+async function attachStoryMediaUrl(story) {
+  if (story.mediaType !== 'image' || story.mediaURL || !story.mediaPath || !storage) return story
+  const mediaURL = await getDownloadURL(ref(storage, story.mediaPath)).catch(() => '')
+  return { ...story, mediaURL }
+}
+
+export async function listCommunityStories({ limitCount = 30 } = {}) {
+  const now = Timestamp.fromDate(new Date(Date.now() + 60 * 1000))
+  const primaryConstraints = [
+    where('status', '==', 'active'),
+    where('visibility', '==', 'public'),
+    where('expiresAt', '>', now),
+    orderBy('expiresAt', 'asc'),
+    limit(limitCount)
+  ]
+  const fallbackConstraints = [
+    where('status', '==', 'active'),
+    where('visibility', '==', 'public'),
+    where('expiresAt', '>', now),
+    limit(limitCount)
+  ]
+
+  let stories = []
+  try {
+    const snapshot = await getDocs(query(collection(db, STORY_COLLECTION), ...primaryConstraints))
+    stories = snapshot.docs.map((docSnap) => normalizeCommunityStory(docSnap))
+  } catch (error) {
+    if (!String(error?.message || '').includes('requires an index')) throw error
+    const snapshot = await getDocs(query(collection(db, STORY_COLLECTION), ...fallbackConstraints))
+    stories = snapshot.docs
+      .map((docSnap) => normalizeCommunityStory(docSnap))
+      .filter(storyIsNotExpired)
+      .sort((a, b) => new Date(a.expiresAt || 0).getTime() - new Date(b.expiresAt || 0).getTime())
+  }
+  return Promise.all(stories.map(attachStoryMediaUrl))
+}
+
+function storyImageExtension(file) {
+  const name = String(file?.name || '').toLowerCase()
+  if (name.endsWith('.png')) return 'png'
+  if (name.endsWith('.webp')) return 'webp'
+  if (name.endsWith('.gif')) return 'gif'
+  return 'jpg'
+}
+
+export async function uploadCommunityStoryImage({ uid = '', storyId = '', file = null } = {}) {
+  const ownerUid = String(uid || '').trim()
+  const id = String(storyId || '').trim()
+  if (!storage) throw new Error('Storage is not available.')
+  if (!ownerUid || ownerUid.includes('/')) throw new Error('A signed-in account is required.')
+  if (!id || id.includes('/')) throw new Error('A valid story id is required.')
+  if (!file || !String(file.type || '').startsWith('image/')) throw new Error('Choose an image file.')
+  if (Number(file.size || 0) > 10 * 1024 * 1024) throw new Error('Story images must be 10 MB or smaller.')
+
+  const mediaPath = `${STORY_COLLECTION}/${ownerUid}/${id}/story-${Date.now()}.${storyImageExtension(file)}`
+  const fileRef = ref(storage, mediaPath)
+  await uploadBytes(fileRef, file, { contentType: file.type || 'image/jpeg' })
+  const mediaURL = await getDownloadURL(fileRef).catch(() => '')
+  return { mediaPath, mediaURL }
+}
+
 export async function createCommunityPost(payload = {}) {
   const callable = httpsCallable(functions, 'createCommunityPost')
   const result = await callable(payload)
@@ -264,6 +364,24 @@ export async function deleteCommunityComment(payload = {}) {
 export async function toggleCommunityCommentLike(payload = {}) {
   const callable = httpsCallable(functions, 'toggleCommunityCommentLike')
   const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function createCommunityStory(payload = {}) {
+  const callable = httpsCallable(functions, 'createCommunityStory')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function deleteCommunityStory(payload = {}) {
+  const callable = httpsCallable(functions, 'deleteCommunityStory')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function recordCommunityStoryView(storyId = '') {
+  const callable = httpsCallable(functions, 'recordCommunityStoryView')
+  const result = await callable({ storyId })
   return result?.data || { ok: false }
 }
 

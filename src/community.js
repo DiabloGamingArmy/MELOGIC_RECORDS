@@ -8,7 +8,9 @@ import { createReport } from './data/productService'
 import {
   createCommunityComment,
   createCommunityPost,
+  createCommunityStory,
   createCommunity,
+  deleteCommunityStory,
   deleteCommunityComment,
   getCommunityCommentViewerState,
   getCommunityBySlug,
@@ -18,13 +20,18 @@ import {
   listCommunityComments,
   listCommunities,
   listCommunityPosts,
+  listCommunityStories,
+  newCommunityStoryId,
   normalizeCommunityComment,
   normalizeCommunityPost,
+  normalizeCommunityStory,
   recordCommunityPostShare,
+  recordCommunityStoryView,
   toggleCommunityCommentLike,
   toggleCommunityFocus,
   toggleCommunityPostLike,
-  toggleCommunityPostSave
+  toggleCommunityPostSave,
+  uploadCommunityStoryImage
 } from './data/communityService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
@@ -46,6 +53,13 @@ const REPORT_REASONS = [
   'Other'
 ]
 const COMMUNITY_CATEGORIES = ['all', 'Genre', 'Production', 'Stage', 'Marketplace', 'Feedback', 'Creator Help']
+const STORY_BACKGROUNDS = [
+  { id: 'aurora', label: 'Aurora' },
+  { id: 'midnight', label: 'Midnight' },
+  { id: 'sunset', label: 'Sunset' },
+  { id: 'stage', label: 'Stage' },
+  { id: 'mono', label: 'Mono' }
+]
 const POSTING_MODES = [
   { value: 'open', label: 'Open' },
   { value: 'focused_only', label: 'Focused only' },
@@ -67,6 +81,25 @@ const state = {
     error: ''
   },
   communitySearchTimer: null,
+  stories: [],
+  storiesLoading: false,
+  storiesError: '',
+  storyComposer: {
+    open: false,
+    mediaType: 'text',
+    text: '',
+    background: 'aurora',
+    file: null,
+    submitting: false,
+    error: '',
+    message: ''
+  },
+  storyViewer: {
+    open: false,
+    storyId: '',
+    loading: false,
+    error: ''
+  },
   posts: [],
   viewerState: {},
   loading: true,
@@ -98,6 +131,7 @@ const state = {
     targetType: 'community_post',
     postId: '',
     commentId: '',
+    storyId: '',
     reason: REPORT_REASONS[0],
     description: '',
     submitting: false,
@@ -167,6 +201,161 @@ function postAvatar(post) {
   const name = post.authorDisplayName || post.authorUsername || 'M'
   if (post.authorAvatarURL) return `<img src="${escapeHtml(post.authorAvatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
+}
+
+function storyExpiresLabel(value = '') {
+  const expiresMs = new Date(value || 0).getTime()
+  if (!Number.isFinite(expiresMs)) return '24h'
+  const diffMs = expiresMs - Date.now()
+  if (diffMs <= 0) return 'Expired'
+  const minutes = Math.ceil(diffMs / 60000)
+  if (minutes < 60) return `${minutes}m left`
+  return `${Math.ceil(minutes / 60)}h left`
+}
+
+function storyById(storyId = '') {
+  return state.stories.find((story) => story.storyId === storyId) || null
+}
+
+function currentStoryIndex() {
+  const index = state.stories.findIndex((story) => story.storyId === state.storyViewer.storyId)
+  return index >= 0 ? index : 0
+}
+
+function storyAvatar(story) {
+  const name = story.authorDisplayName || story.authorUsername || 'M'
+  if (story.authorAvatarURL) return `<img src="${escapeHtml(story.authorAvatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
+  return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
+}
+
+function renderStoryRail() {
+  const createMarkup = state.currentUser ? `
+    <button type="button" class="community-story-item is-create" data-open-story-composer>
+      <span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span>
+      <strong>Your Story</strong>
+      <small>Create</small>
+    </button>
+  ` : `
+    <a class="community-story-item is-create" href="${authRoute({ redirect: window.location.pathname })}">
+      <span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span>
+      <strong>Your Story</strong>
+      <small>Sign in</small>
+    </a>
+  `
+  const storyItems = state.stories.map((story) => `
+    <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
+      <span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''}">
+        ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="lazy" />` : storyAvatar(story)}
+      </span>
+      <strong>${escapeHtml(story.authorDisplayName || 'Creator')}</strong>
+      <small>${escapeHtml(storyExpiresLabel(story.expiresAt))}</small>
+    </button>
+  `).join('')
+
+  return `
+    <section class="community-story-rail community-panel" aria-labelledby="community-stories-title">
+      <div class="community-story-heading">
+        <div>
+          <p class="eyebrow">Stories</p>
+          <h2 id="community-stories-title">Creator updates</h2>
+        </div>
+        <span>${state.storiesLoading ? 'Loading...' : `${formatCount(state.stories.length)} active`}</span>
+      </div>
+      ${state.storiesError ? `<p class="community-error">${escapeHtml(state.storiesError)}</p>` : ''}
+      <div class="community-story-row" aria-label="Community stories">
+        ${createMarkup}
+        ${state.storiesLoading ? '<span class="community-story-empty">Loading stories...</span>' : storyItems || '<span class="community-story-empty">No stories yet.</span>'}
+      </div>
+    </section>
+  `
+}
+
+function renderStoryComposerModal() {
+  if (!state.storyComposer.open) return ''
+  const textLabel = state.storyComposer.mediaType === 'image' ? 'Caption' : 'Story text'
+  const textPlaceholder = state.storyComposer.mediaType === 'image' ? 'Optional caption...' : 'What are you sharing today?'
+  return `
+    <div class="community-modal-backdrop">
+      <section class="community-story-modal" role="dialog" aria-modal="true" aria-labelledby="community-story-composer-title">
+        <header>
+          <div>
+            <p class="eyebrow">Story</p>
+            <h2 id="community-story-composer-title">Create Story</h2>
+          </div>
+          <button type="button" data-close-story-composer aria-label="Close story composer">${iconSvg('x')}</button>
+        </header>
+        ${state.storyComposer.message ? `<p class="community-success">${escapeHtml(state.storyComposer.message)}</p>` : `
+          <form data-story-composer-form>
+            <div class="community-type-toggle" role="group" aria-label="Story type">
+              <button type="button" data-story-media-type="text" class="${state.storyComposer.mediaType === 'text' ? 'is-active' : ''}">${iconSvg('fileText')} <span>Text</span></button>
+              <button type="button" data-story-media-type="image" class="${state.storyComposer.mediaType === 'image' ? 'is-active' : ''}">${iconSvg('image')} <span>Image</span></button>
+            </div>
+            <label>
+              <span>${textLabel}</span>
+              <textarea name="text" maxlength="500" rows="5" placeholder="${textPlaceholder}">${escapeHtml(state.storyComposer.text)}</textarea>
+            </label>
+            ${state.storyComposer.mediaType === 'text' ? `
+              <div class="community-story-backgrounds" role="group" aria-label="Story background">
+                ${STORY_BACKGROUNDS.map((background) => `
+                  <button type="button" data-story-background="${escapeHtml(background.id)}" class="story-bg-${escapeHtml(background.id)} ${state.storyComposer.background === background.id ? 'is-active' : ''}">
+                    <span>${escapeHtml(background.label)}</span>
+                  </button>
+                `).join('')}
+              </div>
+            ` : `
+              <label>
+                <span>Image</span>
+                <input name="storyImage" type="file" accept="image/*" data-story-file />
+              </label>
+              ${state.storyComposer.file ? `<p class="community-story-file">${escapeHtml(state.storyComposer.file.name || 'Image selected')}</p>` : ''}
+            `}
+            ${state.storyComposer.error ? `<p class="community-error">${escapeHtml(state.storyComposer.error)}</p>` : ''}
+            <div class="community-form-actions">
+              <span>Stories expire after 24 hours.</span>
+              <button type="submit" class="button button-accent" ${state.storyComposer.submitting ? 'disabled' : ''}>${state.storyComposer.submitting ? 'Publishing...' : 'Publish Story'}</button>
+            </div>
+          </form>
+        `}
+      </section>
+    </div>
+  `
+}
+
+function renderStoryViewerModal() {
+  if (!state.storyViewer.open) return ''
+  const story = storyById(state.storyViewer.storyId) || state.stories[currentStoryIndex()]
+  if (!story) return ''
+  const index = currentStoryIndex()
+  const isOwn = state.currentUser?.uid && state.currentUser.uid === story.authorUid
+  const profileHref = story.authorUid ? publicProfileRoute({ uid: story.authorUid }) : ROUTES.profilePublic
+  return `
+    <div class="community-modal-backdrop">
+      <section class="community-story-viewer" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
+        <header>
+          <a class="community-author" href="${profileHref}">
+            <span class="community-avatar">${storyAvatar(story)}</span>
+            <span>
+              <strong id="community-story-viewer-title">${escapeHtml(story.authorDisplayName || 'Melogic Creator')}</strong>
+              <em>${escapeHtml(formatUsername(story.authorUsername) || 'Creator')} · ${escapeHtml(storyExpiresLabel(story.expiresAt))}</em>
+            </span>
+          </a>
+          <button type="button" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
+        </header>
+        <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' ? 'has-image' : ''}">
+          ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" />` : `<p>${escapeHtml(story.text)}</p>`}
+          ${story.mediaType === 'image' && story.text ? `<p class="community-story-caption">${escapeHtml(story.text)}</p>` : ''}
+        </div>
+        <footer class="community-story-viewer-actions">
+          <button type="button" data-story-prev ${state.stories.length <= 1 ? 'disabled' : ''}>${iconSvg('arrowLeft')} <span>Prev</span></button>
+          <span>${formatCount(index + 1)} / ${formatCount(state.stories.length)} · ${iconSvg('eye')} ${formatCount(story.viewCount)}</span>
+          <button type="button" data-story-next ${state.stories.length <= 1 ? 'disabled' : ''}><span>Next</span> ${iconSvg('chevronRight')}</button>
+          <button type="button" data-story-report="${escapeHtml(story.storyId)}">${iconSvg('alertCircle')} <span>Report</span></button>
+          ${isOwn ? `<button type="button" data-story-delete="${escapeHtml(story.storyId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
+        </footer>
+        ${state.storyViewer.error ? `<p class="community-error">${escapeHtml(state.storyViewer.error)}</p>` : ''}
+      </section>
+    </div>
+  `
 }
 
 function currentComposerCommunity() {
@@ -492,11 +681,13 @@ function renderCommunitiesView() {
 function renderReportModal() {
   if (!state.report.open) return ''
   const isCommentReport = state.report.targetType === 'community_comment'
+  const isStoryReport = state.report.targetType === 'community_story'
+  const reportLabel = isStoryReport ? 'Story' : isCommentReport ? 'Comment' : 'Post'
   return `
     <div class="community-modal-backdrop">
       <section class="community-report-modal" role="dialog" aria-modal="true" aria-labelledby="community-report-title">
         <header>
-          <h2 id="community-report-title">Report ${isCommentReport ? 'Comment' : 'Post'}</h2>
+          <h2 id="community-report-title">Report ${reportLabel}</h2>
           <button type="button" data-close-community-report aria-label="Close report modal">${iconSvg('x')}</button>
         </header>
         ${state.report.message ? `<p class="community-success">${escapeHtml(state.report.message)}</p>` : `
@@ -560,6 +751,8 @@ function renderDetail() {
         </div>
         ${renderSidebar()}
       </div>
+      ${renderStoryComposerModal()}
+      ${renderStoryViewerModal()}
       ${renderReportModal()}
     </main>
   `
@@ -603,6 +796,8 @@ function renderCommunityDetail() {
           </section>
         </aside>
       </div>
+      ${renderStoryComposerModal()}
+      ${renderStoryViewerModal()}
       ${renderReportModal()}
     </main>
   `
@@ -651,6 +846,7 @@ function render() {
       </section>
       <div class="community-layout">
         <div class="community-main">
+          ${renderStoryRail()}
           ${renderComposer()}
           ${state.message ? `<p class="community-toast">${escapeHtml(state.message)}</p>` : ''}
           <nav class="community-tabs" aria-label="Community feed tabs">
@@ -660,6 +856,8 @@ function render() {
         </div>
         ${renderSidebar()}
       </div>
+      ${renderStoryComposerModal()}
+      ${renderStoryViewerModal()}
       ${renderReportModal()}
     </main>
   `
@@ -686,6 +884,31 @@ async function loadCommentViewerState() {
     await getCommunityCommentViewerState(state.detailPostId, comment.commentId, state.currentUser.uid)
   ]))
   state.commentViewerState = Object.fromEntries(entries)
+}
+
+async function loadStories({ renderAfter = false } = {}) {
+  state.storiesLoading = true
+  state.storiesError = ''
+  if (renderAfter) render()
+  try {
+    state.stories = await listCommunityStories({ limitCount: 30 })
+    const requestedStoryId = new URLSearchParams(window.location.search).get('story') || ''
+    if (requestedStoryId && state.stories.some((story) => story.storyId === requestedStoryId)) {
+      state.storyViewer = { ...state.storyViewer, open: true, storyId: requestedStoryId, error: '' }
+      recordCommunityStoryView(requestedStoryId).then((result) => {
+        if (Number.isFinite(Number(result.viewCount))) {
+          state.stories = state.stories.map((story) => story.storyId === requestedStoryId ? { ...story, viewCount: Number(result.viewCount) } : story)
+          render()
+        }
+      }).catch(() => null)
+    }
+  } catch (error) {
+    console.warn('[community] stories load failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.storiesError = error?.message || 'Stories could not be loaded.'
+  } finally {
+    state.storiesLoading = false
+    if (renderAfter) render()
+  }
 }
 
 async function loadComments({ renderAfter = true } = {}) {
@@ -765,12 +988,17 @@ async function loadCommunity() {
       state.communityFilters.loading = false
     } else if (state.activeTab === 'following') {
       state.posts = []
+      await loadStories()
     } else {
       if (!state.communities.length) {
         state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
         await loadCommunityFocusState()
       }
-      state.posts = await listCommunityPosts({ tab: state.activeTab, limitCount: 25 })
+      const [posts] = await Promise.all([
+        listCommunityPosts({ tab: state.activeTab, limitCount: 25 }),
+        loadStories()
+      ])
+      state.posts = posts
     }
     await loadViewerState()
   } catch (error) {
@@ -1045,12 +1273,139 @@ async function handleCreateCommunitySubmit(event) {
   }
 }
 
+function openStoryComposer() {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  state.storyComposer = {
+    ...state.storyComposer,
+    open: true,
+    submitting: false,
+    error: '',
+    message: ''
+  }
+  render()
+}
+
+async function handleStorySubmit(event) {
+  event.preventDefault()
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  const formData = new FormData(event.currentTarget)
+  const text = String(formData.get('text') || '').trim()
+  const mediaType = state.storyComposer.mediaType === 'image' ? 'image' : 'text'
+  const file = state.storyComposer.file || formData.get('storyImage')
+
+  state.storyComposer = { ...state.storyComposer, text, error: '', submitting: true }
+  if (mediaType === 'text' && !text) {
+    state.storyComposer = { ...state.storyComposer, submitting: false, error: 'Story text is required.' }
+    render()
+    return
+  }
+  if (mediaType === 'image' && (!file || !String(file.type || '').startsWith('image/'))) {
+    state.storyComposer = { ...state.storyComposer, submitting: false, error: 'Choose an image for this story.' }
+    render()
+    return
+  }
+
+  render()
+  try {
+    const storyId = newCommunityStoryId()
+    let uploaded = { mediaPath: '', mediaURL: '' }
+    if (mediaType === 'image') {
+      uploaded = await uploadCommunityStoryImage({ uid: state.currentUser.uid, storyId, file })
+    }
+    const result = await createCommunityStory({
+      storyId,
+      mediaType,
+      text,
+      mediaPath: uploaded.mediaPath,
+      background: state.storyComposer.background
+    })
+    const story = normalizeCommunityStory({
+      ...(result.story || {}),
+      mediaURL: uploaded.mediaURL || result.story?.mediaURL || ''
+    }, result.storyId)
+    state.stories = [story, ...state.stories.filter((item) => item.storyId !== story.storyId)]
+    state.storyComposer = {
+      open: false,
+      mediaType: 'text',
+      text: '',
+      background: 'aurora',
+      file: null,
+      submitting: false,
+      error: '',
+      message: ''
+    }
+    state.message = 'Story published.'
+    render()
+    window.setTimeout(() => {
+      state.message = ''
+      render()
+    }, 3000)
+  } catch (error) {
+    console.warn('[community] create story failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.storyComposer = { ...state.storyComposer, submitting: false, error: error?.message || 'Could not publish this story.' }
+    render()
+  }
+}
+
+function openStoryViewer(storyId = '') {
+  const story = storyById(storyId)
+  if (!story) return
+  state.storyViewer = { open: true, storyId, loading: false, error: '' }
+  render()
+  recordCommunityStoryView(storyId).then((result) => {
+    if (Number.isFinite(Number(result.viewCount))) {
+      state.stories = state.stories.map((item) => item.storyId === storyId ? { ...item, viewCount: Number(result.viewCount) } : item)
+      render()
+    }
+  }).catch((error) => {
+    console.warn('[community] story view count failed', { code: error?.code, message: error?.message, details: error?.details })
+  })
+}
+
+function advanceStory(delta = 1) {
+  if (!state.stories.length) return
+  const nextIndex = (currentStoryIndex() + delta + state.stories.length) % state.stories.length
+  openStoryViewer(state.stories[nextIndex].storyId)
+}
+
+async function handleStoryDelete(storyId = '') {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  const story = storyById(storyId)
+  if (!story || story.authorUid !== state.currentUser.uid) return
+  state.storyViewer = { ...state.storyViewer, error: '' }
+  render()
+  try {
+    await deleteCommunityStory({ storyId })
+    state.stories = state.stories.filter((item) => item.storyId !== storyId)
+    state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
+    state.message = 'Story deleted.'
+    render()
+    window.setTimeout(() => {
+      state.message = ''
+      render()
+    }, 3000)
+  } catch (error) {
+    console.warn('[community] delete story failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.storyViewer = { ...state.storyViewer, error: error?.message || 'Could not delete this story.' }
+    render()
+  }
+}
+
 function openReport(postId) {
   if (!state.currentUser) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  state.report = { open: true, targetType: 'community_post', postId, commentId: '', reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
+  state.report = { open: true, targetType: 'community_post', postId, commentId: '', storyId: '', reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
   render()
 }
 
@@ -1059,7 +1414,16 @@ function openCommentReport(commentId) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  state.report = { open: true, targetType: 'community_comment', postId: state.detailPostId, commentId, reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
+  state.report = { open: true, targetType: 'community_comment', postId: state.detailPostId, commentId, storyId: '', reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
+  render()
+}
+
+function openStoryReport(storyId = '') {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  state.report = { open: true, targetType: 'community_story', postId: '', commentId: '', storyId, reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
   render()
 }
 
@@ -1068,10 +1432,12 @@ async function handleReportSubmit(event) {
   const formData = new FormData(event.currentTarget)
   const post = state.posts.find((item) => item.postId === state.report.postId)
   const comment = state.comments.find((item) => item.commentId === state.report.commentId)
+  const story = storyById(state.report.storyId)
   const reason = String(formData.get('reason') || '').trim()
   const description = String(formData.get('description') || '').trim()
-  if (!post) return
+  if (state.report.targetType !== 'community_story' && !post) return
   if (state.report.targetType === 'community_comment' && !comment) return
+  if (state.report.targetType === 'community_story' && !story) return
   if (reason === 'Other' && !description) {
     state.report.error = 'Description is required when reason is Other.'
     render()
@@ -1080,17 +1446,23 @@ async function handleReportSubmit(event) {
   state.report = { ...state.report, reason, description, submitting: true, error: '' }
   render()
   try {
-    const targetType = state.report.targetType === 'community_comment' ? 'community_comment' : 'community_post'
+    const targetType = state.report.targetType === 'community_comment'
+      ? 'community_comment'
+      : state.report.targetType === 'community_story'
+        ? 'community_story'
+        : 'community_post'
     await createReport({
       targetType,
-      targetId: targetType === 'community_comment' ? comment.commentId : post.postId,
-      targetOwnerUid: targetType === 'community_comment' ? comment.authorUid : post.authorUid,
+      targetId: targetType === 'community_comment' ? comment.commentId : targetType === 'community_story' ? story.storyId : post.postId,
+      targetOwnerUid: targetType === 'community_comment' ? comment.authorUid : targetType === 'community_story' ? story.authorUid : post.authorUid,
       reason,
       description,
       sourcePath: window.location.pathname,
       metadata: targetType === 'community_comment'
         ? { postId: post.postId, commentId: comment.commentId }
-        : { postTitle: post.title, postType: post.type }
+        : targetType === 'community_story'
+          ? { storyId: story.storyId, mediaType: story.mediaType }
+          : { postTitle: post.title, postType: post.type }
     })
     state.report = { ...state.report, submitting: false, message: 'Thank you. Your report has been submitted.' }
     render()
@@ -1114,6 +1486,45 @@ function bindEvents() {
       render()
     })
   })
+  app.querySelector('[data-open-story-composer]')?.addEventListener('click', openStoryComposer)
+  app.querySelectorAll('[data-story-media-type]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.storyComposer = {
+        ...state.storyComposer,
+        mediaType: button.getAttribute('data-story-media-type') === 'image' ? 'image' : 'text',
+        error: ''
+      }
+      render()
+    })
+  })
+  app.querySelectorAll('[data-story-background]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.storyComposer = {
+        ...state.storyComposer,
+        background: button.getAttribute('data-story-background') || 'aurora',
+        error: ''
+      }
+      render()
+    })
+  })
+  app.querySelector('[data-story-file]')?.addEventListener('change', (event) => {
+    state.storyComposer = { ...state.storyComposer, file: event.target.files?.[0] || null, error: '' }
+    render()
+  })
+  app.querySelector('[data-story-composer-form]')?.addEventListener('submit', handleStorySubmit)
+  app.querySelector('[data-close-story-composer]')?.addEventListener('click', () => {
+    state.storyComposer = { ...state.storyComposer, open: false, submitting: false, error: '' }
+    render()
+  })
+  app.querySelectorAll('[data-open-story]').forEach((button) => button.addEventListener('click', () => openStoryViewer(button.getAttribute('data-open-story') || '')))
+  app.querySelector('[data-close-story-viewer]')?.addEventListener('click', () => {
+    state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
+    render()
+  })
+  app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
+  app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
+  app.querySelectorAll('[data-story-report]').forEach((button) => button.addEventListener('click', () => openStoryReport(button.getAttribute('data-story-report') || '')))
+  app.querySelectorAll('[data-story-delete]').forEach((button) => button.addEventListener('click', () => handleStoryDelete(button.getAttribute('data-story-delete') || '')))
   app.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
   app.querySelector('[data-reload-community]')?.addEventListener('click', loadCommunity)
   app.querySelector('[data-open-create-community]')?.addEventListener('click', () => {
