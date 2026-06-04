@@ -24,6 +24,17 @@ import {
   updateAdminSettings,
   uploadSellerAgreementMarkdown
 } from './data/productService'
+import {
+  hideCommunityPost,
+  hideCommunityComment,
+  listAdminCommunityModeration,
+  lockCommunityPostComments,
+  moderateCommunity,
+  pinCommunityPost,
+  restoreCommunityComment,
+  restoreCommunityPost,
+  unpinCommunityPost
+} from './data/communityService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 import { formatUsername } from './utils/format'
@@ -40,6 +51,7 @@ const SECTIONS = [
   { key: 'products', route: ROUTES.adminProducts, label: 'Products', icon: 'package', permission: 'listingEdit' },
   { key: 'users', route: ROUTES.adminUsers, label: 'Users', icon: 'user', permission: 'userRead' },
   { key: 'reports', route: ROUTES.adminReports, label: 'Reports', icon: 'alertCircle', permission: 'admin' },
+  { key: 'community', route: ROUTES.adminCommunity, label: 'Community', icon: 'messageCircle', permission: 'userModerate' },
   { key: 'orders', route: ROUTES.adminOrders, label: 'Orders', icon: 'shoppingCart', permission: 'orderSupport' },
   { key: 'team', route: ROUTES.adminTeam, label: 'Roles', icon: 'folderPlus', permission: 'roleManage' },
   { key: 'logs', route: ROUTES.adminLogs, label: 'Logs', icon: 'fileText', permission: 'auditRead' },
@@ -234,6 +246,7 @@ const state = {
     products: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
     users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], adminNotes: [], loading: false, loaded: false, error: '', filter: 'all', search: '', actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loaded: false, error: '', filter: 'open', actioning: '' },
+    community: { posts: [], communities: [], reports: [], reportedPosts: [], reportedComments: [], hiddenPosts: [], loading: false, loaded: false, error: '', filter: 'reported', actioning: '' },
     orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loaded: false, error: '', filter: 'all' },
     team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
     logs: { items: [], detail: null, detailId: '', loading: false, loaded: false, error: '', filter: 'all', search: '' }
@@ -312,6 +325,13 @@ function formatBytes(size = 0) {
   const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)))
   const value = bytes / (1024 ** index)
   return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`
+}
+
+function formatCount(value = 0) {
+  const count = Math.max(0, Number(value || 0))
+  if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
+  if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
+  return String(count)
 }
 
 function statusClass(value = '') {
@@ -393,6 +413,7 @@ function currentSectionKey() {
   if (isReviewPath(path)) return 'reviews'
   if (path.startsWith(`${ROUTES.adminUsers}/`)) return 'users'
   if (path.startsWith(`${ROUTES.adminReports}/`)) return 'reports'
+  if (path === ROUTES.adminCommunity || path.startsWith(`${ROUTES.adminCommunity}/`)) return 'community'
   if (path.startsWith(`${ROUTES.adminOrders}/`)) return 'orders'
   if (path.startsWith(`${ROUTES.adminTeam}/`)) return 'team'
   if (path.startsWith(`${ROUTES.adminLogs}/`)) return 'logs'
@@ -2981,6 +3002,102 @@ function htmlCell(html = '') {
   return { html }
 }
 
+function communityTargetRoute(type = '', id = '', row = {}) {
+  if (type === 'community_post') return `/community/post/${encodeURIComponent(id)}`
+  if (type === 'community_comment') return row.postId ? `/community/post/${encodeURIComponent(row.postId)}#comments` : ROUTES.adminCommunity
+  if (type === 'community') return row.slug ? `/community/c/${encodeURIComponent(row.slug)}` : ROUTES.adminCommunity
+  return ROUTES.adminCommunity
+}
+
+function communityPostRows(posts = []) {
+  return posts.map((post) => [
+    htmlCell(`<strong>${escapeHtml(post.title || 'Community post')}</strong><small>${escapeHtml(post.postId || post.id || '')}</small>`),
+    htmlCell(`<span>${escapeHtml(post.communityName || post.communitySlug || 'General')}</span><small>${escapeHtml(post.authorDisplayName || post.authorUid || '')}</small>`),
+    htmlCell(renderBadge(humanLabel(post.status || 'unknown'), statusClass(post.status))),
+    `${formatCount(post.likeCount)} likes / ${formatCount(post.commentCount)} comments`,
+    `${formatCount(post.reportCount)} reports`,
+    htmlCell(`
+      <div class="admin-row-actions">
+        <a class="admin-row-action-button" href="${communityTargetRoute('community_post', post.postId)}" target="_blank" rel="noreferrer">Open</a>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="hide-post" data-admin-community-post="${escapeHtml(post.postId)}">Hide</button>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="restore-post" data-admin-community-post="${escapeHtml(post.postId)}">Restore</button>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="${post.commentsLocked ? 'unlock-post' : 'lock-post'}" data-admin-community-post="${escapeHtml(post.postId)}">${post.commentsLocked ? 'Unlock' : 'Lock'}</button>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="${post.pinnedInCommunity ? 'unpin-post' : 'pin-post'}" data-admin-community-post="${escapeHtml(post.postId)}">${post.pinnedInCommunity ? 'Unpin' : 'Pin'}</button>
+      </div>
+    `)
+  ])
+}
+
+function communityRows(communities = []) {
+  return communities.map((community) => [
+    htmlCell(`<strong>${escapeHtml(community.name || 'Community')}</strong><small>c/${escapeHtml(community.slug || community.communityId || '')}</small>`),
+    htmlCell(renderBadge(humanLabel(community.status || 'active'), statusClass(community.status))),
+    `${formatCount(community.focusCount)} focused / ${formatCount(community.postCount)} posts`,
+    `${formatCount(community.reportCount)} reports`,
+    htmlCell((community.pinnedPostIds || []).length ? (community.pinnedPostIds || []).map((id) => `<code class="admin-code-value">${escapeHtml(shortIdentifier(id))}</code>`).join(' ') : '<span class="admin-muted">None</span>'),
+    htmlCell(`
+      <div class="admin-row-actions">
+        <a class="admin-row-action-button" href="${communityTargetRoute('community', community.communityId, community)}" target="_blank" rel="noreferrer">Open</a>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="hide-community" data-admin-community-id="${escapeHtml(community.communityId)}">Hide</button>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="restore-community" data-admin-community-id="${escapeHtml(community.communityId)}">Restore</button>
+      </div>
+    `)
+  ])
+}
+
+function communityReportRows(reports = []) {
+  return reports.map((report) => [
+    humanLabel(report.targetType || report.type),
+    htmlCell(`<strong>${escapeHtml(shortIdentifier(report.targetId || ''))}</strong><small>${escapeHtml(report.sourcePath || '')}</small>`),
+    report.reason,
+    htmlCell(renderBadge(humanLabel(report.status || 'open'), statusClass(report.status))),
+    formatDate(report.createdAt),
+    htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminReports}/${encodeURIComponent(report.reportId || report.id)}">Review</a>`)
+  ])
+}
+
+function communityAdminView() {
+  const data = adminData('community')
+  const filter = data.filter || 'reported'
+  const posts = filter === 'hidden' ? data.hiddenPosts : filter === 'reported' ? data.reportedPosts : data.posts
+  const loading = adminBusyState(data)
+  return `
+    ${adminPageHeader({ eyebrow: 'Community', title: 'Community Moderation', refreshLabel: 'Refresh community moderation' })}
+    <section class="admin-review-tools">${adminFilterControls('community', [
+      { key: 'reported', label: 'Reported Posts' },
+      { key: 'hidden', label: 'Hidden Posts' },
+      { key: 'recent', label: 'Recent Posts' },
+      { key: 'communities', label: 'Communities' },
+      { key: 'reports', label: 'Reports' }
+    ])}</section>
+    ${loading || (filter === 'communities'
+      ? adminSimpleTable('Communities', ['Community', 'Status', 'Activity', 'Reports', 'Pinned', 'Actions'], communityRows(data.communities), { className: 'is-community', emptyTitle: 'No communities loaded.' })
+      : filter === 'reports'
+        ? adminSimpleTable('Community Reports', ['Type', 'Target', 'Reason', 'Status', 'Created', 'Actions'], communityReportRows(data.reports), { className: 'is-reports', emptyTitle: 'No community reports.' })
+        : adminSimpleTable('Community Posts', ['Post', 'Context', 'Status', 'Engagement', 'Reports', 'Actions'], communityPostRows(posts), { className: 'is-community', emptyTitle: 'No posts match this view.' })
+    )}
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading">
+        <h2>Comment Reports</h2>
+        <span class="admin-muted">${formatCount(data.reportedComments?.length || 0)} loaded</span>
+      </div>
+      ${adminSimpleTable('Reported Comments', ['Comment', 'Author', 'Status', 'Reports', 'Actions'], (data.reportedComments || []).map((comment) => [
+        htmlCell(`<strong>${escapeHtml(compactText(comment.body || 'Comment', 90))}</strong><small>${escapeHtml(comment.commentId || '')}</small>`),
+        comment.authorDisplayName || comment.authorUid,
+        htmlCell(renderBadge(humanLabel(comment.status || 'visible'), statusClass(comment.status))),
+        formatCount(comment.reportCount),
+        htmlCell(`
+          <div class="admin-row-actions">
+            <a class="admin-row-action-button" href="${communityTargetRoute('community_comment', comment.commentId, comment)}" target="_blank" rel="noreferrer">Open</a>
+            <button type="button" class="admin-secondary-button" data-admin-community-action="hide-comment" data-admin-community-post="${escapeHtml(comment.postId)}" data-admin-community-comment="${escapeHtml(comment.commentId)}">Hide</button>
+            <button type="button" class="admin-secondary-button" data-admin-community-action="restore-comment" data-admin-community-post="${escapeHtml(comment.postId)}" data-admin-community-comment="${escapeHtml(comment.commentId)}">Restore</button>
+          </div>
+        `)
+      ]), { className: 'is-community-comments', emptyTitle: 'No reported comments loaded.' })}
+    </section>
+  `
+}
+
 function render() {
   state.section = currentSectionKey()
   if (state.section === 'dashboard') return renderLayout(dashboardView())
@@ -2988,6 +3105,7 @@ function render() {
   if (state.section === 'products') return renderLayout(productsView())
   if (state.section === 'users') return renderLayout(usersView())
   if (state.section === 'reports') return renderLayout(reportsView())
+  if (state.section === 'community') return renderLayout(communityAdminView())
   if (state.section === 'orders') return renderLayout(ordersView())
   if (state.section === 'team') return renderLayout(teamView())
   if (state.section === 'logs') return renderLayout(logsView())
@@ -3110,6 +3228,15 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.reports.target = null
       }
     },
+    community: async () => {
+      const result = await listAdminCommunityModeration({ limitCount: 60 })
+      state.adminData.community.posts = result.posts || []
+      state.adminData.community.communities = result.communities || []
+      state.adminData.community.reports = result.reports || []
+      state.adminData.community.reportedPosts = result.reportedPosts || []
+      state.adminData.community.reportedComments = result.reportedComments || []
+      state.adminData.community.hiddenPosts = result.hiddenPosts || []
+    },
     orders: async () => {
       const orderId = adminOrderDetailId()
       if (orderId) {
@@ -3188,6 +3315,7 @@ function canLoadAdminSection(sectionKey = '') {
   if (sectionKey === 'products') return can('listingEdit') || can('productReview')
   if (sectionKey === 'users') return can('userRead') || can('roleManage')
   if (sectionKey === 'reports') return can('admin') || can('userModerate') || can('productReview') || can('orderSupport')
+  if (sectionKey === 'community') return can('userModerate') || can('admin')
   if (sectionKey === 'orders') return can('orderSupport')
   if (sectionKey === 'team') return can('roleManage')
   if (sectionKey === 'logs') return can('auditRead')
@@ -3403,6 +3531,45 @@ async function handleReportAction(action = '') {
   }
 }
 
+async function handleCommunityModerationAction(button) {
+  const action = button.getAttribute('data-admin-community-action') || ''
+  const postId = button.getAttribute('data-admin-community-post') || ''
+  const commentId = button.getAttribute('data-admin-community-comment') || ''
+  const communityId = button.getAttribute('data-admin-community-id') || ''
+  if (!action) return
+  const needsReason = !['pin-post', 'unpin-post', 'lock-post', 'unlock-post'].includes(action)
+  const reason = needsReason ? window.prompt('Reason for this community moderation action') || '' : 'Community moderation update.'
+  if (needsReason && !reason.trim()) {
+    state.error = 'A reason is required for this community moderation action.'
+    render()
+    return
+  }
+  state.adminData.community.actioning = action
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    if (action === 'hide-post') await hideCommunityPost({ postId, reason })
+    else if (action === 'restore-post') await restoreCommunityPost({ postId, reason })
+    else if (action === 'lock-post') await lockCommunityPostComments({ postId, locked: true, reason })
+    else if (action === 'unlock-post') await lockCommunityPostComments({ postId, locked: false, reason })
+    else if (action === 'pin-post') await pinCommunityPost({ postId, reason })
+    else if (action === 'unpin-post') await unpinCommunityPost({ postId, reason })
+    else if (action === 'hide-comment') await hideCommunityComment({ postId, commentId, reason })
+    else if (action === 'restore-comment') await restoreCommunityComment({ postId, commentId, reason })
+    else if (action === 'hide-community') await moderateCommunity({ communityId, action: 'hide', reason })
+    else if (action === 'restore-community') await moderateCommunity({ communityId, action: 'restore', reason })
+    state.message = 'Community moderation action saved.'
+    await loadAdminSectionData('community', { silent: true })
+  } catch (error) {
+    console.warn('[admin] community moderation action failed', { action, code: error?.code, message: error?.message, details: error?.details })
+    state.error = error?.message || 'Could not save community moderation action.'
+  } finally {
+    state.adminData.community.actioning = ''
+    render()
+  }
+}
+
 function openUserActionDialog(type = '', uid = '') {
   if (!uid || !['note', 'suspension'].includes(type)) return
   state.userActionDialog = { open: true, type, uid }
@@ -3572,6 +3739,9 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-report-action]').forEach((button) => {
     button.addEventListener('click', () => handleReportAction(button.getAttribute('data-report-action') || ''))
+  })
+  app.querySelectorAll('[data-admin-community-action]').forEach((button) => {
+    button.addEventListener('click', () => handleCommunityModerationAction(button))
   })
   app.querySelectorAll('[data-edit-settings]').forEach((button) => {
     button.addEventListener('click', () => openSettingsDialog(button.getAttribute('data-edit-settings') || ''))

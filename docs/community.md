@@ -130,20 +130,54 @@ Posts are stored in `communityPosts/{postId}`:
   attachments: [
     {
       type: 'product',
+      targetId: productId,
       productId,
       snapshot: { title, slug, thumbnailURL, creatorName, priceCents, isFree, currency }
+    },
+    {
+      type: 'music',
+      targetId: storagePath,
+      sourceType: 'product_preview',
+      sourceId: productId,
+      storagePath,
+      snapshot: { title, creatorName, durationSeconds, waveformData, coverURL, mimeType }
+    },
+    {
+      type: 'stage_plan',
+      targetId: stageProjectId,
+      snapshot: { title, templateName, stageWidth, stageDepth, units, objectCount, previewImageURL, ownerDisplayName, ownerUsername, visibility, sharePath }
+    },
+    {
+      type: 'studio_project',
+      targetId: studioProjectId,
+      snapshot: { title, bpm, key, durationSeconds, trackCount, coverURL, previewAudioPath, creatorDisplayName, creatorUsername, visibility, sharePath }
     }
   ],
+  attachmentTypes: ['product'],
   mediaPaths: [],
   mentionedUserIds: [],
   mentionedUsernames: [],
+  intent: 'feedback_request',
+  intentData: {},
   scheduledAt: null,
   publishStatus: 'published',
   tags: [],
+  tagKeys: [],
+  searchKeywords: [],
+  titleLower,
+  authorDisplayNameLower,
+  authorUsernameLower,
   status: 'published',
   visibility: 'public',
   official: false,
+  commentsLocked: false,
+  pinnedInCommunity: false,
   counts: { likes: 0, comments: 0, saves: 0, shares: 0, reports: 0 },
+  likeCount: 0,
+  commentCount: 0,
+  saveCount: 0,
+  shareCount: 0,
+  reportCount: 0,
   score: 0,
   createdAt,
   updatedAt
@@ -151,6 +185,44 @@ Posts are stored in `communityPosts/{postId}`:
 ```
 
 Older posts may still use `type: 'product_share'` with `linkedProductId` and `linkedProductSnapshot`. The UI keeps rendering those fields, but new product shares should use `attachments`.
+
+## Creator Content Attachments And Intents
+
+The unified composer supports Melogic-specific attachments and structured post intents.
+
+Attachment types:
+
+- `product`: public published marketplace product snapshot. The backend rebuilds price, title, creator, and thumbnail from `products/{productId}`.
+- `music`: public product audio preview only. This phase does not allow arbitrary community audio upload or private Studio audio sharing.
+- `stage_plan`: owned or collaborated StageMaker plan snapshot. Private plans require an explicit confirmation in the composer and remain private; only title, dimensions, object count, template, and owner display fields are copied.
+- `studio_project`: owned or collaborated Studio/DAW project snapshot. Stems, editor state, full project JSON, and private storage paths are not copied.
+
+Attachment limits:
+
+- 4 total attachments
+- 1 Product
+- 2 Music previews
+- 1 Stage Plan
+- 1 Studio Project
+
+Structured intents:
+
+- `feedback_request`: category, specific question, optional future deadline. The card shows `Feedback Requested` and the comment action says `Give Feedback`.
+- `collaboration_request`: role, genre, compensation type, location mode/text, optional future deadline. The card shows `Looking for Collaborators`.
+
+Security behavior:
+
+- `createCommunityPost` requires Firebase Auth.
+- The callable validates all attachment targets using Admin SDK and never trusts client-provided snapshots.
+- Product music attachments must point to `products/{productId}/audio-previews/...`; paid downloads and deliverables are rejected.
+- Stage/Studio project attachment targets must be owned by or shared with the author.
+- Public posts remain readable, but attachment snapshots do not grant read access to private project source documents or Storage files.
+
+Public project viewer status:
+
+- StageMaker: no new public read-only Stage Plan viewer was added in this phase. Public StageMaker projects may use the existing route; private shared Stage Plans render as snapshot cards only.
+- Studio/DAW: no public Studio Project viewer exists yet. Studio Project attachments render metadata cards only.
+- Music upload: not implemented. Music attachments are limited to existing public product audio previews.
 
 ## Interaction Model
 
@@ -161,6 +233,8 @@ Older posts may still use `type: 'product_share'` with `linkedProductId` and `li
 - Likes go through `toggleCommunityPostLike` and are mirrored at `communityPosts/{postId}/likes/{uid}`.
 - Saves go through `toggleCommunityPostSave` and are mirrored at `communityPosts/{postId}/saves/{uid}`.
 - Shares copy `/community/post/{postId}`. Signed-in shares also call `recordCommunityPostShare`.
+- Search, tag filters, and feed sorts use denormalized post fields (`searchKeywords`, `tagKeys`, flat counts, and `score`) while preserving the existing nested `counts` map.
+- Author post removal goes through `deleteOwnCommunityPost`, which hides the post instead of hard-deleting the public record.
 - Comments go through `createCommunityComment`.
 - Comment deletion goes through `deleteCommunityComment`; owner/admin checks are enforced server-side.
 - Comment likes go through `toggleCommunityCommentLike` and are mirrored at `communityPosts/{postId}/comments/{commentId}/likes/{uid}`.
@@ -183,6 +257,7 @@ Comments are stored in `communityPosts/{postId}/comments/{commentId}`:
   parentCommentId: '',
   replyCount: 0,
   likeCount: 0,
+  reportCount: 0,
   status: 'visible',
   createdAt,
   updatedAt
@@ -236,6 +311,40 @@ Community, community post, and community comment reports reuse `createReport` wi
   sourcePath
 }
 ```
+
+Reporting a community post increments both `counts.reports` and `reportCount`. Comment and community reports increment `reportCount` on their respective targets when the backend can resolve the target safely.
+
+## Moderation and Discovery
+
+Community moderation is callable-owned. Client writes to protected community paths remain blocked by rules except for narrow owner/admin-safe updates already documented in rules.
+
+Callables added for this foundation:
+
+- `hideCommunityPost`
+- `restoreCommunityPost`
+- `lockCommunityPostComments`
+- `deleteOwnCommunityPost`
+- `pinCommunityPost`
+- `unpinCommunityPost`
+- `hideCommunityComment`
+- `restoreCommunityComment`
+- `moderateCommunity`
+- `listAdminCommunityModeration`
+
+Pinned posts are stored on `communities/{communityId}.pinnedPostIds` with a maximum of three ids. The public community feed lifts matching loaded posts above the rest and marks them as pinned.
+
+The Community feed supports:
+
+- `?tag=sound-design`
+- `?search=creator`
+- `?sort=new`
+- `?sort=top-today`
+- `?sort=top-week`
+- `?sort=most-discussed`
+
+`top-today` and `top-week` are a foundation sort that favors denormalized `score` and recency; a later aggregation job can replace this with precise daily/weekly rollups.
+
+Admin community moderation lives at `/admin/community`. It lists recent/reported/hidden posts, reported comments, communities, and community reports. Mutations write `adminLogs`.
 
 Comment reports use:
 
@@ -346,6 +455,16 @@ Done in next phase interaction polish:
 - Emoji insertion and session draft persistence are available in the composer
 - attachment, music, schedule, poll, Stage Plan, and Studio Project tools are visible as disabled `Coming soon` scaffolds
 
+Done in creator content phase:
+
+- Add Music attaches existing public product audio previews only
+- Add Stage Plan attaches owned/collaborated StageMaker projects as public-safe snapshot cards
+- Add Studio Project attaches owned/collaborated Studio projects as public-safe metadata cards
+- Request Feedback and Find Collaborators add structured `intent` data to standard posts
+- feed/sidebar filters support Music, Products, Stage Plans, Studio Projects, Feedback, and Collaboration
+- public profile post cards show intent/attachment badges
+- backend validates attachment counts, ownership/share permissions, safe product preview paths, and future deadlines
+
 Deferred:
 
 - creator follow feed
@@ -353,3 +472,6 @@ Deferred:
 - FYP scoring
 - full community moderation dashboard
 - mention notifications and scheduled publishing
+- arbitrary Community audio upload
+- public read-only Stage Plan viewer
+- public Studio Project viewer

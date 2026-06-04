@@ -443,6 +443,20 @@ body {
   font-size: 0.84rem;
 }
 
+.public-community-post-badges {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 0.5rem;
+  border: 1px solid rgba(134, 223, 240, 0.28);
+  border-radius: 999px;
+  background: rgba(134, 223, 240, 0.1);
+  color: #d2e8ff;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
 .public-stage-thumb {
   display: block;
   aspect-ratio: 16 / 9;

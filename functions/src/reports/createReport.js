@@ -213,6 +213,7 @@ const createReport = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (req
   if (targetType === 'community_post') {
     await firestore.collection('communityPosts').doc(targetId).set({
       'counts.reports': admin.firestore.FieldValue.increment(1),
+      reportCount: admin.firestore.FieldValue.increment(1),
       updatedAt: now
     }, { merge: true }).catch(() => null)
   }

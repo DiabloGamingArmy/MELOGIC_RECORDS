@@ -46,7 +46,7 @@ const deleteCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
     const nextCommentCount = nextCount(visibleCommentsSnap.size || currentCommentCount, -1)
 
     tx.set(commentRef, {
-      status: 'deleted',
+      status: comment.authorUid === uid ? 'deleted_by_author' : 'hidden_by_moderator',
       body: '',
       deletedAt: now,
       deletedBy: uid,
@@ -54,6 +54,8 @@ const deleteCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
     }, { merge: true })
     tx.set(postRef, {
       'counts.comments': nextCommentCount,
+      commentCount: nextCommentCount,
+      score: nextCount(post.score || 0, -1),
       updatedAt: now
     }, { merge: true })
     if (parentRef) {

@@ -12,6 +12,7 @@ import {
   createCommunity,
   deleteCommunityStory,
   deleteCommunityComment,
+  deleteOwnCommunityPost,
   getCommunityCommentViewerState,
   getCommunityBySlug,
   getCommunityFocusState,
@@ -22,11 +23,15 @@ import {
   listFocusedCommunityPosts,
   listCommunityPosts,
   listCommunityStories,
+  listShareableCommunityMusicPreviews,
   listShareableCommunityProducts,
+  listShareableCommunityStagePlans,
+  listShareableCommunityStudioProjects,
   newCommunityStoryId,
   normalizeCommunityComment,
   normalizeCommunityPost,
   normalizeCommunityStory,
+  resolveCommunityAttachmentMediaUrls,
   recordCommunityPostShare,
   recordCommunityStoryView,
   toggleCommunityCommentLike,
@@ -36,7 +41,7 @@ import {
   uploadCommunityStoryImage
 } from './data/communityService'
 import { searchProfilesByUsername } from './data/profileSearchService'
-import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute } from './utils/routes'
+import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
@@ -49,6 +54,10 @@ const DUMMY_STORIES = [
 ]
 const COMPOSER_DRAFT_KEY = 'melogic-community-composer-draft-v2'
 const QUICK_EMOJIS = ['🔥', '🎧', '🎹', '🥁', '🎚️', '✨', '🙌', '💡', '🚀', '❤️', '🤘', '✅']
+const FEEDBACK_CATEGORIES = ['Mix', 'Master', 'Songwriting', 'Sound Design', 'Vocal Performance', 'Stage Layout', 'Product Listing', 'Other']
+const COLLABORATION_ROLES = ['Vocalist', 'Producer', 'Songwriter', 'Guitarist', 'Drummer', 'Mixing Engineer', 'Mastering Engineer', 'Sound Designer', 'Stage Designer', 'Lighting Designer', 'Camera Operator', 'Other']
+const COMPENSATION_TYPES = ['Paid', 'Unpaid', 'Revenue Share', 'Discuss']
+const LOCATION_MODES = ['Remote', 'Local', 'Either']
 const REPORT_REASONS = [
   'Spam',
   'Harassment or abuse',
@@ -78,6 +87,9 @@ const state = {
   activeCommunityId: '',
   activeCommunitySlug: '',
   activeTopicLabel: 'For You',
+  activeTag: normalizeTagKey(parseFeedParam('tag')),
+  feedSearch: parseFeedParam('search'),
+  feedSort: ['new', 'top-today', 'top-week', 'most-discussed'].includes(parseFeedParam('sort')) ? parseFeedParam('sort') : 'new',
   view: parseCommunityView(),
   community: null,
   communities: [],
@@ -109,6 +121,7 @@ const state = {
     error: ''
   },
   posts: [],
+  attachmentMediaUrls: {},
   viewerState: {},
   loading: true,
   error: '',
@@ -132,6 +145,30 @@ const state = {
     productPickerLoading: false,
     productPickerError: '',
     products: [],
+    musicPickerOpen: false,
+    musicPickerLoading: false,
+    musicPickerError: '',
+    musicPreviews: [],
+    stagePickerOpen: false,
+    stagePickerLoading: false,
+    stagePickerError: '',
+    stagePlans: [],
+    studioPickerOpen: false,
+    studioPickerLoading: false,
+    studioPickerError: '',
+    studioProjects: [],
+    intent: '',
+    intentData: {
+      feedbackCategory: 'Mix',
+      feedbackQuestion: '',
+      feedbackDeadlineAt: '',
+      collaborationRoleNeeded: 'Producer',
+      collaborationGenre: '',
+      collaborationCompensationType: 'Discuss',
+      collaborationLocationMode: 'Remote',
+      collaborationLocationText: '',
+      collaborationDeadlineAt: ''
+    },
     submitting: false,
     error: ''
   },
@@ -192,6 +229,30 @@ function defaultComposerState(patch = {}) {
     productPickerLoading: false,
     productPickerError: '',
     products: [],
+    musicPickerOpen: false,
+    musicPickerLoading: false,
+    musicPickerError: '',
+    musicPreviews: [],
+    stagePickerOpen: false,
+    stagePickerLoading: false,
+    stagePickerError: '',
+    stagePlans: [],
+    studioPickerOpen: false,
+    studioPickerLoading: false,
+    studioPickerError: '',
+    studioProjects: [],
+    intent: '',
+    intentData: {
+      feedbackCategory: 'Mix',
+      feedbackQuestion: '',
+      feedbackDeadlineAt: '',
+      collaborationRoleNeeded: 'Producer',
+      collaborationGenre: '',
+      collaborationCompensationType: 'Discuss',
+      collaborationLocationMode: 'Remote',
+      collaborationLocationText: '',
+      collaborationDeadlineAt: ''
+    },
     submitting: false,
     error: '',
     ...patch
@@ -219,8 +280,10 @@ function restoreComposerDraft() {
       tags: String(parsed.tags || '').slice(0, 160),
       communityId: String(parsed.communityId || '').slice(0, 180),
       visibility: parsed.visibility === 'public' ? 'public' : 'public',
-      attachments: Array.isArray(parsed.attachments) ? parsed.attachments.filter((item) => item?.type === 'product' && item.productId).slice(0, 1) : [],
-      mentionedUsers: Array.isArray(parsed.mentionedUsers) ? parsed.mentionedUsers.filter((item) => item?.uid).slice(0, 10) : []
+      attachments: Array.isArray(parsed.attachments) ? parsed.attachments.filter((item) => item?.type && (item.targetId || item.productId || item.projectId || item.storagePath)).slice(0, 4) : [],
+      mentionedUsers: Array.isArray(parsed.mentionedUsers) ? parsed.mentionedUsers.filter((item) => item?.uid).slice(0, 10) : [],
+      intent: ['feedback_request', 'collaboration_request'].includes(parsed.intent) ? parsed.intent : '',
+      intentData: parsed.intentData && typeof parsed.intentData === 'object' ? parsed.intentData : defaultComposerState().intentData
     }
   } catch {
     return null
@@ -236,9 +299,11 @@ function persistComposerDraft() {
       communityId: state.composer.communityId,
       visibility: state.composer.visibility,
       attachments: state.composer.attachments,
-      mentionedUsers: state.composer.mentionedUsers
+      mentionedUsers: state.composer.mentionedUsers,
+      intent: state.composer.intent,
+      intentData: state.composer.intentData
     }
-    const hasDraft = draft.title || draft.body || draft.tags || draft.communityId || draft.attachments.length || draft.mentionedUsers.length
+    const hasDraft = draft.title || draft.body || draft.tags || draft.communityId || draft.attachments.length || draft.mentionedUsers.length || draft.intent
     if (hasDraft) window.sessionStorage?.setItem(COMPOSER_DRAFT_KEY, JSON.stringify(draft))
     else window.sessionStorage?.removeItem(COMPOSER_DRAFT_KEY)
   } catch {
@@ -255,12 +320,16 @@ function clearComposerDraft() {
 }
 
 function composerHasDraft() {
-  return Boolean(state.composer.title || state.composer.body || state.composer.tags || state.composer.attachments.length || state.composer.mentionedUsers.length)
+  return Boolean(state.composer.title || state.composer.body || state.composer.tags || state.composer.attachments.length || state.composer.mentionedUsers.length || state.composer.intent)
 }
 
 function parseDetailPostId() {
   const match = window.location.pathname.match(/^\/community\/post\/([^/]+)/)
   return match ? decodeURIComponent(match[1] || '') : ''
+}
+
+function parseFeedParam(key = '') {
+  return new URLSearchParams(window.location.search).get(key) || ''
 }
 
 function parseCommunityView() {
@@ -326,12 +395,66 @@ function storyAvatar(story) {
 }
 
 function activeFeedTitle() {
+  if (state.activeTab === 'music') return 'Music'
+  if (state.activeTab === 'products') return 'Products'
+  if (state.activeTab === 'stage-plans') return 'Stage Plans'
+  if (state.activeTab === 'studio-projects') return 'Studio Projects'
+  if (state.activeTab === 'feedback') return 'Feedback'
+  if (state.activeTab === 'collaboration') return 'Collaboration'
   if (state.activeTab === 'following') return 'Focused'
   if (state.activeTab === 'community') return state.activeTopicLabel || 'Community'
   if (state.activeTab === 'placeholder') return state.activeTopicLabel || 'Community'
   if (state.activeTab === 'official') return 'Official'
   if (state.activeTab === 'new') return 'New'
   return 'For You'
+}
+
+function filterPostsForActiveTab(posts = []) {
+  if (state.activeTab === 'music') return posts.filter((post) => post.attachmentTypes?.includes('music'))
+  if (state.activeTab === 'products') return posts.filter((post) => post.attachmentTypes?.includes('product') || post.linkedProductId)
+  if (state.activeTab === 'stage-plans') return posts.filter((post) => post.attachmentTypes?.includes('stage_plan'))
+  if (state.activeTab === 'studio-projects') return posts.filter((post) => post.attachmentTypes?.includes('studio_project'))
+  if (state.activeTab === 'feedback') return posts.filter((post) => post.intent === 'feedback_request')
+  if (state.activeTab === 'collaboration') return posts.filter((post) => post.intent === 'collaboration_request')
+  return posts
+}
+
+function updateFeedUrlParams() {
+  if (state.view.type !== 'feed') return
+  const params = new URLSearchParams(window.location.search)
+  if (state.activeTag) params.set('tag', state.activeTag)
+  else params.delete('tag')
+  if (state.feedSearch) params.set('search', state.feedSearch)
+  else params.delete('search')
+  if (state.feedSort && state.feedSort !== 'new') params.set('sort', state.feedSort)
+  else params.delete('sort')
+  const query = params.toString()
+  window.history.replaceState({}, '', `${ROUTES.community}${query ? `?${query}` : ''}`)
+}
+
+function normalizeTagKey(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^#/, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]+/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+}
+
+function pinnedPostIds() {
+  return new Set(Array.isArray(state.community?.pinnedPostIds) ? state.community.pinnedPostIds : [])
+}
+
+function sortPinnedPosts(posts = []) {
+  const pinned = pinnedPostIds()
+  if (!pinned.size) return posts
+  return [...posts].sort((a, b) => {
+    const aPinned = pinned.has(a.postId) || a.pinnedInCommunity
+    const bPinned = pinned.has(b.postId) || b.pinnedInCommunity
+    return Number(bPinned) - Number(aPinned)
+  })
 }
 
 function visibleTopicCommunities() {
@@ -501,9 +624,28 @@ function selectedProductAttachment() {
   return state.composer.attachments.find((attachment) => attachment.type === 'product') || null
 }
 
+function selectedAttachment(type = '') {
+  return state.composer.attachments.find((attachment) => attachment.type === type) || null
+}
+
+function selectedAttachments(type = '') {
+  return state.composer.attachments.filter((attachment) => attachment.type === type)
+}
+
+function attachmentKey(attachment = {}) {
+  return attachment.targetId || attachment.productId || attachment.projectId || attachment.storagePath || attachment.sourceId || ''
+}
+
+function canAddAttachment(type = '') {
+  const count = selectedAttachments(type).length
+  if (type === 'music') return count < 2 && state.composer.attachments.length < 4
+  return count < 1 && state.composer.attachments.length < 4
+}
+
 function productAttachmentFromProduct(product = {}) {
   return {
     type: 'product',
+    targetId: product.productId || product.id || '',
     productId: product.productId || product.id || '',
     snapshot: {
       title: product.title || 'Untitled product',
@@ -518,9 +660,10 @@ function productAttachmentFromProduct(product = {}) {
 }
 
 function productAttachmentPreview(attachment = {}) {
-  if (!attachment?.productId) return ''
+  if (!attachment?.productId && !attachment?.targetId) return ''
   const snapshot = attachment.snapshot || {}
-  const href = productRoute({ id: attachment.productId, slug: snapshot.slug || snapshot.title || '' })
+  const productId = attachment.productId || attachment.targetId || ''
+  const href = productRoute({ id: productId, slug: snapshot.slug || snapshot.title || '' })
   const price = snapshot.isFree ? 'Free' : Number(snapshot.priceCents || 0) ? `$${(Number(snapshot.priceCents || 0) / 100).toFixed(2)}` : ''
   return `
     <article class="community-composer-attachment">
@@ -534,6 +677,98 @@ function productAttachmentPreview(attachment = {}) {
       <button type="button" data-remove-composer-attachment="product" aria-label="Remove product attachment">${iconSvg('x')}</button>
     </article>
   `
+}
+
+function musicAttachmentFromPreview(preview = {}) {
+  return {
+    type: 'music',
+    targetId: preview.targetId || preview.storagePath || '',
+    sourceType: preview.sourceType || 'product_preview',
+    sourceId: preview.sourceId || '',
+    storagePath: preview.storagePath || '',
+    audioURL: preview.audioURL || '',
+    snapshot: preview.snapshot || {}
+  }
+}
+
+function stagePlanAttachmentFromProject(project = {}) {
+  return {
+    type: 'stage_plan',
+    targetId: project.projectId || project.id || '',
+    projectId: project.projectId || project.id || '',
+    snapshot: {
+      title: project.title || 'Untitled Stage Plan',
+      templateName: project.stageType || 'Stage Plan',
+      stageWidth: Number(project.stageWidth || 0),
+      stageDepth: Number(project.stageDepth || 0),
+      units: project.units || 'ft',
+      objectCount: Number(project.objectCount || 0),
+      previewImageURL: '',
+      ownerDisplayName: state.currentUser?.displayName || '',
+      ownerUsername: '',
+      visibility: project.visibility || 'private',
+      sharePath: project.visibility === 'public' ? stageProjectRoute(project.projectId || project.id || '') : ''
+    }
+  }
+}
+
+function studioProjectAttachmentFromProject(project = {}) {
+  return {
+    type: 'studio_project',
+    targetId: project.projectId || project.id || '',
+    projectId: project.projectId || project.id || '',
+    snapshot: {
+      title: project.title || 'Untitled Studio Project',
+      bpm: Number(project.bpm || 0),
+      key: project.key || '',
+      durationSeconds: 0,
+      trackCount: Number(project.trackCount || 0),
+      coverURL: '',
+      previewAudioPath: '',
+      creatorDisplayName: state.currentUser?.displayName || '',
+      creatorUsername: '',
+      visibility: project.visibility || 'private',
+      sharePath: ''
+    }
+  }
+}
+
+function attachmentTitle(attachment = {}) {
+  const snapshot = attachment.snapshot || {}
+  if (attachment.type === 'product') return snapshot.title || 'Product'
+  if (attachment.type === 'music') return snapshot.title || 'Music preview'
+  if (attachment.type === 'stage_plan') return snapshot.title || 'Stage Plan'
+  if (attachment.type === 'studio_project') return snapshot.title || 'Studio Project'
+  return 'Attachment'
+}
+
+function composerAttachmentPreview(attachment = {}) {
+  if (attachment.type === 'product') return productAttachmentPreview(attachment)
+  const key = attachmentKey(attachment)
+  const snapshot = attachment.snapshot || {}
+  const meta = attachment.type === 'music'
+    ? [snapshot.creatorName, 'Audio preview'].filter(Boolean).join(' · ')
+    : attachment.type === 'stage_plan'
+      ? [`${Number(snapshot.stageWidth || 0)} x ${Number(snapshot.stageDepth || 0)} ${snapshot.units || 'ft'}`, `${Number(snapshot.objectCount || 0)} objects`].join(' · ')
+      : attachment.type === 'studio_project'
+        ? [`${Number(snapshot.bpm || 0) || '--'} BPM`, snapshot.key, `${Number(snapshot.trackCount || 0)} tracks`].filter(Boolean).join(' · ')
+        : ''
+  const icon = attachment.type === 'stage_plan' ? 'cube' : attachment.type === 'studio_project' ? 'music' : 'music'
+  return `
+    <article class="community-composer-attachment">
+      <span class="community-attachment-fallback">${iconSvg(icon)}</span>
+      <span>
+        <strong>${escapeHtml(attachmentTitle(attachment))}</strong>
+        <em>${escapeHtml(meta)}</em>
+      </span>
+      <button type="button" data-remove-composer-attachment-key="${escapeHtml(key)}" aria-label="Remove ${escapeHtml(attachmentTitle(attachment))}">${iconSvg('x')}</button>
+    </article>
+  `
+}
+
+function renderComposerAttachments() {
+  if (!state.composer.attachments.length) return ''
+  return `<div class="community-composer-attachments">${state.composer.attachments.map(composerAttachmentPreview).join('')}</div>`
 }
 
 function renderComposerProductPicker() {
@@ -554,6 +789,74 @@ function renderComposerProductPicker() {
         <button type="button" data-close-product-picker>${iconSvg('x')}</button>
       </div>
       ${state.composer.productPickerLoading ? '<p>Loading your published products...</p>' : state.composer.productPickerError ? `<p class="community-error">${escapeHtml(state.composer.productPickerError)}</p>` : rows || '<p>No public published products are available to attach yet.</p>'}
+    </section>
+  `
+}
+
+function renderComposerMusicPicker() {
+  if (!state.composer.musicPickerOpen) return ''
+  const rows = state.composer.musicPreviews.map((preview) => `
+    <button type="button" class="community-product-picker-row" data-select-composer-music="${escapeHtml(preview.storagePath)}">
+      ${preview.snapshot?.coverURL ? `<img src="${escapeHtml(preview.snapshot.coverURL)}" alt="" loading="lazy" />` : `<span class="community-product-fallback">${iconSvg('music')}</span>`}
+      <span>
+        <strong>${escapeHtml(preview.snapshot?.title || 'Music preview')}</strong>
+        <em>${escapeHtml([preview.snapshot?.creatorName, 'Product preview'].filter(Boolean).join(' · '))}</em>
+      </span>
+    </button>
+  `).join('')
+  return `
+    <section class="community-product-picker" aria-label="Music picker">
+      <div class="community-mini-panel-heading">
+        <strong>Select a public audio preview</strong>
+        <button type="button" data-close-music-picker>${iconSvg('x')}</button>
+      </div>
+      ${state.composer.musicPickerLoading ? '<p>Loading public audio previews...</p>' : state.composer.musicPickerError ? `<p class="community-error">${escapeHtml(state.composer.musicPickerError)}</p>` : rows || '<p>No public product audio previews are available to attach yet.</p>'}
+    </section>
+  `
+}
+
+function renderComposerStagePicker() {
+  if (!state.composer.stagePickerOpen) return ''
+  const rows = state.composer.stagePlans.map((project) => `
+    <button type="button" class="community-product-picker-row" data-select-composer-stage="${escapeHtml(project.projectId)}" data-project-visibility="${escapeHtml(project.visibility)}">
+      <span class="community-product-fallback">${iconSvg('cube')}</span>
+      <span>
+        <strong>${escapeHtml(project.title)}</strong>
+        <em>${escapeHtml([project.stageType, `${Number(project.stageWidth || 0)} x ${Number(project.stageDepth || 0)} ${project.units || 'ft'}`, project.visibility === 'public' ? 'Public' : 'Private'].filter(Boolean).join(' · '))}</em>
+      </span>
+    </button>
+  `).join('')
+  return `
+    <section class="community-product-picker" aria-label="Stage Plan picker">
+      <div class="community-mini-panel-heading">
+        <strong>Select a Stage Plan</strong>
+        <button type="button" data-close-stage-picker>${iconSvg('x')}</button>
+      </div>
+      ${state.composer.stagePickerLoading ? '<p>Loading StageMaker plans...</p>' : state.composer.stagePickerError ? `<p class="community-error">${escapeHtml(state.composer.stagePickerError)}</p>` : rows || '<p>No owned or shared StageMaker plans are available.</p>'}
+      <p class="community-picker-note">Private plans are shared as safe snapshot cards only. The editable project stays protected.</p>
+    </section>
+  `
+}
+
+function renderComposerStudioPicker() {
+  if (!state.composer.studioPickerOpen) return ''
+  const rows = state.composer.studioProjects.map((project) => `
+    <button type="button" class="community-product-picker-row" data-select-composer-studio="${escapeHtml(project.projectId)}" data-project-visibility="${escapeHtml(project.visibility)}">
+      <span class="community-product-fallback">${iconSvg('music')}</span>
+      <span>
+        <strong>${escapeHtml(project.title)}</strong>
+        <em>${escapeHtml([project.type, `${Number(project.bpm || 0) || '--'} BPM`, project.key, project.visibility === 'public' ? 'Public' : 'Private'].filter(Boolean).join(' · '))}</em>
+      </span>
+    </button>
+  `).join('')
+  return `
+    <section class="community-product-picker" aria-label="Studio Project picker">
+      <div class="community-mini-panel-heading">
+        <strong>Select a Studio Project</strong>
+        <button type="button" data-close-studio-picker>${iconSvg('x')}</button>
+      </div>
+      ${state.composer.studioPickerLoading ? '<p>Loading Studio projects...</p>' : state.composer.studioPickerError ? `<p class="community-error">${escapeHtml(state.composer.studioPickerError)}</p>` : rows || '<p>No owned or shared Studio projects are available.</p>'}
+      <p class="community-picker-note">Studio projects are shared as safe metadata cards only. Stems and project files stay private.</p>
     </section>
   `
 }
@@ -593,23 +896,92 @@ function renderEmojiPanel() {
 function renderAttachmentToolbar() {
   const disabledActions = [
     ['Add Attachment', 'file'],
-    ['Add Music', 'music'],
     ['Schedule', 'calendar'],
-    ['Add Poll', 'barChart'],
-    ['Add Stage Plan', 'cube'],
-    ['Add Studio Project', 'music']
+    ['Add Poll', 'barChart']
   ]
   return `
     <div class="community-attachment-toolbar" aria-label="Post additions">
+      <span class="community-toolbar-group-label">Attachments</span>
+      <button type="button" data-open-music-picker class="${selectedAttachments('music').length ? 'is-active' : ''}" title="Add Music">${iconSvg('music')} <span>Add Music</span></button>
       <button type="button" data-open-product-picker class="${selectedProductAttachment() ? 'is-active' : ''}" title="Add Product">${iconSvg('package')} <span>Add Product</span></button>
+      <button type="button" data-open-stage-picker class="${selectedAttachment('stage_plan') ? 'is-active' : ''}" title="Add Stage Plan">${iconSvg('cube')} <span>Add Stage Plan</span></button>
+      <button type="button" data-open-studio-picker class="${selectedAttachment('studio_project') ? 'is-active' : ''}" title="Add Studio Project">${iconSvg('music')} <span>Add Studio Project</span></button>
+      <span class="community-toolbar-group-label">Enhance</span>
       <label class="community-mention-control" title="Tag People">
         ${iconSvg('at')} <span>Tag People</span>
         <input type="search" value="${escapeHtml(state.composer.mentionQuery)}" placeholder="@username" data-mention-search />
       </label>
       <button type="button" data-toggle-emoji-panel class="${state.composer.emojiOpen ? 'is-active' : ''}" title="Emoji">${iconSvg('smile')} <span>Emoji</span></button>
       ${disabledActions.map(([label, icon]) => `<button type="button" disabled title="Coming soon">${iconSvg(icon)} <span>${escapeHtml(label)}</span><em>Coming soon</em></button>`).join('')}
+      <span class="community-toolbar-group-label">Intent</span>
+      <button type="button" data-set-composer-intent="feedback_request" class="${state.composer.intent === 'feedback_request' ? 'is-active' : ''}" title="Request Feedback">${iconSvg('messageCircle')} <span>Request Feedback</span></button>
+      <button type="button" data-set-composer-intent="collaboration_request" class="${state.composer.intent === 'collaboration_request' ? 'is-active' : ''}" title="Find Collaborators">${iconSvg('user')} <span>Find Collaborators</span></button>
+      ${state.composer.intent ? `<button type="button" data-clear-composer-intent title="Clear intent">${iconSvg('x')} <span>Clear Intent</span></button>` : ''}
     </div>
   `
+}
+
+function renderComposerIntentFields() {
+  const data = state.composer.intentData || {}
+  if (state.composer.intent === 'feedback_request') {
+    return `
+      <section class="community-intent-panel" aria-label="Feedback request">
+        <div class="community-mini-panel-heading">
+          <strong>Feedback Request</strong>
+          <button type="button" data-clear-composer-intent aria-label="Clear feedback request">${iconSvg('x')}</button>
+        </div>
+        <label>
+          <span>Feedback category</span>
+          <select name="feedbackCategory">${FEEDBACK_CATEGORIES.map((category) => `<option value="${escapeHtml(category)}" ${data.feedbackCategory === category ? 'selected' : ''}>${escapeHtml(category)}</option>`).join('')}</select>
+        </label>
+        <label>
+          <span>Specific question</span>
+          <input name="feedbackQuestion" maxlength="300" value="${escapeHtml(data.feedbackQuestion || '')}" placeholder="What should people listen for or evaluate?" />
+        </label>
+        <label>
+          <span>Deadline optional</span>
+          <input name="feedbackDeadlineAt" type="date" value="${escapeHtml(data.feedbackDeadlineAt || '')}" />
+        </label>
+      </section>
+    `
+  }
+  if (state.composer.intent === 'collaboration_request') {
+    return `
+      <section class="community-intent-panel" aria-label="Collaboration request">
+        <div class="community-mini-panel-heading">
+          <strong>Collaboration Request</strong>
+          <button type="button" data-clear-composer-intent aria-label="Clear collaboration request">${iconSvg('x')}</button>
+        </div>
+        <div class="community-intent-grid">
+          <label>
+            <span>Looking for</span>
+            <select name="collaborationRoleNeeded">${COLLABORATION_ROLES.map((role) => `<option value="${escapeHtml(role)}" ${data.collaborationRoleNeeded === role ? 'selected' : ''}>${escapeHtml(role)}</option>`).join('')}</select>
+          </label>
+          <label>
+            <span>Genre</span>
+            <input name="collaborationGenre" maxlength="80" value="${escapeHtml(data.collaborationGenre || '')}" placeholder="Optional genre" />
+          </label>
+          <label>
+            <span>Compensation</span>
+            <select name="collaborationCompensationType">${COMPENSATION_TYPES.map((type) => `<option value="${escapeHtml(type)}" ${data.collaborationCompensationType === type ? 'selected' : ''}>${escapeHtml(type)}</option>`).join('')}</select>
+          </label>
+          <label>
+            <span>Location</span>
+            <select name="collaborationLocationMode">${LOCATION_MODES.map((mode) => `<option value="${escapeHtml(mode)}" ${data.collaborationLocationMode === mode ? 'selected' : ''}>${escapeHtml(mode)}</option>`).join('')}</select>
+          </label>
+          <label>
+            <span>Location text optional</span>
+            <input name="collaborationLocationText" maxlength="120" value="${escapeHtml(data.collaborationLocationText || '')}" placeholder="City, region, or timezone" />
+          </label>
+          <label>
+            <span>Deadline optional</span>
+            <input name="collaborationDeadlineAt" type="date" value="${escapeHtml(data.collaborationDeadlineAt || '')}" />
+          </label>
+        </div>
+      </section>
+    `
+  }
+  return ''
 }
 
 function renderComposerModal() {
@@ -657,8 +1029,12 @@ function renderComposerModal() {
           ${renderAttachmentToolbar()}
           ${renderEmojiPanel()}
           ${renderComposerProductPicker()}
-          ${productAttachmentPreview(selectedProductAttachment())}
+          ${renderComposerMusicPicker()}
+          ${renderComposerStagePicker()}
+          ${renderComposerStudioPicker()}
+          ${renderComposerAttachments()}
           ${renderMentionPicker()}
+          ${renderComposerIntentFields()}
           ${state.view.type === 'community' && state.community ? `
             <input type="hidden" name="communityId" value="${escapeHtml(state.community.communityId)}" />
             <p class="community-context-note">Posting to <a href="${communityRoute(state.community.slug)}">c/${escapeHtml(state.community.slug)}</a></p>
@@ -694,8 +1070,8 @@ function renderComposerModal() {
 }
 
 function linkedProductMarkup(post) {
-  const attachment = (post.attachments || []).find((item) => item.type === 'product' && item.productId)
-  const productId = attachment?.productId || post.linkedProductId || ''
+  const attachment = (post.attachments || []).find((item) => item.type === 'product' && (item.productId || item.targetId))
+  const productId = attachment?.productId || attachment?.targetId || post.linkedProductId || ''
   const product = attachment?.snapshot || post.linkedProductSnapshot || {}
   if (!productId) return ''
   const href = productRoute({ id: productId, slug: product.slug || product.title || '' })
@@ -712,10 +1088,103 @@ function linkedProductMarkup(post) {
   `
 }
 
+function renderMusicAttachment(attachment = {}) {
+  const snapshot = attachment.snapshot || {}
+  const audioURL = attachment.audioURL || state.attachmentMediaUrls[attachment.storagePath] || ''
+  return `
+    <article class="community-linked-product community-attachment-card is-music" data-stop-card-nav>
+      ${snapshot.coverURL ? `<img src="${escapeHtml(snapshot.coverURL)}" alt="" loading="lazy" />` : `<span class="community-product-fallback">${iconSvg('music')}</span>`}
+      <span>
+        <strong>${escapeHtml(snapshot.title || 'Music preview')}</strong>
+        <em>${escapeHtml([snapshot.creatorName, attachment.sourceType === 'product_preview' ? 'Product preview' : 'Audio preview'].filter(Boolean).join(' · '))}</em>
+        ${audioURL ? `<audio controls preload="none" src="${escapeHtml(audioURL)}"></audio>` : '<small>Audio preview metadata attached.</small>'}
+      </span>
+    </article>
+  `
+}
+
+function renderStagePlanAttachment(attachment = {}) {
+  const snapshot = attachment.snapshot || {}
+  const dimensions = Number(snapshot.stageWidth || 0) && Number(snapshot.stageDepth || 0)
+    ? `${Number(snapshot.stageWidth || 0)} x ${Number(snapshot.stageDepth || 0)} ${snapshot.units || 'ft'}`
+    : ''
+  const href = snapshot.sharePath || ''
+  return `
+    <article class="community-linked-product community-attachment-card is-stage-plan" data-stop-card-nav>
+      ${snapshot.previewImageURL ? `<img src="${escapeHtml(snapshot.previewImageURL)}" alt="" loading="lazy" />` : `<span class="community-blueprint-fallback">${iconSvg('cube')}</span>`}
+      <span>
+        <strong>${escapeHtml(snapshot.title || 'Stage Plan')}</strong>
+        <em>${escapeHtml([snapshot.templateName, dimensions, `${Number(snapshot.objectCount || 0)} objects`].filter(Boolean).join(' · '))}</em>
+        ${href ? `<a class="community-attachment-link" href="${escapeHtml(href)}">View Stage Plan</a>` : '<small>Shared as a public snapshot. Editable plan remains private.</small>'}
+      </span>
+    </article>
+  `
+}
+
+function renderStudioProjectAttachment(attachment = {}) {
+  const snapshot = attachment.snapshot || {}
+  const href = snapshot.sharePath || ''
+  const audioURL = snapshot.previewAudioPath ? state.attachmentMediaUrls[snapshot.previewAudioPath] || '' : ''
+  return `
+    <article class="community-linked-product community-attachment-card is-studio-project" data-stop-card-nav>
+      ${snapshot.coverURL ? `<img src="${escapeHtml(snapshot.coverURL)}" alt="" loading="lazy" />` : `<span class="community-product-fallback">${iconSvg('music')}</span>`}
+      <span>
+        <strong>${escapeHtml(snapshot.title || 'Studio Project')}</strong>
+        <em>${escapeHtml([Number(snapshot.bpm || 0) ? `${Number(snapshot.bpm)} BPM` : '', snapshot.key, `${Number(snapshot.trackCount || 0)} tracks`].filter(Boolean).join(' · '))}</em>
+        ${audioURL ? `<audio controls preload="none" src="${escapeHtml(audioURL)}"></audio>` : ''}
+        ${href ? `<a class="community-attachment-link" href="${escapeHtml(href)}">View Project</a>` : '<small>Project files and stems remain private.</small>'}
+      </span>
+    </article>
+  `
+}
+
+function renderPostAttachments(post) {
+  const attachments = Array.isArray(post.attachments) ? post.attachments : []
+  if (!attachments.length) return linkedProductMarkup(post)
+  return `
+    <div class="community-post-attachments">
+      ${attachments.map((attachment) => {
+        if (attachment.type === 'product') return linkedProductMarkup({ ...post, attachments: [attachment], linkedProductId: '', linkedProductSnapshot: {} })
+        if (attachment.type === 'music') return renderMusicAttachment(attachment)
+        if (attachment.type === 'stage_plan') return renderStagePlanAttachment(attachment)
+        if (attachment.type === 'studio_project') return renderStudioProjectAttachment(attachment)
+        return ''
+      }).join('')}
+    </div>
+  `
+}
+
+function renderPostIntent(post = {}) {
+  const data = post.intentData || {}
+  if (post.intent === 'feedback_request') {
+    return `
+      <section class="community-intent-summary is-feedback">
+        <strong>Feedback Requested</strong>
+        <span>${escapeHtml(data.category || 'Feedback')}</span>
+        <p>${escapeHtml(data.question || 'Give useful feedback in the comments.')}</p>
+        ${data.deadlineAt ? `<em>Deadline ${escapeHtml(formatTime(data.deadlineAt))}</em>` : ''}
+      </section>
+    `
+  }
+  if (post.intent === 'collaboration_request') {
+    return `
+      <section class="community-intent-summary is-collaboration">
+        <strong>Looking for Collaborators</strong>
+        <span>${escapeHtml([data.roleNeeded, data.genre, data.compensationType, data.locationMode].filter(Boolean).join(' · '))}</span>
+        ${data.locationText ? `<p>${escapeHtml(data.locationText)}</p>` : ''}
+        ${data.deadlineAt ? `<em>Deadline ${escapeHtml(formatTime(data.deadlineAt))}</em>` : ''}
+      </section>
+    `
+  }
+  return ''
+}
+
 function postCard(post, { detail = false } = {}) {
   const viewer = state.viewerState[post.postId] || {}
   const body = detail ? post.body : post.body.slice(0, 640)
   const authorHref = post.authorUid ? publicProfileRoute({ uid: post.authorUid }) : ROUTES.profilePublic
+  const isOwn = state.currentUser?.uid && state.currentUser.uid === post.authorUid
+  const pinned = pinnedPostIds().has(post.postId) || post.pinnedInCommunity
   return `
     <article class="community-post-card" data-post-id="${escapeHtml(post.postId)}" data-post-href="${communityPostRoute(post.postId)}" role="link" tabindex="0" aria-label="Open post ${escapeHtml(post.title || 'detail')}">
       <header class="community-post-header">
@@ -727,20 +1196,25 @@ function postCard(post, { detail = false } = {}) {
           </span>
         </a>
         <div class="community-post-badges">
+          ${pinned ? `<span class="community-badge is-pinned">${iconSvg('star')} Pinned</span>` : ''}
           ${post.communitySlug ? `<a class="community-badge" href="${communityRoute(post.communitySlug)}">c/${escapeHtml(post.communitySlug)}</a>` : ''}
           ${post.official ? '<span class="community-badge">Official</span>' : ''}
+          ${post.intent === 'feedback_request' ? '<span class="community-badge">Feedback Requested</span>' : ''}
+          ${post.intent === 'collaboration_request' ? '<span class="community-badge">Looking for Collaborators</span>' : ''}
         </div>
       </header>
       ${post.title ? `<h2>${escapeHtml(post.title)}</h2>` : ''}
       <p class="community-post-body">${escapeHtml(body)}${!detail && post.body.length > body.length ? '...' : ''}</p>
-      ${linkedProductMarkup(post)}
-      ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<span>#${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+      ${renderPostIntent(post)}
+      ${renderPostAttachments(post)}
+      ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<button type="button" data-community-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join('')}</div>` : ''}
       <footer class="community-post-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
-        <a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>Comment</span><em>${formatCount(post.counts.comments)}</em></a>
+        <a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></a>
         <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
         <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
         <button type="button" data-community-report="${escapeHtml(post.postId)}">${iconSvg('alertCircle')} <span>Report</span></button>
+        ${isOwn ? `<button type="button" data-community-delete-post="${escapeHtml(post.postId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
       </footer>
       ${detail ? renderComments(post) : ''}
     </article>
@@ -819,7 +1293,7 @@ function renderComments(post) {
         </div>
       </div>
       ${state.commentActionError ? `<p class="community-error">${escapeHtml(state.commentActionError)}</p>` : ''}
-      ${renderCommentComposer()}
+      ${post.commentsLocked ? '<p class="community-comments-state">Comments are locked for this post.</p>' : renderCommentComposer()}
       ${state.commentsLoading ? '<p class="community-comments-state">Loading comments...</p>' : state.commentsError ? `<p class="community-error">${escapeHtml(state.commentsError)}</p>` : topLevel.length ? `<div class="community-comment-list">${topLevel.map((comment) => commentCard(comment, repliesByParent[comment.commentId] || [])).join('')}</div>` : '<p class="community-comments-empty">No comments yet. Start the conversation.</p>'}
     </section>
   `
@@ -830,6 +1304,7 @@ function emptyCopy() {
   if (state.activeTab === 'community') return `No posts in ${state.activeTopicLabel || 'this community'} yet.`
   if (state.activeTab === 'placeholder') return `${state.activeTopicLabel || 'This topic'} is a placeholder space for now. Browse real communities or create a post in the general feed.`
   if (state.activeTab === 'official') return 'No official posts yet.'
+  if (['music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration'].includes(state.activeTab)) return `No ${activeFeedTitle().toLowerCase()} posts yet.`
   return 'No posts yet. Be the first to share something.'
 }
 
@@ -988,8 +1463,12 @@ function renderLeftNav() {
     { label: 'Communities', icon: 'folder', href: ROUTES.communityCommunities },
     { label: 'My Posts', icon: 'fileText', action: 'My Posts' },
     { label: 'Saved', icon: 'bookmark', action: 'Saved posts' },
-    { label: 'Products', icon: 'package', href: ROUTES.products },
-    { label: 'Stage Plans', icon: 'music', href: ROUTES.studioStagemaker }
+    { label: 'Music', icon: 'music', tab: 'music', active: state.activeTab === 'music' },
+    { label: 'Products', icon: 'package', tab: 'products', active: state.activeTab === 'products' },
+    { label: 'Stage Plans', icon: 'cube', tab: 'stage-plans', active: state.activeTab === 'stage-plans' },
+    { label: 'Studio Projects', icon: 'music', tab: 'studio-projects', active: state.activeTab === 'studio-projects' },
+    { label: 'Feedback', icon: 'messageCircle', tab: 'feedback', active: state.activeTab === 'feedback' },
+    { label: 'Collaboration', icon: 'user', tab: 'collaboration', active: state.activeTab === 'collaboration' }
   ]
   return `
     <aside class="community-left-nav" aria-label="Community navigation">
@@ -1030,18 +1509,21 @@ function renderSidebar() {
         ${suggested.length ? `
           <div class="community-suggested-list">
             ${suggested.map((community) => `
-              <a href="${communityRoute(community.slug)}">
-                <span>${escapeHtml(community.name.slice(0, 1).toUpperCase())}</span>
-                <strong>${escapeHtml(community.name)}</strong>
-                <em>${formatCount(community.focusCount)} focused</em>
-              </a>
+              <article>
+                <a href="${communityRoute(community.slug)}">
+                  <span>${escapeHtml(community.name.slice(0, 1).toUpperCase())}</span>
+                  <strong>${escapeHtml(community.name)}</strong>
+                  <em>${formatCount(community.focusCount)} focused · ${formatCount(community.postCount)} posts</em>
+                </a>
+                <button type="button" data-toggle-community-focus="${escapeHtml(community.communityId)}">${state.communityFocus[community.communityId] ? 'Focused' : 'Focus'}</button>
+              </article>
             `).join('')}
           </div>
         ` : '<p>Communities will appear here as creators focus spaces.</p>'}
       </section>
       <section class="community-rail-card">
         <h2>Trending Tags</h2>
-        ${tags.length ? `<div class="community-trending-tags">${tags.map(([tag, count]) => `<span>#${escapeHtml(tag)} <em>${formatCount(count)}</em></span>`).join('')}</div>` : '<p>Tags will populate once posts start moving.</p>'}
+        ${tags.length ? `<div class="community-trending-tags">${tags.map(([tag, count]) => `<button type="button" data-community-tag="${escapeHtml(tag)}">#${escapeHtml(tag)} <em>${formatCount(count)}</em></button>`).join('')}</div>` : '<p>Tags will populate once posts start moving.</p>'}
       </section>
       <section class="community-rail-card">
         <h2>Creator History</h2>
@@ -1154,8 +1636,24 @@ function renderFeedToolbar() {
         <p class="eyebrow">Community</p>
         <h1>${escapeHtml(title)}</h1>
         <p>${escapeHtml(subtitle)}</p>
+        ${(state.activeTag || state.feedSearch) ? `<div class="community-active-filters">
+          ${state.activeTag ? `<button type="button" data-clear-community-tag>#${escapeHtml(state.activeTag)} ${iconSvg('x')}</button>` : ''}
+          ${state.feedSearch ? `<button type="button" data-clear-community-search>${escapeHtml(state.feedSearch)} ${iconSvg('x')}</button>` : ''}
+        </div>` : ''}
       </div>
-      <button type="button" class="button button-accent" data-open-community-composer>${iconSvg('folderPlus')} <span>Post</span></button>
+      <div class="community-feed-controls">
+        <form data-community-feed-search>
+          <input type="search" name="communityFeedSearch" value="${escapeHtml(state.feedSearch)}" placeholder="Search posts, tags, creators" />
+          <button type="submit" title="Search">${iconSvg('search')}</button>
+        </form>
+        <select data-community-feed-sort aria-label="Feed sort">
+          <option value="new" ${state.feedSort === 'new' ? 'selected' : ''}>New</option>
+          <option value="top-today" ${state.feedSort === 'top-today' ? 'selected' : ''}>Top Today</option>
+          <option value="top-week" ${state.feedSort === 'top-week' ? 'selected' : ''}>Top Week</option>
+          <option value="most-discussed" ${state.feedSort === 'most-discussed' ? 'selected' : ''}>Most Discussed</option>
+        </select>
+        <button type="button" class="button button-accent" data-open-community-composer>${iconSvg('folderPlus')} <span>Post</span></button>
+      </div>
     </section>
   `
 }
@@ -1225,6 +1723,15 @@ async function loadCommentViewerState() {
     await getCommunityCommentViewerState(state.detailPostId, comment.commentId, state.currentUser.uid)
   ]))
   state.commentViewerState = Object.fromEntries(entries)
+}
+
+async function loadAttachmentMediaUrls() {
+  try {
+    state.attachmentMediaUrls = await resolveCommunityAttachmentMediaUrls(state.posts)
+  } catch (error) {
+    console.warn('[community] attachment media url load failed', { code: error?.code, message: error?.message })
+    state.attachmentMediaUrls = {}
+  }
 }
 
 async function loadStories({ renderAfter = false } = {}) {
@@ -1322,7 +1829,7 @@ async function loadCommunity() {
       const community = await getCommunityBySlug(state.view.slug)
       state.community = community
       state.posts = community
-        ? await listCommunityPosts({ communitySlug: community.slug, limitCount: 25 })
+        ? sortPinnedPosts(await listCommunityPosts({ communitySlug: community.slug, limitCount: 25, tag: state.activeTag, search: state.feedSearch, sort: state.feedSort }))
         : []
       state.communities = community ? [community] : []
       await loadCommunityFocusState()
@@ -1340,10 +1847,10 @@ async function loadCommunity() {
         await loadCommunityFocusState()
       }
       const [posts] = await Promise.all([
-        listCommunityPosts({ communitySlug: state.activeCommunitySlug, limitCount: 25 }),
+        listCommunityPosts({ communitySlug: state.activeCommunitySlug, limitCount: 25, tag: state.activeTag, search: state.feedSearch, sort: state.feedSort }),
         loadStories()
       ])
-      state.posts = posts
+      state.posts = filterPostsForActiveTab(posts)
     } else if (state.activeTab === 'following') {
       if (!state.communities.length) {
         state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
@@ -1353,19 +1860,20 @@ async function loadCommunity() {
         state.currentUser?.uid ? listFocusedCommunityPosts(state.currentUser.uid, 25) : Promise.resolve([]),
         loadStories()
       ])
-      state.posts = posts
+      state.posts = filterPostsForActiveTab(posts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
     } else {
       if (!state.communities.length) {
         state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
         await loadCommunityFocusState()
       }
       const [posts] = await Promise.all([
-        listCommunityPosts({ tab: state.activeTab, limitCount: 25 }),
+        listCommunityPosts({ tab: state.activeTab, limitCount: 25, tag: state.activeTag, search: state.feedSearch, sort: state.feedSort }),
         loadStories()
       ])
-      state.posts = posts
+      state.posts = filterPostsForActiveTab(posts)
     }
     await loadViewerState()
+    await loadAttachmentMediaUrls()
   } catch (error) {
     console.warn('[community] load failed', { code: error?.code, message: error?.message, details: error?.details })
     state.error = error?.message || 'Community posts could not be loaded.'
@@ -1390,9 +1898,15 @@ async function handleComposerSubmit(event) {
   const tags = String(formData.get('tags') || '').trim()
 
   state.composer = { ...state.composer, title, body, communityId, tags, error: '' }
+  updateComposerFromForm()
   persistComposerDraft()
   if (!body && !title && !state.composer.attachments.length) {
     state.composer.error = 'Add text, a title, or an attachment before publishing.'
+    render()
+    return
+  }
+  if (state.composer.intent === 'feedback_request' && !state.composer.intentData.feedbackQuestion?.trim()) {
+    state.composer.error = 'Add a specific feedback question.'
     render()
     return
   }
@@ -1407,8 +1921,30 @@ async function handleComposerSubmit(event) {
       body,
       attachments: state.composer.attachments.map((attachment) => ({
         type: attachment.type,
-        productId: attachment.productId
+        targetId: attachment.targetId || attachment.productId || attachment.projectId || attachment.storagePath || '',
+        productId: attachment.productId || '',
+        projectId: attachment.projectId || '',
+        sourceType: attachment.sourceType || '',
+        sourceId: attachment.sourceId || '',
+        storagePath: attachment.storagePath || ''
       })),
+      intent: state.composer.intent,
+      intentData: state.composer.intent === 'feedback_request'
+        ? {
+          category: state.composer.intentData.feedbackCategory,
+          question: state.composer.intentData.feedbackQuestion,
+          deadlineAt: state.composer.intentData.feedbackDeadlineAt
+        }
+        : state.composer.intent === 'collaboration_request'
+          ? {
+            roleNeeded: state.composer.intentData.collaborationRoleNeeded,
+            genre: state.composer.intentData.collaborationGenre,
+            compensationType: state.composer.intentData.collaborationCompensationType,
+            locationMode: state.composer.intentData.collaborationLocationMode,
+            locationText: state.composer.intentData.collaborationLocationText,
+            deadlineAt: state.composer.intentData.collaborationDeadlineAt
+          }
+          : {},
       mentionedUserIds: state.composer.mentionedUsers.map((user) => user.uid).filter(Boolean),
       mentionedUsernames: state.composer.mentionedUsers.map((user) => user.username).filter(Boolean),
       communityId: community?.communityId || '',
@@ -1478,6 +2014,38 @@ async function handleShare(postId) {
     }).catch((error) => console.warn('[community] share count failed', { code: error?.code, message: error?.message }))
   }
   render()
+}
+
+function handleFeedSearch(event) {
+  event.preventDefault()
+  const form = event.currentTarget
+  state.feedSearch = String(new FormData(form).get('communityFeedSearch') || '').trim().slice(0, 80)
+  updateFeedUrlParams()
+  loadCommunity()
+}
+
+function selectTagFilter(tag = '') {
+  state.activeTag = normalizeTagKey(tag)
+  updateFeedUrlParams()
+  loadCommunity()
+}
+
+async function handleDeleteOwnPost(postId = '') {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  if (!window.confirm('Hide this post from the community?')) return
+  try {
+    await deleteOwnCommunityPost({ postId, reason: 'Author removed post from community.' })
+    state.posts = state.posts.filter((post) => post.postId !== postId)
+    state.message = 'Post removed.'
+    render()
+  } catch (error) {
+    console.warn('[community] delete post failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.message = error?.message || 'Could not remove this post.'
+    render()
+  }
 }
 
 function updateCommentCount(commentId, patch = {}) {
@@ -1665,7 +2233,19 @@ function updateComposerFromForm() {
     body: String(formData.get('body') || '').slice(0, 2000),
     communityId: String(formData.get('communityId') || '').trim(),
     tags: String(formData.get('tags') || '').trimStart().slice(0, 160),
-    visibility: 'public'
+    visibility: 'public',
+    intentData: {
+      ...state.composer.intentData,
+      feedbackCategory: String(formData.get('feedbackCategory') || state.composer.intentData.feedbackCategory || 'Mix'),
+      feedbackQuestion: String(formData.get('feedbackQuestion') || '').trimStart().slice(0, 300),
+      feedbackDeadlineAt: String(formData.get('feedbackDeadlineAt') || ''),
+      collaborationRoleNeeded: String(formData.get('collaborationRoleNeeded') || state.composer.intentData.collaborationRoleNeeded || 'Producer'),
+      collaborationGenre: String(formData.get('collaborationGenre') || '').trimStart().slice(0, 80),
+      collaborationCompensationType: String(formData.get('collaborationCompensationType') || state.composer.intentData.collaborationCompensationType || 'Discuss'),
+      collaborationLocationMode: String(formData.get('collaborationLocationMode') || state.composer.intentData.collaborationLocationMode || 'Remote'),
+      collaborationLocationText: String(formData.get('collaborationLocationText') || '').trimStart().slice(0, 120),
+      collaborationDeadlineAt: String(formData.get('collaborationDeadlineAt') || '')
+    }
   }
   persistComposerDraft()
 }
@@ -1693,7 +2273,7 @@ function selectComposerProduct(productId = '') {
   if (!product) return
   state.composer = {
     ...state.composer,
-    attachments: [productAttachmentFromProduct(product)],
+    attachments: [...state.composer.attachments.filter((attachment) => attachment.type !== 'product'), productAttachmentFromProduct(product)].slice(0, 4),
     linkedProductId: product.productId,
     productPickerOpen: false,
     productPickerError: ''
@@ -1702,12 +2282,153 @@ function selectComposerProduct(productId = '') {
   render()
 }
 
+async function openMusicPicker() {
+  if (!state.currentUser?.uid) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  state.composer = { ...state.composer, musicPickerOpen: true, musicPickerLoading: true, musicPickerError: '' }
+  render()
+  try {
+    const musicPreviews = await listShareableCommunityMusicPreviews(state.currentUser.uid, 20)
+    state.composer = { ...state.composer, musicPreviews, musicPickerLoading: false, musicPickerError: '' }
+    render()
+  } catch (error) {
+    console.warn('[community] music picker failed', { code: error?.code, message: error?.message })
+    state.composer = { ...state.composer, musicPickerLoading: false, musicPickerError: 'Audio previews could not be loaded.' }
+    render()
+  }
+}
+
+async function openStagePicker() {
+  if (!state.currentUser?.uid) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  state.composer = { ...state.composer, stagePickerOpen: true, stagePickerLoading: true, stagePickerError: '' }
+  render()
+  try {
+    const stagePlans = await listShareableCommunityStagePlans(state.currentUser.uid, 30)
+    state.composer = { ...state.composer, stagePlans, stagePickerLoading: false, stagePickerError: '' }
+    render()
+  } catch (error) {
+    console.warn('[community] stage picker failed', { code: error?.code, message: error?.message })
+    state.composer = { ...state.composer, stagePickerLoading: false, stagePickerError: 'StageMaker plans could not be loaded.' }
+    render()
+  }
+}
+
+async function openStudioPicker() {
+  if (!state.currentUser?.uid) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  state.composer = { ...state.composer, studioPickerOpen: true, studioPickerLoading: true, studioPickerError: '' }
+  render()
+  try {
+    const studioProjects = await listShareableCommunityStudioProjects(state.currentUser.uid, 30)
+    state.composer = { ...state.composer, studioProjects, studioPickerLoading: false, studioPickerError: '' }
+    render()
+  } catch (error) {
+    console.warn('[community] studio picker failed', { code: error?.code, message: error?.message })
+    state.composer = { ...state.composer, studioPickerLoading: false, studioPickerError: 'Studio projects could not be loaded.' }
+    render()
+  }
+}
+
+function addComposerAttachment(attachment = {}) {
+  const type = attachment.type || ''
+  const next = [
+    ...state.composer.attachments.filter((item) => type === 'music'
+      ? attachmentKey(item) !== attachmentKey(attachment)
+      : item.type !== type),
+    attachment
+  ].slice(0, 4)
+  state.composer = {
+    ...state.composer,
+    attachments: next,
+    musicPickerOpen: false,
+    stagePickerOpen: false,
+    studioPickerOpen: false,
+    musicPickerError: '',
+    stagePickerError: '',
+    studioPickerError: ''
+  }
+  persistComposerDraft()
+  render()
+}
+
+function selectComposerMusic(storagePath = '') {
+  const preview = state.composer.musicPreviews.find((item) => item.storagePath === storagePath)
+  if (!preview) return
+  if (!canAddAttachment('music')) {
+    state.composer = { ...state.composer, musicPickerError: 'You can attach up to two music previews.' }
+    render()
+    return
+  }
+  addComposerAttachment(musicAttachmentFromPreview(preview))
+}
+
+function confirmPrivateShare(project, label = 'project') {
+  if (project.visibility === 'public') return true
+  return window.confirm(`Share this private ${label} as a public snapshot card? The editable project and files will stay private.`)
+}
+
+function selectComposerStage(projectId = '') {
+  const project = state.composer.stagePlans.find((item) => item.projectId === projectId)
+  if (!project) return
+  if (!canAddAttachment('stage_plan')) {
+    state.composer = { ...state.composer, stagePickerError: 'Only one Stage Plan can be attached.' }
+    render()
+    return
+  }
+  if (!confirmPrivateShare(project, 'Stage Plan')) return
+  addComposerAttachment(stagePlanAttachmentFromProject(project))
+}
+
+function selectComposerStudio(projectId = '') {
+  const project = state.composer.studioProjects.find((item) => item.projectId === projectId)
+  if (!project) return
+  if (!canAddAttachment('studio_project')) {
+    state.composer = { ...state.composer, studioPickerError: 'Only one Studio Project can be attached.' }
+    render()
+    return
+  }
+  if (!confirmPrivateShare(project, 'Studio Project')) return
+  addComposerAttachment(studioProjectAttachmentFromProject(project))
+}
+
 function removeComposerAttachment(type = '') {
   state.composer = {
     ...state.composer,
     attachments: state.composer.attachments.filter((attachment) => attachment.type !== type),
     linkedProductId: type === 'product' ? '' : state.composer.linkedProductId
   }
+  persistComposerDraft()
+  render()
+}
+
+function removeComposerAttachmentByKey(key = '') {
+  const cleanKey = String(key || '').trim()
+  if (!cleanKey) return
+  state.composer = {
+    ...state.composer,
+    attachments: state.composer.attachments.filter((attachment) => attachmentKey(attachment) !== cleanKey),
+    linkedProductId: attachmentKey(selectedProductAttachment() || {}) === cleanKey ? '' : state.composer.linkedProductId
+  }
+  persistComposerDraft()
+  render()
+}
+
+function setComposerIntent(intent = '') {
+  updateComposerFromForm()
+  state.composer = { ...state.composer, intent: state.composer.intent === intent ? '' : intent, error: '' }
+  persistComposerDraft()
+  render()
+}
+
+function clearComposerIntent() {
+  state.composer = { ...state.composer, intent: '', error: '' }
   persistComposerDraft()
   render()
 }
@@ -1784,10 +2505,11 @@ function showCommunityToast(message = '') {
 }
 
 function selectTopicTab(tab = 'for-you') {
-  state.activeTab = tab === 'following' ? 'following' : tab === 'new' ? 'new' : tab === 'official' ? 'official' : 'for-you'
+  const supportedTabs = new Set(['following', 'new', 'official', 'music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration', 'for-you'])
+  state.activeTab = supportedTabs.has(tab) ? tab : 'for-you'
   state.activeCommunityId = ''
   state.activeCommunitySlug = ''
-  state.activeTopicLabel = state.activeTab === 'following' ? 'Focused' : state.activeTab === 'new' ? 'New' : state.activeTab === 'official' ? 'Official' : 'For You'
+  state.activeTopicLabel = activeFeedTitle()
   loadCommunity()
 }
 
@@ -2076,6 +2798,28 @@ function bindEvents() {
       selectTopicTab(button.getAttribute('data-community-tab') || 'for-you')
     })
   })
+  app.querySelector('[data-community-feed-search]')?.addEventListener('submit', handleFeedSearch)
+  app.querySelector('[data-community-feed-sort]')?.addEventListener('change', (event) => {
+    state.feedSort = ['new', 'top-today', 'top-week', 'most-discussed'].includes(event.target.value) ? event.target.value : 'new'
+    updateFeedUrlParams()
+    loadCommunity()
+  })
+  app.querySelector('[data-clear-community-tag]')?.addEventListener('click', () => {
+    state.activeTag = ''
+    updateFeedUrlParams()
+    loadCommunity()
+  })
+  app.querySelector('[data-clear-community-search]')?.addEventListener('click', () => {
+    state.feedSearch = ''
+    updateFeedUrlParams()
+    loadCommunity()
+  })
+  app.querySelectorAll('[data-community-tag]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      selectTagFilter(button.getAttribute('data-community-tag') || '')
+    })
+  })
   app.querySelectorAll('[data-topic-community-id]').forEach((button) => {
     button.addEventListener('click', () => {
       selectTopicCommunity({
@@ -2151,12 +2895,42 @@ function bindEvents() {
     updateComposerFromForm()
     openProductPicker()
   })
+  app.querySelector('[data-open-music-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openMusicPicker()
+  })
+  app.querySelector('[data-open-stage-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openStagePicker()
+  })
+  app.querySelector('[data-open-studio-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openStudioPicker()
+  })
   app.querySelector('[data-close-product-picker]')?.addEventListener('click', () => {
     state.composer = { ...state.composer, productPickerOpen: false, productPickerError: '' }
     render()
   })
+  app.querySelector('[data-close-music-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, musicPickerOpen: false, musicPickerError: '' }
+    render()
+  })
+  app.querySelector('[data-close-stage-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, stagePickerOpen: false, stagePickerError: '' }
+    render()
+  })
+  app.querySelector('[data-close-studio-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, studioPickerOpen: false, studioPickerError: '' }
+    render()
+  })
   app.querySelectorAll('[data-select-composer-product]').forEach((button) => button.addEventListener('click', () => selectComposerProduct(button.getAttribute('data-select-composer-product') || '')))
+  app.querySelectorAll('[data-select-composer-music]').forEach((button) => button.addEventListener('click', () => selectComposerMusic(button.getAttribute('data-select-composer-music') || '')))
+  app.querySelectorAll('[data-select-composer-stage]').forEach((button) => button.addEventListener('click', () => selectComposerStage(button.getAttribute('data-select-composer-stage') || '')))
+  app.querySelectorAll('[data-select-composer-studio]').forEach((button) => button.addEventListener('click', () => selectComposerStudio(button.getAttribute('data-select-composer-studio') || '')))
   app.querySelectorAll('[data-remove-composer-attachment]').forEach((button) => button.addEventListener('click', () => removeComposerAttachment(button.getAttribute('data-remove-composer-attachment') || '')))
+  app.querySelectorAll('[data-remove-composer-attachment-key]').forEach((button) => button.addEventListener('click', () => removeComposerAttachmentByKey(button.getAttribute('data-remove-composer-attachment-key') || '')))
+  app.querySelectorAll('[data-set-composer-intent]').forEach((button) => button.addEventListener('click', () => setComposerIntent(button.getAttribute('data-set-composer-intent') || '')))
+  app.querySelectorAll('[data-clear-composer-intent]').forEach((button) => button.addEventListener('click', clearComposerIntent))
   app.querySelector('[data-toggle-emoji-panel]')?.addEventListener('click', () => {
     updateComposerFromForm()
     state.composer = { ...state.composer, emojiOpen: !state.composer.emojiOpen }
@@ -2204,6 +2978,10 @@ function bindEvents() {
   app.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', (event) => {
     event.stopPropagation()
     openReport(button.getAttribute('data-community-report'))
+  }))
+  app.querySelectorAll('[data-community-delete-post]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    handleDeleteOwnPost(button.getAttribute('data-community-delete-post') || '')
   }))
   app.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
   app.querySelectorAll('[data-community-reply-form]').forEach((form) => {

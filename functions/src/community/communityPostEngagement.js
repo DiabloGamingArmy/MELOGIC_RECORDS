@@ -51,6 +51,7 @@ async function togglePostState(request, kind = 'like') {
 
     tx.set(postRef, {
       [`counts.${countKey}`]: count,
+      [kind === 'save' ? 'saveCount' : 'likeCount']: count,
       score: nextCount(post.score, kind === 'like' ? delta : 0),
       updatedAt: now
     }, { merge: true })
@@ -90,7 +91,7 @@ const recordCommunityPostShare = onCall({ timeoutSeconds: 60, memory: '256MiB' }
     const count = nextCount(post.counts?.shares, 1)
     const now = admin.firestore.FieldValue.serverTimestamp()
     tx.set(shareRef, { uid, postId: postRef.id, sharedAt: now, updatedAt: now }, { merge: true })
-    tx.set(postRef, { 'counts.shares': count, updatedAt: now }, { merge: true })
+    tx.set(postRef, { 'counts.shares': count, shareCount: count, updatedAt: now }, { merge: true })
     return { ok: true, postId: postRef.id, sharesCount: count }
   })
 })
