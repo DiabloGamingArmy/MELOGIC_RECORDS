@@ -35,6 +35,8 @@ export function normalizeCommunity(rawOrSnap = {}, explicitId = '') {
     memberCount: Math.max(0, Number(raw.memberCount || 0)),
     focusCount: Math.max(0, Number(raw.focusCount || 0)),
     postCount: Math.max(0, Number(raw.postCount || 0)),
+    reportCount: Math.max(0, Number(raw.reportCount || 0)),
+    pinnedPostIds: Array.isArray(raw.pinnedPostIds) ? raw.pinnedPostIds.filter(Boolean).slice(0, 3) : [],
     visibility: raw.visibility || 'public',
     postingMode: raw.postingMode || 'open',
     status: raw.status || 'active',
@@ -52,10 +54,15 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
       .filter((attachment) => attachment && typeof attachment === 'object')
       .map((attachment) => ({
         type: attachment.type || '',
+        targetId: attachment.targetId || attachment.productId || attachment.projectId || attachment.storagePath || '',
         productId: attachment.productId || '',
+        projectId: attachment.projectId || '',
+        sourceType: attachment.sourceType || '',
+        sourceId: attachment.sourceId || '',
+        storagePath: attachment.storagePath || '',
         snapshot: attachment.snapshot && typeof attachment.snapshot === 'object' ? attachment.snapshot : {}
       }))
-      .filter((attachment) => attachment.type && (attachment.type !== 'product' || attachment.productId))
+      .filter((attachment) => attachment.type && (attachment.type !== 'product' || attachment.productId || attachment.targetId))
     : []
   return {
     postId: id,
@@ -73,22 +80,37 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
     linkedProductId: raw.linkedProductId || '',
     linkedProductSnapshot: raw.linkedProductSnapshot || {},
     attachments,
+    attachmentTypes: Array.isArray(raw.attachmentTypes) ? raw.attachmentTypes : attachments.map((attachment) => attachment.type).filter(Boolean),
     mediaPaths: Array.isArray(raw.mediaPaths) ? raw.mediaPaths : [],
     mentionedUserIds: Array.isArray(raw.mentionedUserIds) ? raw.mentionedUserIds : [],
     mentionedUsernames: Array.isArray(raw.mentionedUsernames) ? raw.mentionedUsernames : [],
+    intent: raw.intent || '',
+    intentData: raw.intentData && typeof raw.intentData === 'object' ? raw.intentData : {},
     scheduledAt: serializeDate(raw.scheduledAt),
     publishStatus: raw.publishStatus || raw.status || 'published',
     tags: Array.isArray(raw.tags) ? raw.tags : [],
+    tagKeys: Array.isArray(raw.tagKeys) ? raw.tagKeys : Array.isArray(raw.tags) ? raw.tags : [],
+    searchKeywords: Array.isArray(raw.searchKeywords) ? raw.searchKeywords : [],
+    titleLower: raw.titleLower || String(raw.title || '').toLowerCase(),
+    authorDisplayNameLower: raw.authorDisplayNameLower || String(raw.authorDisplayName || '').toLowerCase(),
+    authorUsernameLower: raw.authorUsernameLower || String(raw.authorUsername || '').toLowerCase(),
     status: raw.status || 'published',
     visibility: raw.visibility || 'public',
     official: raw.official === true,
+    commentsLocked: raw.commentsLocked === true,
+    pinnedInCommunity: raw.pinnedInCommunity === true,
     counts: {
-      likes: Math.max(0, Number(raw.counts?.likes || 0)),
-      comments: Math.max(0, Number(raw.counts?.comments || 0)),
-      saves: Math.max(0, Number(raw.counts?.saves || 0)),
-      shares: Math.max(0, Number(raw.counts?.shares || 0)),
-      reports: Math.max(0, Number(raw.counts?.reports || 0))
+      likes: Math.max(0, Number(raw.likeCount ?? raw.counts?.likes ?? 0)),
+      comments: Math.max(0, Number(raw.commentCount ?? raw.counts?.comments ?? 0)),
+      saves: Math.max(0, Number(raw.saveCount ?? raw.counts?.saves ?? 0)),
+      shares: Math.max(0, Number(raw.shareCount ?? raw.counts?.shares ?? 0)),
+      reports: Math.max(0, Number(raw.reportCount ?? raw.counts?.reports ?? 0))
     },
+    likeCount: Math.max(0, Number(raw.likeCount ?? raw.counts?.likes ?? 0)),
+    commentCount: Math.max(0, Number(raw.commentCount ?? raw.counts?.comments ?? 0)),
+    saveCount: Math.max(0, Number(raw.saveCount ?? raw.counts?.saves ?? 0)),
+    shareCount: Math.max(0, Number(raw.shareCount ?? raw.counts?.shares ?? 0)),
+    reportCount: Math.max(0, Number(raw.reportCount ?? raw.counts?.reports ?? 0)),
     score: Math.max(0, Number(raw.score || 0)),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
@@ -98,6 +120,7 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
 export function normalizeCommunityShareableProduct(docSnapOrData = {}, explicitId = '') {
   const raw = typeof docSnapOrData.data === 'function' ? docSnapOrData.data() || {} : docSnapOrData || {}
   const id = explicitId || docSnapOrData.id || raw.id || raw.productId || ''
+  const previewAssignment = raw.previewAssignment && typeof raw.previewAssignment === 'object' ? raw.previewAssignment : {}
   return {
     productId: id,
     id,
@@ -110,8 +133,86 @@ export function normalizeCommunityShareableProduct(docSnapOrData = {}, explicitI
     priceCents: Math.max(0, Number(raw.priceCents || 0)),
     isFree: Boolean(raw.isFree) || Number(raw.priceCents || 0) <= 0,
     currency: raw.currency || 'USD',
+    previewAudioPaths: Array.isArray(raw.previewAudioPaths) ? raw.previewAudioPaths.filter(Boolean) : [],
+    primaryPreviewPath: raw.primaryPreviewPath || '',
+    primaryPreviewType: raw.primaryPreviewType || '',
+    primaryPreviewDuration: Math.max(0, Number(raw.primaryPreviewDuration || 0)),
+    previewAssignment,
     status: raw.status || '',
     visibility: raw.visibility || ''
+  }
+}
+
+function sortByActivity(a, b) {
+  return new Date(b.updatedAt || b.lastOpenedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.lastOpenedAt || a.createdAt || 0).getTime()
+}
+
+function safeProductAudioPreviewPath(product = {}, requestedPath = '') {
+  const productId = product.productId || product.id || ''
+  const assignment = product.previewAssignment && typeof product.previewAssignment === 'object' ? product.previewAssignment : {}
+  const candidates = [
+    requestedPath,
+    assignment.hoverAudioPath,
+    product.primaryPreviewType === 'audio' ? product.primaryPreviewPath : '',
+    ...(Array.isArray(product.previewAudioPaths) ? product.previewAudioPaths : [])
+  ]
+  return candidates.find((path) => String(path || '').startsWith(`products/${productId}/audio-previews/`)) || ''
+}
+
+async function safeStorageUrl(path = '') {
+  const clean = String(path || '').trim()
+  if (!clean || !storage) return ''
+  try {
+    return await getDownloadURL(ref(storage, clean))
+  } catch {
+    return ''
+  }
+}
+
+export function normalizeCommunityStagePlan(rawOrSnap = {}, explicitId = '') {
+  const raw = typeof rawOrSnap.data === 'function' ? rawOrSnap.data() || {} : rawOrSnap || {}
+  const id = explicitId || rawOrSnap.id || raw.projectId || raw.id || ''
+  const dimensions = raw.stageDimensions && typeof raw.stageDimensions === 'object'
+    ? raw.stageDimensions
+    : raw.stage && typeof raw.stage === 'object'
+      ? { width: raw.stage.width, depth: raw.stage.depth, unit: raw.stage.unit }
+      : {}
+  const objects = Array.isArray(raw.objects) ? raw.objects : Array.isArray(raw.plan?.objects) ? raw.plan.objects : []
+  return {
+    projectId: id,
+    id,
+    title: raw.title || raw.name || 'Untitled Stage Plan',
+    ownerId: raw.ownerId || '',
+    collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds : [],
+    visibility: raw.visibility || 'private',
+    type: raw.type || 'stage-plan',
+    stageType: raw.stageType || 'Stage Plan',
+    stageWidth: Math.max(0, Number(dimensions.width || 0)),
+    stageDepth: Math.max(0, Number(dimensions.depth || 0)),
+    units: dimensions.unit || dimensions.units || 'ft',
+    objectCount: objects.length,
+    updatedAt: serializeDate(raw.updatedAt || raw.lastOpenedAt || raw.createdAt),
+    createdAt: serializeDate(raw.createdAt)
+  }
+}
+
+export function normalizeCommunityStudioProject(rawOrSnap = {}, explicitId = '') {
+  const raw = typeof rawOrSnap.data === 'function' ? rawOrSnap.data() || {} : rawOrSnap || {}
+  const id = explicitId || rawOrSnap.id || raw.projectId || raw.id || ''
+  const tracks = Array.isArray(raw.tracks) ? raw.tracks : []
+  return {
+    projectId: id,
+    id,
+    title: raw.title || 'Untitled Studio Project',
+    ownerId: raw.ownerId || '',
+    collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds : [],
+    visibility: raw.visibility || 'private',
+    type: raw.type || 'song',
+    bpm: Math.max(0, Number(raw.bpm || 0)),
+    key: raw.key || '',
+    trackCount: Math.max(0, Number(raw.trackCount || tracks.length || 0)),
+    updatedAt: serializeDate(raw.updatedAt || raw.lastOpenedAt || raw.createdAt),
+    createdAt: serializeDate(raw.createdAt)
   }
 }
 
@@ -243,29 +344,100 @@ export async function listFocusedCommunityIds(uid = '', limitCount = 50) {
     .filter((id) => id && !id.includes('/'))
 }
 
-export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', limitCount = 25 } = {}) {
+function normalizeFeedSearchToken(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^#|^@/, '')
+    .replace(/[^a-z0-9\s_-]+/g, ' ')
+    .trim()
+    .split(/[\s,_-]+/)
+    .find((part) => part.length >= 2) || ''
+}
+
+function normalizeTagKey(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/^#/, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/[^a-z0-9-]+/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32)
+}
+
+function postMatchesFeedSearch(post = {}, token = '') {
+  if (!token) return true
+  const haystack = [
+    post.title,
+    post.body,
+    post.communityName,
+    post.communitySlug,
+    post.authorDisplayName,
+    post.authorUsername,
+    ...(post.tags || []),
+    ...(post.searchKeywords || [])
+  ].join(' ').toLowerCase()
+  return haystack.includes(token)
+}
+
+function postSort(sort = 'new') {
+  if (sort === 'most-discussed') {
+    return (a, b) => Number(b.commentCount || b.counts?.comments || 0) - Number(a.commentCount || a.counts?.comments || 0)
+      || new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  }
+  if (sort === 'top-today' || sort === 'top-week') {
+    const maxAge = sort === 'top-today' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+    return (a, b) => {
+      const now = Date.now()
+      const aFresh = now - new Date(a.createdAt || 0).getTime() <= maxAge ? 1 : 0
+      const bFresh = now - new Date(b.createdAt || 0).getTime() <= maxAge ? 1 : 0
+      return bFresh - aFresh
+        || Number(b.score || 0) - Number(a.score || 0)
+        || new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    }
+  }
+  return (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+}
+
+export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', limitCount = 25, tag = '', search = '', sort = 'new' } = {}) {
+  const tagKey = normalizeTagKey(tag)
+  const searchToken = normalizeFeedSearchToken(search)
+  const cleanSort = ['new', 'top-today', 'top-week', 'most-discussed'].includes(sort) ? sort : 'new'
   const constraints = [
     where('status', '==', 'published'),
     where('visibility', '==', 'public')
   ]
   if (communitySlug) constraints.push(where('communitySlug', '==', communitySlug))
   if (tab === 'official') constraints.push(where('official', '==', true))
+  if (tagKey) constraints.push(where('tagKeys', 'array-contains', tagKey))
+  else if (searchToken) constraints.push(where('searchKeywords', 'array-contains', searchToken))
+  if (cleanSort === 'most-discussed') constraints.push(orderBy('commentCount', 'desc'))
+  else if (cleanSort === 'top-today' || cleanSort === 'top-week') constraints.push(orderBy('score', 'desc'))
   constraints.push(orderBy('createdAt', 'desc'))
-  constraints.push(limit(limitCount))
+  constraints.push(limit(Math.max(limitCount, searchToken || tagKey ? limitCount : limitCount * 2)))
 
   const fallbackConstraints = [
     where('status', '==', 'published'),
     where('visibility', '==', 'public'),
-    limit(limitCount)
+    limit(Math.max(50, limitCount * 3))
   ]
 
-  return queryWithIndexFallback(
+  const rows = await queryWithIndexFallback(
     constraints,
     fallbackConstraints,
     normalizeCommunityPost,
-    (post) => (!communitySlug || post.communitySlug === communitySlug) && (tab !== 'official' || post.official),
-    (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    (post) => (
+      (!communitySlug || post.communitySlug === communitySlug)
+      && (tab !== 'official' || post.official)
+      && (!tagKey || (post.tagKeys || post.tags || []).includes(tagKey))
+      && postMatchesFeedSearch(post, searchToken)
+    ),
+    postSort(cleanSort)
   )
+  return rows
+    .filter((post) => postMatchesFeedSearch(post, searchToken))
+    .sort(postSort(cleanSort))
+    .slice(0, limitCount)
 }
 
 export async function listFocusedCommunityPosts(uid = '', limitCount = 25) {
@@ -425,6 +597,83 @@ export async function listShareableCommunityProducts(uid = '', limitCount = 20) 
   }
 }
 
+export async function listShareableCommunityMusicPreviews(uid = '', limitCount = 20) {
+  const products = await listShareableCommunityProducts(uid, Math.max(limitCount, 40))
+  const rows = await Promise.all(products.map(async (product) => {
+    const storagePath = safeProductAudioPreviewPath(product)
+    if (!storagePath) return null
+    return {
+      type: 'music',
+      targetId: storagePath,
+      sourceType: 'product_preview',
+      sourceId: product.productId,
+      storagePath,
+      audioURL: await safeStorageUrl(storagePath),
+      snapshot: {
+        title: product.title || 'Music preview',
+        creatorName: product.creatorName || '',
+        durationSeconds: Math.max(0, Number(product.primaryPreviewDuration || 0)),
+        waveformData: [],
+        coverURL: product.thumbnailURL || product.coverURL || '',
+        mimeType: 'audio/*'
+      }
+    }
+  }))
+  return rows.filter(Boolean).slice(0, limitCount)
+}
+
+async function listProjectRows({ uid = '', collectionName = '', normalize, limitCount = 30 } = {}) {
+  const ownerUid = String(uid || '').trim()
+  if (!ownerUid || !collectionName || !normalize) return []
+  const ref = collection(db, collectionName)
+  const [ownedSnap, sharedSnap] = await Promise.all([
+    getDocs(query(ref, where('ownerId', '==', ownerUid), limit(limitCount))).catch((error) => {
+      if (String(error?.code || '').includes('permission-denied')) return { docs: [] }
+      throw error
+    }),
+    getDocs(query(ref, where('collaboratorIds', 'array-contains', ownerUid), limit(limitCount))).catch((error) => {
+      if (String(error?.code || '').includes('permission-denied')) return { docs: [] }
+      throw error
+    })
+  ])
+  const byId = new Map()
+  ;[...ownedSnap.docs, ...sharedSnap.docs].forEach((docSnap) => {
+    const row = normalize(docSnap)
+    if (row.id) byId.set(row.id, row)
+  })
+  return [...byId.values()].sort(sortByActivity).slice(0, limitCount)
+}
+
+export async function listShareableCommunityStagePlans(uid = '', limitCount = 30) {
+  return listProjectRows({
+    uid,
+    collectionName: 'stageProjects',
+    normalize: normalizeCommunityStagePlan,
+    limitCount
+  })
+}
+
+export async function listShareableCommunityStudioProjects(uid = '', limitCount = 30) {
+  return listProjectRows({
+    uid,
+    collectionName: 'studioProjects',
+    normalize: normalizeCommunityStudioProject,
+    limitCount
+  })
+}
+
+export async function resolveCommunityAttachmentMediaUrls(posts = []) {
+  const paths = new Set()
+  posts.forEach((post) => {
+    ;(post.attachments || []).forEach((attachment) => {
+      if (attachment.type === 'music' && attachment.storagePath) paths.add(attachment.storagePath)
+      if (attachment.type === 'studio_project' && attachment.snapshot?.previewAudioPath) paths.add(attachment.snapshot.previewAudioPath)
+    })
+  })
+  const entries = await Promise.all([...paths].map(async (path) => [path, await safeStorageUrl(path)]))
+  return Object.fromEntries(entries.filter(([, url]) => Boolean(url)))
+}
+
 function storyImageExtension(file) {
   const name = String(file?.name || '').toLowerCase()
   if (name.endsWith('.png')) return 'png'
@@ -518,5 +767,65 @@ export async function toggleCommunityPostSave(postId = '') {
 export async function recordCommunityPostShare(postId = '') {
   const callable = httpsCallable(functions, 'recordCommunityPostShare')
   const result = await callable({ postId })
+  return result?.data || { ok: false }
+}
+
+export async function deleteOwnCommunityPost(payload = {}) {
+  const callable = httpsCallable(functions, 'deleteOwnCommunityPost')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function listAdminCommunityModeration(payload = {}) {
+  const callable = httpsCallable(functions, 'listAdminCommunityModeration')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function hideCommunityPost(payload = {}) {
+  const callable = httpsCallable(functions, 'hideCommunityPost')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function restoreCommunityPost(payload = {}) {
+  const callable = httpsCallable(functions, 'restoreCommunityPost')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function lockCommunityPostComments(payload = {}) {
+  const callable = httpsCallable(functions, 'lockCommunityPostComments')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function pinCommunityPost(payload = {}) {
+  const callable = httpsCallable(functions, 'pinCommunityPost')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function unpinCommunityPost(payload = {}) {
+  const callable = httpsCallable(functions, 'unpinCommunityPost')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function hideCommunityComment(payload = {}) {
+  const callable = httpsCallable(functions, 'hideCommunityComment')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function restoreCommunityComment(payload = {}) {
+  const callable = httpsCallable(functions, 'restoreCommunityComment')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function moderateCommunity(payload = {}) {
+  const callable = httpsCallable(functions, 'moderateCommunity')
+  const result = await callable(payload)
   return result?.data || { ok: false }
 }

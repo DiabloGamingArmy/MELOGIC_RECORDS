@@ -434,10 +434,22 @@ function communityPostCardMarkup(post) {
   const body = String(post.body || '').slice(0, 220)
   const href = `${ROUTES.communityPost}/${encodeURIComponent(post.postId || post.id)}`
   const community = post.communitySlug ? `c/${post.communitySlug}` : 'Community'
+  const attachmentTypes = Array.isArray(post.attachmentTypes)
+    ? post.attachmentTypes
+    : Array.isArray(post.attachments)
+      ? post.attachments.map((attachment) => attachment?.type).filter(Boolean)
+      : []
+  const intentLabel = post.intent === 'feedback_request'
+    ? 'Feedback Requested'
+    : post.intent === 'collaboration_request'
+      ? 'Looking for Collaborators'
+      : ''
+  const attachmentLabel = attachmentTypes.length ? attachmentTypes.map((type) => type.replace(/_/g, ' ')).join(' · ') : ''
   return `
     <article class="public-community-post-card">
       <a href="${href}" class="public-community-post-link">
         <span class="public-content-kicker">${escapeHtml(community)} · ${escapeHtml(formatTime(post.createdAt))}</span>
+        ${intentLabel || attachmentLabel ? `<span class="public-community-post-badges">${escapeHtml([intentLabel, attachmentLabel].filter(Boolean).join(' · '))}</span>` : ''}
         <h4>${escapeHtml(title)}</h4>
         <p>${escapeHtml(body)}${String(post.body || '').length > body.length ? '...' : ''}</p>
         <span class="public-community-post-meta">${Number(post.counts?.likes || 0)} likes · ${Number(post.counts?.comments || 0)} comments</span>

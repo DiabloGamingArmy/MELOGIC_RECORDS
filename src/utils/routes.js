@@ -19,6 +19,7 @@ export const ROUTES = {
   adminProducts: '/admin/products',
   adminUsers: '/admin/users',
   adminReports: '/admin/reports',
+  adminCommunity: '/admin/community',
   adminOrders: '/admin/orders',
   adminTeam: '/admin/team',
   adminLogs: '/admin/logs',

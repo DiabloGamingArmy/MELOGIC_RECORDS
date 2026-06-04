@@ -1439,6 +1439,16 @@
   grid-template-columns: minmax(90px, 0.45fr) minmax(150px, 0.8fr) minmax(150px, 0.8fr) minmax(160px, 1fr) minmax(80px, 0.4fr) minmax(90px, 0.45fr) minmax(110px, 0.55fr) minmax(120px, 0.65fr) minmax(150px, 0.75fr);
 }
 
+.admin-data-table.is-community .admin-data-row {
+  min-width: 980px;
+  grid-template-columns: minmax(210px, 1.3fr) minmax(170px, 1fr) minmax(110px, 0.55fr) minmax(130px, 0.65fr) minmax(95px, 0.5fr) minmax(260px, 1.35fr);
+}
+
+.admin-data-table.is-community-comments .admin-data-row {
+  min-width: 780px;
+  grid-template-columns: minmax(240px, 1.4fr) minmax(160px, 0.9fr) minmax(110px, 0.55fr) minmax(90px, 0.45fr) minmax(140px, 0.75fr);
+}
+
 .admin-data-table.is-orders .admin-data-row,
 .admin-data-table.is-team .admin-data-row,
 .admin-data-table.is-logs .admin-data-row {

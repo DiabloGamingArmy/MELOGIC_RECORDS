@@ -1,5 +1,15 @@
 # StageMaker Roadmap
 
+## Community Sharing
+
+Status: implemented as public-safe Community snapshot attachments.
+
+- Community posts can attach a StageMaker project the author owns or collaborates on.
+- Private StageMaker projects require explicit composer confirmation before sharing.
+- Sharing copies only safe snapshot metadata into the Community post: title, template/type, stage dimensions, unit, object count, owner display fields, and an optional public share path.
+- Private project documents, editor state, object data, notes, and storage assets remain protected by existing project rules.
+- A dedicated public read-only Stage Plan viewer is still deferred; private shared plans render as snapshot cards only.
+
 ## Phase 2: Keybinds and Transform Gizmo Foundation
 
 Status: implemented as a conservative editor interaction pass.

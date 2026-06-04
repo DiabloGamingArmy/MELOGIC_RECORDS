@@ -12,6 +12,7 @@
 | `/admin/users/{uid}` | `userRead` or `roleManage` | Profile, user doc, products, account events | `getAdminUserProfile` | View Account Hub | No |
 | `/admin/reports` | `admin`, `userModerate`, `productReview`, or `orderSupport` | Reports | `listAdminReports` | Browse reports | No |
 | `/admin/reports/{reportId}` | `admin`, `userModerate`, `productReview`, or `orderSupport` | Report detail | `getAdminReport`, `updateReportDecision` | Assign, review, dismiss, resolve, action taken | Yes |
+| `/admin/community` | `userModerate` or `admin` | Community posts, comments, reports, communities | `listAdminCommunityModeration`, community moderation callables | Hide/restore posts and comments, lock comments, pin/unpin posts, hide/restore communities | Yes |
 | `/admin/orders` | `orderSupport` | Orders | `listAdminOrders` | Browse orders | No |
 | `/admin/orders/{orderId}` | `orderSupport` | Order detail and logs | `getAdminOrder` | View order audit | No |
 | `/admin/team` | `roleManage` | Admin users | `listAdminTeam`, `setAdminUserRole` | Assign/remove roles | Yes |

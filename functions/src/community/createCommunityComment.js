@@ -31,6 +31,9 @@ const createCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
 
   const result = await firestore.runTransaction(async (tx) => {
     const { post } = await assertPublicPost(tx, postRef)
+    if (post.commentsLocked === true) {
+      throw new HttpsError('failed-precondition', 'Comments are locked on this post.')
+    }
     const visibleCommentsSnap = await tx.get(postRef.collection('comments').where('status', '==', 'visible'))
     let parent = null
     if (parentRef) {
@@ -59,6 +62,8 @@ const createCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
     tx.set(commentRef, payload)
     tx.set(postRef, {
       'counts.comments': Math.max(0, Number(visibleCommentsSnap.size || post.counts?.comments || 0)) + 1,
+      commentCount: Math.max(0, Number(visibleCommentsSnap.size || post.counts?.comments || 0)) + 1,
+      score: Math.max(0, Number(post.score || 0)) + 1,
       updatedAt: now
     }, { merge: true })
     if (parentRef) {

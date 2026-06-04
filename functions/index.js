@@ -28,6 +28,18 @@ const { toggleCommunityCommentLike } = require('./src/community/toggleCommunityC
 const { createCommunityStory } = require('./src/community/createCommunityStory')
 const { deleteCommunityStory } = require('./src/community/deleteCommunityStory')
 const { recordCommunityStoryView } = require('./src/community/recordCommunityStoryView')
+const {
+  hideCommunityPost,
+  restoreCommunityPost,
+  lockCommunityPostComments,
+  deleteOwnCommunityPost,
+  pinCommunityPost,
+  unpinCommunityPost,
+  hideCommunityComment,
+  restoreCommunityComment,
+  moderateCommunity,
+  listAdminCommunityModeration
+} = require('./src/community/communityModeration')
 const { createReport } = require('./src/reports/createReport')
 const { recordAccountSecurityEvent } = require('./src/account/recordAccountSecurityEvent')
 const { reviewProductDecision } = require('./src/admin/reviewProductDecision')
@@ -82,6 +94,16 @@ exports.toggleCommunityCommentLike = toggleCommunityCommentLike
 exports.createCommunityStory = createCommunityStory
 exports.deleteCommunityStory = deleteCommunityStory
 exports.recordCommunityStoryView = recordCommunityStoryView
+exports.hideCommunityPost = hideCommunityPost
+exports.restoreCommunityPost = restoreCommunityPost
+exports.lockCommunityPostComments = lockCommunityPostComments
+exports.deleteOwnCommunityPost = deleteOwnCommunityPost
+exports.pinCommunityPost = pinCommunityPost
+exports.unpinCommunityPost = unpinCommunityPost
+exports.hideCommunityComment = hideCommunityComment
+exports.restoreCommunityComment = restoreCommunityComment
+exports.moderateCommunity = moderateCommunity
+exports.listAdminCommunityModeration = listAdminCommunityModeration
 exports.createReport = createReport
 exports.recordAccountSecurityEvent = recordAccountSecurityEvent
 exports.reviewProductDecision = reviewProductDecision
