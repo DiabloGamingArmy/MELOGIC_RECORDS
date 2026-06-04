@@ -47,6 +47,16 @@ export function normalizeCommunity(rawOrSnap = {}, explicitId = '') {
 export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
   const raw = typeof docSnapOrData.data === 'function' ? docSnapOrData.data() || {} : docSnapOrData || {}
   const id = explicitId || docSnapOrData.id || raw.postId || ''
+  const attachments = Array.isArray(raw.attachments)
+    ? raw.attachments
+      .filter((attachment) => attachment && typeof attachment === 'object')
+      .map((attachment) => ({
+        type: attachment.type || '',
+        productId: attachment.productId || '',
+        snapshot: attachment.snapshot && typeof attachment.snapshot === 'object' ? attachment.snapshot : {}
+      }))
+      .filter((attachment) => attachment.type && (attachment.type !== 'product' || attachment.productId))
+    : []
   return {
     postId: id,
     id,
@@ -62,7 +72,12 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
     communityName: raw.communityName || '',
     linkedProductId: raw.linkedProductId || '',
     linkedProductSnapshot: raw.linkedProductSnapshot || {},
+    attachments,
     mediaPaths: Array.isArray(raw.mediaPaths) ? raw.mediaPaths : [],
+    mentionedUserIds: Array.isArray(raw.mentionedUserIds) ? raw.mentionedUserIds : [],
+    mentionedUsernames: Array.isArray(raw.mentionedUsernames) ? raw.mentionedUsernames : [],
+    scheduledAt: serializeDate(raw.scheduledAt),
+    publishStatus: raw.publishStatus || raw.status || 'published',
     tags: Array.isArray(raw.tags) ? raw.tags : [],
     status: raw.status || 'published',
     visibility: raw.visibility || 'public',
@@ -77,6 +92,26 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
     score: Math.max(0, Number(raw.score || 0)),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
+  }
+}
+
+export function normalizeCommunityShareableProduct(docSnapOrData = {}, explicitId = '') {
+  const raw = typeof docSnapOrData.data === 'function' ? docSnapOrData.data() || {} : docSnapOrData || {}
+  const id = explicitId || docSnapOrData.id || raw.id || raw.productId || ''
+  return {
+    productId: id,
+    id,
+    title: raw.title || 'Untitled product',
+    slug: raw.slug || '',
+    thumbnailURL: raw.thumbnailURL || raw.coverURL || '',
+    coverURL: raw.coverURL || '',
+    creatorName: raw.artistDisplayName || raw.artistName || '',
+    artistId: raw.artistId || '',
+    priceCents: Math.max(0, Number(raw.priceCents || 0)),
+    isFree: Boolean(raw.isFree) || Number(raw.priceCents || 0) <= 0,
+    currency: raw.currency || 'USD',
+    status: raw.status || '',
+    visibility: raw.visibility || ''
   }
 }
 
@@ -357,6 +392,37 @@ export async function listCommunityStories({ limitCount = 30 } = {}) {
       .sort((a, b) => new Date(a.expiresAt || 0).getTime() - new Date(b.expiresAt || 0).getTime())
   }
   return Promise.all(stories.map(attachStoryMediaUrl))
+}
+
+export async function listShareableCommunityProducts(uid = '', limitCount = 20) {
+  const artistId = String(uid || '').trim()
+  if (!db || !artistId) return []
+  const productsRef = collection(db, 'products')
+  const primary = query(
+    productsRef,
+    where('artistId', '==', artistId),
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public'),
+    orderBy('createdAt', 'desc'),
+    limit(limitCount)
+  )
+  const fallback = query(
+    productsRef,
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public'),
+    limit(Math.max(limitCount, 50))
+  )
+  try {
+    const snapshot = await getDocs(primary)
+    return snapshot.docs.map((docSnap) => normalizeCommunityShareableProduct(docSnap))
+  } catch (error) {
+    if (!String(error?.message || '').includes('requires an index')) throw error
+    const snapshot = await getDocs(fallback)
+    return snapshot.docs
+      .map((docSnap) => normalizeCommunityShareableProduct(docSnap))
+      .filter((product) => product.artistId === artistId)
+      .slice(0, limitCount)
+  }
 }
 
 function storyImageExtension(file) {

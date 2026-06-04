@@ -18,7 +18,7 @@ The `/community` homepage uses a Nexara-inspired social layout adapted to the Me
 - The topic bar exposes For You, Focused, real public communities when available, and honest placeholder topic chips when community data has not loaded.
 - A standalone stories row sits below the topic bar with Melogic gradient story rings.
 - The old inline "Share something" composer is hidden by default.
-- Post creation now opens a modal with Text Post, Share Product, title, body, community destination, tags, Publish, and Cancel.
+- Post creation now opens a wider unified composer with title, body, product attachment, mention search, emoji insertion, community destination, tags, Publish, and Cancel.
 - The homepage body is a three-column layout: left navigation, center feed, and right rail.
 - Feed cards use a cleaner social action row for Like, Comment, Save, Share, and Report.
 
@@ -119,7 +119,7 @@ Posts are stored in `communityPosts/{postId}`:
   authorDisplayName,
   authorUsername,
   authorAvatarURL,
-  type: 'text' | 'product_share',
+  type: 'post',
   title,
   body,
   communityId: '',
@@ -127,7 +127,18 @@ Posts are stored in `communityPosts/{postId}`:
   communityName: '',
   linkedProductId: '',
   linkedProductSnapshot: {},
+  attachments: [
+    {
+      type: 'product',
+      productId,
+      snapshot: { title, slug, thumbnailURL, creatorName, priceCents, isFree, currency }
+    }
+  ],
   mediaPaths: [],
+  mentionedUserIds: [],
+  mentionedUsernames: [],
+  scheduledAt: null,
+  publishStatus: 'published',
   tags: [],
   status: 'published',
   visibility: 'public',
@@ -138,6 +149,8 @@ Posts are stored in `communityPosts/{postId}`:
   updatedAt
 }
 ```
+
+Older posts may still use `type: 'product_share'` with `linkedProductId` and `linkedProductSnapshot`. The UI keeps rendering those fields, but new product shares should use `attachments`.
 
 ## Interaction Model
 
@@ -319,9 +332,24 @@ Done in phase 5:
 - story Firestore/Storage rules and indexes
 - Nexera story rail visual reference ported into the Melogic Community shell
 
+Done in next phase interaction polish:
+
+- community post cards open `/community/post/{postId}` from non-interactive card areas
+- post cards are keyboard-openable with Enter or Space and keep button/link actions isolated from card navigation
+- comment actions link to `/community/post/{postId}#comments`
+- share copies the canonical post detail URL and confirms with `Post link copied.`
+- New Post is now one unified composer instead of separate Text Post / Share Product modes
+- product sharing is an attachment on a standard post through `attachments: [{ type: 'product', productId, snapshot }]`
+- legacy `product_share` and `linkedProductId` posts still render
+- Add Product uses the signed-in creator's public published products and writes a server-sanitized product snapshot
+- Tag People has a username search foundation and stores sanitized mention ids/usernames
+- Emoji insertion and session draft persistence are available in the composer
+- attachment, music, schedule, poll, Stage Plan, and Studio Project tools are visible as disabled `Coming soon` scaffolds
+
 Deferred:
 
 - creator follow feed
 - video stories and live streams
 - FYP scoring
 - full community moderation dashboard
+- mention notifications and scheduled publishing

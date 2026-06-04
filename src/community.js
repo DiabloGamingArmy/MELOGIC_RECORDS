@@ -22,6 +22,7 @@ import {
   listFocusedCommunityPosts,
   listCommunityPosts,
   listCommunityStories,
+  listShareableCommunityProducts,
   newCommunityStoryId,
   normalizeCommunityComment,
   normalizeCommunityPost,
@@ -34,6 +35,7 @@ import {
   toggleCommunityPostSave,
   uploadCommunityStoryImage
 } from './data/communityService'
+import { searchProfilesByUsername } from './data/profileSearchService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
@@ -45,6 +47,8 @@ const DUMMY_STORIES = [
   { id: 'test2', label: 'test2', initials: 'T2' },
   { id: 'test3', label: 'test3', initials: 'T3' }
 ]
+const COMPOSER_DRAFT_KEY = 'melogic-community-composer-draft-v2'
+const QUICK_EMOJIS = ['🔥', '🎧', '🎹', '🥁', '🎚️', '✨', '🙌', '💡', '🚀', '❤️', '🤘', '✅']
 const REPORT_REASONS = [
   'Spam',
   'Harassment or abuse',
@@ -111,12 +115,23 @@ const state = {
   message: '',
   composer: {
     open: false,
-    type: 'text',
     title: '',
     body: '',
     linkedProductId: '',
     communityId: '',
     tags: '',
+    visibility: 'public',
+    attachments: [],
+    emojiOpen: false,
+    mentionQuery: '',
+    mentionResults: [],
+    mentionSearchLoading: false,
+    mentionSearchError: '',
+    mentionedUsers: [],
+    productPickerOpen: false,
+    productPickerLoading: false,
+    productPickerError: '',
+    products: [],
     submitting: false,
     error: ''
   },
@@ -157,6 +172,32 @@ const state = {
 
 if (state.view.createOpen) state.createCommunity.open = true
 
+function defaultComposerState(patch = {}) {
+  return {
+    open: false,
+    title: '',
+    body: '',
+    linkedProductId: '',
+    communityId: '',
+    tags: '',
+    visibility: 'public',
+    attachments: [],
+    emojiOpen: false,
+    mentionQuery: '',
+    mentionResults: [],
+    mentionSearchLoading: false,
+    mentionSearchError: '',
+    mentionedUsers: [],
+    productPickerOpen: false,
+    productPickerLoading: false,
+    productPickerError: '',
+    products: [],
+    submitting: false,
+    error: '',
+    ...patch
+  }
+}
+
 function escapeHtml(value) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -164,6 +205,57 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
+}
+
+function restoreComposerDraft() {
+  try {
+    const raw = window.sessionStorage?.getItem(COMPOSER_DRAFT_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return null
+    return {
+      title: String(parsed.title || '').slice(0, 120),
+      body: String(parsed.body || '').slice(0, 2000),
+      tags: String(parsed.tags || '').slice(0, 160),
+      communityId: String(parsed.communityId || '').slice(0, 180),
+      visibility: parsed.visibility === 'public' ? 'public' : 'public',
+      attachments: Array.isArray(parsed.attachments) ? parsed.attachments.filter((item) => item?.type === 'product' && item.productId).slice(0, 1) : [],
+      mentionedUsers: Array.isArray(parsed.mentionedUsers) ? parsed.mentionedUsers.filter((item) => item?.uid).slice(0, 10) : []
+    }
+  } catch {
+    return null
+  }
+}
+
+function persistComposerDraft() {
+  try {
+    const draft = {
+      title: state.composer.title,
+      body: state.composer.body,
+      tags: state.composer.tags,
+      communityId: state.composer.communityId,
+      visibility: state.composer.visibility,
+      attachments: state.composer.attachments,
+      mentionedUsers: state.composer.mentionedUsers
+    }
+    const hasDraft = draft.title || draft.body || draft.tags || draft.communityId || draft.attachments.length || draft.mentionedUsers.length
+    if (hasDraft) window.sessionStorage?.setItem(COMPOSER_DRAFT_KEY, JSON.stringify(draft))
+    else window.sessionStorage?.removeItem(COMPOSER_DRAFT_KEY)
+  } catch {
+    // Draft persistence should never block posting.
+  }
+}
+
+function clearComposerDraft() {
+  try {
+    window.sessionStorage?.removeItem(COMPOSER_DRAFT_KEY)
+  } catch {
+    // Ignore storage cleanup failures.
+  }
+}
+
+function composerHasDraft() {
+  return Boolean(state.composer.title || state.composer.body || state.composer.tags || state.composer.attachments.length || state.composer.mentionedUsers.length)
 }
 
 function parseDetailPostId() {
@@ -405,6 +497,121 @@ function currentComposerCommunity() {
   return null
 }
 
+function selectedProductAttachment() {
+  return state.composer.attachments.find((attachment) => attachment.type === 'product') || null
+}
+
+function productAttachmentFromProduct(product = {}) {
+  return {
+    type: 'product',
+    productId: product.productId || product.id || '',
+    snapshot: {
+      title: product.title || 'Untitled product',
+      slug: product.slug || '',
+      thumbnailURL: product.thumbnailURL || product.coverURL || '',
+      creatorName: product.creatorName || '',
+      priceCents: Math.max(0, Number(product.priceCents || 0)),
+      isFree: Boolean(product.isFree) || Number(product.priceCents || 0) <= 0,
+      currency: product.currency || 'USD'
+    }
+  }
+}
+
+function productAttachmentPreview(attachment = {}) {
+  if (!attachment?.productId) return ''
+  const snapshot = attachment.snapshot || {}
+  const href = productRoute({ id: attachment.productId, slug: snapshot.slug || snapshot.title || '' })
+  const price = snapshot.isFree ? 'Free' : Number(snapshot.priceCents || 0) ? `$${(Number(snapshot.priceCents || 0) / 100).toFixed(2)}` : ''
+  return `
+    <article class="community-composer-attachment">
+      <a href="${href}" target="_blank" rel="noopener">
+        ${snapshot.thumbnailURL ? `<img src="${escapeHtml(snapshot.thumbnailURL)}" alt="" loading="lazy" />` : `<span class="community-product-fallback">${iconSvg('package')}</span>`}
+        <span>
+          <strong>${escapeHtml(snapshot.title || 'Product')}</strong>
+          <em>${escapeHtml([snapshot.creatorName, price].filter(Boolean).join(' · '))}</em>
+        </span>
+      </a>
+      <button type="button" data-remove-composer-attachment="product" aria-label="Remove product attachment">${iconSvg('x')}</button>
+    </article>
+  `
+}
+
+function renderComposerProductPicker() {
+  if (!state.composer.productPickerOpen) return ''
+  const rows = state.composer.products.map((product) => `
+    <button type="button" class="community-product-picker-row" data-select-composer-product="${escapeHtml(product.productId)}">
+      ${product.thumbnailURL ? `<img src="${escapeHtml(product.thumbnailURL)}" alt="" loading="lazy" />` : `<span class="community-product-fallback">${iconSvg('package')}</span>`}
+      <span>
+        <strong>${escapeHtml(product.title)}</strong>
+        <em>${escapeHtml(product.isFree ? 'Free' : `$${(Number(product.priceCents || 0) / 100).toFixed(2)}`)}</em>
+      </span>
+    </button>
+  `).join('')
+  return `
+    <section class="community-product-picker" aria-label="Product picker">
+      <div class="community-mini-panel-heading">
+        <strong>Select a published product</strong>
+        <button type="button" data-close-product-picker>${iconSvg('x')}</button>
+      </div>
+      ${state.composer.productPickerLoading ? '<p>Loading your published products...</p>' : state.composer.productPickerError ? `<p class="community-error">${escapeHtml(state.composer.productPickerError)}</p>` : rows || '<p>No public published products are available to attach yet.</p>'}
+    </section>
+  `
+}
+
+function renderMentionPicker() {
+  if (!state.composer.mentionQuery && !state.composer.mentionedUsers.length) return ''
+  return `
+    <section class="community-mention-picker" aria-label="Mention people">
+      <div class="community-selected-mentions">
+        ${state.composer.mentionedUsers.map((user) => `
+          <span>@${escapeHtml(user.username || user.displayName || 'creator')} <button type="button" data-remove-mentioned-user="${escapeHtml(user.uid)}" aria-label="Remove mention">${iconSvg('x')}</button></span>
+        `).join('')}
+      </div>
+      ${state.composer.mentionSearchLoading ? '<p>Searching creators...</p>' : state.composer.mentionSearchError ? `<p class="community-error">${escapeHtml(state.composer.mentionSearchError)}</p>` : state.composer.mentionResults.length ? `
+        <div class="community-mention-results">
+          ${state.composer.mentionResults.map((user) => `
+            <button type="button" data-select-mentioned-user="${escapeHtml(user.uid)}">
+              <span class="community-avatar">${user.avatarURL || user.photoURL ? `<img src="${escapeHtml(user.avatarURL || user.photoURL)}" alt="" loading="lazy" />` : `<span>${escapeHtml((user.displayName || user.username || 'M').slice(0, 1).toUpperCase())}</span>`}</span>
+              <span><strong>${escapeHtml(user.displayName || user.username || 'Creator')}</strong><em>${escapeHtml(formatUsername(user.username) || '')}</em></span>
+            </button>
+          `).join('')}
+        </div>
+      ` : state.composer.mentionQuery.length >= 2 ? '<p>No creators found.</p>' : ''}
+    </section>
+  `
+}
+
+function renderEmojiPanel() {
+  if (!state.composer.emojiOpen) return ''
+  return `
+    <div class="community-emoji-panel" aria-label="Emoji picker">
+      ${QUICK_EMOJIS.map((emoji) => `<button type="button" data-insert-emoji="${escapeHtml(emoji)}">${escapeHtml(emoji)}</button>`).join('')}
+    </div>
+  `
+}
+
+function renderAttachmentToolbar() {
+  const disabledActions = [
+    ['Add Attachment', 'file'],
+    ['Add Music', 'music'],
+    ['Schedule', 'calendar'],
+    ['Add Poll', 'barChart'],
+    ['Add Stage Plan', 'cube'],
+    ['Add Studio Project', 'music']
+  ]
+  return `
+    <div class="community-attachment-toolbar" aria-label="Post additions">
+      <button type="button" data-open-product-picker class="${selectedProductAttachment() ? 'is-active' : ''}" title="Add Product">${iconSvg('package')} <span>Add Product</span></button>
+      <label class="community-mention-control" title="Tag People">
+        ${iconSvg('at')} <span>Tag People</span>
+        <input type="search" value="${escapeHtml(state.composer.mentionQuery)}" placeholder="@username" data-mention-search />
+      </label>
+      <button type="button" data-toggle-emoji-panel class="${state.composer.emojiOpen ? 'is-active' : ''}" title="Emoji">${iconSvg('smile')} <span>Emoji</span></button>
+      ${disabledActions.map(([label, icon]) => `<button type="button" disabled title="Coming soon">${iconSvg(icon)} <span>${escapeHtml(label)}</span><em>Coming soon</em></button>`).join('')}
+    </div>
+  `
+}
+
 function renderComposerModal() {
   if (!state.composer.open) return ''
   if (!state.currentUser) {
@@ -438,25 +645,20 @@ function renderComposerModal() {
           </div>
           <button type="button" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
         </header>
-        <div class="community-type-toggle" role="group" aria-label="Post type">
-          <button type="button" data-post-type="text" class="${state.composer.type === 'text' ? 'is-active' : ''}">${iconSvg('fileText')} <span>Text Post</span></button>
-          <button type="button" data-post-type="product_share" class="${state.composer.type === 'product_share' ? 'is-active' : ''}">${iconSvg('package')} <span>Share Product</span></button>
-        </div>
         <form data-community-composer-form>
-          <label>
+          <label class="community-composer-title-field">
             <span>Title</span>
             <input name="title" maxlength="120" value="${escapeHtml(state.composer.title)}" placeholder="Optional headline" />
           </label>
-          <label>
+          <label class="community-composer-body-field">
             <span>Body</span>
-            <textarea name="body" maxlength="2000" rows="5" placeholder="Share an update, question, or idea.">${escapeHtml(state.composer.body)}</textarea>
+            <textarea name="body" maxlength="2000" rows="8" placeholder="Share an update, question, idea, product note, or creative win." data-composer-body>${escapeHtml(state.composer.body)}</textarea>
           </label>
-          ${state.composer.type === 'product_share' ? `
-            <label>
-              <span>Product ID</span>
-              <input name="linkedProductId" maxlength="180" value="${escapeHtml(state.composer.linkedProductId)}" placeholder="Paste a published product ID" />
-            </label>
-          ` : ''}
+          ${renderAttachmentToolbar()}
+          ${renderEmojiPanel()}
+          ${renderComposerProductPicker()}
+          ${productAttachmentPreview(selectedProductAttachment())}
+          ${renderMentionPicker()}
           ${state.view.type === 'community' && state.community ? `
             <input type="hidden" name="communityId" value="${escapeHtml(state.community.communityId)}" />
             <p class="community-context-note">Posting to <a href="${communityRoute(state.community.slug)}">c/${escapeHtml(state.community.slug)}</a></p>
@@ -469,6 +671,12 @@ function renderComposerModal() {
               </select>
             </label>
           `}
+          <label>
+            <span>Visibility</span>
+            <select name="visibility" disabled title="Public posts only in this phase">
+              <option value="public" selected>Public</option>
+            </select>
+          </label>
           <label>
             <span>Tags</span>
             <input name="tags" maxlength="160" value="${escapeHtml(state.composer.tags)}" placeholder="beats, feedback, release" />
@@ -486,16 +694,19 @@ function renderComposerModal() {
 }
 
 function linkedProductMarkup(post) {
-  const product = post.linkedProductSnapshot || {}
-  if (post.type !== 'product_share' || !post.linkedProductId) return ''
-  const href = productRoute({ id: post.linkedProductId, slug: product.slug || product.title || '' })
+  const attachment = (post.attachments || []).find((item) => item.type === 'product' && item.productId)
+  const productId = attachment?.productId || post.linkedProductId || ''
+  const product = attachment?.snapshot || post.linkedProductSnapshot || {}
+  if (!productId) return ''
+  const href = productRoute({ id: productId, slug: product.slug || product.title || '' })
+  const creator = product.creatorName || product.artistName || ''
   const price = product.isFree ? 'Free' : product.priceCents ? `$${(Number(product.priceCents) / 100).toFixed(2)}` : ''
   return `
     <a class="community-linked-product" href="${href}">
       ${product.thumbnailURL ? `<img src="${escapeHtml(product.thumbnailURL)}" alt="" loading="lazy" />` : `<span class="community-product-fallback">${iconSvg('package')}</span>`}
       <span>
         <strong>${escapeHtml(product.title || 'Shared product')}</strong>
-        <em>${escapeHtml([product.artistName, price].filter(Boolean).join(' · '))}</em>
+        <em>${escapeHtml([creator, price].filter(Boolean).join(' · '))}</em>
       </span>
     </a>
   `
@@ -506,7 +717,7 @@ function postCard(post, { detail = false } = {}) {
   const body = detail ? post.body : post.body.slice(0, 640)
   const authorHref = post.authorUid ? publicProfileRoute({ uid: post.authorUid }) : ROUTES.profilePublic
   return `
-    <article class="community-post-card" data-post-id="${escapeHtml(post.postId)}" data-post-href="${communityPostRoute(post.postId)}">
+    <article class="community-post-card" data-post-id="${escapeHtml(post.postId)}" data-post-href="${communityPostRoute(post.postId)}" role="link" tabindex="0" aria-label="Open post ${escapeHtml(post.title || 'detail')}">
       <header class="community-post-header">
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar">${postAvatar(post)}</span>
@@ -526,7 +737,7 @@ function postCard(post, { detail = false } = {}) {
       ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<span>#${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
       <footer class="community-post-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
-        <a href="${communityPostRoute(post.postId)}">${iconSvg('messageCircle')} <span>Comment</span><em>${formatCount(post.counts.comments)}</em></a>
+        <a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>Comment</span><em>${formatCount(post.counts.comments)}</em></a>
         <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
         <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
         <button type="button" data-community-report="${escapeHtml(post.postId)}">${iconSvg('alertCircle')} <span>Report</span></button>
@@ -600,7 +811,7 @@ function renderComments(post) {
     return map
   }, {})
   return `
-    <section class="community-comments" aria-labelledby="community-comments-title">
+    <section class="community-comments" id="comments" aria-labelledby="community-comments-title">
       <div class="community-comments-heading">
         <div>
           <h3 id="community-comments-title">Comments</h3>
@@ -1175,18 +1386,13 @@ async function handleComposerSubmit(event) {
   const formData = new FormData(form)
   const title = String(formData.get('title') || '').trim()
   const body = String(formData.get('body') || '').trim()
-  const linkedProductId = String(formData.get('linkedProductId') || '').trim()
   const communityId = String(formData.get('communityId') || '').trim()
   const tags = String(formData.get('tags') || '').trim()
 
-  state.composer = { ...state.composer, title, body, linkedProductId, communityId, tags, error: '' }
-  if (!body) {
-    state.composer.error = 'Post body is required.'
-    render()
-    return
-  }
-  if (state.composer.type === 'product_share' && !linkedProductId) {
-    state.composer.error = 'Paste a published product ID to share.'
+  state.composer = { ...state.composer, title, body, communityId, tags, error: '' }
+  persistComposerDraft()
+  if (!body && !title && !state.composer.attachments.length) {
+    state.composer.error = 'Add text, a title, or an attachment before publishing.'
     render()
     return
   }
@@ -1196,10 +1402,15 @@ async function handleComposerSubmit(event) {
   try {
     const community = currentComposerCommunity()
     const result = await createCommunityPost({
-      type: state.composer.type,
+      type: 'post',
       title,
       body,
-      linkedProductId,
+      attachments: state.composer.attachments.map((attachment) => ({
+        type: attachment.type,
+        productId: attachment.productId
+      })),
+      mentionedUserIds: state.composer.mentionedUsers.map((user) => user.uid).filter(Boolean),
+      mentionedUsernames: state.composer.mentionedUsers.map((user) => user.username).filter(Boolean),
       communityId: community?.communityId || '',
       communitySlug: community?.slug || '',
       tags: tags.split(/[,\s]+/).filter(Boolean)
@@ -1216,7 +1427,8 @@ async function handleComposerSubmit(event) {
     if (state.community?.communityId === post.communityId) {
       state.community = { ...state.community, postCount: state.community.postCount + 1 }
     }
-    state.composer = { open: false, type: 'text', title: '', body: '', linkedProductId: '', communityId: state.view.type === 'community' ? state.community?.communityId || '' : '', tags: '', submitting: false, error: '' }
+    clearComposerDraft()
+    state.composer = defaultComposerState({ communityId: state.view.type === 'community' ? state.community?.communityId || '' : '' })
     state.message = 'Post published.'
     render()
     window.setTimeout(() => {
@@ -1256,7 +1468,7 @@ async function handleSave(postId) {
 async function handleShare(postId) {
   const url = `${window.location.origin}${communityPostRoute(postId)}`
   await navigator.clipboard?.writeText(url).catch(() => null)
-  state.message = 'Link copied.'
+  state.message = 'Post link copied.'
   if (state.currentUser) {
     recordCommunityPostShare(postId).then((result) => {
       if (Number.isFinite(Number(result.sharesCount))) {
@@ -1414,14 +1626,16 @@ async function handleToggleFocus(communityId) {
 }
 
 function openCommunityComposer() {
+  const draft = restoreComposerDraft()
   state.composer = {
     ...state.composer,
+    ...(draft || {}),
     open: true,
     communityId: state.view.type === 'community'
       ? state.community?.communityId || ''
       : state.activeTab === 'community'
         ? state.activeCommunityId
-        : state.composer.communityId,
+        : draft?.communityId || state.composer.communityId,
     submitting: false,
     error: ''
   }
@@ -1429,7 +1643,132 @@ function openCommunityComposer() {
 }
 
 function closeCommunityComposer() {
-  state.composer = { ...state.composer, open: false, submitting: false, error: '' }
+  if (composerHasDraft()) {
+    if (!window.confirm('Discard draft?')) return
+    clearComposerDraft()
+    state.composer = defaultComposerState({
+      communityId: state.view.type === 'community' ? state.community?.communityId || '' : ''
+    })
+  } else {
+    state.composer = { ...state.composer, open: false, submitting: false, error: '' }
+  }
+  render()
+}
+
+function updateComposerFromForm() {
+  const form = app?.querySelector('[data-community-composer-form]')
+  if (!form) return
+  const formData = new FormData(form)
+  state.composer = {
+    ...state.composer,
+    title: String(formData.get('title') || '').trimStart().slice(0, 120),
+    body: String(formData.get('body') || '').slice(0, 2000),
+    communityId: String(formData.get('communityId') || '').trim(),
+    tags: String(formData.get('tags') || '').trimStart().slice(0, 160),
+    visibility: 'public'
+  }
+  persistComposerDraft()
+}
+
+async function openProductPicker() {
+  if (!state.currentUser?.uid) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  state.composer = { ...state.composer, productPickerOpen: true, productPickerLoading: true, productPickerError: '' }
+  render()
+  try {
+    const products = await listShareableCommunityProducts(state.currentUser.uid, 20)
+    state.composer = { ...state.composer, products, productPickerLoading: false, productPickerError: '' }
+    render()
+  } catch (error) {
+    console.warn('[community] product picker failed', { code: error?.code, message: error?.message })
+    state.composer = { ...state.composer, productPickerLoading: false, productPickerError: 'Published products could not be loaded.' }
+    render()
+  }
+}
+
+function selectComposerProduct(productId = '') {
+  const product = state.composer.products.find((item) => item.productId === productId)
+  if (!product) return
+  state.composer = {
+    ...state.composer,
+    attachments: [productAttachmentFromProduct(product)],
+    linkedProductId: product.productId,
+    productPickerOpen: false,
+    productPickerError: ''
+  }
+  persistComposerDraft()
+  render()
+}
+
+function removeComposerAttachment(type = '') {
+  state.composer = {
+    ...state.composer,
+    attachments: state.composer.attachments.filter((attachment) => attachment.type !== type),
+    linkedProductId: type === 'product' ? '' : state.composer.linkedProductId
+  }
+  persistComposerDraft()
+  render()
+}
+
+function insertEmoji(emoji = '') {
+  const textarea = app?.querySelector('[data-composer-body]')
+  const current = state.composer.body || ''
+  if (textarea) {
+    const start = textarea.selectionStart ?? current.length
+    const end = textarea.selectionEnd ?? current.length
+    state.composer.body = `${current.slice(0, start)}${emoji}${current.slice(end)}`.slice(0, 2000)
+  } else {
+    state.composer.body = `${current}${emoji}`.slice(0, 2000)
+  }
+  state.composer.emojiOpen = false
+  persistComposerDraft()
+  render()
+}
+
+let mentionSearchTimer = null
+
+function queueMentionSearch(value = '') {
+  const mentionQuery = String(value || '').replace(/^@/, '').trim().toLowerCase()
+  state.composer = { ...state.composer, mentionQuery, mentionSearchError: '', mentionResults: mentionQuery.length >= 2 ? state.composer.mentionResults : [] }
+  persistComposerDraft()
+  window.clearTimeout(mentionSearchTimer)
+  if (mentionQuery.length < 2) {
+    render()
+    return
+  }
+  state.composer = { ...state.composer, mentionSearchLoading: true }
+  render()
+  mentionSearchTimer = window.setTimeout(async () => {
+    try {
+      const rows = await searchProfilesByUsername(mentionQuery)
+      const existing = new Set(state.composer.mentionedUsers.map((user) => user.uid))
+      state.composer = { ...state.composer, mentionResults: rows.filter((user) => !existing.has(user.uid)), mentionSearchLoading: false, mentionSearchError: '' }
+      render()
+    } catch (error) {
+      state.composer = { ...state.composer, mentionSearchLoading: false, mentionSearchError: error?.message || 'Creator search is unavailable.' }
+      render()
+    }
+  }, 250)
+}
+
+function selectMentionedUser(uid = '') {
+  const user = state.composer.mentionResults.find((item) => item.uid === uid)
+  if (!user) return
+  state.composer = {
+    ...state.composer,
+    mentionedUsers: [...state.composer.mentionedUsers.filter((item) => item.uid !== uid), user].slice(0, 10),
+    mentionQuery: '',
+    mentionResults: []
+  }
+  persistComposerDraft()
+  render()
+}
+
+function removeMentionedUser(uid = '') {
+  state.composer = { ...state.composer, mentionedUsers: state.composer.mentionedUsers.filter((item) => item.uid !== uid) }
+  persistComposerDraft()
   render()
 }
 
@@ -1480,6 +1819,16 @@ function updateTopicArrowState() {
   const atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 4
   left?.toggleAttribute('disabled', atStart)
   right?.toggleAttribute('disabled', atEnd)
+}
+
+function isPostCardInteractiveTarget(target) {
+  return Boolean(target?.closest?.('a, button, input, textarea, select, label, [role="button"], [data-stop-card-nav]'))
+}
+
+function openPostDetail(postId = '', hash = '') {
+  const id = String(postId || '').trim()
+  if (!id) return
+  window.location.assign(`${communityPostRoute(id)}${hash}`)
 }
 
 async function handleCreateCommunitySubmit(event) {
@@ -1707,6 +2056,21 @@ async function handleReportSubmit(event) {
 }
 
 function bindEvents() {
+  app.querySelectorAll('.community-post-card[data-post-id]').forEach((card) => {
+    card.addEventListener('click', (event) => {
+      if (isPostCardInteractiveTarget(event.target)) return
+      openPostDetail(card.getAttribute('data-post-id') || '')
+    })
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      if (isPostCardInteractiveTarget(event.target)) return
+      event.preventDefault()
+      openPostDetail(card.getAttribute('data-post-id') || '')
+    })
+  })
+  app.querySelectorAll('.community-post-card a, .community-post-card button, .community-post-card input, .community-post-card textarea, .community-post-card select, .community-post-card label').forEach((element) => {
+    element.addEventListener('click', (event) => event.stopPropagation())
+  })
   app.querySelectorAll('[data-community-tab]').forEach((button) => {
     button.addEventListener('click', () => {
       selectTopicTab(button.getAttribute('data-community-tab') || 'for-you')
@@ -1742,12 +2106,6 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-community-nav-stub]').forEach((button) => {
     button.addEventListener('click', () => showCommunityToast(`${button.getAttribute('data-community-nav-stub')} is coming in a later community pass.`))
-  })
-  app.querySelectorAll('[data-post-type]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.composer.type = button.getAttribute('data-post-type') || 'text'
-      render()
-    })
   })
   app.querySelectorAll('[data-story-media-type]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1788,6 +2146,26 @@ function bindEvents() {
   app.querySelectorAll('[data-story-report]').forEach((button) => button.addEventListener('click', () => openStoryReport(button.getAttribute('data-story-report') || '')))
   app.querySelectorAll('[data-story-delete]').forEach((button) => button.addEventListener('click', () => handleStoryDelete(button.getAttribute('data-story-delete') || '')))
   app.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
+  app.querySelector('[data-community-composer-form]')?.addEventListener('input', updateComposerFromForm)
+  app.querySelector('[data-open-product-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openProductPicker()
+  })
+  app.querySelector('[data-close-product-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, productPickerOpen: false, productPickerError: '' }
+    render()
+  })
+  app.querySelectorAll('[data-select-composer-product]').forEach((button) => button.addEventListener('click', () => selectComposerProduct(button.getAttribute('data-select-composer-product') || '')))
+  app.querySelectorAll('[data-remove-composer-attachment]').forEach((button) => button.addEventListener('click', () => removeComposerAttachment(button.getAttribute('data-remove-composer-attachment') || '')))
+  app.querySelector('[data-toggle-emoji-panel]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    state.composer = { ...state.composer, emojiOpen: !state.composer.emojiOpen }
+    render()
+  })
+  app.querySelectorAll('[data-insert-emoji]').forEach((button) => button.addEventListener('click', () => insertEmoji(button.getAttribute('data-insert-emoji') || '')))
+  app.querySelector('[data-mention-search]')?.addEventListener('input', (event) => queueMentionSearch(event.target.value))
+  app.querySelectorAll('[data-select-mentioned-user]').forEach((button) => button.addEventListener('click', () => selectMentionedUser(button.getAttribute('data-select-mentioned-user') || '')))
+  app.querySelectorAll('[data-remove-mentioned-user]').forEach((button) => button.addEventListener('click', () => removeMentionedUser(button.getAttribute('data-remove-mentioned-user') || '')))
   app.querySelector('[data-reload-community]')?.addEventListener('click', loadCommunity)
   app.querySelector('[data-open-create-community]')?.addEventListener('click', () => {
     state.createCommunity = { ...state.createCommunity, open: true, error: '', message: '' }
@@ -1807,11 +2185,26 @@ function bindEvents() {
     state.communityFilters.category = event.target.value
     loadCommunities()
   })
-  app.querySelectorAll('[data-toggle-community-focus]').forEach((button) => button.addEventListener('click', () => handleToggleFocus(button.getAttribute('data-toggle-community-focus'))))
-  app.querySelectorAll('[data-community-like]').forEach((button) => button.addEventListener('click', () => handleLike(button.getAttribute('data-community-like'))))
-  app.querySelectorAll('[data-community-save]').forEach((button) => button.addEventListener('click', () => handleSave(button.getAttribute('data-community-save'))))
-  app.querySelectorAll('[data-community-share]').forEach((button) => button.addEventListener('click', () => handleShare(button.getAttribute('data-community-share'))))
-  app.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', () => openReport(button.getAttribute('data-community-report'))))
+  app.querySelectorAll('[data-toggle-community-focus]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    handleToggleFocus(button.getAttribute('data-toggle-community-focus'))
+  }))
+  app.querySelectorAll('[data-community-like]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    handleLike(button.getAttribute('data-community-like'))
+  }))
+  app.querySelectorAll('[data-community-save]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    handleSave(button.getAttribute('data-community-save'))
+  }))
+  app.querySelectorAll('[data-community-share]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    handleShare(button.getAttribute('data-community-share'))
+  }))
+  app.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    openReport(button.getAttribute('data-community-report'))
+  }))
   app.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
   app.querySelectorAll('[data-community-reply-form]').forEach((form) => {
     form.addEventListener('submit', (event) => handleReplySubmit(event, form.getAttribute('data-community-reply-form') || ''))
