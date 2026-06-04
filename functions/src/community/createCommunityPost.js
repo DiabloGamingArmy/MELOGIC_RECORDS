@@ -3,7 +3,7 @@ const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
 const { cleanSlug, seedOfficialCommunities } = require('./communityShared')
 
-const POST_TYPES = new Set(['text', 'product_share'])
+const POST_TYPES = new Set(['post', 'text', 'product_share'])
 
 function db() {
   return admin.firestore()
@@ -62,6 +62,45 @@ async function buildProductSnapshot(productId = '') {
   }
 }
 
+async function buildProductAttachment(productId = '') {
+  const productLink = await buildProductSnapshot(productId)
+  if (!productLink.linkedProductId) return null
+  return {
+    type: 'product',
+    productId: productLink.linkedProductId,
+    snapshot: {
+      title: productLink.linkedProductSnapshot.title || 'Untitled product',
+      slug: productLink.linkedProductSnapshot.slug || '',
+      thumbnailURL: productLink.linkedProductSnapshot.thumbnailURL || '',
+      creatorName: productLink.linkedProductSnapshot.artistName || '',
+      priceCents: productLink.linkedProductSnapshot.priceCents || 0,
+      isFree: productLink.linkedProductSnapshot.isFree === true,
+      currency: productLink.linkedProductSnapshot.currency || 'USD'
+    }
+  }
+}
+
+async function normalizeAttachments(value = []) {
+  const raw = Array.isArray(value) ? value : []
+  const productIds = Array.from(new Set(raw
+    .filter((attachment) => attachment && typeof attachment === 'object' && attachment.type === 'product')
+    .map((attachment) => cleanString(attachment.productId || '', 180))
+    .filter((id) => id && !id.includes('/')))).slice(0, 1)
+
+  const productAttachments = await Promise.all(productIds.map((id) => buildProductAttachment(id)))
+  return productAttachments.filter(Boolean)
+}
+
+function normalizeMentions(ids = [], usernames = [], uid = '') {
+  const mentionedUserIds = Array.from(new Set((Array.isArray(ids) ? ids : [])
+    .map((id) => cleanString(id, 180))
+    .filter((id) => id && id !== uid && !id.includes('/')))).slice(0, 10)
+  const mentionedUsernames = Array.from(new Set((Array.isArray(usernames) ? usernames : [])
+    .map((username) => cleanString(username, 60).replace(/^@/, '').toLowerCase())
+    .filter(Boolean))).slice(0, 10)
+  return { mentionedUserIds, mentionedUsernames }
+}
+
 async function resolveCommunityForPost({ communityId = '', communitySlug = '', uid = '' } = {}) {
   const id = cleanString(communityId || cleanSlug(communitySlug), 180)
   if (!id) return { communityId: '', communitySlug: '' }
@@ -100,28 +139,35 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   const uid = cleanString(request.auth?.uid || '', 180)
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.')
 
-  const type = cleanString(request.data?.type || 'text', 40)
+  const rawType = cleanString(request.data?.type || 'post', 40)
+  const type = rawType === 'product_share' ? 'product_share' : rawType === 'text' ? 'text' : 'post'
   const title = cleanString(request.data?.title || '', 120)
   const body = cleanString(request.data?.body || '', 2000)
   const tags = normalizeTags(request.data?.tags || [])
+  const mentions = normalizeMentions(request.data?.mentionedUserIds || [], request.data?.mentionedUsernames || [], uid)
 
   if (!POST_TYPES.has(type)) throw new HttpsError('invalid-argument', 'A valid post type is required.')
-  if (!body) throw new HttpsError('invalid-argument', 'Post body is required.')
   if (type === 'product_share' && !cleanString(request.data?.linkedProductId || '', 180)) {
     throw new HttpsError('invalid-argument', 'Choose a product to share.')
   }
 
-  const [author, productLink, community] = await Promise.all([
+  const [author, productLink, attachments, community] = await Promise.all([
     loadAuthorSnapshot(uid),
     type === 'product_share'
       ? buildProductSnapshot(request.data?.linkedProductId || '')
       : Promise.resolve({ linkedProductId: '', linkedProductSnapshot: {} }),
+    type === 'product_share'
+      ? Promise.resolve([])
+      : normalizeAttachments(request.data?.attachments || []),
     resolveCommunityForPost({
       communityId: request.data?.communityId || '',
       communitySlug: request.data?.communitySlug || '',
       uid
     })
   ])
+  if (!body && !title && !attachments.length && type !== 'product_share') {
+    throw new HttpsError('invalid-argument', 'Add text, a title, or an attachment before publishing.')
+  }
 
   const postRef = db().collection('communityPosts').doc()
   const now = admin.firestore.FieldValue.serverTimestamp()
@@ -136,7 +182,12 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     communitySlug: community.communitySlug,
     communityName: community.communityName || '',
     ...productLink,
+    attachments,
     mediaPaths: [],
+    mentionedUserIds: mentions.mentionedUserIds,
+    mentionedUsernames: mentions.mentionedUsernames,
+    scheduledAt: null,
+    publishStatus: 'published',
     tags,
     status: 'published',
     visibility: 'public',
