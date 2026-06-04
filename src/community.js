@@ -46,7 +46,8 @@ import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
-const FALLBACK_TOPIC_LABELS = ['Serum', 'Vital', 'Ableton', 'Logic', 'Dubstep', 'Mixing', 'StageMaker', 'Sample Packs', 'Vocals', 'Feedback']
+const COMMUNITY_PAGE_SIZE = 12
+const FALLBACK_TOPIC_LABELS = ['StageMaker', 'Vocals', 'Sound Design', 'Sample Packs', 'Mixing & Mastering', 'Metalcore', 'Live Production', 'Feedback', 'Dubstep', 'Logic', 'Ableton', 'Serum', 'Vital']
 const DUMMY_STORIES = [
   { id: 'test1', label: 'test1', initials: 'T1' },
   { id: 'test2', label: 'test2', initials: 'T2' },
@@ -80,6 +81,7 @@ const POSTING_MODES = [
   { value: 'members_only', label: 'Members only' },
   { value: 'moderators_only', label: 'Moderators only' }
 ]
+const COMMUNITY_DEBUG = Boolean(import.meta.env?.DEV) || new URLSearchParams(window.location.search).has('debugCommunity')
 
 const state = {
   currentUser: null,
@@ -124,6 +126,13 @@ const state = {
   attachmentMediaUrls: {},
   viewerState: {},
   loading: true,
+  feedInitialLoading: false,
+  feedLoadingMore: false,
+  feedHasMore: true,
+  feedCursor: null,
+  feedError: '',
+  feedStillLoading: false,
+  feedRequestId: 0,
   error: '',
   message: '',
   composer: {
@@ -208,6 +217,34 @@ const state = {
 }
 
 if (state.view.createOpen) state.createCommunity.open = true
+
+let feedPaginationObserver = null
+let communityScrollChromeReady = false
+let communityScrollRaf = 0
+let lastCommunityScrollY = window.scrollY || 0
+
+function logCommunityPerf(label, data = {}) {
+  if (!COMMUNITY_DEBUG) return
+  console.debug('[community:perf]', label, data)
+}
+
+function feedQueryOptions() {
+  return {
+    tab: state.activeTab,
+    communitySlug: state.view.type === 'community' && state.community ? state.community.slug : state.activeCommunitySlug,
+    limitCount: COMMUNITY_PAGE_SIZE,
+    tag: state.activeTag,
+    search: state.feedSearch,
+    sort: state.feedSort
+  }
+}
+
+function resetFeedPagination() {
+  state.feedCursor = null
+  state.feedHasMore = true
+  state.feedError = ''
+  state.feedStillLoading = false
+}
 
 function defaultComposerState(patch = {}) {
   return {
@@ -518,6 +555,16 @@ function renderStoriesRow() {
       ${state.storiesLoading ? '<span class="community-story-empty">Loading stories...</span>' : ''}
       ${state.storiesError ? `<span class="community-story-empty">${escapeHtml(state.storiesError)}</span>` : ''}
     </section>
+  `
+}
+
+function renderCommunityScrollChrome() {
+  return `
+    <div class="community-scroll-chrome" data-community-scroll-chrome>
+      ${renderTopicBar()}
+      ${renderStoriesRow()}
+      <div class="community-shell-divider" aria-hidden="true"></div>
+    </div>
   `
 }
 
@@ -1308,11 +1355,45 @@ function emptyCopy() {
   return 'No posts yet. Be the first to share something.'
 }
 
+function renderFeedSkeletons() {
+  return `
+    <section class="community-feed is-loading" aria-label="Loading community posts">
+      <div class="community-feed-state community-panel">
+        <strong>${state.feedStillLoading ? 'Still loading posts...' : 'Loading posts...'}</strong>
+        <span>${state.feedStillLoading ? 'The feed is taking longer than usual. The rest of Community is still available.' : 'Fetching the latest creator posts.'}</span>
+      </div>
+      ${Array.from({ length: 4 }).map(() => `
+        <article class="community-post-card community-post-skeleton" aria-hidden="true">
+          <div class="community-skeleton-line is-author"></div>
+          <div class="community-skeleton-line is-title"></div>
+          <div class="community-skeleton-line"></div>
+          <div class="community-skeleton-line is-short"></div>
+        </article>
+      `).join('')}
+    </section>
+  `
+}
+
 function renderFeed() {
-  if (state.loading) return '<section class="community-feed-state community-panel">Loading community posts...</section>'
+  if (state.feedInitialLoading && !state.posts.length) return renderFeedSkeletons()
   if (state.error) return `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.error)}</span><button type="button" class="button button-muted" data-reload-community>Retry</button></section>`
-  if (!state.posts.length) return `<section class="community-feed-state community-panel">${escapeHtml(emptyCopy())}</section>`
-  return `<section class="community-feed" aria-label="Community posts">${state.posts.map((post) => postCard(post)).join('')}</section>`
+  if (state.feedError && !state.posts.length) return `<section class="community-feed-state community-panel"><strong>Could not load posts.</strong><span>${escapeHtml(state.feedError)}</span><button type="button" class="button button-muted" data-reload-community>Retry</button></section>`
+  if (!state.posts.length) {
+    return `
+      <section class="community-feed-state community-panel">
+        <strong>${escapeHtml(emptyCopy())}</strong>
+        <button type="button" class="button button-accent" data-open-community-composer>Create Post</button>
+      </section>
+    `
+  }
+  return `
+    <section class="community-feed" aria-label="Community posts">
+      ${state.posts.map((post) => postCard(post)).join('')}
+      ${state.feedError ? `<div class="community-feed-state community-panel"><strong>Could not load more posts.</strong><span>${escapeHtml(state.feedError)}</span></div>` : ''}
+      <div class="community-feed-sentinel" data-community-feed-sentinel aria-hidden="true"></div>
+      ${state.feedLoadingMore ? '<div class="community-feed-more-state">Loading more posts...</div>' : state.feedHasMore ? '<button type="button" class="community-load-more button button-muted" data-load-more-posts>Load more</button>' : '<div class="community-feed-more-state">You are caught up.</div>'}
+    </section>
+  `
 }
 
 function renderCommunityCard(community) {
@@ -1660,6 +1741,7 @@ function renderFeedToolbar() {
 
 function render() {
   if (!app) return
+  if (state.view.type !== 'feed' || communityModalIsOpen()) setCommunityChromeHidden(false)
   if (state.detailPostId) {
     app.innerHTML = renderDetail()
     bindEvents()
@@ -1683,8 +1765,7 @@ function render() {
     ${renderPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
     <main class="community-page">
-      ${renderTopicBar()}
-      ${renderStoriesRow()}
+      ${renderCommunityScrollChrome()}
       ${state.message ? `<p class="community-toast">${escapeHtml(state.message)}</p>` : ''}
       <div class="community-layout is-home">
         ${renderLeftNav()}
@@ -1732,6 +1813,17 @@ async function loadAttachmentMediaUrls() {
     console.warn('[community] attachment media url load failed', { code: error?.code, message: error?.message })
     state.attachmentMediaUrls = {}
   }
+}
+
+async function loadFeedEnrichment(requestId = state.feedRequestId) {
+  const startedAt = performance.now()
+  await Promise.allSettled([
+    loadViewerState(),
+    loadAttachmentMediaUrls()
+  ])
+  if (requestId !== state.feedRequestId) return
+  logCommunityPerf('feed enrichment complete', { durationMs: Math.round(performance.now() - startedAt), posts: state.posts.length })
+  render()
 }
 
 async function loadStories({ renderAfter = false } = {}) {
@@ -1788,10 +1880,10 @@ async function loadCommunityFocusState() {
   state.communityFocus = Object.fromEntries(entries)
 }
 
-async function loadCommunities() {
+async function loadCommunities({ renderOnStart = true, renderAfter = true } = {}) {
   state.communityFilters.loading = true
   state.communityFilters.error = ''
-  render()
+  if (renderOnStart) render()
   try {
     state.communities = await listCommunities({
       category: state.communityFilters.category,
@@ -1804,84 +1896,160 @@ async function loadCommunities() {
     state.communityFilters.error = error?.message || 'Communities could not be loaded.'
   } finally {
     state.communityFilters.loading = false
+    if (renderAfter) render()
+  }
+}
+
+function mergeUniquePosts(existing = [], incoming = []) {
+  const byId = new Map(existing.map((post) => [post.postId, post]))
+  incoming.forEach((post) => {
+    if (post.postId && !byId.has(post.postId)) byId.set(post.postId, post)
+  })
+  return [...byId.values()]
+}
+
+async function loadFeedPage({ reset = false } = {}) {
+  if (reset) resetFeedPagination()
+  if (!reset && (!state.feedHasMore || state.feedLoadingMore || state.feedInitialLoading)) return
+  const requestId = reset ? state.feedRequestId + 1 : state.feedRequestId
+  state.feedRequestId = requestId
+  state.feedError = ''
+  if (reset) {
+    state.posts = []
+    state.viewerState = {}
+    state.attachmentMediaUrls = {}
+    state.feedInitialLoading = true
+    state.feedStillLoading = false
+  } else {
+    state.feedLoadingMore = true
+  }
+  state.loading = false
+  render()
+
+  let stillLoadingTimer = null
+  if (reset) {
+    stillLoadingTimer = window.setTimeout(() => {
+      if (state.feedRequestId === requestId && state.feedInitialLoading) {
+        state.feedStillLoading = true
+        render()
+      }
+    }, 5000)
+  }
+
+  const startedAt = performance.now()
+  try {
+    let posts = []
+    let cursor = null
+    let hasMore = false
+    if (state.activeTab === 'placeholder') {
+      posts = []
+      hasMore = false
+    } else if (state.activeTab === 'following') {
+      if (reset && state.currentUser?.uid) {
+        posts = await listFocusedCommunityPosts(state.currentUser.uid, COMMUNITY_PAGE_SIZE)
+        posts = filterPostsForActiveTab(posts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
+      }
+      hasMore = false
+    } else {
+      const result = await listCommunityPosts({
+        ...feedQueryOptions(),
+        pageMode: true,
+        cursor: reset ? null : state.feedCursor
+      })
+      posts = filterPostsForActiveTab(result.posts || [])
+      cursor = result.cursor || null
+      hasMore = Boolean(result.hasMore)
+    }
+    if (requestId !== state.feedRequestId) return
+    state.posts = reset ? sortPinnedPosts(posts) : sortPinnedPosts(mergeUniquePosts(state.posts, posts))
+    state.feedCursor = cursor || state.feedCursor
+    state.feedHasMore = hasMore
+    logCommunityPerf(reset ? 'first feed page loaded' : 'next feed page loaded', {
+      durationMs: Math.round(performance.now() - startedAt),
+      posts: posts.length,
+      hasMore
+    })
+  } catch (error) {
+    if (requestId !== state.feedRequestId) return
+    console.warn('[community] feed page load failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.feedError = error?.message || 'Community posts could not be loaded.'
+  } finally {
+    if (stillLoadingTimer) window.clearTimeout(stillLoadingTimer)
+    if (requestId !== state.feedRequestId) return
+    state.feedInitialLoading = false
+    state.feedLoadingMore = false
+    state.feedStillLoading = false
     render()
+    loadFeedEnrichment(requestId).catch(() => null)
   }
 }
 
 async function loadCommunity() {
-  state.loading = true
   state.error = ''
-  render()
-  try {
-    if (state.detailPostId) {
+  state.feedError = ''
+  if (state.detailPostId) {
+    state.loading = true
+    render()
+    try {
       const post = await getCommunityPost(state.detailPostId)
       state.posts = post ? [post] : []
       state.comments = []
       state.commentViewerState = {}
       if (post) await loadComments({ renderAfter: false })
-    } else if (state.view.type === 'communities') {
+      await loadViewerState()
+      await loadAttachmentMediaUrls()
+    } catch (error) {
+      console.warn('[community] detail load failed', { code: error?.code, message: error?.message, details: error?.details })
+      state.error = error?.message || 'This post could not be loaded.'
+    } finally {
       state.loading = false
-      await loadCommunities()
-      return
-    } else if (state.view.type === 'community') {
-      state.communityFilters.loading = true
-      state.communityFilters.error = ''
+      render()
+    }
+    return
+  }
+
+  if (state.view.type === 'communities') {
+    state.loading = false
+    await loadCommunities()
+    return
+  }
+
+  loadStories({ renderAfter: true }).catch(() => null)
+
+  if (!state.communities.length && state.view.type !== 'community') {
+    loadCommunities({ renderOnStart: false, renderAfter: true }).catch(() => null)
+  }
+
+  if (state.view.type === 'community') {
+    state.loading = false
+    state.communityFilters.loading = true
+    state.communityFilters.error = ''
+    resetFeedPagination()
+    state.posts = []
+    state.viewerState = {}
+    state.attachmentMediaUrls = {}
+    render()
+    try {
       const community = await getCommunityBySlug(state.view.slug)
       state.community = community
-      state.posts = community
-        ? sortPinnedPosts(await listCommunityPosts({ communitySlug: community.slug, limitCount: 25, tag: state.activeTag, search: state.feedSearch, sort: state.feedSort }))
-        : []
       state.communities = community ? [community] : []
-      await loadCommunityFocusState()
       state.communityFilters.loading = false
-    } else if (state.activeTab === 'placeholder') {
-      if (!state.communities.length) {
-        state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
-        await loadCommunityFocusState()
+      render()
+      if (community) {
+        loadCommunityFocusState().then(render).catch(() => null)
+        await loadFeedPage({ reset: true })
       }
-      await loadStories()
-      state.posts = []
-    } else if (state.activeTab === 'community' && state.activeCommunitySlug) {
-      if (!state.communities.length) {
-        state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
-        await loadCommunityFocusState()
-      }
-      const [posts] = await Promise.all([
-        listCommunityPosts({ communitySlug: state.activeCommunitySlug, limitCount: 25, tag: state.activeTag, search: state.feedSearch, sort: state.feedSort }),
-        loadStories()
-      ])
-      state.posts = filterPostsForActiveTab(posts)
-    } else if (state.activeTab === 'following') {
-      if (!state.communities.length) {
-        state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
-        await loadCommunityFocusState()
-      }
-      const [posts] = await Promise.all([
-        state.currentUser?.uid ? listFocusedCommunityPosts(state.currentUser.uid, 25) : Promise.resolve([]),
-        loadStories()
-      ])
-      state.posts = filterPostsForActiveTab(posts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
-    } else {
-      if (!state.communities.length) {
-        state.communities = await listCommunities({ limitCount: 50 }).catch(() => [])
-        await loadCommunityFocusState()
-      }
-      const [posts] = await Promise.all([
-        listCommunityPosts({ tab: state.activeTab, limitCount: 25, tag: state.activeTag, search: state.feedSearch, sort: state.feedSort }),
-        loadStories()
-      ])
-      state.posts = filterPostsForActiveTab(posts)
+    } catch (error) {
+      console.warn('[community] community detail load failed', { code: error?.code, message: error?.message, details: error?.details })
+      state.communityFilters.error = error?.message || 'Community could not be loaded.'
+      state.communityFilters.loading = false
+      render()
     }
-    await loadViewerState()
-    await loadAttachmentMediaUrls()
-  } catch (error) {
-    console.warn('[community] load failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.error = error?.message || 'Community posts could not be loaded.'
-    state.communityFilters.loading = false
-  } finally {
-    state.loading = false
-    render()
+    return
   }
+
+  state.loading = false
+  await loadFeedPage({ reset: true })
 }
 
 function updatePostCounts(postId, patch = {}) {
@@ -2543,6 +2711,60 @@ function updateTopicArrowState() {
   right?.toggleAttribute('disabled', atEnd)
 }
 
+function communityModalIsOpen() {
+  return Boolean(state.composer.open || state.storyComposer.open || state.storyViewer.open || state.report.open || state.createCommunity.open)
+}
+
+function activeElementIsCommunityInput() {
+  const active = document.activeElement
+  return Boolean(active?.closest?.('.community-page input, .community-page textarea, .community-page select, .community-page [contenteditable="true"]'))
+}
+
+function setCommunityChromeHidden(hidden = false) {
+  document.body.classList.toggle('community-chrome-hidden', Boolean(hidden))
+}
+
+function handleCommunityChromeScroll() {
+  communityScrollRaf = 0
+  if (state.view.type !== 'feed' || communityModalIsOpen() || activeElementIsCommunityInput()) {
+    setCommunityChromeHidden(false)
+    lastCommunityScrollY = window.scrollY || 0
+    return
+  }
+  const currentY = Math.max(0, window.scrollY || 0)
+  const delta = currentY - lastCommunityScrollY
+  if (currentY < 24) setCommunityChromeHidden(false)
+  else if (delta > 12) setCommunityChromeHidden(true)
+  else if (delta < -8) setCommunityChromeHidden(false)
+  if (Math.abs(delta) >= 4) lastCommunityScrollY = currentY
+}
+
+function scheduleCommunityChromeScroll() {
+  if (communityScrollRaf) return
+  communityScrollRaf = window.requestAnimationFrame(handleCommunityChromeScroll)
+}
+
+function setupCommunityScrollChrome() {
+  if (communityScrollChromeReady) return
+  communityScrollChromeReady = true
+  window.addEventListener('scroll', scheduleCommunityChromeScroll, { passive: true })
+  window.addEventListener('focusin', () => setCommunityChromeHidden(false), { passive: true })
+}
+
+function setupFeedPaginationObserver() {
+  if (feedPaginationObserver) {
+    feedPaginationObserver.disconnect()
+    feedPaginationObserver = null
+  }
+  const sentinel = app?.querySelector('[data-community-feed-sentinel]')
+  if (!sentinel || !state.feedHasMore || state.feedInitialLoading || state.feedLoadingMore) return
+  if (!('IntersectionObserver' in window)) return
+  feedPaginationObserver = new IntersectionObserver((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) loadFeedPage({ reset: false })
+  }, { rootMargin: '640px 0px 640px 0px' })
+  feedPaginationObserver.observe(sentinel)
+}
+
 function isPostCardInteractiveTarget(target) {
   return Boolean(target?.closest?.('a, button, input, textarea, select, label, [role="button"], [data-stop-card-nav]'))
 }
@@ -2843,6 +3065,9 @@ function bindEvents() {
   })
   app.querySelector('[data-community-topic-scroll]')?.addEventListener('scroll', updateTopicArrowState, { passive: true })
   updateTopicArrowState()
+  app.querySelector('[data-load-more-posts]')?.addEventListener('click', () => loadFeedPage({ reset: false }))
+  setupCommunityScrollChrome()
+  setupFeedPaginationObserver()
   app.querySelectorAll('[data-open-community-composer]').forEach((button) => button.addEventListener('click', openCommunityComposer))
   app.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
   app.querySelectorAll('[data-story-coming-soon]').forEach((button) => {

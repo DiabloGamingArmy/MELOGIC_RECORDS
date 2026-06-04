@@ -22,6 +22,18 @@ The `/community` homepage uses a Nexara-inspired social layout adapted to the Me
 - The homepage body is a three-column layout: left navigation, center feed, and right rail.
 - Feed cards use a cleaner social action row for Like, Comment, Save, Share, and Report.
 
+## Progressive Feed Loading
+
+The `/community` feed renders progressively:
+
+- The topic bar, story rail, left navigation, right rail, and center-feed skeletons render immediately.
+- The first feed request loads 12 public/published posts, then renders cards as soon as that page returns.
+- Stories, community suggestions, focus state, viewer like/save state, and Storage media URL resolution run as background enrichment and cannot block the first post page.
+- Attachment cards render text/metadata first. Audio/media controls appear after cached Storage URLs resolve.
+- Pagination uses a Firestore cursor for the primary query path, with an IntersectionObserver sentinel plus a manual "Load more" fallback button.
+- Search, tag, community, and sort changes reset pagination and only reload the center feed.
+- Topic/story chrome hides while scrolling down and reappears when scrolling up; the global navigation stays visible.
+
 Phase A placeholders:
 
 - `Your Story`, `test1`, `test2`, and `test3` show the future story interaction with a coming-soon toast.

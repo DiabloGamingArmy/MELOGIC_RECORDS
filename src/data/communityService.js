@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, Timestamp, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, startAfter, Timestamp, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
@@ -159,14 +159,15 @@ function safeProductAudioPreviewPath(product = {}, requestedPath = '') {
   return candidates.find((path) => String(path || '').startsWith(`products/${productId}/audio-previews/`)) || ''
 }
 
+const storageUrlCache = new Map()
+
 async function safeStorageUrl(path = '') {
   const clean = String(path || '').trim()
   if (!clean || !storage) return ''
-  try {
-    return await getDownloadURL(ref(storage, clean))
-  } catch {
-    return ''
+  if (!storageUrlCache.has(clean)) {
+    storageUrlCache.set(clean, getDownloadURL(ref(storage, clean)).catch(() => ''))
   }
+  return storageUrlCache.get(clean)
 }
 
 export function normalizeCommunityStagePlan(rawOrSnap = {}, explicitId = '') {
@@ -399,10 +400,11 @@ function postSort(sort = 'new') {
   return (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
 }
 
-export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', limitCount = 25, tag = '', search = '', sort = 'new' } = {}) {
+export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', limitCount = 25, tag = '', search = '', sort = 'new', pageMode = false, cursor = null } = {}) {
   const tagKey = normalizeTagKey(tag)
   const searchToken = normalizeFeedSearchToken(search)
   const cleanSort = ['new', 'top-today', 'top-week', 'most-discussed'].includes(sort) ? sort : 'new'
+  const pageLimit = Math.max(1, Number(limitCount || 25))
   const constraints = [
     where('status', '==', 'published'),
     where('visibility', '==', 'public')
@@ -414,13 +416,46 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
   if (cleanSort === 'most-discussed') constraints.push(orderBy('commentCount', 'desc'))
   else if (cleanSort === 'top-today' || cleanSort === 'top-week') constraints.push(orderBy('score', 'desc'))
   constraints.push(orderBy('createdAt', 'desc'))
-  constraints.push(limit(Math.max(limitCount, searchToken || tagKey ? limitCount : limitCount * 2)))
+  if (pageMode && cursor) constraints.push(startAfter(cursor))
+  constraints.push(limit(pageMode ? pageLimit + 1 : Math.max(pageLimit, searchToken || tagKey ? pageLimit : pageLimit * 2)))
 
   const fallbackConstraints = [
     where('status', '==', 'published'),
     where('visibility', '==', 'public'),
-    limit(Math.max(50, limitCount * 3))
+    limit(Math.max(50, pageLimit * 3))
   ]
+
+  if (pageMode) {
+    try {
+      const snapshot = await getDocs(query(collection(db, POST_COLLECTION), ...constraints))
+      const visibleDocs = snapshot.docs.slice(0, pageLimit)
+      const posts = visibleDocs
+        .map((docSnap) => normalizeCommunityPost(docSnap))
+        .filter((post) => postMatchesFeedSearch(post, searchToken))
+      return {
+        posts,
+        cursor: visibleDocs[visibleDocs.length - 1] || cursor || null,
+        hasMore: snapshot.docs.length > pageLimit
+      }
+    } catch (error) {
+      if (!String(error?.message || '').includes('requires an index')) throw error
+      const snapshot = await getDocs(query(collection(db, POST_COLLECTION), ...fallbackConstraints))
+      const rows = snapshot.docs
+        .map((docSnap) => normalizeCommunityPost(docSnap))
+        .filter((post) => (
+          (!communitySlug || post.communitySlug === communitySlug)
+          && (tab !== 'official' || post.official)
+          && (!tagKey || (post.tagKeys || post.tags || []).includes(tagKey))
+          && postMatchesFeedSearch(post, searchToken)
+        ))
+        .sort(postSort(cleanSort))
+      return {
+        posts: rows.slice(0, pageLimit),
+        cursor: null,
+        hasMore: false
+      }
+    }
+  }
 
   const rows = await queryWithIndexFallback(
     constraints,
@@ -437,7 +472,7 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
   return rows
     .filter((post) => postMatchesFeedSearch(post, searchToken))
     .sort(postSort(cleanSort))
-    .slice(0, limitCount)
+    .slice(0, pageLimit)
 }
 
 export async function listFocusedCommunityPosts(uid = '', limitCount = 25) {
@@ -531,7 +566,7 @@ function storyIsNotExpired(story) {
 
 async function attachStoryMediaUrl(story) {
   if (story.mediaType !== 'image' || story.mediaURL || !story.mediaPath || !storage) return story
-  const mediaURL = await getDownloadURL(ref(storage, story.mediaPath)).catch(() => '')
+  const mediaURL = await safeStorageUrl(story.mediaPath)
   return { ...story, mediaURL }
 }
 
