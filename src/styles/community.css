@@ -85,7 +85,7 @@ body.community-chrome-hidden .community-scroll-chrome {
   grid-template-columns: 36px minmax(0, 1fr) 36px;
   gap: .35rem;
   align-items: center;
-  padding: .45rem max(1rem, calc((100vw - 1280px) / 2));
+  padding: .38rem max(1.5rem, calc((100vw - 1440px) / 2));
 }
 
 .community-topic-scroll {
@@ -170,17 +170,17 @@ body.community-chrome-hidden .community-scroll-chrome {
 
 .community-stories-row {
   display: flex;
-  gap: .85rem;
+  gap: 1.15rem;
   align-items: start;
-  width: min(1600px, calc(100% - 48px));
+  width: min(1440px, calc(100% - 48px));
   margin: 0 auto;
-  padding: .9rem 0 .8rem;
+  padding: .65rem 0 .55rem;
   overflow-x: auto;
   scrollbar-width: none;
 }
 
 .community-shell-divider {
-  width: min(1600px, calc(100% - 48px));
+  width: min(1440px, calc(100% - 48px));
   height: 1px;
   margin: 0 auto;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .14), transparent);
@@ -189,14 +189,14 @@ body.community-chrome-hidden .community-scroll-chrome {
 .community-story-item {
   display: grid;
   justify-items: center;
-  gap: .38rem;
-  flex: 0 0 74px;
-  max-width: 82px;
+  gap: .3rem;
+  flex: 0 0 62px;
+  max-width: 70px;
   border: 0;
   background: transparent;
   color: #dce6f5;
   font: inherit;
-  font-size: .78rem;
+  font-size: .74rem;
   text-align: center;
   cursor: pointer;
 }
@@ -213,10 +213,10 @@ body.community-chrome-hidden .community-scroll-chrome {
 .community-story-ring {
   display: grid;
   place-items: center;
-  width: 62px;
-  height: 62px;
+  width: 54px;
+  height: 54px;
   border-radius: 50%;
-  padding: 3px;
+  padding: 2px;
   background: linear-gradient(135deg, #39bfff, #9c6cff 58%, #65e2a7);
 }
 
@@ -243,8 +243,8 @@ body.community-chrome-hidden .community-scroll-chrome {
 }
 
 .community-story-avatar svg {
-  width: 21px;
-  height: 21px;
+  width: 18px;
+  height: 18px;
 }
 
 .community-story-avatar.is-create {
@@ -392,27 +392,40 @@ body.community-chrome-hidden .community-right-rail {
 .community-feed-toolbar {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1.1rem;
   align-items: flex-end;
-  margin-bottom: .9rem;
-  padding: .9rem 0 .15rem;
+  margin-bottom: .75rem;
+  padding: .75rem 0 .1rem;
 }
 
 .community-feed-toolbar .button {
+  display: inline-flex;
+  gap: .42rem;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
+  min-height: 38px;
+  line-height: 1;
+}
+
+.community-feed-toolbar .button svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .community-feed-controls {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: .6rem;
+  gap: .55rem;
   align-items: center;
 }
 
 .community-feed-controls form {
   display: flex;
-  min-width: min(320px, 100%);
+  min-width: min(300px, 100%);
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 999px;
   overflow: hidden;
