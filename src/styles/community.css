@@ -18,12 +18,24 @@
   color: inherit;
 }
 
+.community-page .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .community-hero {
   display: flex;
   justify-content: space-between;
   gap: 1.5rem;
   align-items: flex-end;
-  width: min(1180px, calc(100% - 2rem));
+  width: min(1440px, calc(100% - 48px));
   margin: 0 auto;
   padding: 4rem 0 1.5rem;
 }
@@ -160,7 +172,7 @@ body.community-chrome-hidden .community-scroll-chrome {
   display: flex;
   gap: .85rem;
   align-items: start;
-  width: min(1280px, calc(100% - 2rem));
+  width: min(1600px, calc(100% - 48px));
   margin: 0 auto;
   padding: .9rem 0 .8rem;
   overflow-x: auto;
@@ -168,7 +180,7 @@ body.community-chrome-hidden .community-scroll-chrome {
 }
 
 .community-shell-divider {
-  width: min(1280px, calc(100% - 2rem));
+  width: min(1600px, calc(100% - 48px));
   height: 1px;
   margin: 0 auto;
   background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .14), transparent);
@@ -267,21 +279,54 @@ body.community-chrome-hidden .community-scroll-chrome {
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 1rem;
   align-items: start;
-  width: min(1180px, calc(100% - 2rem));
+  width: min(1440px, calc(100% - 48px));
   margin: 0 auto;
   padding: 0 0 4rem;
 }
 
 .community-layout.is-home {
-  grid-template-columns: minmax(174px, 218px) minmax(0, 680px) minmax(260px, 300px);
+  grid-template-columns: minmax(190px, 240px) minmax(0, 820px) minmax(300px, 360px);
   justify-content: center;
-  gap: 1.25rem;
-  width: min(1320px, calc(100% - 1.5rem));
+  gap: 1.5rem;
+  width: min(1600px, calc(100% - 48px));
   padding-top: .75rem;
 }
 
 .community-layout.is-detail {
   align-items: start;
+  grid-template-columns: minmax(0, 900px) minmax(300px, 360px);
+  gap: 1.5rem;
+  width: min(1360px, calc(100% - 48px));
+  padding-top: .6rem;
+}
+
+.community-detail-topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-end;
+  width: min(1360px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 2.1rem 0 .6rem;
+}
+
+.community-detail-topbar h1 {
+  margin: .1rem 0 0;
+  font-size: clamp(1.35rem, 2.3vw, 2rem);
+  letter-spacing: 0;
+}
+
+.community-detail-topbar .button {
+  flex: 0 0 auto;
+}
+
+.community-detail-topbar .button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.community-detail-main {
+  min-width: 0;
 }
 
 .community-main {
@@ -305,7 +350,7 @@ body.community-chrome-hidden .community-right-rail {
 
 .community-left-nav {
   display: grid;
-  gap: .8rem;
+  gap: .35rem;
 }
 
 .community-left-nav nav {
@@ -314,8 +359,7 @@ body.community-chrome-hidden .community-right-rail {
 }
 
 .community-left-nav a,
-.community-left-nav button,
-.community-left-post-button {
+.community-left-nav button {
   display: flex;
   align-items: center;
   gap: .65rem;
@@ -343,14 +387,6 @@ body.community-chrome-hidden .community-right-rail {
   border-color: rgba(255, 255, 255, .1);
   background: rgba(255, 255, 255, .06);
   color: #ffffff;
-}
-
-.community-left-post-button {
-  justify-content: center;
-  color: #071017;
-  border-color: rgba(93, 222, 177, .5);
-  background: linear-gradient(135deg, #53c5ff, #9c6cff 60%, #6ee0a6);
-  font-weight: 900;
 }
 
 .community-feed-toolbar {
@@ -456,6 +492,24 @@ body.community-chrome-hidden .community-right-rail {
   border-radius: 8px;
   background: rgba(13, 18, 27, .82);
   box-shadow: 0 18px 46px rgba(0, 0, 0, .16);
+}
+
+.community-right-rail.community-sidebar {
+  padding: .15rem 0 1rem;
+}
+
+.community-rail-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 0 1rem;
+}
+
+.community-rail-card + .community-rail-card {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, .11);
 }
 
 .community-panel,
@@ -653,6 +707,17 @@ body.community-chrome-hidden .community-right-rail {
   background: rgba(16, 23, 34, .92);
 }
 
+.community-post-detail-card,
+.community-post-detail-card:hover {
+  cursor: default;
+  border-color: rgba(255, 255, 255, .1);
+  background: rgba(13, 18, 27, .78);
+}
+
+.community-post-detail-card {
+  box-shadow: 0 16px 38px rgba(0, 0, 0, .12);
+}
+
 .community-post-card:focus-visible {
   outline: 2px solid #7fd3ff;
   outline-offset: 3px;
@@ -713,6 +778,96 @@ body.community-chrome-hidden .community-right-rail {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: .4rem;
+}
+
+.community-post-header-actions {
+  position: relative;
+  display: flex;
+  gap: .45rem;
+  align-items: flex-start;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.community-post-options {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.community-post-options-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 50%;
+  color: #c8d4e6;
+  background: rgba(255, 255, 255, .045);
+  cursor: pointer;
+}
+
+.community-post-options-button:hover,
+.community-post-options-button[aria-expanded="true"] {
+  color: #ffffff;
+  border-color: rgba(83, 197, 255, .32);
+  background: rgba(83, 197, 255, .1);
+}
+
+.community-post-options-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.community-post-options-menu {
+  position: absolute;
+  top: calc(100% + .4rem);
+  right: 0;
+  z-index: 35;
+  display: grid;
+  gap: .18rem;
+  min-width: 190px;
+  padding: .35rem;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  background: rgba(12, 17, 25, .98);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .34);
+}
+
+.community-post-options-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  width: 100%;
+  min-height: 34px;
+  padding: .44rem .55rem;
+  border: 0;
+  border-radius: 6px;
+  color: #dce6f5;
+  background: transparent;
+  font: inherit;
+  font-size: .88rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.community-post-options-menu button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .07);
+  color: #ffffff;
+}
+
+.community-post-options-menu button:disabled {
+  color: #7f8ea3;
+  cursor: not-allowed;
+}
+
+.community-post-options-menu .is-danger {
+  color: #ffc4c4;
+}
+
+.community-post-options-menu em {
+  color: #7f8ea3;
+  font-size: .76rem;
+  font-style: normal;
 }
 
 .community-badge {
@@ -932,9 +1087,31 @@ body.community-chrome-hidden .community-right-rail {
 }
 
 .community-composer-body-field textarea {
-  min-height: 180px;
+  min-height: 220px;
   max-height: 320px;
   resize: vertical;
+}
+
+.community-composer-primary,
+.community-composer-tools {
+  display: grid;
+  gap: .75rem;
+}
+
+.community-composer-meta-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(120px, .65fr) minmax(0, 1fr);
+  gap: .75rem;
+  align-items: end;
+}
+
+.community-composer-meta-grid .community-context-note {
+  align-self: stretch;
+  margin: 0;
+  padding: .72rem .78rem;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .035);
 }
 
 .community-attachment-toolbar {
@@ -1365,12 +1542,58 @@ body.community-chrome-hidden .community-right-rail {
 
 .community-comment-composer {
   display: grid;
+  gap: .55rem;
+  margin-top: .85rem;
+  padding: .4rem 0 .15rem;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  background: transparent;
+}
+
+.community-comment-composer-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
   gap: .65rem;
-  margin-top: .8rem;
-  padding: .75rem;
+  align-items: start;
+}
+
+.community-comment-composer-avatar {
+  width: 38px;
+  height: 38px;
+  flex-basis: 38px;
+}
+
+.community-comment-composer-row label {
+  min-width: 0;
+}
+
+.community-comment-tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  padding-left: 48px;
+}
+
+.community-comment-tool-row button {
+  display: inline-flex;
+  gap: .3rem;
+  align-items: center;
+  min-height: 28px;
+  padding: .28rem .45rem;
   border: 1px solid rgba(255, 255, 255, .08);
-  border-radius: 8px;
+  border-radius: 999px;
+  color: #7f8ea3;
   background: rgba(255, 255, 255, .035);
+  font: inherit;
+  font-size: .78rem;
+}
+
+.community-comment-tool-row svg {
+  width: 14px;
+  height: 14px;
+}
+
+.community-comment-form-actions.is-quiet {
+  padding-left: 48px;
 }
 
 .community-comment-list {
@@ -1504,10 +1727,16 @@ body.community-chrome-hidden .community-right-rail {
   inset: 0;
   z-index: 100;
   display: grid;
-  place-items: center;
-  padding: 1rem;
+  justify-items: center;
+  align-items: start;
+  padding: 88px 1rem 1rem;
+  overflow: auto;
   background: rgba(3, 6, 10, .74);
   backdrop-filter: blur(16px);
+}
+
+body.community-modal-open {
+  overflow: hidden;
 }
 
 .community-report-modal,
@@ -1525,9 +1754,17 @@ body.community-chrome-hidden .community-right-rail {
 }
 
 .community-composer-modal {
-  width: min(720px, calc(100vw - 32px));
-  max-height: calc(100vh - 80px);
+  width: min(940px, calc(100vw - 48px));
+  max-height: calc(100vh - 104px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   padding: 1.1rem;
+}
+
+.community-composer-modal form {
+  min-height: 0;
+  overflow: auto;
+  padding-right: .15rem;
 }
 
 .community-report-modal header,
@@ -1653,10 +1890,6 @@ body.community-chrome-hidden .community-right-rail {
     white-space: nowrap;
   }
 
-  .community-left-post-button {
-    width: auto;
-    justify-self: start;
-  }
 }
 
 @media (max-width: 860px) {
@@ -1688,13 +1921,20 @@ body.community-chrome-hidden .community-right-rail {
   }
 
   .community-feed-toolbar,
-  .community-hero {
+  .community-hero,
+  .community-detail-topbar {
     align-items: flex-start;
     flex-direction: column;
   }
 
+  .community-detail-topbar {
+    width: calc(100% - 1.5rem);
+    padding-top: 1.4rem;
+  }
+
   .community-community-grid,
-  .community-community-tools {
+  .community-community-tools,
+  .community-composer-meta-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -1747,13 +1987,19 @@ body.community-chrome-hidden .community-right-rail {
   }
 
   .community-modal-backdrop {
-    padding: .5rem;
+    padding: 72px .5rem .5rem;
     place-items: stretch;
   }
 
   .community-composer-modal {
     width: 100%;
-    max-height: calc(100vh - 1rem);
+    max-height: calc(100vh - 80px);
+  }
+
+  .community-report-modal,
+  .community-story-modal,
+  .community-story-viewer {
+    max-height: calc(100vh - 80px);
   }
 
   .community-attachment-toolbar {

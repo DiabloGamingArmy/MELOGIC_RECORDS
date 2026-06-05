@@ -47,7 +47,21 @@ import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
 const COMMUNITY_PAGE_SIZE = 12
-const FALLBACK_TOPIC_LABELS = ['StageMaker', 'Vocals', 'Sound Design', 'Sample Packs', 'Mixing & Mastering', 'Metalcore', 'Live Production', 'Feedback', 'Dubstep', 'Logic', 'Ableton', 'Serum', 'Vital']
+const FALLBACK_COMMUNITY_DEFS = [
+  ['StageMaker', 'Stage', 'Stage design, live rigs, venue plans, and show builds.'],
+  ['Vocals', 'Production', 'Vocal production, performance, tuning, chains, and toplines.'],
+  ['Sound Design', 'Production', 'Synthesis, resampling, textures, and creative sound building.'],
+  ['Sample Packs', 'Marketplace', 'Loops, one-shots, kits, and creator pack discussion.'],
+  ['Mixing & Mastering', 'Production', 'Mix critique, mastering notes, references, and release polish.'],
+  ['Metalcore', 'Genre', 'Heavy guitars, drums, vocals, programming, and modern metalcore production.'],
+  ['Live Production', 'Stage', 'Live playback, routing, stage plots, cues, and touring workflows.'],
+  ['Feedback', 'Feedback', 'Ask for focused critique and give useful creator feedback.'],
+  ['Dubstep', 'Genre', 'Bass design, drops, arrangement, and electronic production talk.'],
+  ['Logic', 'Production', 'Logic Pro workflows, templates, plugins, and troubleshooting.'],
+  ['Ableton', 'Production', 'Ableton Live workflows, racks, performance, and production systems.'],
+  ['Serum', 'Production', 'Serum patches, wavetables, basses, leads, and sound design.'],
+  ['Vital', 'Production', 'Vital presets, modulation, wavetables, and synthesis tips.']
+]
 const DUMMY_STORIES = [
   { id: 'test1', label: 'test1', initials: 'T1' },
   { id: 'test2', label: 'test2', initials: 'T2' },
@@ -133,6 +147,7 @@ const state = {
   feedError: '',
   feedStillLoading: false,
   feedRequestId: 0,
+  openPostMenuId: '',
   error: '',
   message: '',
   composer: {
@@ -222,6 +237,8 @@ let feedPaginationObserver = null
 let communityScrollChromeReady = false
 let communityScrollRaf = 0
 let lastCommunityScrollY = window.scrollY || 0
+let communityKeyboardReady = false
+let communityOutsideClickReady = false
 
 function logCommunityPerf(label, data = {}) {
   if (!COMMUNITY_DEBUG) return
@@ -244,6 +261,70 @@ function resetFeedPagination() {
   state.feedHasMore = true
   state.feedError = ''
   state.feedStillLoading = false
+}
+
+function slugifyCommunity(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function fallbackCommunities() {
+  return FALLBACK_COMMUNITY_DEFS.map(([name, category, description]) => {
+    const slug = slugifyCommunity(name)
+    return {
+      communityId: slug,
+      id: slug,
+      slug,
+      name,
+      description,
+      category,
+      iconURL: '',
+      bannerURL: '',
+      createdBy: '',
+      ownerUid: '',
+      moderatorIds: [],
+      memberCount: 0,
+      focusCount: 0,
+      postCount: 0,
+      reportCount: 0,
+      pinnedPostIds: [],
+      visibility: 'public',
+      postingMode: 'open',
+      status: 'active',
+      official: false,
+      fallback: true,
+      createdAt: '',
+      updatedAt: ''
+    }
+  })
+}
+
+function fallbackCommunityBySlug(slug = '') {
+  const clean = slugifyCommunity(slug)
+  return fallbackCommunities().find((community) => community.slug === clean || community.communityId === clean) || null
+}
+
+function displayedCommunities() {
+  const real = state.communities.filter((community) => community.status === 'active' && community.visibility === 'public')
+  return real.length ? real : fallbackCommunities()
+}
+
+function directoryCommunities() {
+  const category = state.communityFilters.category || 'all'
+  const search = String(state.communityFilters.search || '').trim().toLowerCase()
+  return displayedCommunities()
+    .filter((community) => category === 'all' || community.category === category)
+    .filter((community) => {
+      if (!search) return true
+      return [community.name, community.slug, community.description, community.category]
+        .some((value) => String(value || '').toLowerCase().includes(search))
+    })
 }
 
 function defaultComposerState(patch = {}) {
@@ -406,6 +487,14 @@ function postAvatar(post) {
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
+function currentUserAvatar() {
+  const user = state.currentUser || {}
+  const name = user.displayName || user.email || 'M'
+  const photoURL = user.photoURL || user.avatarURL || ''
+  if (photoURL) return `<img src="${escapeHtml(photoURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
+  return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
+}
+
 function storyExpiresLabel(value = '') {
   const expiresMs = new Date(value || 0).getTime()
   if (!Number.isFinite(expiresMs)) return '24h'
@@ -440,7 +529,6 @@ function activeFeedTitle() {
   if (state.activeTab === 'collaboration') return 'Collaboration'
   if (state.activeTab === 'following') return 'Focused'
   if (state.activeTab === 'community') return state.activeTopicLabel || 'Community'
-  if (state.activeTab === 'placeholder') return state.activeTopicLabel || 'Community'
   if (state.activeTab === 'official') return 'Official'
   if (state.activeTab === 'new') return 'New'
   return 'For You'
@@ -495,22 +583,14 @@ function sortPinnedPosts(posts = []) {
 }
 
 function visibleTopicCommunities() {
-  return state.communities
-    .filter((community) => community.status === 'active' && community.visibility === 'public')
-    .slice(0, 18)
+  return displayedCommunities().slice(0, 18)
 }
 
 function renderTopicBar() {
   const communities = visibleTopicCommunities()
-  const communityPills = communities.length
-    ? communities.map((community) => `
+  const communityPills = communities.map((community) => `
       <button type="button" class="community-topic-pill ${state.activeTab === 'community' && state.activeCommunityId === community.communityId ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(community.communityId)}" data-topic-community-slug="${escapeHtml(community.slug)}" data-topic-community-label="${escapeHtml(community.name)}">
         ${escapeHtml(community.name)}
-      </button>
-    `).join('')
-    : FALLBACK_TOPIC_LABELS.map((label) => `
-      <button type="button" class="community-topic-pill is-placeholder ${state.activeTab === 'placeholder' && state.activeTopicLabel === label ? 'is-active' : ''}" data-topic-placeholder="${escapeHtml(label)}">
-        ${escapeHtml(label)}
       </button>
     `).join('')
 
@@ -1065,45 +1145,51 @@ function renderComposerModal() {
           <button type="button" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
         </header>
         <form data-community-composer-form>
-          <label class="community-composer-title-field">
-            <span>Title</span>
-            <input name="title" maxlength="120" value="${escapeHtml(state.composer.title)}" placeholder="Optional headline" />
-          </label>
-          <label class="community-composer-body-field">
-            <span>Body</span>
-            <textarea name="body" maxlength="2000" rows="8" placeholder="Share an update, question, idea, product note, or creative win." data-composer-body>${escapeHtml(state.composer.body)}</textarea>
-          </label>
-          ${renderAttachmentToolbar()}
-          ${renderEmojiPanel()}
-          ${renderComposerProductPicker()}
-          ${renderComposerMusicPicker()}
-          ${renderComposerStagePicker()}
-          ${renderComposerStudioPicker()}
-          ${renderComposerAttachments()}
-          ${renderMentionPicker()}
-          ${renderComposerIntentFields()}
-          ${state.view.type === 'community' && state.community ? `
-            <input type="hidden" name="communityId" value="${escapeHtml(state.community.communityId)}" />
-            <p class="community-context-note">Posting to <a href="${communityRoute(state.community.slug)}">c/${escapeHtml(state.community.slug)}</a></p>
-          ` : `
+          <div class="community-composer-primary">
+            <label class="community-composer-title-field">
+              <span>Title</span>
+              <input name="title" maxlength="120" value="${escapeHtml(state.composer.title)}" placeholder="Optional headline" />
+            </label>
+            <label class="community-composer-body-field">
+              <span>Body</span>
+              <textarea name="body" maxlength="2000" rows="8" placeholder="Share an update, question, idea, product note, or creative win." data-composer-body>${escapeHtml(state.composer.body)}</textarea>
+            </label>
+          </div>
+          <div class="community-composer-tools">
+            ${renderAttachmentToolbar()}
+            ${renderEmojiPanel()}
+            ${renderComposerProductPicker()}
+            ${renderComposerMusicPicker()}
+            ${renderComposerStagePicker()}
+            ${renderComposerStudioPicker()}
+            ${renderComposerAttachments()}
+            ${renderMentionPicker()}
+            ${renderComposerIntentFields()}
+          </div>
+          <div class="community-composer-meta-grid">
+            ${state.view.type === 'community' && state.community ? `
+              <input type="hidden" name="communityId" value="${escapeHtml(state.community.communityId)}" />
+              <p class="community-context-note">Posting to <a href="${communityRoute(state.community.slug)}">c/${escapeHtml(state.community.slug)}</a></p>
+            ` : `
+              <label>
+                <span>Community destination</span>
+                <select name="communityId">
+                  <option value="">General feed</option>
+                  ${state.communities.map((community) => `<option value="${escapeHtml(community.communityId)}" ${state.composer.communityId === community.communityId ? 'selected' : ''}>${escapeHtml(community.name)} · c/${escapeHtml(community.slug)}</option>`).join('')}
+                </select>
+              </label>
+            `}
             <label>
-              <span>Community destination</span>
-              <select name="communityId">
-                <option value="">General feed</option>
-                ${state.communities.map((community) => `<option value="${escapeHtml(community.communityId)}" ${state.composer.communityId === community.communityId ? 'selected' : ''}>${escapeHtml(community.name)} · c/${escapeHtml(community.slug)}</option>`).join('')}
+              <span>Visibility</span>
+              <select name="visibility" disabled title="Public posts only in this phase">
+                <option value="public" selected>Public</option>
               </select>
             </label>
-          `}
-          <label>
-            <span>Visibility</span>
-            <select name="visibility" disabled title="Public posts only in this phase">
-              <option value="public" selected>Public</option>
-            </select>
-          </label>
-          <label>
-            <span>Tags</span>
-            <input name="tags" maxlength="160" value="${escapeHtml(state.composer.tags)}" placeholder="beats, feedback, release" />
-          </label>
+            <label>
+              <span>Tags</span>
+              <input name="tags" maxlength="160" value="${escapeHtml(state.composer.tags)}" placeholder="beats, feedback, release" />
+            </label>
+          </div>
           ${state.composer.error ? `<p class="community-error">${escapeHtml(state.composer.error)}</p>` : ''}
           <div class="community-form-actions">
             <span>${Math.max(0, 2000 - state.composer.body.length)} characters left</span>
@@ -1226,14 +1312,40 @@ function renderPostIntent(post = {}) {
   return ''
 }
 
+function renderPostOptionsMenu(post = {}, { isOwn = false } = {}) {
+  const open = state.openPostMenuId === post.postId
+  return `
+    <div class="community-post-options" data-post-options-root>
+      <button type="button" class="community-post-options-button" data-toggle-post-menu="${escapeHtml(post.postId)}" aria-label="Post options" aria-haspopup="menu" aria-expanded="${open ? 'true' : 'false'}">
+        ${iconSvg('moreVertical')}
+      </button>
+      ${open ? `
+        <div class="community-post-options-menu" role="menu">
+          ${isOwn ? '<button type="button" role="menuitem" disabled title="Edit Post is coming soon.">Edit Post <em>Coming soon</em></button>' : ''}
+          <button type="button" role="menuitem" data-copy-post-link="${escapeHtml(post.postId)}">Copy Link</button>
+          ${isOwn ? `
+            <button type="button" role="menuitem" class="is-danger" data-community-delete-post="${escapeHtml(post.postId)}">Delete Post</button>
+          ` : `
+            <button type="button" role="menuitem" data-community-report="${escapeHtml(post.postId)}">Report Post</button>
+            <button type="button" role="menuitem" disabled title="Hide/Not Interested is coming soon.">Hide / Not Interested <em>Coming soon</em></button>
+          `}
+        </div>
+      ` : ''}
+    </div>
+  `
+}
+
 function postCard(post, { detail = false } = {}) {
   const viewer = state.viewerState[post.postId] || {}
   const body = detail ? post.body : post.body.slice(0, 640)
   const authorHref = post.authorUid ? publicProfileRoute({ uid: post.authorUid }) : ROUTES.profilePublic
   const isOwn = state.currentUser?.uid && state.currentUser.uid === post.authorUid
   const pinned = pinnedPostIds().has(post.postId) || post.pinnedInCommunity
+  const articleAttrs = detail
+    ? `class="community-post-card community-post-detail-card is-detail" data-post-id="${escapeHtml(post.postId)}"`
+    : `class="community-post-card" data-post-id="${escapeHtml(post.postId)}" data-post-href="${communityPostRoute(post.postId)}" role="link" tabindex="0" aria-label="Open post ${escapeHtml(post.title || 'detail')}"`
   return `
-    <article class="community-post-card" data-post-id="${escapeHtml(post.postId)}" data-post-href="${communityPostRoute(post.postId)}" role="link" tabindex="0" aria-label="Open post ${escapeHtml(post.title || 'detail')}">
+    <article ${articleAttrs}>
       <header class="community-post-header">
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar">${postAvatar(post)}</span>
@@ -1242,12 +1354,15 @@ function postCard(post, { detail = false } = {}) {
             <em>${escapeHtml(formatUsername(post.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(post.createdAt))}</em>
           </span>
         </a>
-        <div class="community-post-badges">
-          ${pinned ? `<span class="community-badge is-pinned">${iconSvg('star')} Pinned</span>` : ''}
-          ${post.communitySlug ? `<a class="community-badge" href="${communityRoute(post.communitySlug)}">c/${escapeHtml(post.communitySlug)}</a>` : ''}
-          ${post.official ? '<span class="community-badge">Official</span>' : ''}
-          ${post.intent === 'feedback_request' ? '<span class="community-badge">Feedback Requested</span>' : ''}
-          ${post.intent === 'collaboration_request' ? '<span class="community-badge">Looking for Collaborators</span>' : ''}
+        <div class="community-post-header-actions">
+          <div class="community-post-badges">
+            ${pinned ? `<span class="community-badge is-pinned">${iconSvg('star')} Pinned</span>` : ''}
+            ${post.communitySlug ? `<a class="community-badge" href="${communityRoute(post.communitySlug)}">c/${escapeHtml(post.communitySlug)}</a>` : ''}
+            ${post.official ? '<span class="community-badge">Official</span>' : ''}
+            ${post.intent === 'feedback_request' ? '<span class="community-badge">Feedback Requested</span>' : ''}
+            ${post.intent === 'collaboration_request' ? '<span class="community-badge">Looking for Collaborators</span>' : ''}
+          </div>
+          ${renderPostOptionsMenu(post, { isOwn })}
         </div>
       </header>
       ${post.title ? `<h2>${escapeHtml(post.title)}</h2>` : ''}
@@ -1260,8 +1375,6 @@ function postCard(post, { detail = false } = {}) {
         <a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></a>
         <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
         <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
-        <button type="button" data-community-report="${escapeHtml(post.postId)}">${iconSvg('alertCircle')} <span>Report</span></button>
-        ${isOwn ? `<button type="button" data-community-delete-post="${escapeHtml(post.postId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
       </footer>
       ${detail ? renderComments(post) : ''}
     </article>
@@ -1281,14 +1394,23 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
   const body = isReply ? state.replyDrafts[parentCommentId] || '' : state.commentDraft
   return `
     <form class="community-comment-composer" ${isReply ? `data-community-reply-form="${escapeHtml(parentCommentId)}"` : 'data-community-comment-form'}>
-      <label>
-        <span>${isReply ? 'Reply' : 'Comment'}</span>
-        <textarea name="body" maxlength="2000" rows="${isReply ? '3' : '4'}" placeholder="${isReply ? 'Write a reply...' : 'Start the conversation...'}">${escapeHtml(body)}</textarea>
-      </label>
-      <div class="community-comment-form-actions">
+      <div class="community-comment-composer-row">
+        <span class="community-avatar community-comment-composer-avatar">${currentUserAvatar()}</span>
+        <label>
+          <span class="sr-only">${isReply ? 'Reply' : 'Comment'}</span>
+          <textarea name="body" maxlength="2000" rows="${isReply ? '2' : '3'}" placeholder="${isReply ? 'Write a reply...' : 'Start the conversation...'}">${escapeHtml(body)}</textarea>
+        </label>
+        <button type="submit" class="button button-accent" ${state.commentSubmitting ? 'disabled' : ''}>${state.commentSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post'}</button>
+      </div>
+      <div class="community-comment-tool-row" aria-label="Comment attachments">
+        <button type="button" disabled title="Image comments are coming soon.">${iconSvg('image')} <span>Image</span></button>
+        <button type="button" disabled title="Music comments are coming soon.">${iconSvg('music')} <span>Music</span></button>
+        <button type="button" disabled title="Project comments are coming soon.">${iconSvg('cube')} <span>Project</span></button>
+        <button type="button" disabled title="Comment emoji picker is coming soon.">${iconSvg('smile')} <span>Emoji</span></button>
+      </div>
+      <div class="community-comment-form-actions is-quiet">
         <span>${Math.max(0, 2000 - body.length)} characters left</span>
         ${isReply ? `<button type="button" class="button button-muted" data-cancel-reply-composer="${escapeHtml(parentCommentId)}">Cancel</button>` : ''}
-        <button type="submit" class="button button-accent" ${state.commentSubmitting ? 'disabled' : ''}>${state.commentSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post Comment'}</button>
       </div>
     </form>
   `
@@ -1349,7 +1471,6 @@ function renderComments(post) {
 function emptyCopy() {
   if (state.activeTab === 'following') return state.currentUser ? 'Focus communities to build this feed.' : 'Sign in to focus communities.'
   if (state.activeTab === 'community') return `No posts in ${state.activeTopicLabel || 'this community'} yet.`
-  if (state.activeTab === 'placeholder') return `${state.activeTopicLabel || 'This topic'} is a placeholder space for now. Browse real communities or create a post in the general feed.`
   if (state.activeTab === 'official') return 'No official posts yet.'
   if (['music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration'].includes(state.activeTab)) return `No ${activeFeedTitle().toLowerCase()} posts yet.`
   return 'No posts yet. Be the first to share something.'
@@ -1370,6 +1491,18 @@ function renderFeedSkeletons() {
           <div class="community-skeleton-line is-short"></div>
         </article>
       `).join('')}
+    </section>
+  `
+}
+
+function renderDetailSkeleton() {
+  return `
+    <section class="community-post-card community-post-detail-card is-detail community-post-skeleton" aria-label="Loading post">
+      <div class="community-skeleton-line is-author"></div>
+      <div class="community-skeleton-line is-title"></div>
+      <div class="community-skeleton-line"></div>
+      <div class="community-skeleton-line"></div>
+      <div class="community-skeleton-line is-short"></div>
     </section>
   `
 }
@@ -1398,6 +1531,7 @@ function renderFeed() {
 
 function renderCommunityCard(community) {
   const focused = Boolean(state.communityFocus[community.communityId])
+  const focusDisabled = community.fallback === true
   return `
     <article class="community-community-card">
       <a class="community-community-main" href="${communityRoute(community.slug)}">
@@ -1414,7 +1548,7 @@ function renderCommunityCard(community) {
         <span>${escapeHtml(community.postingMode.replace(/_/g, ' '))}</span>
       </div>
       <div class="community-card-actions">
-        <button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" data-toggle-community-focus="${escapeHtml(community.communityId)}">${focused ? 'Focused' : 'Focus'}</button>
+        <button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>
         <a class="button button-muted" href="${communityRoute(community.slug)}">Open</a>
       </div>
     </article>
@@ -1494,7 +1628,7 @@ function renderCommunitiesView() {
               </select>
             </label>
           </section>
-          ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : state.communities.length ? `<section class="community-community-grid">${state.communities.map(renderCommunityCard).join('')}</section>` : '<section class="community-feed-state community-panel">No communities yet.</section>'}
+          ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : `<section class="community-community-grid">${directoryCommunities().map(renderCommunityCard).join('') || '<div class="community-feed-state community-panel">No communities match those filters.</div>'}</section>`}
         </div>
         ${renderSidebar()}
       </div>
@@ -1553,7 +1687,6 @@ function renderLeftNav() {
   ]
   return `
     <aside class="community-left-nav" aria-label="Community navigation">
-      <button type="button" class="community-left-post-button" data-open-community-composer>${iconSvg('folderPlus')} <span>Post</span></button>
       <nav>
         ${navItems.map((item) => item.href ? `
           <a class="${item.active ? 'is-active' : ''}" href="${item.href}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></a>
@@ -1581,7 +1714,9 @@ function trendingTags() {
 }
 
 function renderSidebar() {
-  const suggested = visibleTopicCommunities().slice(0, 4)
+  const suggested = displayedCommunities()
+    .filter((community) => !state.communityFocus[community.communityId])
+    .slice(0, 5)
   const tags = trendingTags()
   return `
     <aside class="community-right-rail community-sidebar">
@@ -1596,7 +1731,7 @@ function renderSidebar() {
                   <strong>${escapeHtml(community.name)}</strong>
                   <em>${formatCount(community.focusCount)} focused · ${formatCount(community.postCount)} posts</em>
                 </a>
-                <button type="button" data-toggle-community-focus="${escapeHtml(community.communityId)}">${state.communityFocus[community.communityId] ? 'Focused' : 'Focus'}</button>
+                <button type="button" ${community.fallback ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${community.fallback ? 'Soon' : state.communityFocus[community.communityId] ? 'Focused' : 'Focus'}</button>
               </article>
             `).join('')}
           </div>
@@ -1624,17 +1759,16 @@ function renderDetail() {
     ${renderPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
     <main class="community-page">
-      <section class="community-hero compact">
+      <section class="community-detail-topbar">
         <div>
           <p class="eyebrow">Community</p>
-          <h1>Post</h1>
-          <p>Full community post view and action surface.</p>
+          <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
         </div>
-        <a class="button button-muted" href="${ROUTES.community}">Back to Community</a>
+        <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
       </section>
       <div class="community-layout is-detail">
-        <div>
-          ${state.loading ? '<section class="community-feed-state community-panel">Loading post...</section>' : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
+        <div class="community-detail-main">
+          ${state.loading ? renderDetailSkeleton() : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
         </div>
         ${renderSidebar()}
       </div>
@@ -1648,6 +1782,7 @@ function renderDetail() {
 function renderCommunityDetail() {
   const community = state.community
   const focused = community ? Boolean(state.communityFocus[community.communityId]) : false
+  const focusDisabled = community?.fallback === true
   return `
     ${renderPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
@@ -1661,7 +1796,11 @@ function renderCommunityDetail() {
         </div>
         <div class="community-hero-actions">
           <a class="button button-muted" href="${ROUTES.communityCommunities}">All Communities</a>
-          ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" data-toggle-community-focus="${escapeHtml(community.communityId)}">${focused ? 'Focused' : 'Focus'}</button>` : ''}
+          ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>` : ''}
+          ${community ? focusDisabled
+            ? `<button type="button" class="button button-muted" disabled title="Posting is available once this community is active.">${iconSvg('plus')} <span>Post soon</span></button>`
+            : `<button type="button" class="button button-accent" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>`
+          : ''}
         </div>
       </section>
       <div class="community-layout">
@@ -1669,20 +1808,7 @@ function renderCommunityDetail() {
           ${community ? renderFeedToolbar() : ''}
           ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading community...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : community ? renderFeed() : '<section class="community-feed-state community-panel">This community is not available.</section>'}
         </div>
-        <aside class="community-sidebar">
-          <section class="community-panel">
-            <h2>Rules</h2>
-            <p>Community rules and moderator notes are coming next.</p>
-          </section>
-          <section class="community-panel">
-            <h2>Moderators</h2>
-            <p>${community?.moderatorIds?.length ? `${community.moderatorIds.length} moderator${community.moderatorIds.length === 1 ? '' : 's'}` : 'Moderator profiles will appear here.'}</p>
-          </section>
-          <section class="community-panel">
-            <h2>Guidelines</h2>
-            <p>Share work, give useful feedback, and respect creator ownership.</p>
-          </section>
-        </aside>
+        ${renderSidebar()}
       </div>
       ${renderComposerModal()}
       ${renderStoryComposerModal()}
@@ -1702,15 +1828,14 @@ function hydrateShell() {
 
 function renderFeedToolbar() {
   const title = state.view.type === 'community' && state.community ? state.community.name : activeFeedTitle()
+  const postDisabled = state.view.type === 'community' && state.community?.fallback === true
   const subtitle = state.view.type === 'community' && state.community
     ? `Posts in c/${state.community.slug}.`
     : state.activeTab === 'following'
     ? 'Posts from communities you focus.'
     : state.activeTab === 'community'
       ? 'Posts from this community.'
-      : state.activeTab === 'placeholder'
-        ? 'This is a placeholder topic until the real community exists.'
-        : 'Fresh creator updates from across Melogic.'
+      : 'Fresh creator updates from across Melogic.'
   return `
     <section class="community-feed-toolbar" aria-label="Feed controls">
       <div>
@@ -1733,7 +1858,10 @@ function renderFeedToolbar() {
           <option value="top-week" ${state.feedSort === 'top-week' ? 'selected' : ''}>Top Week</option>
           <option value="most-discussed" ${state.feedSort === 'most-discussed' ? 'selected' : ''}>Most Discussed</option>
         </select>
-        <button type="button" class="button button-accent" data-open-community-composer>${iconSvg('folderPlus')} <span>Post</span></button>
+        ${postDisabled
+          ? `<button type="button" class="button button-muted" disabled title="Posting is available once this community is active.">${iconSvg('plus')} <span>Post soon</span></button>`
+          : `<button type="button" class="button button-accent" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>`
+        }
       </div>
     </section>
   `
@@ -1741,6 +1869,7 @@ function renderFeedToolbar() {
 
 function render() {
   if (!app) return
+  document.body.classList.toggle('community-modal-open', communityModalIsOpen())
   if (state.view.type !== 'feed' || communityModalIsOpen()) setCommunityChromeHidden(false)
   if (state.detailPostId) {
     app.innerHTML = renderDetail()
@@ -1941,10 +2070,7 @@ async function loadFeedPage({ reset = false } = {}) {
     let posts = []
     let cursor = null
     let hasMore = false
-    if (state.activeTab === 'placeholder') {
-      posts = []
-      hasMore = false
-    } else if (state.activeTab === 'following') {
+    if (state.activeTab === 'following') {
       if (reset && state.currentUser?.uid) {
         posts = await listFocusedCommunityPosts(state.currentUser.uid, COMMUNITY_PAGE_SIZE)
         posts = filterPostsForActiveTab(posts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
@@ -1989,21 +2115,34 @@ async function loadCommunity() {
   state.feedError = ''
   if (state.detailPostId) {
     state.loading = true
+    state.posts = []
+    state.comments = []
+    state.commentViewerState = {}
+    state.attachmentMediaUrls = {}
     render()
+    const startedAt = performance.now()
     try {
       const post = await getCommunityPost(state.detailPostId)
       state.posts = post ? [post] : []
-      state.comments = []
-      state.commentViewerState = {}
-      if (post) await loadComments({ renderAfter: false })
-      await loadViewerState()
-      await loadAttachmentMediaUrls()
+      state.loading = false
+      logCommunityPerf('detail post loaded', { durationMs: Math.round(performance.now() - startedAt), postId: state.detailPostId, found: Boolean(post) })
+      render()
+      if (post) {
+        Promise.allSettled([
+          loadComments({ renderAfter: true }),
+          loadViewerState().then(render),
+          loadAttachmentMediaUrls().then(render),
+          !state.communities.length ? loadCommunities({ renderOnStart: false, renderAfter: true }) : Promise.resolve()
+        ]).then(() => {
+          logCommunityPerf('detail enrichment complete', { postId: state.detailPostId })
+        }).catch(() => null)
+      }
     } catch (error) {
       console.warn('[community] detail load failed', { code: error?.code, message: error?.message, details: error?.details })
       state.error = error?.message || 'This post could not be loaded.'
-    } finally {
       state.loading = false
       render()
+    } finally {
     }
     return
   }
@@ -2030,9 +2169,9 @@ async function loadCommunity() {
     state.attachmentMediaUrls = {}
     render()
     try {
-      const community = await getCommunityBySlug(state.view.slug)
+      const community = await getCommunityBySlug(state.view.slug) || fallbackCommunityBySlug(state.view.slug)
       state.community = community
-      state.communities = community ? [community] : []
+      state.communities = community && !community.fallback ? [community] : state.communities
       state.communityFilters.loading = false
       render()
       if (community) {
@@ -2184,6 +2323,13 @@ async function handleShare(postId) {
   render()
 }
 
+async function copyPostLink(postId) {
+  const url = `${window.location.origin}${communityPostRoute(postId)}`
+  await navigator.clipboard?.writeText(url).catch(() => null)
+  state.openPostMenuId = ''
+  showCommunityToast('Post link copied.')
+}
+
 function handleFeedSearch(event) {
   event.preventDefault()
   const form = event.currentTarget
@@ -2204,6 +2350,7 @@ async function handleDeleteOwnPost(postId = '') {
     return
   }
   if (!window.confirm('Hide this post from the community?')) return
+  state.openPostMenuId = ''
   try {
     await deleteOwnCommunityPost({ postId, reason: 'Author removed post from community.' })
     state.posts = state.posts.filter((post) => post.postId !== postId)
@@ -2682,21 +2829,15 @@ function selectTopicTab(tab = 'for-you') {
 }
 
 function selectTopicCommunity({ communityId = '', slug = '', label = '' } = {}) {
+  if (slug) {
+    window.location.assign(communityRoute(slug))
+    return
+  }
   state.activeTab = 'community'
   state.activeCommunityId = communityId
   state.activeCommunitySlug = slug
   state.activeTopicLabel = label || slug || 'Community'
   state.composer = { ...state.composer, communityId }
-  loadCommunity()
-}
-
-function selectPlaceholderTopic(label = '') {
-  state.activeTab = 'placeholder'
-  state.activeCommunityId = ''
-  state.activeCommunitySlug = ''
-  state.activeTopicLabel = label || 'Community'
-  state.posts = []
-  showCommunityToast(`${state.activeTopicLabel} is a placeholder topic for now.`)
   loadCommunity()
 }
 
@@ -2749,6 +2890,36 @@ function setupCommunityScrollChrome() {
   communityScrollChromeReady = true
   window.addEventListener('scroll', scheduleCommunityChromeScroll, { passive: true })
   window.addEventListener('focusin', () => setCommunityChromeHidden(false), { passive: true })
+}
+
+function setupCommunityKeyboardShortcuts() {
+  if (communityKeyboardReady) return
+  communityKeyboardReady = true
+  window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return
+    if (state.openPostMenuId) {
+      state.openPostMenuId = ''
+      render()
+      return
+    }
+    if (!communityModalIsOpen()) return
+    if (state.composer.open) state.composer = { ...state.composer, open: false, submitting: false, error: '' }
+    if (state.storyComposer.open) state.storyComposer = { ...state.storyComposer, open: false, submitting: false, error: '' }
+    if (state.storyViewer.open) state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
+    if (state.report.open) state.report = { ...state.report, open: false, submitting: false, error: '' }
+    if (state.createCommunity.open) state.createCommunity = { ...state.createCommunity, open: false, submitting: false, error: '' }
+    render()
+  })
+}
+
+function setupCommunityOutsideClick() {
+  if (communityOutsideClickReady) return
+  communityOutsideClickReady = true
+  document.addEventListener('click', (event) => {
+    if (!state.openPostMenuId || event.target.closest('[data-post-options-root]')) return
+    state.openPostMenuId = ''
+    render()
+  })
 }
 
 function setupFeedPaginationObserver() {
@@ -2931,6 +3102,7 @@ function openReport(postId) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
+  state.openPostMenuId = ''
   state.report = { open: true, targetType: 'community_post', postId, commentId: '', storyId: '', reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
   render()
 }
@@ -3000,7 +3172,7 @@ async function handleReportSubmit(event) {
 }
 
 function bindEvents() {
-  app.querySelectorAll('.community-post-card[data-post-id]').forEach((card) => {
+  app.querySelectorAll('.community-post-card[data-post-id]:not(.is-detail)').forEach((card) => {
     card.addEventListener('click', (event) => {
       if (isPostCardInteractiveTarget(event.target)) return
       openPostDetail(card.getAttribute('data-post-id') || '')
@@ -3015,6 +3187,21 @@ function bindEvents() {
   app.querySelectorAll('.community-post-card a, .community-post-card button, .community-post-card input, .community-post-card textarea, .community-post-card select, .community-post-card label').forEach((element) => {
     element.addEventListener('click', (event) => event.stopPropagation())
   })
+  app.querySelectorAll('[data-toggle-post-menu]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      const postId = button.getAttribute('data-toggle-post-menu') || ''
+      state.openPostMenuId = state.openPostMenuId === postId ? '' : postId
+      render()
+    })
+  })
+  app.querySelectorAll('[data-copy-post-link]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation()
+      copyPostLink(button.getAttribute('data-copy-post-link') || '')
+    })
+  })
+  setupCommunityOutsideClick()
   app.querySelectorAll('[data-community-tab]').forEach((button) => {
     button.addEventListener('click', () => {
       selectTopicTab(button.getAttribute('data-community-tab') || 'for-you')
@@ -3051,9 +3238,6 @@ function bindEvents() {
       })
     })
   })
-  app.querySelectorAll('[data-topic-placeholder]').forEach((button) => {
-    button.addEventListener('click', () => selectPlaceholderTopic(button.getAttribute('data-topic-placeholder') || 'Community'))
-  })
   app.querySelectorAll('[data-topic-scroll]').forEach((button) => {
     button.addEventListener('click', () => {
       const scroller = app.querySelector('[data-community-topic-scroll]')
@@ -3067,6 +3251,7 @@ function bindEvents() {
   updateTopicArrowState()
   app.querySelector('[data-load-more-posts]')?.addEventListener('click', () => loadFeedPage({ reset: false }))
   setupCommunityScrollChrome()
+  setupCommunityKeyboardShortcuts()
   setupFeedPaginationObserver()
   app.querySelectorAll('[data-open-community-composer]').forEach((button) => button.addEventListener('click', openCommunityComposer))
   app.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
