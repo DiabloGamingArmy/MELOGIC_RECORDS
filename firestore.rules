@@ -1891,6 +1891,11 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /dislikes/{uid} {
+        allow read: if signedIn() && request.auth.uid == uid;
+        allow write: if false;
+      }
+
       match /saves/{uid} {
         allow read: if signedIn() && request.auth.uid == uid;
         allow write: if false;

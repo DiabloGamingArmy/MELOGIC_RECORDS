@@ -500,6 +500,16 @@ Done in creator content phase:
 - public profile post cards show intent/attachment badges
 - backend validates attachment counts, ownership/share permissions, safe product preview paths, and future deadlines
 
+Done in post interaction refinement:
+
+- post Likes and Dislikes are visible actions with mutually exclusive optimistic state
+- `toggleCommunityPostLike` and `toggleCommunityPostDislike` enforce one active reaction per viewer server-side
+- post authors can edit title, body, tags, and safe public visibility through the `updateCommunityPost` callable
+- edited posts keep immutable fields, attachments, counts, reports, and moderation fields server-controlled
+- edited posts show an `edited` label near the timestamp
+- topic and story rails expose left/right fade edges only when more horizontal content is available
+- header profile menu reinitialization cleans up stale outside-click/auth listeners so the avatar menu stays reliable across Community routes
+
 Deferred:
 
 - creator follow feed

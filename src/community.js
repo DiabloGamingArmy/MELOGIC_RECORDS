@@ -36,8 +36,10 @@ import {
   recordCommunityStoryView,
   toggleCommunityCommentLike,
   toggleCommunityFocus,
+  toggleCommunityPostDislike,
   toggleCommunityPostLike,
   toggleCommunityPostSave,
+  updateCommunityPost,
   uploadCommunityStoryImage
 } from './data/communityService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -196,6 +198,16 @@ const state = {
     submitting: false,
     error: ''
   },
+  editPost: {
+    open: false,
+    postId: '',
+    title: '',
+    body: '',
+    tags: '',
+    visibility: 'public',
+    submitting: false,
+    error: ''
+  },
   createCommunity: {
     open: false,
     name: '',
@@ -240,6 +252,7 @@ let lastCommunityScrollY = window.scrollY || 0
 let communityKeyboardReady = false
 let communityOutsideClickReady = false
 let communityBeforeUnloadReady = false
+let communityRailResizeReady = false
 const communityPendingActions = new Map()
 
 function logCommunityPerf(label, data = {}) {
@@ -673,7 +686,7 @@ function renderStoriesRow() {
   `).join('')
 
   return `
-    <section class="community-stories-row" aria-label="Community stories">
+    <section class="community-stories-row" aria-label="Community stories" data-community-stories-scroll>
       <button type="button" class="community-story-item is-create" data-story-coming-soon="Your Story">
         <span class="community-story-ring"><span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span></span>
         <strong>Your Story</strong>
@@ -1388,7 +1401,7 @@ function postCard(post, { detail = false } = {}) {
           <span class="community-avatar">${postAvatar(post)}</span>
           <span>
             <strong>${escapeHtml(post.authorDisplayName || 'Melogic Creator')}</strong>
-            <em>${escapeHtml(formatUsername(post.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(post.createdAt))}</em>
+            <em>${escapeHtml(formatUsername(post.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(post.createdAt))}${post.edited ? ' · edited' : ''}</em>
           </span>
         </a>
         <div class="community-post-header-actions">
@@ -1409,6 +1422,7 @@ function postCard(post, { detail = false } = {}) {
       ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<button type="button" data-community-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join('')}</div>` : ''}
       <footer class="community-post-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
+        <button type="button" class="${viewer.disliked ? 'is-active' : ''}" data-community-dislike="${escapeHtml(post.postId)}">${iconSvg('thumbsDown')} <span>Dislike</span><em>${formatCount(post.counts.dislikes)}</em></button>
         <a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></a>
         <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
         <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
@@ -1707,6 +1721,48 @@ function renderReportModal() {
   `
 }
 
+function renderEditPostModal() {
+  if (!state.editPost.open) return ''
+  const post = postById(state.editPost.postId) || {}
+  const hasAttachments = Array.isArray(post.attachments) && post.attachments.length > 0
+  return `
+    <div class="community-modal-backdrop">
+      <section class="community-report-modal community-edit-post-modal" role="dialog" aria-modal="true" aria-labelledby="community-edit-post-title">
+        <header>
+          <h2 id="community-edit-post-title">Edit Post</h2>
+          <button type="button" data-close-edit-post aria-label="Close edit post modal">${iconSvg('x')}</button>
+        </header>
+        <form data-community-edit-post-form>
+          <label>
+            <span>Title</span>
+            <input name="title" maxlength="120" value="${escapeHtml(state.editPost.title)}" placeholder="Optional title" />
+          </label>
+          <label>
+            <span>Post</span>
+            <textarea name="body" maxlength="4000" rows="7" placeholder="What do you want to share?">${escapeHtml(state.editPost.body)}</textarea>
+          </label>
+          <label>
+            <span>Tags</span>
+            <input name="tags" maxlength="180" value="${escapeHtml(state.editPost.tags)}" placeholder="mixing, feedback, stage" />
+          </label>
+          <label>
+            <span>Visibility</span>
+            <select name="visibility">
+              <option value="public" ${state.editPost.visibility === 'public' ? 'selected' : ''}>Public</option>
+            </select>
+          </label>
+          ${hasAttachments ? '<p class="community-muted-note">Attachment editing is coming soon.</p>' : ''}
+          ${state.editPost.error ? `<p class="community-error">${escapeHtml(state.editPost.error)}</p>` : ''}
+          <div class="community-form-actions">
+            <button type="button" class="button button-muted" data-close-edit-post ${state.editPost.submitting ? 'disabled' : ''}>Cancel</button>
+            <button type="submit" class="button button-accent" ${state.editPost.submitting ? 'disabled' : ''}>${state.editPost.submitting ? 'Saving...' : 'Save Changes'}</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `
+}
+
 function renderLeftNav() {
   const navItems = [
     { label: 'Home', icon: 'home', href: ROUTES.community },
@@ -1811,6 +1867,7 @@ function renderDetail() {
       </div>
       ${renderStoryComposerModal()}
       ${renderStoryViewerModal()}
+      ${renderEditPostModal()}
       ${renderReportModal()}
     </main>
   `
@@ -1850,6 +1907,7 @@ function renderCommunityDetail() {
       ${renderComposerModal()}
       ${renderStoryComposerModal()}
       ${renderStoryViewerModal()}
+      ${renderEditPostModal()}
       ${renderReportModal()}
     </main>
   `
@@ -1944,6 +2002,7 @@ function render() {
       ${renderComposerModal()}
       ${renderStoryComposerModal()}
       ${renderStoryViewerModal()}
+      ${renderEditPostModal()}
       ${renderReportModal()}
     </main>
   `
@@ -2231,6 +2290,7 @@ async function loadCommunity() {
 function updatePostCounts(postId, patch = {}) {
   const flatPatch = {}
   if (Object.prototype.hasOwnProperty.call(patch, 'likes')) flatPatch.likeCount = patch.likes
+  if (Object.prototype.hasOwnProperty.call(patch, 'dislikes')) flatPatch.dislikeCount = patch.dislikes
   if (Object.prototype.hasOwnProperty.call(patch, 'comments')) flatPatch.commentCount = patch.comments
   if (Object.prototype.hasOwnProperty.call(patch, 'saves')) flatPatch.saveCount = patch.saves
   if (Object.prototype.hasOwnProperty.call(patch, 'shares')) flatPatch.shareCount = patch.shares
@@ -2266,14 +2326,18 @@ function updatePostActionDom(postId = '') {
   const escapedPostId = communityCssEscape(postId)
   app?.querySelectorAll(`.community-post-card[data-post-id="${escapedPostId}"]`).forEach((card) => {
     const likeButton = card.querySelector(`[data-community-like="${escapedPostId}"]`)
+    const dislikeButton = card.querySelector(`[data-community-dislike="${escapedPostId}"]`)
     const saveButton = card.querySelector(`[data-community-save="${escapedPostId}"]`)
     const shareButton = card.querySelector(`[data-community-share="${escapedPostId}"]`)
     likeButton?.classList.toggle('is-active', Boolean(viewer.liked))
+    dislikeButton?.classList.toggle('is-active', Boolean(viewer.disliked))
     saveButton?.classList.toggle('is-active', Boolean(viewer.saved))
     const likeCount = likeButton?.querySelector('em')
+    const dislikeCount = dislikeButton?.querySelector('em')
     const saveCount = saveButton?.querySelector('em')
     const shareCount = shareButton?.querySelector('em')
     if (likeCount) likeCount.textContent = formatCount(post.counts.likes)
+    if (dislikeCount) dislikeCount.textContent = formatCount(post.counts.dislikes)
     if (saveCount) saveCount.textContent = formatCount(post.counts.saves)
     if (shareCount) shareCount.textContent = formatCount(post.counts.shares)
   })
@@ -2282,7 +2346,7 @@ function updatePostActionDom(postId = '') {
 function postMenuItemsMarkup(post = {}, { isOwn = false } = {}) {
   return `
     <div class="community-post-options-menu" role="menu">
-      ${isOwn ? '<button type="button" role="menuitem" disabled title="Edit Post is coming soon.">Edit Post <em>Coming soon</em></button>' : ''}
+      ${isOwn ? `<button type="button" role="menuitem" data-community-edit-post="${escapeHtml(post.postId)}">Edit Post</button>` : ''}
       <button type="button" role="menuitem" data-copy-post-link="${escapeHtml(post.postId)}">Copy Link</button>
       ${isOwn ? `
         <button type="button" role="menuitem" class="is-danger" data-community-delete-post="${escapeHtml(post.postId)}">Delete Post</button>
@@ -2317,6 +2381,12 @@ function bindPostMenuEvents(root = app) {
     button.addEventListener('click', (event) => {
       stopCommunityActionEvent(event)
       handleDeleteOwnPost(button.getAttribute('data-community-delete-post') || '')
+    })
+  })
+  root?.querySelectorAll('[data-community-edit-post]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      openEditPost(button.getAttribute('data-community-edit-post') || '')
     })
   })
 }
@@ -2408,7 +2478,7 @@ async function handleComposerSubmit(event) {
     } else {
       state.posts = [post, ...state.posts.filter((item) => item.postId !== post.postId)]
     }
-    state.viewerState[post.postId] = { liked: false, saved: false }
+    state.viewerState[post.postId] = { liked: false, disliked: false, saved: false }
     if (state.community?.communityId === post.communityId) {
       state.community = { ...state.community, postCount: state.community.postCount + 1 }
     }
@@ -2438,23 +2508,69 @@ async function handleLike(postId) {
   if (communityPendingActions.has(actionId)) return
   const post = postById(postId)
   const previousLiked = Boolean(state.viewerState[postId]?.liked)
+  const previousDisliked = Boolean(state.viewerState[postId]?.disliked)
   const previousLikes = Number(post?.counts?.likes || 0)
+  const previousDislikes = Number(post?.counts?.dislikes || 0)
   const nextLiked = !previousLiked
   setPostViewerFlag(postId, 'liked', nextLiked)
+  if (nextLiked) setPostViewerFlag(postId, 'disliked', false)
   setPostCount(postId, 'likes', previousLikes + (nextLiked ? 1 : -1))
+  if (nextLiked && previousDisliked) setPostCount(postId, 'dislikes', previousDislikes - 1)
   updatePostActionDom(postId)
   trackCommunityAction(actionId, toggleCommunityPostLike(postId))
     .then((result) => {
-      setPostViewerFlag(postId, 'liked', Boolean(result.active))
+      setPostViewerFlag(postId, 'liked', Boolean(result.liked ?? result.active))
+      setPostViewerFlag(postId, 'disliked', Boolean(result.disliked))
       if (Number.isFinite(Number(result.likesCount))) setPostCount(postId, 'likes', Number(result.likesCount))
+      if (Number.isFinite(Number(result.dislikesCount))) setPostCount(postId, 'dislikes', Number(result.dislikesCount))
       updatePostActionDom(postId)
     })
     .catch((error) => {
       console.warn('[community] like failed', { code: error?.code, message: error?.message, details: error?.details })
       setPostViewerFlag(postId, 'liked', previousLiked)
+      setPostViewerFlag(postId, 'disliked', previousDisliked)
       setPostCount(postId, 'likes', previousLikes)
+      setPostCount(postId, 'dislikes', previousDislikes)
       updatePostActionDom(postId)
       showCommunityToast('Could not save like. Please try again.')
+    })
+}
+
+async function handleDislike(postId) {
+  if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  const actionId = `dislike:${postId}`
+  if (communityPendingActions.has(actionId)) return
+  const post = postById(postId)
+  const previousLiked = Boolean(state.viewerState[postId]?.liked)
+  const previousDisliked = Boolean(state.viewerState[postId]?.disliked)
+  const previousLikes = Number(post?.counts?.likes || 0)
+  const previousDislikes = Number(post?.counts?.dislikes || 0)
+  const nextDisliked = !previousDisliked
+  setPostViewerFlag(postId, 'disliked', nextDisliked)
+  if (nextDisliked) setPostViewerFlag(postId, 'liked', false)
+  setPostCount(postId, 'dislikes', previousDislikes + (nextDisliked ? 1 : -1))
+  if (nextDisliked && previousLiked) setPostCount(postId, 'likes', previousLikes - 1)
+  updatePostActionDom(postId)
+  trackCommunityAction(actionId, toggleCommunityPostDislike(postId))
+    .then((result) => {
+      setPostViewerFlag(postId, 'liked', Boolean(result.liked))
+      setPostViewerFlag(postId, 'disliked', Boolean(result.disliked ?? result.active))
+      if (Number.isFinite(Number(result.likesCount))) setPostCount(postId, 'likes', Number(result.likesCount))
+      if (Number.isFinite(Number(result.dislikesCount))) setPostCount(postId, 'dislikes', Number(result.dislikesCount))
+      updatePostActionDom(postId)
+    })
+    .catch((error) => {
+      console.warn('[community] dislike failed', { code: error?.code, message: error?.message, details: error?.details })
+      setPostViewerFlag(postId, 'liked', previousLiked)
+      setPostViewerFlag(postId, 'disliked', previousDisliked)
+      setPostCount(postId, 'likes', previousLikes)
+      setPostCount(postId, 'dislikes', previousDislikes)
+      updatePostActionDom(postId)
+      showCommunityToast('Could not save dislike. Please try again.')
     })
 }
 
@@ -2519,6 +2635,107 @@ async function copyPostLink(postId) {
   await navigator.clipboard?.writeText(url).catch(() => null)
   closePostMenusDom()
   showCommunityToast('Post link copied.')
+}
+
+function openEditPost(postId = '') {
+  const post = postById(postId)
+  if (!post || !state.currentUser?.uid || post.authorUid !== state.currentUser.uid) return
+  closePostMenusDom()
+  state.editPost = {
+    open: true,
+    postId: post.postId,
+    title: post.title || '',
+    body: post.body || '',
+    tags: Array.isArray(post.tags) ? post.tags.join(', ') : '',
+    visibility: post.visibility || 'public',
+    submitting: false,
+    error: ''
+  }
+  render()
+}
+
+function closeEditPostModal() {
+  state.editPost = {
+    open: false,
+    postId: '',
+    title: '',
+    body: '',
+    tags: '',
+    visibility: 'public',
+    submitting: false,
+    error: ''
+  }
+  render()
+}
+
+function parseEditTags(value = '') {
+  return Array.from(new Set(String(value || '')
+    .split(/[,\s]+/)
+    .map((tag) => normalizeTagKey(tag))
+    .filter(Boolean)))
+    .slice(0, 5)
+}
+
+async function handleEditPostSubmit(event) {
+  event.preventDefault()
+  if (!state.currentUser) return
+  const form = event.currentTarget
+  const formData = new FormData(form)
+  const postId = state.editPost.postId
+  const post = postById(postId)
+  if (!post) return
+  const title = String(formData.get('title') || '').trim()
+  const body = String(formData.get('body') || '').trim()
+  const tags = parseEditTags(String(formData.get('tags') || ''))
+  const visibility = String(formData.get('visibility') || 'public').trim()
+  if (!title && !body && !(Array.isArray(post.attachments) && post.attachments.length)) {
+    state.editPost = { ...state.editPost, title, body, tags: tags.join(', '), visibility, error: 'Add text, a title, or keep an attachment before saving.' }
+    render()
+    return
+  }
+
+  const actionId = `edit-post:${postId}`
+  if (communityPendingActions.has(actionId)) return
+  const previousPost = post
+  const previousScrollY = window.scrollY || 0
+  state.editPost = { ...state.editPost, title, body, tags: tags.join(', '), visibility, submitting: true, error: '' }
+  render()
+
+  const optimisticPost = normalizeCommunityPost({
+    ...previousPost,
+    title,
+    titleLower: title.toLowerCase(),
+    body,
+    tags,
+    tagKeys: tags,
+    visibility: visibility === 'public' ? 'public' : previousPost.visibility,
+    edited: true,
+    editedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }, postId)
+
+  state.posts = state.posts.map((item) => item.postId === postId ? optimisticPost : item)
+  state.editPost = { open: false, postId: '', title: '', body: '', tags: '', visibility: 'public', submitting: false, error: '' }
+  render()
+  window.requestAnimationFrame(() => window.scrollTo({ top: previousScrollY }))
+
+  trackCommunityAction(actionId, updateCommunityPost({ postId, title, body, tags, visibility }))
+    .then((result) => {
+      if (result?.post) {
+        state.posts = state.posts.map((item) => item.postId === postId
+          ? normalizeCommunityPost({ ...item, ...result.post }, postId)
+          : item)
+        updatePostActionDom(postId)
+      }
+      showCommunityToast('Post updated.')
+    })
+    .catch((error) => {
+      console.warn('[community] edit post failed', { code: error?.code, message: error?.message, details: error?.details })
+      state.posts = state.posts.map((item) => item.postId === postId ? previousPost : item)
+      render()
+      window.requestAnimationFrame(() => window.scrollTo({ top: previousScrollY }))
+      showCommunityToast('Could not update this post. Please try again.')
+    })
 }
 
 function handleFeedSearch(event) {
@@ -3096,10 +3313,27 @@ function updateTopicArrowState() {
   const atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 4
   left?.toggleAttribute('disabled', atStart)
   right?.toggleAttribute('disabled', atEnd)
+  updateHorizontalRailFadeState(scroller, app.querySelector('.community-topic-bar'))
+}
+
+function updateHorizontalRailFadeState(scroller, root = scroller) {
+  if (!scroller || !root) return
+  const canScroll = scroller.scrollWidth > scroller.clientWidth + 4
+  const canScrollLeft = canScroll && scroller.scrollLeft > 4
+  const canScrollRight = canScroll && scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 4
+  root.classList.toggle('can-scroll-left', canScrollLeft)
+  root.classList.toggle('can-scroll-right', canScrollRight)
+}
+
+function updateCommunityRailFadeState() {
+  const topicScroller = app?.querySelector('[data-community-topic-scroll]')
+  const storiesScroller = app?.querySelector('[data-community-stories-scroll]')
+  if (topicScroller) updateHorizontalRailFadeState(topicScroller, app.querySelector('.community-topic-bar'))
+  if (storiesScroller) updateHorizontalRailFadeState(storiesScroller, storiesScroller)
 }
 
 function communityModalIsOpen() {
-  return Boolean(state.composer.open || state.storyComposer.open || state.storyViewer.open || state.report.open || state.createCommunity.open)
+  return Boolean(state.composer.open || state.storyComposer.open || state.storyViewer.open || state.report.open || state.editPost.open || state.createCommunity.open)
 }
 
 function activeElementIsCommunityInput() {
@@ -3152,6 +3386,7 @@ function setupCommunityKeyboardShortcuts() {
     if (state.storyComposer.open) state.storyComposer = { ...state.storyComposer, open: false, submitting: false, error: '' }
     if (state.storyViewer.open) state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
     if (state.report.open) state.report = { ...state.report, open: false, submitting: false, error: '' }
+    if (state.editPost.open) state.editPost = { open: false, postId: '', title: '', body: '', tags: '', visibility: 'public', submitting: false, error: '' }
     if (state.createCommunity.open) state.createCommunity = { ...state.createCommunity, open: false, submitting: false, error: '' }
     render()
   })
@@ -3164,6 +3399,12 @@ function setupCommunityOutsideClick() {
     if (!state.openPostMenuId || event.target.closest('[data-post-options-root]')) return
     closePostMenusDom()
   })
+}
+
+function setupCommunityRailResize() {
+  if (communityRailResizeReady) return
+  communityRailResizeReady = true
+  window.addEventListener('resize', updateCommunityRailFadeState, { passive: true })
 }
 
 function setupFeedPaginationObserver() {
@@ -3492,7 +3733,10 @@ function bindEvents() {
     })
   })
   app.querySelector('[data-community-topic-scroll]')?.addEventListener('scroll', updateTopicArrowState, { passive: true })
+  app.querySelector('[data-community-stories-scroll]')?.addEventListener('scroll', updateCommunityRailFadeState, { passive: true })
+  setupCommunityRailResize()
   updateTopicArrowState()
+  updateCommunityRailFadeState()
   app.querySelector('[data-load-more-posts]')?.addEventListener('click', () => loadFeedPage({ reset: false }))
   setupCommunityScrollChrome()
   setupCommunityKeyboardShortcuts()
@@ -3621,6 +3865,10 @@ function bindEvents() {
     stopCommunityActionEvent(event)
     handleLike(button.getAttribute('data-community-like'))
   }))
+  app.querySelectorAll('[data-community-dislike]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleDislike(button.getAttribute('data-community-dislike'))
+  }))
   app.querySelectorAll('[data-community-save]').forEach((button) => button.addEventListener('click', (event) => {
     stopCommunityActionEvent(event)
     handleSave(button.getAttribute('data-community-save'))
@@ -3637,6 +3885,12 @@ function bindEvents() {
     stopCommunityActionEvent(event)
     handleDeleteOwnPost(button.getAttribute('data-community-delete-post') || '')
   }))
+  app.querySelectorAll('[data-community-edit-post]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    openEditPost(button.getAttribute('data-community-edit-post') || '')
+  }))
+  app.querySelector('[data-community-edit-post-form]')?.addEventListener('submit', handleEditPostSubmit)
+  app.querySelectorAll('[data-close-edit-post]').forEach((button) => button.addEventListener('click', closeEditPostModal))
   app.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
   app.querySelectorAll('[data-community-reply-form]').forEach((form) => {
     form.addEventListener('submit', (event) => handleReplySubmit(event, form.getAttribute('data-community-reply-form') || ''))

@@ -331,6 +331,10 @@ main {
   z-index: 2140;
 }
 
+.profile-menu.is-open {
+  z-index: 10020;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -445,7 +449,7 @@ main {
   padding: 0.28rem;
   display: grid;
   gap: 0.1rem;
-  z-index: 2140;
+  z-index: 10020;
 }
 
 .profile-dropdown[hidden] {

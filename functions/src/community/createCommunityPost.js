@@ -449,12 +449,14 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     pinnedInCommunity: false,
     counts: {
       likes: 0,
+      dislikes: 0,
       comments: 0,
       saves: 0,
       shares: 0,
       reports: 0
     },
     likeCount: 0,
+    dislikeCount: 0,
     commentCount: 0,
     saveCount: 0,
     shareCount: 0,

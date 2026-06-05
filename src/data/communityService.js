@@ -101,19 +101,23 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
     pinnedInCommunity: raw.pinnedInCommunity === true,
     counts: {
       likes: Math.max(0, Number(raw.likeCount ?? raw.counts?.likes ?? 0)),
+      dislikes: Math.max(0, Number(raw.dislikeCount ?? raw.counts?.dislikes ?? 0)),
       comments: Math.max(0, Number(raw.commentCount ?? raw.counts?.comments ?? 0)),
       saves: Math.max(0, Number(raw.saveCount ?? raw.counts?.saves ?? 0)),
       shares: Math.max(0, Number(raw.shareCount ?? raw.counts?.shares ?? 0)),
       reports: Math.max(0, Number(raw.reportCount ?? raw.counts?.reports ?? 0))
     },
     likeCount: Math.max(0, Number(raw.likeCount ?? raw.counts?.likes ?? 0)),
+    dislikeCount: Math.max(0, Number(raw.dislikeCount ?? raw.counts?.dislikes ?? 0)),
     commentCount: Math.max(0, Number(raw.commentCount ?? raw.counts?.comments ?? 0)),
     saveCount: Math.max(0, Number(raw.saveCount ?? raw.counts?.saves ?? 0)),
     shareCount: Math.max(0, Number(raw.shareCount ?? raw.counts?.shares ?? 0)),
     reportCount: Math.max(0, Number(raw.reportCount ?? raw.counts?.reports ?? 0)),
     score: Math.max(0, Number(raw.score || 0)),
     createdAt: serializeDate(raw.createdAt),
-    updatedAt: serializeDate(raw.updatedAt)
+    updatedAt: serializeDate(raw.updatedAt),
+    edited: raw.edited === true,
+    editedAt: serializeDate(raw.editedAt)
   }
 }
 
@@ -520,12 +524,13 @@ export async function getCommunityPost(postId = '') {
 export async function getCommunityPostViewerState(postId = '', uid = '') {
   const id = String(postId || '').trim()
   const viewerUid = String(uid || '').trim()
-  if (!id || !viewerUid) return { liked: false, saved: false }
-  const [likeSnap, saveSnap] = await Promise.all([
+  if (!id || !viewerUid) return { liked: false, disliked: false, saved: false }
+  const [likeSnap, dislikeSnap, saveSnap] = await Promise.all([
     getDoc(doc(db, POST_COLLECTION, id, 'likes', viewerUid)).catch(() => null),
+    getDoc(doc(db, POST_COLLECTION, id, 'dislikes', viewerUid)).catch(() => null),
     getDoc(doc(db, POST_COLLECTION, id, 'saves', viewerUid)).catch(() => null)
   ])
-  return { liked: Boolean(likeSnap?.exists?.()), saved: Boolean(saveSnap?.exists?.()) }
+  return { liked: Boolean(likeSnap?.exists?.()), disliked: Boolean(dislikeSnap?.exists?.()), saved: Boolean(saveSnap?.exists?.()) }
 }
 
 export async function listCommunityComments(postId = '', limitCount = 120) {
@@ -791,6 +796,12 @@ export async function toggleCommunityPostLike(postId = '') {
   return result?.data || { ok: false }
 }
 
+export async function toggleCommunityPostDislike(postId = '') {
+  const callable = httpsCallable(functions, 'toggleCommunityPostDislike')
+  const result = await callable({ postId })
+  return result?.data || { ok: false }
+}
+
 export async function toggleCommunityPostSave(postId = '') {
   const callable = httpsCallable(functions, 'toggleCommunityPostSave')
   const result = await callable({ postId })
@@ -805,6 +816,12 @@ export async function recordCommunityPostShare(postId = '') {
 
 export async function deleteOwnCommunityPost(payload = {}) {
   const callable = httpsCallable(functions, 'deleteOwnCommunityPost')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function updateCommunityPost(payload = {}) {
+  const callable = httpsCallable(functions, 'updateCommunityPost')
   const result = await callable(payload)
   return result?.data || { ok: false }
 }

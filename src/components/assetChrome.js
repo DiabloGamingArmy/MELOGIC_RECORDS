@@ -8,6 +8,7 @@ import { ROUTES, authRoute } from '../utils/routes'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
 const BANNER_ALERT_STORAGE_KEY = 'melogic_banner_alert'
+let navAuthCleanup = null
 
 function escapeHtml(value) {
   return String(value || '')
@@ -358,6 +359,10 @@ function initCartDrawer() {
 }
 
 function initNavAuthState() {
+  if (typeof navAuthCleanup === 'function') {
+    navAuthCleanup()
+    navAuthCleanup = null
+  }
   const profileMenu = document.querySelector('[data-profile-menu]')
   const profileTrigger = document.querySelector('[data-nav-profile-trigger]')
   const profileDropdown = document.querySelector('[data-nav-profile-dropdown]')
@@ -373,6 +378,8 @@ function initNavAuthState() {
   const inboxLink = document.querySelector('[data-nav-inbox]')
   if (!profileMenu || !profileTrigger || !profileDropdown || !profileAvatar || !authEntryLink || !signOutButton) return
   let currentUser = null
+  const controller = new AbortController()
+  const { signal } = controller
 
   const setMenuOpen = (open) => {
     profileTrigger.setAttribute('aria-expanded', String(open))
@@ -435,47 +442,47 @@ function initNavAuthState() {
     event.stopPropagation()
     const isOpen = profileTrigger.getAttribute('aria-expanded') === 'true'
     setMenuOpen(!isOpen)
-  })
+  }, { signal })
 
   profileTrigger.addEventListener('keydown', (event) => {
     if (event.key !== 'ArrowDown' && event.key !== 'Enter' && event.key !== ' ') return
     event.preventDefault()
     setMenuOpen(true)
-  })
+  }, { signal })
 
   profileDropdown.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       setMenuOpen(false)
       profileTrigger.focus()
     }
-  })
+  }, { signal })
 
   profileDropdown.addEventListener('click', (event) => {
     event.stopPropagation()
-  })
+  }, { signal })
 
-  document.addEventListener('click', (event) => {
+  document.addEventListener('pointerdown', (event) => {
     if (!profileMenu.contains(event.target)) {
       setMenuOpen(false)
     }
-  })
+  }, { capture: true, signal })
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') setMenuOpen(false)
-  })
+  }, { signal })
 
   authEntryLink.addEventListener('click', () => {
     setMenuOpen(false)
-  })
+  }, { signal })
 
   if (viewProfileLink) {
-    viewProfileLink.addEventListener('click', () => setMenuOpen(false))
+    viewProfileLink.addEventListener('click', () => setMenuOpen(false), { signal })
   }
   if (editProfileLink) {
-    editProfileLink.addEventListener('click', () => setMenuOpen(false))
+    editProfileLink.addEventListener('click', () => setMenuOpen(false), { signal })
   }
   if (adminLink) {
-    adminLink.addEventListener('click', () => setMenuOpen(false))
+    adminLink.addEventListener('click', () => setMenuOpen(false), { signal })
   }
 
   signOutButton.addEventListener('click', async (event) => {
@@ -493,7 +500,7 @@ function initNavAuthState() {
       signOutButton.removeAttribute('aria-busy')
       signOutButton.disabled = false
     }
-  })
+  }, { signal })
 
   setMenuOpen(false)
 
@@ -506,7 +513,7 @@ function initNavAuthState() {
     }
   })
 
-  subscribeToAuthState((user) => {
+  const unsubscribeAuth = subscribeToAuthState((user) => {
     currentUser = user || null
     if (user) {
       setSignedInView(user)
@@ -521,5 +528,10 @@ function initNavAuthState() {
     if (resolvedUser) return
     event.preventDefault()
     window.location.assign(authRoute({ redirect: ROUTES.inbox }))
-  })
+  }, { signal })
+
+  navAuthCleanup = () => {
+    controller.abort()
+    if (typeof unsubscribeAuth === 'function') unsubscribeAuth()
+  }
 }

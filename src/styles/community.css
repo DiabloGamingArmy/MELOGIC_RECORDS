@@ -81,11 +81,49 @@ body.community-chrome-hidden .community-scroll-chrome {
 }
 
 .community-topic-bar {
+  position: relative;
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr) 36px;
   gap: .35rem;
   align-items: center;
   padding: .38rem max(1.5rem, calc((100vw - 1440px) / 2));
+}
+
+.community-topic-bar::before,
+.community-topic-bar::after,
+.community-stories-row::before,
+.community-stories-row::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 44px;
+  opacity: 0;
+  transition: opacity .18s ease;
+  z-index: 2;
+}
+
+.community-topic-bar::before,
+.community-stories-row::before {
+  left: 0;
+  background: linear-gradient(90deg, rgba(8, 11, 16, .96), rgba(8, 11, 16, 0));
+}
+
+.community-topic-bar::after,
+.community-stories-row::after {
+  right: 0;
+  background: linear-gradient(270deg, rgba(8, 11, 16, .96), rgba(8, 11, 16, 0));
+}
+
+.community-topic-bar.can-scroll-left::before,
+.community-stories-row.can-scroll-left::before {
+  opacity: 1;
+}
+
+.community-topic-bar.can-scroll-right::after,
+.community-stories-row.can-scroll-right::after {
+  opacity: 1;
 }
 
 .community-topic-scroll {
@@ -169,6 +207,7 @@ body.community-chrome-hidden .community-scroll-chrome {
 }
 
 .community-stories-row {
+  position: relative;
   display: flex;
   gap: 1.15rem;
   align-items: start;
@@ -1007,6 +1046,12 @@ body.community-chrome-hidden .community-right-rail {
   color: #ffffff;
   border-color: rgba(83, 197, 255, .34);
   background: rgba(83, 197, 255, .08);
+}
+
+.community-muted-note {
+  margin: 0;
+  color: #95a5ba;
+  font-size: .86rem;
 }
 
 .community-panel-heading {
