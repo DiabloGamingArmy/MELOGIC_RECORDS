@@ -59,3 +59,5 @@
 - Frontend route, label, and empty-state changes require `firebase deploy --only hosting --project melogic-records`.
 - Admin callable authorization changes require deploying the changed function names.
 - Firestore/Storage security changes require separate rules deploys; bucket CORS is a separate `gsutil` or `gcloud storage` operation and is not applied by Hosting.
+- Active Staff presence is session-based: each browser tab writes `presence/{uid}/sessions/{sessionId}` and the admin overview treats staff as active only while a non-hidden session has a heartbeat inside the 60-90 second window. Stale parent `presence/{uid}` documents are not enough to keep someone online.
+- Admin audit tables should render usernames/display names/emails as primary identity text with raw UIDs only as dim secondary context.

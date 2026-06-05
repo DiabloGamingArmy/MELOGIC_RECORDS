@@ -253,7 +253,7 @@ function ensureLocalContributorRow() {
   const username = draft.artistUsername || ''
   const avatarURL = draft.artistAvatarURL || draft.artistPhotoURL || editorState.user.photoURL || ''
   const existingIndex = editorState.contributorUI.rows.findIndex((row) => row.uid === uid)
-  const ownerRow = { uid, displayName, username, avatarURL, role: editorState.contributorUI.rows[existingIndex]?.role || 'Creator', status: 'accepted', decision: 'accepted', lockedOwner: true, profilePath: draft.artistProfilePath || `profiles/${uid}` }
+  const ownerRow = { uid, displayName, username, avatarURL, role: 'Creator/Owner', status: 'accepted', decision: 'accepted', lockedOwner: true, profilePath: draft.artistProfilePath || `profiles/${uid}` }
   if (existingIndex >= 0) editorState.contributorUI.rows[existingIndex] = { ...editorState.contributorUI.rows[existingIndex], ...ownerRow }
   else editorState.contributorUI.rows = [ownerRow, ...editorState.contributorUI.rows]
 }
@@ -1446,25 +1446,30 @@ function renderContributorsPanel() {
           ${['all', 'pending', 'accepted', 'denied'].map((filter) => `<button type=\"button\" class=\"${editorState.contributorUI.filter === filter ? 'is-active' : ''}\" data-contributor-filter=\"${filter}\">${filter[0].toUpperCase()}${filter.slice(1)}</button>`).join('')}
         </div>
         <div class=\"contributor-table\">
-          ${rows.length ? rows.map((row) => `
-            <article class=\"contributor-row\">
+          ${rows.length ? rows.map((row) => {
+            const isOwner = Boolean(row.lockedOwner)
+            const roleValue = isOwner ? 'Creator/Owner' : (row.role || '')
+            return `
+            <article class=\"contributor-row ${isOwner ? 'is-owner' : ''}\">
               <img class=\"contributor-avatar\" src=\"${escapeHtml(row.avatarURL || '')}\" alt=\"\" />
               <div class=\"contributor-identity\">
                 <strong>${escapeHtml(row.displayName || 'Unknown')}</strong>
                 <p>${escapeHtml(formatUsername(row.username) || 'manual')}</p>
-                <p>${escapeHtml(row.uid || '')}</p>
+                <p class=\"contributor-uid\">${escapeHtml(row.uid || '')}</p>
               </div>
-              <div><input type=\"text\" value=\"${escapeHtml(row.role || '')}\" data-contributor-role-edit=\"${escapeHtml(row.uid)}\" placeholder=\"Role\"/></div>
+              <div><input type=\"text\" value=\"${escapeHtml(roleValue)}\" data-contributor-role-edit=\"${escapeHtml(row.uid)}\" placeholder=\"Role\" ${isOwner ? 'disabled' : ''}/></div>
               <div>${escapeHtml((row.requestedAt || '').slice(0, 10) || '—')}</div>
               <div>${escapeHtml((row.decisionAt || '').slice(0, 10) || '—')}</div>
               <div><span class=\"contributor-status-badge is-${escapeHtml(row.status || 'pending')}\">${escapeHtml(row.status || 'pending')}</span></div>
               <div class=\"contributor-actions\">
-                <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:accepted\">Accept</button>
-                <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:denied\">Deny</button>
-                ${row.lockedOwner ? '' : `<button type=\"button\" data-contributor-remove=\"${escapeHtml(row.uid)}\">Remove</button>`}
+                ${isOwner
+                  ? '<span class=\"contributor-owner-label\">Creator</span>'
+                  : `<button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:accepted\">Accept</button>
+                    <button type=\"button\" data-contributor-status=\"${escapeHtml(row.uid)}:denied\">Deny</button>
+                    <button type=\"button\" data-contributor-remove=\"${escapeHtml(row.uid)}\">Remove</button>`}
               </div>
             </article>
-          `).join('') : '<p class=\"contributor-empty-state\">No contributing artists added yet.</p>'}
+          `}).join('') : '<p class=\"contributor-empty-state\">No contributing artists added yet.</p>'}
         </div>
       </article>
       <aside class=\"contributors-notice\">
@@ -2105,6 +2110,8 @@ function renderEditor() {
   editorRoot.querySelectorAll('[data-contributor-status]').forEach((button) => {
     button.addEventListener('click', async () => {
       const [uid, status] = String(button.getAttribute('data-contributor-status') || '').split(':')
+      const targetRow = editorState.contributorUI.rows.find((row) => row.uid === uid)
+      if (targetRow?.lockedOwner) return
       editorState.contributorUI.rows = editorState.contributorUI.rows.map((row) => row.uid === uid ? { ...row, status, decision: status, decisionAt: new Date().toISOString() } : row)
       recalcContributorSummaryFromRows()
       if (editorState.draft?.id && !isPlaceholderProductId(editorState.draft.id)) await recalculateAcceptedContributors(editorState.draft.id)
@@ -2126,6 +2133,8 @@ function renderEditor() {
     input.addEventListener('input', (event) => {
       const uid = input.getAttribute('data-contributor-role-edit') || ''
       const value = event.target.value
+      const targetRow = editorState.contributorUI.rows.find((row) => row.uid === uid)
+      if (targetRow?.lockedOwner) return
       editorState.contributorUI.rows = editorState.contributorUI.rows.map((row) => row.uid === uid ? { ...row, role: value } : row)
     })
   })
@@ -2399,47 +2408,37 @@ async function loadAgreementForEditor(user) {
     latestVersion = String(agreementConfig.activeVersion || '')
 
     stage = 'agreement-markdown'
-    if (agreementConfig.markdown) {
-      editorState.agreement.markdown = agreementConfig.markdown
-      editorState.agreement.source = 'platform-settings-inline'
-      editorState.agreement.loadedVersion = latestVersion
+    try {
+      const agreementResult = await getAgreementMarkdown(agreementConfig.storagePath, {
+        returnMetadata: true
+      })
+      if (!isCurrentLoad()) return
+      editorState.agreement.markdown = agreementResult.markdown || ''
+      editorState.agreement.source = agreementResult.source || ''
+      editorState.agreement.loadedVersion = agreementResult.version || ''
+      editorState.agreement.warning = agreementResult.warning || editorState.agreement.warning || ''
+      if (editorState.agreement.loadedVersion && latestVersion && editorState.agreement.loadedVersion !== latestVersion) {
+        editorState.agreement.acceptanceBlockedReason = `Showing ${editorState.agreement.loadedVersion}; load latest seller agreement ${latestVersion} before accepting.`
+      }
       editorState.agreement.error = ''
       editorState.agreement.errorDetail = ''
-    } else {
-      try {
-        const agreementResult = await getAgreementMarkdown(agreementConfig.storagePath, {
-          returnMetadata: true,
-          publicPath: agreementConfig.publicPath,
-          allowStorageFetch: agreementConfig.allowStorageFetch === true
-        })
-        if (!isCurrentLoad()) return
-        editorState.agreement.markdown = agreementResult.markdown || ''
-        editorState.agreement.source = agreementResult.source || ''
-        editorState.agreement.loadedVersion = agreementResult.version || ''
-        editorState.agreement.warning = agreementResult.warning || editorState.agreement.warning || ''
-        if (editorState.agreement.loadedVersion && latestVersion && editorState.agreement.loadedVersion !== latestVersion) {
-          editorState.agreement.acceptanceBlockedReason = `Showing ${editorState.agreement.loadedVersion}; load latest seller agreement ${latestVersion} before accepting.`
-        }
-        editorState.agreement.error = ''
-        editorState.agreement.errorDetail = ''
-      } catch (markdownError) {
-        if (!isCurrentLoad()) return
-        editorState.agreement.markdown = ''
-        editorState.agreement.loadedVersion = ''
-        editorState.agreement.acceptanceBlockedReason = ''
-        editorState.agreement.error = 'Seller agreement could not be loaded.'
-        editorState.agreement.errorDetail = [
-          markdownError?.code ? `Reason: ${markdownError.code}` : '',
-          markdownError?.message || '',
-          markdownError?.details?.storagePath ? `Storage path: ${markdownError.details.storagePath}` : ''
-        ].filter(Boolean).join(' · ')
-        console.warn('[new-product] agreement markdown load failed', {
-          stage,
-          code: markdownError?.code,
-          message: markdownError?.message,
-          storagePath: agreementConfig.storagePath
-        })
-      }
+    } catch (markdownError) {
+      if (!isCurrentLoad()) return
+      editorState.agreement.markdown = ''
+      editorState.agreement.loadedVersion = ''
+      editorState.agreement.acceptanceBlockedReason = ''
+      editorState.agreement.error = 'Seller agreement could not be loaded.'
+      editorState.agreement.errorDetail = [
+        markdownError?.code ? `Reason: ${markdownError.code}` : '',
+        markdownError?.message || '',
+        markdownError?.details?.storagePath ? `Storage path: ${markdownError.details.storagePath}` : ''
+      ].filter(Boolean).join(' · ')
+      console.warn('[new-product] agreement markdown load failed', {
+        stage,
+        code: markdownError?.code,
+        message: markdownError?.message,
+        storagePath: agreementConfig.storagePath
+      })
     }
     clearTimeout(timeoutId)
     if (isCurrentLoad()) {

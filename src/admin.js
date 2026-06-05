@@ -951,15 +951,16 @@ function shortIdentifier(value = '') {
 
 function adminLogActorCell(log = {}) {
   const actor = log.actorSummary || {}
-  const primary = formatUsername(actor.username) || actor.displayName || actor.label || actor.name || shortIdentifier(log.actorUid) || log.actorEmail || 'System'
-  const secondary = actor.role || log.actorRole || shortIdentifier(log.actorUid) || (primary === log.actorEmail ? '' : log.actorEmail)
+  const primary = formatUsername(actor.username) || actor.displayName || actor.label || actor.name || log.actorEmail || 'System'
+  const secondaryParts = [actor.role || log.actorRole, log.actorUid ? `UID ${shortIdentifier(log.actorUid)}` : ''].filter(Boolean)
+  const secondary = secondaryParts.join(' · ')
   return htmlCell(`<strong>${escapeHtml(primary)}</strong>${secondary ? `<small class="admin-code-value">${escapeHtml(secondary)}</small>` : ''}`)
 }
 
 function adminLogTargetCell(log = {}) {
   const target = log.targetSummary || {}
-  const primary = target.label || target.title || target.username || shortIdentifier(log.targetId) || 'Target'
-  const secondary = target.secondary || target.slug || ''
+  const primary = target.label || target.title || formatUsername(target.username) || 'Target'
+  const secondary = target.secondary || target.slug || (log.targetId ? `ID ${shortIdentifier(log.targetId)}` : '')
   return htmlCell(`<strong>${escapeHtml(primary)}</strong>${secondary ? `<small class="admin-code-value">${escapeHtml(secondary)}</small>` : ''}`)
 }
 

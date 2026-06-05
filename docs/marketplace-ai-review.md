@@ -34,6 +34,10 @@ Every decision writes an audit event under `productModeration/{productId}/events
 
 `AUTO_APPROVE_PRODUCTS` defaults to false. If enabled, automatic publish only happens when Gemini succeeds, rule checks pass, the AI risk level is low or unknown with no reasons, required listing fields are present, the seller agreement is accepted, product deliverables exist, and pricing is valid. AI failures never publish through rule-based fallback.
 
+Product contributor attribution treats the owner as an accepted `Creator/Owner` row. The owner row is not actionable and should never show Accept/Deny controls.
+
+Seller agreement acceptance must record the version displayed from Firebase Storage at `legal/agreements/marketplace-product-seller-agreement/vN.md`. Inline platform settings markdown and same-origin fallback markdown are not valid acceptance sources.
+
 ## AI Moderation Settings
 
 - Authoritative settings live in `platformConfig/current.aiModeration`.

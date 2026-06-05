@@ -316,16 +316,20 @@
 .contributor-filter-row button { border: 1px solid rgba(103,130,198,.35); background: rgba(20,26,48,.92); color: #cad8ff; border-radius: 999px; padding: .2rem .6rem; }
 .contributor-filter-row .is-active { background: linear-gradient(90deg, rgba(53,198,238,.28), rgba(166,46,228,.28)); color: #fff; }
 .contributor-table { display: grid; gap: .45rem; max-height: 500px; overflow: auto; }
-.contributor-row { display: grid; grid-template-columns: 44px 1.2fr .7fr .55fr .55fr .55fr 1fr; gap: .45rem; align-items: center; border: 1px solid rgba(103,130,193,.22); border-radius: 10px; padding: .45rem .55rem; }
+.contributor-row { display: grid; grid-template-columns: 44px minmax(150px,1.2fr) minmax(130px,.7fr) .55fr .55fr .55fr minmax(140px,1fr); gap: .55rem; align-items: center; border: 1px solid rgba(103,130,193,.24); border-radius: 12px; padding: .6rem .65rem; background: rgba(13,20,38,.72); }
+.contributor-row.is-owner { border-color: rgba(96,214,199,.42); background: rgba(28,68,72,.24); }
 .contributor-avatar { width: 36px; height: 36px; border-radius: 50%; background: rgba(55,72,111,.7); object-fit: cover; }
-.contributor-identity p, .contributor-identity strong { margin: 0; }
+.contributor-identity { min-width: 0; }
+.contributor-identity p, .contributor-identity strong { display: block; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contributor-identity p { color: #9fb3e4; font-size: .77rem; }
+.contributor-uid { color: #7184b4 !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
 .contributor-status-badge { border-radius: 999px; padding: .15rem .45rem; font-size: .72rem; text-transform: capitalize; }
 .contributor-status-badge.is-pending { background: rgba(213, 158, 56, .25); color: #ffd485; border: 1px solid rgba(252, 190, 92, .55); }
 .contributor-status-badge.is-accepted { background: rgba(74, 185, 168, .25); color: #a7fff3; border: 1px solid rgba(96, 214, 199, .55); }
 .contributor-status-badge.is-denied { background: rgba(169, 73, 94, .25); color: #ffc0ca; border: 1px solid rgba(216, 101, 127, .55); }
 .contributor-actions { display: flex; gap: .3rem; flex-wrap: wrap; justify-content: flex-end; }
 .contributor-actions button { border: 1px solid rgba(99,126,191,.4); background: rgba(21,29,55,.95); color: #d4dfff; border-radius: 8px; padding: .25rem .45rem; font-size: .75rem; }
+.contributor-owner-label { border: 1px solid rgba(96,214,199,.45); border-radius: 999px; color: #a7fff3; padding: .22rem .5rem; font-size: .75rem; }
 .contributor-empty-state { color: #9cb2e2; }
 .contributors-notice h4 { margin: 0 0 .6rem; color: #d7e4ff; }
 .contributors-notice p { margin: 0; color: #b8caef; line-height: 1.4; }

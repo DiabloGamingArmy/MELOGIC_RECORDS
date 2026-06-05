@@ -1,14 +1,10 @@
 # Firebase Storage CORS for Browser Asset Reads
 
-The Marketplace Seller Agreement Markdown, public brand assets, avatars, and StageMaker/Studio images may be loaded in-browser from Firebase Storage. The product editor also has a same-origin fallback at:
+The Marketplace Seller Agreement Markdown, public brand assets, avatars, and StageMaker/Studio images may be loaded in-browser from Firebase Storage. The product editor loads seller agreement markdown from Firebase Storage only:
 
-`public/legal/agreements/marketplace-product-seller-agreement/v1.md`
+`legal/agreements/marketplace-product-seller-agreement/v<number>.md`
 
-It also supports a same-origin manifest:
-
-`public/legal/agreements/marketplace-product-seller-agreement/manifest.json`
-
-For production stability, keep `platformConfig/current.agreements` as the authoritative admin settings document and mirror the active seller agreement to `platformSettings/marketplaceSellerAgreement` for the product editor. Browser-side Firebase Storage folder listing is intentionally not the default because it creates noisy CORS failures when the bucket CORS policy is missing or stale.
+For production stability, keep `platformConfig/current.agreements` as the authoritative admin settings document and mirror the active seller agreement to `platformSettings/marketplaceSellerAgreement` for the product editor. Browser-side Firebase Storage folder listing is opt-in; when latest mode is enabled, the editor lists the Storage folder and selects the highest `vN.md` file.
 
 Because browser `fetch()` and Firebase Storage browser reads enforce CORS, the bucket serving:
 
@@ -79,10 +75,10 @@ Storage security rules and bucket CORS are separate settings: rules decide who m
 Use this as the authoritative latest-version pointer:
 
 1. `platformConfig/current.agreements` for admin-owned platform settings.
-2. Mirrored `platformSettings/marketplaceSellerAgreement` with `activeVersion`, `storagePath`, and optional `publicPath` for creator editor reads.
-3. `public/legal/agreements/marketplace-product-seller-agreement/manifest.json` as same-origin fallback.
+2. Mirrored `platformSettings/marketplaceSellerAgreement` with `activeVersion` and `storagePath` for creator editor reads.
+3. Firebase Storage object reads from `legal/agreements/marketplace-product-seller-agreement/v<number>.md`.
 
-Only enable browser-side Storage version discovery if bucket CORS has been applied. In Firestore config, set `versionDiscoveryMode: "storage"` or `storageDiscoveryEnabled: true` when you intentionally want the browser to list Storage objects. Direct fetch of the exact configured agreement object is controlled separately by `allowStorageFetch`.
+Only enable browser-side Storage version discovery if bucket CORS has been applied. In Firestore config, set `versionDiscoveryMode: "storage"` or `storageDiscoveryEnabled: true` when you intentionally want the browser to list Storage objects. Same-origin or inline markdown fallbacks must not be used for seller agreement acceptance.
 
 ## Operator Runbook
 
@@ -100,6 +96,7 @@ Only enable browser-side Storage version discovery if bucket CORS has been appli
 - `updateAdminSettings` writes `platformConfig/current` and mirrors the active agreement to `platformSettings/marketplaceSellerAgreement`.
 - The mirror enables direct fetch of the configured Storage object with `allowStorageFetch: true`.
 - Browser-side Storage folder listing remains opt-in and is not the default.
+- Same-origin and inline markdown fallbacks are not accepted as the displayed seller agreement source.
 
 ## Production Readiness Caveat
 

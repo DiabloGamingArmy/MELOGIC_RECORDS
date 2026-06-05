@@ -19,6 +19,7 @@ import {
   hydrateThreadFromSourceIfNeeded,
   listInboxThreads,
   loadProfilesByUids,
+  listOlderMessages,
   markThreadDelivered,
   markThreadRead,
   repairMyInboxThreads,
@@ -89,6 +90,7 @@ const appState = {
   threads: [],
   selectedThreadId: '',
   messagesByThreadId: {},
+  messagePaginationByThreadId: {},
   participantsByThreadId: {},
   typingUsersByThreadId: {},
   blockedUsersByUid: {},
@@ -145,6 +147,7 @@ const appState = {
   reactionsByThreadId: {},
   hiddenMessageIdsByThreadId: {},
   reactionDetailModal: null,
+  imagePreviewModal: null,
   reactionUnsubscribe: () => {},
   hiddenMessagesUnsubscribe: () => {},
   hasWindowFocus: document.hasFocus(),
@@ -223,6 +226,25 @@ function setupInboxDelegates() {
   })
 
   inboxRoot.addEventListener('click', (event) => {
+    const loadOlderButton = event.target.closest('[data-load-older-messages]')
+    if (loadOlderButton) {
+      event.preventDefault()
+      const threadId = loadOlderButton.getAttribute('data-load-older-messages') || appState.selectedThreadId
+      loadOlderMessagesForThread(threadId)
+      return
+    }
+
+    const imageButton = event.target.closest('[data-preview-message-image]')
+    if (imageButton) {
+      event.preventDefault()
+      appState.imagePreviewModal = {
+        url: imageButton.getAttribute('data-preview-message-image') || '',
+        name: imageButton.getAttribute('data-preview-message-image-name') || 'Image attachment'
+      }
+      renderFloatingUi()
+      return
+    }
+
     const unblockInline = event.target.closest('[data-unblock-contact-inline]')
     if (!unblockInline) return
     event.preventDefault()
@@ -828,6 +850,55 @@ function scrollMessageListToBottom({ behavior = 'auto' } = {}) {
   })
 }
 
+function mergeMessages(existing = [], incoming = []) {
+  const byId = new Map()
+  ;[...existing, ...incoming].forEach((message) => {
+    if (!message?.id) return
+    byId.set(message.id, { ...(byId.get(message.id) || {}), ...message })
+  })
+  return Array.from(byId.values())
+    .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
+}
+
+async function loadOlderMessagesForThread(threadId = '') {
+  if (!threadId || appState.messagePaginationByThreadId[threadId]?.loadingOlder) return
+  const current = appState.messagesByThreadId[threadId] || []
+  const earliest = current[0]?.createdAt || ''
+  if (!earliest) return
+  const list = inboxRoot.querySelector('[data-message-list]')
+  const previousScrollHeight = list?.scrollHeight || 0
+  const previousScrollTop = list?.scrollTop || 0
+  appState.messagePaginationByThreadId[threadId] = {
+    ...(appState.messagePaginationByThreadId[threadId] || {}),
+    loadingOlder: true
+  }
+  renderSignedInState()
+  try {
+    const older = await listOlderMessages(threadId, earliest)
+    appState.messagesByThreadId[threadId] = mergeMessages(older, appState.messagesByThreadId[threadId] || [])
+    appState.messagePaginationByThreadId[threadId] = {
+      loadingOlder: false,
+      hasOlder: older.length > 0
+    }
+    await hydrateProfilesForMessages(threadId, older)
+    if (appState.selectedThreadId === threadId) {
+      renderSignedInState()
+      requestAnimationFrame(() => {
+        const nextList = inboxRoot.querySelector('[data-message-list]')
+        if (!nextList) return
+        nextList.scrollTop = Math.max(0, nextList.scrollHeight - previousScrollHeight + previousScrollTop)
+      })
+    }
+  } catch (error) {
+    appState.messagePaginationByThreadId[threadId] = {
+      ...(appState.messagePaginationByThreadId[threadId] || {}),
+      loadingOlder: false
+    }
+    warnRealtimePermission(`older-messages-${threadId}`, error)
+    if (appState.selectedThreadId === threadId) renderSignedInState()
+  }
+}
+
 function revokeAttachmentPreviews(threadId) {
   const urls = appState.attachmentPreviewByThreadId[threadId] || []
   urls.forEach((url) => {
@@ -1291,6 +1362,10 @@ function getMessageGroupsMarkup(thread) {
   }
 
   const grouped = groupMessages(messages)
+  const pagination = appState.messagePaginationByThreadId[thread.id] || {}
+  const olderControl = pagination.hasOlder === false
+    ? '<p class="message-history-boundary">Beginning of this conversation.</p>'
+    : `<button type="button" class="message-history-button" data-load-older-messages="${escapeHtml(thread.id)}" ${pagination.loadingOlder ? 'disabled' : ''}>${pagination.loadingOlder ? 'Loading earlier...' : 'Load earlier messages'}</button>`
   const messageGroups = grouped
     .map((entry, index) => {
       if (entry.kind === 'separator') {
@@ -1323,7 +1398,7 @@ function getMessageGroupsMarkup(thread) {
           const attachmentsMarkup = Array.isArray(message.attachments) && message.attachments.length
             ? `<div class="message-attachment-list">${message.attachments.map((attachment) => {
               const mime = String(attachment.mimeType || '')
-              if (mime.startsWith('image/')) return `<a href="${escapeHtml(attachment.url || '#')}" target="_blank" rel="noopener"><img decoding="async" src="${escapeHtml(attachment.url || '')}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" onerror="this.closest('a')?.classList.add('is-image-load-failed')" /></a>`
+              if (mime.startsWith('image/')) return `<button type="button" class="message-image-preview-button" data-preview-message-image="${escapeHtml(attachment.url || '')}" data-preview-message-image-name="${escapeHtml(attachment.name || 'Image attachment')}"><img decoding="async" src="${escapeHtml(attachment.url || '')}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" onerror="this.closest('button')?.classList.add('is-image-load-failed')" /></button>`
               if (mime.startsWith('video/')) return `<video src="${escapeHtml(attachment.url)}" controls preload="metadata"></video>`
               if (mime.startsWith('audio/')) return `<audio src="${escapeHtml(attachment.url)}" controls></audio>`
               return `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener" class="message-file-link">${escapeHtml(attachment.name || 'Download attachment')}</a>`
@@ -1397,7 +1472,7 @@ function getMessageGroupsMarkup(thread) {
     })
     .join('')
 
-  return `<div class="message-list" data-message-list>${messageGroups}</div>`
+  return `<div class="message-list" data-message-list>${olderControl}${messageGroups}</div>`
 }
 
 function getConversationBodyMarkup() {
@@ -1991,8 +2066,32 @@ function getContextMenuMarkup() {
   `
 }
 
+function getImagePreviewModalMarkup() {
+  const modal = appState.imagePreviewModal
+  if (!modal?.url) return ''
+  const zoom = Math.max(0.75, Math.min(Number(modal.zoom || 1), 2.5))
+  return `
+    <div class="image-preview-backdrop" data-image-preview-close>
+      <section class="image-preview-modal" role="dialog" aria-modal="true" aria-label="Image preview">
+        <header>
+          <strong>${escapeHtml(modal.name || 'Image attachment')}</strong>
+          <div class="image-preview-actions">
+            <button type="button" data-image-preview-zoom="-0.25" aria-label="Zoom out">-</button>
+            <button type="button" data-image-preview-zoom="0.25" aria-label="Zoom in">+</button>
+            <a href="${escapeHtml(modal.url)}" target="_blank" rel="noopener">Open</a>
+            <button type="button" data-image-preview-close aria-label="Close image preview">×</button>
+          </div>
+        </header>
+        <div class="image-preview-stage">
+          <img src="${escapeHtml(modal.url)}" alt="${escapeHtml(modal.name || 'Image attachment')}" style="transform:scale(${zoom})" />
+        </div>
+      </section>
+    </div>
+  `
+}
+
 function renderFloatingUi() {
-  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}`
+  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getImagePreviewModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}`
 }
 
 async function handleFloatingMenuAction(button) {
@@ -2156,6 +2255,26 @@ function setupFloatingEventDelegates() {
     if (modalClose) {
       if (event.target !== modalClose && !event.target.hasAttribute('data-reaction-modal-close')) return
       appState.reactionDetailModal = null
+      renderFloatingUi()
+      return
+    }
+
+    const imageZoom = event.target.closest('[data-image-preview-zoom]')
+    if (imageZoom) {
+      event.preventDefault()
+      const delta = Number(imageZoom.getAttribute('data-image-preview-zoom') || 0)
+      appState.imagePreviewModal = {
+        ...(appState.imagePreviewModal || {}),
+        zoom: Math.max(0.75, Math.min(Number(appState.imagePreviewModal?.zoom || 1) + delta, 2.5))
+      }
+      renderFloatingUi()
+      return
+    }
+
+    const imageClose = event.target.closest('[data-image-preview-close]')
+    if (imageClose) {
+      if (event.target !== imageClose && !event.target.hasAttribute('data-image-preview-close')) return
+      appState.imagePreviewModal = null
       renderFloatingUi()
       return
     }
@@ -3337,7 +3456,13 @@ function startMessageSubscription(threadId) {
 
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
     reconcileOptimisticMessages(threadId, messages)
-    appState.messagesByThreadId[threadId] = messages
+    const existing = appState.messagesByThreadId[threadId] || []
+    appState.messagesByThreadId[threadId] = mergeMessages(existing, messages)
+    appState.messagePaginationByThreadId[threadId] = {
+      ...(appState.messagePaginationByThreadId[threadId] || {}),
+      hasOlder: appState.messagePaginationByThreadId[threadId]?.hasOlder === false ? false : messages.length >= 8,
+      loadingOlder: false
+    }
     preloadMessageImages(messages)
     appState.loadingMessageThreadId = ''
     await hydrateProfilesForMessages(threadId, messages)
@@ -3615,6 +3740,11 @@ function startBlockedUsersSubscription() {
 function handleGlobalKeydown(event) {
   if (event.key === 'Escape' && appState.reactionDetailModal) {
     appState.reactionDetailModal = null
+    renderFloatingUi()
+    return
+  }
+  if (event.key === 'Escape' && appState.imagePreviewModal) {
+    appState.imagePreviewModal = null
     renderFloatingUi()
     return
   }

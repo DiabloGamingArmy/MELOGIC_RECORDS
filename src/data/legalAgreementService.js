@@ -14,7 +14,6 @@ const FALLBACK_SELLER_AGREEMENT_CONFIG = Object.freeze({
 })
 const AGREEMENT_FOLDER_PATH = 'legal/agreements/marketplace-product-seller-agreement'
 const FALLBACK_AGREEMENT_STORAGE_PATH = `${AGREEMENT_FOLDER_PATH}/v1.md`
-const AGREEMENT_MANIFEST_PATH = `/${AGREEMENT_FOLDER_PATH}/manifest.json`
 const AGREEMENT_REQUEST_TIMEOUT_MS = 10000
 
 function agreementError(code, message, details = {}) {
@@ -104,49 +103,9 @@ export async function getAgreementMarkdown(storagePath = '', options = {}) {
     throw agreementError('agreement-missing-path', 'Seller agreement file is missing.', { storagePath })
   }
   const returnMetadata = options.returnMetadata === true
-  const sameOriginPath = `/${String(storagePath || '').replace(/^\/+/, '')}`
-  const sameOriginCandidates = []
-  if (options.publicPath) sameOriginCandidates.push({ path: options.publicPath, source: 'same-origin-public', warning: '' })
-  sameOriginCandidates.push({ path: sameOriginPath, source: 'same-origin', warning: '' })
-  if (storagePath !== FALLBACK_AGREEMENT_STORAGE_PATH) {
-    sameOriginCandidates.push({
-      path: `/${FALLBACK_AGREEMENT_STORAGE_PATH}`,
-      source: 'same-origin-fallback',
-      warning: 'Could not load the configured agreement file from same-origin hosting. Showing bundled fallback.'
-    })
-  }
-
-  const seenPaths = new Set()
-  for (const candidate of sameOriginCandidates) {
-    const candidatePath = `/${String(candidate.path || '').replace(/^\/+/, '')}`
-    if (seenPaths.has(candidatePath)) continue
-    seenPaths.add(candidatePath)
-    try {
-      const text = await fetchTextWithTimeout(candidatePath, {
-        storagePath,
-        fallbackPath: candidatePath
-      })
-      const parsedVersion = parseVersionFromPath(candidatePath)
-      return returnMetadata
-        ? {
-            markdown: text,
-            source: candidate.source,
-            fallbackPath: candidatePath,
-            warning: candidate.warning,
-            version: parsedVersion?.version || ''
-          }
-        : text
-    } catch (fallbackError) {
-      devWarn('[legalAgreementService] Same-origin agreement fallback errored.', candidatePath, fallbackError?.code || fallbackError?.message || fallbackError)
-    }
-  }
-
-  if (options.allowStorageFetch !== true) {
-    throw agreementError(
-      'agreement-hosted-fallback-missing',
-      'Seller agreement could not be loaded from same-origin hosting. Firebase Storage browser fetch is disabled until bucket CORS is configured.',
-      { storagePath }
-    )
+  const parsedRequestedVersion = parseVersionFromPath(storagePath)
+  if (!parsedRequestedVersion || !String(storagePath).startsWith(`${AGREEMENT_FOLDER_PATH}/`)) {
+    throw agreementError('agreement-invalid-path', 'Seller agreement must load from the approved Firebase Storage agreement path.', { storagePath })
   }
 
   if (!storage) {
@@ -210,34 +169,6 @@ function storageDiscoveryEnabled(config = {}) {
   return config.storageDiscoveryEnabled === true || config.versionDiscoveryMode === 'storage'
 }
 
-async function getSameOriginAgreementManifest() {
-  try {
-    const text = await fetchTextWithTimeout(AGREEMENT_MANIFEST_PATH, { fallbackPath: AGREEMENT_MANIFEST_PATH }, 3000)
-    const manifest = JSON.parse(text)
-    const versions = Array.isArray(manifest.versions) ? manifest.versions : []
-    const candidates = versions
-      .map((item) => {
-        const raw = typeof item === 'string' ? { version: item } : (item || {})
-        const version = String(raw.version || '').toLowerCase().replace(/^v?(\d+)$/, 'v$1')
-        const storagePath = String(raw.storagePath || (version ? `${AGREEMENT_FOLDER_PATH}/${version}.md` : '')).trim()
-        const parsed = parseVersionFromPath(storagePath || `${version}.md`)
-        if (!parsed) return null
-        return {
-          version: parsed.version,
-          versionNumber: parsed.versionNumber,
-          storagePath,
-          publicPath: String(raw.publicPath || `/${storagePath}`).trim()
-        }
-      })
-      .filter(Boolean)
-      .sort((a, b) => b.versionNumber - a.versionNumber)
-    return candidates[0] || null
-  } catch (error) {
-    devWarn('[legalAgreementService] Same-origin agreement manifest unavailable.', error?.code || error?.message || error)
-    return null
-  }
-}
-
 export function parseVersionFromPath(path = '') {
   const match = String(path || '').match(/(?:^|\/)(v(\d+))\.md$/i)
   if (!match) return null
@@ -252,37 +183,15 @@ export async function getLatestMarketplaceSellerAgreement() {
   const config = await getMarketplaceSellerAgreementConfig()
   const fallbackPath = config.storagePath || FALLBACK_AGREEMENT_STORAGE_PATH
   const fallbackVersion = String(config.activeVersion || 'v1').toLowerCase()
+  const shouldDiscoverLatest = storageDiscoveryEnabled(config) || ['latest', 'storage_latest'].includes(config.versionDiscoveryMode)
 
-  if (config.configSource === 'firestore' && config.storagePath) {
+  if (!storage || !shouldDiscoverLatest) {
     return {
       ...config,
       storagePath: fallbackPath,
       activeVersion: fallbackVersion,
-      versionDiscoverySource: 'platform-settings',
-      allowStorageFetch: config.allowStorageFetch === true || storageDiscoveryEnabled(config)
-    }
-  }
-
-  const manifestCandidate = await getSameOriginAgreementManifest()
-  if (manifestCandidate) {
-    return {
-      ...config,
-      storagePath: manifestCandidate.storagePath,
-      publicPath: manifestCandidate.publicPath,
-      activeVersion: manifestCandidate.version,
-      versionDiscoverySource: 'same-origin-manifest',
-      allowStorageFetch: false
-    }
-  }
-
-  if (!storage || !storageDiscoveryEnabled(config)) {
-    return {
-      ...config,
-      storagePath: fallbackPath,
-      activeVersion: fallbackVersion,
-      versionDiscoverySource: 'configured-fallback',
-      versionDiscoveryWarning: 'Could not verify latest Storage agreement version. Showing configured hosted fallback.',
-      allowStorageFetch: false
+      versionDiscoverySource: config.configSource === 'firestore' ? 'platform-settings' : 'default-storage-path',
+      allowStorageFetch: true
     }
   }
 
@@ -309,14 +218,14 @@ export async function getLatestMarketplaceSellerAgreement() {
       }
     }
   } catch (error) {
-    devWarn('[legalAgreementService] Could not list agreement versions from Storage; falling back to config/default.', error?.code || error?.message || error)
+    devWarn('[legalAgreementService] Could not list agreement versions from Storage; using configured path with warning.', error?.code || error?.message || error)
     return {
       ...config,
       storagePath: fallbackPath,
       activeVersion: fallbackVersion,
-      versionDiscoveryWarning: 'Could not verify latest Storage agreement version. Falling back to configured agreement.',
+      versionDiscoveryWarning: 'Could not verify latest Storage agreement version. Showing the configured Storage agreement path.',
       versionDiscoveryCode: error?.code || 'agreement-list-failed',
-      allowStorageFetch: false
+      allowStorageFetch: true
     }
   }
 
@@ -325,6 +234,7 @@ export async function getLatestMarketplaceSellerAgreement() {
     storagePath: fallbackPath,
     activeVersion: fallbackVersion,
     versionDiscoverySource: 'configured-fallback',
-    allowStorageFetch: false
+    versionDiscoveryWarning: 'No versioned Storage agreement files were found. Showing the configured Storage agreement path.',
+    allowStorageFetch: true
   }
 }

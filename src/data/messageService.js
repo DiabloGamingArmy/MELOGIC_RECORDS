@@ -6,7 +6,9 @@ import {
   doc,
   getDoc,
   getDocs,
+  endBefore,
   limit,
+  limitToLast,
   onSnapshot,
   orderBy,
   query,
@@ -21,6 +23,8 @@ import { storage } from '../firebase/storage'
 
 const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
 const MAX_ATTACHMENT_LABEL = '256 MB'
+const INITIAL_MESSAGE_LIMIT = 8
+const OLDER_MESSAGE_PAGE_SIZE = 24
 
 function toIsoDate(value) {
   if (!value) return null
@@ -166,7 +170,7 @@ function normalizeTypingState(typingId, raw = {}) {
 }
 
 function getMessagesQuery(threadId) {
-  return query(collection(db, 'threads', threadId, 'messages'), orderBy('createdAt', 'asc'), limit(300))
+  return query(collection(db, 'threads', threadId, 'messages'), orderBy('createdAt', 'asc'), limitToLast(INITIAL_MESSAGE_LIMIT))
 }
 
 export async function listMessages(threadId) {
@@ -181,6 +185,29 @@ export async function listMessages(threadId) {
 
   return snapshot.docs
     .map((messageDoc) => normalizeMessage(messageDoc.id, messageDoc.data()))
+    .sort((a, b) => (a.createdAt || '') > (b.createdAt || '') ? 1 : -1)
+}
+
+export async function listOlderMessages(threadId, beforeCreatedAt = null, pageSize = OLDER_MESSAGE_PAGE_SIZE) {
+  if (!db || !threadId || !beforeCreatedAt) return []
+  const beforeDate = beforeCreatedAt instanceof Date ? beforeCreatedAt : new Date(beforeCreatedAt)
+  if (Number.isNaN(beforeDate.getTime())) return []
+
+  let snapshot
+  try {
+    snapshot = await getDocs(query(
+      collection(db, 'threads', threadId, 'messages'),
+      orderBy('createdAt', 'asc'),
+      endBefore(beforeDate),
+      limitToLast(Math.max(4, Math.min(Number(pageSize || OLDER_MESSAGE_PAGE_SIZE), 50)))
+    ))
+  } catch {
+    snapshot = await getDocs(query(collection(db, 'threads', threadId, 'messages'), orderBy('createdAt', 'asc'), limit(300)))
+  }
+
+  return snapshot.docs
+    .map((messageDoc) => normalizeMessage(messageDoc.id, messageDoc.data()))
+    .filter((message) => new Date(message.createdAt || 0).getTime() < beforeDate.getTime())
     .sort((a, b) => (a.createdAt || '') > (b.createdAt || '') ? 1 : -1)
 }
 
