@@ -265,6 +265,17 @@ Public project viewer status:
 - Stories go through `createCommunityStory`, `deleteCommunityStory`, and `recordCommunityStoryView`.
 - Story reports reuse `createReport` with `targetType: 'community_story'`.
 
+Frontend interaction policy:
+
+- Non-submit Community buttons must explicitly use `type="button"`; only composer, comment, story, search, report, and community-create submit buttons may use `type="submit"`.
+- Post card actions call a shared action-event guard so likes, saves, shares, reports, deletes, menu clicks, and comment actions do not bubble into card navigation.
+- The post three-dot menu is local UI state only. Opening, switching, Escape closing, and outside-click closing must not call Firebase or reload the feed.
+- Post likes, saves, signed-in share counts, post deletes, comment likes, comment deletes, and community focus use optimistic local state first, then run the callable in the background.
+- Optimistic writes are registered in a Community pending-action map. While the map is non-empty, `beforeunload` shows the browser-native leave warning.
+- If an optimistic write fails, the UI rolls back to the saved local snapshot and shows a non-blocking Community toast.
+- Simple post actions should update the affected card/action controls directly and preserve scroll position, feed pagination, active filters, and loaded posts.
+- Full feed reloads are reserved for route/context changes, filter/sort/search changes, initial loads, and rare destructive recovery paths after failed rollbacks.
+
 ## Comment Schema
 
 Comments are stored in `communityPosts/{postId}/comments/{commentId}`:

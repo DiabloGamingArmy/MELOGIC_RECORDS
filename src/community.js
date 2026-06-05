@@ -239,10 +239,58 @@ let communityScrollRaf = 0
 let lastCommunityScrollY = window.scrollY || 0
 let communityKeyboardReady = false
 let communityOutsideClickReady = false
+let communityBeforeUnloadReady = false
+const communityPendingActions = new Map()
 
 function logCommunityPerf(label, data = {}) {
   if (!COMMUNITY_DEBUG) return
   console.debug('[community:perf]', label, data)
+}
+
+function dispatchCommunityPendingActionsChanged() {
+  window.dispatchEvent(new CustomEvent('community:pending-actions-changed', {
+    detail: { pendingCount: communityPendingActions.size }
+  }))
+}
+
+function trackCommunityAction(actionId, promise) {
+  const id = String(actionId || '').trim()
+  if (!id) return promise
+  communityPendingActions.set(id, { startedAt: Date.now(), promise })
+  dispatchCommunityPendingActionsChanged()
+  return promise.finally(() => {
+    communityPendingActions.delete(id)
+    dispatchCommunityPendingActionsChanged()
+  })
+}
+
+function hasPendingCommunityActions() {
+  return communityPendingActions.size > 0
+}
+
+function setupCommunityPendingLeaveWarning() {
+  if (communityBeforeUnloadReady) return
+  communityBeforeUnloadReady = true
+  window.addEventListener('beforeunload', (event) => {
+    if (!hasPendingCommunityActions()) return
+    event.preventDefault()
+    event.returnValue = ''
+  })
+}
+
+function confirmCommunityNavigation() {
+  if (!hasPendingCommunityActions()) return true
+  return window.confirm('Community actions are still saving. Leave anyway?')
+}
+
+function stopCommunityActionEvent(event) {
+  event?.preventDefault?.()
+  event?.stopPropagation?.()
+}
+
+function communityCssEscape(value = '') {
+  const clean = String(value || '')
+  return window.CSS?.escape ? window.CSS.escape(clean) : clean.replace(/["\\]/g, '\\$&')
 }
 
 function feedQueryOptions() {
@@ -1319,18 +1367,7 @@ function renderPostOptionsMenu(post = {}, { isOwn = false } = {}) {
       <button type="button" class="community-post-options-button" data-toggle-post-menu="${escapeHtml(post.postId)}" aria-label="Post options" aria-haspopup="menu" aria-expanded="${open ? 'true' : 'false'}">
         ${iconSvg('moreVertical')}
       </button>
-      ${open ? `
-        <div class="community-post-options-menu" role="menu">
-          ${isOwn ? '<button type="button" role="menuitem" disabled title="Edit Post is coming soon.">Edit Post <em>Coming soon</em></button>' : ''}
-          <button type="button" role="menuitem" data-copy-post-link="${escapeHtml(post.postId)}">Copy Link</button>
-          ${isOwn ? `
-            <button type="button" role="menuitem" class="is-danger" data-community-delete-post="${escapeHtml(post.postId)}">Delete Post</button>
-          ` : `
-            <button type="button" role="menuitem" data-community-report="${escapeHtml(post.postId)}">Report Post</button>
-            <button type="button" role="menuitem" disabled title="Hide/Not Interested is coming soon.">Hide / Not Interested <em>Coming soon</em></button>
-          `}
-        </div>
-      ` : ''}
+      ${open ? postMenuItemsMarkup(post, { isOwn }) : ''}
     </div>
   `
 }
@@ -2192,7 +2229,112 @@ async function loadCommunity() {
 }
 
 function updatePostCounts(postId, patch = {}) {
-  state.posts = state.posts.map((post) => post.postId === postId ? normalizeCommunityPost({ ...post, counts: { ...post.counts, ...patch } }, postId) : post)
+  const flatPatch = {}
+  if (Object.prototype.hasOwnProperty.call(patch, 'likes')) flatPatch.likeCount = patch.likes
+  if (Object.prototype.hasOwnProperty.call(patch, 'comments')) flatPatch.commentCount = patch.comments
+  if (Object.prototype.hasOwnProperty.call(patch, 'saves')) flatPatch.saveCount = patch.saves
+  if (Object.prototype.hasOwnProperty.call(patch, 'shares')) flatPatch.shareCount = patch.shares
+  if (Object.prototype.hasOwnProperty.call(patch, 'reports')) flatPatch.reportCount = patch.reports
+  state.posts = state.posts.map((post) => post.postId === postId
+    ? normalizeCommunityPost({ ...post, ...flatPatch, counts: { ...post.counts, ...patch } }, postId)
+    : post)
+}
+
+function postById(postId = '') {
+  return state.posts.find((post) => post.postId === postId) || null
+}
+
+function setPostCount(postId = '', key = '', value = 0) {
+  const nextValue = Math.max(0, Number(value) || 0)
+  updatePostCounts(postId, { [key]: nextValue })
+}
+
+function adjustPostCount(postId = '', key = '', delta = 0) {
+  const post = postById(postId)
+  const current = Number(post?.counts?.[key] || 0)
+  setPostCount(postId, key, current + delta)
+}
+
+function setPostViewerFlag(postId = '', key = '', value = false) {
+  state.viewerState[postId] = { ...(state.viewerState[postId] || {}), [key]: Boolean(value) }
+}
+
+function updatePostActionDom(postId = '') {
+  const post = postById(postId)
+  if (!post) return
+  const viewer = state.viewerState[postId] || {}
+  const escapedPostId = communityCssEscape(postId)
+  app?.querySelectorAll(`.community-post-card[data-post-id="${escapedPostId}"]`).forEach((card) => {
+    const likeButton = card.querySelector(`[data-community-like="${escapedPostId}"]`)
+    const saveButton = card.querySelector(`[data-community-save="${escapedPostId}"]`)
+    const shareButton = card.querySelector(`[data-community-share="${escapedPostId}"]`)
+    likeButton?.classList.toggle('is-active', Boolean(viewer.liked))
+    saveButton?.classList.toggle('is-active', Boolean(viewer.saved))
+    const likeCount = likeButton?.querySelector('em')
+    const saveCount = saveButton?.querySelector('em')
+    const shareCount = shareButton?.querySelector('em')
+    if (likeCount) likeCount.textContent = formatCount(post.counts.likes)
+    if (saveCount) saveCount.textContent = formatCount(post.counts.saves)
+    if (shareCount) shareCount.textContent = formatCount(post.counts.shares)
+  })
+}
+
+function postMenuItemsMarkup(post = {}, { isOwn = false } = {}) {
+  return `
+    <div class="community-post-options-menu" role="menu">
+      ${isOwn ? '<button type="button" role="menuitem" disabled title="Edit Post is coming soon.">Edit Post <em>Coming soon</em></button>' : ''}
+      <button type="button" role="menuitem" data-copy-post-link="${escapeHtml(post.postId)}">Copy Link</button>
+      ${isOwn ? `
+        <button type="button" role="menuitem" class="is-danger" data-community-delete-post="${escapeHtml(post.postId)}">Delete Post</button>
+      ` : `
+        <button type="button" role="menuitem" data-community-report="${escapeHtml(post.postId)}">Report Post</button>
+        <button type="button" role="menuitem" disabled title="Hide/Not Interested is coming soon.">Hide / Not Interested <em>Coming soon</em></button>
+      `}
+    </div>
+  `
+}
+
+function closePostMenusDom() {
+  state.openPostMenuId = ''
+  app?.querySelectorAll('[data-toggle-post-menu]').forEach((button) => button.setAttribute('aria-expanded', 'false'))
+  app?.querySelectorAll('.community-post-options-menu').forEach((menu) => menu.remove())
+}
+
+function bindPostMenuEvents(root = app) {
+  root?.querySelectorAll('[data-copy-post-link]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      copyPostLink(button.getAttribute('data-copy-post-link') || '')
+    })
+  })
+  root?.querySelectorAll('[data-community-report]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      openReport(button.getAttribute('data-community-report') || '')
+    })
+  })
+  root?.querySelectorAll('[data-community-delete-post]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      handleDeleteOwnPost(button.getAttribute('data-community-delete-post') || '')
+    })
+  })
+}
+
+function togglePostMenuDom(postId = '') {
+  const cleanPostId = String(postId || '').trim()
+  const post = postById(cleanPostId)
+  if (!post) return
+  const shouldOpen = state.openPostMenuId !== cleanPostId
+  closePostMenusDom()
+  if (!shouldOpen) return
+  state.openPostMenuId = cleanPostId
+  const isOwn = Boolean(state.currentUser?.uid && state.currentUser.uid === post.authorUid)
+  app?.querySelectorAll(`.community-post-card[data-post-id="${communityCssEscape(cleanPostId)}"] [data-post-options-root]`).forEach((root) => {
+    root.querySelector('[data-toggle-post-menu]')?.setAttribute('aria-expanded', 'true')
+    root.insertAdjacentHTML('beforeend', postMenuItemsMarkup(post, { isOwn }))
+    bindPostMenuEvents(root)
+  })
 }
 
 async function handleComposerSubmit(event) {
@@ -2288,45 +2430,94 @@ async function handleComposerSubmit(event) {
 
 async function handleLike(postId) {
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  const result = await toggleCommunityPostLike(postId)
-  state.viewerState[postId] = { ...(state.viewerState[postId] || {}), liked: Boolean(result.active) }
-  if (Number.isFinite(Number(result.likesCount))) updatePostCounts(postId, { likes: Number(result.likesCount) })
-  render()
+  const actionId = `like:${postId}`
+  if (communityPendingActions.has(actionId)) return
+  const post = postById(postId)
+  const previousLiked = Boolean(state.viewerState[postId]?.liked)
+  const previousLikes = Number(post?.counts?.likes || 0)
+  const nextLiked = !previousLiked
+  setPostViewerFlag(postId, 'liked', nextLiked)
+  setPostCount(postId, 'likes', previousLikes + (nextLiked ? 1 : -1))
+  updatePostActionDom(postId)
+  trackCommunityAction(actionId, toggleCommunityPostLike(postId))
+    .then((result) => {
+      setPostViewerFlag(postId, 'liked', Boolean(result.active))
+      if (Number.isFinite(Number(result.likesCount))) setPostCount(postId, 'likes', Number(result.likesCount))
+      updatePostActionDom(postId)
+    })
+    .catch((error) => {
+      console.warn('[community] like failed', { code: error?.code, message: error?.message, details: error?.details })
+      setPostViewerFlag(postId, 'liked', previousLiked)
+      setPostCount(postId, 'likes', previousLikes)
+      updatePostActionDom(postId)
+      showCommunityToast('Could not save like. Please try again.')
+    })
 }
 
 async function handleSave(postId) {
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  const result = await toggleCommunityPostSave(postId)
-  state.viewerState[postId] = { ...(state.viewerState[postId] || {}), saved: Boolean(result.active) }
-  if (Number.isFinite(Number(result.savesCount))) updatePostCounts(postId, { saves: Number(result.savesCount) })
-  render()
+  const actionId = `save:${postId}`
+  if (communityPendingActions.has(actionId)) return
+  const post = postById(postId)
+  const previousSaved = Boolean(state.viewerState[postId]?.saved)
+  const previousSaves = Number(post?.counts?.saves || 0)
+  const nextSaved = !previousSaved
+  setPostViewerFlag(postId, 'saved', nextSaved)
+  setPostCount(postId, 'saves', previousSaves + (nextSaved ? 1 : -1))
+  updatePostActionDom(postId)
+  trackCommunityAction(actionId, toggleCommunityPostSave(postId))
+    .then((result) => {
+      setPostViewerFlag(postId, 'saved', Boolean(result.active))
+      if (Number.isFinite(Number(result.savesCount))) setPostCount(postId, 'saves', Number(result.savesCount))
+      updatePostActionDom(postId)
+    })
+    .catch((error) => {
+      console.warn('[community] save failed', { code: error?.code, message: error?.message, details: error?.details })
+      setPostViewerFlag(postId, 'saved', previousSaved)
+      setPostCount(postId, 'saves', previousSaves)
+      updatePostActionDom(postId)
+      showCommunityToast('Could not save this post. Please try again.')
+    })
 }
 
 async function handleShare(postId) {
   const url = `${window.location.origin}${communityPostRoute(postId)}`
-  await navigator.clipboard?.writeText(url).catch(() => null)
-  state.message = 'Post link copied.'
+  const post = postById(postId)
+  const previousShares = Number(post?.counts?.shares || 0)
+  await (navigator.share
+    ? navigator.share({ title: post?.title || 'Melogic Community post', url }).catch(() => navigator.clipboard?.writeText(url))
+    : navigator.clipboard?.writeText(url)
+  ).catch(() => null)
+  showCommunityToast('Post link copied.')
   if (state.currentUser) {
-    recordCommunityPostShare(postId).then((result) => {
+    adjustPostCount(postId, 'shares', 1)
+    updatePostActionDom(postId)
+    trackCommunityAction(`share:${postId}`, recordCommunityPostShare(postId)).then((result) => {
       if (Number.isFinite(Number(result.sharesCount))) {
-        updatePostCounts(postId, { shares: Number(result.sharesCount) })
-        render()
+        setPostCount(postId, 'shares', Number(result.sharesCount))
+        updatePostActionDom(postId)
       }
-    }).catch((error) => console.warn('[community] share count failed', { code: error?.code, message: error?.message }))
+    }).catch((error) => {
+      console.warn('[community] share count failed', { code: error?.code, message: error?.message })
+      setPostCount(postId, 'shares', previousShares)
+      updatePostActionDom(postId)
+      showCommunityToast('Shared link copied, but the share count could not be saved.')
+    })
   }
-  render()
 }
 
 async function copyPostLink(postId) {
   const url = `${window.location.origin}${communityPostRoute(postId)}`
   await navigator.clipboard?.writeText(url).catch(() => null)
-  state.openPostMenuId = ''
+  closePostMenusDom()
   showCommunityToast('Post link copied.')
 }
 
@@ -2346,21 +2537,25 @@ function selectTagFilter(tag = '') {
 
 async function handleDeleteOwnPost(postId = '') {
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
+  const actionId = `delete:${postId}`
+  if (communityPendingActions.has(actionId)) return
   if (!window.confirm('Hide this post from the community?')) return
-  state.openPostMenuId = ''
-  try {
-    await deleteOwnCommunityPost({ postId, reason: 'Author removed post from community.' })
-    state.posts = state.posts.filter((post) => post.postId !== postId)
-    state.message = 'Post removed.'
-    render()
-  } catch (error) {
-    console.warn('[community] delete post failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.message = error?.message || 'Could not remove this post.'
-    render()
-  }
+  const previousPosts = state.posts
+  closePostMenusDom()
+  state.posts = state.posts.filter((post) => post.postId !== postId)
+  app?.querySelectorAll(`.community-post-card[data-post-id="${communityCssEscape(postId)}"]`).forEach((card) => card.remove())
+  showCommunityToast('Post removed.')
+  trackCommunityAction(actionId, deleteOwnCommunityPost({ postId, reason: 'Author removed post from community.' }))
+    .catch((error) => {
+      console.warn('[community] delete post failed', { code: error?.code, message: error?.message, details: error?.details })
+      state.posts = previousPosts
+      showCommunityToast('Could not delete post. Restored.')
+      render()
+    })
 }
 
 function updateCommentCount(commentId, patch = {}) {
@@ -2378,6 +2573,7 @@ function updateDetailCommentCount(delta = 0, absoluteValue = null) {
 async function handleCommentSubmit(event) {
   event.preventDefault()
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
@@ -2393,7 +2589,8 @@ async function handleCommentSubmit(event) {
   state.commentSubmitting = true
   render()
   try {
-    const result = await createCommunityComment({ postId: state.detailPostId, body })
+    const tempId = `comment:${state.detailPostId}:${Date.now()}`
+    const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, body }))
     const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
     state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
     state.commentViewerState[comment.commentId] = { liked: false }
@@ -2412,6 +2609,7 @@ async function handleCommentSubmit(event) {
 async function handleReplySubmit(event, parentCommentId = '') {
   event.preventDefault()
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
@@ -2427,7 +2625,8 @@ async function handleReplySubmit(event, parentCommentId = '') {
   state.commentSubmitting = true
   render()
   try {
-    const result = await createCommunityComment({ postId: state.detailPostId, parentCommentId, body })
+    const tempId = `comment:${state.detailPostId}:${parentCommentId}:${Date.now()}`
+    const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, parentCommentId, body }))
     const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
     state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
     state.commentViewerState[comment.commentId] = { liked: false }
@@ -2447,65 +2646,104 @@ async function handleReplySubmit(event, parentCommentId = '') {
 
 async function handleCommentLike(commentId = '') {
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  try {
-    const result = await toggleCommunityCommentLike({ postId: state.detailPostId, commentId })
+  const actionId = `comment-like:${state.detailPostId}:${commentId}`
+  if (communityPendingActions.has(actionId)) return
+  const comment = state.comments.find((item) => item.commentId === commentId)
+  const previousLiked = Boolean(state.commentViewerState[commentId]?.liked)
+  const previousLikeCount = Number(comment?.likeCount || 0)
+  const nextLiked = !previousLiked
+  state.commentViewerState[commentId] = { liked: nextLiked }
+  updateCommentCount(commentId, { likeCount: Math.max(0, previousLikeCount + (nextLiked ? 1 : -1)) })
+  render()
+  trackCommunityAction(actionId, toggleCommunityCommentLike({ postId: state.detailPostId, commentId })).then((result) => {
     state.commentViewerState[commentId] = { liked: Boolean(result.active) }
     if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
     render()
-  } catch (error) {
+  }).catch((error) => {
     console.warn('[community] comment like failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.commentActionError = error?.message || 'Could not update this comment.'
+    state.commentViewerState[commentId] = { liked: previousLiked }
+    updateCommentCount(commentId, { likeCount: previousLikeCount })
+    state.commentActionError = 'Could not update this comment.'
     render()
-  }
+  })
 }
 
 async function handleCommentDelete(commentId = '') {
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  try {
-    const comment = state.comments.find((item) => item.commentId === commentId)
-    const result = await deleteCommunityComment({ postId: state.detailPostId, commentId })
-    state.comments = state.comments.filter((item) => item.commentId !== commentId && item.parentCommentId !== commentId)
-    if (comment?.parentCommentId) {
-      updateCommentCount(comment.parentCommentId, { replyCount: Math.max(0, (state.comments.find((item) => item.commentId === comment.parentCommentId)?.replyCount || 0) - 1) })
-    }
+  const actionId = `comment-delete:${state.detailPostId}:${commentId}`
+  if (communityPendingActions.has(actionId)) return
+  const previousComments = state.comments
+  const previousPosts = state.posts
+  const comment = state.comments.find((item) => item.commentId === commentId)
+  state.comments = state.comments.filter((item) => item.commentId !== commentId && item.parentCommentId !== commentId)
+  if (comment?.parentCommentId) {
+    updateCommentCount(comment.parentCommentId, { replyCount: Math.max(0, (state.comments.find((item) => item.commentId === comment.parentCommentId)?.replyCount || 0) - 1) })
+  }
+  updateDetailCommentCount(0, state.comments.length)
+  render()
+  trackCommunityAction(actionId, deleteCommunityComment({ postId: state.detailPostId, commentId })).then((result) => {
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount)))
     else updateDetailCommentCount(0, state.comments.length)
     render()
-  } catch (error) {
+  }).catch((error) => {
     console.warn('[community] comment delete failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.commentActionError = error?.message || 'Could not delete this comment.'
+    state.comments = previousComments
+    state.posts = previousPosts
+    state.commentActionError = 'Could not delete this comment.'
     render()
-  }
+  })
 }
 
 async function handleToggleFocus(communityId) {
   if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  try {
-    const result = await toggleCommunityFocus(communityId)
-    state.communityFocus[communityId] = Boolean(result.focused)
-    state.communities = state.communities.map((community) => community.communityId === communityId ? { ...community, focusCount: Number(result.focusCount ?? community.focusCount) } : community)
-    if (state.community?.communityId === communityId) {
-      state.community = { ...state.community, focusCount: Number(result.focusCount ?? state.community.focusCount) }
-    }
-    if (state.view.type === 'feed' && state.activeTab === 'following') {
-      await loadCommunity()
-      return
-    }
-    render()
-  } catch (error) {
-    console.warn('[community] focus failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.message = error?.message || 'Could not update focus.'
-    render()
+  const actionId = `focus:${communityId}`
+  if (communityPendingActions.has(actionId)) return
+  const previousFocused = Boolean(state.communityFocus[communityId])
+  const previousCommunities = state.communities
+  const previousCommunity = state.community
+  const nextFocused = !previousFocused
+  const delta = nextFocused ? 1 : -1
+  state.communityFocus[communityId] = nextFocused
+  state.communities = state.communities.map((community) => community.communityId === communityId
+    ? { ...community, focusCount: Math.max(0, Number(community.focusCount || 0) + delta) }
+    : community)
+  if (state.community?.communityId === communityId) {
+    state.community = { ...state.community, focusCount: Math.max(0, Number(state.community.focusCount || 0) + delta) }
   }
+  render()
+  trackCommunityAction(actionId, toggleCommunityFocus(communityId))
+    .then((result) => {
+      state.communityFocus[communityId] = Boolean(result.focused)
+      state.communities = state.communities.map((community) => community.communityId === communityId ? { ...community, focusCount: Number(result.focusCount ?? community.focusCount) } : community)
+      if (state.community?.communityId === communityId) {
+        state.community = { ...state.community, focusCount: Number(result.focusCount ?? state.community.focusCount) }
+      }
+      if (state.view.type === 'feed' && state.activeTab === 'following') {
+        loadCommunity()
+        return
+      }
+      render()
+    })
+    .catch((error) => {
+      console.warn('[community] focus failed', { code: error?.code, message: error?.message, details: error?.details })
+      state.communityFocus[communityId] = previousFocused
+      state.communities = previousCommunities
+      state.community = previousCommunity
+      showCommunityToast('Could not update focus. Please try again.')
+      render()
+    })
 }
 
 function openCommunityComposer() {
@@ -2810,11 +3048,18 @@ function removeMentionedUser(uid = '') {
 
 function showCommunityToast(message = '') {
   state.message = message
-  render()
+  let toast = app?.querySelector('.community-toast')
+  if (!toast && app?.querySelector('.community-page')) {
+    toast = document.createElement('p')
+    toast.className = 'community-toast'
+    const anchor = app.querySelector('.community-layout, .community-detail-topbar, .community-hero')
+    app.querySelector('.community-page')?.insertBefore(toast, anchor || null)
+  }
+  if (toast) toast.textContent = message
   window.setTimeout(() => {
     if (state.message === message) {
       state.message = ''
-      render()
+      app?.querySelector('.community-toast')?.remove()
     }
   }, 2800)
 }
@@ -2830,6 +3075,7 @@ function selectTopicTab(tab = 'for-you') {
 
 function selectTopicCommunity({ communityId = '', slug = '', label = '' } = {}) {
   if (slug) {
+    if (!confirmCommunityNavigation()) return
     window.location.assign(communityRoute(slug))
     return
   }
@@ -2898,8 +3144,7 @@ function setupCommunityKeyboardShortcuts() {
   window.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return
     if (state.openPostMenuId) {
-      state.openPostMenuId = ''
-      render()
+      closePostMenusDom()
       return
     }
     if (!communityModalIsOpen()) return
@@ -2917,8 +3162,7 @@ function setupCommunityOutsideClick() {
   communityOutsideClickReady = true
   document.addEventListener('click', (event) => {
     if (!state.openPostMenuId || event.target.closest('[data-post-options-root]')) return
-    state.openPostMenuId = ''
-    render()
+    closePostMenusDom()
   })
 }
 
@@ -2943,6 +3187,7 @@ function isPostCardInteractiveTarget(target) {
 function openPostDetail(postId = '', hash = '') {
   const id = String(postId || '').trim()
   if (!id) return
+  if (!confirmCommunityNavigation()) return
   window.location.assign(`${communityPostRoute(id)}${hash}`)
 }
 
@@ -3149,7 +3394,7 @@ async function handleReportSubmit(event) {
       : state.report.targetType === 'community_story'
         ? 'community_story'
         : 'community_post'
-    await createReport({
+    await trackCommunityAction(`report:${targetType}:${targetType === 'community_comment' ? comment.commentId : targetType === 'community_story' ? story.storyId : post.postId}`, createReport({
       targetType,
       targetId: targetType === 'community_comment' ? comment.commentId : targetType === 'community_story' ? story.storyId : post.postId,
       targetOwnerUid: targetType === 'community_comment' ? comment.authorUid : targetType === 'community_story' ? story.authorUid : post.authorUid,
@@ -3161,7 +3406,7 @@ async function handleReportSubmit(event) {
         : targetType === 'community_story'
           ? { storyId: story.storyId, mediaType: story.mediaType }
           : { postTitle: post.title, postType: post.type }
-    })
+    }))
     state.report = { ...state.report, submitting: false, message: 'Thank you. Your report has been submitted.' }
     render()
   } catch (error) {
@@ -3172,6 +3417,7 @@ async function handleReportSubmit(event) {
 }
 
 function bindEvents() {
+  setupCommunityPendingLeaveWarning()
   app.querySelectorAll('.community-post-card[data-post-id]:not(.is-detail)').forEach((card) => {
     card.addEventListener('click', (event) => {
       if (isPostCardInteractiveTarget(event.target)) return
@@ -3189,15 +3435,13 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-toggle-post-menu]').forEach((button) => {
     button.addEventListener('click', (event) => {
-      event.stopPropagation()
-      const postId = button.getAttribute('data-toggle-post-menu') || ''
-      state.openPostMenuId = state.openPostMenuId === postId ? '' : postId
-      render()
+      stopCommunityActionEvent(event)
+      togglePostMenuDom(button.getAttribute('data-toggle-post-menu') || '')
     })
   })
   app.querySelectorAll('[data-copy-post-link]').forEach((button) => {
     button.addEventListener('click', (event) => {
-      event.stopPropagation()
+      stopCommunityActionEvent(event)
       copyPostLink(button.getAttribute('data-copy-post-link') || '')
     })
   })
@@ -3225,7 +3469,7 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-community-tag]').forEach((button) => {
     button.addEventListener('click', (event) => {
-      event.stopPropagation()
+      stopCommunityActionEvent(event)
       selectTagFilter(button.getAttribute('data-community-tag') || '')
     })
   })
@@ -3370,27 +3614,27 @@ function bindEvents() {
     loadCommunities()
   })
   app.querySelectorAll('[data-toggle-community-focus]').forEach((button) => button.addEventListener('click', (event) => {
-    event.stopPropagation()
+    stopCommunityActionEvent(event)
     handleToggleFocus(button.getAttribute('data-toggle-community-focus'))
   }))
   app.querySelectorAll('[data-community-like]').forEach((button) => button.addEventListener('click', (event) => {
-    event.stopPropagation()
+    stopCommunityActionEvent(event)
     handleLike(button.getAttribute('data-community-like'))
   }))
   app.querySelectorAll('[data-community-save]').forEach((button) => button.addEventListener('click', (event) => {
-    event.stopPropagation()
+    stopCommunityActionEvent(event)
     handleSave(button.getAttribute('data-community-save'))
   }))
   app.querySelectorAll('[data-community-share]').forEach((button) => button.addEventListener('click', (event) => {
-    event.stopPropagation()
+    stopCommunityActionEvent(event)
     handleShare(button.getAttribute('data-community-share'))
   }))
   app.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', (event) => {
-    event.stopPropagation()
+    stopCommunityActionEvent(event)
     openReport(button.getAttribute('data-community-report'))
   }))
   app.querySelectorAll('[data-community-delete-post]').forEach((button) => button.addEventListener('click', (event) => {
-    event.stopPropagation()
+    stopCommunityActionEvent(event)
     handleDeleteOwnPost(button.getAttribute('data-community-delete-post') || '')
   }))
   app.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
@@ -3407,9 +3651,18 @@ function bindEvents() {
     state.replyComposerFor = state.replyComposerFor === parentCommentId ? '' : state.replyComposerFor
     render()
   }))
-  app.querySelectorAll('[data-community-comment-like]').forEach((button) => button.addEventListener('click', () => handleCommentLike(button.getAttribute('data-community-comment-like'))))
-  app.querySelectorAll('[data-community-comment-delete]').forEach((button) => button.addEventListener('click', () => handleCommentDelete(button.getAttribute('data-community-comment-delete'))))
-  app.querySelectorAll('[data-community-comment-report]').forEach((button) => button.addEventListener('click', () => openCommentReport(button.getAttribute('data-community-comment-report'))))
+  app.querySelectorAll('[data-community-comment-like]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleCommentLike(button.getAttribute('data-community-comment-like'))
+  }))
+  app.querySelectorAll('[data-community-comment-delete]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleCommentDelete(button.getAttribute('data-community-comment-delete'))
+  }))
+  app.querySelectorAll('[data-community-comment-report]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    openCommentReport(button.getAttribute('data-community-comment-report'))
+  }))
   app.querySelectorAll('[data-close-community-report]').forEach((button) => {
     button.addEventListener('click', () => {
       state.report = { ...state.report, open: false, submitting: false, error: '' }
