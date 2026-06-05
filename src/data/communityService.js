@@ -287,7 +287,6 @@ export async function seedCommunities() {
 }
 
 export async function listCommunities({ category = 'all', search = '', limitCount = 50 } = {}) {
-  await seedCommunities().catch(() => null)
   const primary = [
     where('status', '==', 'active'),
     where('visibility', '==', 'public')
@@ -314,7 +313,6 @@ export async function listCommunities({ category = 'all', search = '', limitCoun
 }
 
 export async function getCommunityBySlug(slug = '') {
-  await seedCommunities().catch(() => null)
   const clean = String(slug || '').trim()
   if (!clean) return null
   const snap = await getDoc(doc(db, COMMUNITY_COLLECTION, clean)).catch((error) => {

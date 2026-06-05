@@ -15,12 +15,14 @@ Phase 5 adds lightweight creator Stories. The story rail and viewer borrow the s
 The `/community` homepage uses a Nexara-inspired social layout adapted to the Melogic app shell:
 
 - A compact full-width topic bar sits directly below the global site header.
-- The topic bar exposes For You, Focused, real public communities when available, and honest placeholder topic chips when community data has not loaded.
+- The topic bar exposes For You, Focused, and routable community chips. Real public communities are used first; if none are available, local fallback chips route to clean `/community/c/{slug}` pages without silently creating Firestore community documents.
 - A standalone stories row sits below the topic bar with Melogic gradient story rings.
 - The old inline "Share something" composer is hidden by default.
 - Post creation now opens a wider unified composer with title, body, product attachment, mention search, emoji insertion, community destination, tags, Publish, and Cancel.
 - The homepage body is a three-column layout: left navigation, center feed, and right rail.
-- Feed cards use a cleaner social action row for Like, Comment, Save, Share, and Report.
+- Feed cards use a cleaner social action row for Like, Comment, Save, and Share. Report, Delete, Copy Link, and coming-soon moderation/personalization actions live in the per-post three-dot menu.
+- The left rail does not duplicate the primary Post button. Posting stays in the feed toolbar and community headers where the current destination is clear.
+- The right rail is integrated into the page with divided sections for suggested communities, tags, creator history, and guidelines rather than heavy nested panels.
 
 ## Progressive Feed Loading
 
@@ -34,10 +36,20 @@ The `/community` feed renders progressively:
 - Search, tag, community, and sort changes reset pagination and only reload the center feed.
 - Topic/story chrome hides while scrolling down and reappears when scrolling up; the global navigation stays visible.
 
-Phase A placeholders:
+## Detail And Composer Polish
+
+The New Post composer uses a header-safe fixed overlay. The backdrop locks page scrolling, keeps the close control visible below the global navigation, and lets the modal scroll internally on shorter viewports. On desktop the composer is wider, with a landscape flow: title/body first, attachment and enhancement tools next, and compact destination/visibility/tag controls below.
+
+Post detail pages intentionally split detail cards from feed cards. Feed cards remain clickable and keep hover highlighting; detail cards use `.community-post-detail-card.is-detail`, do not render link roles/tab targets, do not get card-level navigation listeners, and keep a neutral cursor/background on hover while action buttons remain interactive.
+
+Detail loading is staged: the shell and skeleton render first, `getCommunityPost` renders the post as soon as it returns, and comments, viewer like/save state, media URL resolution, and right-rail enrichment continue afterward. This keeps the main post readable before slower secondary data completes.
+
+Known limitations: the Vite dev server does not mirror Firebase Hosting rewrites for direct `/community/post/{postId}` URLs, so direct detail-route smoke testing should use Firebase Hosting or a local Firebase hosting server.
+
+Fallback and deferred surfaces:
 
 - `Your Story`, `test1`, `test2`, and `test3` show the future story interaction with a coming-soon toast.
-- Real story upload is not exposed from the homepage visual row in this pass.
+- Fallback community chips and cards are local UI scaffolds only. Focus and scoped posting are disabled until the corresponding community document exists.
 - Live streams remain deferred.
 - Advanced For You scoring remains deferred.
 - The Creator History / This Day in History rail card is a designed placeholder for a later data source.
