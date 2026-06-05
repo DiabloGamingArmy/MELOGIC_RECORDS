@@ -64,32 +64,43 @@ Fallback and deferred surfaces:
 
 ## Story Schema
 
-Stories are stored in `communityStories/{storyId}`. Story images are uploaded to `communityStories/{uid}/{storyId}/{fileName}`.
+Stories are stored in `communityStories/{storyId}`. Story media is uploaded to `communityStories/{uid}/{storyId}/{fileName}`.
 
 ```js
 {
   storyId,
+  id,
   authorUid,
   authorDisplayName,
   authorUsername,
   authorAvatarURL,
-  mediaType: 'text' | 'image',
+  authorPhotoURL,
+  mediaType: 'text' | 'image' | 'video',
   text,
+  caption,
   mediaPath,
+  thumbnailPath,
+  durationSeconds,
   background: 'aurora' | 'midnight' | 'sunset' | 'stage' | 'mono',
   linkedPostId: '',
   linkedProductId: '',
   expiresAt,
+  lifetimeHours,
   createdAt,
   updatedAt,
   viewCount: 0,
+  likeCount: 0,
+  replyCount: 0,
   reportCount: 0,
+  moderationStatus: 'not_submitted',
   status: 'active',
   visibility: 'public'
 }
 ```
 
-Stories expire after 24 hours. The MVP supports text and image stories only; video, livestreams, and editing tools are intentionally deferred.
+Story expiration is computed server-side by `createCommunityStory`. The UI offers 6, 12, 24, and 48 hour lifetimes; the backend clamps accepted lifetimes to 1-48 hours and writes `expiresAt`. Active story queries filter `status == 'active'`, `visibility == 'public'`, and `expiresAt > now`, so expired stories simply stop appearing until a future cleanup job removes or marks them.
+
+Story uploads support MP4/WebM video up to 50 MB and JPG/PNG/WebP images up to 10 MB. The Story Composer has Upload Video and Record Video modes. Recording uses `navigator.mediaDevices.getUserMedia` plus `MediaRecorder`, defaults to the front camera on mobile when available, records for up to 60 seconds, and falls back to upload with a clear message when the browser denies permission or does not support recording.
 
 ## Community Schema
 
@@ -262,6 +273,8 @@ Public project viewer status:
 - Comments go through `createCommunityComment`.
 - Comment deletion goes through `deleteCommunityComment`; owner/admin checks are enforced server-side.
 - Comment likes go through `toggleCommunityCommentLike` and are mirrored at `communityPosts/{postId}/comments/{commentId}/likes/{uid}`.
+- Comment dislikes go through `toggleCommunityCommentDislike` and are mirrored at `communityPosts/{postId}/comments/{commentId}/dislikes/{uid}`.
+- Comment like/dislike reactions are mutually exclusive, optimistic in the UI, and rollback on callable failure.
 - Stories go through `createCommunityStory`, `deleteCommunityStory`, and `recordCommunityStoryView`.
 - Story reports reuse `createReport` with `targetType: 'community_story'`.
 
@@ -270,7 +283,7 @@ Frontend interaction policy:
 - Non-submit Community buttons must explicitly use `type="button"`; only composer, comment, story, search, report, and community-create submit buttons may use `type="submit"`.
 - Post card actions call a shared action-event guard so likes, saves, shares, reports, deletes, menu clicks, and comment actions do not bubble into card navigation.
 - The post three-dot menu is local UI state only. Opening, switching, Escape closing, and outside-click closing must not call Firebase or reload the feed.
-- Post likes, saves, signed-in share counts, post deletes, comment likes, comment deletes, and community focus use optimistic local state first, then run the callable in the background.
+- Post likes, saves, signed-in share counts, post deletes, comment likes/dislikes, comment deletes, and community focus use optimistic local state first, then run the callable in the background.
 - Optimistic writes are registered in a Community pending-action map. While the map is non-empty, `beforeunload` shows the browser-native leave warning.
 - If an optimistic write fails, the UI rolls back to the saved local snapshot and shows a non-blocking Community toast.
 - Simple post actions should update the affected card/action controls directly and preserve scroll position, feed pagination, active filters, and loaded posts.
@@ -292,6 +305,7 @@ Comments are stored in `communityPosts/{postId}/comments/{commentId}`:
   parentCommentId: '',
   replyCount: 0,
   likeCount: 0,
+  dislikeCount: 0,
   reportCount: 0,
   status: 'visible',
   createdAt,
@@ -299,7 +313,7 @@ Comments are stored in `communityPosts/{postId}/comments/{commentId}`:
 }
 ```
 
-Replies are one level deep. `parentCommentId` can point to a visible top-level comment, but replies cannot receive replies yet.
+Replies are one level deep. `parentCommentId` can point to a visible top-level comment, but replies cannot receive replies yet. The detail UI renders replies as a threaded line under the parent instead of a card nested inside another card. Reply submission uses `replySubmittingFor` and local `replyErrors`, so only the relevant reply composer shows `Posting...` or an error.
 
 ## Notifications
 
@@ -406,7 +420,9 @@ Visible comments on published public posts are publicly readable. Direct client 
 
 Community rules allow public reads for `active/public` communities. Direct client creation and focus writes are blocked because Admin SDK callables own those writes. Community owners/moderators can update basic fields; user moderators can hide/suspend communities.
 
-Story rules allow public reads for `active/public` stories whose `expiresAt` is still in the future. Signed-in users may create tightly-shaped own stories, but the production UI uses callables so author identity, expiration, counters, and status stay server-controlled. Owner/admin delete/hide paths are narrow. Storage rules allow signed-in users to upload image stories only under `communityStories/{uid}/{storyId}`.
+Story rules allow public reads for `active/public` stories whose `expiresAt` is still in the future. Signed-in users may create tightly-shaped own stories, but the production UI uses callables so author identity, expiration, counters, and status stay server-controlled. Owner/admin delete/hide paths are narrow. Storage rules allow signed-in users to upload image/video story media only under `communityStories/{uid}/{storyId}`; images are capped at 10 MB and videos at 50 MB.
+
+Community subpages such as `/community/communities` and `/community/c/{slug}` include Back actions that route safely to `/community` instead of relying on arbitrary browser history.
 
 Indexes added:
 
@@ -510,13 +526,27 @@ Done in post interaction refinement:
 - topic and story rails expose left/right fade edges only when more horizontal content is available
 - header profile menu reinitialization cleans up stale outside-click/auth listeners so the avatar menu stays reliable across Community routes
 
+Done in stories and comment refinement:
+
+- Story Composer opens from `Your Story` and supports video/image uploads with modal-local progress
+- Story Composer supports direct browser recording through `MediaRecorder`, with a 60 second auto-stop and upload fallback messaging
+- Story lifetime can be set to 6, 12, 24, or 48 hours; backend clamps metadata to the 1-48 hour range
+- story metadata supports video fields, captions, lifetime hours, moderation scaffold fields, and report counters
+- story Storage rules allow owner-only image/video uploads under `communityStories/{uid}/{storyId}`
+- Community subpages expose Back buttons that route to `/community`
+- comment replies use visual thread lines instead of nested card blocks
+- reply posting uses local reply composer loading/errors instead of global comment loading
+- comment Likes and Dislikes are visible on comments and replies, mutually exclusive, optimistic, and callable-backed
+- topic and story rail fade classes remain the supported fade implementation for non-blocking edge opacity
+
 Deferred:
 
 - creator follow feed
-- video stories and live streams
+- livestreams and advanced story editing
 - FYP scoring
 - full community moderation dashboard
 - mention notifications and scheduled publishing
 - arbitrary Community audio upload
 - public read-only Stage Plan viewer
 - public Studio Project viewer
+- story moderation/admin detail viewer

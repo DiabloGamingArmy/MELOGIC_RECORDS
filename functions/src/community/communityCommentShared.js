@@ -71,6 +71,7 @@ function serializeComment(comment = {}, id = '') {
     parentCommentId: comment.parentCommentId || '',
     replyCount: Math.max(0, Number(comment.replyCount || 0)),
     likeCount: Math.max(0, Number(comment.likeCount || 0)),
+    dislikeCount: Math.max(0, Number(comment.dislikeCount || 0)),
     status: comment.status || 'visible',
     createdAt: serializeDate(comment.createdAt),
     updatedAt: serializeDate(comment.updatedAt)

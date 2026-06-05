@@ -178,9 +178,18 @@ service firebase.storage {
 
     match /communityStories/{uid}/{storyId}/{fileName} {
       allow read: if true;
-      allow write: if signedIn()
+      allow create, update: if signedIn()
         && request.auth.uid == uid
-        && isImageUpload(10 * 1024 * 1024);
+        && (
+          isImageUpload(10 * 1024 * 1024)
+          || isVideoUpload(50 * 1024 * 1024)
+        );
+      allow delete: if signedIn()
+        && (
+          request.auth.uid == uid
+          || request.auth.token.admin == true
+          || request.auth.token.userModerate == true
+        );
     }
 
     match /products/{productId}/thumbnails/{fileName} {

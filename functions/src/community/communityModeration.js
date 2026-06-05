@@ -91,6 +91,7 @@ function serializeComment(docSnap, postId = '') {
     parentCommentId: cleanString(raw.parentCommentId || '', 180),
     status: cleanString(raw.status || '', 80),
     likeCount: Math.max(0, Number(raw.likeCount || 0)),
+    dislikeCount: Math.max(0, Number(raw.dislikeCount || 0)),
     replyCount: Math.max(0, Number(raw.replyCount || 0)),
     reportCount: Math.max(0, Number(raw.reportCount || 0)),
     createdAt: serializeDate(raw.createdAt),
