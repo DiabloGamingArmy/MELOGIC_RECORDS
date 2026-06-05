@@ -69,6 +69,7 @@ function serializePost(docSnap) {
     commentsLocked: raw.commentsLocked === true,
     pinnedInCommunity: raw.pinnedInCommunity === true,
     likeCount: Math.max(0, Number(raw.likeCount ?? counts.likes ?? 0)),
+    dislikeCount: Math.max(0, Number(raw.dislikeCount ?? counts.dislikes ?? 0)),
     commentCount: Math.max(0, Number(raw.commentCount ?? counts.comments ?? 0)),
     reportCount: Math.max(0, Number(raw.reportCount ?? counts.reports ?? 0)),
     score: Math.max(0, Number(raw.score || 0)),

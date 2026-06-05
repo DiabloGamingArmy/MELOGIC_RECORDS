@@ -78,7 +78,74 @@ async function togglePostState(request, kind = 'like') {
   })
 }
 
-const toggleCommunityPostLike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => togglePostState(request, 'like'))
+async function togglePostReaction(request, reaction = 'like') {
+  const uid = requireAuth(request)
+  const postRef = postRefFor(request.data?.postId || '')
+  const likeRef = postRef.collection('likes').doc(uid)
+  const dislikeRef = postRef.collection('dislikes').doc(uid)
+  const author = reaction === 'like' ? await loadAuthorSnapshot(uid) : null
+
+  return admin.firestore().runTransaction(async (tx) => {
+    const post = await assertPublicPost(tx, postRef)
+    const [likeSnap, dislikeSnap] = await Promise.all([tx.get(likeRef), tx.get(dislikeRef)])
+    const currentReaction = likeSnap.exists ? 'like' : dislikeSnap.exists ? 'dislike' : ''
+    const nextReaction = currentReaction === reaction ? '' : reaction
+    const likeDelta = (nextReaction === 'like' ? 1 : 0) - (currentReaction === 'like' ? 1 : 0)
+    const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (currentReaction === 'dislike' ? 1 : 0)
+    const likeCount = nextCount(post.counts?.likes ?? post.likeCount, likeDelta)
+    const dislikeCount = nextCount(post.counts?.dislikes ?? post.dislikeCount, dislikeDelta)
+    const now = admin.firestore.FieldValue.serverTimestamp()
+
+    if (nextReaction === 'like') {
+      tx.set(likeRef, { uid, postId: postRef.id, reaction: 'like', createdAt: now, updatedAt: now }, { merge: true })
+      tx.delete(dislikeRef)
+    } else if (nextReaction === 'dislike') {
+      tx.set(dislikeRef, { uid, postId: postRef.id, reaction: 'dislike', createdAt: now, updatedAt: now }, { merge: true })
+      tx.delete(likeRef)
+    } else {
+      if (currentReaction === 'like') tx.delete(likeRef)
+      if (currentReaction === 'dislike') tx.delete(dislikeRef)
+    }
+
+    tx.set(postRef, {
+      'counts.likes': likeCount,
+      'counts.dislikes': dislikeCount,
+      likeCount,
+      dislikeCount,
+      score: nextCount(post.score, likeDelta),
+      updatedAt: now
+    }, { merge: true })
+
+    if (nextReaction === 'like' && currentReaction !== 'like' && post.authorUid && post.authorUid !== uid) {
+      writeAccountEventToBatch(admin.firestore(), tx, post.authorUid, {
+        type: 'community_post_like',
+        title: 'Your post got a like',
+        message: `${author?.authorDisplayName || 'A creator'} liked your community post.`,
+        actorUid: uid,
+        actorType: 'user',
+        source: 'community',
+        path: `/community/post/${postRef.id}`,
+        metadata: { postId: postRef.id }
+      })
+    }
+
+    return {
+      ok: true,
+      postId: postRef.id,
+      reaction: nextReaction || null,
+      liked: nextReaction === 'like',
+      disliked: nextReaction === 'dislike',
+      active: nextReaction === reaction,
+      likesCount: likeCount,
+      dislikesCount: dislikeCount,
+      likeCount,
+      dislikeCount
+    }
+  })
+}
+
+const toggleCommunityPostLike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => togglePostReaction(request, 'like'))
+const toggleCommunityPostDislike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => togglePostReaction(request, 'dislike'))
 const toggleCommunityPostSave = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => togglePostState(request, 'save'))
 
 const recordCommunityPostShare = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
@@ -98,6 +165,7 @@ const recordCommunityPostShare = onCall({ timeoutSeconds: 60, memory: '256MiB' }
 
 module.exports = {
   toggleCommunityPostLike,
+  toggleCommunityPostDislike,
   toggleCommunityPostSave,
   recordCommunityPostShare
 }
