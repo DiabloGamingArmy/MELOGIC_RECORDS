@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, startAfter, Timestamp, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
+import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
@@ -236,6 +236,7 @@ export function normalizeCommunityComment(docSnapOrData = {}, explicitId = '') {
     parentCommentId: raw.parentCommentId || '',
     replyCount: Math.max(0, Number(raw.replyCount || 0)),
     likeCount: Math.max(0, Number(raw.likeCount || 0)),
+    dislikeCount: Math.max(0, Number(raw.dislikeCount || 0)),
     reportCount: Math.max(0, Number(raw.reportCount || 0)),
     status: raw.status || 'visible',
     createdAt: serializeDate(raw.createdAt),
@@ -253,18 +254,27 @@ export function normalizeCommunityStory(docSnapOrData = {}, explicitId = '') {
     authorDisplayName: raw.authorDisplayName || 'Melogic Creator',
     authorUsername: raw.authorUsername || '',
     authorAvatarURL: raw.authorAvatarURL || '',
-    mediaType: raw.mediaType === 'image' ? 'image' : 'text',
+    authorPhotoURL: raw.authorPhotoURL || raw.authorAvatarURL || '',
+    mediaType: raw.mediaType === 'video' ? 'video' : raw.mediaType === 'image' ? 'image' : 'text',
     text: raw.text || '',
+    caption: raw.caption || raw.text || '',
     mediaPath: raw.mediaPath || '',
     mediaURL: raw.mediaURL || '',
+    thumbnailPath: raw.thumbnailPath || '',
+    thumbnailURL: raw.thumbnailURL || '',
+    durationSeconds: Math.max(0, Number(raw.durationSeconds || 0)),
     background: raw.background || 'aurora',
     linkedPostId: raw.linkedPostId || '',
     linkedProductId: raw.linkedProductId || '',
     expiresAt: serializeDate(raw.expiresAt),
+    lifetimeHours: Math.max(1, Number(raw.lifetimeHours || 24)),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt),
     viewCount: Math.max(0, Number(raw.viewCount || 0)),
+    likeCount: Math.max(0, Number(raw.likeCount || 0)),
+    replyCount: Math.max(0, Number(raw.replyCount || 0)),
     reportCount: Math.max(0, Number(raw.reportCount || 0)),
+    moderationStatus: raw.moderationStatus || '',
     status: raw.status || 'active',
     visibility: raw.visibility || 'public'
   }
@@ -553,9 +563,12 @@ export async function getCommunityCommentViewerState(postId = '', commentId = ''
   const cleanPostId = String(postId || '').trim()
   const cleanCommentId = String(commentId || '').trim()
   const viewerUid = String(uid || '').trim()
-  if (!cleanPostId || !cleanCommentId || !viewerUid) return { liked: false }
-  const likeSnap = await getDoc(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'likes', viewerUid)).catch(() => null)
-  return { liked: Boolean(likeSnap?.exists?.()) }
+  if (!cleanPostId || !cleanCommentId || !viewerUid) return { liked: false, disliked: false }
+  const [likeSnap, dislikeSnap] = await Promise.all([
+    getDoc(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'likes', viewerUid)).catch(() => null),
+    getDoc(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'dislikes', viewerUid)).catch(() => null)
+  ])
+  return { liked: Boolean(likeSnap?.exists?.()), disliked: Boolean(dislikeSnap?.exists?.()) }
 }
 
 export function newCommunityStoryId() {
@@ -568,7 +581,7 @@ function storyIsNotExpired(story) {
 }
 
 async function attachStoryMediaUrl(story) {
-  if (story.mediaType !== 'image' || story.mediaURL || !story.mediaPath || !storage) return story
+  if ((story.mediaType !== 'image' && story.mediaType !== 'video') || story.mediaURL || !story.mediaPath || !storage) return story
   const mediaURL = await safeStorageUrl(story.mediaPath)
   return { ...story, mediaURL }
 }
@@ -712,28 +725,60 @@ export async function resolveCommunityAttachmentMediaUrls(posts = []) {
   return Object.fromEntries(entries.filter(([, url]) => Boolean(url)))
 }
 
-function storyImageExtension(file) {
+function storyMediaExtension(file) {
+  const type = String(file?.type || '').toLowerCase()
   const name = String(file?.name || '').toLowerCase()
+  if (type.includes('webm') || name.endsWith('.webm')) return 'webm'
+  if (type.includes('mp4') || name.endsWith('.mp4')) return 'mp4'
   if (name.endsWith('.png')) return 'png'
   if (name.endsWith('.webp')) return 'webp'
-  if (name.endsWith('.gif')) return 'gif'
   return 'jpg'
 }
 
-export async function uploadCommunityStoryImage({ uid = '', storyId = '', file = null } = {}) {
+function storyMediaType(file) {
+  const type = String(file?.type || '').toLowerCase()
+  if (type.startsWith('video/')) return 'video'
+  if (type.startsWith('image/')) return 'image'
+  return ''
+}
+
+export function validateCommunityStoryMedia(file = null) {
+  const type = String(file?.type || '').toLowerCase()
+  const size = Number(file?.size || 0)
+  if (!file) throw new Error('Choose a video or image for this story.')
+  const allowedImages = ['image/jpeg', 'image/png', 'image/webp']
+  const allowedVideos = ['video/mp4', 'video/webm']
+  if (!allowedImages.includes(type) && !allowedVideos.includes(type)) {
+    throw new Error('Stories support MP4, WebM, JPG, PNG, and WebP files.')
+  }
+  if (type.startsWith('video/') && size > 50 * 1024 * 1024) throw new Error('Story videos must be 50 MB or smaller.')
+  if (type.startsWith('image/') && size > 10 * 1024 * 1024) throw new Error('Story images must be 10 MB or smaller.')
+  return { mediaType: storyMediaType(file), contentType: type }
+}
+
+export async function uploadCommunityStoryMedia({ uid = '', storyId = '', file = null, onProgress = null } = {}) {
   const ownerUid = String(uid || '').trim()
   const id = String(storyId || '').trim()
   if (!storage) throw new Error('Storage is not available.')
   if (!ownerUid || ownerUid.includes('/')) throw new Error('A signed-in account is required.')
   if (!id || id.includes('/')) throw new Error('A valid story id is required.')
-  if (!file || !String(file.type || '').startsWith('image/')) throw new Error('Choose an image file.')
-  if (Number(file.size || 0) > 10 * 1024 * 1024) throw new Error('Story images must be 10 MB or smaller.')
+  const { mediaType, contentType } = validateCommunityStoryMedia(file)
 
-  const mediaPath = `${STORY_COLLECTION}/${ownerUid}/${id}/story-${Date.now()}.${storyImageExtension(file)}`
+  const mediaPath = `${STORY_COLLECTION}/${ownerUid}/${id}/original-${Date.now()}.${storyMediaExtension(file)}`
   const fileRef = ref(storage, mediaPath)
-  await uploadBytes(fileRef, file, { contentType: file.type || 'image/jpeg' })
+  await new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(fileRef, file, { contentType })
+    task.on('state_changed', (snapshot) => {
+      const progress = snapshot.totalBytes ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) : 0
+      if (typeof onProgress === 'function') onProgress(progress)
+    }, reject, resolve)
+  })
   const mediaURL = await getDownloadURL(fileRef).catch(() => '')
-  return { mediaPath, mediaURL }
+  return { mediaPath, mediaURL, mediaType }
+}
+
+export async function uploadCommunityStoryImage({ uid = '', storyId = '', file = null } = {}) {
+  return uploadCommunityStoryMedia({ uid, storyId, file })
 }
 
 export async function createCommunityPost(payload = {}) {
@@ -756,6 +801,12 @@ export async function deleteCommunityComment(payload = {}) {
 
 export async function toggleCommunityCommentLike(payload = {}) {
   const callable = httpsCallable(functions, 'toggleCommunityCommentLike')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function toggleCommunityCommentDislike(payload = {}) {
+  const callable = httpsCallable(functions, 'toggleCommunityCommentDislike')
   const result = await callable(payload)
   return result?.data || { ok: false }
 }

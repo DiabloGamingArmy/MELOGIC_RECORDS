@@ -35,12 +35,14 @@ import {
   recordCommunityPostShare,
   recordCommunityStoryView,
   toggleCommunityCommentLike,
+  toggleCommunityCommentDislike,
   toggleCommunityFocus,
   toggleCommunityPostDislike,
   toggleCommunityPostLike,
   toggleCommunityPostSave,
   updateCommunityPost,
-  uploadCommunityStoryImage
+  uploadCommunityStoryMedia,
+  validateCommunityStoryMedia
 } from './data/communityService'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
@@ -91,6 +93,8 @@ const STORY_BACKGROUNDS = [
   { id: 'stage', label: 'Stage' },
   { id: 'mono', label: 'Mono' }
 ]
+const STORY_LIFETIME_OPTIONS = [6, 12, 24, 48]
+const STORY_MAX_RECORD_SECONDS = 60
 const POSTING_MODES = [
   { value: 'open', label: 'Open' },
   { value: 'focused_only', label: 'Focused only' },
@@ -124,10 +128,18 @@ const state = {
   storiesError: '',
   storyComposer: {
     open: false,
-    mediaType: 'text',
+    mode: 'upload',
+    mediaType: 'video',
     text: '',
     background: 'aurora',
     file: null,
+    previewURL: '',
+    lifetimeHours: 24,
+    visibility: 'public',
+    uploadProgress: 0,
+    recording: false,
+    recordingSeconds: 0,
+    recordingSupported: true,
     submitting: false,
     error: '',
     message: ''
@@ -237,6 +249,8 @@ const state = {
   commentsError: '',
   commentDraft: '',
   replyDrafts: {},
+  replySubmittingFor: '',
+  replyErrors: {},
   replyComposerFor: '',
   commentSubmitting: false,
   commentActionError: '',
@@ -254,6 +268,10 @@ let communityOutsideClickReady = false
 let communityBeforeUnloadReady = false
 let communityRailResizeReady = false
 const communityPendingActions = new Map()
+let storyMediaRecorder = null
+let storyRecordingStream = null
+let storyRecordingChunks = []
+let storyRecordingTimer = null
 
 function logCommunityPerf(label, data = {}) {
   if (!COMMUNITY_DEBUG) return
@@ -566,6 +584,39 @@ function storyExpiresLabel(value = '') {
   return `${Math.ceil(minutes / 60)}h left`
 }
 
+function resetStoryPreviewURL() {
+  if (state.storyComposer.previewURL) URL.revokeObjectURL(state.storyComposer.previewURL)
+}
+
+function cleanStoryComposerState(overrides = {}) {
+  return {
+    open: false,
+    mode: 'upload',
+    mediaType: 'video',
+    text: '',
+    background: 'aurora',
+    file: null,
+    previewURL: '',
+    lifetimeHours: 24,
+    visibility: 'public',
+    uploadProgress: 0,
+    recording: false,
+    recordingSeconds: 0,
+    recordingSupported: true,
+    submitting: false,
+    error: '',
+    message: '',
+    ...overrides
+  }
+}
+
+function storyFileLabel(file = null) {
+  if (!file) return ''
+  const size = Number(file.size || 0)
+  const mb = size ? `${(size / (1024 * 1024)).toFixed(size > 9 * 1024 * 1024 ? 0 : 1)} MB` : ''
+  return [file.name || 'Story media selected', mb].filter(Boolean).join(' · ')
+}
+
 function storyById(storyId = '') {
   return state.stories.find((story) => story.storyId === storyId) || null
 }
@@ -577,7 +628,7 @@ function currentStoryIndex() {
 
 function storyAvatar(story) {
   const name = story.authorDisplayName || story.authorUsername || 'M'
-  if (story.authorAvatarURL) return `<img src="${escapeHtml(story.authorAvatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
+  if (story.authorAvatarURL || story.authorPhotoURL) return `<img src="${escapeHtml(story.authorAvatarURL || story.authorPhotoURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
@@ -670,16 +721,17 @@ function renderTopicBar() {
 }
 
 function renderStoriesRow() {
-  const placeholderItems = DUMMY_STORIES.map((story) => `
+  const hasOwnActiveStory = Boolean(state.currentUser?.uid && state.stories.some((story) => story.authorUid === state.currentUser.uid))
+  const placeholderItems = !state.stories.length ? DUMMY_STORIES.map((story) => `
     <button type="button" class="community-story-item is-placeholder" data-story-coming-soon="${escapeHtml(story.label)}">
       <span class="community-story-ring"><span class="community-story-avatar">${escapeHtml(story.initials)}</span></span>
       <strong>${escapeHtml(story.label)}</strong>
     </button>
-  `).join('')
+  `).join('') : ''
   const realStoryItems = state.stories.slice(0, 12).map((story) => `
     <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
-      <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''}">
-        ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="lazy" />` : storyAvatar(story)}
+      <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
+        ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="lazy" />` : story.mediaType === 'video' ? iconSvg('play') : storyAvatar(story)}
       </span></span>
       <strong>${escapeHtml(story.authorDisplayName || story.authorUsername || 'Creator')}</strong>
     </button>
@@ -687,9 +739,9 @@ function renderStoriesRow() {
 
   return `
     <section class="community-stories-row" aria-label="Community stories" data-community-stories-scroll>
-      <button type="button" class="community-story-item is-create" data-story-coming-soon="Your Story">
+      <button type="button" class="community-story-item is-create ${hasOwnActiveStory ? 'has-active-story' : ''}" data-open-story-composer>
         <span class="community-story-ring"><span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span></span>
-        <strong>Your Story</strong>
+        <strong>${hasOwnActiveStory ? 'Add Story' : 'Your Story'}</strong>
       </button>
       ${placeholderItems}
       ${realStoryItems}
@@ -711,8 +763,9 @@ function renderCommunityScrollChrome() {
 
 function renderStoryComposerModal() {
   if (!state.storyComposer.open) return ''
-  const textLabel = state.storyComposer.mediaType === 'image' ? 'Caption' : 'Story text'
-  const textPlaceholder = state.storyComposer.mediaType === 'image' ? 'Optional caption...' : 'What are you sharing today?'
+  const isRecordMode = state.storyComposer.mode === 'record'
+  const isVideo = state.storyComposer.mediaType === 'video'
+  const hasPreview = Boolean(state.storyComposer.previewURL)
   return `
     <div class="community-modal-backdrop">
       <section class="community-story-modal" role="dialog" aria-modal="true" aria-labelledby="community-story-composer-title">
@@ -726,31 +779,64 @@ function renderStoryComposerModal() {
         ${state.storyComposer.message ? `<p class="community-success">${escapeHtml(state.storyComposer.message)}</p>` : `
           <form data-story-composer-form>
             <div class="community-type-toggle" role="group" aria-label="Story type">
-              <button type="button" data-story-media-type="text" class="${state.storyComposer.mediaType === 'text' ? 'is-active' : ''}">${iconSvg('fileText')} <span>Text</span></button>
-              <button type="button" data-story-media-type="image" class="${state.storyComposer.mediaType === 'image' ? 'is-active' : ''}">${iconSvg('image')} <span>Image</span></button>
+              <button type="button" data-story-mode="upload" class="${state.storyComposer.mode === 'upload' ? 'is-active' : ''}">${iconSvg('image')} <span>Upload Video</span></button>
+              <button type="button" data-story-mode="record" class="${isRecordMode ? 'is-active' : ''}">${iconSvg('play')} <span>Record Video</span></button>
             </div>
-            <label>
-              <span>${textLabel}</span>
-              <textarea name="text" maxlength="500" rows="5" placeholder="${textPlaceholder}">${escapeHtml(state.storyComposer.text)}</textarea>
-            </label>
-            ${state.storyComposer.mediaType === 'text' ? `
-              <div class="community-story-backgrounds" role="group" aria-label="Story background">
-                ${STORY_BACKGROUNDS.map((background) => `
-                  <button type="button" data-story-background="${escapeHtml(background.id)}" class="story-bg-${escapeHtml(background.id)} ${state.storyComposer.background === background.id ? 'is-active' : ''}">
-                    <span>${escapeHtml(background.label)}</span>
-                  </button>
-                `).join('')}
+            <div class="community-story-preview ${hasPreview || state.storyComposer.recording ? 'has-media' : ''}">
+              ${hasPreview
+                ? isVideo
+                  ? `<video src="${escapeHtml(state.storyComposer.previewURL)}" controls playsinline preload="metadata"></video>`
+                  : `<img src="${escapeHtml(state.storyComposer.previewURL)}" alt="Story preview" />`
+                : isRecordMode
+                  ? `<video data-story-record-preview autoplay muted playsinline></video>`
+                  : `<div>${iconSvg('play')}<span>Choose an MP4/WebM video or JPG/PNG/WebP image.</span></div>`
+              }
+            </div>
+            ${isRecordMode ? `
+              <div class="community-story-record-controls">
+                <span data-story-record-timer>${state.storyComposer.recording ? `${state.storyComposer.recordingSeconds}s / ${STORY_MAX_RECORD_SECONDS}s` : 'Ready to record up to 60 seconds.'}</span>
+                ${state.storyComposer.recording
+                  ? `<button type="button" class="button button-accent" data-stop-story-recording>Stop Recording</button>`
+                  : `<button type="button" class="button button-accent" data-start-story-recording ${state.storyComposer.submitting ? 'disabled' : ''}>Start Recording</button>`
+                }
               </div>
+              <p class="community-muted-note">Recording uses this browser's camera and microphone permissions. If recording is not supported, upload a video instead.</p>
             ` : `
               <label>
-                <span>Image</span>
-                <input name="storyImage" type="file" accept="image/*" data-story-file />
+                <span>Story media</span>
+                <input name="storyMedia" type="file" accept="video/mp4,video/webm,image/jpeg,image/png,image/webp" data-story-file />
               </label>
-              ${state.storyComposer.file ? `<p class="community-story-file">${escapeHtml(state.storyComposer.file.name || 'Image selected')}</p>` : ''}
+              ${state.storyComposer.file ? `<p class="community-story-file">${escapeHtml(storyFileLabel(state.storyComposer.file))}</p>` : ''}
             `}
+            <label>
+              <span>Caption</span>
+              <textarea name="text" maxlength="500" rows="3" placeholder="Add a short caption...">${escapeHtml(state.storyComposer.text)}</textarea>
+            </label>
+            <div class="community-story-options-grid">
+              <label>
+                <span>Lifetime</span>
+                <select name="lifetimeHours" data-story-lifetime>
+                  ${STORY_LIFETIME_OPTIONS.map((hours) => `<option value="${hours}" ${Number(state.storyComposer.lifetimeHours) === hours ? 'selected' : ''}>${hours} hours</option>`).join('')}
+                </select>
+              </label>
+              <label>
+                <span>Visibility</span>
+                <select name="visibility" data-story-visibility>
+                  <option value="public" selected>Public</option>
+                  <option value="focused" disabled>Focused coming soon</option>
+                  <option value="followers" disabled>Followers coming soon</option>
+                </select>
+              </label>
+            </div>
+            ${state.storyComposer.submitting ? `
+              <div class="community-story-progress" aria-label="Story upload progress">
+                <span style="width: ${Math.max(0, Math.min(100, Number(state.storyComposer.uploadProgress || 0)))}%"></span>
+                <em>${formatCount(state.storyComposer.uploadProgress || 0)}%</em>
+              </div>
+            ` : ''}
             ${state.storyComposer.error ? `<p class="community-error">${escapeHtml(state.storyComposer.error)}</p>` : ''}
             <div class="community-form-actions">
-              <span>Stories expire after 24 hours.</span>
+              <span>Stories can stay up for 1-48 hours.</span>
               <button type="submit" class="button button-accent" ${state.storyComposer.submitting ? 'disabled' : ''}>${state.storyComposer.submitting ? 'Publishing...' : 'Publish Story'}</button>
             </div>
           </form>
@@ -780,9 +866,14 @@ function renderStoryViewerModal() {
           </a>
           <button type="button" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
         </header>
-        <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' ? 'has-image' : ''}">
-          ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" />` : `<p>${escapeHtml(story.text)}</p>`}
-          ${story.mediaType === 'image' && story.text ? `<p class="community-story-caption">${escapeHtml(story.text)}</p>` : ''}
+        <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
+          ${story.mediaType === 'video' && story.mediaURL
+            ? `<video src="${escapeHtml(story.mediaURL)}" controls autoplay playsinline></video>`
+            : story.mediaType === 'image' && story.mediaURL
+              ? `<img src="${escapeHtml(story.mediaURL)}" alt="" />`
+              : `<p>${escapeHtml(story.text)}</p>`
+          }
+          ${(story.mediaType === 'image' || story.mediaType === 'video') && (story.caption || story.text) ? `<p class="community-story-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
         </div>
         <footer class="community-story-viewer-actions">
           <button type="button" data-story-prev ${state.stories.length <= 1 ? 'disabled' : ''}>${iconSvg('arrowLeft')} <span>Prev</span></button>
@@ -1443,6 +1534,8 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
   }
   const isReply = Boolean(parentCommentId)
   const body = isReply ? state.replyDrafts[parentCommentId] || '' : state.commentDraft
+  const isSubmitting = isReply ? state.replySubmittingFor === parentCommentId : state.commentSubmitting
+  const localError = isReply ? state.replyErrors[parentCommentId] || '' : ''
   return `
     <form class="community-comment-composer" ${isReply ? `data-community-reply-form="${escapeHtml(parentCommentId)}"` : 'data-community-comment-form'}>
       <div class="community-comment-composer-row">
@@ -1451,8 +1544,9 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
           <span class="sr-only">${isReply ? 'Reply' : 'Comment'}</span>
           <textarea name="body" maxlength="2000" rows="${isReply ? '2' : '3'}" placeholder="${isReply ? 'Write a reply...' : 'Start the conversation...'}">${escapeHtml(body)}</textarea>
         </label>
-        <button type="submit" class="button button-accent" ${state.commentSubmitting ? 'disabled' : ''}>${state.commentSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post'}</button>
+        <button type="submit" class="button button-accent" ${isSubmitting ? 'disabled' : ''}>${isSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post'}</button>
       </div>
+      ${localError ? `<p class="community-error">${escapeHtml(localError)}</p>` : ''}
       <div class="community-comment-tool-row" aria-label="Comment attachments">
         <button type="button" disabled title="Image comments are coming soon.">${iconSvg('image')} <span>Image</span></button>
         <button type="button" disabled title="Music comments are coming soon.">${iconSvg('music')} <span>Music</span></button>
@@ -1486,6 +1580,7 @@ function commentCard(comment, replies = []) {
       <p class="community-comment-body">${escapeHtml(comment.body)}</p>
       <footer class="community-comment-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-comment-like="${escapeHtml(comment.commentId)}">${iconSvg('thumbsUp')} <span>${formatCount(comment.likeCount)}</span></button>
+        <button type="button" class="${viewer.disliked ? 'is-active' : ''}" data-community-comment-dislike="${escapeHtml(comment.commentId)}">${iconSvg('thumbsDown')} <span>${formatCount(comment.dislikeCount)}</span></button>
         ${canReply ? `<button type="button" data-toggle-reply-composer="${escapeHtml(comment.commentId)}">${iconSvg('messageCircle')} <span>Reply</span></button>` : ''}
         <button type="button" data-community-comment-report="${escapeHtml(comment.commentId)}">${iconSvg('alertCircle')} <span>Report</span></button>
         ${isOwn ? `<button type="button" data-community-comment-delete="${escapeHtml(comment.commentId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
@@ -1662,7 +1757,10 @@ function renderCommunitiesView() {
           <h1>Communities</h1>
           <p>Find focused spaces for genres, production, StageMaker, feedback, and creator support.</p>
         </div>
-        <button type="button" class="button button-accent" data-open-create-community>Create Community</button>
+        <div class="community-hero-actions">
+          <button type="button" class="button button-accent" data-open-create-community>Create Community</button>
+          <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back</span></a>
+        </div>
       </section>
       <div class="community-layout">
         <div class="community-main">
@@ -1889,6 +1987,7 @@ function renderCommunityDetail() {
           ${community ? `<div class="community-community-stats hero-stats"><span>c/${escapeHtml(community.slug)}</span><span>${formatCount(community.focusCount)} focused</span><span>${formatCount(community.postCount)} posts</span></div>` : ''}
         </div>
         <div class="community-hero-actions">
+          <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
           <a class="button button-muted" href="${ROUTES.communityCommunities}">All Communities</a>
           ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>` : ''}
           ${community ? focusDisabled
@@ -2810,7 +2909,7 @@ async function handleCommentSubmit(event) {
     const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, body }))
     const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
     state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
-    state.commentViewerState[comment.commentId] = { liked: false }
+    state.commentViewerState[comment.commentId] = { liked: false, disliked: false }
     state.commentDraft = ''
     state.commentSubmitting = false
     updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount || 0)))
@@ -2833,30 +2932,32 @@ async function handleReplySubmit(event, parentCommentId = '') {
   const formData = new FormData(event.currentTarget)
   const body = String(formData.get('body') || '').trim()
   state.replyDrafts = { ...state.replyDrafts, [parentCommentId]: body }
+  state.replyErrors = { ...state.replyErrors, [parentCommentId]: '' }
   state.commentActionError = ''
   if (!body) {
-    state.commentActionError = 'Reply body is required.'
+    state.replyErrors = { ...state.replyErrors, [parentCommentId]: 'Reply body is required.' }
     render()
     return
   }
-  state.commentSubmitting = true
+  state.replySubmittingFor = parentCommentId
   render()
   try {
     const tempId = `comment:${state.detailPostId}:${parentCommentId}:${Date.now()}`
     const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, parentCommentId, body }))
     const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
     state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
-    state.commentViewerState[comment.commentId] = { liked: false }
+    state.commentViewerState[comment.commentId] = { liked: false, disliked: false }
     state.replyDrafts = { ...state.replyDrafts, [parentCommentId]: '' }
+    state.replyErrors = { ...state.replyErrors, [parentCommentId]: '' }
     state.replyComposerFor = ''
-    state.commentSubmitting = false
+    state.replySubmittingFor = ''
     updateCommentCount(parentCommentId, { replyCount: (state.comments.find((item) => item.commentId === parentCommentId)?.replyCount || 0) + 1 })
     updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount || 0)))
     render()
   } catch (error) {
     console.warn('[community] create reply failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.commentSubmitting = false
-    state.commentActionError = error?.message || 'Could not post this reply.'
+    state.replySubmittingFor = ''
+    state.replyErrors = { ...state.replyErrors, [parentCommentId]: error?.message || 'Could not post this reply.' }
     render()
   }
 }
@@ -2871,19 +2972,57 @@ async function handleCommentLike(commentId = '') {
   if (communityPendingActions.has(actionId)) return
   const comment = state.comments.find((item) => item.commentId === commentId)
   const previousLiked = Boolean(state.commentViewerState[commentId]?.liked)
+  const previousDisliked = Boolean(state.commentViewerState[commentId]?.disliked)
   const previousLikeCount = Number(comment?.likeCount || 0)
+  const previousDislikeCount = Number(comment?.dislikeCount || 0)
   const nextLiked = !previousLiked
-  state.commentViewerState[commentId] = { liked: nextLiked }
+  state.commentViewerState[commentId] = { liked: nextLiked, disliked: nextLiked ? false : previousDisliked }
   updateCommentCount(commentId, { likeCount: Math.max(0, previousLikeCount + (nextLiked ? 1 : -1)) })
+  if (nextLiked && previousDisliked) updateCommentCount(commentId, { dislikeCount: Math.max(0, previousDislikeCount - 1) })
   render()
   trackCommunityAction(actionId, toggleCommunityCommentLike({ postId: state.detailPostId, commentId })).then((result) => {
-    state.commentViewerState[commentId] = { liked: Boolean(result.active) }
+    state.commentViewerState[commentId] = { liked: Boolean(result.liked ?? result.active), disliked: Boolean(result.disliked) }
     if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
+    if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
     render()
   }).catch((error) => {
     console.warn('[community] comment like failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.commentViewerState[commentId] = { liked: previousLiked }
+    state.commentViewerState[commentId] = { liked: previousLiked, disliked: previousDisliked }
     updateCommentCount(commentId, { likeCount: previousLikeCount })
+    updateCommentCount(commentId, { dislikeCount: previousDislikeCount })
+    state.commentActionError = 'Could not update this comment.'
+    render()
+  })
+}
+
+async function handleCommentDislike(commentId = '') {
+  if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  const actionId = `comment-dislike:${state.detailPostId}:${commentId}`
+  if (communityPendingActions.has(actionId)) return
+  const comment = state.comments.find((item) => item.commentId === commentId)
+  const previousLiked = Boolean(state.commentViewerState[commentId]?.liked)
+  const previousDisliked = Boolean(state.commentViewerState[commentId]?.disliked)
+  const previousLikeCount = Number(comment?.likeCount || 0)
+  const previousDislikeCount = Number(comment?.dislikeCount || 0)
+  const nextDisliked = !previousDisliked
+  state.commentViewerState[commentId] = { liked: nextDisliked ? false : previousLiked, disliked: nextDisliked }
+  updateCommentCount(commentId, { dislikeCount: Math.max(0, previousDislikeCount + (nextDisliked ? 1 : -1)) })
+  if (nextDisliked && previousLiked) updateCommentCount(commentId, { likeCount: Math.max(0, previousLikeCount - 1) })
+  render()
+  trackCommunityAction(actionId, toggleCommunityCommentDislike({ postId: state.detailPostId, commentId })).then((result) => {
+    state.commentViewerState[commentId] = { liked: Boolean(result.liked), disliked: Boolean(result.disliked ?? result.active) }
+    if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
+    if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
+    render()
+  }).catch((error) => {
+    console.warn('[community] comment dislike failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.commentViewerState[commentId] = { liked: previousLiked, disliked: previousDisliked }
+    updateCommentCount(commentId, { likeCount: previousLikeCount })
+    updateCommentCount(commentId, { dislikeCount: previousDislikeCount })
     state.commentActionError = 'Could not update this comment.'
     render()
   })
@@ -3383,7 +3522,11 @@ function setupCommunityKeyboardShortcuts() {
     }
     if (!communityModalIsOpen()) return
     if (state.composer.open) state.composer = { ...state.composer, open: false, submitting: false, error: '' }
-    if (state.storyComposer.open) state.storyComposer = { ...state.storyComposer, open: false, submitting: false, error: '' }
+    if (state.storyComposer.open) {
+      resetStoryRecording()
+      resetStoryPreviewURL()
+      state.storyComposer = cleanStoryComposerState()
+    }
     if (state.storyViewer.open) state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
     if (state.report.open) state.report = { ...state.report, open: false, submitting: false, error: '' }
     if (state.editPost.open) state.editPost = { open: false, postId: '', title: '', body: '', tags: '', visibility: 'public', submitting: false, error: '' }
@@ -3456,17 +3599,136 @@ async function handleCreateCommunitySubmit(event) {
   }
 }
 
+function stopStoryRecordingTracks() {
+  if (storyRecordingTimer) {
+    window.clearInterval(storyRecordingTimer)
+    storyRecordingTimer = null
+  }
+  if (storyRecordingStream) {
+    storyRecordingStream.getTracks().forEach((track) => track.stop())
+    storyRecordingStream = null
+  }
+}
+
+function resetStoryRecording() {
+  if (storyMediaRecorder && storyMediaRecorder.state !== 'inactive') {
+    try {
+      storyMediaRecorder.stop()
+    } catch {
+      // Recorder may already be stopping.
+    }
+  }
+  storyMediaRecorder = null
+  storyRecordingChunks = []
+  stopStoryRecordingTracks()
+}
+
+function bindStoryRecordingPreview() {
+  const video = app?.querySelector('[data-story-record-preview]')
+  if (video && storyRecordingStream) {
+    video.srcObject = storyRecordingStream
+    video.play?.().catch(() => {})
+  }
+}
+
+function setStoryFile(file = null, mediaType = '') {
+  resetStoryPreviewURL()
+  const previewURL = file ? URL.createObjectURL(file) : ''
+  state.storyComposer = {
+    ...state.storyComposer,
+    file,
+    previewURL,
+    mediaType: mediaType || (String(file?.type || '').startsWith('image/') ? 'image' : 'video'),
+    error: '',
+    uploadProgress: 0
+  }
+}
+
+async function startStoryRecording() {
+  if (!state.currentUser) {
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    state.storyComposer = { ...state.storyComposer, mode: 'record', recordingSupported: false, error: 'Recording is not supported in this browser. Upload a video instead.' }
+    render()
+    return
+  }
+  try {
+    resetStoryRecording()
+    resetStoryPreviewURL()
+    storyRecordingStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: true
+    }).catch(() => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }))
+    storyRecordingChunks = []
+    const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') ? 'video/webm;codecs=vp8,opus' : 'video/webm'
+    storyMediaRecorder = new MediaRecorder(storyRecordingStream, { mimeType })
+    storyMediaRecorder.addEventListener('dataavailable', (event) => {
+      if (event.data?.size) storyRecordingChunks.push(event.data)
+    })
+    storyMediaRecorder.addEventListener('stop', () => {
+      const blob = new Blob(storyRecordingChunks, { type: 'video/webm' })
+      const file = typeof File === 'function'
+        ? new File([blob], `story-recording-${Date.now()}.webm`, { type: 'video/webm' })
+        : Object.assign(blob, { name: `story-recording-${Date.now()}.webm` })
+      stopStoryRecordingTracks()
+      setStoryFile(file, 'video')
+      state.storyComposer = { ...state.storyComposer, recording: false, recordingSeconds: Math.min(STORY_MAX_RECORD_SECONDS, state.storyComposer.recordingSeconds || 0), error: '' }
+      render()
+    })
+    state.storyComposer = {
+      ...state.storyComposer,
+      mode: 'record',
+      mediaType: 'video',
+      file: null,
+      previewURL: '',
+      recording: true,
+      recordingSeconds: 0,
+      recordingSupported: true,
+      error: ''
+    }
+    storyMediaRecorder.start()
+    render()
+    bindStoryRecordingPreview()
+    const startedAt = Date.now()
+    storyRecordingTimer = window.setInterval(() => {
+      const seconds = Math.min(STORY_MAX_RECORD_SECONDS, Math.floor((Date.now() - startedAt) / 1000))
+      state.storyComposer.recordingSeconds = seconds
+      const timer = app?.querySelector('[data-story-record-timer]')
+      if (timer) timer.textContent = `${seconds}s / ${STORY_MAX_RECORD_SECONDS}s`
+      if (seconds >= STORY_MAX_RECORD_SECONDS) stopStoryRecording()
+    }, 500)
+  } catch (error) {
+    console.warn('[community] story recording failed', { name: error?.name, message: error?.message })
+    resetStoryRecording()
+    state.storyComposer = { ...state.storyComposer, mode: 'record', recording: false, error: error?.name === 'NotAllowedError' ? 'Camera permission was denied. Upload a video instead.' : 'Recording could not start. Upload a video instead.' }
+    render()
+  }
+}
+
+function stopStoryRecording() {
+  if (storyMediaRecorder && storyMediaRecorder.state !== 'inactive') {
+    storyMediaRecorder.stop()
+    return
+  }
+  stopStoryRecordingTracks()
+  state.storyComposer = { ...state.storyComposer, recording: false }
+  render()
+}
+
 function openStoryComposer() {
   if (!state.currentUser) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
+  resetStoryRecording()
+  resetStoryPreviewURL()
   state.storyComposer = {
-    ...state.storyComposer,
+    ...cleanStoryComposerState({
     open: true,
-    submitting: false,
-    error: '',
-    message: ''
+    recordingSupported: typeof MediaRecorder !== 'undefined' && Boolean(navigator.mediaDevices?.getUserMedia)
+    })
   }
   render()
 }
@@ -3479,17 +3741,15 @@ async function handleStorySubmit(event) {
   }
   const formData = new FormData(event.currentTarget)
   const text = String(formData.get('text') || '').trim()
-  const mediaType = state.storyComposer.mediaType === 'image' ? 'image' : 'text'
-  const file = state.storyComposer.file || formData.get('storyImage')
+  const lifetimeHours = Math.min(48, Math.max(1, Number(formData.get('lifetimeHours') || state.storyComposer.lifetimeHours || 24)))
+  const visibility = String(formData.get('visibility') || 'public') === 'public' ? 'public' : 'public'
+  const file = state.storyComposer.file || formData.get('storyMedia')
 
-  state.storyComposer = { ...state.storyComposer, text, error: '', submitting: true }
-  if (mediaType === 'text' && !text) {
-    state.storyComposer = { ...state.storyComposer, submitting: false, error: 'Story text is required.' }
-    render()
-    return
-  }
-  if (mediaType === 'image' && (!file || !String(file.type || '').startsWith('image/'))) {
-    state.storyComposer = { ...state.storyComposer, submitting: false, error: 'Choose an image for this story.' }
+  state.storyComposer = { ...state.storyComposer, text, lifetimeHours, visibility, error: '', submitting: true, uploadProgress: 0 }
+  try {
+    validateCommunityStoryMedia(file)
+  } catch (error) {
+    state.storyComposer = { ...state.storyComposer, submitting: false, error: error?.message || 'Choose a supported story video or image.' }
     render()
     return
   }
@@ -3497,15 +3757,26 @@ async function handleStorySubmit(event) {
   render()
   try {
     const storyId = newCommunityStoryId()
-    let uploaded = { mediaPath: '', mediaURL: '' }
-    if (mediaType === 'image') {
-      uploaded = await uploadCommunityStoryImage({ uid: state.currentUser.uid, storyId, file })
-    }
+    const uploaded = await uploadCommunityStoryMedia({
+      uid: state.currentUser.uid,
+      storyId,
+      file,
+      onProgress: (progress) => {
+        state.storyComposer = { ...state.storyComposer, uploadProgress: progress }
+        const bar = app?.querySelector('.community-story-progress span')
+        const text = app?.querySelector('.community-story-progress em')
+        if (bar) bar.style.width = `${Math.max(0, Math.min(100, progress))}%`
+        if (text) text.textContent = `${progress}%`
+      }
+    })
     const result = await createCommunityStory({
       storyId,
-      mediaType,
+      mediaType: uploaded.mediaType,
       text,
+      caption: text,
       mediaPath: uploaded.mediaPath,
+      lifetimeHours,
+      visibility,
       background: state.storyComposer.background
     })
     const story = normalizeCommunityStory({
@@ -3513,16 +3784,9 @@ async function handleStorySubmit(event) {
       mediaURL: uploaded.mediaURL || result.story?.mediaURL || ''
     }, result.storyId)
     state.stories = [story, ...state.stories.filter((item) => item.storyId !== story.storyId)]
-    state.storyComposer = {
-      open: false,
-      mediaType: 'text',
-      text: '',
-      background: 'aurora',
-      file: null,
-      submitting: false,
-      error: '',
-      message: ''
-    }
+    resetStoryRecording()
+    resetStoryPreviewURL()
+    state.storyComposer = cleanStoryComposerState()
     state.message = 'Story published.'
     render()
     window.setTimeout(() => {
@@ -3744,8 +4008,9 @@ function bindEvents() {
   app.querySelectorAll('[data-open-community-composer]').forEach((button) => button.addEventListener('click', openCommunityComposer))
   app.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
   app.querySelectorAll('[data-story-coming-soon]').forEach((button) => {
-    button.addEventListener('click', () => showCommunityToast('Stories are coming soon.'))
+    button.addEventListener('click', () => showCommunityToast('Story placeholders will be replaced as creators publish.'))
   })
+  app.querySelectorAll('[data-open-story-composer]').forEach((button) => button.addEventListener('click', openStoryComposer))
   app.querySelectorAll('[data-community-nav-stub]').forEach((button) => {
     button.addEventListener('click', () => showCommunityToast(`${button.getAttribute('data-community-nav-stub')} is coming in a later community pass.`))
   })
@@ -3759,6 +4024,20 @@ function bindEvents() {
       render()
     })
   })
+  app.querySelectorAll('[data-story-mode]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const mode = button.getAttribute('data-story-mode') === 'record' ? 'record' : 'upload'
+      if (mode !== 'record') resetStoryRecording()
+      state.storyComposer = {
+        ...state.storyComposer,
+        mode,
+        mediaType: mode === 'record' ? 'video' : state.storyComposer.mediaType || 'video',
+        error: ''
+      }
+      render()
+      bindStoryRecordingPreview()
+    })
+  })
   app.querySelectorAll('[data-story-background]').forEach((button) => {
     button.addEventListener('click', () => {
       state.storyComposer = {
@@ -3770,14 +4049,29 @@ function bindEvents() {
     })
   })
   app.querySelector('[data-story-file]')?.addEventListener('change', (event) => {
-    state.storyComposer = { ...state.storyComposer, file: event.target.files?.[0] || null, error: '' }
+    const file = event.target.files?.[0] || null
+    try {
+      const { mediaType } = validateCommunityStoryMedia(file)
+      setStoryFile(file, mediaType)
+    } catch (error) {
+      resetStoryPreviewURL()
+      state.storyComposer = { ...state.storyComposer, file: null, previewURL: '', error: error?.message || 'Choose a supported story video or image.' }
+    }
     render()
   })
+  app.querySelector('[data-story-lifetime]')?.addEventListener('change', (event) => {
+    state.storyComposer = { ...state.storyComposer, lifetimeHours: Math.min(48, Math.max(1, Number(event.target.value || 24))) }
+  })
+  app.querySelector('[data-start-story-recording]')?.addEventListener('click', startStoryRecording)
+  app.querySelector('[data-stop-story-recording]')?.addEventListener('click', stopStoryRecording)
   app.querySelector('[data-story-composer-form]')?.addEventListener('submit', handleStorySubmit)
   app.querySelector('[data-close-story-composer]')?.addEventListener('click', () => {
-    state.storyComposer = { ...state.storyComposer, open: false, submitting: false, error: '' }
+    resetStoryRecording()
+    resetStoryPreviewURL()
+    state.storyComposer = cleanStoryComposerState()
     render()
   })
+  bindStoryRecordingPreview()
   app.querySelectorAll('[data-open-story]').forEach((button) => button.addEventListener('click', () => openStoryViewer(button.getAttribute('data-open-story') || '')))
   app.querySelector('[data-close-story-viewer]')?.addEventListener('click', () => {
     state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
@@ -3908,6 +4202,10 @@ function bindEvents() {
   app.querySelectorAll('[data-community-comment-like]').forEach((button) => button.addEventListener('click', (event) => {
     stopCommunityActionEvent(event)
     handleCommentLike(button.getAttribute('data-community-comment-like'))
+  }))
+  app.querySelectorAll('[data-community-comment-dislike]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleCommentDislike(button.getAttribute('data-community-comment-dislike'))
   }))
   app.querySelectorAll('[data-community-comment-delete]').forEach((button) => button.addEventListener('click', (event) => {
     stopCommunityActionEvent(event)

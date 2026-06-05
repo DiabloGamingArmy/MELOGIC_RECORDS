@@ -54,6 +54,7 @@ const createCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
       parentCommentId: parentCommentId || '',
       replyCount: 0,
       likeCount: 0,
+      dislikeCount: 0,
       status: 'visible',
       createdAt: now,
       updatedAt: now

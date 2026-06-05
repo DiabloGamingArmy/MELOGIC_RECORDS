@@ -12,7 +12,7 @@ const {
   requireAuth
 } = require('./communityCommentShared')
 
-const toggleCommunityCommentLike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
+async function toggleCommunityCommentReaction(request, reaction = 'like') {
   const uid = requireAuth(request)
   const postId = cleanString(request.data?.postId || '', 180)
   const commentId = cleanString(request.data?.commentId || '', 180)
@@ -24,24 +24,37 @@ const toggleCommunityCommentLike = onCall({ timeoutSeconds: 60, memory: '256MiB'
   const postRef = postRefFor(postId)
   const commentRef = commentRefFor(postId, commentId)
   const likeRef = commentRef.collection('likes').doc(uid)
-  const author = await loadAuthorSnapshot(uid)
+  const dislikeRef = commentRef.collection('dislikes').doc(uid)
+  const author = reaction === 'like' ? await loadAuthorSnapshot(uid) : null
 
   return firestore.runTransaction(async (tx) => {
     await assertPublicPost(tx, postRef)
-    const [commentSnap, likeSnap] = await Promise.all([tx.get(commentRef), tx.get(likeRef)])
+    const [commentSnap, likeSnap, dislikeSnap] = await Promise.all([tx.get(commentRef), tx.get(likeRef), tx.get(dislikeRef)])
     if (!commentSnap.exists || commentSnap.data()?.status !== 'visible') {
       throw new HttpsError('not-found', 'Comment not found.')
     }
     const comment = commentSnap.data() || {}
-    const active = !likeSnap.exists
-    const likeCount = nextCount(comment.likeCount, active ? 1 : -1)
+    const currentReaction = likeSnap.exists ? 'like' : dislikeSnap.exists ? 'dislike' : ''
+    const nextReaction = currentReaction === reaction ? '' : reaction
+    const likeDelta = (nextReaction === 'like' ? 1 : 0) - (currentReaction === 'like' ? 1 : 0)
+    const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (currentReaction === 'dislike' ? 1 : 0)
+    const likeCount = nextCount(comment.likeCount, likeDelta)
+    const dislikeCount = nextCount(comment.dislikeCount, dislikeDelta)
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    if (active) tx.set(likeRef, { uid, postId, commentId, createdAt: now, updatedAt: now })
-    else tx.delete(likeRef)
-    tx.set(commentRef, { likeCount, updatedAt: now }, { merge: true })
+    if (nextReaction === 'like') {
+      tx.set(likeRef, { uid, postId, commentId, reaction: 'like', createdAt: now, updatedAt: now }, { merge: true })
+      tx.delete(dislikeRef)
+    } else if (nextReaction === 'dislike') {
+      tx.set(dislikeRef, { uid, postId, commentId, reaction: 'dislike', createdAt: now, updatedAt: now }, { merge: true })
+      tx.delete(likeRef)
+    } else {
+      if (currentReaction === 'like') tx.delete(likeRef)
+      if (currentReaction === 'dislike') tx.delete(dislikeRef)
+    }
+    tx.set(commentRef, { likeCount, dislikeCount, updatedAt: now }, { merge: true })
 
-    if (active && comment.authorUid && comment.authorUid !== uid) {
+    if (nextReaction === 'like' && currentReaction !== 'like' && comment.authorUid && comment.authorUid !== uid) {
       writeAccountEventToBatch(firestore, tx, comment.authorUid, {
         type: 'community_comment_like',
         title: 'Your comment got a like',
@@ -54,10 +67,24 @@ const toggleCommunityCommentLike = onCall({ timeoutSeconds: 60, memory: '256MiB'
       })
     }
 
-    return { ok: true, postId, commentId, active, likeCount }
+    return {
+      ok: true,
+      postId,
+      commentId,
+      reaction: nextReaction || null,
+      active: nextReaction === reaction,
+      liked: nextReaction === 'like',
+      disliked: nextReaction === 'dislike',
+      likeCount,
+      dislikeCount
+    }
   })
-})
+}
+
+const toggleCommunityCommentLike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => toggleCommunityCommentReaction(request, 'like'))
+const toggleCommunityCommentDislike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => toggleCommunityCommentReaction(request, 'dislike'))
 
 module.exports = {
-  toggleCommunityCommentLike
+  toggleCommunityCommentLike,
+  toggleCommunityCommentDislike
 }

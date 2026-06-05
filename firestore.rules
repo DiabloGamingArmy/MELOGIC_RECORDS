@@ -1701,17 +1701,25 @@ service cloud.firestore {
         'authorDisplayName',
         'authorUsername',
         'authorAvatarURL',
+        'authorPhotoURL',
         'mediaType',
         'text',
+        'caption',
         'mediaPath',
+        'thumbnailPath',
+        'durationSeconds',
         'background',
         'linkedPostId',
         'linkedProductId',
         'expiresAt',
+        'lifetimeHours',
         'createdAt',
         'updatedAt',
         'viewCount',
+        'likeCount',
+        'replyCount',
         'reportCount',
+        'moderationStatus',
         'status',
         'visibility'
       ]);
@@ -1728,11 +1736,15 @@ service cloud.firestore {
         && request.resource.data.authorUsername.size() <= 60
         && request.resource.data.authorAvatarURL is string
         && request.resource.data.authorAvatarURL.size() <= 900
-        && request.resource.data.mediaType in ['text', 'image']
+        && (!('authorPhotoURL' in request.resource.data) || request.resource.data.authorPhotoURL is string)
+        && request.resource.data.mediaType in ['text', 'image', 'video']
         && request.resource.data.text is string
         && request.resource.data.text.size() <= 500
+        && (!('caption' in request.resource.data) || (request.resource.data.caption is string && request.resource.data.caption.size() <= 500))
         && request.resource.data.mediaPath is string
         && request.resource.data.mediaPath.size() <= 900
+        && (!('thumbnailPath' in request.resource.data) || (request.resource.data.thumbnailPath is string && request.resource.data.thumbnailPath.size() <= 900))
+        && (!('durationSeconds' in request.resource.data) || (request.resource.data.durationSeconds is number && request.resource.data.durationSeconds >= 0 && request.resource.data.durationSeconds <= 300))
         && request.resource.data.background in ['aurora', 'midnight', 'sunset', 'stage', 'mono', '']
         && request.resource.data.linkedPostId is string
         && request.resource.data.linkedPostId.size() <= 180
@@ -1740,8 +1752,14 @@ service cloud.firestore {
         && request.resource.data.linkedProductId.size() <= 180
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time
+        && request.resource.data.lifetimeHours is number
+        && request.resource.data.lifetimeHours >= 1
+        && request.resource.data.lifetimeHours <= 48
         && request.resource.data.viewCount == 0
+        && request.resource.data.likeCount == 0
+        && request.resource.data.replyCount == 0
         && request.resource.data.reportCount == 0
+        && request.resource.data.moderationStatus in ['not_submitted', '']
         && request.resource.data.status == 'active'
         && request.resource.data.visibility == 'public'
         && (
@@ -1752,6 +1770,10 @@ service cloud.firestore {
           )
           || (
             request.resource.data.mediaType == 'image'
+            && request.resource.data.mediaPath.matches('communityStories/' + request.auth.uid + '/' + storyId + '/.*')
+          )
+          || (
+            request.resource.data.mediaType == 'video'
             && request.resource.data.mediaPath.matches('communityStories/' + request.auth.uid + '/' + storyId + '/.*')
           )
         );
@@ -1921,6 +1943,7 @@ service cloud.firestore {
               && request.resource.data.createdAt == resource.data.createdAt
               && request.resource.data.replyCount == resource.data.replyCount
               && request.resource.data.likeCount == resource.data.likeCount
+              && request.resource.data.dislikeCount == resource.data.dislikeCount
               && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                 'status',
                 'body',
@@ -1945,6 +1968,11 @@ service cloud.firestore {
         allow delete: if false;
 
         match /likes/{uid} {
+          allow read: if signedIn() && request.auth.uid == uid;
+          allow write: if false;
+        }
+
+        match /dislikes/{uid} {
           allow read: if signedIn() && request.auth.uid == uid;
           allow write: if false;
         }
