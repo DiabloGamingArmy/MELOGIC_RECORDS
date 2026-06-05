@@ -578,8 +578,45 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   justify-items: start;
 }
 
+.message-history-button,
+.message-history-boundary {
+  align-self: center;
+  margin: 0.15rem 0 0.5rem;
+}
+
+.message-history-button {
+  border: 1px solid rgba(126, 147, 191, 0.35);
+  border-radius: 999px;
+  background: rgba(12, 18, 32, 0.86);
+  color: #bfd0f4;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.34rem 0.7rem;
+}
+
+.message-history-button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.message-history-boundary {
+  color: #899cc5;
+  font-size: 0.76rem;
+}
+
 .message-cluster.is-self .message-attachment-list {
   justify-items: end;
+}
+
+.message-image-preview-button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: zoom-in;
+  max-width: min(360px, 100%);
 }
 
 .message-attachment-list img,
@@ -786,6 +823,14 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 }
 
 .message-attachment-list a.is-image-load-failed::after {
+  content: 'Image could not be loaded';
+  display: block;
+  color: #ffd2d2;
+  font-size: 0.72rem;
+  margin-top: 0.25rem;
+}
+
+.message-image-preview-button.is-image-load-failed::after {
   content: 'Image could not be loaded';
   display: block;
   color: #ffd2d2;
@@ -1253,6 +1298,76 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   grid-template-columns: 2rem minmax(0, 1fr) auto;
   gap: 0.5rem;
   align-items: center;
+}
+
+.image-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 15, 0.76);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  pointer-events: auto;
+}
+
+.image-preview-modal {
+  width: min(960px, 100%);
+  max-height: min(760px, 92vh);
+  border: 1px solid rgba(128, 153, 204, 0.45);
+  border-radius: 0.9rem;
+  background: rgba(9, 14, 25, 0.98);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.image-preview-modal header,
+.image-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.image-preview-modal header {
+  justify-content: space-between;
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px solid rgba(128, 153, 204, 0.24);
+}
+
+.image-preview-modal header strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-preview-actions button,
+.image-preview-actions a {
+  border: 1px solid rgba(126, 147, 191, 0.35);
+  border-radius: 0.55rem;
+  background: rgba(17, 25, 44, 0.92);
+  color: #dbe7ff;
+  font: inherit;
+  line-height: 1;
+  padding: 0.38rem 0.52rem;
+  text-decoration: none;
+}
+
+.image-preview-stage {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.image-preview-stage img {
+  max-width: 100%;
+  max-height: 68vh;
+  object-fit: contain;
+  transform-origin: center center;
+  transition: transform 120ms ease;
 }
 
 .reaction-detail-meta {

@@ -2,13 +2,34 @@ import { doc, getDoc, serverTimestamp, setDoc, Timestamp } from 'firebase/firest
 import { auth, subscribeToIdToken, waitForInitialAuthState } from '../firebase/auth'
 import { db } from '../firebase/firestore'
 
-const ACTIVE_WINDOW_MS = 2 * 60 * 1000
-const HEARTBEAT_MS = 45 * 1000
+const ACTIVE_WINDOW_MS = 90 * 1000
+const HIDDEN_ACTIVE_WINDOW_MS = 30 * 1000
+const HEARTBEAT_MS = 30 * 1000
+const SESSION_STORAGE_KEY = 'melogic_presence_session_id_v1'
 
 let started = false
 let heartbeatTimer = null
 let unsubscribeToken = null
 let latestClaims = {}
+let sessionId = ''
+
+function getSessionId() {
+  if (sessionId) return sessionId
+  try {
+    const existing = window.sessionStorage?.getItem(SESSION_STORAGE_KEY)
+    if (existing) {
+      sessionId = existing
+      return sessionId
+    }
+    const generated = `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    window.sessionStorage?.setItem(SESSION_STORAGE_KEY, generated)
+    sessionId = generated
+    return sessionId
+  } catch {
+    sessionId = sessionId || `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+    return sessionId
+  }
+}
 
 function cleanString(value = '', max = 240) {
   return String(value || '').replace(/[\u0000-\u001F\u007F]/g, '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -55,10 +76,11 @@ async function writePresence(user, { hidden = false } = {}) {
   const isModerator = roles.includes('moderator') || latestClaims.userModerate === true
   const staffVisible = isAdmin || isModerator || roles.includes('founder') || roles.includes('staff')
   const now = Date.now()
-  const activeUntil = Timestamp.fromMillis(now + (hidden ? 30 * 1000 : ACTIVE_WINDOW_MS))
-
-  await setDoc(doc(db, 'presence', user.uid), {
+  const currentSessionId = getSessionId()
+  const activeUntil = Timestamp.fromMillis(now + (hidden ? HIDDEN_ACTIVE_WINDOW_MS : ACTIVE_WINDOW_MS))
+  const sharedPayload = {
     uid: user.uid,
+    sessionId: currentSessionId,
     displayName: cleanString(profile.displayName || account.displayName || user.displayName || 'User', 180),
     username: cleanString(profile.username || account.username || '', 120),
     photoURL: cleanString(profile.photoURL || profile.avatarURL || account.photoURL || user.photoURL || '', 900),
@@ -75,7 +97,16 @@ async function writePresence(user, { hidden = false } = {}) {
     pageTitle: cleanString(document.title || '', 180),
     userAgentSummary: userAgentSummary(),
     updatedAt: serverTimestamp()
-  }, { merge: true })
+  }
+
+  await Promise.all([
+    setDoc(doc(db, 'presence', user.uid), sharedPayload, { merge: true }),
+    setDoc(doc(db, 'presence', user.uid, 'sessions', currentSessionId), {
+      ...sharedPayload,
+      hidden: Boolean(hidden),
+      createdAt: serverTimestamp()
+    }, { merge: true })
+  ])
 }
 
 function clearHeartbeat() {

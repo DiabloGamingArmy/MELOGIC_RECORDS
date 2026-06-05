@@ -38,6 +38,8 @@ The inbox messaging framework baseline is **complete** and considered stable.
 - Account/security events are a separate read path from `users/{uid}/accountEvents`.
 - Users can mark account events read without creating/deleting event records.
 - Universal pinned inbox items live in `users/{uid}/inboxPins/{pinId}` and may reference message threads, system notifications, or account events. Pins are user-owned shortcuts only; they do not mutate the source notification/thread records.
+- Message threads initially subscribe to the latest small window of messages and render at the bottom of the conversation. The "Load earlier messages" control prepends older pages while preserving scroll position.
+- Image attachments open in an in-app preview modal with zoom controls. The source attachment remains available through the preview's Open action.
 
 ## Regression Checklist
 

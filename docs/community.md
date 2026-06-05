@@ -479,6 +479,8 @@ Done in phase 4:
 - profile Communities tab shows public communities the creator owns or moderates
 - profile Stage Plans tab is public-safe and only reads StageMaker plans explicitly marked `visibility: public`
 - profile header shows public-safe creator stats without scanning private data
+- profile product cards use the marketplace product media resolver so `thumbnailPath`, `coverPath`, and gallery Storage paths can render through cached download URLs when direct URL fields are empty
+- profile header counts prefer stored public-safe stats and fall back to the already loaded public tab collections
 - community post profile cards link to `/community/post/{postId}`
 
 Done in phase 5:

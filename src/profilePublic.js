@@ -5,7 +5,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { addToCart } from './data/cartService'
-import { createReport } from './data/productService'
+import { createReport, normalizeProduct, resolveProductMedia } from './data/productService'
 import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
@@ -165,7 +165,11 @@ async function loadPublicProductsForArtist(uid) {
   )
 
   const snap = await getDocs(productsQuery)
-  const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+  const rows = await Promise.all(snap.docs.map(async (docSnap) => {
+    const raw = docSnap.data() || {}
+    const media = await resolveProductMedia({ id: docSnap.id, ...raw })
+    return normalizeProduct(docSnap.id, raw, media)
+  }))
   uiState.productsByUid.set(uid, rows)
   return rows
 }

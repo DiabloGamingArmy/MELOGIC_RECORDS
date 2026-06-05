@@ -1170,6 +1170,14 @@ service cloud.firestore {
       allow create, update: if isOwner(userId)
         && request.resource.data.uid == userId;
       allow delete: if isOwner(userId);
+
+      match /sessions/{sessionId} {
+        allow read: if signedIn();
+        allow create, update: if isOwner(userId)
+          && request.resource.data.uid == userId
+          && request.resource.data.sessionId == sessionId;
+        allow delete: if isOwner(userId);
+      }
     }
 
     match /users/{uid} {
