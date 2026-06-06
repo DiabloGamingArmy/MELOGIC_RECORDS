@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
-const { assertAnyPermission, cleanString } = require('../admin/adminAuth')
+const { assertAnyPermission, cleanString, requireAdminActionSecurity } = require('../admin/adminAuth')
 const { reportSummary, serializeDate } = require('../admin/adminListShared')
 const { writeAdminAuditLog } = require('../admin/auditLog')
 const { canManageCommunity } = require('./communityShared')
@@ -44,6 +44,10 @@ function canModerateCommunityTarget(request = {}, community = null) {
 
 async function assertPostModerator(request = {}, post = {}) {
   const community = await loadCommunityForPost(post)
+  if (isPlatformModerator(request)) {
+    await requireAdminActionSecurity(request, ['userModerate'])
+    return community
+  }
   if (!canModerateCommunityTarget(request, community)) {
     throw new HttpsError('permission-denied', 'Community moderation permission is required.')
   }
@@ -200,6 +204,7 @@ const deleteOwnCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
   if (post.authorUid !== uid && !isPlatformModerator(request)) {
     throw new HttpsError('permission-denied', 'You can only delete your own post.')
   }
+  if (post.authorUid !== uid) await requireAdminActionSecurity(request, ['userModerate'])
   const now = admin.firestore.FieldValue.serverTimestamp()
   const update = {
     status: post.authorUid === uid ? 'hidden_by_author' : 'hidden_by_moderator',
@@ -216,6 +221,7 @@ const deleteOwnCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
 
 const pinCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const uid = requireUid(request)
+  if (isPlatformModerator(request)) await requireAdminActionSecurity(request, ['userModerate'])
   const postId = safeId(request.data?.postId || '', 'post id')
   const reason = cleanReason(request.data?.reason || 'Pinned community post.')
   const firestore = db()
@@ -249,6 +255,7 @@ const pinCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async 
 
 const unpinCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const uid = requireUid(request)
+  if (isPlatformModerator(request)) await requireAdminActionSecurity(request, ['userModerate'])
   const postId = safeId(request.data?.postId || '', 'post id')
   const reason = cleanReason(request.data?.reason || 'Unpinned community post.')
   const firestore = db()
@@ -309,7 +316,7 @@ const hideCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (r
 const restoreCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => updateCommentModeration(request, 'visible', 'community_comment_restored'))
 
 const moderateCommunity = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  assertAnyPermission(request, ['userModerate'])
+  await requireAdminActionSecurity(request, ['userModerate'])
   const communityId = safeId(request.data?.communityId || '', 'community id')
   const action = cleanString(request.data?.action || '', 80)
   const reason = cleanReason(request.data?.reason || '')

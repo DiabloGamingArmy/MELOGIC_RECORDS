@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
-const { assertAnyPermission, cleanString } = require('./adminAuth')
+const { cleanString, requireAdminActionSecurity } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
 const { writeAccountEvent } = require('../account/accountEvents')
 
@@ -51,7 +51,7 @@ function buildPatch(action = '', actorUid = '', reason = '', notes = '') {
 }
 
 const updateReportDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const actor = assertAnyPermission(request, ['userModerate', 'productReview', 'orderSupport'])
+  const actor = await requireAdminActionSecurity(request, ['userModerate', 'productReview', 'orderSupport'])
   const reportId = cleanString(request.data?.reportId || '', 180)
   const action = cleanString(request.data?.action || '', 40)
   const reason = cleanString(request.data?.reason || '', 1200)

@@ -1888,17 +1888,17 @@ export async function getEmailAdminStatus() {
   return result?.data || { ok: false, providerConfigured: false, recent: [] }
 }
 
-export async function listAdminEmailLogs({ mode = 'sent', limitCount = 10, cursor = '' } = {}) {
+export async function listAdminEmailLogs({ mode = 'sent', limitCount = 10, cursor = '', search = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminEmailLogs')
-  const result = await callable({ mode, limit: limitCount, cursor })
+  const result = await callable({ mode, limit: limitCount, cursor, search })
   return result?.data || { ok: false, items: [], nextCursor: '', hasMore: false }
 }
 
-export async function sendAdminEmail({ to = '', subject = '', body = '', category = 'support', relatedUid = '', relatedProductId = '', relatedOrderId = '', relatedReportId = '', cc = '', replyTo = '' } = {}) {
+export async function sendAdminEmail({ to = '', subject = '', body = '', category = 'support', templateType = 'support', ctaLabel = '', ctaUrl = '', relatedUid = '', relatedProductId = '', relatedOrderId = '', relatedReportId = '', cc = '', replyTo = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'sendAdminEmail')
-  const result = await callable({ to, subject, body, category, relatedUid, relatedProductId, relatedOrderId, relatedReportId, cc, replyTo })
+  const result = await callable({ to, subject, body, category, templateType, ctaLabel, ctaUrl, relatedUid, relatedProductId, relatedOrderId, relatedReportId, cc, replyTo })
   return result?.data || { ok: false }
 }
 
@@ -1913,6 +1913,27 @@ export async function sendAdminSystemMessage({ recipientUid = '', category = 'su
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'sendAdminSystemMessage')
   const result = await callable({ recipientUid, category, priority, subject, body, actionLabel, actionUrl, internalNote })
+  return result?.data || { ok: false }
+}
+
+export async function forcePasswordReset({ uid = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'forcePasswordReset')
+  const result = await callable({ uid })
+  return result?.data || { ok: false }
+}
+
+export async function setTemporaryPassword({ uid = '', password = '', confirmation = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'setTemporaryPassword')
+  const result = await callable({ uid, password, confirmation })
+  return result?.data || { ok: false }
+}
+
+export async function revokeRecoveryCodes({ uid = '', confirmation = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'revokeRecoveryCodes')
+  const result = await callable({ uid, confirmation })
   return result?.data || { ok: false }
 }
 

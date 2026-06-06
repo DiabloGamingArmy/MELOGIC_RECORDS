@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
-const { assertAnyPermission, cleanString } = require('./adminAuth')
+const { cleanString, requireAdminActionSecurity } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
 const { mergeSettings, sanitizeSettingsPatch, settingsRef } = require('./adminSettingsShared')
 
@@ -28,7 +28,7 @@ async function mirrorSellerAgreementSettings(actor = {}, sectionAfter = {}) {
 }
 
 const updateAdminSettings = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const actor = assertAnyPermission(request, ['settingsManage', 'roleManage'])
+  const actor = await requireAdminActionSecurity(request, ['settingsManage', 'roleManage'])
   const patch = sanitizeSettingsPatch(request.data?.section || '', request.data?.values || {})
   if (!patch) throw new HttpsError('invalid-argument', 'A valid settings section and at least one setting are required.')
 

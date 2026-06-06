@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
-const { assertPermission, cleanString } = require('./adminAuth')
+const { cleanString, requireAdminActionSecurity } = require('./adminAuth')
 const { buildAdminAuditLogEntry } = require('./auditLog')
 const { writeAccountEventToBatch } = require('../account/accountEvents')
 const {
@@ -96,7 +96,7 @@ function buildCreatorReviewEvent({ decision = '', productId = '', product = {}, 
 }
 
 const reviewProductDecision = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const reviewer = assertPermission(request, 'productReview')
+  const reviewer = await requireAdminActionSecurity(request, 'productReview')
   const productId = normalizeProductId(request.data?.productId)
   const decision = normalizeDecision(request.data?.decision)
   const reason = cleanString(request.data?.reason || '', 1200)

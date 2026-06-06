@@ -2306,6 +2306,18 @@
   font-weight: 700;
 }
 
+.admin-tool-list {
+  display: grid;
+  gap: 0.55rem;
+  align-content: start;
+}
+
+.admin-secondary-button.is-danger,
+.admin-primary-link.is-danger {
+  border-color: rgba(255, 124, 151, .45);
+  color: #ffb5c3;
+}
+
 @media (max-width: 900px) {
   .admin-email-search {
     grid-template-columns: 1fr;

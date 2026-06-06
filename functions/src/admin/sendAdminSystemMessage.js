@@ -1,6 +1,6 @@
 const admin = require('firebase-admin')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
-const { assertPermission, cleanString } = require('./adminAuth')
+const { cleanString, requireAdminActionSecurity } = require('./adminAuth')
 const { buildAdminAuditLogEntry, writeAdminAuditLog } = require('./auditLog')
 const { writeAccountEventToBatch } = require('../account/accountEvents')
 
@@ -75,7 +75,7 @@ async function writeFailedAudit({ claims, recipientUid, category, priority, subj
 }
 
 const sendAdminSystemMessage = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const claims = assertPermission(request, 'emailSend')
+  const claims = await requireAdminActionSecurity(request, 'emailSend')
   const recipientUid = cleanString(request.data?.recipientUid || request.data?.uid || '', 180)
   const category = cleanCategory(request.data?.category)
   const priority = cleanPriority(request.data?.priority)

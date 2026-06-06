@@ -27,6 +27,8 @@ Melogic uses Firebase Admin action links plus the Workspace support mailbox for 
 - Admin accounts see a missing-2FA warning on `/account/security` until they enroll authenticator-app 2FA.
 - Admin suspension/unsuspension writes account events so the affected user can see critical account status changes.
 - Recovery code status is available from `getRecoveryCodeStatus`; raw recovery codes are never returned after generation.
+- Admin write actions use `requireAdminActionSecurity` for high-impact callables. The gate checks admin auth, permission, verified email, and enrolled MFA before allowing state changes.
+- Admin Account Hub can force password reset, set a temporary password for owner-approved support cases, and revoke recovery codes without exposing existing raw recovery codes.
 
 ### Scaffolded
 
@@ -35,6 +37,7 @@ Melogic uses Firebase Admin action links plus the Workspace support mailbox for 
 ### Pending
 
 - Full recovery-code sign-in flow from the MFA challenge screen.
+- Full Admin Profile Editor and maintenance tool dry-run/apply flows.
 - Full account-status enforcement beyond the current stored suspension flag and account event.
 - Full enforcement of suspended-account restrictions across every product, report, checkout, and messaging edge.
 - Login-success logging is intentionally not enabled to avoid noisy writes.

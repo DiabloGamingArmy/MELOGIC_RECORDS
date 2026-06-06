@@ -227,6 +227,36 @@ function assertAnyPermission(request = {}, permissions = []) {
   throw new HttpsError('permission-denied', 'One of these admin permissions is required.')
 }
 
+async function requireAdminActionSecurity(request = {}, permissionOrPermissions = '') {
+  const permissions = Array.isArray(permissionOrPermissions) ? permissionOrPermissions : [permissionOrPermissions].filter(Boolean)
+  const claims = permissions.length > 1
+    ? assertAnyPermission(request, permissions)
+    : permissions.length === 1
+      ? assertPermission(request, permissions[0])
+      : assertAdmin(request)
+  let user = null
+  try {
+    const admin = require('firebase-admin')
+    user = await admin.auth().getUser(claims.uid)
+  } catch {
+    throw new HttpsError('permission-denied', 'Admin account could not be verified.')
+  }
+  if (user?.emailVerified !== true) {
+    throw new HttpsError('permission-denied', 'Verify your email before performing admin actions.', {
+      code: 'admin-email-not-verified',
+      actionRequired: 'verify_email'
+    })
+  }
+  const factors = Array.isArray(user?.multiFactor?.enrolledFactors) ? user.multiFactor.enrolledFactors : []
+  if (!factors.length) {
+    throw new HttpsError('permission-denied', 'Enable 2FA before performing admin actions.', {
+      code: 'admin-2fa-required',
+      actionRequired: 'enable_2fa'
+    })
+  }
+  return claims
+}
+
 function canManageRoles(claims = {}) {
   return permissionIsAllowed(claims, 'roleManage')
 }
@@ -255,6 +285,7 @@ module.exports = {
   assertAdmin,
   assertAnyPermission,
   assertPermission,
+  requireAdminActionSecurity,
   buildAdminClaims,
   canEditListings,
   canManageRoles,

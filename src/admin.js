@@ -21,10 +21,13 @@ import {
   listMarketplaceReviewQueue,
   reviewProductDecision,
   addAdminUserNote,
+  forcePasswordReset,
+  revokeRecoveryCodes,
   setAdminUserRole,
   sendAdminAuthEmail,
   sendAdminEmail,
   sendAdminSystemMessage,
+  setTemporaryPassword,
   setUserSuspension,
   updateReportDecision,
   updateAdminSettings,
@@ -62,6 +65,7 @@ const SECTIONS = [
   { key: 'team', route: ROUTES.adminTeam, label: 'Roles', icon: 'folderPlus', permission: 'roleManage' },
   { key: 'logs', route: ROUTES.adminLogs, label: 'Logs', icon: 'fileText', permission: 'auditRead' },
   { key: 'contact', route: ROUTES.adminContact, label: 'Contact', icon: 'messageCircle', permission: 'emailSend' },
+  { key: 'tools', route: ROUTES.adminTools, label: 'Tools', icon: 'folderPlus', permission: 'admin' },
   { key: 'settings', route: ROUTES.adminSettings, label: 'Settings', icon: 'edit', permission: 'admin' }
 ]
 
@@ -450,6 +454,7 @@ function currentSectionKey() {
   if (path.startsWith(`${ROUTES.adminOrders}/`)) return 'orders'
   if (path.startsWith(`${ROUTES.adminTeam}/`)) return 'team'
   if (path.startsWith(`${ROUTES.adminLogs}/`)) return 'logs'
+  if (path === ROUTES.adminTools || path.startsWith(`${ROUTES.adminTools}/`)) return 'tools'
   const section = SECTIONS.find((item) => item.route.replace(/\/+$/, '') === path)
   return section?.key || 'dashboard'
 }
@@ -2165,6 +2170,9 @@ function selectedUserPanel() {
         <button type="button" class="admin-secondary-button" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled title="You cannot open a direct message with yourself."' : ''}>Message</button>
         <button type="button" class="admin-secondary-button" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Email User</button>
         <button type="button" class="admin-secondary-button" data-admin-auth-email="password_reset" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Send Reset</button>
+        <button type="button" class="admin-secondary-button" data-admin-force-reset="${escapeHtml(uid)}" ${can('userModerate') && user?.email ? '' : 'disabled title="User moderation permission and a user email are required."'}>Force Reset</button>
+        <button type="button" class="admin-secondary-button" data-admin-temp-password="${escapeHtml(uid)}" ${can('roleManage') ? '' : 'disabled title="Owner role management permission is required."'}>Set Temporary Password</button>
+        <button type="button" class="admin-secondary-button is-danger" data-admin-revoke-recovery="${escapeHtml(uid)}" ${can('roleManage') && user.recoveryCodesGenerated ? '' : 'disabled title="Owner role management permission and generated recovery codes are required."'}>Revoke Codes</button>
         <button type="button" class="admin-secondary-button" data-admin-auth-email="email_verification" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email && !user.emailVerified ? '' : 'disabled title="Only available for unverified email accounts with emailSend permission."'}>Send Verification</button>
         <button type="button" class="admin-secondary-button" data-admin-security-notice-user="${escapeHtml(uid)}" ${can('emailSend') ? '' : 'disabled title="emailSend permission is required."'}>Security Notice</button>
         <button type="button" class="admin-secondary-button ${user?.suspended ? '' : 'is-danger'}" data-admin-suspension-user="${escapeHtml(uid)}" ${!canSuspend || isSelf || actioning ? `disabled title="${escapeHtml(isSelf ? 'You cannot suspend your own account.' : canSuspend ? 'Account action in progress.' : 'User moderation permission is required.')}"` : ''}>${actioning === 'suspension' ? 'Saving...' : user?.suspended ? 'Unsuspend' : 'Suspend'}</button>
@@ -3061,6 +3069,59 @@ function contactView() {
   `
 }
 
+function toolsView() {
+  if (!canLoadAdminSection('tools')) return permissionState('admin')
+  return `
+    ${adminPageHeader({
+      eyebrow: 'Admin',
+      title: 'Tools',
+      description: 'Vital support, security, communication, and maintenance entry points. State-changing tools require verified email and 2FA.',
+      refreshLabel: 'Refresh tools'
+    })}
+    <section class="admin-hub-grid">
+      <article class="admin-section-slab admin-fixed-panel is-short">
+        <div class="admin-slab-heading"><h2>User Tools</h2><span class="review-badge is-warning">2FA gated</span></div>
+        <div class="admin-panel-scroll admin-tool-list">
+          <a class="admin-secondary-link" href="${ROUTES.adminUsers}">Find user by email, username, or UID</a>
+          <a class="admin-secondary-link" href="${ROUTES.adminContact}?mode=email">Email user</a>
+          <a class="admin-secondary-link" href="${ROUTES.adminContact}?mode=system">Send system message</a>
+          <p class="admin-muted">Open an Account Hub for password tools, suspension tools, recovery-code status, and admin notes.</p>
+        </div>
+      </article>
+      <article class="admin-section-slab admin-fixed-panel is-short">
+        <div class="admin-slab-heading"><h2>Product Tools</h2><span class="review-badge">Audits</span></div>
+        <div class="admin-panel-scroll admin-tool-list">
+          <a class="admin-secondary-link" href="${ROUTES.adminProducts}">Find product by title, ID, or creator</a>
+          <a class="admin-secondary-link" href="${ROUTES.adminReviews}">Open marketplace review queue</a>
+          <p class="admin-muted">Review decisions and moderation writes require verified email and 2FA.</p>
+        </div>
+      </article>
+      <article class="admin-section-slab admin-fixed-panel is-short">
+        <div class="admin-slab-heading"><h2>Communication Tools</h2><span class="review-badge">Contact</span></div>
+        <div class="admin-panel-scroll admin-tool-list">
+          <a class="admin-secondary-link" href="${ROUTES.adminContact}?mode=email">Email templates and activity</a>
+          <a class="admin-secondary-link" href="${ROUTES.adminContact}?mode=system">System message templates</a>
+          <a class="admin-secondary-link" href="${ROUTES.adminContact}?mode=email&activity=failed">Recent failed contact attempts</a>
+        </div>
+      </article>
+      <article class="admin-section-slab admin-fixed-panel is-short">
+        <div class="admin-slab-heading"><h2>Security Tools</h2><span class="review-badge is-approved">Read only</span></div>
+        <div class="admin-panel-scroll admin-tool-list">
+          <a class="admin-secondary-link" href="${ROUTES.adminLogs}">Recent admin actions</a>
+          <a class="admin-secondary-link" href="${ROUTES.adminTeam}">Admin role audit</a>
+          <p class="admin-muted">Admins without verified email or 2FA will be blocked by backend gates from write actions.</p>
+        </div>
+      </article>
+      <article class="admin-section-slab admin-fixed-panel is-short">
+        <div class="admin-slab-heading"><h2>Maintenance Tools</h2><span class="review-badge is-warning">Planned</span></div>
+        <div class="admin-panel-scroll">
+          <article class="admin-empty-state">Maintenance repair tools will use dry-run previews, confirmation phrases, and admin logs before rewriting data.</article>
+        </div>
+      </article>
+    </section>
+  `
+}
+
 function emailSettingsPanel() {
   const status = state.contact.emailStatus || {}
   const form = state.contact.emailForm || {}
@@ -3584,6 +3645,7 @@ function render() {
   if (state.section === 'team') return renderLayout(teamView())
   if (state.section === 'logs') return renderLayout(logsView())
   if (state.section === 'contact') return renderLayout(contactView())
+  if (state.section === 'tools') return renderLayout(toolsView())
   if (state.section === 'settings') return renderLayout(settingsView())
   return renderLayout(placeholderView(state.section))
 }
@@ -3784,9 +3846,11 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       const category = String(params.get('category') || '').trim().toLowerCase()
       const priority = String(params.get('priority') || '').trim().toLowerCase()
       const activity = String(params.get('activity') || '').trim().toLowerCase()
+      const emailLogId = String(params.get('email') || '').trim()
       if (category) state.contact.systemForm.category = category
       if (priority) state.contact.systemForm.priority = priority
       if (['sent', 'failed', 'draft'].includes(activity)) state.contact.emailLogTab = activity
+      if (emailLogId) state.contact.emailLogDetailId = emailLogId
       const tab = state.contact.emailLogTab || 'sent'
       const logState = emailLogState(tab)
       if (!logState.loaded && tab !== 'draft') {
@@ -3884,6 +3948,7 @@ function canLoadAdminSection(sectionKey = '') {
   if (sectionKey === 'team') return can('roleManage')
   if (sectionKey === 'logs') return can('auditRead')
   if (sectionKey === 'contact') return can('emailSend')
+  if (sectionKey === 'tools') return can('admin') || can('userRead') || can('emailSend') || can('auditRead')
   if (sectionKey === 'settings') return can('admin')
   return false
 }
@@ -4168,6 +4233,76 @@ async function submitAdminUserEmailAction(uid = '', type = '') {
   } catch (error) {
     console.warn('[admin] admin user email action failed', { code: error?.code, message: error?.message, details: error?.details })
     state.error = error?.message || 'Account email could not be sent.'
+  } finally {
+    state.adminData.users.actioning = ''
+    render()
+  }
+}
+
+function adminActionBlockedMessage(error) {
+  const code = error?.details?.code || error?.code || ''
+  if (code === 'admin-email-not-verified') return 'Verify your email before performing admin actions. Open Account Security to continue.'
+  if (code === 'admin-2fa-required') return 'Enable 2FA before performing admin actions. Open Account Security to continue.'
+  return error?.message || 'Admin action failed.'
+}
+
+async function submitForcePasswordReset(uid = '') {
+  if (!uid || !window.confirm('Force this user to reset their password?')) return
+  state.adminData.users.actioning = 'force-reset'
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    await forcePasswordReset({ uid })
+    state.message = 'Force password reset email sent.'
+    await loadAdminSectionData('users', { silent: true })
+  } catch (error) {
+    console.warn('[admin] force password reset failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = adminActionBlockedMessage(error)
+  } finally {
+    state.adminData.users.actioning = ''
+    render()
+  }
+}
+
+async function submitTemporaryPassword(uid = '') {
+  if (!uid) return
+  const confirmation = window.prompt('Type SET TEMPORARY PASSWORD to continue.')
+  if (confirmation !== 'SET TEMPORARY PASSWORD') return
+  const password = window.prompt('Optional: enter a temporary password, or leave blank to generate one.') || ''
+  state.adminData.users.actioning = 'temp-password'
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    const result = await setTemporaryPassword({ uid, password, confirmation })
+    state.message = 'Temporary password set. The user must reset it after sign-in.'
+    if (result.temporaryPassword) window.alert(`Temporary password shown once:\n\n${result.temporaryPassword}`)
+    await loadAdminSectionData('users', { silent: true })
+  } catch (error) {
+    console.warn('[admin] temporary password failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = adminActionBlockedMessage(error)
+  } finally {
+    state.adminData.users.actioning = ''
+    render()
+  }
+}
+
+async function submitRevokeRecoveryCodes(uid = '') {
+  if (!uid) return
+  const confirmation = window.prompt('Type REVOKE CODES to invalidate all recovery codes.')
+  if (confirmation !== 'REVOKE CODES') return
+  state.adminData.users.actioning = 'revoke-codes'
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    await revokeRecoveryCodes({ uid, confirmation })
+    state.message = 'Recovery codes revoked.'
+    await loadAdminSectionData('users', { silent: true })
+  } catch (error) {
+    console.warn('[admin] revoke recovery codes failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = adminActionBlockedMessage(error)
   } finally {
     state.adminData.users.actioning = ''
     render()
@@ -4495,6 +4630,15 @@ function bindEvents() {
   app.querySelectorAll('[data-admin-auth-email]').forEach((button) => {
     button.addEventListener('click', () => submitAdminUserEmailAction(button.getAttribute('data-admin-auth-email-uid') || '', button.getAttribute('data-admin-auth-email') || ''))
   })
+  app.querySelectorAll('[data-admin-force-reset]').forEach((button) => {
+    button.addEventListener('click', () => submitForcePasswordReset(button.getAttribute('data-admin-force-reset') || ''))
+  })
+  app.querySelectorAll('[data-admin-temp-password]').forEach((button) => {
+    button.addEventListener('click', () => submitTemporaryPassword(button.getAttribute('data-admin-temp-password') || ''))
+  })
+  app.querySelectorAll('[data-admin-revoke-recovery]').forEach((button) => {
+    button.addEventListener('click', () => submitRevokeRecoveryCodes(button.getAttribute('data-admin-revoke-recovery') || ''))
+  })
   app.querySelectorAll('[data-admin-security-notice-user]').forEach((button) => {
     button.addEventListener('click', () => openAdminSecurityNotice(button.getAttribute('data-admin-security-notice-user') || ''))
   })
@@ -4581,6 +4725,11 @@ function bindEvents() {
     button.addEventListener('click', () => {
       state.contact.emailLogDetailId = button.getAttribute('data-email-log-detail') || ''
       state.contact.emailLogDetailView = 'preview'
+      const params = new URLSearchParams(window.location.search)
+      params.set('mode', 'email')
+      params.set('activity', state.contact.emailLogTab || 'sent')
+      params.set('email', state.contact.emailLogDetailId)
+      window.history.pushState({}, '', `${ROUTES.adminContact}?${params.toString()}`)
       render()
     })
   })
@@ -4592,6 +4741,7 @@ function bindEvents() {
   })
   app.querySelector('[data-close-email-log-detail]')?.addEventListener('click', () => {
     state.contact.emailLogDetailId = ''
+    window.history.pushState({}, '', `${ROUTES.adminContact}?mode=email&activity=${encodeURIComponent(state.contact.emailLogTab || 'sent')}`)
     render()
   })
   app.querySelector('[data-admin-system-form]')?.addEventListener('input', (event) => {
