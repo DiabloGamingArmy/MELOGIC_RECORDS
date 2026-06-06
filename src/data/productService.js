@@ -1769,17 +1769,17 @@ export async function setAdminUserRole({ uid = '', role = '', active = true, rea
   return result?.data || { ok: false }
 }
 
-export async function listAdminProducts({ limitCount = 50, search = '', productId = '' } = {}) {
+export async function listAdminProducts({ limitCount = 50, search = '', productId = '', cursor = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminProducts')
-  const result = await callable({ limit: limitCount, search, productId })
+  const result = await callable({ limit: limitCount, search, productId, cursor })
   return result?.data || { ok: false, products: [] }
 }
 
-export async function listAdminUsers({ limitCount = 50, search = '', uid = '' } = {}) {
+export async function listAdminUsers({ limitCount = 50, search = '', uid = '', cursor = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminUsers')
-  const result = await callable({ limit: limitCount, search, uid })
+  const result = await callable({ limit: limitCount, search, uid, cursor })
   return result?.data || { ok: false, users: [] }
 }
 
@@ -1804,10 +1804,10 @@ export async function setUserSuspension({ uid = '', suspended = true, reason = '
   return result?.data || { ok: false }
 }
 
-export async function listAdminReports({ limitCount = 50 } = {}) {
+export async function listAdminReports({ limitCount = 50, cursor = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminReports')
-  const result = await callable({ limit: limitCount })
+  const result = await callable({ limit: limitCount, cursor })
   return result?.data || { ok: false, reports: [] }
 }
 
@@ -1825,10 +1825,10 @@ export async function updateReportDecision({ reportId = '', action = '', reason 
   return result?.data || { ok: false }
 }
 
-export async function listAdminOrders({ limitCount = 50, orderId = '' } = {}) {
+export async function listAdminOrders({ limitCount = 50, orderId = '', cursor = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminOrders')
-  const result = await callable({ limit: limitCount, orderId })
+  const result = await callable({ limit: limitCount, orderId, cursor })
   return result?.data || { ok: false, orders: [] }
 }
 
@@ -1839,10 +1839,10 @@ export async function getAdminOrder({ orderId = '' } = {}) {
   return result?.data || { ok: false, order: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [] }
 }
 
-export async function listAdminLogs({ limitCount = 50 } = {}) {
+export async function listAdminLogs({ limitCount = 50, cursor = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminLogs')
-  const result = await callable({ limit: limitCount })
+  const result = await callable({ limit: limitCount, cursor })
   return result?.data || { ok: false, logs: [] }
 }
 
@@ -1899,6 +1899,13 @@ export async function sendAdminAuthEmail({ uid = '', type = '', to = '', subject
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'sendAdminAuthEmail')
   const result = await callable({ uid, type, to, subject, body })
+  return result?.data || { ok: false }
+}
+
+export async function sendAdminSystemMessage({ recipientUid = '', category = 'support', priority = 'normal', subject = '', body = '', actionLabel = '', actionUrl = '', internalNote = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'sendAdminSystemMessage')
+  const result = await callable({ recipientUid, category, priority, subject, body, actionLabel, actionUrl, internalNote })
   return result?.data || { ok: false }
 }
 

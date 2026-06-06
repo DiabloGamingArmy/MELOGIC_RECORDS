@@ -59,3 +59,20 @@ Admin email sending uses transaction-backed Firestore counters:
 - per recipient: 5 emails per hour.
 
 Rate-limit failures return “Email rate limit reached. Try again later.” and write `admin_email_rate_limited` to `adminLogs`. No email is sent when a limit is exceeded.
+
+## SMTP Troubleshooting
+
+A browser CORS error with HTTP 504 from a callable usually means the Cloud Function timed out before Firebase could return normal callable/CORS headers. For email sends, suspect SMTP connection, STARTTLS, authentication, recipient, or socket timeout issues first.
+
+`sendAdminEmail` logs safe stage diagnostics for callable entry, permission, validation, rate limits, provider configuration, SMTP connection/auth/send stages, email log writes, and admin log writes. Logs include error name, code, message, and server-side stack traces. They must never include `SMTP_PASS`, mailbox app passwords, OAuth tokens, or other secret values.
+
+Common production checks:
+
+- Google Workspace mailbox app password is valid and not revoked.
+- Workspace SMTP/app-password policy allows the `support@melogicrecords.studio` mailbox to authenticate.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `EMAIL_FROM` are set in Secret Manager.
+- The deployed function revision is bound to the intended secret versions.
+- Port `587` uses STARTTLS; port `465` uses implicit TLS.
+- Admin Email failures show redacted provider errors, not raw credentials.
+
+After changing or rotating secrets, redeploy the affected functions so the revision binds the intended secret versions.

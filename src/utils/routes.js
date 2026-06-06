@@ -23,6 +23,7 @@ export const ROUTES = {
   adminOrders: '/admin/orders',
   adminTeam: '/admin/team',
   adminLogs: '/admin/logs',
+  adminContact: '/admin/contact',
   adminSettings: '/admin/settings',
   adminMarketplaceReview: '/admin/reviews',
   community: '/community',
