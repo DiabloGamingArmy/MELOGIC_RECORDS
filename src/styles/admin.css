@@ -229,11 +229,14 @@
 .admin-metric {
   display: grid;
   gap: 0.35rem;
+  min-height: 88px;
+  align-content: start;
   padding: 0.9rem;
 }
 
 .admin-metric strong {
   font-size: 1.55rem;
+  line-height: 1.05;
   overflow-wrap: anywhere;
 }
 
@@ -1788,6 +1791,45 @@
   margin-top: 1rem;
 }
 
+.admin-contact-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  border-bottom: 1px solid var(--admin-border);
+  padding-bottom: 0.65rem;
+}
+
+.admin-contact-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 38px;
+  border: 1px solid var(--admin-border);
+  border-radius: 7px;
+  background: var(--admin-card);
+  color: var(--admin-text);
+  font-weight: 900;
+  text-decoration: none;
+  padding: 0 0.75rem;
+}
+
+.admin-contact-tabs a.is-active {
+  border-color: var(--admin-primary);
+  background: var(--admin-primary);
+  color: #ffffff;
+}
+
+.admin-contact-tabs span {
+  color: inherit;
+  font-size: 0.68rem;
+  opacity: 0.78;
+  text-transform: uppercase;
+}
+
+.admin-contact-panel {
+  align-content: start;
+}
+
 .admin-email-form {
   display: grid;
   gap: 0.75rem;
@@ -1848,6 +1890,25 @@
   border-radius: 8px;
   padding: 0.7rem;
   background: var(--admin-surface-soft);
+  min-height: 86px;
+}
+
+.admin-account-event > div:first-child {
+  min-width: 0;
+}
+
+.admin-account-event strong,
+.admin-account-event p {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.admin-load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem 0 0.25rem;
 }
 
 .admin-account-event p {
@@ -1893,6 +1954,41 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
   align-items: start;
+}
+
+.admin-fixed-panel {
+  min-height: 360px;
+  max-height: 430px;
+  overflow: hidden;
+}
+
+.admin-fixed-panel.is-short {
+  min-height: 260px;
+  max-height: 320px;
+}
+
+.admin-fixed-panel.is-products-panel {
+  min-height: 360px;
+  max-height: 460px;
+}
+
+.admin-panel-scroll,
+.admin-table-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.admin-table-scroll {
+  max-height: 360px;
+}
+
+.admin-table-scroll .admin-data-table {
+  min-width: 0;
+}
+
+.admin-table-scroll .admin-data-table.is-products .admin-data-row {
+  min-width: 1120px;
 }
 
 [data-admin-theme] .admin-sidebar,
@@ -2107,6 +2203,12 @@
     max-height: none;
     overflow: visible;
     padding-right: 0;
+  }
+
+  .admin-fixed-panel,
+  .admin-fixed-panel.is-short,
+  .admin-fixed-panel.is-products-panel {
+    max-height: none;
   }
 }
 

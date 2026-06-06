@@ -61,6 +61,7 @@ const { getAdminSettings } = require('./src/admin/getAdminSettings')
 const { updateAdminSettings } = require('./src/admin/updateAdminSettings')
 const { addAdminUserNote } = require('./src/admin/addAdminUserNote')
 const { setUserSuspension } = require('./src/admin/setUserSuspension')
+const { sendAdminSystemMessage } = require('./src/admin/sendAdminSystemMessage')
 const { requestEmailVerification, requestPasswordResetEmail } = require('./src/email/authEmails')
 const { getEmailAdminStatus, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
 
@@ -130,6 +131,7 @@ exports.getAdminSettings = getAdminSettings
 exports.updateAdminSettings = updateAdminSettings
 exports.addAdminUserNote = addAdminUserNote
 exports.setUserSuspension = setUserSuspension
+exports.sendAdminSystemMessage = sendAdminSystemMessage
 exports.requestPasswordResetEmail = requestPasswordResetEmail
 exports.requestEmailVerification = requestEmailVerification
 exports.sendAdminEmail = sendAdminEmail

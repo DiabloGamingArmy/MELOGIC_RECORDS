@@ -1,6 +1,6 @@
 const { onCall } = require('firebase-functions/v2/https')
 const { assertPermission } = require('./adminAuth')
-const { db, logSummary, normalizeLimit, safeListCollection } = require('./adminListShared')
+const { db, logSummary, normalizeLimit, paginationFromSnapshot, safeListCollection } = require('./adminListShared')
 
 function clean(value = '', max = 180) {
   return String(value || '').trim().slice(0, max)
@@ -60,7 +60,8 @@ async function targetSummary(log = {}) {
 const listAdminLogs = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const claims = assertPermission(request, 'auditRead')
   const limit = normalizeLimit(request.data?.limit ?? request.data?.limitCount ?? 50)
-  const snapshot = await safeListCollection('adminLogs', { orderBy: 'createdAt', direction: 'desc', limit })
+  const cursor = clean(request.data?.cursor || '', 180)
+  const snapshot = await safeListCollection('adminLogs', { orderBy: 'createdAt', direction: 'desc', limit, cursor })
   const logs = snapshot.docs.map(logSummary)
   const actorUids = Array.from(new Set(logs.map((log) => log.actorUid).filter(Boolean)))
   const actorEntries = await Promise.all(actorUids.map(async (uid) => [uid, await userSummary(uid)]))
@@ -72,9 +73,12 @@ const listAdminLogs = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (re
     actorSummary: actorMap[log.actorUid] || null,
     targetSummary: targetMap[log.id] || null
   }))
+  const pagination = paginationFromSnapshot(snapshot, limit)
   return {
     ok: true,
     logs: hydratedLogs,
+    nextCursor: pagination.nextCursor,
+    hasMore: pagination.hasMore,
     total: hydratedLogs.length,
     requester: { uid: claims.uid, role: claims.adminRole }
   }

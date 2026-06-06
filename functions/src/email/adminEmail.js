@@ -85,6 +85,89 @@ function sanitizeReplyTo(value = '') {
   return validateEmailAddress(value) || SUPPORT_EMAIL
 }
 
+function errorDetails(error = {}) {
+  return {
+    name: cleanString(error?.name || '', 120),
+    code: cleanString(error?.code || error?.details?.code || '', 120),
+    message: cleanString(error?.message || '', 300),
+    stack: cleanString(error?.stack || '', 2000)
+  }
+}
+
+function logStage(stage = '', data = {}, level = 'info') {
+  const payload = { stage, ...data }
+  if (level === 'error') console.error('[sendAdminEmail]', payload)
+  else if (level === 'warn') console.warn('[sendAdminEmail]', payload)
+  else console.info('[sendAdminEmail]', payload)
+}
+
+function safeFailureCode(error = {}) {
+  const code = cleanString(error?.details?.code || error?.code || '', 120)
+  if ([
+    'email-provider-not-configured',
+    'smtp-auth-failed',
+    'smtp-timeout',
+    'smtp-connection-failed',
+    'smtp-recipient-rejected',
+    'smtp-send-failed',
+    'email-log-write-failed'
+  ].includes(code)) return code
+  if (code === 'resource-exhausted') return 'email-rate-limit-reached'
+  return 'smtp-send-failed'
+}
+
+function safeFailureMessage(code = '') {
+  const map = {
+    'email-provider-not-configured': 'Email provider is not configured.',
+    'smtp-auth-failed': 'SMTP authentication failed. Check the mailbox app password or Workspace SMTP policy.',
+    'smtp-timeout': 'SMTP request timed out before the email provider responded.',
+    'smtp-connection-failed': 'SMTP connection failed. Check host, port, and Workspace SMTP access.',
+    'smtp-recipient-rejected': 'SMTP recipient was rejected by the provider.',
+    'smtp-send-failed': 'SMTP send failed. Check Admin Email failures and Functions logs.',
+    'email-log-write-failed': 'Email log could not be written.',
+    'email-rate-limit-reached': 'Email rate limit reached. Try again later.'
+  }
+  return map[code] || 'Email could not be sent.'
+}
+
+function toCallableError(error = {}) {
+  if (error instanceof HttpsError && error.code === 'resource-exhausted') return error
+  const code = safeFailureCode(error)
+  const canonical = code === 'smtp-timeout' ? 'deadline-exceeded' : 'failed-precondition'
+  return new HttpsError(canonical, safeFailureMessage(code), {
+    code,
+    message: safeFailureMessage(code)
+  })
+}
+
+function emailLogWriteError(error = {}) {
+  const wrapped = new Error(safeFailureMessage('email-log-write-failed'))
+  wrapped.name = 'EmailLogWriteError'
+  wrapped.code = 'email-log-write-failed'
+  wrapped.cause = error
+  return wrapped
+}
+
+async function writeFailedEmailLog(input = {}) {
+  logStage('failed email log write attempt started', {
+    recipientDomain: input.to?.split('@')[1] || '',
+    category: input.category || '',
+    errorCode: cleanString(input.error?.code || input.error?.details?.code || '', 120)
+  })
+  try {
+    const emailLogId = await writeEmailLog({
+      ...input,
+      provider: input.provider || 'smtp',
+      status: 'failed'
+    })
+    logStage('email log write success', { emailLogId, status: 'failed' })
+    return emailLogId
+  } catch (logError) {
+    logStage('email log write failure', errorDetails(logError), 'error')
+    throw emailLogWriteError(logError)
+  }
+}
+
 async function logRateLimit({ claims, to, category, relatedUid, relatedProductId, relatedOrderId, relatedReportId, scope = '' } = {}) {
   await writeAdminAuditLog({
     actorUid: claims.uid,
@@ -106,7 +189,16 @@ async function logRateLimit({ claims, to, category, relatedUid, relatedProductId
 }
 
 const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: EMAIL_SECRETS }, async (request) => {
+  logStage('sendAdminEmail callable entered', {
+    hasAuth: Boolean(request.auth?.uid),
+    appCheck: request.app ? 'present' : 'missing'
+  })
   const claims = assertPermission(request, 'emailSend')
+  logStage('auth/permission passed', {
+    uid: claims.uid,
+    adminRole: claims.adminRole,
+    requires2FA: false
+  })
 
   const to = validateEmailAddress(request.data?.to || '')
   const cc = normalizeCc(request.data?.cc || [])
@@ -123,18 +215,53 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
   if (cc.length && cc.includes(to)) throw new HttpsError('invalid-argument', 'CC cannot include the primary recipient.')
   if (!subject || subject.length > 180) throw new HttpsError('invalid-argument', 'Subject is required and must be 180 characters or fewer.')
   if (!body || body.length > 5000) throw new HttpsError('invalid-argument', 'Message body is required and must be 5000 characters or fewer.')
+  logStage('payload validated', {
+    recipientDomain: to.split('@')[1] || '',
+    ccCount: cc.length,
+    category,
+    relatedUid: Boolean(relatedUid),
+    relatedProductId: Boolean(relatedProductId),
+    relatedOrderId: Boolean(relatedOrderId),
+    relatedReportId: Boolean(relatedReportId),
+    subjectLength: subject.length,
+    bodyLength: body.length
+  })
   try {
+    logStage('rate limit check started', { uid: claims.uid, recipientDomain: to.split('@')[1] || '' })
     await assertAdminEmailRateLimit({ uid: claims.uid, to })
+    logStage('rate limit passed', { uid: claims.uid, recipientDomain: to.split('@')[1] || '' })
   } catch (error) {
+    logStage('rate limit failed', errorDetails(error), 'warn')
+    const rateLimitError = error instanceof HttpsError ? error : new HttpsError('resource-exhausted', 'Email rate limit reached. Try again later.')
     if (error instanceof HttpsError && error.code === 'resource-exhausted') {
       await logRateLimit({ claims, to, category, relatedUid, relatedProductId, relatedOrderId, relatedReportId, scope: error.details?.scope || '' })
     }
-    throw error
+    await writeFailedEmailLog({
+      to,
+      cc,
+      subject,
+      category,
+      templateName: 'admin_custom',
+      sentByUid: claims.uid,
+      sentByUsername: claims.email || '',
+      relatedUid,
+      relatedProductId,
+      relatedOrderId,
+      relatedReportId,
+      body,
+      error: rateLimitError,
+      metadata: { source: 'admin_custom', stage: 'rate_limit' }
+    }).catch((logError) => {
+      logStage('rate-limit failed email log write failure', errorDetails(logError), 'error')
+    })
+    throw rateLimitError
   }
 
   const html = plainTextToHtml(body)
   let result = null
   try {
+    logStage('provider config detected', { providerConfigured: providerConfigured(), provider: 'smtp' })
+    logStage('sendEmail start', { recipientDomain: to.split('@')[1] || '', category })
     result = await sendEmail({
       to,
       cc,
@@ -145,6 +272,11 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
       category: `admin_${category}`,
       metadata: { template: 'admin_custom' }
     })
+    logStage('sendEmail success', {
+      provider: result.provider || 'smtp',
+      providerMessageId: cleanString(result.providerMessageId || '', 260)
+    })
+    logStage('emailLogs write start', { status: 'sent', recipientDomain: to.split('@')[1] || '' })
     const emailLogId = await writeEmailLog({
       to,
       cc,
@@ -162,7 +294,11 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
       providerMessageId: result.providerMessageId || '',
       status: 'sent',
       metadata: { source: 'admin_custom' }
+    }).catch((logError) => {
+      logStage('emailLogs write failure', errorDetails(logError), 'error')
+      throw emailLogWriteError(logError)
     })
+    logStage('emailLogs write success', { emailLogId, status: 'sent' })
     const auditLogId = await writeAdminAuditLog({
       actorUid: claims.uid,
       actorEmail: claims.email,
@@ -182,9 +318,13 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
         providerMessageId: result.providerMessageId || ''
       }
     })
+    logStage('adminLogs write success', { auditLogId, action: 'admin_email_sent' })
     return { ok: true, emailLogId, auditLogId, providerMessageId: result.providerMessageId || '' }
   } catch (error) {
-    const emailLogId = await writeEmailLog({
+    logStage('sendAdminEmail failure caught', errorDetails(error), 'error')
+    let emailLogId = ''
+    try {
+      emailLogId = await writeFailedEmailLog({
       to,
       cc,
       subject,
@@ -198,10 +338,12 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
       relatedReportId,
       body,
       provider: result?.provider || 'smtp',
-      status: 'failed',
       error,
       metadata: { source: 'admin_custom' }
-    }).catch(() => '')
+      })
+    } catch (logError) {
+      error = logError
+    }
     await writeAdminAuditLog({
       actorUid: claims.uid,
       actorEmail: claims.email,
@@ -220,8 +362,12 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
         relatedReportId,
         errorCode: cleanString(error?.code || '', 120)
       }
-    }).catch(() => {})
-    throw new HttpsError('failed-precondition', error?.code === 'email-provider-not-configured' ? 'Email provider is not configured.' : 'Email could not be sent right now.')
+    }).then((auditLogId) => {
+      logStage('adminLogs write success', { auditLogId, action: 'admin_email_failed' })
+    }).catch((auditError) => {
+      logStage('adminLogs write failure', errorDetails(auditError), 'error')
+    })
+    throw toCallableError(error)
   }
 })
 

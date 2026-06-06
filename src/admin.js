@@ -23,6 +23,7 @@ import {
   setAdminUserRole,
   sendAdminAuthEmail,
   sendAdminEmail,
+  sendAdminSystemMessage,
   setUserSuspension,
   updateReportDecision,
   updateAdminSettings,
@@ -59,6 +60,7 @@ const SECTIONS = [
   { key: 'orders', route: ROUTES.adminOrders, label: 'Orders', icon: 'shoppingCart', permission: 'orderSupport' },
   { key: 'team', route: ROUTES.adminTeam, label: 'Roles', icon: 'folderPlus', permission: 'roleManage' },
   { key: 'logs', route: ROUTES.adminLogs, label: 'Logs', icon: 'fileText', permission: 'auditRead' },
+  { key: 'contact', route: ROUTES.adminContact, label: 'Contact', icon: 'messageCircle', permission: 'emailSend' },
   { key: 'settings', route: ROUTES.adminSettings, label: 'Settings', icon: 'edit', permission: 'admin' }
 ]
 
@@ -248,13 +250,13 @@ const state = {
     activeStaff: []
   },
   adminData: {
-    products: { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' },
-    users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], adminNotes: [], loading: false, loaded: false, error: '', filter: 'all', search: '', actioning: '' },
-    reports: { items: [], detail: null, reporter: null, target: null, loading: false, loaded: false, error: '', filter: 'open', actioning: '' },
+    products: { items: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 },
+    users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
+    reports: { items: [], detail: null, reporter: null, target: null, loading: false, loadingMore: false, loaded: false, error: '', filter: 'open', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     community: { posts: [], communities: [], reports: [], reportedPosts: [], reportedComments: [], hiddenPosts: [], loading: false, loaded: false, error: '', filter: 'reported', actioning: '' },
-    orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loaded: false, error: '', filter: 'all' },
+    orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', cursor: '', hasMore: false, pageSize: 15 },
     team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
-    logs: { items: [], detail: null, detailId: '', loading: false, loaded: false, error: '', filter: 'all', search: '' }
+    logs: { items: [], detail: null, detailId: '', loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 }
   },
   settings: {
     data: {},
@@ -265,10 +267,19 @@ const state = {
     updatedAt: null,
     updatedBy: '',
     dialog: { open: false, section: '' },
+    emailStatus: null
+  },
+  contact: {
+    loading: false,
+    loaded: false,
+    error: '',
     emailStatus: null,
     emailForm: { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' },
     emailSending: false,
-    emailMessage: ''
+    emailMessage: '',
+    systemForm: { recipientUid: '', recipientLabel: '', category: 'support', priority: 'normal', subject: '', body: '', actionLabel: '', actionUrl: '', internalNote: '' },
+    systemSending: false,
+    systemMessage: ''
   },
   dialog: {
     open: false,
@@ -1915,12 +1926,13 @@ function adminData(key = '') {
   return state.adminData[key] || { items: [], loading: false, loaded: false, error: '', filter: 'all', search: '' }
 }
 
-function adminPageHeader({ eyebrow = 'Admin', title = '', refreshLabel = 'Refresh' } = {}) {
+function adminPageHeader({ eyebrow = 'Admin', title = '', description = '', refreshLabel = 'Refresh' } = {}) {
   return `
     <header class="admin-page-header">
       <div>
         <p class="eyebrow">${escapeHtml(eyebrow)}</p>
         <h1>${escapeHtml(title)}</h1>
+        ${description ? `<p>${escapeHtml(description)}</p>` : ''}
       </div>
       <button type="button" class="admin-icon-button" data-refresh-admin-section title="${escapeHtml(refreshLabel)}">${iconSvg('barChart')}</button>
     </header>
@@ -1959,6 +1971,27 @@ function adminBusyState(data) {
   if (data.error) return `<article class="admin-empty-state"><strong>Could not load data.</strong><span>${escapeHtml(data.error)}</span></article>`
   if (!data.loaded) return '<article class="admin-empty-state">Loading admin data...</article>'
   return ''
+}
+
+function mergePageItems(existing = [], incoming = []) {
+  const seen = new Set()
+  return [...existing, ...incoming].filter((item) => {
+    const id = item?.id || item?.uid || item?.reportId || ''
+    if (!id) return true
+    if (seen.has(id)) return false
+    seen.add(id)
+    return true
+  })
+}
+
+function loadMoreControls(collection = '') {
+  const data = adminData(collection)
+  if (!data?.loaded || !data.hasMore) return ''
+  return `
+    <div class="admin-load-more-row">
+      <button type="button" class="admin-secondary-button" data-admin-load-more="${escapeHtml(collection)}" ${data.loadingMore ? 'disabled' : ''}>${data.loadingMore ? 'Loading...' : 'Load more'}</button>
+    </div>
+  `
 }
 
 function filterAdminProducts(products = []) {
@@ -2047,7 +2080,7 @@ function productsView() {
       ${adminSearchForm('products', 'Search product, creator, status')}
       ${adminFilterControls('products', PRODUCT_ADMIN_FILTERS)}
     </section>
-    ${loading || productAdminTable(products)}
+    ${loading || `${productAdminTable(products)}${loadMoreControls('products')}`}
   `
 }
 
@@ -2122,7 +2155,7 @@ function selectedUserPanel() {
         <button type="button" class="admin-secondary-button" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Email User</button>
         <button type="button" class="admin-secondary-button" data-admin-auth-email="password_reset" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Send Reset</button>
         <button type="button" class="admin-secondary-button" data-admin-auth-email="email_verification" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email && !user.emailVerified ? '' : 'disabled title="Only available for unverified email accounts with emailSend permission."'}>Send Verification</button>
-        <button type="button" class="admin-secondary-button" data-admin-auth-email="security_notice" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Security Notice</button>
+        <button type="button" class="admin-secondary-button" data-admin-security-notice-user="${escapeHtml(uid)}" ${can('emailSend') ? '' : 'disabled title="emailSend permission is required."'}>Security Notice</button>
         <button type="button" class="admin-secondary-button ${user?.suspended ? '' : 'is-danger'}" data-admin-suspension-user="${escapeHtml(uid)}" ${!canSuspend || isSelf || actioning ? `disabled title="${escapeHtml(isSelf ? 'You cannot suspend your own account.' : canSuspend ? 'Account action in progress.' : 'User moderation permission is required.')}"` : ''}>${actioning === 'suspension' ? 'Saving...' : user?.suspended ? 'Unsuspend' : 'Suspend'}</button>
         <button type="button" class="admin-secondary-button" data-admin-note-user="${escapeHtml(uid)}" ${!canNote || actioning ? `disabled title="${escapeHtml(canNote ? 'Account action in progress.' : 'User moderation or order support permission is required.')}"` : ''}>Add Note</button>
         <a class="admin-secondary-link" href="${publicProfile}" target="_blank" rel="noreferrer">Public Profile</a>
@@ -2141,54 +2174,58 @@ function selectedUserPanel() {
         <article class="admin-metric"><span>2FA</span><strong>${escapeHtml(user.mfaEnabled ? 'Enabled' : 'Off')}</strong></article>
       </section>
       <section class="admin-hub-grid">
-        <article class="admin-section-slab">
+        <article class="admin-section-slab admin-fixed-panel">
           <div class="admin-slab-heading"><h2>Overview</h2>${renderBadge(user.suspended ? 'Suspended' : 'Active', user.suspended ? 'rejected' : 'published')}</div>
-          ${renderKeyValueGrid([
-            renderField('UID', user.uid, { code: true }),
-            renderField('Display name', user.displayName),
-            renderField('Username', formatUsername(user.username)),
-            renderField('Email', user.email),
-            renderField('Role', humanLabel(user.role)),
-            renderField('Admin role', humanLabel(user.adminRole || adminUser.role)),
-            renderField('Account status', humanLabel(user.accountStatus || (user.suspended ? 'suspended' : 'active'))),
-            renderField('Suspension reason', user.suspensionReason, { wide: true }),
-            renderDateField('Suspension until', user.suspensionUntil),
-            renderBooleanField('Verified', user.verified),
-            renderDateField('Created at', user.createdAt),
-            renderDateField('Last active', user.lastActiveAt)
-          ])}
-          <div class="admin-listing-taxonomy">
-            <div><h3>Account Roles</h3>${renderBadgeList((user.roles || []).map(humanLabel), 'No account roles')}</div>
-            <div><h3>Profile Badges</h3>${renderBadgeList((user.badges || []).map(humanLabel), 'No profile badges')}</div>
+          <div class="admin-panel-scroll">
+            ${renderKeyValueGrid([
+              renderField('UID', user.uid, { code: true }),
+              renderField('Display name', user.displayName),
+              renderField('Username', formatUsername(user.username)),
+              renderField('Email', user.email),
+              renderField('Role', humanLabel(user.role)),
+              renderField('Admin role', humanLabel(user.adminRole || adminUser.role)),
+              renderField('Account status', humanLabel(user.accountStatus || (user.suspended ? 'suspended' : 'active'))),
+              renderField('Suspension reason', user.suspensionReason, { wide: true }),
+              renderDateField('Suspension until', user.suspensionUntil),
+              renderBooleanField('Verified', user.verified),
+              renderDateField('Created at', user.createdAt),
+              renderDateField('Last active', user.lastActiveAt)
+            ])}
+            <div class="admin-listing-taxonomy">
+              <div><h3>Account Roles</h3>${renderBadgeList((user.roles || []).map(humanLabel), 'No account roles')}</div>
+              <div><h3>Profile Badges</h3>${renderBadgeList((user.badges || []).map(humanLabel), 'No profile badges')}</div>
+            </div>
           </div>
         </article>
-        <article class="admin-section-slab">
+        <article class="admin-section-slab admin-fixed-panel">
           <div class="admin-slab-heading"><h2>Security / Activity</h2><span class="admin-muted">Read only</span></div>
-          ${renderKeyValueGrid([
-            renderBooleanField('Admin active', user.adminActive || adminUser.active),
-            renderBooleanField('Email verified', user.emailVerified),
-            renderBooleanField('2FA enabled', user.mfaEnabled),
-            renderField('2FA factors', String(Number(user.mfaFactorCount || 0))),
-            renderField('Auth providers', normalizeList(user.authProviderIds || []).join(', ') || 'Not recorded'),
-            renderField('Admin role', humanLabel(adminUser.role || user.adminRole)),
-            renderField('Updated by', adminUser.updatedBy, { code: true }),
-            renderDateField('Role updated', adminUser.updatedAt),
-            renderDateField('Last sign-in', user.authLastSignInAt || user.lastActiveAt),
-            renderDateField('Last security event', user.lastSecurityEventAt),
-            renderField('Recent account events', String(Number(user.recentAccountEventCount || 0)))
-          ])}
-          ${accountEventsList(data.accountEvents || [])}
+          <div class="admin-panel-scroll">
+            ${renderKeyValueGrid([
+              renderBooleanField('Admin active', user.adminActive || adminUser.active),
+              renderBooleanField('Email verified', user.emailVerified),
+              renderBooleanField('2FA enabled', user.mfaEnabled),
+              renderField('2FA factors', String(Number(user.mfaFactorCount || 0))),
+              renderField('Auth providers', normalizeList(user.authProviderIds || []).join(', ') || 'Not recorded'),
+              renderField('Admin role', humanLabel(adminUser.role || user.adminRole)),
+              renderField('Updated by', adminUser.updatedBy, { code: true }),
+              renderDateField('Role updated', adminUser.updatedAt),
+              renderDateField('Last sign-in', user.authLastSignInAt || user.lastActiveAt),
+              renderDateField('Last security event', user.lastSecurityEventAt),
+              renderField('Recent account events', String(Number(user.recentAccountEventCount || 0)))
+            ])}
+            ${accountEventsList(data.accountEvents || [])}
+          </div>
         </article>
       </section>
-      <section class="admin-section-slab">
+      <section class="admin-section-slab admin-fixed-panel is-products-panel">
         <div class="admin-slab-heading"><h2>Products</h2><span class="admin-muted">${data.recentProducts?.length || 0} loaded</span></div>
-        ${data.recentProducts?.length ? productAdminTable(data.recentProducts) : '<article class="admin-empty-state">No recent products loaded for this creator.</article>'}
+        <div class="admin-table-scroll">${data.recentProducts?.length ? productAdminTable(data.recentProducts) : '<article class="admin-empty-state">No recent products loaded for this creator.</article>'}</div>
       </section>
       <section class="admin-hub-grid">
-        <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Reports</h2></div><article class="admin-empty-state">No report detail data is loaded for this account yet.</article></article>
-        <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Orders / Library</h2></div><article class="admin-empty-state">No order or entitlement detail data is loaded for this account yet.</article></article>
-        <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Admin Notes</h2><button type="button" class="admin-secondary-button" data-admin-note-user="${escapeHtml(uid)}" ${!canNote ? 'disabled title="User moderation or order support permission is required."' : ''}>Add Note</button></div>${adminNotesList(data.adminNotes || [])}</article>
-        <article class="admin-section-slab"><div class="admin-slab-heading"><h2>Timeline / Logs</h2><a href="${ROUTES.adminLogs}" class="admin-secondary-link">Open Logs</a></div><article class="admin-empty-state">Role changes and admin actions are available in Logs.</article></article>
+        <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Reports</h2></div><div class="admin-panel-scroll"><article class="admin-empty-state">No report detail data is loaded for this account yet.</article></div></article>
+        <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Orders / Library</h2></div><div class="admin-panel-scroll"><article class="admin-empty-state">No order or entitlement detail data is loaded for this account yet.</article></div></article>
+        <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Admin Notes</h2><button type="button" class="admin-secondary-button" data-admin-note-user="${escapeHtml(uid)}" ${!canNote ? 'disabled title="User moderation or order support permission is required."' : ''}>Add Note</button></div><div class="admin-panel-scroll">${adminNotesList(data.adminNotes || [])}</div></article>
+        <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Timeline / Logs</h2><a href="${ROUTES.adminLogs}" class="admin-secondary-link">Open Logs</a></div><div class="admin-panel-scroll"><article class="admin-empty-state">Role changes and admin actions are available in Logs.</article></div></article>
       </section>
       ${userActionDialog()}
     ` : `<article class="admin-empty-state">No profile found for ${escapeHtml(uid)}.</article>${userActionDialog()}`}
@@ -2210,7 +2247,7 @@ function usersView() {
       ${adminSearchForm('users', 'Search UID, username, name, email')}
       ${adminFilterControls('users', USER_ADMIN_FILTERS)}
     </section>
-    ${loading || usersTable(users)}
+    ${loading || `${usersTable(users)}${loadMoreControls('users')}`}
   `
 }
 
@@ -2234,6 +2271,21 @@ function reportsView() {
     user: data.items.filter((report) => ['user', 'profile'].includes(report.targetType) || ['user', 'profile'].includes(report.type)).length,
     resolved: data.items.filter((report) => report.status === 'resolved').length
   }
+  const reportsTable = adminSimpleTable('Reports', ['Type', 'Target', 'Reporter', 'Reason', 'Priority', 'Status', 'Created', 'Assigned', 'Actions'], reports.map((report) => [
+    humanLabel(report.type),
+    `${report.targetType || 'target'} ${report.targetId || ''}`.trim(),
+    report.reporterUid,
+    report.reason,
+    humanLabel(report.priority),
+    humanLabel(report.status),
+    formatDate(report.createdAt),
+    report.assignedTo,
+    htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminReports}/${encodeURIComponent(report.id)}">View</a>`)
+  ]), {
+    className: 'is-reports',
+    emptyTitle: 'No active reports.',
+    emptyBody: 'Reports from users, products, and orders will appear here.'
+  })
   return `
     ${adminPageHeader({ eyebrow: 'Trust', title: 'Reports', refreshLabel: 'Refresh reports' })}
     <section class="admin-metric-grid is-compact">
@@ -2244,21 +2296,7 @@ function reportsView() {
       <article class="admin-metric"><span>Resolved</span><strong>${summary.resolved}</strong></article>
     </section>
     <section class="admin-review-tools">${adminFilterControls('reports', REPORT_ADMIN_FILTERS)}</section>
-    ${loading || adminSimpleTable('Reports', ['Type', 'Target', 'Reporter', 'Reason', 'Priority', 'Status', 'Created', 'Assigned', 'Actions'], reports.map((report) => [
-      humanLabel(report.type),
-      `${report.targetType || 'target'} ${report.targetId || ''}`.trim(),
-      report.reporterUid,
-      report.reason,
-      humanLabel(report.priority),
-      humanLabel(report.status),
-      formatDate(report.createdAt),
-      report.assignedTo,
-      htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminReports}/${encodeURIComponent(report.id)}">View</a>`)
-    ]), {
-      className: 'is-reports',
-      emptyTitle: 'No active reports.',
-      emptyBody: 'Reports from users, products, and orders will appear here.'
-    })}
+    ${loading || `${reportsTable}${loadMoreControls('reports')}`}
   `
 }
 
@@ -2539,6 +2577,20 @@ function ordersView() {
     return true
   })
   const revenue = orders.reduce((sum, order) => sum + Number(order.amountCents || 0), 0)
+  const ordersTable = adminSimpleTable('Orders', ['Order ID', 'Buyer', 'Products', 'Amount', 'Payment', 'Refund', 'Created', 'Actions'], orders.map((order) => [
+    order.id,
+    order.buyerUid || order.uid,
+    order.productTitles?.join(', ') || `${order.productCount || 0} product(s)`,
+    formatMoney(order.amountCents, order.currency),
+    humanLabel(order.paymentStatus),
+    humanLabel(order.refundStatus),
+    formatDate(order.createdAt),
+    htmlCell(`<a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
+  ]), {
+    className: 'is-orders',
+    emptyTitle: 'No orders yet.',
+    emptyBody: 'Paid purchases, free claims, refunds, and entitlement issues will appear here.'
+  })
   return `
     ${adminPageHeader({ eyebrow: 'Commerce', title: 'Orders', refreshLabel: 'Refresh orders' })}
     <section class="admin-metric-grid">
@@ -2547,20 +2599,7 @@ function ordersView() {
       <article class="admin-metric"><span>Refund / Failed</span><strong>${orders.filter((order) => order.refundStatus || order.paymentStatus === 'failed').length}</strong></article>
     </section>
     <section class="admin-review-tools">${adminFilterControls('orders', ORDER_ADMIN_FILTERS)}</section>
-    ${loading || adminSimpleTable('Orders', ['Order ID', 'Buyer', 'Products', 'Amount', 'Payment', 'Refund', 'Created', 'Actions'], orders.map((order) => [
-      order.id,
-      order.buyerUid || order.uid,
-      order.productTitles?.join(', ') || `${order.productCount || 0} product(s)`,
-      formatMoney(order.amountCents, order.currency),
-      humanLabel(order.paymentStatus),
-      humanLabel(order.refundStatus),
-      formatDate(order.createdAt),
-      htmlCell(`<a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
-    ]), {
-      className: 'is-orders',
-      emptyTitle: 'No orders yet.',
-      emptyBody: 'Paid purchases, free claims, refunds, and entitlement issues will appear here.'
-    })}
+    ${loading || `${ordersTable}${loadMoreControls('orders')}`}
   `
 }
 
@@ -2691,7 +2730,7 @@ function logsView() {
         <span class="admin-muted">Newest admin actions. Date range and target filters are scaffolded for the next pass.</span>
       </div>
     </section>
-    ${loading || logsTable(data.items)}
+    ${loading || `${logsTable(data.items)}${loadMoreControls('logs')}`}
   `
 }
 
@@ -2928,14 +2967,89 @@ function settingsView() {
     <section class="admin-settings-grid">
       ${SETTINGS_SECTIONS.map((section) => settingsCard(section, settings[section.key] || {})).join('')}
     </section>
-    ${emailSettingsPanel()}
+    ${emailConfigurationCard()}
     ${settingsDialog()}
   `
 }
 
+function emailConfigurationCard() {
+  const status = state.settings.emailStatus || state.contact.emailStatus || {}
+  return `
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Email Configuration</h2>
+          <p class="admin-muted">SMTP status and sender settings. Compose messages in Contact.</p>
+        </div>
+        <a class="admin-secondary-link" href="${ROUTES.adminContact}?mode=email">Open Contact Center</a>
+      </div>
+      <dl class="admin-field-grid is-compact">
+        ${renderField('Sender address', status.senderAddress || 'support@melogicrecords.studio')}
+        ${renderField('Provider', status.provider || 'smtp')}
+        ${renderBooleanField('Provider configured', status.providerConfigured)}
+        ${renderBooleanField('Security notifications', status.securityNotificationsEnabled)}
+      </dl>
+    </section>
+  `
+}
+
+function contactMode() {
+  const params = new URLSearchParams(window.location.search)
+  const mode = String(params.get('mode') || 'email').toLowerCase()
+  return ['email', 'system', 'text', 'call'].includes(mode) ? mode : 'email'
+}
+
+function contactModeTabs(mode = contactMode()) {
+  const tabs = [
+    ['email', 'Email'],
+    ['system', 'System Message'],
+    ['text', 'Text'],
+    ['call', 'Call']
+  ]
+  return `
+    <nav class="admin-contact-tabs" aria-label="Contact modes">
+      ${tabs.map(([key, label]) => `<a href="${ROUTES.adminContact}?mode=${key}" class="${mode === key ? 'is-active' : ''}">${escapeHtml(label)}${['text', 'call'].includes(key) ? '<span>Coming soon</span>' : ''}</a>`).join('')}
+    </nav>
+  `
+}
+
+function contactSummaryCards() {
+  const status = state.contact.emailStatus || {}
+  const sentCount = (status.recent || []).filter((row) => row.status === 'sent').length
+  const failedCount = Number(status.recentFailureCount || (status.failures || []).length || 0)
+  return `
+    <section class="admin-metric-grid is-compact">
+      <article class="admin-metric"><span>Email provider</span><strong>${escapeHtml(status.providerConfigured ? 'Ready' : 'Check')}</strong></article>
+      <article class="admin-metric"><span>Recent sent</span><strong>${sentCount}</strong></article>
+      <article class="admin-metric"><span>Failed messages</span><strong>${failedCount}</strong></article>
+      <article class="admin-metric"><span>System messages</span><strong>${escapeHtml(state.contact.systemMessage.startsWith('Sent') ? 'Sent' : 'Ready')}</strong></article>
+    </section>
+  `
+}
+
+function contactView() {
+  if (!can('emailSend')) return permissionState('emailSend')
+  const mode = contactMode()
+  return `
+    ${adminPageHeader({
+      eyebrow: 'Communications',
+      title: 'Contact',
+      description: 'Send support, account, and platform messages from Melogic Records.',
+      refreshLabel: 'Refresh contact'
+    })}
+    ${state.contact.error ? `<p class="admin-status is-error">${escapeHtml(state.contact.error)}</p>` : ''}
+    ${contactSummaryCards()}
+    ${contactModeTabs(mode)}
+    ${mode === 'email' ? emailSettingsPanel() : ''}
+    ${mode === 'system' ? systemMessagePanel() : ''}
+    ${mode === 'text' ? contactComingSoonPanel('Text', 'SMS support messaging is planned for a later phase. This will require a compliant SMS provider and opt-in rules.') : ''}
+    ${mode === 'call' ? contactComingSoonPanel('Call', 'Call support tools are planned for a later phase. This may include call notes, callbacks, and support history.') : ''}
+  `
+}
+
 function emailSettingsPanel() {
-  const status = state.settings.emailStatus || {}
-  const form = state.settings.emailForm || {}
+  const status = state.contact.emailStatus || {}
+  const form = state.contact.emailForm || {}
   const canSend = can('emailSend')
   const recent = Array.isArray(status.recent) ? status.recent : []
   return `
@@ -2979,10 +3093,10 @@ function emailSettingsPanel() {
           <p>${escapeHtml(form.subject || 'No subject yet')}</p>
           <small>${escapeHtml((form.body || 'No message yet').slice(0, 220))}</small>
         </article>
-        ${state.settings.emailMessage ? `<p class="admin-status ${state.settings.emailMessage.startsWith('Sent') ? 'is-success' : 'is-error'}">${escapeHtml(state.settings.emailMessage)}</p>` : ''}
+        ${state.contact.emailMessage ? `<p class="admin-status ${state.contact.emailMessage.startsWith('Sent') ? 'is-success' : 'is-error'}">${escapeHtml(state.contact.emailMessage)}</p>` : ''}
         <div class="admin-modal-actions">
           <button type="button" class="admin-secondary-button" data-admin-email-self ${canSend && state.currentUser?.email ? '' : 'disabled'}>Send Test to Self</button>
-          <button type="submit" class="admin-primary-button" ${canSend && !state.settings.emailSending ? '' : 'disabled'}>${state.settings.emailSending ? 'Sending...' : 'Send Email'}</button>
+          <button type="submit" class="admin-primary-button" ${canSend && !state.contact.emailSending ? '' : 'disabled'}>${state.contact.emailSending ? 'Sending...' : 'Send Email'}</button>
         </div>
       </form>
       <div class="admin-slab-heading">
@@ -3009,6 +3123,70 @@ function emailSettingsPanel() {
         htmlCell(`<strong>${escapeHtml(row.errorCode || 'failed')}</strong><small>${escapeHtml(row.errorMessageRedacted || '')}</small>`),
         formatDate(row.createdAt)
       ]), { className: 'is-email-failures', emptyTitle: 'No recent email failures.', emptyBody: 'Provider errors and rate-limited sends will appear in logs.' })}
+    </section>
+  `
+}
+
+function systemMessagePanel() {
+  const form = state.contact.systemForm || {}
+  const recipientLabel = form.recipientLabel || form.recipientUid || ''
+  const categories = ['support', 'account', 'security', 'product', 'marketplace', 'community', 'order', 'other']
+  const priorities = ['normal', 'important', 'critical']
+  return `
+    <section class="admin-section-slab admin-contact-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>System Message</h2>
+          <p class="admin-muted">Send a verified platform message to a user's Inbox → System.</p>
+        </div>
+        <span class="review-badge is-approved">Verified sender</span>
+      </div>
+      <form class="admin-email-form" data-admin-system-form>
+        <div class="admin-form-grid">
+          <label><span>Recipient user</span><input data-admin-system-field="recipientUid" value="${escapeHtml(form.recipientUid)}" placeholder="UID, username, display name, or email" /></label>
+          <label><span>Category</span><select data-admin-system-field="category">
+            ${categories.map((category) => `<option value="${category}" ${form.category === category ? 'selected' : ''}>${escapeHtml(humanLabel(category))}</option>`).join('')}
+          </select></label>
+          <label><span>Priority</span><select data-admin-system-field="priority">
+            ${priorities.map((priority) => `<option value="${priority}" ${form.priority === priority ? 'selected' : ''}>${escapeHtml(humanLabel(priority))}</option>`).join('')}
+          </select></label>
+        </div>
+        ${recipientLabel ? `<p class="admin-muted">Selected recipient: ${escapeHtml(recipientLabel)}</p>` : ''}
+        <label><span>Subject</span><input data-admin-system-field="subject" maxlength="180" value="${escapeHtml(form.subject)}" /></label>
+        <label><span>Message</span><textarea data-admin-system-field="body" rows="7" maxlength="5000">${escapeHtml(form.body)}</textarea></label>
+        <div class="admin-form-grid">
+          <label><span>Optional action label</span><input data-admin-system-field="actionLabel" maxlength="80" value="${escapeHtml(form.actionLabel)}" /></label>
+          <label><span>Optional action URL</span><input data-admin-system-field="actionUrl" value="${escapeHtml(form.actionUrl)}" placeholder="/account/security" /></label>
+          <label><span>Internal note</span><input data-admin-system-field="internalNote" maxlength="1200" value="${escapeHtml(form.internalNote)}" /></label>
+        </div>
+        <article class="admin-email-preview">
+          <strong>Melogic Records Support ✓</strong>
+          <p>${escapeHtml(form.subject || 'No subject yet')}</p>
+          <small>${escapeHtml((form.body || 'No message yet').slice(0, 260))}</small>
+          ${form.actionLabel ? `<small>Action: ${escapeHtml(form.actionLabel)} → ${escapeHtml(form.actionUrl || 'Missing URL')}</small>` : ''}
+        </article>
+        ${state.contact.systemMessage ? `<p class="admin-status ${state.contact.systemMessage.startsWith('Sent') ? 'is-success' : 'is-error'}">${escapeHtml(state.contact.systemMessage)}</p>` : ''}
+        <div class="admin-modal-actions">
+          <button type="submit" class="admin-primary-button" ${state.contact.systemSending ? 'disabled' : ''}>${state.contact.systemSending ? 'Sending...' : 'Send System Message'}</button>
+        </div>
+      </form>
+    </section>
+  `
+}
+
+function contactComingSoonPanel(title = '', body = '') {
+  return `
+    <section class="admin-section-slab admin-contact-panel">
+      <div class="admin-slab-heading">
+        <h2>${escapeHtml(title)}</h2>
+        <span class="review-badge is-warning">Coming soon</span>
+      </div>
+      <p class="admin-muted">${escapeHtml(body)}</p>
+      <div class="admin-form-grid is-disabled">
+        <label><span>Recipient</span><input disabled value="" /></label>
+        <label><span>Subject</span><input disabled value="" /></label>
+        <label><span>Message</span><input disabled value="" /></label>
+      </div>
     </section>
   `
 }
@@ -3231,6 +3409,7 @@ function render() {
   if (state.section === 'orders') return renderLayout(ordersView())
   if (state.section === 'team') return renderLayout(teamView())
   if (state.section === 'logs') return renderLayout(logsView())
+  if (state.section === 'contact') return renderLayout(contactView())
   if (state.section === 'settings') return renderLayout(settingsView())
   return renderLayout(placeholderView(state.section))
 }
@@ -3305,12 +3484,14 @@ async function loadAdminOverview({ silent = false } = {}) {
   }
 }
 
-async function loadAdminSectionData(sectionKey = state.section, { silent = false } = {}) {
+async function loadAdminSectionData(sectionKey = state.section, { silent = false, append = false } = {}) {
   const map = {
     products: async () => {
       const data = adminData('products')
-      const result = await listAdminProducts({ limitCount: 50, search: data.search })
-      state.adminData.products.items = result.products || []
+      const result = await listAdminProducts({ limitCount: data.pageSize || 15, search: data.search, cursor: append ? data.cursor : '' })
+      state.adminData.products.items = append ? mergePageItems(state.adminData.products.items, result.products || []) : (result.products || [])
+      state.adminData.products.cursor = result.nextCursor || ''
+      state.adminData.products.hasMore = result.hasMore === true
       await hydrateReviewMedia(state.adminData.products.items)
     },
     users: async () => {
@@ -3331,8 +3512,10 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.accountEvents = []
         state.adminData.users.adminNotes = []
       }
-      const result = await listAdminUsers({ limitCount: 50, search: data.search, uid: detailUid || '' })
-      state.adminData.users.items = result.users || []
+      const result = await listAdminUsers({ limitCount: data.pageSize || 15, search: data.search, uid: detailUid || '', cursor: append ? data.cursor : '' })
+      state.adminData.users.items = append ? mergePageItems(state.adminData.users.items, result.users || []) : (result.users || [])
+      state.adminData.users.cursor = result.nextCursor || ''
+      state.adminData.users.hasMore = result.hasMore === true
     },
     reports: async () => {
       const reportId = adminReportDetailId()
@@ -3343,8 +3526,11 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.reports.target = result.target || null
         state.adminData.reports.items = result.reports || (result.report ? [result.report] : [])
       } else {
-        const result = await listAdminReports({ limitCount: 50 })
-        state.adminData.reports.items = result.reports || []
+        const data = adminData('reports')
+        const result = await listAdminReports({ limitCount: data.pageSize || 15, cursor: append ? data.cursor : '' })
+        state.adminData.reports.items = append ? mergePageItems(state.adminData.reports.items, result.reports || []) : (result.reports || [])
+        state.adminData.reports.cursor = result.nextCursor || ''
+        state.adminData.reports.hasMore = result.hasMore === true
         state.adminData.reports.detail = null
         state.adminData.reports.reporter = null
         state.adminData.reports.target = null
@@ -3370,8 +3556,11 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.orders.mismatchWarnings = result.mismatchWarnings || []
         state.adminData.orders.items = result.order ? [result.order] : []
       } else {
-        const result = await listAdminOrders({ limitCount: 50 })
-        state.adminData.orders.items = result.orders || []
+        const data = adminData('orders')
+        const result = await listAdminOrders({ limitCount: data.pageSize || 15, cursor: append ? data.cursor : '' })
+        state.adminData.orders.items = append ? mergePageItems(state.adminData.orders.items, result.orders || []) : (result.orders || [])
+        state.adminData.orders.cursor = result.nextCursor || ''
+        state.adminData.orders.hasMore = result.hasMore === true
         state.adminData.orders.detail = null
         state.adminData.orders.logs = []
         state.adminData.orders.entitlements = []
@@ -3402,11 +3591,26 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.logs.detailId = logId
         state.adminData.logs.items = result.log ? [result.log] : []
       } else {
-        const result = await listAdminLogs({ limitCount: 50 })
-        state.adminData.logs.items = result.logs || []
+        const data = adminData('logs')
+        const result = await listAdminLogs({ limitCount: data.pageSize || 15, cursor: append ? data.cursor : '' })
+        state.adminData.logs.items = append ? mergePageItems(state.adminData.logs.items, result.logs || []) : (result.logs || [])
+        state.adminData.logs.cursor = result.nextCursor || ''
+        state.adminData.logs.hasMore = result.hasMore === true
         state.adminData.logs.detail = null
         state.adminData.logs.detailId = ''
       }
+    },
+    contact: async () => {
+      const emailStatus = await getEmailAdminStatus().catch((error) => ({ ok: false, providerConfigured: false, recent: [], error: error?.message || 'Email status unavailable.' }))
+      state.contact.emailStatus = emailStatus
+      state.settings.emailStatus = emailStatus
+      const params = new URLSearchParams(window.location.search)
+      const uid = String(params.get('user') || '').trim()
+      if (uid) prefillContactRecipient(uid)
+      const category = String(params.get('category') || '').trim().toLowerCase()
+      const priority = String(params.get('priority') || '').trim().toLowerCase()
+      if (category) state.contact.systemForm.category = category
+      if (priority) state.contact.systemForm.priority = priority
     },
     settings: async () => {
       const [result, emailStatus] = await Promise.all([
@@ -3420,9 +3624,17 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
     }
   }
   if (!map[sectionKey]) return
-  const data = sectionKey === 'settings' ? state.settings : adminData(sectionKey)
+  const data = sectionKey === 'settings' ? state.settings : sectionKey === 'contact' ? state.contact : adminData(sectionKey)
   if (!canLoadAdminSection(sectionKey)) return
-  data.loading = !silent
+  if (append && data.loadingMore) return
+  if (append && !data.hasMore) return
+  if (append) {
+    data.loadingMore = true
+  } else {
+    data.loading = !silent
+    if ('cursor' in data) data.cursor = ''
+    if ('hasMore' in data) data.hasMore = false
+  }
   data.error = ''
   render()
   try {
@@ -3433,6 +3645,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
     data.error = error?.message || `Could not load ${sectionKey}.`
   } finally {
     data.loading = false
+    data.loadingMore = false
     render()
   }
 }
@@ -3445,6 +3658,7 @@ function canLoadAdminSection(sectionKey = '') {
   if (sectionKey === 'orders') return can('orderSupport')
   if (sectionKey === 'team') return can('roleManage')
   if (sectionKey === 'logs') return can('auditRead')
+  if (sectionKey === 'contact') return can('emailSend')
   if (sectionKey === 'settings') return can('admin')
   return false
 }
@@ -3628,34 +3842,40 @@ async function submitSettingsForm(form) {
 
 function updateEmailFormFromDom(form = app.querySelector('[data-admin-email-form]')) {
   if (!form) return
-  const next = { ...(state.settings.emailForm || {}) }
+  const next = { ...(state.contact.emailForm || {}) }
   form.querySelectorAll('[data-admin-email-field]').forEach((input) => {
     const key = input.getAttribute('data-admin-email-field') || ''
     if (key) next[key] = input.value || ''
   })
-  state.settings.emailForm = next
+  state.contact.emailForm = next
 }
 
 async function submitAdminEmailForm(form, { self = false } = {}) {
-  if (!can('emailSend') || state.settings.emailSending) return
+  if (!can('emailSend') || state.contact.emailSending) return
   updateEmailFormFromDom(form)
   const payload = {
-    ...(state.settings.emailForm || {}),
-    to: self ? (state.currentUser?.email || '') : (state.settings.emailForm?.to || '')
+    ...(state.contact.emailForm || {}),
+    to: self ? (state.currentUser?.email || '') : (state.contact.emailForm?.to || '')
   }
-  state.settings.emailSending = true
-  state.settings.emailMessage = ''
+  state.contact.emailSending = true
+  state.contact.emailMessage = ''
   render()
   try {
     const result = await sendAdminEmail(payload)
-    state.settings.emailMessage = `Sent email. Log ${result.emailLogId || ''}`.trim()
-    state.settings.emailForm = { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' }
-    state.settings.emailStatus = await getEmailAdminStatus().catch(() => state.settings.emailStatus)
+    state.contact.emailMessage = `Sent email. Log ${result.emailLogId || ''}`.trim()
+    state.contact.emailForm = { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' }
+    state.contact.emailStatus = await getEmailAdminStatus().catch(() => state.contact.emailStatus)
+    state.settings.emailStatus = state.contact.emailStatus
   } catch (error) {
     console.warn('[admin] email send failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.settings.emailMessage = error?.message || 'Email could not be sent.'
+    const safeCode = error?.details?.code || error?.code || ''
+    const safeMessage = error?.details?.message || error?.message || 'Email could not be sent.'
+    const internalMessage = String(safeMessage).toLowerCase() === 'internal'
+      ? 'Email request failed before a clean response. Check Admin Email failures and Functions logs.'
+      : safeMessage
+    state.contact.emailMessage = `${internalMessage}${safeCode ? ` (${safeCode})` : ''} Check Admin Email failures/logs for details.`
   } finally {
-    state.settings.emailSending = false
+    state.contact.emailSending = false
     render()
   }
 }
@@ -3673,7 +3893,7 @@ function openAdminEmailComposerForUser(uid = '') {
     render()
     return
   }
-  state.settings.emailForm = {
+  state.contact.emailForm = {
     to: user.email || '',
     cc: '',
     replyTo: '',
@@ -3685,13 +3905,14 @@ function openAdminEmailComposerForUser(uid = '') {
     relatedOrderId: '',
     relatedReportId: ''
   }
-  state.settings.emailMessage = ''
+  state.contact.emailMessage = ''
   state.message = 'Email composer prefilled for this account.'
   state.error = ''
-  if (window.location.pathname !== ROUTES.adminSettings) window.history.pushState({}, '', ROUTES.adminSettings)
-  state.section = 'settings'
+  const target = `${ROUTES.adminContact}?mode=email&user=${encodeURIComponent(uid)}`
+  if (`${window.location.pathname}${window.location.search}` !== target) window.history.pushState({}, '', target)
+  state.section = 'contact'
   render()
-  loadAdminSectionData('settings', { silent: true })
+  loadAdminSectionData('contact', { silent: true })
 }
 
 async function submitAdminUserEmailAction(uid = '', type = '') {
@@ -3811,15 +4032,103 @@ function closeUserActionDialog() {
   render()
 }
 
+function prefillContactRecipient(uid = '') {
+  const cleanUid = String(uid || '').trim()
+  if (!cleanUid) return
+  const user = userForAdminEmail(cleanUid)
+  const label = user?.displayName || formatUsername(user?.username) || user?.email || cleanUid
+  state.contact.systemForm = {
+    ...(state.contact.systemForm || {}),
+    recipientUid: cleanUid,
+    recipientLabel: label
+  }
+}
+
 function openAdminMessage(uid = '') {
   const targetUid = String(uid || '').trim()
   if (!targetUid) return
-  if (targetUid === state.currentUser?.uid) {
-    state.error = 'You cannot open a direct message with yourself.'
-    render()
-    return
+  prefillContactRecipient(targetUid)
+  const target = `${ROUTES.adminContact}?mode=system&user=${encodeURIComponent(targetUid)}`
+  if (`${window.location.pathname}${window.location.search}` !== target) window.history.pushState({}, '', target)
+  state.section = 'contact'
+  state.message = 'System message composer prefilled for this account.'
+  state.error = ''
+  render()
+  loadAdminSectionData('contact', { silent: true })
+}
+
+function openAdminSecurityNotice(uid = '') {
+  const targetUid = String(uid || '').trim()
+  if (!targetUid) return
+  prefillContactRecipient(targetUid)
+  state.contact.systemForm = {
+    ...(state.contact.systemForm || {}),
+    category: 'security',
+    priority: 'important',
+    subject: 'Melogic Records security notice',
+    body: ''
   }
-  window.location.assign(`${ROUTES.inbox}?start=${encodeURIComponent(targetUid)}`)
+  const target = `${ROUTES.adminContact}?mode=system&user=${encodeURIComponent(targetUid)}&category=security&priority=important`
+  if (`${window.location.pathname}${window.location.search}` !== target) window.history.pushState({}, '', target)
+  state.section = 'contact'
+  state.message = 'Security notice composer prefilled for this account.'
+  state.error = ''
+  render()
+  loadAdminSectionData('contact', { silent: true })
+}
+
+function updateSystemFormFromDom(form = app.querySelector('[data-admin-system-form]')) {
+  if (!form) return
+  const next = { ...(state.contact.systemForm || {}) }
+  form.querySelectorAll('[data-admin-system-field]').forEach((input) => {
+    const key = input.getAttribute('data-admin-system-field') || ''
+    if (key) next[key] = input.value || ''
+  })
+  state.contact.systemForm = next
+}
+
+function resolveSystemRecipientUid(value = '') {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const lowered = raw.toLowerCase().replace(/^@/, '')
+  const pools = [
+    state.adminData.users.profile,
+    ...(state.adminData.users.items || []),
+    state.adminData.team.profile,
+    ...(state.adminData.team.items || [])
+  ].filter(Boolean)
+  const match = pools.find((user) => {
+    const candidates = [user.uid, user.username, user.usernameLower, user.displayName, user.email]
+      .map((candidate) => String(candidate || '').trim().toLowerCase().replace(/^@/, ''))
+      .filter(Boolean)
+    return candidates.includes(lowered)
+  })
+  return match?.uid || raw
+}
+
+async function submitAdminSystemMessageForm(form) {
+  if (!can('emailSend') || state.contact.systemSending) return
+  updateSystemFormFromDom(form)
+  const payload = {
+    ...(state.contact.systemForm || {}),
+    recipientUid: resolveSystemRecipientUid(state.contact.systemForm?.recipientUid || '')
+  }
+  state.contact.systemSending = true
+  state.contact.systemMessage = ''
+  render()
+  try {
+    const result = await sendAdminSystemMessage(payload)
+    state.contact.systemMessage = `Sent system message. Notification ${result.notificationId || ''}`.trim()
+    state.contact.systemForm = { recipientUid: '', recipientLabel: '', category: 'support', priority: 'normal', subject: '', body: '', actionLabel: '', actionUrl: '', internalNote: '' }
+  } catch (error) {
+    console.warn('[admin] system message failed', { code: error?.code, message: error?.message, details: error?.details })
+    const safeCode = error?.details?.code || error?.code || ''
+    const safeMessage = error?.details?.message || error?.message || 'System message could not be sent.'
+    state.contact.systemMessage = `${safeMessage}${safeCode ? ` (${safeCode})` : ''}`
+  } finally {
+    state.contact.systemSending = false
+    render()
+  }
 }
 
 async function submitAdminNote(form) {
@@ -3907,6 +4216,13 @@ function bindEvents() {
       render()
     })
   })
+  app.querySelectorAll('[data-admin-load-more]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const collection = button.getAttribute('data-admin-load-more') || ''
+      if (!collection) return
+      loadAdminSectionData(collection, { silent: true, append: true })
+    })
+  })
   app.querySelectorAll('[data-admin-search-form]').forEach((form) => {
     form.addEventListener('submit', (event) => {
       event.preventDefault()
@@ -3952,6 +4268,9 @@ function bindEvents() {
   app.querySelectorAll('[data-admin-auth-email]').forEach((button) => {
     button.addEventListener('click', () => submitAdminUserEmailAction(button.getAttribute('data-admin-auth-email-uid') || '', button.getAttribute('data-admin-auth-email') || ''))
   })
+  app.querySelectorAll('[data-admin-security-notice-user]').forEach((button) => {
+    button.addEventListener('click', () => openAdminSecurityNotice(button.getAttribute('data-admin-security-notice-user') || ''))
+  })
   app.querySelectorAll('[data-admin-note-user]').forEach((button) => {
     button.addEventListener('click', () => openUserActionDialog('note', button.getAttribute('data-admin-note-user') || ''))
   })
@@ -3995,6 +4314,13 @@ function bindEvents() {
   app.querySelector('[data-admin-email-self]')?.addEventListener('click', (event) => {
     event.preventDefault()
     submitAdminEmailForm(app.querySelector('[data-admin-email-form]'), { self: true })
+  })
+  app.querySelector('[data-admin-system-form]')?.addEventListener('input', (event) => {
+    updateSystemFormFromDom(event.currentTarget)
+  })
+  app.querySelector('[data-admin-system-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitAdminSystemMessageForm(event.currentTarget)
   })
   app.querySelectorAll('[data-copy-value]').forEach((button) => {
     button.addEventListener('click', async () => {

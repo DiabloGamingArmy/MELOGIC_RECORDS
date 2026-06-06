@@ -1966,8 +1966,9 @@ function getFilterContentMarkup(filterName) {
                     <p class="system-notification-title">${escapeHtml(item.title)}</p>
                     <button type="button" class="system-pin-button ${pinned ? 'is-pinned' : ''}" data-pin-system-item="${escapeHtml(item.sourceCollection)}:${escapeHtml(item.id)}">${pinned ? 'Pinned' : 'Pin'}</button>
                   </div>
+                  ${item.senderName || item.sourceLabel ? `<small class="system-notification-sender">${escapeHtml(item.senderName || item.sourceLabel)}${item.senderVerified || item.supportVerified ? ' ✓' : ''}</small>` : ''}
                   <p>${escapeHtml(item.body)}</p>
-                  <small>${escapeHtml(formatThreadTimestamp(item.createdAt))} · ${escapeHtml(item.severity)}</small>
+                  <small>${escapeHtml(formatThreadTimestamp(item.createdAt))} · ${escapeHtml(item.category || item.type || 'system')} · ${escapeHtml(item.priority || item.severity || 'info')}</small>
                   ${item.actionHref ? `<a class="button button-muted" href="${escapeHtml(item.actionHref)}">Open</a>` : ''}
                 </article>
               `

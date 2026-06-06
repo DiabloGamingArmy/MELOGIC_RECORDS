@@ -1,6 +1,4 @@
-const net = require('node:net')
-const tls = require('node:tls')
-const crypto = require('node:crypto')
+const nodemailer = require('nodemailer')
 const { defineSecret } = require('firebase-functions/params')
 
 const SMTP_HOST = defineSecret('SMTP_HOST')
@@ -12,6 +10,7 @@ const EMAIL_FROM = defineSecret('EMAIL_FROM')
 const EMAIL_SECRETS = [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM]
 const SUPPORT_EMAIL = 'support@melogicrecords.studio'
 const DEFAULT_FROM = `Melogic Records Support <${SUPPORT_EMAIL}>`
+const SMTP_TIMEOUT_MS = 22000
 
 function cleanString(value = '', max = 1000) {
   return String(value || '')
@@ -28,6 +27,79 @@ function validateEmailAddress(email = '') {
 
 function recipientDomain(email = '') {
   return validateEmailAddress(email).split('@')[1] || ''
+}
+
+function safeErrorDetails(error = {}) {
+  return {
+    name: cleanString(error?.name || '', 120),
+    code: cleanString(error?.code || '', 120),
+    command: cleanString(error?.command || '', 120),
+    responseCode: Number(error?.responseCode || 0) || 0,
+    message: cleanString(error?.message || '', 300),
+    stack: cleanString(error?.stack || '', 1800)
+  }
+}
+
+function logStage(stage = '', data = {}, level = 'info') {
+  const payload = {
+    stage,
+    ...data
+  }
+  if (level === 'error') console.error('[emailSender]', payload)
+  else if (level === 'warn') console.warn('[emailSender]', payload)
+  else console.info('[emailSender]', payload)
+}
+
+function safeEmailError(code = 'smtp-send-failed', message = 'Email could not be sent.', cause = null) {
+  const error = new Error(message)
+  error.name = 'SafeEmailError'
+  error.code = code
+  error.safeMessage = message
+  if (cause) {
+    error.cause = cause
+    error.original = safeErrorDetails(cause)
+  }
+  return error
+}
+
+function mapSmtpError(error = {}) {
+  const rawCode = cleanString(error?.code || '', 120).toUpperCase()
+  const command = cleanString(error?.command || '', 120).toUpperCase()
+  const responseCode = Number(error?.responseCode || 0)
+  const message = cleanString(error?.message || '', 500).toLowerCase()
+
+  if (rawCode === 'SMTP-TIMEOUT' || rawCode.includes('TIMEOUT') || message.includes('timed out')) return 'smtp-timeout'
+  if (rawCode === 'EAUTH' || command === 'AUTH' || [530, 534, 535].includes(responseCode)) return 'smtp-auth-failed'
+  if (rawCode === 'ECONNECTION' || rawCode === 'ESOCKET' || rawCode === 'ECONNREFUSED' || rawCode === 'ENOTFOUND' || rawCode === 'EAI_AGAIN') return 'smtp-connection-failed'
+  if (rawCode === 'EENVELOPE' || command === 'RCPT TO' || [550, 551, 552, 553, 554].includes(responseCode)) return 'smtp-recipient-rejected'
+  return 'smtp-send-failed'
+}
+
+function safeMessageForCode(code = '') {
+  const map = {
+    'email-provider-not-configured': 'Email provider is not configured.',
+    'smtp-auth-failed': 'SMTP authentication failed. Check the mailbox app password or Workspace SMTP policy.',
+    'smtp-timeout': 'SMTP request timed out before the email provider responded.',
+    'smtp-connection-failed': 'SMTP connection failed. Check host, port, and Workspace SMTP access.',
+    'smtp-recipient-rejected': 'SMTP recipient was rejected by the provider.',
+    'smtp-send-failed': 'SMTP send failed.',
+    'email-log-write-failed': 'Email log could not be written.'
+  }
+  return map[code] || 'Email could not be sent.'
+}
+
+function withTimeout(promise, timeoutMs = SMTP_TIMEOUT_MS, stage = 'smtp') {
+  let timer = null
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      const error = safeEmailError('smtp-timeout', safeMessageForCode('smtp-timeout'))
+      error.stage = stage
+      reject(error)
+    }, timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
 }
 
 function htmlEscape(value = '') {
@@ -158,152 +230,91 @@ function readSmtpConfig() {
   }
 }
 
-function smtpLineReader(socket) {
-  let buffer = ''
-  const pending = []
-  socket.on('data', (chunk) => {
-    buffer += chunk.toString('utf8')
-    let newline
-    while ((newline = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, newline + 1)
-      buffer = buffer.slice(newline + 1)
-      const next = pending.shift()
-      if (next) next(line)
-    }
-  })
-  return () => new Promise((resolve) => pending.push(resolve))
-}
-
-async function readSmtpResponse(readLine) {
-  const lines = []
-  while (true) {
-    const line = await readLine()
-    lines.push(line.trim())
-    if (/^\d{3}\s/.test(line)) break
-  }
-  const code = Number(lines[0]?.slice(0, 3) || 0)
-  return { code, message: lines.join(' ') }
-}
-
-async function expectSmtp(readLine, expected) {
-  const response = await readSmtpResponse(readLine)
-  const allowed = Array.isArray(expected) ? expected : [expected]
-  if (!allowed.includes(response.code)) {
-    const error = new Error(`SMTP rejected command with ${response.code}`)
-    error.code = `smtp-${response.code || 'unknown'}`
-    error.smtpMessage = response.message
-    throw error
-  }
-  return response
-}
-
-function writeSmtp(socket, command = '') {
-  socket.write(`${command}\r\n`)
-}
-
-function dotStuff(value = '') {
-  return String(value || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..')
-}
-
-function messageId() {
-  return `<${crypto.randomUUID()}@melogicrecords.studio>`
-}
-
-function buildRawMessage({ to, cc = [], subject, html, text, from, replyTo }) {
-  const boundary = `melogic-${crypto.randomBytes(12).toString('hex')}`
-  const id = messageId()
-  const headers = [
-    `From: ${from}`,
-    `To: ${to}`,
-    ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []),
-    `Reply-To: ${replyTo || SUPPORT_EMAIL}`,
-    `Subject: ${cleanString(subject, 180).replace(/\r?\n/g, ' ')}`,
-    `Message-ID: ${id}`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/alternative; boundary="${boundary}"`
-  ]
-  const body = [
-    `--${boundary}`,
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
-    '',
-    text || textFromHtml(html),
-    `--${boundary}`,
-    'Content-Type: text/html; charset=UTF-8',
-    'Content-Transfer-Encoding: 8bit',
-    '',
-    html || htmlEscape(text || '').replace(/\n/g, '<br />'),
-    `--${boundary}--`,
-    ''
-  ]
-  return { raw: `${headers.join('\r\n')}\r\n\r\n${body.join('\r\n')}`, messageId: id }
-}
-
 async function sendViaSmtp(config, payload) {
   const secure = Number(config.port) === 465
-  let socket = secure
-    ? tls.connect({ host: config.host, port: config.port, servername: config.host })
-    : net.connect({ host: config.host, port: config.port })
-  const readLine = smtpLineReader(socket)
-  await new Promise((resolve, reject) => {
-    socket.once('connect', resolve)
-    socket.once('error', reject)
-  })
-  await expectSmtp(readLine, 220)
-  writeSmtp(socket, `EHLO melogicrecords.studio`)
-  await expectSmtp(readLine, 250)
-  if (!secure) {
-    writeSmtp(socket, 'STARTTLS')
-    await expectSmtp(readLine, 220)
-    socket = tls.connect({ socket, servername: config.host })
-    await new Promise((resolve, reject) => {
-      socket.once('secureConnect', resolve)
-      socket.once('error', reject)
-    })
-    const secureReadLine = smtpLineReader(socket)
-    writeSmtp(socket, `EHLO melogicrecords.studio`)
-    await expectSmtp(secureReadLine, 250)
-    writeSmtp(socket, 'AUTH LOGIN')
-    await expectSmtp(secureReadLine, 334)
-    writeSmtp(socket, Buffer.from(config.user).toString('base64'))
-    await expectSmtp(secureReadLine, 334)
-    writeSmtp(socket, Buffer.from(config.pass).toString('base64'))
-    await expectSmtp(secureReadLine, 235)
-    const built = buildRawMessage({ ...payload, from: config.from })
-    writeSmtp(socket, `MAIL FROM:<${config.user}>`)
-    await expectSmtp(secureReadLine, 250)
-    for (const recipient of [payload.to, ...(payload.cc || [])]) {
-      writeSmtp(socket, `RCPT TO:<${recipient}>`)
-      await expectSmtp(secureReadLine, [250, 251])
+  const requireTLS = Number(config.port) === 587
+  const recipients = [payload.to, ...(payload.cc || [])]
+  const diag = {
+    provider: 'smtp',
+    port: Number(config.port),
+    secure,
+    requireTLS,
+    recipientDomain: recipientDomain(payload.to),
+    ccCount: (payload.cc || []).length,
+    userDomain: recipientDomain(config.user),
+    fromDomain: recipientDomain(config.from)
+  }
+  logStage('provider config detected', diag)
+  const transporter = nodemailer.createTransport({
+    host: config.host,
+    port: Number(config.port),
+    secure,
+    requireTLS,
+    auth: {
+      user: config.user,
+      pass: config.pass
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
+    tls: {
+      servername: config.host
     }
-    writeSmtp(socket, 'DATA')
-    await expectSmtp(secureReadLine, 354)
-    writeSmtp(socket, `${dotStuff(built.raw)}\r\n.`)
-    await expectSmtp(secureReadLine, 250)
-    writeSmtp(socket, 'QUIT')
-    socket.end()
-    return { providerMessageId: built.messageId }
+  })
+
+  try {
+    logStage('SMTP connect start', diag)
+    if (!secure) logStage('STARTTLS start', { requireTLS })
+    logStage('SMTP auth start', { userDomain: recipientDomain(config.user) })
+    await withTimeout(transporter.verify(), SMTP_TIMEOUT_MS, 'smtp-verify')
+    logStage('SMTP connect success', diag)
+    logStage('SMTP 220 received', { inferredBy: 'nodemailer.verify' })
+    logStage('EHLO sent/received', { inferredBy: 'nodemailer.verify' })
+    if (!secure) {
+      logStage('STARTTLS success', { inferredBy: 'nodemailer.verify' })
+      logStage('TLS secureConnect success', { inferredBy: 'nodemailer.verify' })
+    }
+    logStage('SMTP auth success', { userDomain: recipientDomain(config.user) })
+
+    logStage('MAIL FROM start', { fromDomain: recipientDomain(config.user) })
+    logStage('RCPT TO start', { recipientDomain: recipientDomain(payload.to), recipientCount: recipients.length })
+    logStage('DATA start', { hasHtml: Boolean(payload.html), hasText: Boolean(payload.text) })
+    const info = await withTimeout(
+      transporter.sendMail({
+        from: config.from,
+        to: payload.to,
+        cc: payload.cc || [],
+        replyTo: payload.replyTo || SUPPORT_EMAIL,
+        subject: payload.subject,
+        text: payload.text || textFromHtml(payload.html),
+        html: payload.html || htmlEscape(payload.text || '').replace(/\n/g, '<br />')
+      }),
+      SMTP_TIMEOUT_MS,
+      'smtp-send'
+    )
+    logStage('MAIL FROM success', { fromDomain: recipientDomain(config.user) })
+    logStage('RCPT TO success', { acceptedCount: Array.isArray(info.accepted) ? info.accepted.length : 0, rejectedCount: Array.isArray(info.rejected) ? info.rejected.length : 0 })
+    logStage('DATA success', { providerMessageId: cleanString(info.messageId || '', 260) })
+    logStage('final SMTP accepted message', { providerMessageId: cleanString(info.messageId || '', 260), response: cleanString(info.response || '', 260) })
+    return { providerMessageId: info.messageId || '', accepted: info.accepted || [], rejected: info.rejected || [] }
+  } catch (error) {
+    const mapped = error?.code === 'smtp-timeout' ? 'smtp-timeout' : mapSmtpError(error)
+    const safe = safeEmailError(mapped, safeMessageForCode(mapped), error)
+    logStage(`${mapped} failure`, safeErrorDetails(error), 'error')
+    if (mapped === 'smtp-connection-failed') logStage('SMTP connect failure', safeErrorDetails(error), 'error')
+    if (mapped === 'smtp-timeout') logStage('SMTP timeout failure', { stage: cleanString(error?.stage || '', 80), ...safeErrorDetails(error) }, 'error')
+    if (mapped === 'smtp-auth-failed') logStage('SMTP auth failure', safeErrorDetails(error), 'error')
+    if (mapped === 'smtp-recipient-rejected') logStage('RCPT TO failure', safeErrorDetails(error), 'error')
+    if (mapped === 'smtp-send-failed') logStage('DATA failure', safeErrorDetails(error), 'error')
+    throw safe
+  } finally {
+    try {
+      transporter.close()
+      logStage('socket close/destroy', { provider: 'smtp', closed: true })
+    } catch (closeError) {
+      logStage('socket close/destroy failure', safeErrorDetails(closeError), 'warn')
+    }
   }
-  writeSmtp(socket, 'AUTH LOGIN')
-  await expectSmtp(readLine, 334)
-  writeSmtp(socket, Buffer.from(config.user).toString('base64'))
-  await expectSmtp(readLine, 334)
-  writeSmtp(socket, Buffer.from(config.pass).toString('base64'))
-  await expectSmtp(readLine, 235)
-  const built = buildRawMessage({ ...payload, from: config.from })
-  writeSmtp(socket, `MAIL FROM:<${config.user}>`)
-  await expectSmtp(readLine, 250)
-  for (const recipient of [payload.to, ...(payload.cc || [])]) {
-    writeSmtp(socket, `RCPT TO:<${recipient}>`)
-    await expectSmtp(readLine, [250, 251])
-  }
-  writeSmtp(socket, 'DATA')
-  await expectSmtp(readLine, 354)
-  writeSmtp(socket, `${dotStuff(built.raw)}\r\n.`)
-  await expectSmtp(readLine, 250)
-  writeSmtp(socket, 'QUIT')
-  socket.end()
-  return { providerMessageId: built.messageId }
 }
 
 async function sendEmail({ to, cc = [], subject, html, text, replyTo = SUPPORT_EMAIL, category = 'transactional', metadata = {} } = {}) {
@@ -332,9 +343,7 @@ async function sendEmail({ to, cc = [], subject, html, text, replyTo = SUPPORT_E
   const domain = recipientDomain(cleanTo)
   if (!config.configured) {
     console.warn('[emailSender] provider not configured', { category, recipientDomain: domain })
-    const error = new Error('Email provider is not configured.')
-    error.code = 'email-provider-not-configured'
-    throw error
+    throw safeEmailError('email-provider-not-configured', safeMessageForCode('email-provider-not-configured'))
   }
   try {
     const result = await sendViaSmtp(config, { to: cleanTo, cc: cleanCc, subject: cleanSubject, html: cleanHtml, text: cleanText, replyTo })

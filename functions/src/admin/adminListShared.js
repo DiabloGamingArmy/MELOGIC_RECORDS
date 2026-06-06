@@ -15,12 +15,30 @@ function normalizeLimit(value = 50, max = 100) {
   return Math.max(1, Math.min(Math.round(toNumber(value || 50)), max))
 }
 
-async function safeListCollection(collectionName = '', { orderBy = 'updatedAt', direction = 'desc', limit = 50 } = {}) {
+async function safeListCollection(collectionName = '', { orderBy = 'updatedAt', direction = 'desc', limit = 50, cursor = '' } = {}) {
   const ref = db().collection(collectionName)
+  const cleanCursor = cleanString(cursor, 180)
+  const cursorSnap = cleanCursor && !cleanCursor.includes('/')
+    ? await ref.doc(cleanCursor).get().catch(() => null)
+    : null
   try {
-    return await ref.orderBy(orderBy, direction).limit(normalizeLimit(limit)).get()
+    let query = ref.orderBy(orderBy, direction)
+    if (cursorSnap?.exists) query = query.startAfter(cursorSnap)
+    return await query.limit(normalizeLimit(limit)).get()
   } catch (error) {
-    return ref.limit(normalizeLimit(limit)).get()
+    let query = ref
+    if (cursorSnap?.exists) query = query.startAfter(cursorSnap)
+    return query.limit(normalizeLimit(limit)).get()
+  }
+}
+
+function paginationFromSnapshot(snapshot, limit = 50) {
+  const docs = snapshot?.docs || []
+  const normalizedLimit = normalizeLimit(limit)
+  const lastDoc = docs[docs.length - 1]
+  return {
+    nextCursor: docs.length >= normalizedLimit && lastDoc?.id ? lastDoc.id : '',
+    hasMore: docs.length >= normalizedLimit
   }
 }
 
@@ -202,6 +220,7 @@ module.exports = {
   logSummary,
   normalizeLimit,
   orderSummary,
+  paginationFromSnapshot,
   productSummary,
   profileSummary,
   reportSummary,

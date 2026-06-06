@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { assertAnyPermission, cleanString } = require('./adminAuth')
-const { db, normalizeLimit, orderSummary, productSummary, profileSummary, reportSummary, safeListCollection } = require('./adminListShared')
+const { db, normalizeLimit, orderSummary, paginationFromSnapshot, productSummary, profileSummary, reportSummary, safeListCollection } = require('./adminListShared')
 
 function matchesFilter(report = {}, filter = '') {
   if (!filter || filter === 'all') return true
@@ -114,6 +114,7 @@ const listAdminReports = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async 
   const limit = normalizeLimit(request.data?.limit ?? request.data?.limitCount ?? 50)
   const reportId = cleanString(request.data?.reportId || '', 180)
   const filter = cleanString(request.data?.filter || '', 80)
+  const cursor = cleanString(request.data?.cursor || '', 180)
 
   if (reportId) {
     if (reportId.includes('/')) throw new HttpsError('invalid-argument', 'A valid report id is required.')
@@ -131,11 +132,14 @@ const listAdminReports = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async 
     }
   }
 
-  const snapshot = await safeListCollection('reports', { orderBy: 'createdAt', direction: 'desc', limit })
+  const snapshot = await safeListCollection('reports', { orderBy: 'createdAt', direction: 'desc', limit, cursor })
   const reports = snapshot.docs.map(reportSummary).filter((report) => matchesFilter(report, filter))
+  const pagination = paginationFromSnapshot(snapshot, limit)
   return {
     ok: true,
     reports,
+    nextCursor: pagination.nextCursor,
+    hasMore: pagination.hasMore,
     total: reports.length,
     requester: { uid: claims.uid, role: claims.adminRole }
   }
