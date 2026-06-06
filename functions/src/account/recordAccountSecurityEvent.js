@@ -5,6 +5,7 @@ const { EMAIL_SECRETS } = require('../email/emailSender')
 const { sendSecurityEmail } = require('../email/securityEmail')
 
 const CLIENT_SECURITY_EVENTS = new Set([
+  'new_login',
   'password_reset_requested',
   'email_verification_requested',
   'two_factor_enabled',
@@ -12,7 +13,7 @@ const CLIENT_SECURITY_EVENTS = new Set([
   'recovery_codes_generated'
 ])
 
-const EMAIL_SECURITY_EVENTS = new Set(['two_factor_enabled', 'two_factor_disabled'])
+const EMAIL_SECURITY_EVENTS = new Set(['new_login', 'two_factor_enabled', 'two_factor_disabled'])
 
 const EVENT_COPY = {
   password_reset_requested: {
@@ -39,6 +40,11 @@ const EVENT_COPY = {
     severity: 'warning',
     title: 'Recovery codes generated',
     message: 'New account recovery codes were generated.'
+  },
+  new_login: {
+    severity: 'warning',
+    title: 'New sign-in to your Melogic Records account',
+    message: 'A new device signed in to your account.'
   }
 }
 
@@ -54,6 +60,11 @@ function userAgentSummary(request = {}) {
   return cleanString(request.rawRequest?.headers?.['user-agent'] || '', 180)
 }
 
+function hashDeviceId(uid = '', deviceId = '') {
+  const crypto = require('node:crypto')
+  return crypto.createHash('sha256').update(`${uid}:${deviceId}`).digest('hex').slice(0, 40)
+}
+
 const recordAccountSecurityEvent = onCall({ timeoutSeconds: 30, memory: '256MiB', secrets: EMAIL_SECRETS }, async (request) => {
   const uid = cleanString(request.auth?.uid || '', 180)
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.')
@@ -64,6 +75,52 @@ const recordAccountSecurityEvent = onCall({ timeoutSeconds: 30, memory: '256MiB'
   }
 
   const copy = EVENT_COPY[type] || EVENT_COPY.password_reset_requested
+  if (type === 'new_login') {
+    const deviceId = cleanString(request.data?.deviceId || '', 180)
+    if (!deviceId) throw new HttpsError('invalid-argument', 'Device id is required.')
+    const browserSummary = cleanString(request.data?.browserSummary || userAgentSummary(request), 180)
+    const deviceRef = admin.firestore().collection('users').doc(uid).collection('securityDevices').doc(hashDeviceId(uid, deviceId))
+    const snap = await deviceRef.get()
+    const now = admin.firestore.FieldValue.serverTimestamp()
+    if (snap.exists) {
+      await deviceRef.set({
+        lastSeenAt: now,
+        browserSummary,
+        userAgentSummary: userAgentSummary(request)
+      }, { merge: true })
+      return { ok: true, eventId: '', emailSent: false, knownDevice: true }
+    }
+    const result = await sendSecurityEmail(uid, 'new_login', {
+      severity: copy.severity,
+      title: copy.title,
+      message: copy.message,
+      source: 'auth-signin',
+      ip: clientIp(request),
+      userAgentSummary: browserSummary || userAgentSummary(request),
+      metadata: {
+        browserSummary,
+        deviceIdHash: deviceRef.id
+      }
+    })
+    await deviceRef.set({
+      deviceIdHash: deviceRef.id,
+      browserSummary,
+      userAgentSummary: userAgentSummary(request),
+      createdAt: now,
+      lastSeenAt: now,
+      emailSentAt: result.emailSent ? now : null
+    }, { merge: true })
+    return {
+      ok: true,
+      eventId: result.eventId || '',
+      emailSent: result.emailSent === true,
+      emailSkipped: result.emailSkipped === true,
+      emailSkipReason: result.emailSkipReason || '',
+      emailError: result.emailError || '',
+      knownDevice: false
+    }
+  }
+
   if (EMAIL_SECURITY_EVENTS.has(type)) {
     const result = await sendSecurityEmail(uid, type, {
       severity: copy.severity,

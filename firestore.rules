@@ -1300,6 +1300,11 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
       }
 
+      match /securityDevices/{deviceId} {
+        allow read: if isOwner(uid);
+        allow create, update, delete: if false;
+      }
+
       match /inboxPins/{pinId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid)

@@ -11,6 +11,7 @@ import {
   getAdminReport,
   getAdminUserProfile,
   listActiveStaffPresence,
+  listAdminEmailLogs,
   listAdminLogs,
   listAdminOrders,
   listAdminProducts,
@@ -277,6 +278,13 @@ const state = {
     emailForm: { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' },
     emailSending: false,
     emailMessage: '',
+    emailLogTab: 'sent',
+    emailLogDetailId: '',
+    emailLogs: {
+      sent: { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false },
+      failed: { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false },
+      draft: { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false }
+    },
     systemForm: { recipientUid: '', recipientLabel: '', category: 'support', priority: 'normal', subject: '', body: '', actionLabel: '', actionUrl: '', internalNote: '' },
     systemSending: false,
     systemMessage: ''
@@ -1976,7 +1984,7 @@ function adminBusyState(data) {
 function mergePageItems(existing = [], incoming = []) {
   const seen = new Set()
   return [...existing, ...incoming].filter((item) => {
-    const id = item?.id || item?.uid || item?.reportId || ''
+    const id = item?.id || item?.uid || item?.reportId || item?.emailId || ''
     if (!id) return true
     if (seen.has(id)) return false
     seen.add(id)
@@ -3051,7 +3059,6 @@ function emailSettingsPanel() {
   const status = state.contact.emailStatus || {}
   const form = state.contact.emailForm || {}
   const canSend = can('emailSend')
-  const recent = Array.isArray(status.recent) ? status.recent : []
   return `
     <section class="admin-section-slab admin-email-settings">
       <div class="admin-slab-heading">
@@ -3099,30 +3106,125 @@ function emailSettingsPanel() {
           <button type="submit" class="admin-primary-button" ${canSend && !state.contact.emailSending ? '' : 'disabled'}>${state.contact.emailSending ? 'Sending...' : 'Send Email'}</button>
         </div>
       </form>
-      <div class="admin-slab-heading">
-        <h3>Recent Email Logs</h3>
-        <span class="admin-muted">${recent.length} loaded</span>
-      </div>
-      ${adminSimpleTable('Recent Email Logs', ['Recipient', 'Subject', 'Category', 'Status', 'Sent by', 'Provider', 'Created'], recent.map((row) => [
-        htmlCell(`<strong>${escapeHtml(row.recipientDomain || row.to || 'Recipient')}</strong><small class="admin-code-value">${escapeHtml(row.to || '')}</small>`),
-        row.subject || '',
+    </section>
+    ${emailActivityPanel()}
+  `
+}
+
+function emailLogState(tab = state.contact.emailLogTab || 'sent') {
+  return state.contact.emailLogs?.[tab] || { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false }
+}
+
+function emailActivityTabs(active = state.contact.emailLogTab || 'sent') {
+  return `
+    <div class="admin-contact-tabs is-subtabs" role="tablist" aria-label="Email activity">
+      ${[
+        ['sent', 'Sent'],
+        ['failed', 'Failed'],
+        ['draft', 'Draft']
+      ].map(([key, label]) => `<a href="${ROUTES.adminContact}?mode=email&activity=${key}" class="${active === key ? 'is-active' : ''}" data-email-log-tab="${key}" aria-current="${active === key ? 'page' : 'false'}">${escapeHtml(label)}</a>`).join('')}
+    </div>
+  `
+}
+
+function emailLogRows(tab = 'sent', rows = []) {
+  if (tab === 'draft') {
+    return '<article class="admin-empty-state">Draft emails are coming soon.</article>'
+  }
+  if (!rows.length) {
+    const copy = tab === 'failed'
+      ? 'No recent email failures. Provider errors and rate-limited sends will appear here.'
+      : 'No sent emails loaded yet.'
+    return `<article class="admin-empty-state">${escapeHtml(copy)}</article>`
+  }
+  const headers = tab === 'failed'
+    ? ['Recipient/domain', 'Subject', 'Category', 'Error', 'Created', 'Actions']
+    : ['Recipient', 'Subject', 'Category', 'Status', 'Sent By', 'Provider', 'Created', 'Actions']
+  const tableRows = rows.map((row) => {
+    const viewButton = htmlCell(`<button type="button" class="admin-secondary-button" data-email-log-detail="${escapeHtml(row.emailId)}">View Details</button>`)
+    if (tab === 'failed') {
+      return [
+        htmlCell(`<strong>${escapeHtml(row.toDomain || row.recipientDomain || 'Recipient')}</strong><small>${escapeHtml(row.to || '')}</small>`),
+        compactText(row.subject || '', 70),
         humanLabel(row.category || ''),
-        htmlCell(renderBadge(humanLabel(row.status || 'unknown'), row.status === 'sent' ? 'approved' : row.status === 'failed' ? 'rejected' : 'pending')),
-        row.sentByUsername || row.sentByUid || '',
-        htmlCell(`<span>${escapeHtml(row.provider || '')}</span>${row.providerMessageId ? `<small class="admin-code-value">${escapeHtml(row.providerMessageId)}</small>` : ''}${row.errorMessageRedacted ? `<small>${escapeHtml(row.errorMessageRedacted)}</small>` : ''}`),
-        formatDate(row.createdAt || row.sentAt)
-      ]), { className: 'is-email-logs', emptyTitle: 'No email logs yet.', emptyBody: 'Sent and failed emails will appear here.' })}
+        htmlCell(`<strong>${escapeHtml(row.errorCode || 'failed')}</strong><small>${escapeHtml(compactText(row.errorMessageRedacted || '', 80))}</small>`),
+        formatDate(row.createdAt || row.failedAt),
+        viewButton
+      ]
+    }
+    return [
+      htmlCell(`<strong>${escapeHtml(row.to || row.recipientDomain || 'Recipient')}</strong><small>${escapeHtml(row.recipientDomain || row.toDomain || '')}</small>`),
+      compactText(row.subject || '', 70),
+      humanLabel(row.category || ''),
+      htmlCell(renderBadge(humanLabel(row.status || 'sent'), row.status === 'sent' ? 'approved' : 'pending')),
+      htmlCell(`<strong>${escapeHtml(row.sentByUsername || row.sentByUid || 'System')}</strong>${row.sentByUid ? `<small>${escapeHtml(row.sentByUid)}</small>` : ''}`),
+      htmlCell(`<strong>${escapeHtml(row.provider || 'smtp')}</strong>${row.providerMessageId ? `<small class="admin-code-value">${escapeHtml(shortIdentifier(row.providerMessageId))}</small>` : ''}`),
+      formatDate(row.createdAt || row.sentAt),
+      viewButton
+    ]
+  })
+  return adminSimpleTable(tab === 'failed' ? 'Email Failures' : 'Sent Emails', headers, tableRows, {
+    className: tab === 'failed' ? 'is-email-failures' : 'is-email-logs',
+    emptyTitle: tab === 'failed' ? 'No recent email failures.' : 'No sent emails loaded.',
+    emptyBody: tab === 'failed' ? 'Provider errors and rate-limited sends will appear here.' : 'Sent emails will appear here.'
+  })
+}
+
+function emailLogDetail() {
+  const tab = state.contact.emailLogTab || 'sent'
+  const detailId = state.contact.emailLogDetailId || ''
+  if (!detailId) return ''
+  const row = emailLogState(tab).items.find((item) => item.emailId === detailId)
+  if (!row) return ''
+  return `
+    <article class="admin-email-detail-drawer">
       <div class="admin-slab-heading">
-        <h3>Recent Failures</h3>
-        <span class="admin-muted">${Array.isArray(status.failures) ? status.failures.length : 0} loaded</span>
+        <h3>Email Details</h3>
+        <button type="button" class="admin-icon-button" data-close-email-log-detail title="Close">${iconSvg('x')}</button>
       </div>
-      ${adminSimpleTable('Email Failures', ['Domain', 'Subject', 'Category', 'Error', 'Created'], (status.failures || []).map((row) => [
-        row.toDomain || '',
-        row.subject || '',
-        humanLabel(row.category || ''),
-        htmlCell(`<strong>${escapeHtml(row.errorCode || 'failed')}</strong><small>${escapeHtml(row.errorMessageRedacted || '')}</small>`),
-        formatDate(row.createdAt)
-      ]), { className: 'is-email-failures', emptyTitle: 'No recent email failures.', emptyBody: 'Provider errors and rate-limited sends will appear in logs.' })}
+      ${renderKeyValueGrid([
+        renderField('Recipient', row.to || row.toDomain),
+        renderField('CC domains', (row.ccDomains || []).join(', ') || 'None'),
+        renderField('Reply-To', row.replyTo || 'Not set'),
+        renderField('Subject', row.subject, { wide: true }),
+        renderField('Category', humanLabel(row.category)),
+        renderField('Status', humanLabel(row.status)),
+        renderField('Provider', row.provider || 'smtp'),
+        renderField('Provider message ID', row.providerMessageId || 'Not set', { wide: true, code: true }),
+        renderDateField('Created', row.createdAt),
+        renderDateField('Sent', row.sentAt),
+        renderDateField('Failed', row.failedAt),
+        renderField('Sent by', row.sentByUsername || row.sentByUid || 'System'),
+        renderField('Related user', row.relatedUid, { code: true }),
+        renderField('Related product', row.relatedProductId, { code: true }),
+        renderField('Related order', row.relatedOrderId, { code: true }),
+        renderField('Related report', row.relatedReportId, { code: true }),
+        renderField('Body preview', row.bodyPreview, { wide: true }),
+        renderField('Internal note', row.internalNote, { wide: true }),
+        renderField('Error', [row.errorCode, row.errorMessageRedacted].filter(Boolean).join(': '), { wide: true })
+      ])}
+    </article>
+  `
+}
+
+function emailActivityPanel() {
+  const tab = state.contact.emailLogTab || 'sent'
+  const data = emailLogState(tab)
+  return `
+    <section class="admin-section-slab admin-email-activity admin-fixed-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Email Activity</h2>
+          <p class="admin-muted">Sent, failed, and draft activity is paginated separately from the composer.</p>
+        </div>
+        <span class="admin-muted">${data.items.length} loaded</span>
+      </div>
+      ${emailActivityTabs(tab)}
+      <div class="admin-table-scroll">
+        ${data.loading ? '<article class="admin-empty-state">Loading email activity...</article>' : data.error ? `<article class="admin-empty-state"><strong>Could not load email activity.</strong><span>${escapeHtml(data.error)}</span></article>` : emailLogRows(tab, data.items)}
+        ${data.hasMore ? `<div class="admin-load-more-row"><button type="button" class="admin-secondary-button" data-email-log-load-more ${data.loadingMore ? 'disabled' : ''}>${data.loadingMore ? 'Loading...' : 'Load more'}</button></div>` : ''}
+        ${emailLogDetail()}
+      </div>
     </section>
   `
 }
@@ -3609,8 +3711,24 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       if (uid) prefillContactRecipient(uid)
       const category = String(params.get('category') || '').trim().toLowerCase()
       const priority = String(params.get('priority') || '').trim().toLowerCase()
+      const activity = String(params.get('activity') || '').trim().toLowerCase()
       if (category) state.contact.systemForm.category = category
       if (priority) state.contact.systemForm.priority = priority
+      if (['sent', 'failed', 'draft'].includes(activity)) state.contact.emailLogTab = activity
+      const tab = state.contact.emailLogTab || 'sent'
+      const logState = emailLogState(tab)
+      if (!logState.loaded && tab !== 'draft') {
+        logState.loading = true
+        const result = await listAdminEmailLogs({ mode: tab, limitCount: 10 }).catch((error) => ({ error, items: [], nextCursor: '', hasMore: false }))
+        if (result.error) logState.error = result.error?.message || 'Email activity could not be loaded.'
+        logState.items = result.items || []
+        logState.cursor = result.nextCursor || ''
+        logState.hasMore = result.hasMore === true
+        logState.loaded = true
+        logState.loading = false
+      } else if (tab === 'draft') {
+        state.contact.emailLogs.draft.loaded = true
+      }
     },
     settings: async () => {
       const [result, emailStatus] = await Promise.all([
@@ -3643,6 +3761,41 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
   } catch (error) {
     console.warn('[admin] section load failed', { sectionKey, code: error?.code, message: error?.message, details: error?.details })
     data.error = error?.message || `Could not load ${sectionKey}.`
+  } finally {
+    data.loading = false
+    data.loadingMore = false
+    render()
+  }
+}
+
+async function loadEmailLogs(tab = state.contact.emailLogTab || 'sent', { append = false, silent = false } = {}) {
+  const cleanTab = ['sent', 'failed', 'draft'].includes(tab) ? tab : 'sent'
+  const data = emailLogState(cleanTab)
+  if (append && (data.loadingMore || !data.hasMore)) return
+  if (cleanTab === 'draft') {
+    state.contact.emailLogs.draft = { ...data, items: [], loading: false, loadingMore: false, loaded: true, error: '', cursor: '', hasMore: false }
+    render()
+    return
+  }
+  if (append) {
+    data.loadingMore = true
+  } else {
+    data.loading = !silent
+    data.cursor = ''
+    data.hasMore = false
+    state.contact.emailLogDetailId = ''
+  }
+  data.error = ''
+  render()
+  try {
+    const result = await listAdminEmailLogs({ mode: cleanTab, limitCount: 10, cursor: append ? data.cursor : '' })
+    data.items = append ? mergePageItems(data.items, result.items || []) : (result.items || [])
+    data.cursor = result.nextCursor || ''
+    data.hasMore = result.hasMore === true
+    data.loaded = true
+  } catch (error) {
+    console.warn('[admin] email logs load failed', { tab: cleanTab, code: error?.code, message: error?.message, details: error?.details })
+    data.error = error?.message || 'Email activity could not be loaded.'
   } finally {
     data.loading = false
     data.loadingMore = false
@@ -3866,6 +4019,8 @@ async function submitAdminEmailForm(form, { self = false } = {}) {
     state.contact.emailForm = { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' }
     state.contact.emailStatus = await getEmailAdminStatus().catch(() => state.contact.emailStatus)
     state.settings.emailStatus = state.contact.emailStatus
+    state.contact.emailLogs.sent.loaded = false
+    if (state.contact.emailLogTab === 'sent') await loadEmailLogs('sent', { silent: true })
   } catch (error) {
     console.warn('[admin] email send failed', { code: error?.code, message: error?.message, details: error?.details })
     const safeCode = error?.details?.code || error?.code || ''
@@ -4314,6 +4469,31 @@ function bindEvents() {
   app.querySelector('[data-admin-email-self]')?.addEventListener('click', (event) => {
     event.preventDefault()
     submitAdminEmailForm(app.querySelector('[data-admin-email-form]'), { self: true })
+  })
+  app.querySelectorAll('[data-email-log-tab]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      const tab = button.getAttribute('data-email-log-tab') || 'sent'
+      state.contact.emailLogTab = ['sent', 'failed', 'draft'].includes(tab) ? tab : 'sent'
+      state.contact.emailLogDetailId = ''
+      window.history.pushState({}, '', `${ROUTES.adminContact}?mode=email&activity=${encodeURIComponent(state.contact.emailLogTab)}`)
+      render()
+      const data = emailLogState(state.contact.emailLogTab)
+      if (!data.loaded) loadEmailLogs(state.contact.emailLogTab, { silent: false })
+    })
+  })
+  app.querySelector('[data-email-log-load-more]')?.addEventListener('click', () => {
+    loadEmailLogs(state.contact.emailLogTab || 'sent', { append: true, silent: true })
+  })
+  app.querySelectorAll('[data-email-log-detail]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.contact.emailLogDetailId = button.getAttribute('data-email-log-detail') || ''
+      render()
+    })
+  })
+  app.querySelector('[data-close-email-log-detail]')?.addEventListener('click', () => {
+    state.contact.emailLogDetailId = ''
+    render()
   })
   app.querySelector('[data-admin-system-form]')?.addEventListener('input', (event) => {
     updateSystemFormFromDom(event.currentTarget)

@@ -20,9 +20,11 @@ import {
   updateCurrentUserProfile
 } from './firebase/auth'
 import { executeRecaptchaAction, getRecaptchaSiteKey, isRecaptchaAuthEnabled } from './security/recaptchaEnterprise'
+import { recordAccountSecurityEvent } from './services/accountEvents'
 import { ROUTES, cleanRedirectTarget } from './utils/routes'
 
 const app = document.querySelector('#app')
+const AUTH_DEVICE_KEY = 'melogic-auth-device-id'
 
 app.innerHTML = `
   ${renderPagePreloaderMarkup()}
@@ -301,6 +303,35 @@ function sanitizeMfaCode(value = '') {
   return String(value || '').replace(/\D/g, '').slice(0, 6)
 }
 
+function authDeviceId() {
+  try {
+    const existing = localStorage.getItem(AUTH_DEVICE_KEY)
+    if (existing) return existing
+    const generated = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    localStorage.setItem(AUTH_DEVICE_KEY, generated)
+    return generated
+  } catch {
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+}
+
+function browserSummary() {
+  const ua = navigator.userAgent || ''
+  const browser = ua.includes('Firefox') ? 'Firefox' : ua.includes('Edg/') ? 'Edge' : ua.includes('Chrome') ? 'Chrome' : ua.includes('Safari') ? 'Safari' : 'Browser'
+  const os = ua.includes('Mac OS X') ? 'macOS' : ua.includes('Windows') ? 'Windows' : ua.includes('Android') ? 'Android' : ua.includes('iPhone') || ua.includes('iPad') ? 'iOS' : 'Unknown OS'
+  return `${browser} on ${os}`
+}
+
+async function recordSuccessfulSignIn() {
+  await recordAccountSecurityEvent('new_login', {
+    deviceId: authDeviceId(),
+    browserSummary: browserSummary(),
+    path: ROUTES.accountSecurity
+  }).catch((error) => {
+    console.warn('[auth] new sign-in event failed', error?.code || error?.message || error)
+  })
+}
+
 function resetMfaChallenge() {
   pendingMfaResolver = null
   pendingMfaHint = null
@@ -478,6 +509,7 @@ async function handleSignInSubmit(event) {
     setFeedback('Signing in...', 'info')
     await authPersistenceReady
     await signInWithEmail(email, password)
+    await recordSuccessfulSignIn()
     setFeedback('Signed in successfully. Redirecting to your profile...', 'success')
     await redirectToProfile()
   } catch (error) {
@@ -508,6 +540,7 @@ async function handleMfaSubmit() {
     const assertion = TotpMultiFactorGenerator.assertionForSignIn(pendingMfaHint.uid, code)
     await pendingMfaResolver.resolveSignIn(assertion)
     resetMfaChallenge()
+    await recordSuccessfulSignIn()
     setFeedback('Signed in successfully. Redirecting...', 'success')
     await redirectToProfile()
   } catch (error) {
@@ -599,6 +632,7 @@ async function handleGoogleSignIn() {
       return
     }
 
+    await recordSuccessfulSignIn()
     setFeedback('Signed in with Google. Redirecting...', 'success')
     await redirectToProfile()
   } catch (error) {

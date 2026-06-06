@@ -1888,6 +1888,13 @@ export async function getEmailAdminStatus() {
   return result?.data || { ok: false, providerConfigured: false, recent: [] }
 }
 
+export async function listAdminEmailLogs({ mode = 'sent', limitCount = 10, cursor = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminEmailLogs')
+  const result = await callable({ mode, limit: limitCount, cursor })
+  return result?.data || { ok: false, items: [], nextCursor: '', hasMore: false }
+}
+
 export async function sendAdminEmail({ to = '', subject = '', body = '', category = 'support', relatedUid = '', relatedProductId = '', relatedOrderId = '', relatedReportId = '', cc = '', replyTo = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'sendAdminEmail')
