@@ -28,3 +28,34 @@ Email sender code reads Firebase Functions v2 secrets with `defineSecret`. Missi
 ## Security Notifications
 
 Security emails are concise account notices with timestamp, action summary, and support guidance. They never include TOTP secrets, recovery codes, or password reset links except in the dedicated reset/verification email flows.
+
+## Admin Email Operations
+
+Admin custom email is sent through `sendAdminEmail` and requires the `emailSend` permission. Owner/admin role fallback may qualify according to the current admin-claims model, but non-admin users cannot send arbitrary email.
+
+Admin email supports:
+
+- plain-text body converted to escaped HTML;
+- optional CC recipients;
+- optional Reply-To, defaulting to `support@melogicrecords.studio`;
+- categories: support, account, marketplace, moderation, order, security, payout, other;
+- related user/product/order/report IDs;
+- email log and admin audit log entries for sent, failed, and rate-limited attempts.
+
+Marketing/newsletter sending is out of scope. Any bulk or marketing email feature must include unsubscribe/compliance handling before it is added.
+
+## Email Logs
+
+`emailLogs/{emailId}` records recipient, recipient domain, CC domains, subject, category, template name, status, sender admin UID/email, related IDs, provider, provider message ID, timestamps, redacted errors, body hash, and a short body preview. Full secret/provider errors and SMTP credentials are never stored.
+
+Regular users cannot read or write email logs. Admins with `emailSend` or audit permissions can read through rules/callables. Backend code is the only writer.
+
+## Rate Limits
+
+Admin email sending uses transaction-backed Firestore counters:
+
+- per admin: 10 emails per 10 minutes;
+- global: 50 emails per hour;
+- per recipient: 5 emails per hour.
+
+Rate-limit failures return “Email rate limit reached. Try again later.” and write `admin_email_rate_limited` to `adminLogs`. No email is sent when a limit is exceeded.

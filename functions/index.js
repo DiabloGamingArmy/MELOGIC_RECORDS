@@ -62,7 +62,7 @@ const { updateAdminSettings } = require('./src/admin/updateAdminSettings')
 const { addAdminUserNote } = require('./src/admin/addAdminUserNote')
 const { setUserSuspension } = require('./src/admin/setUserSuspension')
 const { requestEmailVerification, requestPasswordResetEmail } = require('./src/email/authEmails')
-const { getEmailAdminStatus, sendAdminEmail } = require('./src/email/adminEmail')
+const { getEmailAdminStatus, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -133,4 +133,5 @@ exports.setUserSuspension = setUserSuspension
 exports.requestPasswordResetEmail = requestPasswordResetEmail
 exports.requestEmailVerification = requestEmailVerification
 exports.sendAdminEmail = sendAdminEmail
+exports.sendAdminAuthEmail = sendAdminAuthEmail
 exports.getEmailAdminStatus = getEmailAdminStatus

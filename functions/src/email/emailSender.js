@@ -209,12 +209,13 @@ function messageId() {
   return `<${crypto.randomUUID()}@melogicrecords.studio>`
 }
 
-function buildRawMessage({ to, subject, html, text, from, replyTo }) {
+function buildRawMessage({ to, cc = [], subject, html, text, from, replyTo }) {
   const boundary = `melogic-${crypto.randomBytes(12).toString('hex')}`
   const id = messageId()
   const headers = [
     `From: ${from}`,
     `To: ${to}`,
+    ...(cc.length ? [`Cc: ${cc.join(', ')}`] : []),
     `Reply-To: ${replyTo || SUPPORT_EMAIL}`,
     `Subject: ${cleanString(subject, 180).replace(/\r?\n/g, ' ')}`,
     `Message-ID: ${id}`,
@@ -271,8 +272,10 @@ async function sendViaSmtp(config, payload) {
     const built = buildRawMessage({ ...payload, from: config.from })
     writeSmtp(socket, `MAIL FROM:<${config.user}>`)
     await expectSmtp(secureReadLine, 250)
-    writeSmtp(socket, `RCPT TO:<${payload.to}>`)
-    await expectSmtp(secureReadLine, [250, 251])
+    for (const recipient of [payload.to, ...(payload.cc || [])]) {
+      writeSmtp(socket, `RCPT TO:<${recipient}>`)
+      await expectSmtp(secureReadLine, [250, 251])
+    }
     writeSmtp(socket, 'DATA')
     await expectSmtp(secureReadLine, 354)
     writeSmtp(socket, `${dotStuff(built.raw)}\r\n.`)
@@ -290,8 +293,10 @@ async function sendViaSmtp(config, payload) {
   const built = buildRawMessage({ ...payload, from: config.from })
   writeSmtp(socket, `MAIL FROM:<${config.user}>`)
   await expectSmtp(readLine, 250)
-  writeSmtp(socket, `RCPT TO:<${payload.to}>`)
-  await expectSmtp(readLine, [250, 251])
+  for (const recipient of [payload.to, ...(payload.cc || [])]) {
+    writeSmtp(socket, `RCPT TO:<${recipient}>`)
+    await expectSmtp(readLine, [250, 251])
+  }
   writeSmtp(socket, 'DATA')
   await expectSmtp(readLine, 354)
   writeSmtp(socket, `${dotStuff(built.raw)}\r\n.`)
@@ -301,7 +306,7 @@ async function sendViaSmtp(config, payload) {
   return { providerMessageId: built.messageId }
 }
 
-async function sendEmail({ to, subject, html, text, replyTo = SUPPORT_EMAIL, category = 'transactional', metadata = {} } = {}) {
+async function sendEmail({ to, cc = [], subject, html, text, replyTo = SUPPORT_EMAIL, category = 'transactional', metadata = {} } = {}) {
   const cleanTo = validateEmailAddress(to)
   if (!cleanTo) {
     const error = new Error('A valid recipient email is required.')
@@ -309,6 +314,7 @@ async function sendEmail({ to, subject, html, text, replyTo = SUPPORT_EMAIL, cat
     throw error
   }
   const cleanSubject = cleanString(subject, 180)
+  const cleanCc = Array.isArray(cc) ? Array.from(new Set(cc.map((email) => validateEmailAddress(email)).filter(Boolean))).slice(0, 10) : []
   if (!cleanSubject) {
     const error = new Error('Email subject is required.')
     error.code = 'invalid-subject'
@@ -331,7 +337,7 @@ async function sendEmail({ to, subject, html, text, replyTo = SUPPORT_EMAIL, cat
     throw error
   }
   try {
-    const result = await sendViaSmtp(config, { to: cleanTo, subject: cleanSubject, html: cleanHtml, text: cleanText, replyTo })
+    const result = await sendViaSmtp(config, { to: cleanTo, cc: cleanCc, subject: cleanSubject, html: cleanHtml, text: cleanText, replyTo })
     console.info('[emailSender] sent', { category, recipientDomain: domain, provider: config.provider, providerMessageId: result.providerMessageId, metadata: { template: metadata.template || '' } })
     return { ok: true, provider: config.provider, providerMessageId: result.providerMessageId }
   } catch (error) {

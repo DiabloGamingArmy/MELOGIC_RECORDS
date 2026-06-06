@@ -1888,10 +1888,17 @@ export async function getEmailAdminStatus() {
   return result?.data || { ok: false, providerConfigured: false, recent: [] }
 }
 
-export async function sendAdminEmail({ to = '', subject = '', body = '', category = 'support', relatedUid = '', relatedProductId = '', relatedOrderId = '' } = {}) {
+export async function sendAdminEmail({ to = '', subject = '', body = '', category = 'support', relatedUid = '', relatedProductId = '', relatedOrderId = '', relatedReportId = '', cc = '', replyTo = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'sendAdminEmail')
-  const result = await callable({ to, subject, body, category, relatedUid, relatedProductId, relatedOrderId })
+  const result = await callable({ to, subject, body, category, relatedUid, relatedProductId, relatedOrderId, relatedReportId, cc, replyTo })
+  return result?.data || { ok: false }
+}
+
+export async function sendAdminAuthEmail({ uid = '', type = '', to = '', subject = '', body = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'sendAdminAuthEmail')
+  const result = await callable({ uid, type, to, subject, body })
   return result?.data || { ok: false }
 }
 
