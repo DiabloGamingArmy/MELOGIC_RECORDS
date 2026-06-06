@@ -153,17 +153,63 @@ function renderDemoCards(items = []) {
   `).join('')}</div>`
 }
 
+function renderDemoSection(title = '', body = '', items = []) {
+  return `
+    <article class="studio-demo-type">
+      <div class="studio-type-heading">
+        <div>
+          <h3>${esc(title)}</h3>
+          <p>${esc(body)}</p>
+        </div>
+      </div>
+      ${renderDemoCards(items)}
+    </article>
+  `
+}
+
 function renderRecentList(projects = [], kind = 'daw') {
   if (!projects.length) {
-    return `<p class="studio-recents-empty">${kind === 'stage' ? 'Recent stage projects will appear here once you open a Stagemaker project.' : 'Recent projects will appear here once you open a project.'}</p>`
+    return `<p class="studio-recents-empty">${kind === 'stage' ? 'Your stage plans will appear here.' : 'Your DAW sessions will appear here.'}</p>`
   }
   const attr = kind === 'stage' ? 'data-open-stage-project' : 'data-open-daw-project'
-  return `<div class="studio-card-grid studio-recent-list">${projects.map((project) => `
+  return `<div class="studio-recent-list">${projects.map((project) => `
     <button class="studio-recent-item" ${attr}="${project.id}" type="button">
       <span class="studio-card-topline"><strong>${project.title}</strong><span class="studio-badge">${ownerBadge(project)}</span></span>
       <span>${kind === 'stage' ? stageSubtitle(project) : dawSubtitle(project)} - ${fmtDate(project)}</span>
     </button>
   `).join('')}</div>`
+}
+
+function renderRecentLane(kind = 'daw', projects = []) {
+  const isStage = kind === 'stage'
+  const href = isStage ? ROUTES.studioStagemaker : ROUTES.studioDaw
+  const createLabel = isStage ? 'New Stage Plan' : 'New DAW Project'
+  const createAttr = isStage ? 'data-new-stage-project' : 'data-new-daw-project'
+  return `
+    <article class="studio-type-lane">
+      <div class="studio-type-heading">
+        <div>
+          <h3>${isStage ? 'StageMaker Recents' : 'DAW Recents'}</h3>
+          <p>${isStage ? 'Stage plots, input lists, and room plans.' : 'Sessions, arrangements, and production files.'}</p>
+        </div>
+        <a href="${href}">View all</a>
+      </div>
+      ${renderRecentList(projects.slice(0, 3), kind)}
+      <a class="studio-create-link" ${state.user ? createAttr : ''} href="${state.user ? '#' : authRoute({ redirect: href })}">${createLabel}</a>
+    </article>
+  `
+}
+
+function renderRecentLanes() {
+  if (state.daw.error && state.stage.error) {
+    return `<p class="studio-recents-empty">${state.daw.error} ${state.stage.error}</p>`
+  }
+  return `
+    <section class="studio-type-lanes">
+      ${renderRecentLane('daw', state.daw.recentProjects)}
+      ${renderRecentLane('stage', state.stage.recentProjects)}
+    </section>
+  `
 }
 
 function renderMixedProjectRows(projects = []) {
@@ -195,6 +241,47 @@ function renderMixedProjectRows(projects = []) {
       </article>
     `
   }).join('')}</div>`
+}
+
+function renderProjectLibrary() {
+  if (state.daw.error && state.stage.error) return `<p class="studio-recents-empty">${state.daw.error} ${state.stage.error}</p>`
+  return `
+    <section class="studio-library-panel">
+      <div class="studio-library-header">
+        <div>
+          <h3>Project Library</h3>
+          <p>Browse your workspace by tool instead of sorting through one mixed stack.</p>
+        </div>
+        <div class="studio-filter-pills" aria-label="Project types">
+          <span>All</span>
+          <span>DAW</span>
+          <span>StageMaker</span>
+        </div>
+      </div>
+      <div class="studio-library-columns">
+        <article>
+          <div class="studio-type-heading">
+            <div>
+              <h3>DAW Projects</h3>
+              <p>${state.daw.projects.length} session${state.daw.projects.length === 1 ? '' : 's'}</p>
+            </div>
+            <a href="${ROUTES.studioDaw}">Open DAW</a>
+          </div>
+          ${renderProjectArea('daw')}
+        </article>
+        <article>
+          <div class="studio-type-heading">
+            <div>
+              <h3>Stage Plans</h3>
+              <p>${state.stage.projects.length} plan${state.stage.projects.length === 1 ? '' : 's'}</p>
+            </div>
+            <a href="${ROUTES.studioStagemaker}">Open StageMaker</a>
+          </div>
+          ${renderProjectArea('stage')}
+        </article>
+      </div>
+    </section>
+  `
 }
 
 function renderProjectArea(kind = 'daw') {
@@ -277,8 +364,6 @@ function renderProjectsPanel(kind = 'daw') {
 }
 
 function renderHub() {
-  const combined = mixedProjects()
-  const recent = combined.slice(0, 6)
   return `
     <section class="studio-main">
       <section class="studio-hub-hero">
@@ -288,22 +373,22 @@ function renderHub() {
           <p>Your creative workspace for production, stage planning, collaboration, and release prep.</p>
         </div>
         <div class="studio-hub-actions">
-          <a class="button button-accent" href="${ROUTES.studioDaw}">Open DAW</a>
-          <a class="button button-muted" href="${ROUTES.studioStagemaker}">Open Stagemaker</a>
+          <a class="studio-hub-cta" href="${ROUTES.studioDaw}">Open DAW</a>
+          <a class="studio-hub-cta" href="${ROUTES.studioStagemaker}">Open StageMaker</a>
         </div>
       </section>
 
       <div class="studio-section-heading"><h2>CONTINUE WORKING</h2><span class="studio-section-line studio-section-line--recents"></span></div>
-      ${state.daw.loading || state.stage.loading ? '<p class="studio-recents-empty">Loading recent work...</p>' : renderMixedProjectRows(recent)}
+      ${state.daw.loading || state.stage.loading ? '<p class="studio-recents-empty">Loading recent work...</p>' : renderRecentLanes()}
 
       <div class="studio-section-heading"><h2>DEMO PROJECTS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       <div class="studio-demo-stack">
-        ${renderDemoCards(dawDemos)}
-        ${renderDemoCards(stageDemos)}
+        ${renderDemoSection('DAW Demos', 'Reference sessions and production examples.', dawDemos)}
+        ${renderDemoSection('StageMaker Templates', 'Venue layouts and stage-plan starting points.', stageDemos)}
       </div>
 
-      <div class="studio-section-heading"><h2>YOUR PROJECTS</h2><span class="studio-section-line studio-section-line--projects"></span></div>
-      <section class="studio-projects-panel is-compact"><div class="studio-projects-body">${state.daw.error && state.stage.error ? `<p class="studio-recents-empty">${state.daw.error} ${state.stage.error}</p>` : renderMixedProjectRows(combined)}</div></section>
+      <div class="studio-section-heading"><h2>PROJECT LIBRARY</h2><span class="studio-section-line studio-section-line--projects"></span></div>
+      ${renderProjectLibrary()}
 
       <div class="studio-section-heading"><h2>STUDIO MODULES</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       <div class="studio-module-grid">

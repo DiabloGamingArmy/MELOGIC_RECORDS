@@ -64,7 +64,7 @@ const SECTIONS = [
   { key: 'orders', route: ROUTES.adminOrders, label: 'Orders', icon: 'shoppingCart', permission: 'orderSupport' },
   { key: 'team', route: ROUTES.adminTeam, label: 'Roles', icon: 'folderPlus', permission: 'roleManage' },
   { key: 'logs', route: ROUTES.adminLogs, label: 'Logs', icon: 'fileText', permission: 'auditRead' },
-  { key: 'contact', route: ROUTES.adminContact, label: 'Contact', icon: 'messageCircle', permission: 'emailSend' },
+  { key: 'contact', route: ROUTES.adminContact, label: 'Contact', icon: 'mailSend', permission: 'emailSend' },
   { key: 'tools', route: ROUTES.adminTools, label: 'Tools', icon: 'folderPlus', permission: 'admin' },
   { key: 'settings', route: ROUTES.adminSettings, label: 'Settings', icon: 'edit', permission: 'admin' }
 ]
@@ -3220,10 +3220,9 @@ function emailActivitySearchToolbar() {
   const active = state.contact.emailLogSearch || ''
   return `
     <form class="admin-email-search" data-email-log-search-form>
-      <input data-email-log-search-input value="${escapeHtml(state.contact.emailLogSearchInput || active)}" placeholder="Search emails by recipient, subject, sender, username, UID, role, or content" />
+      <input data-email-log-search-input value="${escapeHtml(state.contact.emailLogSearchInput || active)}" placeholder="Search recipient, subject, sender, username, UID, role, or content" />
       <button type="submit" class="admin-secondary-button">Search</button>
       ${active ? '<button type="button" class="admin-secondary-button" data-email-log-search-clear>Clear</button>' : ''}
-      ${active ? `<span class="admin-muted">Searching: ${escapeHtml(active)}</span>` : ''}
     </form>
   `
 }
@@ -3258,8 +3257,8 @@ function emailLogRows(tab = 'sent', rows = []) {
     if (tab === 'failed') {
       return [
         htmlCell(`<strong>${escapeHtml(row.toDomain || row.recipientDomain || 'Recipient')}</strong><small>${escapeHtml(row.to || '')}</small>`),
-        compactText(row.subject || '', 70),
-        humanLabel(row.category || ''),
+        htmlCell(`<span class="admin-email-two-line">${escapeHtml(compactText(row.subject || '', 120))}</span>`),
+        htmlCell(`<span class="admin-email-two-line">${escapeHtml(humanLabel(row.category || ''))}</span>`),
         htmlCell(`<strong>${escapeHtml(row.errorCode || 'failed')}</strong><small>${escapeHtml(compactText(row.errorMessageRedacted || '', 80))}</small>`),
         htmlCell(`<strong>${escapeHtml(row.sentByUsername || row.sentByUid || 'System')}</strong>${row.sentByUid ? `<small>${escapeHtml(row.sentByUid)}</small>` : ''}`),
         formatDate(row.createdAt || row.failedAt),
@@ -3268,8 +3267,8 @@ function emailLogRows(tab = 'sent', rows = []) {
     }
     return [
       htmlCell(`<strong>${escapeHtml(row.to || row.recipientDomain || 'Recipient')}</strong><small>${escapeHtml(row.recipientDomain || row.toDomain || '')}</small>`),
-      compactText(row.subject || '', 70),
-      humanLabel(row.category || ''),
+      htmlCell(`<span class="admin-email-two-line">${escapeHtml(compactText(row.subject || '', 120))}</span>`),
+      htmlCell(`<span class="admin-email-two-line">${escapeHtml(humanLabel(row.category || ''))}</span>`),
       htmlCell(renderBadge(humanLabel(row.status || 'sent'), row.status === 'sent' ? 'approved' : 'pending')),
       htmlCell(`<strong>${escapeHtml(row.sentByUsername || row.sentByUid || 'System')}</strong>${row.sentByUid ? `<small>${escapeHtml(row.sentByUid)}</small>` : ''}`),
       formatDate(row.createdAt || row.sentAt),
@@ -3288,7 +3287,19 @@ function emailLogDetail() {
   const detailId = state.contact.emailLogDetailId || ''
   if (!detailId) return ''
   const row = emailLogState(tab).items.find((item) => item.emailId === detailId)
-  if (!row) return ''
+  if (!row) {
+    return `
+      <div class="admin-email-detail-backdrop" data-email-log-detail-backdrop>
+        <article class="admin-email-detail-drawer" role="dialog" aria-modal="true" aria-label="Email details">
+          <div class="admin-slab-heading">
+            <h3>Email Details</h3>
+            <button type="button" class="admin-icon-button" data-close-email-log-detail title="Close">${iconSvg('x')}</button>
+          </div>
+          <article class="admin-empty-state"><strong>Email log not loaded.</strong><span>Load the matching activity tab or clear search, then open details again.</span></article>
+        </article>
+      </div>
+    `
+  }
   const view = state.contact.emailLogDetailView || 'preview'
   const htmlPreview = row.renderedHtml || row.htmlPreview || ''
   const plainText = row.plainText || row.bodyPreview || ''
@@ -3300,7 +3311,8 @@ function emailLogDetail() {
         ? `<iframe class="admin-email-preview-frame" sandbox srcdoc="${escapeHtml(htmlPreview)}" title="Email preview"></iframe>`
         : '<article class="admin-empty-state">Full rendered preview was not stored for this email. Future emails will include preview data.</article>'
   return `
-    <article class="admin-email-detail-drawer">
+    <div class="admin-email-detail-backdrop" data-email-log-detail-backdrop>
+    <article class="admin-email-detail-drawer" role="dialog" aria-modal="true" aria-label="Email details">
       <div class="admin-slab-heading">
         <h3>Email Details</h3>
         <button type="button" class="admin-icon-button" data-close-email-log-detail title="Close">${iconSvg('x')}</button>
@@ -3310,7 +3322,8 @@ function emailLogDetail() {
         renderField('CC domains', (row.ccDomains || []).join(', ') || 'None'),
         renderField('Reply-To', row.replyTo || 'Not set'),
         renderField('Subject', row.subject, { wide: true }),
-        renderField('Template', row.templateType || row.templateName || 'Not stored'),
+        renderField('Final sent subject', row.finalSubject || row.subject, { wide: true }),
+        renderField('Template type', row.templateType || row.templateName || 'Not stored'),
         renderField('Category', humanLabel(row.category)),
         renderField('Status', humanLabel(row.status)),
         renderField('Provider', row.provider || 'smtp'),
@@ -3336,6 +3349,7 @@ function emailLogDetail() {
       </div>
       ${previewContent}
     </article>
+    </div>
   `
 }
 
@@ -3343,21 +3357,24 @@ function emailActivityPanel() {
   const tab = state.contact.emailLogTab || 'sent'
   const data = emailLogState(tab)
   return `
-    <section class="admin-section-slab admin-email-activity admin-fixed-panel">
-      <div class="admin-slab-heading">
+    <section class="admin-section-slab admin-email-activity">
+      <div class="admin-email-activity-header">
         <div>
           <h2>Email Activity</h2>
           <p class="admin-muted">Sent, failed, and draft activity is paginated separately from the composer.</p>
         </div>
         <span class="admin-muted">${data.items.length} loaded</span>
       </div>
-      ${emailActivitySearchToolbar()}
-      ${emailActivityTabs(tab)}
+      <div class="admin-email-activity-toolbar">
+        ${emailActivityTabs(tab)}
+        ${emailActivitySearchToolbar()}
+      </div>
+      ${state.contact.emailLogSearch ? `<p class="admin-email-search-note">Searching: ${escapeHtml(state.contact.emailLogSearch)}</p>` : ''}
       <div class="admin-table-scroll admin-email-activity-scroll">
         ${data.loading ? '<article class="admin-empty-state">Loading email activity...</article>' : data.error ? `<article class="admin-empty-state"><strong>Could not load email activity.</strong><span>${escapeHtml(data.error)}</span></article>` : emailLogRows(tab, data.items)}
         ${data.hasMore ? `<div class="admin-load-more-row"><button type="button" class="admin-secondary-button" data-email-log-load-more ${data.loadingMore ? 'disabled' : ''}>${data.loadingMore ? 'Loading...' : 'Load more'}</button></div>` : ''}
-        ${emailLogDetail()}
       </div>
+      ${emailLogDetail()}
     </section>
   `
 }
@@ -4740,6 +4757,12 @@ function bindEvents() {
     })
   })
   app.querySelector('[data-close-email-log-detail]')?.addEventListener('click', () => {
+    state.contact.emailLogDetailId = ''
+    window.history.pushState({}, '', `${ROUTES.adminContact}?mode=email&activity=${encodeURIComponent(state.contact.emailLogTab || 'sent')}`)
+    render()
+  })
+  app.querySelector('[data-email-log-detail-backdrop]')?.addEventListener('click', (event) => {
+    if (event.target !== event.currentTarget) return
     state.contact.emailLogDetailId = ''
     window.history.pushState({}, '', `${ROUTES.adminContact}?mode=email&activity=${encodeURIComponent(state.contact.emailLogTab || 'sent')}`)
     render()
