@@ -14,6 +14,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { auth, sendEmailVerificationRequest, sendPasswordReset, waitForInitialAuthState } from './firebase/auth'
 import { markAccountEventRead, markAllAccountEventsRead, recordAccountSecurityEvent, subscribeToAccountEvents } from './services/accountEvents'
+import { generateRecoveryCodes, getRecoveryCodeStatus } from './services/recoveryCodes'
 import { ROUTES, authRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
@@ -53,6 +54,16 @@ let state = {
   verificationStatus: '',
   verificationStatusType: 'info',
   sendingVerification: false,
+  recovery: {
+    loading: false,
+    generating: false,
+    generated: false,
+    remaining: 0,
+    generatedAt: '',
+    status: '',
+    statusType: 'info',
+    modalCodes: []
+  },
   totp: {
     stage: 'idle',
     qrDataUrl: '',
@@ -281,6 +292,53 @@ function renderDisableTotpDialog(isAdminAccount = false) {
   `
 }
 
+function renderRecoveryCodesPanel(factors = []) {
+  const enabled = factors.some((factor) => factor.factorId === TotpMultiFactorGenerator.FACTOR_ID)
+  const generated = state.recovery.generated === true
+  const badge = !enabled ? '2FA required' : generated ? 'Generated' : 'Not generated'
+  const badgeClass = generated ? 'is-good' : 'is-warning'
+  const copy = !enabled
+    ? 'Enable authenticator-app 2FA before generating recovery codes.'
+    : generated
+      ? `${state.recovery.remaining} recovery code${state.recovery.remaining === 1 ? '' : 's'} remaining. Regenerating invalidates old codes.`
+      : 'Generate backup codes you can save for account recovery if your authenticator app is unavailable.'
+  return `
+    <article class="security-panel security-recovery-panel">
+      <div class="security-heading">
+        <div>
+          <p class="eyebrow">Recovery</p>
+          <h2>Recovery codes</h2>
+        </div>
+        <span class="security-pill ${badgeClass}">${escapeHtml(badge)}</span>
+      </div>
+      <p class="security-copy">${escapeHtml(copy)}</p>
+      ${state.recovery.status ? `<p class="security-status" data-state="${escapeHtml(state.recovery.statusType)}">${escapeHtml(state.recovery.status)}</p>` : ''}
+      <button type="button" class="button ${generated ? 'button-muted' : 'button-accent'}" data-generate-recovery-codes ${enabled && !state.recovery.generating ? '' : 'disabled'}>
+        ${state.recovery.generating ? 'Generating...' : generated ? 'Regenerate Codes' : 'Generate Recovery Codes'}
+      </button>
+    </article>
+  `
+}
+
+function renderRecoveryCodesDialog() {
+  if (!state.recovery.modalCodes.length) return ''
+  return `
+    <div class="security-modal-backdrop" role="presentation">
+      <section class="security-modal security-recovery-modal" role="dialog" aria-modal="true" aria-labelledby="recovery-codes-title">
+        <h2 id="recovery-codes-title">Save these recovery codes now</h2>
+        <p>You will not be able to view these codes again after closing this window.</p>
+        <div class="security-recovery-code-list">
+          ${state.recovery.modalCodes.map((code) => `<code>${escapeHtml(code)}</code>`).join('')}
+        </div>
+        <div class="security-actions">
+          <button type="button" class="button button-muted" data-copy-recovery-codes>Copy Codes</button>
+          <button type="button" class="button button-accent" data-close-recovery-codes>I Saved These Codes</button>
+        </div>
+      </section>
+    </div>
+  `
+}
+
 function renderReauthDialog() {
   if (!state.reauth.visible) return ''
   return `
@@ -381,17 +439,7 @@ function render() {
 
       ${renderTotpPanel(factors)}
 
-      <article class="security-panel">
-        <div class="security-heading">
-          <div>
-            <p class="eyebrow">Recovery</p>
-            <h2>Recovery codes</h2>
-          </div>
-          <span class="security-pill">Planned</span>
-        </div>
-        <p class="security-copy">Recovery codes will be available after authenticator-app 2FA enrollment is enabled.</p>
-        <button type="button" class="button button-muted" disabled>Generate Recovery Codes</button>
-      </article>
+      ${renderRecoveryCodesPanel(factors)}
 
       <article class="security-panel">
         <div class="security-heading">
@@ -420,6 +468,7 @@ function render() {
       </article>
     </div>
     ${renderDisableTotpDialog(isAdminAccount)}
+    ${renderRecoveryCodesDialog()}
     ${renderReauthDialog()}
   `
   bindActions()
@@ -455,6 +504,12 @@ function bindActions() {
     render()
   })
   root.querySelector('[data-confirm-disable-totp]')?.addEventListener('click', disableTotp)
+  root.querySelector('[data-generate-recovery-codes]')?.addEventListener('click', handleGenerateRecoveryCodes)
+  root.querySelector('[data-copy-recovery-codes]')?.addEventListener('click', copyRecoveryCodes)
+  root.querySelector('[data-close-recovery-codes]')?.addEventListener('click', () => {
+    state.recovery.modalCodes = []
+    render()
+  })
   root.querySelector('[data-reauth-password]')?.addEventListener('input', (event) => {
     state.reauth.password = event.currentTarget.value
   })
@@ -527,6 +582,62 @@ async function refreshCurrentUser() {
     await auth.currentUser.getIdToken(true).catch(() => {})
     state.user = auth.currentUser
   }
+}
+
+async function loadRecoveryStatus({ silent = false } = {}) {
+  if (!state.user) return
+  if (!silent) state.recovery.loading = true
+  try {
+    const status = await getRecoveryCodeStatus()
+    state.recovery.generated = status.generated === true
+    state.recovery.remaining = Number(status.remaining || 0)
+    state.recovery.generatedAt = status.generatedAt || ''
+    state.recovery.status = ''
+    state.recovery.statusType = 'info'
+  } catch (error) {
+    console.warn('[account-security] recovery status failed', error?.code || error?.message || error)
+    state.recovery.status = 'Recovery code status could not be loaded.'
+    state.recovery.statusType = 'error'
+  } finally {
+    state.recovery.loading = false
+  }
+}
+
+async function handleGenerateRecoveryCodes() {
+  if (!state.user || state.recovery.generating) return
+  state.recovery.generating = true
+  state.recovery.status = state.recovery.generated ? 'Regenerating recovery codes will invalidate old codes...' : 'Generating recovery codes...'
+  state.recovery.statusType = 'info'
+  render()
+  try {
+    const result = await generateRecoveryCodes()
+    state.recovery.generated = true
+    state.recovery.remaining = Number(result.remaining || result.codes?.length || 0)
+    state.recovery.modalCodes = Array.isArray(result.codes) ? result.codes : []
+    state.recovery.status = 'Recovery codes generated. Save them before closing the modal.'
+    state.recovery.statusType = 'success'
+  } catch (error) {
+    console.warn('[account-security] recovery code generation failed', error?.code || error?.message || error)
+    state.recovery.status = error?.message || 'Recovery codes could not be generated.'
+    state.recovery.statusType = 'error'
+  } finally {
+    state.recovery.generating = false
+    render()
+  }
+}
+
+async function copyRecoveryCodes() {
+  const codes = state.recovery.modalCodes || []
+  if (!codes.length) return
+  try {
+    await navigator.clipboard.writeText(codes.join('\n'))
+    state.recovery.status = 'Recovery codes copied.'
+    state.recovery.statusType = 'success'
+  } catch {
+    state.recovery.status = 'Copy failed. Select the codes and save them manually.'
+    state.recovery.statusType = 'error'
+  }
+  render()
 }
 
 async function startTotpSetup() {
@@ -720,6 +831,7 @@ function startAccountEventsSubscription() {
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible' || !auth.currentUser) return
   await refreshCurrentUser()
+  await loadRecoveryStatus({ silent: true })
   render()
 })
 
@@ -730,6 +842,7 @@ waitForInitialAuthState().then(async (user) => {
     return
   }
   await refreshCurrentUser()
+  await loadRecoveryStatus({ silent: true })
   try {
     const token = await getIdTokenResult(state.user, true)
     state.claims = token.claims || {}

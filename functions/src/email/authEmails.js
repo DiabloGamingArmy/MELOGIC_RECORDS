@@ -94,6 +94,14 @@ function customAuthActionLink(firebaseLink = '', fallbackMode = '') {
   return output.toString()
 }
 
+function sanitizedActionPreview(template = {}) {
+  return {
+    renderedHtml: cleanString(String(template.html || '').replace(/href="[^"]+"/g, 'href="[secure action link]"'), 20000),
+    plainText: cleanString(String(template.text || '').replace(/https?:\/\/\S+/g, '[secure action link]'), 10000),
+    ctaUrl: '[secure action link]'
+  }
+}
+
 async function writeFailedEmailLog(flow = '', {
   stage = 'unknown',
   email = '',
@@ -262,7 +270,7 @@ const requestPasswordResetEmail = onCall({ timeoutSeconds: 60, memory: '256MiB',
       provider: result.provider || 'smtp',
       providerMessageId: result.providerMessageId || '',
       status: 'sent',
-      metadata: { template: 'password_reset' }
+      metadata: { template: 'password_reset', templateType: 'auth_password_reset', finalSubject: template.subject, ...sanitizedActionPreview(template) }
     })
     logStage(flow, 'email log write succeeded', { uid: userRecord.uid, recipientDomain: recipientDomain(email), status: 'sent' })
 
@@ -290,7 +298,7 @@ const requestPasswordResetEmail = onCall({ timeoutSeconds: 60, memory: '256MiB',
       category: 'password_reset',
       relatedUid: userRecord?.uid || '',
       error,
-      metadata: { template: 'password_reset' }
+        metadata: { template: 'password_reset' }
     })
     await writePasswordResetFailureEvent(flow, userRecord, error, stage)
     return { ok: true, message: GENERIC_RESET_MESSAGE }
@@ -361,7 +369,7 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
       provider: result.provider || 'smtp',
       providerMessageId: result.providerMessageId || '',
       status: 'sent',
-      metadata: { template: 'email_verification' }
+      metadata: { template: 'email_verification', templateType: 'auth_email_verification', finalSubject: template.subject, ...sanitizedActionPreview(template) }
     })
     logStage(flow, 'email log write succeeded', { uid, recipientDomain: recipientDomain(email), status: 'sent' })
 

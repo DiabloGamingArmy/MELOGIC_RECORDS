@@ -43,6 +43,7 @@ const {
 } = require('./src/community/communityModeration')
 const { createReport } = require('./src/reports/createReport')
 const { recordAccountSecurityEvent } = require('./src/account/recordAccountSecurityEvent')
+const { generateRecoveryCodes, getRecoveryCodeStatus, useRecoveryCode } = require('./src/account/recoveryCodes')
 const { reviewProductDecision } = require('./src/admin/reviewProductDecision')
 const { listMarketplaceReviewQueue } = require('./src/admin/listMarketplaceReviewQueue')
 const { setAdminUserRole } = require('./src/admin/setAdminUserRole')
@@ -113,6 +114,9 @@ exports.moderateCommunity = moderateCommunity
 exports.listAdminCommunityModeration = listAdminCommunityModeration
 exports.createReport = createReport
 exports.recordAccountSecurityEvent = recordAccountSecurityEvent
+exports.generateRecoveryCodes = generateRecoveryCodes
+exports.getRecoveryCodeStatus = getRecoveryCodeStatus
+exports.useRecoveryCode = useRecoveryCode
 exports.reviewProductDecision = reviewProductDecision
 exports.listMarketplaceReviewQueue = listMarketplaceReviewQueue
 exports.setAdminUserRole = setAdminUserRole

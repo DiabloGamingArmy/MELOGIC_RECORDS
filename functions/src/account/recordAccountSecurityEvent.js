@@ -17,7 +17,7 @@ const CLIENT_SECURITY_EVENTS = new Set([
   'recovery_codes_generated'
 ])
 
-const EMAIL_SECURITY_EVENTS = new Set(['new_login', 'two_factor_enabled', 'two_factor_disabled'])
+const EMAIL_SECURITY_EVENTS = new Set(['new_login'])
 
 const EVENT_COPY = {
   password_reset_requested: {
