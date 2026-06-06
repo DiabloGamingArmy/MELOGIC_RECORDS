@@ -1881,6 +1881,20 @@ export async function updateAdminSettings({ section = '', values = {}, reason = 
   return result?.data || { ok: false, settings: {} }
 }
 
+export async function getEmailAdminStatus() {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'getEmailAdminStatus')
+  const result = await callable({})
+  return result?.data || { ok: false, providerConfigured: false, recent: [] }
+}
+
+export async function sendAdminEmail({ to = '', subject = '', body = '', category = 'support', relatedUid = '', relatedProductId = '', relatedOrderId = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'sendAdminEmail')
+  const result = await callable({ to, subject, body, category, relatedUid, relatedProductId, relatedOrderId })
+  return result?.data || { ok: false }
+}
+
 export async function createReport({ targetType = '', targetId = '', targetOwnerUid = '', reason = '', description = '', sourcePath = '', metadata = {} } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'createReport')

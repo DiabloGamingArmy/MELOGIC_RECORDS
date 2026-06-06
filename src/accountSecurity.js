@@ -3,7 +3,7 @@ import './styles/accountSecurity.css'
 import { getIdTokenResult, multiFactor } from 'firebase/auth'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
-import { auth, sendPasswordReset, waitForInitialAuthState } from './firebase/auth'
+import { auth, sendEmailVerificationRequest, sendPasswordReset, waitForInitialAuthState } from './firebase/auth'
 import { markAccountEventRead, markAllAccountEventsRead, recordAccountSecurityEvent, subscribeToAccountEvents } from './services/accountEvents'
 import { ROUTES, authRoute } from './utils/routes'
 
@@ -41,6 +41,9 @@ let state = {
   resetStatus: '',
   resetStatusType: 'info',
   sendingReset: false,
+  verificationStatus: '',
+  verificationStatusType: 'info',
+  sendingVerification: false,
   claims: {},
   unsubscribeEvents: () => {}
 }
@@ -126,6 +129,9 @@ function render() {
   const resetMessage = state.resetStatus
     ? `<p class="security-status" data-state="${escapeHtml(state.resetStatusType)}">${escapeHtml(state.resetStatus)}</p>`
     : ''
+  const verificationMessage = state.verificationStatus
+    ? `<p class="security-status" data-state="${escapeHtml(state.verificationStatusType)}">${escapeHtml(state.verificationStatus)}</p>`
+    : ''
 
   root.innerHTML = `
     <div class="security-layout">
@@ -144,6 +150,20 @@ function render() {
           <div><dt>2FA</dt><dd>${factors.length ? `${factors.length} factor enrolled` : 'Not enrolled'}</dd></div>
         </dl>
         ${isAdminAccount && !factors.length ? '<p class="security-status" data-state="error">Admin accounts should enroll 2FA when authenticator-app support is enabled.</p>' : ''}
+      </article>
+
+      <article class="security-panel">
+        <div class="security-heading">
+          <div>
+            <p class="eyebrow">Email</p>
+            <h2>Email verification</h2>
+          </div>
+        </div>
+        <p class="security-copy">Verification links are sent from Melogic Records Support to your current account email.</p>
+        ${verificationMessage}
+        <button type="button" class="button button-accent" data-send-verification-email ${state.sendingVerification || !user.email || user.emailVerified ? 'disabled' : ''}>
+          ${user.emailVerified ? 'Email Verified' : state.sendingVerification ? 'Sending...' : 'Send Verification Email'}
+        </button>
       </article>
 
       <article class="security-panel">
@@ -216,6 +236,7 @@ function render() {
 
 function bindActions() {
   root.querySelector('[data-send-security-reset]')?.addEventListener('click', handlePasswordReset)
+  root.querySelector('[data-send-verification-email]')?.addEventListener('click', handleEmailVerification)
   root.querySelector('[data-mark-all-account-events]')?.addEventListener('click', async () => {
     await markAllAccountEventsRead(state.user.uid, state.events).catch((error) => {
       console.warn('[account-security] mark all read failed', error?.code || error?.message || error)
@@ -226,6 +247,27 @@ function bindActions() {
       await markAccountEventRead(state.user.uid, card.dataset.accountEventId).catch(() => {})
     })
   })
+}
+
+async function handleEmailVerification() {
+  if (!state.user?.email || state.user.emailVerified || state.sendingVerification) return
+  state.sendingVerification = true
+  state.verificationStatus = 'Sending verification email...'
+  state.verificationStatusType = 'info'
+  render()
+
+  try {
+    const result = await sendEmailVerificationRequest()
+    state.verificationStatus = result?.message || 'Verification email sent.'
+    state.verificationStatusType = 'success'
+  } catch (error) {
+    console.warn('[account-security] verification email failed', error?.code || error?.message || error)
+    state.verificationStatus = 'Verification email could not be sent. Please try again.'
+    state.verificationStatusType = 'error'
+  } finally {
+    state.sendingVerification = false
+    render()
+  }
 }
 
 async function handlePasswordReset() {

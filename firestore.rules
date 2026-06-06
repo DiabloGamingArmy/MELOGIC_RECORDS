@@ -34,6 +34,10 @@ service cloud.firestore {
       return isOwnerAdminRole() || (isAdminClaim() && request.auth.token.orderSupport == true);
     }
 
+    function hasEmailSendClaim() {
+      return isOwnerAdminRole() || (isAdminClaim() && request.auth.token.emailSend == true);
+    }
+
     function canReadReportsClaim() {
       return hasUserModerateClaim() || hasProductReviewClaim() || hasOrderSupportClaim();
     }
@@ -1700,6 +1704,15 @@ service cloud.firestore {
     match /adminLogs/{logId} {
       allow read: if hasAuditReadClaim() || hasRoleManageClaim();
       allow write: if false;
+    }
+
+    match /emailLogs/{emailId} {
+      allow read: if hasAuditReadClaim() || hasEmailSendClaim();
+      allow write: if false;
+    }
+
+    match /emailRateLimits/{rateLimitId} {
+      allow read, write: if false;
     }
 
     function communityStoryKeysAllowed() {

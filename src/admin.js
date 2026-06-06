@@ -5,6 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import {
   getAdminSettings,
   getAdminOrder,
+  getEmailAdminStatus,
   getAdminLog,
   getAdminReport,
   getAdminUserProfile,
@@ -19,6 +20,7 @@ import {
   reviewProductDecision,
   addAdminUserNote,
   setAdminUserRole,
+  sendAdminEmail,
   setUserSuspension,
   updateReportDecision,
   updateAdminSettings,
@@ -259,7 +261,11 @@ const state = {
     saving: false,
     updatedAt: null,
     updatedBy: '',
-    dialog: { open: false, section: '' }
+    dialog: { open: false, section: '' },
+    emailStatus: null,
+    emailForm: { to: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '' },
+    emailSending: false,
+    emailMessage: ''
   },
   dialog: {
     open: false,
@@ -354,7 +360,8 @@ function humanLabel(value = '') {
     ai_failed: 'AI Error',
     failed_ai_auth: 'AI Auth Error',
     marketplaceReviewer: 'Marketplace Reviewer',
-    listingEditor: 'Listing Editor'
+    listingEditor: 'Listing Editor',
+    emailSend: 'Email Send'
   }
   if (known[text]) return known[text]
   return sharedActionLabel(text)
@@ -394,6 +401,7 @@ function setAuditTab(tabKey = 'listing') {
 
 function can(permission = 'admin') {
   if (permission === 'admin') return state.claims.admin === true
+  if (permission === 'emailSend' && ['owner', 'admin'].includes(state.claims.adminRole || '')) return true
   return state.claims[permission] === true
 }
 
@@ -2550,7 +2558,7 @@ function adminTeamTable(team = []) {
 }
 
 function permissionMatrixMarkup(permissions = {}) {
-  const keys = ['admin', 'productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead', 'settingsManage']
+  const keys = ['admin', 'productReview', 'listingEdit', 'userRead', 'userModerate', 'orderSupport', 'roleManage', 'auditRead', 'settingsManage', 'emailSend']
   return `
     <div class="admin-permission-matrix">
       ${keys.map((key) => {
@@ -2888,7 +2896,63 @@ function settingsView() {
     <section class="admin-settings-grid">
       ${SETTINGS_SECTIONS.map((section) => settingsCard(section, settings[section.key] || {})).join('')}
     </section>
+    ${emailSettingsPanel()}
     ${settingsDialog()}
+  `
+}
+
+function emailSettingsPanel() {
+  const status = state.settings.emailStatus || {}
+  const form = state.settings.emailForm || {}
+  const canSend = can('emailSend')
+  const recent = Array.isArray(status.recent) ? status.recent : []
+  return `
+    <section class="admin-section-slab admin-email-settings">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Email</h2>
+          <p class="admin-muted">Sender architecture for support, auth, security, and admin messages.</p>
+        </div>
+        <span class="review-badge ${status.providerConfigured ? 'is-approved' : 'is-warning'}">${status.providerConfigured ? 'Configured' : 'Secrets Required'}</span>
+      </div>
+      <dl class="admin-field-grid is-compact">
+        ${renderField('Sender address', status.senderAddress || 'support@melogicrecords.studio')}
+        ${renderField('Provider', status.provider || 'smtp')}
+        ${renderBooleanField('Provider configured', status.providerConfigured)}
+        ${renderBooleanField('Password reset custom sender', status.passwordResetCustomSenderEnabled)}
+        ${renderBooleanField('Verification custom sender', status.verificationCustomSenderEnabled)}
+        ${renderBooleanField('Security notifications', status.securityNotificationsEnabled)}
+      </dl>
+      <form class="admin-email-form" data-admin-email-form>
+        <div class="admin-form-grid">
+          <label><span>Recipient email</span><input data-admin-email-field="to" type="email" value="${escapeHtml(form.to)}" ${canSend ? '' : 'disabled'} /></label>
+          <label><span>Category</span><select data-admin-email-field="category" ${canSend ? '' : 'disabled'}>
+            ${['support', 'account', 'marketplace', 'moderation', 'payout', 'other'].map((category) => `<option value="${category}" ${form.category === category ? 'selected' : ''}>${escapeHtml(humanLabel(category))}</option>`).join('')}
+          </select></label>
+          <label><span>Related user UID</span><input data-admin-email-field="relatedUid" value="${escapeHtml(form.relatedUid)}" ${canSend ? '' : 'disabled'} /></label>
+          <label><span>Related product ID</span><input data-admin-email-field="relatedProductId" value="${escapeHtml(form.relatedProductId)}" ${canSend ? '' : 'disabled'} /></label>
+          <label><span>Related order ID</span><input data-admin-email-field="relatedOrderId" value="${escapeHtml(form.relatedOrderId)}" ${canSend ? '' : 'disabled'} /></label>
+        </div>
+        <label><span>Subject</span><input data-admin-email-field="subject" maxlength="180" value="${escapeHtml(form.subject)}" ${canSend ? '' : 'disabled'} /></label>
+        <label><span>Message</span><textarea data-admin-email-field="body" rows="7" maxlength="5000" ${canSend ? '' : 'disabled'}>${escapeHtml(form.body)}</textarea></label>
+        ${state.settings.emailMessage ? `<p class="admin-status ${state.settings.emailMessage.startsWith('Sent') ? 'is-success' : 'is-error'}">${escapeHtml(state.settings.emailMessage)}</p>` : ''}
+        <div class="admin-modal-actions">
+          <button type="button" class="admin-secondary-button" data-admin-email-self ${canSend && state.currentUser?.email ? '' : 'disabled'}>Send Test to Self</button>
+          <button type="submit" class="admin-primary-button" ${canSend && !state.settings.emailSending ? '' : 'disabled'}>${state.settings.emailSending ? 'Sending...' : 'Send Email'}</button>
+        </div>
+      </form>
+      <div class="admin-slab-heading">
+        <h3>Recent Email Logs</h3>
+        <span class="admin-muted">${recent.length} loaded</span>
+      </div>
+      ${adminSimpleTable('Recent Email Logs', ['Recipient', 'Subject', 'Category', 'Status', 'Created'], recent.map((row) => [
+        htmlCell(`<strong>${escapeHtml(row.recipientDomain || row.to || 'Recipient')}</strong><small class="admin-code-value">${escapeHtml(row.to || '')}</small>`),
+        row.subject || '',
+        humanLabel(row.category || ''),
+        htmlCell(renderBadge(humanLabel(row.status || 'unknown'), row.status === 'sent' ? 'approved' : row.status === 'failed' ? 'rejected' : 'pending')),
+        formatDate(row.createdAt || row.sentAt)
+      ]), { className: 'is-email-logs', emptyTitle: 'No email logs yet.', emptyBody: 'Sent and failed emails will appear here.' })}
+    </section>
   `
 }
 
@@ -3288,10 +3352,14 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       }
     },
     settings: async () => {
-      const result = await getAdminSettings()
+      const [result, emailStatus] = await Promise.all([
+        getAdminSettings(),
+        getEmailAdminStatus().catch((error) => ({ ok: false, providerConfigured: false, recent: [], error: error?.message || 'Email status unavailable.' }))
+      ])
       state.settings.data = result.settings || {}
       state.settings.updatedAt = result.updatedAt || null
       state.settings.updatedBy = result.updatedBy || ''
+      state.settings.emailStatus = emailStatus
     }
   }
   if (!map[sectionKey]) return
@@ -3497,6 +3565,40 @@ async function submitSettingsForm(form) {
     state.settings.error = error?.message || 'Could not save settings.'
   } finally {
     state.settings.saving = false
+    render()
+  }
+}
+
+function updateEmailFormFromDom(form = app.querySelector('[data-admin-email-form]')) {
+  if (!form) return
+  const next = { ...(state.settings.emailForm || {}) }
+  form.querySelectorAll('[data-admin-email-field]').forEach((input) => {
+    const key = input.getAttribute('data-admin-email-field') || ''
+    if (key) next[key] = input.value || ''
+  })
+  state.settings.emailForm = next
+}
+
+async function submitAdminEmailForm(form, { self = false } = {}) {
+  if (!can('emailSend') || state.settings.emailSending) return
+  updateEmailFormFromDom(form)
+  const payload = {
+    ...(state.settings.emailForm || {}),
+    to: self ? (state.currentUser?.email || '') : (state.settings.emailForm?.to || '')
+  }
+  state.settings.emailSending = true
+  state.settings.emailMessage = ''
+  render()
+  try {
+    const result = await sendAdminEmail(payload)
+    state.settings.emailMessage = `Sent email. Log ${result.emailLogId || ''}`.trim()
+    state.settings.emailForm = { to: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '' }
+    state.settings.emailStatus = await getEmailAdminStatus().catch(() => state.settings.emailStatus)
+  } catch (error) {
+    console.warn('[admin] email send failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.settings.emailMessage = error?.message || 'Email could not be sent.'
+  } finally {
+    state.settings.emailSending = false
     render()
   }
 }
@@ -3753,6 +3855,17 @@ function bindEvents() {
   app.querySelector('[data-settings-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     submitSettingsForm(event.currentTarget)
+  })
+  app.querySelector('[data-admin-email-form]')?.addEventListener('input', (event) => {
+    updateEmailFormFromDom(event.currentTarget)
+  })
+  app.querySelector('[data-admin-email-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitAdminEmailForm(event.currentTarget)
+  })
+  app.querySelector('[data-admin-email-self]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    submitAdminEmailForm(app.querySelector('[data-admin-email-form]'), { self: true })
   })
   app.querySelectorAll('[data-copy-value]').forEach((button) => {
     button.addEventListener('click', async () => {
