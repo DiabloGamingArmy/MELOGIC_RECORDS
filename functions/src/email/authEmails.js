@@ -170,7 +170,7 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
       metadata: { template: 'email_verification' }
     })
     await writeAccountEvent(admin.firestore(), uid, {
-      type: 'security_notice',
+      type: 'email_verification_requested',
       severity: 'info',
       title: 'Verification email sent',
       message: 'A verification email was sent for your account.',

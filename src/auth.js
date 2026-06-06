@@ -1,5 +1,6 @@
 import './styles/base.css'
 import './styles/auth.css'
+import { TotpMultiFactorGenerator, getMultiFactorResolver } from 'firebase/auth'
 import { httpsCallable } from 'firebase/functions'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
@@ -61,6 +62,18 @@ app.innerHTML = `
 
           <h2 id="auth-card-title" class="auth-card-title">Welcome back to Melogic.</h2>
           <p class="auth-status-message" data-auth-feedback role="status" aria-live="polite"></p>
+          <section class="auth-mfa-challenge is-hidden" data-mfa-challenge aria-live="polite">
+            <h3>Two-factor authentication</h3>
+            <p>Enter the 6-digit code from your authenticator app.</p>
+            <label>
+              <span>Authenticator code</span>
+              <input type="text" name="mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" />
+            </label>
+            <div class="auth-mfa-actions">
+              <button type="button" class="button button-accent" data-mfa-submit>Verify Code</button>
+              <button type="button" class="button button-muted" data-mfa-cancel>Cancel</button>
+            </div>
+          </section>
 
           <form class="auth-form" data-panel="signin">
             <label>
@@ -159,10 +172,16 @@ const googleButton = document.querySelector('[data-google-btn]')
 const signinButton = document.querySelector('[data-signin-btn]')
 const signupButton = document.querySelector('[data-signup-btn]')
 const forgotPasswordButton = document.querySelector('[data-forgot-password]')
+const mfaChallenge = document.querySelector('[data-mfa-challenge]')
+const mfaCodeInput = document.querySelector('input[name="mfa-code"]')
+const mfaSubmitButton = document.querySelector('[data-mfa-submit]')
+const mfaCancelButton = document.querySelector('[data-mfa-cancel]')
 const feedback = document.querySelector('[data-auth-feedback]')
 const authCardTitle = document.querySelector('#auth-card-title')
 const actionButtons = [signinButton, signupButton, googleButton].filter(Boolean)
 let isSubmitting = false
+let pendingMfaResolver = null
+let pendingMfaHint = null
 
 function setRecaptchaStatus(form, state = 'idle', message = 'Verification runs when you submit.') {
   if (!form) return
@@ -278,6 +297,49 @@ function setLoadingState(enabled, buttonTextMap = {}) {
   }
 }
 
+function sanitizeMfaCode(value = '') {
+  return String(value || '').replace(/\D/g, '').slice(0, 6)
+}
+
+function resetMfaChallenge() {
+  pendingMfaResolver = null
+  pendingMfaHint = null
+  if (mfaCodeInput) mfaCodeInput.value = ''
+  mfaChallenge?.classList.add('is-hidden')
+}
+
+function showMfaChallenge(error) {
+  try {
+    const resolver = getMultiFactorResolver(auth, error)
+    const hint = resolver.hints.find((item) => item.factorId === TotpMultiFactorGenerator.FACTOR_ID) || resolver.hints[0]
+    if (!hint || hint.factorId !== TotpMultiFactorGenerator.FACTOR_ID) {
+      setFeedback('This account requires an unsupported second factor. Contact support.', 'error')
+      return false
+    }
+    pendingMfaResolver = resolver
+    pendingMfaHint = hint
+    mfaChallenge?.classList.remove('is-hidden')
+    if (mfaCodeInput) {
+      mfaCodeInput.value = ''
+      window.setTimeout(() => mfaCodeInput.focus(), 0)
+    }
+    setFeedback('Enter the 6-digit code from your authenticator app.', 'info')
+    return true
+  } catch (resolverError) {
+    console.warn('[auth] getMultiFactorResolver failed', resolverError?.code || resolverError?.message || resolverError)
+    return false
+  }
+}
+
+function friendlyMfaError(error) {
+  const code = String(error?.code || '')
+  if (code === 'auth/invalid-verification-code' || code === 'auth/invalid-code') return 'That code was not accepted. Check the six digits and try again.'
+  if (code === 'auth/code-expired') return 'That code expired. Try the current code from your authenticator app.'
+  if (code === 'auth/too-many-requests') return 'Too many attempts were made. Please wait a moment and try again.'
+  if (code === 'auth/network-request-failed') return 'Network request failed. Check your connection and try again.'
+  return 'We could not verify that code. Please try again.'
+}
+
 function friendlyAuthError(errorCode) {
   const map = {
     'auth/invalid-email': 'Please enter a valid email address.',
@@ -291,6 +353,7 @@ function friendlyAuthError(errorCode) {
     'auth/too-many-requests': 'Too many attempts were made. Please wait a moment and try again.',
     'auth/network-request-failed': 'Network request failed. Check your connection and try again.',
     'auth/user-disabled': 'This account has been disabled. Contact support if you believe this is a mistake.',
+    'auth/multi-factor-auth-required': 'Enter the 6-digit code from your authenticator app.',
     'auth/email-already-in-use': 'That email is already in use.',
     'auth/weak-password': 'Password should be at least 6 characters.',
     'auth/popup-closed-by-user': 'Google sign-in was cancelled before completion.',
@@ -420,8 +483,39 @@ async function handleSignInSubmit(event) {
   } catch (error) {
     setRecaptchaStatus(signinForm, 'error', 'Verification failed. Please try again.')
     logFirebaseAuthError('signInWithEmail', error)
+    if (error?.code === 'auth/multi-factor-auth-required' && showMfaChallenge(error)) {
+      setRecaptchaStatus(signinForm, 'verified', 'First factor verified.')
+      return
+    }
     setFeedback(friendlySubmitError(error), 'error')
   } finally {
+    setLoadingState(false)
+  }
+}
+
+async function handleMfaSubmit() {
+  if (isSubmitting || !pendingMfaResolver || !pendingMfaHint) return
+  const code = sanitizeMfaCode(mfaCodeInput?.value || '')
+  if (!/^\d{6}$/.test(code)) {
+    setFeedback('Enter the 6-digit code from your authenticator app.', 'error')
+    return
+  }
+
+  setLoadingState(true, { signin: 'Verifying...' })
+  if (mfaSubmitButton) mfaSubmitButton.disabled = true
+  if (mfaCancelButton) mfaCancelButton.disabled = true
+  try {
+    const assertion = TotpMultiFactorGenerator.assertionForSignIn(pendingMfaHint.uid, code)
+    await pendingMfaResolver.resolveSignIn(assertion)
+    resetMfaChallenge()
+    setFeedback('Signed in successfully. Redirecting...', 'success')
+    await redirectToProfile()
+  } catch (error) {
+    logFirebaseAuthError('resolveTotpSignIn', error)
+    setFeedback(friendlyMfaError(error), 'error')
+  } finally {
+    if (mfaSubmitButton) mfaSubmitButton.disabled = false
+    if (mfaCancelButton) mfaCancelButton.disabled = false
     setLoadingState(false)
   }
 }
@@ -509,6 +603,11 @@ async function handleGoogleSignIn() {
     await redirectToProfile()
   } catch (error) {
     setRecaptchaStatus(signinForm, 'error', 'Verification failed. Please try again.')
+    logFirebaseAuthError('signInWithGoogle', error)
+    if (error?.code === 'auth/multi-factor-auth-required' && showMfaChallenge(error)) {
+      setRecaptchaStatus(signinForm, 'verified', 'First factor verified.')
+      return
+    }
     setFeedback(friendlyProvisioningError(error), 'error')
   } finally {
     setLoadingState(false)
@@ -571,6 +670,20 @@ signinForm?.addEventListener('submit', handleSignInSubmit)
 signupForm?.addEventListener('submit', handleSignUpSubmit)
 googleButton?.addEventListener('click', handleGoogleSignIn)
 forgotPasswordButton?.addEventListener('click', handleForgotPassword)
+mfaSubmitButton?.addEventListener('click', handleMfaSubmit)
+mfaCancelButton?.addEventListener('click', () => {
+  resetMfaChallenge()
+  setFeedback('Two-factor sign-in cancelled.', 'info')
+})
+mfaCodeInput?.addEventListener('input', (event) => {
+  event.currentTarget.value = sanitizeMfaCode(event.currentTarget.value)
+})
+mfaCodeInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    handleMfaSubmit()
+  }
+})
 initPasswordToggles()
 setRecaptchaStatus(signinForm, 'idle', 'Verification runs when you submit.')
 setRecaptchaStatus(signupForm, 'idle', 'Verification runs when you submit.')

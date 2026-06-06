@@ -50,6 +50,24 @@ const app = document.querySelector('#app')
 
 const inboxFilters = ['Messages', 'Calls', 'Likes', 'Follows', 'Comments', 'Mentions', 'System']
 const initialSystemFilter = new URLSearchParams(window.location.search).get('system')
+const securityAccountEventTypes = new Set([
+  'password_reset_requested',
+  'password_changed',
+  'email_verification_requested',
+  'email_verified',
+  'email_change_requested',
+  'email_changed',
+  'two_factor_enabled',
+  'two_factor_disabled',
+  'recovery_codes_generated',
+  'recovery_code_used',
+  'admin_role_changed',
+  'account_suspended',
+  'account_unsuspended',
+  'login_success',
+  'login_failed',
+  'security_notice'
+])
 
 const activityCopy = {
   Calls: {
@@ -1065,7 +1083,7 @@ function systemInboxPin(item = {}) {
   const isAccountEvent = sourceCollection === 'accountEvents'
   const type = isAccountEvent ? 'accountEvent' : 'systemNotification'
   const systemFilter = isAccountEvent
-    ? (String(item.type || '').includes('security') ? 'security' : 'account')
+    ? (securityAccountEventTypes.has(String(item.type || '')) ? 'security' : 'account')
     : (item.type || 'other')
   return {
     pinId: buildInboxPinId(type, item.id),
@@ -1077,6 +1095,14 @@ function systemInboxPin(item = {}) {
     targetPath: item.actionHref || item.path || ROUTES.inbox,
     metadata: { sourceCollection, systemFilter }
   }
+}
+
+function accountEventMatchesSystemFilter(item = {}, filter = 'all') {
+  if (filter === 'all') return true
+  const isSecurity = securityAccountEventTypes.has(String(item.type || ''))
+  if (filter === 'security') return isSecurity
+  if (filter === 'account') return !isSecurity
+  return false
 }
 
 function getMessagesSidebarMarkup() {
@@ -1910,12 +1936,12 @@ function getFilterContentMarkup(filterName) {
       .filter((item) => appState.systemFilter === 'all' || item.type === appState.systemFilter)
       .map((item) => ({ ...item, sourceCollection: 'systemNotifications', body: item.body || item.message || '' }))
     const accountRows = appState.accountEvents
-      .filter((item) => ['all', 'account', 'security'].includes(appState.systemFilter))
+      .filter((item) => accountEventMatchesSystemFilter(item, appState.systemFilter))
       .map((item) => ({
         ...item,
         sourceCollection: 'accountEvents',
         body: item.message || '',
-        actionHref: item.path || '',
+        actionHref: item.path || (securityAccountEventTypes.has(String(item.type || '')) ? ROUTES.accountSecurity : ''),
         type: item.type || 'account'
       }))
     const rows = [...accountRows, ...notificationRows]

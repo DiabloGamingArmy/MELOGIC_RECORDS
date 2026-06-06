@@ -25,7 +25,7 @@
 
 | Route | Required permission | Data source | Backend callable | Main actions | Changes state |
 | --- | --- | --- | --- | --- | --- |
-| `/account/security` | Signed-in user | Firebase Auth current user, `users/{uid}/accountEvents` | `requestPasswordResetEmail`, `requestEmailVerification`, `recordAccountSecurityEvent` | Request password reset, request email verification, view/mark events read | Yes, email request events, read markers, and low-risk event |
+| `/account/security` | Signed-in user | Firebase Auth current user, `users/{uid}/accountEvents` | `requestPasswordResetEmail`, `requestEmailVerification`, `recordAccountSecurityEvent` | Request password reset, request email verification, enroll/disable Firebase Auth TOTP, view/mark events read | Yes, email request events, TOTP state through Firebase Auth, read markers, and trusted backend events |
 | `/inbox?system=account` | Signed-in user | `users/{uid}/systemNotifications`, `users/{uid}/accountEvents`, `users/{uid}/inboxPins` | None for reads | View Account/System events, mark read, pin inbox shortcuts | Yes, read markers and user-owned pins |
 
 ## Public and Creator Routes
@@ -43,6 +43,7 @@
 - Detail routes include Back links where the current admin UI has a detail panel.
 - Admin-sensitive mutations go through callables and write `adminLogs`.
 - Admin custom email sends go through `sendAdminEmail`, write `emailLogs`, and mirror the action to `adminLogs`; frontend code never handles SMTP credentials or app passwords.
+- Admin Account Hub can display Firebase Auth email verification and MFA factor status, but must never expose TOTP secrets, recovery codes, or reset links.
 - Missing or denied report/order detail records should render a clear error or not-found state instead of an indefinite loading shell.
 - Account Hub actions are explicit: Message opens Inbox DM flow, Add Note writes admin-only notes, and Suspend/Unsuspend writes account status plus audit/account events.
 - Unsupported commerce actions, such as Stripe refunds and manual entitlement grant/revoke, must remain disabled with clear titles until backend callables exist.

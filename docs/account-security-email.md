@@ -33,7 +33,7 @@ Melogic uses Firebase Admin action links plus the Workspace support mailbox for 
 
 ### Pending
 
-- Full TOTP enrollment, disable, and recovery-code callable flow.
+- Firebase Auth TOTP enrollment and disable flow is available from `/account/security`; recovery codes remain a future hardening phase.
 - Full account-status enforcement beyond the current stored suspension flag and account event.
 - Full enforcement of suspended-account restrictions across every product, report, checkout, and messaging edge.
 - Login-success logging is intentionally not enabled to avoid noisy writes.

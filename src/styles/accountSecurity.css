@@ -55,6 +55,11 @@
   margin-top: 0.8rem;
 }
 
+.security-panel .button.is-danger {
+  border-color: rgba(255, 138, 154, 0.42);
+  color: #ffbdc6;
+}
+
 .security-pill {
   display: inline-flex;
   align-items: center;
@@ -104,10 +109,89 @@
 }
 
 .provider-list,
-.security-actions {
+.security-actions,
+.security-key-row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+}
+
+.security-qr-code {
+  display: block;
+  width: min(220px, 100%);
+  height: auto;
+  margin: 1rem 0 0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.6rem;
+}
+
+.security-key-row {
+  align-items: center;
+  margin-top: 0.6rem;
+}
+
+.security-key-row code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(129, 147, 191, 0.24);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  color: #dce8ff;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 0.78rem;
+}
+
+.security-code-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.8rem;
+}
+
+.security-code-field span {
+  color: #c3d3f1;
+  font-size: 0.84rem;
+}
+
+.security-code-field input {
+  width: 100%;
+  border: 1px solid rgba(129, 147, 191, 0.28);
+  border-radius: 8px;
+  padding: 0.72rem 0.78rem;
+  color: #eef4ff;
+  background: rgba(5, 8, 14, 0.78);
+  font: inherit;
+}
+
+.security-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 6, 14, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.security-modal {
+  width: min(460px, 100%);
+  border: 1px solid rgba(129, 147, 191, 0.3);
+  border-radius: 8px;
+  padding: 1rem;
+  background: #0d1728;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
+}
+
+.security-modal h2,
+.security-modal p {
+  margin: 0;
+}
+
+.security-modal p {
+  margin-top: 0.6rem;
+  color: #c3d3f1;
+  line-height: 1.5;
 }
 
 .provider-list {

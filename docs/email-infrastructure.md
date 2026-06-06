@@ -64,4 +64,6 @@ To disable sending quickly, revoke the Workspace credential or remove/rotate `SM
 
 ## 2FA Direction
 
-Email confirmation is not used as primary 2FA. The Account Security page keeps authenticator-app/TOTP enrollment scaffolded and disabled until a dedicated MFA phase implements Firebase Auth-compatible enrollment and recovery codes.
+Email confirmation is not used as primary 2FA. Authenticator-app/TOTP enrollment is handled through Firebase Auth in `/account/security`; the TOTP secret stays in browser memory during setup and is not written to Firestore or Functions.
+
+Recovery codes remain a future hardening phase and must store only hashed codes server-side when implemented.
