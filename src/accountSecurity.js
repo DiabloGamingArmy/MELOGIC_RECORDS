@@ -60,6 +60,7 @@ let state = {
     code: '',
     status: '',
     statusType: 'info',
+    statusCode: '',
     showKey: false,
     enrolling: false,
     disabling: false,
@@ -135,6 +136,7 @@ function friendlyMfaError(error) {
   const code = String(error?.code || '')
   const message = String(error?.message || '')
   if (code === 'auth/requires-recent-login') return 'Please reauthenticate to continue.'
+  if (code === 'auth/unverified-email') return 'Verify your email before enabling authenticator-app 2FA.'
   if (code === 'auth/invalid-verification-code' || code === 'auth/invalid-code') return 'That code was not accepted. Check the six digits and try again.'
   if (code === 'auth/code-expired') return 'That setup session expired. Start setup again.'
   if (code === 'auth/missing-verification-code') return 'Enter the six-digit code from your authenticator app.'
@@ -158,13 +160,15 @@ function resetTotpSetup({ keepStatus = false } = {}) {
     confirmDisable: false,
     firebaseUnavailable: keepStatus ? state.totp.firebaseUnavailable : false,
     status: keepStatus ? state.totp.status : '',
-    statusType: keepStatus ? state.totp.statusType : 'info'
+    statusType: keepStatus ? state.totp.statusType : 'info',
+    statusCode: keepStatus ? state.totp.statusCode : ''
   }
 }
 
-function setTotpStatus(status = '', statusType = 'info') {
+function setTotpStatus(status = '', statusType = 'info', statusCode = '') {
   state.totp.status = status
   state.totp.statusType = statusType
+  state.totp.statusCode = statusCode
 }
 
 function providerReauthCopy() {
@@ -202,6 +206,9 @@ function renderTotpPanel(factors = []) {
   const statusMessage = state.totp.status
     ? `<p class="security-status" data-state="${escapeHtml(state.totp.statusType)}">${escapeHtml(state.totp.status)}</p>`
     : ''
+  const verificationCta = state.totp.statusCode === 'auth/unverified-email' && state.user?.email && !state.user?.emailVerified
+    ? `<button type="button" class="button button-accent" data-send-verification-email ${state.sendingVerification ? 'disabled' : ''}>${state.sendingVerification ? 'Sending...' : 'Send Verification Email'}</button>`
+    : ''
 
   if (state.totp.stage === 'setup') {
     return `
@@ -215,6 +222,7 @@ function renderTotpPanel(factors = []) {
         </div>
         <p class="security-copy">Scan the QR code with an authenticator app, then enter the six-digit code it shows.</p>
         ${statusMessage}
+        ${verificationCta}
         ${state.totp.qrDataUrl ? `<img class="security-qr-code" src="${escapeHtml(state.totp.qrDataUrl)}" alt="Authenticator app setup QR code" />` : ''}
         <div class="security-key-row">
           <button type="button" class="button button-muted" data-toggle-totp-key>${state.totp.showKey ? 'Hide Setup Key' : 'Show Setup Key'}</button>
@@ -245,6 +253,7 @@ function renderTotpPanel(factors = []) {
         ? `Authenticator-app 2FA is enabled with ${totpFactors.length} enrolled factor${totpFactors.length === 1 ? '' : 's'}.`
         : 'Add a six-digit authenticator-app challenge to email/password sign-in.'}</p>
       ${statusMessage}
+      ${verificationCta}
       ${state.totp.firebaseUnavailable ? '<p class="security-status" data-state="error">Enable TOTP multi-factor authentication in Firebase Authentication settings before users can enroll.</p>' : ''}
       <div class="security-actions">
         ${enabled
@@ -418,7 +427,9 @@ function render() {
 
 function bindActions() {
   root.querySelector('[data-send-security-reset]')?.addEventListener('click', handlePasswordReset)
-  root.querySelector('[data-send-verification-email]')?.addEventListener('click', handleEmailVerification)
+  root.querySelectorAll('[data-send-verification-email]').forEach((button) => {
+    button.addEventListener('click', handleEmailVerification)
+  })
   root.querySelector('[data-start-totp-setup]')?.addEventListener('click', startTotpSetup)
   root.querySelector('[data-confirm-totp-setup]')?.addEventListener('click', confirmTotpSetup)
   root.querySelector('[data-cancel-totp-setup]')?.addEventListener('click', () => {
@@ -543,6 +554,7 @@ async function startTotpSetup() {
         showKey: false,
         status: 'Scan the QR code, then enter the six-digit code.',
         statusType: 'info',
+        statusCode: '',
         firebaseUnavailable: false
       }
       render()
@@ -553,7 +565,7 @@ async function startTotpSetup() {
   } catch (error) {
     console.warn('[account-security] TOTP setup failed', error?.code || error?.message || error)
     state.totp.firebaseUnavailable = String(error?.code || '').includes('operation-not-allowed')
-    setTotpStatus(friendlyMfaError(error), 'error')
+    setTotpStatus(friendlyMfaError(error), 'error', String(error?.code || ''))
     render()
   }
 }
@@ -593,7 +605,7 @@ async function confirmTotpSetup() {
   } catch (error) {
     console.warn('[account-security] TOTP enrollment failed', error?.code || error?.message || error)
     state.totp.enrolling = false
-    setTotpStatus(friendlyMfaError(error), 'error')
+    setTotpStatus(friendlyMfaError(error), 'error', String(error?.code || ''))
     render()
   }
 }
@@ -633,7 +645,7 @@ async function disableTotp() {
   } catch (error) {
     console.warn('[account-security] disable TOTP failed', error?.code || error?.message || error)
     state.totp.disabling = false
-    setTotpStatus(friendlyMfaError(error), 'error')
+    setTotpStatus(friendlyMfaError(error), 'error', String(error?.code || ''))
     render()
   }
 }
@@ -651,7 +663,11 @@ async function handleEmailVerification() {
     state.verificationStatusType = 'success'
   } catch (error) {
     console.warn('[account-security] verification email failed', error?.code || error?.message || error)
-    state.verificationStatus = 'Verification email could not be sent. Please try again.'
+    const code = String(error?.code || '')
+    const message = String(error?.message || '')
+    state.verificationStatus = code === 'functions/internal' || message === 'internal'
+      ? 'Verification email could not be sent right now. Please try again.'
+      : message || 'Verification email could not be sent right now. Please try again.'
     state.verificationStatusType = 'error'
   } finally {
     state.sendingVerification = false
