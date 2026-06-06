@@ -363,7 +363,7 @@ function render() {
             <h2>Password reset</h2>
           </div>
         </div>
-        <p class="security-copy">A reset link will be sent through Firebase Authentication to your account email.</p>
+        <p class="security-copy">A reset link will be sent from Melogic Records Support to your account email.</p>
         ${resetMessage}
         <button type="button" class="button button-accent" data-send-security-reset ${state.sendingReset || !user.email ? 'disabled' : ''}>
           ${state.sendingReset ? 'Sending...' : 'Send Password Reset Email'}

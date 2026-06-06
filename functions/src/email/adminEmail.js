@@ -76,6 +76,38 @@ function cleanId(value = '') {
   return id.includes('/') ? '' : id
 }
 
+function serializeEmailLog(docSnap) {
+  const raw = docSnap.data() || {}
+  return {
+    emailId: docSnap.id,
+    to: cleanString(raw.to || '', 320),
+    toDomain: cleanString(raw.toDomain || raw.recipientDomain || '', 160),
+    recipientDomain: cleanString(raw.recipientDomain || raw.toDomain || '', 160),
+    ccDomains: Array.isArray(raw.ccDomains) ? raw.ccDomains.map((domain) => cleanString(domain, 160)).filter(Boolean).slice(0, 10) : [],
+    replyTo: cleanString(raw.replyTo || raw.metadata?.replyTo || '', 320),
+    subject: cleanString(raw.subject || '', 220),
+    category: cleanString(raw.category || '', 80),
+    templateName: cleanString(raw.templateName || '', 120),
+    status: cleanString(raw.status || '', 80),
+    sentByUid: cleanString(raw.sentByUid || '', 180),
+    sentByUsername: cleanString(raw.sentByUsername || '', 180),
+    relatedUid: cleanString(raw.relatedUid || '', 180),
+    relatedProductId: cleanString(raw.relatedProductId || '', 180),
+    relatedOrderId: cleanString(raw.relatedOrderId || '', 180),
+    relatedReportId: cleanString(raw.relatedReportId || '', 180),
+    bodyHash: cleanString(raw.bodyHash || '', 80),
+    bodyPreview: cleanString(raw.bodyPreview || '', 180),
+    provider: cleanString(raw.provider || '', 80),
+    providerMessageId: cleanString(raw.providerMessageId || '', 260),
+    errorCode: cleanString(raw.errorCode || '', 120),
+    errorMessageRedacted: cleanString(raw.errorMessageRedacted || '', 240),
+    createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate().toISOString() : '',
+    sentAt: raw.sentAt?.toDate ? raw.sentAt.toDate().toISOString() : '',
+    failedAt: raw.failedAt?.toDate ? raw.failedAt.toDate().toISOString() : '',
+    internalNote: cleanString(raw.metadata?.internalNote || raw.metadata?.note || '', 900)
+  }
+}
+
 function normalizeCc(value = []) {
   const values = Array.isArray(value) ? value : String(value || '').split(',')
   return Array.from(new Set(values.map((email) => validateEmailAddress(email)).filter(Boolean))).slice(0, 5)
@@ -558,8 +590,43 @@ const getEmailAdminStatus = onCall({ timeoutSeconds: 60, memory: '256MiB', secre
   }
 })
 
+const listAdminEmailLogs = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: EMAIL_SECRETS }, async (request) => {
+  const claims = assertAnyPermission(request, ['emailSend', 'settingsManage', 'auditRead'])
+  const mode = cleanString(request.data?.mode || request.data?.status || 'sent', 40).toLowerCase()
+  const status = ['sent', 'failed', 'draft'].includes(mode) ? mode : 'sent'
+  const limit = Math.max(1, Math.min(Math.round(Number(request.data?.limit || request.data?.limitCount || 10)), 25))
+  const cursor = cleanId(request.data?.cursor || '')
+
+  if (status === 'draft') {
+    return {
+      ok: true,
+      items: [],
+      nextCursor: '',
+      hasMore: false,
+      requester: { uid: claims.uid, role: claims.adminRole }
+    }
+  }
+
+  const ref = admin.firestore().collection('emailLogs')
+  let query = ref.where('status', '==', status).orderBy('createdAt', 'desc')
+  if (cursor) {
+    const cursorSnap = await ref.doc(cursor).get().catch(() => null)
+    if (cursorSnap?.exists) query = query.startAfter(cursorSnap)
+  }
+  const snapshot = await query.limit(limit).get()
+  const docs = snapshot.docs || []
+  return {
+    ok: true,
+    items: docs.map(serializeEmailLog),
+    nextCursor: docs.length >= limit ? docs[docs.length - 1]?.id || '' : '',
+    hasMore: docs.length >= limit,
+    requester: { uid: claims.uid, role: claims.adminRole }
+  }
+})
+
 module.exports = {
   getEmailAdminStatus,
+  listAdminEmailLogs,
   sendAdminAuthEmail,
   sendAdminEmail
 }

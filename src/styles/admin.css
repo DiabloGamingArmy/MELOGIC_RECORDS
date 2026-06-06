@@ -1813,7 +1813,23 @@
   padding: 0 0.75rem;
 }
 
-.admin-contact-tabs a.is-active {
+.admin-contact-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 38px;
+  border: 1px solid var(--admin-border);
+  border-radius: 7px;
+  background: var(--admin-card);
+  color: var(--admin-text);
+  font: inherit;
+  font-weight: 900;
+  padding: 0 0.75rem;
+  cursor: pointer;
+}
+
+.admin-contact-tabs a.is-active,
+.admin-contact-tabs button.is-active {
   border-color: var(--admin-primary);
   background: var(--admin-primary);
   color: #ffffff;
@@ -1828,6 +1844,24 @@
 
 .admin-contact-panel {
   align-content: start;
+}
+
+.admin-email-activity {
+  margin-top: 0.85rem;
+}
+
+.admin-email-activity .admin-table-scroll {
+  max-height: none;
+}
+
+.admin-email-detail-drawer {
+  display: grid;
+  gap: 0.65rem;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: var(--admin-card-subtle);
+  margin-top: 0.75rem;
+  padding: 0.8rem;
 }
 
 .admin-email-form {
@@ -1957,30 +1991,37 @@
 }
 
 .admin-fixed-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-height: 360px;
+  height: 400px;
   max-height: 430px;
   overflow: hidden;
 }
 
 .admin-fixed-panel.is-short {
   min-height: 260px;
+  height: 300px;
   max-height: 320px;
 }
 
 .admin-fixed-panel.is-products-panel {
   min-height: 360px;
+  height: 440px;
   max-height: 460px;
 }
 
 .admin-panel-scroll,
 .admin-table-scroll {
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-right: 0.25rem;
 }
 
 .admin-table-scroll {
   max-height: 360px;
+  overflow: auto;
 }
 
 .admin-table-scroll .admin-data-table {
@@ -2208,6 +2249,7 @@
   .admin-fixed-panel,
   .admin-fixed-panel.is-short,
   .admin-fixed-panel.is-products-panel {
+    height: auto;
     max-height: none;
   }
 }
