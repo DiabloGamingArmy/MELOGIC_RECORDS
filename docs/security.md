@@ -39,6 +39,8 @@ Sensitive actions such as enabling or disabling TOTP may require recent login. T
 
 Admin and owner accounts see a non-blocking warning when 2FA is not enabled. Future hardening should require 2FA before role management, payout changes, marketplace settings changes, account suspension, and admin email sends.
 
+In this phase, 2FA is not hard-required for admin email or other sensitive actions because the production Firebase project may still need TOTP enabled in Firebase Console and the owner must not be accidentally locked out. The UI and docs prepare enforcement; backend permissions still rely on authenticated admin claims.
+
 ## Recovery Codes
 
 Recovery codes are intentionally scaffolded only. They are not generated, accepted, or stored in this phase. A future phase should generate one-time codes, show them once, store only hashes server-side, and allow regeneration after reauthentication.

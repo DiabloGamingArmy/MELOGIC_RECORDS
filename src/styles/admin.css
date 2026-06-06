@@ -2047,6 +2047,31 @@
   color: var(--admin-muted);
 }
 
+.admin-email-preview {
+  border: 1px solid rgba(129, 147, 191, .24);
+  border-radius: 8px;
+  padding: .75rem;
+  background: rgba(255, 255, 255, .04);
+}
+
+.admin-email-preview strong,
+.admin-email-preview p,
+.admin-email-preview small {
+  display: block;
+  margin: 0;
+}
+
+.admin-email-preview p {
+  margin-top: .35rem;
+  color: var(--admin-text);
+}
+
+.admin-email-preview small {
+  margin-top: .25rem;
+  color: var(--admin-muted);
+  white-space: pre-wrap;
+}
+
 @media (max-width: 1060px) {
   .admin-console-shell,
   .admin-review-layout,
