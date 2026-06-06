@@ -1,5 +1,6 @@
 import './styles/base.css'
 import './styles/admin.css'
+import { multiFactor } from 'firebase/auth'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import {
@@ -218,6 +219,7 @@ const DISPLAYED_PRODUCT_KEYS = new Set([
 
 const state = {
   currentUser: null,
+  currentUserMfaEnabled: false,
   claims: {},
   section: 'dashboard',
   products: [],
@@ -703,6 +705,20 @@ function statusMessage() {
   `
 }
 
+function adminMfaRecommendation() {
+  if (state.currentUserMfaEnabled) return ''
+  if (!can('admin') && !['owner', 'admin'].includes(String(state.claims.adminRole || ''))) return ''
+  return `
+    <section class="admin-security-warning">
+      <div>
+        <strong>Admin accounts should enable two-factor authentication.</strong>
+        <p>Authenticator-app 2FA is available in Account Security and will be required for sensitive admin actions in a later hardening phase.</p>
+      </div>
+      <a class="admin-secondary-link" href="${ROUTES.accountSecurity}">Open Security</a>
+    </section>
+  `
+}
+
 function themeToggleButton() {
   const isDark = state.theme === 'dark'
   return `
@@ -721,6 +737,7 @@ function renderLayout(content) {
     <section class="admin-main ${reviewDetailProductId() || adminUserDetailUid() || adminReportDetailId() || adminOrderDetailId() || adminTeamDetailUid() || adminLogDetailId() ? 'admin-main-detail' : ''}">
       ${themeToggleButton()}
       ${statusMessage()}
+      ${adminMfaRecommendation()}
       ${content}
     </section>
   `
@@ -1018,6 +1035,8 @@ function accountEventsList(events = []) {
           <div>
             <strong>${escapeHtml(event.title || humanLabel(event.type))}</strong>
             <p>${escapeHtml(event.message || '')}</p>
+            ${event.emailSkipped ? `<p class="admin-muted">Email skipped: ${escapeHtml(event.emailSkipReason || 'not configured')}</p>` : ''}
+            ${event.emailSent ? '<p class="admin-muted">Security email sent.</p>' : ''}
             <small>${escapeHtml(formatDate(event.createdAt))} · ${escapeHtml(humanLabel(event.severity || 'info'))} · ${escapeHtml(event.source || 'system')}</small>
           </div>
           ${event.path ? `<a class="admin-secondary-link" href="${escapeHtml(event.path)}">Open</a>` : ''}
@@ -2113,6 +2132,8 @@ function selectedUserPanel() {
         <article class="admin-metric"><span>Orders</span><strong>${Number(user.orderCount || 0)}</strong></article>
         <article class="admin-metric"><span>Role</span><strong>${escapeHtml(humanLabel(user.adminRole || user.role || 'user'))}</strong></article>
         <article class="admin-metric"><span>Status</span><strong>${escapeHtml(user.suspended ? 'Suspended' : user.adminActive ? 'Admin Active' : 'Active')}</strong></article>
+        <article class="admin-metric"><span>Email</span><strong>${escapeHtml(user.emailVerified ? 'Verified' : 'Unverified')}</strong></article>
+        <article class="admin-metric"><span>2FA</span><strong>${escapeHtml(user.mfaEnabled ? 'Enabled' : 'Off')}</strong></article>
       </section>
       <section class="admin-hub-grid">
         <article class="admin-section-slab">
@@ -2140,10 +2161,16 @@ function selectedUserPanel() {
           <div class="admin-slab-heading"><h2>Security / Activity</h2><span class="admin-muted">Read only</span></div>
           ${renderKeyValueGrid([
             renderBooleanField('Admin active', user.adminActive || adminUser.active),
+            renderBooleanField('Email verified', user.emailVerified),
+            renderBooleanField('2FA enabled', user.mfaEnabled),
+            renderField('2FA factors', String(Number(user.mfaFactorCount || 0))),
+            renderField('Auth providers', normalizeList(user.authProviderIds || []).join(', ') || 'Not recorded'),
             renderField('Admin role', humanLabel(adminUser.role || user.adminRole)),
             renderField('Updated by', adminUser.updatedBy, { code: true }),
             renderDateField('Role updated', adminUser.updatedAt),
-            renderDateField('Last sign-in', user.lastActiveAt)
+            renderDateField('Last sign-in', user.authLastSignInAt || user.lastActiveAt),
+            renderDateField('Last security event', user.lastSecurityEventAt),
+            renderField('Recent account events', String(Number(user.recentAccountEventCount || 0)))
           ])}
           ${accountEventsList(data.accountEvents || [])}
         </article>
@@ -3950,6 +3977,11 @@ async function init() {
   }
   const tokenResult = await state.currentUser.getIdTokenResult(true)
   state.claims = tokenResult?.claims || {}
+  try {
+    state.currentUserMfaEnabled = (multiFactor(state.currentUser).enrolledFactors || []).length > 0
+  } catch {
+    state.currentUserMfaEnabled = false
+  }
   if (state.claims.admin !== true) {
     renderAccessDenied()
     return

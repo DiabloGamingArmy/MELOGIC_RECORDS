@@ -55,6 +55,8 @@ async function sendSecurityEmail(uid = '', type = '', data = {}) {
     timestamp: data.timestamp || new Date().toISOString()
   })
   let emailSent = false
+  let emailSkipped = !email
+  let emailSkipReason = email ? '' : 'account-email-unavailable'
   let emailError = ''
   let providerMessageId = ''
   try {
@@ -82,6 +84,13 @@ async function sendSecurityEmail(uid = '', type = '', data = {}) {
     }
   } catch (error) {
     emailError = cleanString(error?.code || error?.message || 'email-send-failed', 240)
+    emailSkipped = true
+    emailSkipReason = error?.code === 'email-provider-not-configured' ? 'email-provider-not-configured' : 'email-send-failed'
+    console.warn('[securityEmail] Email provider not configured or send failed', {
+      type: cleanType,
+      uid: cleanUid,
+      code: emailError
+    })
     if (email) {
       await writeEmailLog({
         to: email,
@@ -110,6 +119,8 @@ async function sendSecurityEmail(uid = '', type = '', data = {}) {
     userAgentSummary: cleanString(data.userAgentSummary || '', 180),
     emailSent,
     emailSentAt: emailSent ? new Date().toISOString() : '',
+    emailSkipped,
+    emailSkipReason,
     emailError,
     metadata: {
       ...(data.metadata || {}),
@@ -117,11 +128,13 @@ async function sendSecurityEmail(uid = '', type = '', data = {}) {
       userAgentSummary: cleanString(data.userAgentSummary || '', 180),
       emailSent,
       emailSentAt: emailSent ? new Date().toISOString() : '',
+      emailSkipped,
+      emailSkipReason,
       emailError
     }
   })
 
-  return { ok: true, eventId, emailSent, emailError, providerMessageId }
+  return { ok: true, eventId, emailSent, emailSkipped, emailSkipReason, emailError, providerMessageId }
 }
 
 module.exports = {

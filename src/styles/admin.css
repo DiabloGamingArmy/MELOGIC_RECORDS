@@ -2025,6 +2025,28 @@
   grid-template-columns: minmax(220px, 1.5fr) minmax(120px, .9fr) minmax(100px, .7fr) minmax(120px, .9fr) minmax(110px, .7fr);
 }
 
+.admin-security-warning {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+  border: 1px solid rgba(255, 192, 91, .34);
+  border-radius: 8px;
+  padding: .85rem 1rem;
+  background: rgba(137, 92, 24, .14);
+}
+
+.admin-security-warning strong,
+.admin-security-warning p {
+  margin: 0;
+}
+
+.admin-security-warning p {
+  margin-top: .25rem;
+  color: var(--admin-muted);
+}
+
 @media (max-width: 1060px) {
   .admin-console-shell,
   .admin-review-layout,

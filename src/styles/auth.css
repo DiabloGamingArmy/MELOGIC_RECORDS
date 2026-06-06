@@ -67,6 +67,36 @@
   color: #9aeec6;
 }
 
+.auth-mfa-challenge {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.8rem 0 0;
+  border: 1px solid rgba(137, 181, 255, 0.32);
+  border-radius: 8px;
+  padding: 0.9rem;
+  background: rgba(52, 91, 161, 0.14);
+}
+
+.auth-mfa-challenge.is-hidden {
+  display: none;
+}
+
+.auth-mfa-challenge h3,
+.auth-mfa-challenge p {
+  margin: 0;
+}
+
+.auth-mfa-challenge p {
+  color: #c3d3f1;
+  line-height: 1.45;
+}
+
+.auth-mfa-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .auth-form {
   margin-top: 0.62rem;
   display: grid;
