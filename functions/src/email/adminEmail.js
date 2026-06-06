@@ -427,11 +427,28 @@ const sendAdminAuthEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secret
   let subject = ''
   let html = ''
   let text = ''
+  const authActionSettings = {
+    url: 'https://melogicrecords.studio/auth/action',
+    handleCodeInApp: true
+  }
+  const customAuthActionLink = (firebaseLink = '', fallbackMode = '') => {
+    const parsed = new URL(firebaseLink)
+    const output = new URL('/auth/action', 'https://melogicrecords.studio')
+    const mode = parsed.searchParams.get('mode') || fallbackMode
+    const oobCode = parsed.searchParams.get('oobCode') || ''
+    const continueUrl = parsed.searchParams.get('continueUrl') || 'https://melogicrecords.studio/account/security'
+    const lang = parsed.searchParams.get('lang') || ''
+    if (mode) output.searchParams.set('mode', mode)
+    if (oobCode) output.searchParams.set('oobCode', oobCode)
+    if (continueUrl) output.searchParams.set('continueUrl', continueUrl)
+    if (lang) output.searchParams.set('lang', lang)
+    return output.toString()
+  }
   if (type === 'password_reset') {
-    const link = await admin.auth().generatePasswordResetLink(to, { url: 'https://melogicrecords.studio/auth', handleCodeInApp: false })
+    const link = customAuthActionLink(await admin.auth().generatePasswordResetLink(to, authActionSettings), 'resetPassword')
     template = renderEmailTemplate('password_reset', { actionLink: link })
   } else if (type === 'email_verification') {
-    const link = await admin.auth().generateEmailVerificationLink(to, { url: 'https://melogicrecords.studio/auth', handleCodeInApp: false })
+    const link = customAuthActionLink(await admin.auth().generateEmailVerificationLink(to, authActionSettings), 'verifyEmail')
     template = renderEmailTemplate('email_verification', { actionLink: link })
   } else {
     subject = cleanString(request.data?.subject || 'Melogic Records security notice', 180)

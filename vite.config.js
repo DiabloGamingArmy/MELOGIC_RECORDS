@@ -22,6 +22,7 @@ export default defineConfig({
         productDashboard: resolve(__dirname, 'product-dashboard.html'),
         admin: resolve(__dirname, 'admin.html'),
         auth: resolve(__dirname, 'auth.html'),
+        authAction: resolve(__dirname, 'auth-action.html'),
         product: resolve(__dirname, 'product.html'),
         inbox: resolve(__dirname, 'inbox.html'),
         accountSecurity: resolve(__dirname, 'account-security.html'),
