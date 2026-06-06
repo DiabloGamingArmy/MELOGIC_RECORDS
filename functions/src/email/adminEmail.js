@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const crypto = require('node:crypto')
-const { assertAnyPermission, assertPermission, cleanString } = require('../admin/adminAuth')
+const { assertAnyPermission, assertPermission, cleanString, requireAdminActionSecurity } = require('../admin/adminAuth')
 const { writeAdminAuditLog } = require('../admin/auditLog')
 const { EMAIL_SECRETS, SUPPORT_EMAIL, providerConfigured, renderEmailTemplate, sendEmail, validateEmailAddress } = require('./emailSender')
 const { writeEmailLog } = require('./emailLog')
@@ -303,7 +303,7 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
     hasAuth: Boolean(request.auth?.uid),
     appCheck: request.app ? 'present' : 'missing'
   })
-  const claims = assertPermission(request, 'emailSend')
+  const claims = await requireAdminActionSecurity(request, 'emailSend')
   logStage('auth/permission passed', {
     uid: claims.uid,
     adminRole: claims.adminRole,
@@ -506,7 +506,7 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
 })
 
 const sendAdminAuthEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: EMAIL_SECRETS }, async (request) => {
-  const claims = assertPermission(request, 'emailSend')
+  const claims = await requireAdminActionSecurity(request, 'emailSend')
   const uid = cleanId(request.data?.uid || request.data?.relatedUid || '')
   const type = cleanString(request.data?.type || '', 80)
   if (!uid) throw new HttpsError('invalid-argument', 'A valid user uid is required.')

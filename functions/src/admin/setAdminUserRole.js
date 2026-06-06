@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const {
   assertPermission,
+  requireAdminActionSecurity,
   buildAdminClaims,
   cleanString,
   mergeAdminClaims,
@@ -53,7 +54,7 @@ async function assertOwnerWillRemain(uid = '') {
 }
 
 const setAdminUserRole = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const actor = assertPermission(request, 'roleManage')
+  const actor = await requireAdminActionSecurity(request, 'roleManage')
   const uid = normalizeUid(request.data?.uid)
   const requestedRole = normalizeRole(request.data?.role || '')
   const active = request.data?.active !== false && requestedRole !== 'remove'

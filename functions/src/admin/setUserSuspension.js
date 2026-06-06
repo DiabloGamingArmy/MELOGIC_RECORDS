@@ -1,6 +1,6 @@
 const admin = require('firebase-admin')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
-const { assertAnyPermission, cleanString, normalizeRole, roleRank } = require('./adminAuth')
+const { assertAnyPermission, cleanString, normalizeRole, requireAdminActionSecurity, roleRank } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
 const { writeAccountEvent } = require('../account/accountEvents')
 
@@ -46,7 +46,7 @@ function suspensionUntil(duration = '') {
 }
 
 const setUserSuspension = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const claims = assertAnyPermission(request, ['userModerate'])
+  const claims = await requireAdminActionSecurity(request, ['userModerate'])
   const uid = cleanString(request.data?.uid || '', 180)
   const suspended = request.data?.suspended === true
   const reason = cleanString(request.data?.reason || '', 1200)

@@ -1,6 +1,6 @@
 const admin = require('firebase-admin')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
-const { assertAnyPermission, cleanString } = require('./adminAuth')
+const { cleanString, requireAdminActionSecurity } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
 
 const SEVERITIES = new Set(['info', 'warning', 'critical'])
@@ -11,7 +11,7 @@ function db() {
 }
 
 const addAdminUserNote = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const claims = assertAnyPermission(request, ['userModerate', 'orderSupport'])
+  const claims = await requireAdminActionSecurity(request, ['userModerate', 'orderSupport'])
   const uid = cleanString(request.data?.uid || '', 180)
   const note = cleanString(request.data?.note || '', 2400)
   const severity = SEVERITIES.has(cleanString(request.data?.severity || '', 40)) ? cleanString(request.data?.severity, 40) : 'info'
