@@ -29,13 +29,13 @@ The inbox messaging framework baseline is **complete** and considered stable.
 - Do not rewrite message send/read/delete/hide/block core flows for notification work.
 - Add future account, security, system, or marketplace notices through isolated modules and filters.
 - Keep `dmBlockState` as the cross-account DM lockout source of truth.
-- Account events are read from `users/{uid}/accountEvents` and rendered under Inbox -> System -> Account without altering DM/group chat behavior.
+- Account events are read from `users/{uid}/accountEvents` and rendered under Inbox -> System -> Account without altering DM/group chat behavior. Security/auth email callables may attach delivery fields such as `emailSent`, `emailSentAt`, `emailError`, `ipHash`, and `userAgentSummary`.
 
 ## Implementation Status
 
 - Core DM/group chat baseline remains stable.
 - System notifications remain in `users/{uid}/systemNotifications`.
-- Account/security events are a separate read path from `users/{uid}/accountEvents`.
+- Account/security events are a separate read path from `users/{uid}/accountEvents`; password reset, email verification, and security notices are written by backend callables, not by client-side email providers.
 - Users can mark account events read without creating/deleting event records.
 - Universal pinned inbox items live in `users/{uid}/inboxPins/{pinId}` and may reference message threads, system notifications, or account events. Pins are user-owned shortcuts only; they do not mutate the source notification/thread records.
 - Message threads initially subscribe to the latest small window of messages and render at the bottom of the conversation. The "Load earlier messages" control prepends older pages while preserving scroll position.

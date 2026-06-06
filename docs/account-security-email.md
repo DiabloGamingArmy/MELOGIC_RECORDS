@@ -1,9 +1,10 @@
 # Account Security Email
 
-Melogic uses Firebase Authentication password reset emails for account recovery.
+Melogic uses Firebase Admin action links plus the Workspace support mailbox for account recovery emails.
 
-- The public auth page exposes a forgot-password flow that calls `sendPasswordResetEmail`.
+- The public auth page exposes a forgot-password flow that calls `requestPasswordResetEmail`.
 - Signed-in users can request the same email from `/account/security`.
+- Signed-in users can request account email verification from `/account/security`.
 - The UI always shows a generic success message so account existence is not revealed.
 - Security events are recorded under `users/{uid}/accountEvents` by trusted Cloud Functions.
 - Users can read their own account events and mark them read; clients cannot create or delete account events.
@@ -13,8 +14,9 @@ Melogic uses Firebase Authentication password reset emails for account recovery.
 
 ### Implemented
 
-- Public auth forgot-password flow calls Firebase Auth `sendPasswordResetEmail`.
-- Signed-in `/account/security` page can send a password reset email to the current account email.
+- Public auth forgot-password flow calls the `requestPasswordResetEmail` callable.
+- Signed-in `/account/security` page can send a password reset email to the current account email through the support mailbox.
+- Signed-in `/account/security` page can send a verification email to the current Firebase Auth email.
 - Trusted functions write account events under `users/{uid}/accountEvents`.
 - Product review decisions, reports, role changes, and signed-in password reset requests write account events.
 - Inbox System -> Account reads account events separately from core message threads.
@@ -38,19 +40,20 @@ Melogic uses Firebase Authentication password reset emails for account recovery.
 
 ### Known Risks
 
-- Password reset email delivery depends on Firebase Auth email templates and sender configuration.
+- Password reset and verification delivery depend on configured Firebase Functions SMTP secrets for `support@melogicrecords.studio`.
 - 2FA controls are intentionally not interactive until the supported Firebase MFA flow is implemented.
 
 ## Manual Test Checklist
 
 1. Request forgot-password from the public auth page and confirm the UI shows a generic success message.
 2. Open `/account/security` while signed in and confirm provider, email, MFA, and admin warning states match the account.
-3. Confirm account events load under both `/account/security` and Inbox -> System -> Account.
-4. Confirm Firestore rules allow users to read/update only their own `readAt` markers and block forged create/delete.
-5. Confirm suspended users receive an `account_suspended` event and normal users cannot write suspension fields themselves.
+3. Request verification for an unverified account and confirm the UI shows `Verification email sent.`
+4. Confirm account events load under both `/account/security` and Inbox -> System -> Account.
+5. Confirm Firestore rules allow users to read/update only their own `readAt` markers and block forged create/delete.
+6. Confirm suspended users receive an `account_suspended` event and normal users cannot write suspension fields themselves.
 
 ## Deploy Notes
 
 - UI copy or route fixes require Hosting deploy.
-- Trusted event-writing changes require deploying the affected account/admin/product/report functions.
-- No secret values are required for password reset; Firebase Auth email template configuration lives in Firebase Console.
+- Trusted event-writing changes require deploying the affected account/admin/product/report/email functions.
+- Email sending requires the SMTP secrets documented in `docs/email-infrastructure.md`.

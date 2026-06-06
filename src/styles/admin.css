@@ -1784,6 +1784,51 @@
   font-size: 0.78rem;
 }
 
+.admin-email-settings {
+  margin-top: 1rem;
+}
+
+.admin-email-form {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.admin-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.admin-email-form label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--admin-muted);
+  font-size: 0.82rem;
+}
+
+.admin-email-form input,
+.admin-email-form select,
+.admin-email-form textarea {
+  width: 100%;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: var(--admin-card-subtle);
+  color: var(--admin-text);
+  font: inherit;
+  padding: 0.58rem 0.65rem;
+}
+
+.admin-email-form textarea {
+  resize: vertical;
+}
+
+@media (max-width: 980px) {
+  .admin-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .admin-presence-person small {
   color: var(--admin-muted);
   font-size: 0.7rem;

@@ -8,11 +8,12 @@ import {
   signInWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
-  sendPasswordResetEmail,
   signOut,
   updateProfile
 } from 'firebase/auth'
+import { httpsCallable } from 'firebase/functions'
 import { app } from './firebaseConfig.js'
+import { functions } from './functions.js'
 
 export const auth = getAuth(app)
 let hasWarnedPersistence = false
@@ -70,7 +71,16 @@ export async function signInWithGoogle({ forceAccountSelect = false } = {}) {
 
 export async function sendPasswordReset(email) {
   await authPersistenceReady
-  return sendPasswordResetEmail(auth, email)
+  const callable = httpsCallable(functions, 'requestPasswordResetEmail')
+  const result = await callable({ email })
+  return result?.data || { ok: true }
+}
+
+export async function sendEmailVerificationRequest() {
+  await authPersistenceReady
+  const callable = httpsCallable(functions, 'requestEmailVerification')
+  const result = await callable({})
+  return result?.data || { ok: true }
 }
 
 export function signOutUser() {

@@ -19,13 +19,13 @@
 | `/admin/team/{uid}` | `roleManage` | Admin user and profile context | `listAdminTeam`, `getAdminUserProfile` | View role audit | No |
 | `/admin/logs` | `auditRead` | Admin logs | `listAdminLogs` | View audit logs | No |
 | `/admin/logs/{logId}` | `auditRead` | Admin log detail | `getAdminLog` | View log detail, open target, copy JSON | No |
-| `/admin/settings` | `admin`; edit requires `settingsManage` or `roleManage` | `platformConfig/current` | `getAdminSettings`, `updateAdminSettings` | Edit marketplace, agreements, AI moderation, upload limits, review policy | Yes |
+| `/admin/settings` | `admin`; edit requires `settingsManage`, `roleManage`, or `emailSend` for email tools | `platformConfig/current`, `emailLogs` through callables | `getAdminSettings`, `updateAdminSettings`, `getEmailAdminStatus`, `sendAdminEmail` | Edit marketplace, agreements, AI moderation, upload limits, review policy, and send support/admin emails | Yes |
 
 ## Account and Inbox Trust Routes
 
 | Route | Required permission | Data source | Backend callable | Main actions | Changes state |
 | --- | --- | --- | --- | --- | --- |
-| `/account/security` | Signed-in user | Firebase Auth current user, `users/{uid}/accountEvents` | `recordAccountSecurityEvent` | Request password reset, view/mark events read | Yes, read markers and low-risk event |
+| `/account/security` | Signed-in user | Firebase Auth current user, `users/{uid}/accountEvents` | `requestPasswordResetEmail`, `requestEmailVerification`, `recordAccountSecurityEvent` | Request password reset, request email verification, view/mark events read | Yes, email request events, read markers, and low-risk event |
 | `/inbox?system=account` | Signed-in user | `users/{uid}/systemNotifications`, `users/{uid}/accountEvents`, `users/{uid}/inboxPins` | None for reads | View Account/System events, mark read, pin inbox shortcuts | Yes, read markers and user-owned pins |
 
 ## Public and Creator Routes
@@ -42,6 +42,7 @@
 - Non-admin users should receive intentional access-denied states for admin routes.
 - Detail routes include Back links where the current admin UI has a detail panel.
 - Admin-sensitive mutations go through callables and write `adminLogs`.
+- Admin custom email sends go through `sendAdminEmail`, write `emailLogs`, and mirror the action to `adminLogs`; frontend code never handles SMTP credentials or app passwords.
 - Missing or denied report/order detail records should render a clear error or not-found state instead of an indefinite loading shell.
 - Account Hub actions are explicit: Message opens Inbox DM flow, Add Note writes admin-only notes, and Suspend/Unsuspend writes account status plus audit/account events.
 - Unsupported commerce actions, such as Stripe refunds and manual entitlement grant/revoke, must remain disabled with clear titles until backend callables exist.
