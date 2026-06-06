@@ -14,6 +14,7 @@ const RECIPIENT_WINDOW_MS = 60 * 60 * 1000
 const ADMIN_LIMIT = 10
 const GLOBAL_LIMIT = 50
 const RECIPIENT_LIMIT = 5
+const TEMPLATE_TYPES = new Set(['raw', 'support', 'alert'])
 
 function htmlEscape(value = '') {
   return String(value || '')
@@ -26,6 +27,76 @@ function htmlEscape(value = '') {
 
 function plainTextToHtml(value = '') {
   return `<p>${htmlEscape(value).replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br />')}</p>`
+}
+
+function normalizeTemplateType(value = '') {
+  const type = cleanString(value || 'raw', 40).toLowerCase()
+  return TEMPLATE_TYPES.has(type) ? type : 'raw'
+}
+
+function validateCtaUrl(value = '') {
+  const raw = cleanString(value, 900)
+  if (!raw) return ''
+  try {
+    const parsed = new URL(raw)
+    if (!['http:', 'https:'].includes(parsed.protocol)) return ''
+    return parsed.toString()
+  } catch {
+    return ''
+  }
+}
+
+function textFromHtml(value = '') {
+  return String(value || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function renderAdminTemplate({ templateType = 'raw', subject = '', body = '', ctaLabel = '', ctaUrl = '' } = {}) {
+  const type = normalizeTemplateType(templateType)
+  const cleanSubject = cleanString(subject, 180)
+  const finalSubject = type === 'alert' && !/^\[alert\]/i.test(cleanSubject) ? `[ALERT] ${cleanSubject}` : cleanSubject
+  const safeCtaUrl = validateCtaUrl(ctaUrl)
+  const safeCtaLabel = cleanString(ctaLabel || (type === 'alert' ? 'Review Account Security' : 'Open Melogic Records'), 80)
+  if (type === 'raw') {
+    return {
+      templateType: type,
+      finalSubject,
+      html: plainTextToHtml(body),
+      text: body,
+      ctaLabel: '',
+      ctaUrl: ''
+    }
+  }
+  const alertLabel = type === 'alert'
+    ? '<p style="display:inline-block;margin:0 0 14px;padding:5px 9px;border-radius:999px;background:#432318;color:#ffd1a3;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase">Melogic Alert</p>'
+    : ''
+  const button = safeCtaUrl
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" style="margin:24px 0 4px"><tr><td style="background:${type === 'alert' ? '#ffb36b' : '#38d5c8'};border-radius:10px"><a href="${htmlEscape(safeCtaUrl)}" style="display:inline-block;padding:12px 18px;color:#061522;text-decoration:none;font-weight:800;font-size:14px">${htmlEscape(safeCtaLabel)}</a></td></tr></table>`
+    : ''
+  const html = `<!doctype html><html><body style="margin:0;background:#07101f;color:#e7f0ff;font-family:Arial,Helvetica,sans-serif">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#07101f;padding:34px 12px"><tr><td align="center">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#0b1323;border:1px solid ${type === 'alert' ? '#5b3b2d' : '#273b5d'};border-radius:14px;overflow:hidden">
+      <tr><td style="padding:22px 28px;background:#0f1b31;border-bottom:1px solid #243957"><p style="margin:0;color:#8ef8da;font-size:12px;letter-spacing:.18em;font-weight:800">MELOGIC RECORDS</p><p style="margin:8px 0 0;color:#9db2d6;font-size:12px;letter-spacing:.08em;text-transform:uppercase">${type === 'alert' ? 'Account Alert' : 'Support'}</p></td></tr>
+      <tr><td style="padding:30px 28px 26px">${alertLabel}<h1 style="margin:0 0 16px;font-size:26px;line-height:1.2;color:#fff">${htmlEscape(finalSubject)}</h1><div style="font-size:15px;line-height:1.65;color:#d5e1f7">${plainTextToHtml(body)}</div>${button}<hr style="border:0;border-top:1px solid #253750;margin:26px 0" /><p style="margin:0;color:#8fa3c7;font-size:12px;line-height:1.5">Need help? Reply to this email or contact ${SUPPORT_EMAIL}.</p></td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`
+  const ctaText = safeCtaUrl ? `\n\n${safeCtaLabel}: ${safeCtaUrl}` : ''
+  return {
+    templateType: type,
+    finalSubject,
+    html,
+    text: `${finalSubject}\n\n${body}${ctaText}\n\nNeed help? Reply to this email or contact ${SUPPORT_EMAIL}.`,
+    ctaLabel: safeCtaUrl ? safeCtaLabel : '',
+    ctaUrl: safeCtaUrl
+  }
+}
+
+function sanitizedActionPreview(template = {}) {
+  return {
+    renderedHtml: cleanString(String(template.html || '').replace(/href="[^"]+"/g, 'href="[secure action link]"'), 20000),
+    plainText: cleanString(String(template.text || '').replace(/https?:\/\/\S+/g, '[secure action link]'), 10000),
+    ctaUrl: '[secure action link]'
+  }
 }
 
 function emailHash(email = '') {
@@ -104,7 +175,14 @@ function serializeEmailLog(docSnap) {
     createdAt: raw.createdAt?.toDate ? raw.createdAt.toDate().toISOString() : '',
     sentAt: raw.sentAt?.toDate ? raw.sentAt.toDate().toISOString() : '',
     failedAt: raw.failedAt?.toDate ? raw.failedAt.toDate().toISOString() : '',
-    internalNote: cleanString(raw.metadata?.internalNote || raw.metadata?.note || '', 900)
+    internalNote: cleanString(raw.metadata?.internalNote || raw.metadata?.note || '', 900),
+    templateType: cleanString(raw.templateType || raw.metadata?.templateType || raw.templateName || '', 120),
+    finalSubject: cleanString(raw.finalSubject || raw.subject || '', 220),
+    renderedHtml: cleanString(raw.renderedHtml || raw.htmlPreview || '', 20000),
+    htmlPreview: cleanString(raw.htmlPreview || raw.renderedHtml || '', 20000),
+    plainText: cleanString(raw.plainText || '', 10000),
+    ctaLabel: cleanString(raw.ctaLabel || '', 120),
+    ctaUrl: cleanString(raw.ctaUrl || '', 900)
   }
 }
 
@@ -237,6 +315,10 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
   const replyTo = sanitizeReplyTo(request.data?.replyTo || SUPPORT_EMAIL)
   const subject = cleanString(request.data?.subject || '', 180)
   const body = cleanString(request.data?.body || '', 5000)
+  const templateType = normalizeTemplateType(request.data?.templateType || 'raw')
+  const ctaLabel = cleanString(request.data?.ctaLabel || '', 80)
+  const rawCtaUrl = cleanString(request.data?.ctaUrl || '', 900)
+  const ctaUrl = validateCtaUrl(rawCtaUrl)
   const category = CATEGORIES.has(cleanString(request.data?.category || '', 80)) ? cleanString(request.data?.category || '', 80) : 'support'
   const relatedUid = cleanId(request.data?.relatedUid || '')
   const relatedProductId = cleanId(request.data?.relatedProductId || '')
@@ -247,6 +329,7 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
   if (cc.length && cc.includes(to)) throw new HttpsError('invalid-argument', 'CC cannot include the primary recipient.')
   if (!subject || subject.length > 180) throw new HttpsError('invalid-argument', 'Subject is required and must be 180 characters or fewer.')
   if (!body || body.length > 5000) throw new HttpsError('invalid-argument', 'Message body is required and must be 5000 characters or fewer.')
+  if (rawCtaUrl && !ctaUrl) throw new HttpsError('invalid-argument', 'CTA URL must be a valid http or https URL.')
   logStage('payload validated', {
     recipientDomain: to.split('@')[1] || '',
     ccCount: cc.length,
@@ -273,7 +356,7 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
       cc,
       subject,
       category,
-      templateName: 'admin_custom',
+      templateName: templateType,
       sentByUid: claims.uid,
       sentByUsername: claims.email || '',
       relatedUid,
@@ -282,14 +365,14 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
       relatedReportId,
       body,
       error: rateLimitError,
-      metadata: { source: 'admin_custom', stage: 'rate_limit' }
+      metadata: { source: 'admin_custom', stage: 'rate_limit', templateType, finalSubject: subject, plainText: body }
     }).catch((logError) => {
       logStage('rate-limit failed email log write failure', errorDetails(logError), 'error')
     })
     throw rateLimitError
   }
 
-  const html = plainTextToHtml(body)
+  const rendered = renderAdminTemplate({ templateType, subject, body, ctaLabel, ctaUrl })
   let result = null
   try {
     logStage('provider config detected', { providerConfigured: providerConfigured(), provider: 'smtp' })
@@ -297,12 +380,12 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
     result = await sendEmail({
       to,
       cc,
-      subject,
-      html,
-      text: body,
+      subject: rendered.finalSubject,
+      html: rendered.html,
+      text: rendered.text,
       replyTo,
       category: `admin_${category}`,
-      metadata: { template: 'admin_custom' }
+      metadata: { template: templateType }
     })
     logStage('sendEmail success', {
       provider: result.provider || 'smtp',
@@ -312,20 +395,29 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
     const emailLogId = await writeEmailLog({
       to,
       cc,
-      subject,
+      subject: rendered.finalSubject,
       category,
-      templateName: 'admin_custom',
+      templateName: templateType,
       sentByUid: claims.uid,
       sentByUsername: claims.email || '',
       relatedUid,
       relatedProductId,
       relatedOrderId,
       relatedReportId,
-      body,
+      body: rendered.text,
       provider: result.provider || 'smtp',
       providerMessageId: result.providerMessageId || '',
       status: 'sent',
-      metadata: { source: 'admin_custom' }
+      metadata: {
+        source: 'admin_custom',
+        templateType,
+        finalSubject: rendered.finalSubject,
+        renderedHtml: rendered.html,
+        plainText: rendered.text,
+        ctaLabel: rendered.ctaLabel,
+        ctaUrl: rendered.ctaUrl,
+        replyTo
+      }
     }).catch((logError) => {
       logStage('emailLogs write failure', errorDetails(logError), 'error')
       throw emailLogWriteError(logError)
@@ -342,6 +434,7 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
       reason: category,
       metadata: {
         category,
+        templateType,
         targetEmailDomain: to.split('@')[1] || '',
         relatedUid,
         relatedProductId,
@@ -359,19 +452,28 @@ const sendAdminEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secrets: E
       emailLogId = await writeFailedEmailLog({
       to,
       cc,
-      subject,
+      subject: rendered.finalSubject,
       category,
-      templateName: 'admin_custom',
+      templateName: templateType,
       sentByUid: claims.uid,
       sentByUsername: claims.email || '',
       relatedUid,
       relatedProductId,
       relatedOrderId,
       relatedReportId,
-      body,
+      body: rendered.text,
       provider: result?.provider || 'smtp',
       error,
-      metadata: { source: 'admin_custom' }
+      metadata: {
+        source: 'admin_custom',
+        templateType,
+        finalSubject: rendered.finalSubject,
+        renderedHtml: rendered.html,
+        plainText: rendered.text,
+        ctaLabel: rendered.ctaLabel,
+        ctaUrl: rendered.ctaUrl,
+        replyTo
+      }
       })
     } catch (logError) {
       error = logError
@@ -484,7 +586,12 @@ const sendAdminAuthEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secret
       provider: result.provider || 'smtp',
       providerMessageId: result.providerMessageId || '',
       status: 'sent',
-      metadata: { source: 'admin_user_action' }
+      metadata: {
+        source: 'admin_user_action',
+        templateType: type,
+        finalSubject: subject,
+        ...(type === 'password_reset' || type === 'email_verification' ? sanitizedActionPreview({ html, text }) : { renderedHtml: html, plainText: text })
+      }
     })
     const auditLogId = await writeAdminAuditLog({
       actorUid: claims.uid,
@@ -613,6 +720,8 @@ const listAdminEmailLogs = onCall({ timeoutSeconds: 60, memory: '256MiB', secret
   const status = ['sent', 'failed', 'draft'].includes(mode) ? mode : 'sent'
   const limit = Math.max(1, Math.min(Math.round(Number(request.data?.limit || request.data?.limitCount || 10)), 25))
   const cursor = cleanId(request.data?.cursor || '')
+  const search = cleanString(request.data?.search || '', 120).toLowerCase()
+  const searchToken = search.split(/[^a-z0-9@._-]+/i).map((token) => token.trim()).filter((token) => token.length >= 2)[0] || ''
 
   if (status === 'draft') {
     return {
@@ -626,17 +735,47 @@ const listAdminEmailLogs = onCall({ timeoutSeconds: 60, memory: '256MiB', secret
 
   const ref = admin.firestore().collection('emailLogs')
   let query = ref.where('status', '==', status).orderBy('createdAt', 'desc')
+  if (searchToken) {
+    query = ref.where('status', '==', status).where('searchTokens', 'array-contains', searchToken).orderBy('createdAt', 'desc')
+  }
   if (cursor) {
     const cursorSnap = await ref.doc(cursor).get().catch(() => null)
     if (cursorSnap?.exists) query = query.startAfter(cursorSnap)
   }
-  const snapshot = await query.limit(limit).get()
-  const docs = snapshot.docs || []
+  let snapshot = await query.limit(limit).get()
+  let docs = snapshot.docs || []
+  if (searchToken && docs.length === 0) {
+    const legacySnap = await ref.where('status', '==', status).orderBy('createdAt', 'desc').limit(50).get()
+    docs = (legacySnap.docs || []).filter((docSnap) => {
+      const row = serializeEmailLog(docSnap)
+      return [
+        row.to,
+        row.toDomain,
+        row.recipientDomain,
+        row.subject,
+        row.category,
+        row.status,
+        row.sentByUid,
+        row.sentByUsername,
+        row.relatedUid,
+        row.relatedProductId,
+        row.relatedOrderId,
+        row.relatedReportId,
+        row.provider,
+        row.providerMessageId,
+        row.bodyPreview,
+        row.plainText,
+        row.templateType
+      ].join(' ').toLowerCase().includes(search)
+    }).slice(0, limit)
+    snapshot = { docs }
+  }
   return {
     ok: true,
     items: docs.map(serializeEmailLog),
-    nextCursor: docs.length >= limit ? docs[docs.length - 1]?.id || '' : '',
-    hasMore: docs.length >= limit,
+    nextCursor: searchToken ? '' : docs.length >= limit ? docs[docs.length - 1]?.id || '' : '',
+    hasMore: searchToken ? false : docs.length >= limit,
+    search: searchToken,
     requester: { uid: claims.uid, role: claims.adminRole }
   }
 })

@@ -275,11 +275,14 @@ const state = {
     loaded: false,
     error: '',
     emailStatus: null,
-    emailForm: { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' },
+    emailForm: { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', templateType: 'support', ctaLabel: '', ctaUrl: '', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' },
     emailSending: false,
     emailMessage: '',
     emailLogTab: 'sent',
     emailLogDetailId: '',
+    emailLogDetailView: 'preview',
+    emailLogSearch: '',
+    emailLogSearchInput: '',
     emailLogs: {
       sent: { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false },
       failed: { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false },
@@ -2213,6 +2216,9 @@ function selectedUserPanel() {
               renderBooleanField('Email verified', user.emailVerified),
               renderBooleanField('2FA enabled', user.mfaEnabled),
               renderField('2FA factors', String(Number(user.mfaFactorCount || 0))),
+              renderBooleanField('Recovery codes generated', user.recoveryCodesGenerated),
+              renderField('Recovery codes remaining', String(Number(user.recoveryCodesRemaining || 0))),
+              renderDateField('Recovery codes generated at', user.recoveryCodesGeneratedAt),
               renderField('Auth providers', normalizeList(user.authProviderIds || []).join(', ') || 'Not recorded'),
               renderField('Admin role', humanLabel(adminUser.role || user.adminRole)),
               renderField('Updated by', adminUser.updatedBy, { code: true }),
@@ -3088,6 +3094,15 @@ function emailSettingsPanel() {
           <label><span>Category</span><select data-admin-email-field="category" ${canSend ? '' : 'disabled'}>
             ${['support', 'account', 'marketplace', 'moderation', 'order', 'security', 'payout', 'other'].map((category) => `<option value="${category}" ${form.category === category ? 'selected' : ''}>${escapeHtml(humanLabel(category))}</option>`).join('')}
           </select></label>
+          <label><span>Template</span><select data-admin-email-field="templateType" ${canSend ? '' : 'disabled'}>
+            ${[
+              ['raw', 'Raw Text'],
+              ['support', 'Melogic Support Template'],
+              ['alert', 'Melogic Alert Template']
+            ].map(([key, label]) => `<option value="${key}" ${(form.templateType || 'support') === key ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+          </select></label>
+          <label><span>Button label</span><input data-admin-email-field="ctaLabel" value="${escapeHtml(form.ctaLabel || '')}" placeholder="Optional CTA" ${canSend ? '' : 'disabled'} /></label>
+          <label><span>Button URL</span><input data-admin-email-field="ctaUrl" value="${escapeHtml(form.ctaUrl || '')}" placeholder="https://melogicrecords.studio/..." ${canSend ? '' : 'disabled'} /></label>
           <label><span>Related user UID</span><input data-admin-email-field="relatedUid" value="${escapeHtml(form.relatedUid)}" ${canSend ? '' : 'disabled'} /></label>
           <label><span>Related product ID</span><input data-admin-email-field="relatedProductId" value="${escapeHtml(form.relatedProductId)}" ${canSend ? '' : 'disabled'} /></label>
           <label><span>Related order ID</span><input data-admin-email-field="relatedOrderId" value="${escapeHtml(form.relatedOrderId)}" ${canSend ? '' : 'disabled'} /></label>
@@ -3095,11 +3110,7 @@ function emailSettingsPanel() {
         </div>
         <label><span>Subject</span><input data-admin-email-field="subject" maxlength="180" value="${escapeHtml(form.subject)}" ${canSend ? '' : 'disabled'} /></label>
         <label><span>Message</span><textarea data-admin-email-field="body" rows="7" maxlength="5000" ${canSend ? '' : 'disabled'}>${escapeHtml(form.body)}</textarea></label>
-        <article class="admin-email-preview">
-          <strong>Preview</strong>
-          <p>${escapeHtml(form.subject || 'No subject yet')}</p>
-          <small>${escapeHtml((form.body || 'No message yet').slice(0, 220))}</small>
-        </article>
+        ${renderAdminEmailComposerPreview(form)}
         ${state.contact.emailMessage ? `<p class="admin-status ${state.contact.emailMessage.startsWith('Sent') ? 'is-success' : 'is-error'}">${escapeHtml(state.contact.emailMessage)}</p>` : ''}
         <div class="admin-modal-actions">
           <button type="button" class="admin-secondary-button" data-admin-email-self ${canSend && state.currentUser?.email ? '' : 'disabled'}>Send Test to Self</button>
@@ -3111,8 +3122,49 @@ function emailSettingsPanel() {
   `
 }
 
+function adminEmailPreviewModel(form = {}) {
+  const templateType = ['raw', 'support', 'alert'].includes(form.templateType) ? form.templateType : 'support'
+  const subject = String(form.subject || 'No subject yet').trim()
+  const finalSubject = templateType === 'alert' && !/^\[alert\]/i.test(subject) ? `[ALERT] ${subject}` : subject
+  const body = String(form.body || 'No message yet')
+  return { templateType, finalSubject, body, ctaLabel: form.ctaLabel || '', ctaUrl: form.ctaUrl || '' }
+}
+
+function renderAdminEmailComposerPreview(form = {}) {
+  const preview = adminEmailPreviewModel(form)
+  if (preview.templateType === 'raw') {
+    return `
+      <article class="admin-email-preview is-raw">
+        <strong>Raw Text Preview</strong>
+        <p>${escapeHtml(preview.finalSubject)}</p>
+        <small>${escapeHtml(preview.body.slice(0, 700))}</small>
+      </article>
+    `
+  }
+  return `
+    <article class="admin-email-preview ${preview.templateType === 'alert' ? 'is-alert' : 'is-support'}">
+      <strong>${preview.templateType === 'alert' ? 'Melogic Alert Template' : 'Melogic Support Template'}</strong>
+      <p>${escapeHtml(preview.finalSubject)}</p>
+      <small>${escapeHtml(preview.body.slice(0, 700))}</small>
+      ${preview.ctaUrl ? `<span class="admin-email-preview-cta">${escapeHtml(preview.ctaLabel || 'Open Melogic Records')}</span>` : ''}
+    </article>
+  `
+}
+
 function emailLogState(tab = state.contact.emailLogTab || 'sent') {
   return state.contact.emailLogs?.[tab] || { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false }
+}
+
+function emailActivitySearchToolbar() {
+  const active = state.contact.emailLogSearch || ''
+  return `
+    <form class="admin-email-search" data-email-log-search-form>
+      <input data-email-log-search-input value="${escapeHtml(state.contact.emailLogSearchInput || active)}" placeholder="Search emails by recipient, subject, sender, username, UID, role, or content" />
+      <button type="submit" class="admin-secondary-button">Search</button>
+      ${active ? '<button type="button" class="admin-secondary-button" data-email-log-search-clear>Clear</button>' : ''}
+      ${active ? `<span class="admin-muted">Searching: ${escapeHtml(active)}</span>` : ''}
+    </form>
+  `
 }
 
 function emailActivityTabs(active = state.contact.emailLogTab || 'sent') {
@@ -3138,8 +3190,8 @@ function emailLogRows(tab = 'sent', rows = []) {
     return `<article class="admin-empty-state">${escapeHtml(copy)}</article>`
   }
   const headers = tab === 'failed'
-    ? ['Recipient/domain', 'Subject', 'Category', 'Error', 'Created', 'Actions']
-    : ['Recipient', 'Subject', 'Category', 'Status', 'Sent By', 'Provider', 'Created', 'Actions']
+    ? ['Recipient', 'Subject', 'Category', 'Status', 'Sent By', 'Created', 'Actions']
+    : ['Recipient', 'Subject', 'Category', 'Status', 'Sent By', 'Created', 'Actions']
   const tableRows = rows.map((row) => {
     const viewButton = htmlCell(`<button type="button" class="admin-secondary-button" data-email-log-detail="${escapeHtml(row.emailId)}">View Details</button>`)
     if (tab === 'failed') {
@@ -3148,6 +3200,7 @@ function emailLogRows(tab = 'sent', rows = []) {
         compactText(row.subject || '', 70),
         humanLabel(row.category || ''),
         htmlCell(`<strong>${escapeHtml(row.errorCode || 'failed')}</strong><small>${escapeHtml(compactText(row.errorMessageRedacted || '', 80))}</small>`),
+        htmlCell(`<strong>${escapeHtml(row.sentByUsername || row.sentByUid || 'System')}</strong>${row.sentByUid ? `<small>${escapeHtml(row.sentByUid)}</small>` : ''}`),
         formatDate(row.createdAt || row.failedAt),
         viewButton
       ]
@@ -3158,7 +3211,6 @@ function emailLogRows(tab = 'sent', rows = []) {
       humanLabel(row.category || ''),
       htmlCell(renderBadge(humanLabel(row.status || 'sent'), row.status === 'sent' ? 'approved' : 'pending')),
       htmlCell(`<strong>${escapeHtml(row.sentByUsername || row.sentByUid || 'System')}</strong>${row.sentByUid ? `<small>${escapeHtml(row.sentByUid)}</small>` : ''}`),
-      htmlCell(`<strong>${escapeHtml(row.provider || 'smtp')}</strong>${row.providerMessageId ? `<small class="admin-code-value">${escapeHtml(shortIdentifier(row.providerMessageId))}</small>` : ''}`),
       formatDate(row.createdAt || row.sentAt),
       viewButton
     ]
@@ -3176,6 +3228,16 @@ function emailLogDetail() {
   if (!detailId) return ''
   const row = emailLogState(tab).items.find((item) => item.emailId === detailId)
   if (!row) return ''
+  const view = state.contact.emailLogDetailView || 'preview'
+  const htmlPreview = row.renderedHtml || row.htmlPreview || ''
+  const plainText = row.plainText || row.bodyPreview || ''
+  const previewContent = view === 'html'
+    ? `<pre class="admin-email-raw">${escapeHtml(htmlPreview || 'Full rendered preview was not stored for this email. Future emails will include preview data.')}</pre>`
+    : view === 'text'
+      ? `<pre class="admin-email-raw">${escapeHtml(plainText || 'Plaintext fallback was not stored for this email.')}</pre>`
+      : htmlPreview
+        ? `<iframe class="admin-email-preview-frame" sandbox srcdoc="${escapeHtml(htmlPreview)}" title="Email preview"></iframe>`
+        : '<article class="admin-empty-state">Full rendered preview was not stored for this email. Future emails will include preview data.</article>'
   return `
     <article class="admin-email-detail-drawer">
       <div class="admin-slab-heading">
@@ -3187,6 +3249,7 @@ function emailLogDetail() {
         renderField('CC domains', (row.ccDomains || []).join(', ') || 'None'),
         renderField('Reply-To', row.replyTo || 'Not set'),
         renderField('Subject', row.subject, { wide: true }),
+        renderField('Template', row.templateType || row.templateName || 'Not stored'),
         renderField('Category', humanLabel(row.category)),
         renderField('Status', humanLabel(row.status)),
         renderField('Provider', row.provider || 'smtp'),
@@ -3203,6 +3266,14 @@ function emailLogDetail() {
         renderField('Internal note', row.internalNote, { wide: true }),
         renderField('Error', [row.errorCode, row.errorMessageRedacted].filter(Boolean).join(': '), { wide: true })
       ])}
+      <div class="admin-email-detail-tabs">
+        ${[
+          ['preview', 'Preview'],
+          ['html', 'Raw HTML'],
+          ['text', 'Plain Text']
+        ].map(([key, label]) => `<button type="button" class="admin-secondary-button ${view === key ? 'is-active' : ''}" data-email-log-detail-view="${key}">${escapeHtml(label)}</button>`).join('')}
+      </div>
+      ${previewContent}
     </article>
   `
 }
@@ -3219,8 +3290,9 @@ function emailActivityPanel() {
         </div>
         <span class="admin-muted">${data.items.length} loaded</span>
       </div>
+      ${emailActivitySearchToolbar()}
       ${emailActivityTabs(tab)}
-      <div class="admin-table-scroll">
+      <div class="admin-table-scroll admin-email-activity-scroll">
         ${data.loading ? '<article class="admin-empty-state">Loading email activity...</article>' : data.error ? `<article class="admin-empty-state"><strong>Could not load email activity.</strong><span>${escapeHtml(data.error)}</span></article>` : emailLogRows(tab, data.items)}
         ${data.hasMore ? `<div class="admin-load-more-row"><button type="button" class="admin-secondary-button" data-email-log-load-more ${data.loadingMore ? 'disabled' : ''}>${data.loadingMore ? 'Loading...' : 'Load more'}</button></div>` : ''}
         ${emailLogDetail()}
@@ -3719,7 +3791,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       const logState = emailLogState(tab)
       if (!logState.loaded && tab !== 'draft') {
         logState.loading = true
-        const result = await listAdminEmailLogs({ mode: tab, limitCount: 10 }).catch((error) => ({ error, items: [], nextCursor: '', hasMore: false }))
+        const result = await listAdminEmailLogs({ mode: tab, limitCount: 10, search: state.contact.emailLogSearch || '' }).catch((error) => ({ error, items: [], nextCursor: '', hasMore: false }))
         if (result.error) logState.error = result.error?.message || 'Email activity could not be loaded.'
         logState.items = result.items || []
         logState.cursor = result.nextCursor || ''
@@ -3788,7 +3860,7 @@ async function loadEmailLogs(tab = state.contact.emailLogTab || 'sent', { append
   data.error = ''
   render()
   try {
-    const result = await listAdminEmailLogs({ mode: cleanTab, limitCount: 10, cursor: append ? data.cursor : '' })
+    const result = await listAdminEmailLogs({ mode: cleanTab, limitCount: 10, cursor: append ? data.cursor : '', search: state.contact.emailLogSearch || '' })
     data.items = append ? mergePageItems(data.items, result.items || []) : (result.items || [])
     data.cursor = result.nextCursor || ''
     data.hasMore = result.hasMore === true
@@ -4016,7 +4088,7 @@ async function submitAdminEmailForm(form, { self = false } = {}) {
   try {
     const result = await sendAdminEmail(payload)
     state.contact.emailMessage = `Sent email. Log ${result.emailLogId || ''}`.trim()
-    state.contact.emailForm = { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' }
+    state.contact.emailForm = { to: '', cc: '', replyTo: '', subject: '', body: '', category: 'support', templateType: 'support', ctaLabel: '', ctaUrl: '', relatedUid: '', relatedProductId: '', relatedOrderId: '', relatedReportId: '' }
     state.contact.emailStatus = await getEmailAdminStatus().catch(() => state.contact.emailStatus)
     state.settings.emailStatus = state.contact.emailStatus
     state.contact.emailLogs.sent.loaded = false
@@ -4476,6 +4548,7 @@ function bindEvents() {
       const tab = button.getAttribute('data-email-log-tab') || 'sent'
       state.contact.emailLogTab = ['sent', 'failed', 'draft'].includes(tab) ? tab : 'sent'
       state.contact.emailLogDetailId = ''
+      state.contact.emailLogDetailView = 'preview'
       window.history.pushState({}, '', `${ROUTES.adminContact}?mode=email&activity=${encodeURIComponent(state.contact.emailLogTab)}`)
       render()
       const data = emailLogState(state.contact.emailLogTab)
@@ -4485,9 +4558,35 @@ function bindEvents() {
   app.querySelector('[data-email-log-load-more]')?.addEventListener('click', () => {
     loadEmailLogs(state.contact.emailLogTab || 'sent', { append: true, silent: true })
   })
+  app.querySelector('[data-email-log-search-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const input = app.querySelector('[data-email-log-search-input]')
+    state.contact.emailLogSearch = String(input?.value || '').trim()
+    state.contact.emailLogSearchInput = state.contact.emailLogSearch
+    const data = emailLogState(state.contact.emailLogTab || 'sent')
+    data.loaded = false
+    loadEmailLogs(state.contact.emailLogTab || 'sent', { silent: false })
+  })
+  app.querySelector('[data-email-log-search-input]')?.addEventListener('input', (event) => {
+    state.contact.emailLogSearchInput = event.currentTarget.value || ''
+  })
+  app.querySelector('[data-email-log-search-clear]')?.addEventListener('click', () => {
+    state.contact.emailLogSearch = ''
+    state.contact.emailLogSearchInput = ''
+    const data = emailLogState(state.contact.emailLogTab || 'sent')
+    data.loaded = false
+    loadEmailLogs(state.contact.emailLogTab || 'sent', { silent: false })
+  })
   app.querySelectorAll('[data-email-log-detail]').forEach((button) => {
     button.addEventListener('click', () => {
       state.contact.emailLogDetailId = button.getAttribute('data-email-log-detail') || ''
+      state.contact.emailLogDetailView = 'preview'
+      render()
+    })
+  })
+  app.querySelectorAll('[data-email-log-detail-view]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.contact.emailLogDetailView = button.getAttribute('data-email-log-detail-view') || 'preview'
       render()
     })
   })

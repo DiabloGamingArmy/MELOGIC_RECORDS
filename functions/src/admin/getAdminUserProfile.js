@@ -50,19 +50,22 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   const uid = cleanString(request.data?.uid || '', 180)
   if (!uid || uid.includes('/')) throw new HttpsError('invalid-argument', 'A valid uid is required.')
 
-  const [profileSnap, userSnap, adminSnap, productsSnap, eventsSnap, notesSnap, authUser] = await Promise.all([
+  const [profileSnap, userSnap, adminSnap, productsSnap, eventsSnap, notesSnap, recoverySnap, authUser] = await Promise.all([
     db().collection('profiles').doc(uid).get(),
     db().collection('users').doc(uid).get(),
     db().collection('adminUsers').doc(uid).get(),
     db().collection('products').where('artistId', '==', uid).limit(25).get(),
     db().collection('users').doc(uid).collection('accountEvents').orderBy('createdAt', 'desc').limit(12).get(),
     db().collection('users').doc(uid).collection('adminNotes').orderBy('createdAt', 'desc').limit(25).get().catch(() => ({ docs: [] })),
+    db().collection('users').doc(uid).collection('security').doc('recoveryCodes').get().catch(() => ({ exists: false, data: () => ({}) })),
     admin.auth().getUser(uid).catch(() => null)
   ])
 
   const source = profileSnap.exists ? profileSnap : userSnap
   const account = userSnap.exists ? userSnap.data() || {} : {}
   const authFactors = Array.isArray(authUser?.multiFactor?.enrolledFactors) ? authUser.multiFactor.enrolledFactors : []
+  const recovery = recoverySnap.exists ? recoverySnap.data() || {} : {}
+  const recoveryHashes = Array.isArray(recovery.codeHashes) ? recovery.codeHashes : []
   const baseUser = source.exists ? profileSummary(source, adminSnap.exists ? adminUserSummary(adminSnap) : null, account) : null
   return {
     ok: true,
@@ -73,6 +76,9 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
           authDisabled: authUser?.disabled === true,
           mfaEnabled: authFactors.length > 0,
           mfaFactorCount: authFactors.length,
+          recoveryCodesGenerated: recovery.enabled === true && recoveryHashes.length > 0,
+          recoveryCodesRemaining: recoveryHashes.filter((item) => item?.used !== true).length,
+          recoveryCodesGeneratedAt: serializeDate(recovery.generatedAt),
           mfaFactors: authFactors.map((factor) => ({
             uid: cleanString(factor.uid || '', 180),
             factorId: cleanString(factor.factorId || '', 80),
