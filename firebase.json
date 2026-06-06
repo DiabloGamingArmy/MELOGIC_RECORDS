@@ -78,6 +78,11 @@
         "type": 301
       },
       {
+        "source": "/auth-action.html",
+        "destination": "/auth/action",
+        "type": 301
+      },
+      {
         "source": "/profile.html",
         "destination": "/profile",
         "type": 301
@@ -227,6 +232,10 @@
       {
         "source": "/auth",
         "destination": "/auth.html"
+      },
+      {
+        "source": "/auth/action",
+        "destination": "/auth-action.html"
       },
       {
         "source": "/profile",

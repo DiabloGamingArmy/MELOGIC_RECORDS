@@ -7,7 +7,11 @@ const { sendSecurityEmail } = require('../email/securityEmail')
 const CLIENT_SECURITY_EVENTS = new Set([
   'new_login',
   'password_reset_requested',
+  'password_reset_completed',
   'email_verification_requested',
+  'email_verified',
+  'auth_action_link_invalid',
+  'auth_action_link_expired',
   'two_factor_enabled',
   'two_factor_disabled',
   'recovery_codes_generated'
@@ -21,10 +25,30 @@ const EVENT_COPY = {
     title: 'Password reset requested',
     message: 'A password reset email was requested for your account.'
   },
+  password_reset_completed: {
+    severity: 'success',
+    title: 'Password reset completed',
+    message: 'Your Melogic Records password was reset.'
+  },
   email_verification_requested: {
     severity: 'info',
     title: 'Verification email requested',
     message: 'A verification email was requested for your account.'
+  },
+  email_verified: {
+    severity: 'success',
+    title: 'Email verified',
+    message: 'Your account email was verified.'
+  },
+  auth_action_link_invalid: {
+    severity: 'warning',
+    title: 'Account action link unavailable',
+    message: 'An account action link was invalid or already used.'
+  },
+  auth_action_link_expired: {
+    severity: 'warning',
+    title: 'Account action link expired',
+    message: 'An account action link expired before it was used.'
   },
   two_factor_enabled: {
     severity: 'success',

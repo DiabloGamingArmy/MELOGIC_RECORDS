@@ -524,6 +524,7 @@ async function submitReauth() {
 async function refreshCurrentUser() {
   if (auth.currentUser) {
     await auth.currentUser.reload().catch(() => {})
+    await auth.currentUser.getIdToken(true).catch(() => {})
     state.user = auth.currentUser
   }
 }
@@ -716,12 +717,19 @@ function startAccountEventsSubscription() {
   )
 }
 
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !auth.currentUser) return
+  await refreshCurrentUser()
+  render()
+})
+
 waitForInitialAuthState().then(async (user) => {
   state.user = user || auth.currentUser || null
   if (!state.user) {
     window.location.assign(authRoute({ redirect: ROUTES.accountSecurity }))
     return
   }
+  await refreshCurrentUser()
   try {
     const token = await getIdTokenResult(state.user, true)
     state.claims = token.claims || {}

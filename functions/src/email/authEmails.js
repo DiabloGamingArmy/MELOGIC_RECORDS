@@ -76,8 +76,22 @@ function actionCodeSettings(path = '/auth') {
   const cleanPath = String(path || '/auth').startsWith('/') ? path : `/${path}`
   return {
     url: `${AUTH_ACTION_BASE_URL}${cleanPath}`,
-    handleCodeInApp: false
+    handleCodeInApp: true
   }
+}
+
+function customAuthActionLink(firebaseLink = '', fallbackMode = '') {
+  const parsed = new URL(firebaseLink)
+  const output = new URL('/auth/action', AUTH_ACTION_BASE_URL)
+  const mode = parsed.searchParams.get('mode') || fallbackMode
+  const oobCode = parsed.searchParams.get('oobCode') || ''
+  const continueUrl = parsed.searchParams.get('continueUrl') || `${AUTH_ACTION_BASE_URL}/account/security`
+  const lang = parsed.searchParams.get('lang') || ''
+  if (mode) output.searchParams.set('mode', mode)
+  if (oobCode) output.searchParams.set('oobCode', oobCode)
+  if (continueUrl) output.searchParams.set('continueUrl', continueUrl)
+  if (lang) output.searchParams.set('lang', lang)
+  return output.toString()
 }
 
 async function writeFailedEmailLog(flow = '', {
@@ -199,11 +213,11 @@ const requestPasswordResetEmail = onCall({ timeoutSeconds: 60, memory: '256MiB',
     logStage(flow, 'user lookup passed', { uid: userRecord.uid, recipientDomain: recipientDomain(email) })
 
     stage = 'actionCodeSettings'
-    const settings = actionCodeSettings('/auth')
-    logStage(flow, 'actionCodeSettings built', { urlOrigin: AUTH_ACTION_BASE_URL, continuePath: '/auth', handleCodeInApp: settings.handleCodeInApp })
+    const settings = actionCodeSettings('/auth/action')
+    logStage(flow, 'actionCodeSettings built', { urlOrigin: AUTH_ACTION_BASE_URL, continuePath: '/auth/action', handleCodeInApp: settings.handleCodeInApp })
 
     stage = 'Firebase Admin link generation'
-    link = await admin.auth().generatePasswordResetLink(email, settings)
+    link = customAuthActionLink(await admin.auth().generatePasswordResetLink(email, settings), 'resetPassword')
     logStage(flow, 'Firebase Admin link generated', { uid: userRecord.uid, recipientDomain: recipientDomain(email) })
   } catch (error) {
     if (error?.code === 'auth/user-not-found') {
@@ -316,11 +330,11 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     if (user.emailVerified) return { ok: true, message: 'Your email is already verified.' }
 
     stage = 'actionCodeSettings'
-    const settings = actionCodeSettings('/auth')
-    logStage(flow, 'actionCodeSettings built', { uid, urlOrigin: AUTH_ACTION_BASE_URL, continuePath: '/auth', handleCodeInApp: settings.handleCodeInApp })
+    const settings = actionCodeSettings('/auth/action')
+    logStage(flow, 'actionCodeSettings built', { uid, urlOrigin: AUTH_ACTION_BASE_URL, continuePath: '/auth/action', handleCodeInApp: settings.handleCodeInApp })
 
     stage = 'Firebase Admin link generation'
-    const link = await admin.auth().generateEmailVerificationLink(email, settings)
+    const link = customAuthActionLink(await admin.auth().generateEmailVerificationLink(email, settings), 'verifyEmail')
     logStage(flow, 'Firebase Admin link generated', { uid, recipientDomain: recipientDomain(email) })
 
     const template = renderEmailTemplate('email_verification', { actionLink: link })

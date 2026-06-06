@@ -137,21 +137,31 @@ const TEMPLATE_SUBJECTS = {
 
 function baseEmailHtml({ eyebrow = 'Melogic Records', title = '', body = '', ctaLabel = '', ctaUrl = '', footer = '' } = {}) {
   const button = ctaUrl
-    ? `<p style="margin:28px 0"><a href="${htmlEscape(ctaUrl)}" style="background:#35c6ee;color:#04111f;text-decoration:none;border-radius:8px;padding:12px 18px;font-weight:700;display:inline-block">${htmlEscape(ctaLabel || 'Open Melogic Records')}</a></p>`
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" style="margin:28px 0 8px"><tr><td style="background:#38d5c8;border-radius:10px"><a href="${htmlEscape(ctaUrl)}" style="display:inline-block;padding:13px 20px;color:#061522;text-decoration:none;font-weight:800;font-size:14px;letter-spacing:.01em">${htmlEscape(ctaLabel || 'Open Melogic Records')}</a></td></tr></table>`
     : ''
   return `<!doctype html>
 <html><body style="margin:0;background:#07101f;color:#e7f0ff;font-family:Arial,Helvetica,sans-serif">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#07101f;padding:28px 12px">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#07101f;padding:34px 12px">
     <tr><td align="center">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;background:#0d1728;border:1px solid #253750;border-radius:12px;padding:28px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#0b1323;border:1px solid #273b5d;border-radius:14px;overflow:hidden">
         <tr><td>
-          <p style="margin:0 0 8px;color:#8ef8da;font-size:12px;letter-spacing:.08em;text-transform:uppercase">${htmlEscape(eyebrow)}</p>
-          <h1 style="margin:0 0 16px;font-size:26px;line-height:1.2;color:#ffffff">${htmlEscape(title)}</h1>
-          <div style="font-size:15px;line-height:1.65;color:#d5e1f7">${body}</div>
-          ${button}
-          ${footer ? `<p style="margin:18px 0 0;color:#aebddd;font-size:13px;line-height:1.5">${footer}</p>` : ''}
-          <hr style="border:0;border-top:1px solid #253750;margin:24px 0" />
-          <p style="margin:0;color:#8fa3c7;font-size:12px">Need help? Reply to this email or contact ${SUPPORT_EMAIL}.</p>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f1b31;border-bottom:1px solid #243957">
+            <tr><td style="padding:22px 28px">
+              <p style="margin:0;color:#8ef8da;font-size:12px;letter-spacing:.18em;font-weight:800">MELOGIC RECORDS</p>
+              <p style="margin:8px 0 0;color:#9db2d6;font-size:12px;letter-spacing:.08em;text-transform:uppercase">${htmlEscape(eyebrow)}</p>
+            </td></tr>
+          </table>
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr><td style="padding:30px 28px 26px">
+              <h1 style="margin:0 0 16px;font-size:27px;line-height:1.2;color:#ffffff;font-weight:800">${htmlEscape(title)}</h1>
+              <div style="font-size:15px;line-height:1.65;color:#d5e1f7">${body}</div>
+              ${button}
+              ${footer ? `<p style="margin:18px 0 0;color:#aebddd;font-size:13px;line-height:1.5">${footer}</p>` : ''}
+              <hr style="border:0;border-top:1px solid #253750;margin:26px 0" />
+              <p style="margin:0 0 8px;color:#aabade;font-size:13px;line-height:1.5">If you did not request this, you can ignore this email.</p>
+              <p style="margin:0;color:#8fa3c7;font-size:12px;line-height:1.5">Need help? Reply to this email or contact ${SUPPORT_EMAIL}.</p>
+            </td></tr>
+          </table>
         </td></tr>
       </table>
     </td></tr>
@@ -173,9 +183,10 @@ function renderEmailTemplate(templateName = '', data = {}) {
   if (name === 'password_reset') {
     const html = baseEmailHtml({
       title: 'Reset your password',
-      body: `<p>We received a request to reset the password for your Melogic Records account.</p><p>If you made this request, use the button below. If this was not you, you can safely ignore this email.</p>`,
+      body: `<p>Use this secure link to reset your Melogic Records password.</p><p>Choose a unique password you do not reuse on other services.</p>`,
       ctaLabel: 'Reset Password',
-      ctaUrl: actionLink
+      ctaUrl: actionLink,
+      footer: 'If you did not request a password reset, you can ignore this email.'
     })
     return { subject: TEMPLATE_SUBJECTS.password_reset, html, text: `Reset your Melogic Records password.\n\nUse this link to reset your password:${fallbackLink}\n\nIf this was not you, you can ignore this email.\n\nSupport: ${SUPPORT_EMAIL}` }
   }
@@ -185,7 +196,8 @@ function renderEmailTemplate(templateName = '', data = {}) {
       title: 'Confirm your email',
       body: `<p>Confirm this email address to finish securing your Melogic Records account.</p>`,
       ctaLabel: 'Confirm Email',
-      ctaUrl: actionLink
+      ctaUrl: actionLink,
+      footer: 'This helps protect your profile, marketplace activity, and account recovery.'
     })
     return { subject: TEMPLATE_SUBJECTS.email_verification, html, text: `Confirm your Melogic Records email.${fallbackLink}\n\nSupport: ${SUPPORT_EMAIL}` }
   }
@@ -205,7 +217,7 @@ function renderEmailTemplate(templateName = '', data = {}) {
   const html = baseEmailHtml({
     eyebrow: 'Account Security',
     title,
-    body: `<p>${htmlEscape(message)}</p>${details ? `<p><strong>Details:</strong> ${htmlEscape(details)}</p>` : ''}<p><strong>Time:</strong> ${htmlEscape(timestamp)}</p><p>If this was not you, reset your password and contact support.</p>`,
+    body: `<p>${htmlEscape(message)}</p>${details ? `<p><strong>Details:</strong> ${htmlEscape(details)}</p>` : ''}<p><strong>Time:</strong> ${htmlEscape(timestamp)}</p><p>If this was you, no action is needed. If this was not you, reset your password immediately and contact support.</p>`,
     ctaLabel: 'Review Account Security',
     ctaUrl: appUrl('/account/security')
   })
