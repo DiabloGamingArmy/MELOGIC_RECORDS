@@ -1282,6 +1282,17 @@ service cloud.firestore {
         allow read, write: if isOwner(uid);
       }
 
+      match /inboxThreadPrefs/{threadId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly(['threadId', 'pinned', 'pinnedAt', 'updatedAt'])
+          && request.resource.data.keys().hasAll(['threadId', 'pinned', 'updatedAt'])
+          && request.resource.data.threadId == threadId
+          && request.resource.data.pinned is bool
+          && (!('pinnedAt' in request.resource.data) || request.resource.data.pinnedAt is timestamp || request.resource.data.pinnedAt == null);
+        allow delete: if isOwner(uid);
+      }
+
       match /blockedUsers/{targetUid} {
         allow read, create, update, delete: if isOwner(uid);
       }

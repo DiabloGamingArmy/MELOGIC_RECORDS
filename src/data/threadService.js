@@ -59,6 +59,15 @@ function normalizeThread(threadId, raw = {}) {
   }
 }
 
+function normalizeThreadPref(threadId, raw = {}) {
+  return {
+    threadId,
+    pinned: raw.pinned === true,
+    pinnedAt: toIsoDate(raw.pinnedAt),
+    updatedAt: toIsoDate(raw.updatedAt)
+  }
+}
+
 function normalizeDmBlockState(raw = null) {
   if (!raw || typeof raw !== 'object') return null
   const blockedBy = String(raw.blockedBy || '').trim()
@@ -100,6 +109,24 @@ function sortThreadsNewestFirst(threads = []) {
   })
 }
 
+function applyThreadPrefs(threads = [], prefs = new Map()) {
+  return threads.map((thread) => {
+    const pref = prefs.get(thread.id)
+    if (!pref) return thread
+    return {
+      ...thread,
+      pinned: pref.pinned,
+      pinnedAt: pref.pinned ? (pref.pinnedAt || thread.pinnedAt || thread.updatedAt || thread.createdAt || null) : null
+    }
+  })
+}
+
+async function loadThreadPrefs(uid) {
+  if (!db || !uid) return new Map()
+  const snapshot = await getDocs(collection(db, 'users', uid, 'inboxThreadPrefs'))
+  return new Map(snapshot.docs.map((prefDoc) => [prefDoc.id, normalizeThreadPref(prefDoc.id, prefDoc.data())]))
+}
+
 function shouldFallbackListener(error) {
   const code = String(error?.code || '').toLowerCase()
   return code.includes('failed-precondition')
@@ -118,10 +145,13 @@ export async function listThreadsForUser(uid) {
     snapshot = await getDocs(query(collection(db, 'users', uid, 'inboxThreads'), limit(100)))
   }
 
-  const threads = snapshot.docs
-    .map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
-    .filter((thread) => !thread.deleted)
-  const hydratedThreads = await Promise.all(threads.map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
+  const [prefs, threads] = await Promise.all([
+    loadThreadPrefs(uid).catch(() => new Map()),
+    Promise.resolve(snapshot.docs
+      .map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
+      .filter((thread) => !thread.deleted))
+  ])
+  const hydratedThreads = await Promise.all(applyThreadPrefs(threads, prefs).map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
   return sortThreadsNewestFirst(hydratedThreads)
 }
 
@@ -130,7 +160,32 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
 
   let primaryUnsubscribe = () => {}
   let fallbackUnsubscribe = () => {}
+  let prefsUnsubscribe = () => {}
   let usingFallback = false
+  let latestThreads = []
+  let latestPrefs = new Map()
+  let hasThreadSnapshot = false
+  let hasPrefsSnapshot = false
+
+  const emit = () => {
+    if (!hasThreadSnapshot || !hasPrefsSnapshot) return
+    callback(sortThreadsNewestFirst(applyThreadPrefs(latestThreads, latestPrefs)))
+  }
+
+  prefsUnsubscribe = onSnapshot(
+    collection(db, 'users', uid, 'inboxThreadPrefs'),
+    (snapshot) => {
+      latestPrefs = new Map(snapshot.docs.map((prefDoc) => [prefDoc.id, normalizeThreadPref(prefDoc.id, prefDoc.data())]))
+      hasPrefsSnapshot = true
+      emit()
+    },
+    (error) => {
+      hasPrefsSnapshot = true
+      latestPrefs = new Map()
+      emit()
+      console.warn('[threadService] Inbox thread preferences listener failed.', error?.code || error?.message || error)
+    }
+  )
 
   const startFallbackListener = () => {
     if (usingFallback) return
@@ -147,10 +202,11 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
     fallbackUnsubscribe = onSnapshot(
       query(collection(db, 'users', uid, 'inboxThreads'), limit(100)),
       (snapshot) => {
-        const threads = snapshot.docs
+        latestThreads = snapshot.docs
           .map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
           .filter((thread) => !thread.deleted)
-        callback(sortThreadsNewestFirst(threads))
+        hasThreadSnapshot = true
+        emit()
       },
       (error) => {
         if (typeof onError === 'function') onError(error)
@@ -159,10 +215,11 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
   }
 
   primaryUnsubscribe = onSnapshot(getInboxMirrorQuery(uid), (snapshot) => {
-    const threads = snapshot.docs
+    latestThreads = snapshot.docs
       .map((threadDoc) => normalizeThread(threadDoc.id, threadDoc.data()))
       .filter((thread) => !thread.deleted)
-    callback(sortThreadsNewestFirst(threads))
+    hasThreadSnapshot = true
+    emit()
   }, (error) => {
     if (shouldFallbackListener(error)) {
       startFallbackListener()
@@ -174,6 +231,7 @@ export function subscribeToThreadsForUser(uid, callback, onError) {
   return () => {
     primaryUnsubscribe()
     fallbackUnsubscribe()
+    prefsUnsubscribe()
   }
 }
 
@@ -406,11 +464,20 @@ export async function updateThreadDetails({ threadId, actorUid, title = '', imag
 
 export async function setThreadPinnedForUser({ uid, threadId, pinned }) {
   if (!db || !uid || !threadId) return false
-  await setDoc(doc(db, 'users', uid, 'inboxThreads', threadId), {
-    pinned: Boolean(pinned),
-    pinnedAt: pinned ? serverTimestamp() : null,
-    updatedAt: serverTimestamp()
-  }, { merge: true })
+  const value = Boolean(pinned)
+  await Promise.all([
+    setDoc(doc(db, 'users', uid, 'inboxThreadPrefs', threadId), {
+      threadId,
+      pinned: value,
+      pinnedAt: value ? serverTimestamp() : null,
+      updatedAt: serverTimestamp()
+    }, { merge: true }),
+    setDoc(doc(db, 'users', uid, 'inboxThreads', threadId), {
+      pinned: value,
+      pinnedAt: value ? serverTimestamp() : null,
+      updatedAt: serverTimestamp()
+    }, { merge: true })
+  ])
   return true
 }
 

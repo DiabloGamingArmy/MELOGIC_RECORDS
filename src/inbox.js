@@ -174,7 +174,9 @@ const appState = {
   threadsFallbackPending: false,
   hasLoadedThreadsOnce: false,
   inboxRepairAttempted: false,
-  isRepairingInbox: false
+  isRepairingInbox: false,
+  bottomScrollRequestByThreadId: {},
+  pendingBottomScrollTimer: null
 }
 
 let searchDebounceTimer = null
@@ -406,6 +408,15 @@ function upsertThreadInState(nextThread) {
   appState.threads = sortInboxThreadsLocal(
     appState.threads.map((thread) => (thread.id === nextThread.id ? { ...thread, ...nextThread } : thread))
   )
+}
+
+function mergeSourceThreadState(current = {}, sourceThread = {}) {
+  return {
+    ...current,
+    ...sourceThread,
+    pinned: current.pinned === true,
+    pinnedAt: current.pinned === true ? current.pinnedAt : null
+  }
 }
 
 function sortInboxThreadsLocal(threads = []) {
@@ -853,17 +864,67 @@ function updateTypingHeartbeat(threadId, value) {
   }, TYPING_IDLE_CLEAR_MS)
 }
 
-function scrollMessageListToBottom({ behavior = 'auto' } = {}) {
+function isMessageListNearBottom(threshold = 120) {
+  const list = inboxRoot.querySelector('[data-message-list]')
+  if (!list) return true
+  return list.scrollHeight - list.scrollTop - list.clientHeight <= threshold
+}
+
+function waitForVisibleMessageMedia(list, timeoutMs = 1000) {
+  if (!list) return Promise.resolve()
+  const media = Array.from(list.querySelectorAll('img, video'))
+    .filter((item) => {
+      if (item.tagName === 'IMG') return !item.complete
+      return Number(item.readyState || 0) < 1
+    })
+  if (!media.length) return Promise.resolve()
+  return Promise.race([
+    Promise.all(media.map((item) => new Promise((resolve) => {
+      const done = () => {
+        item.removeEventListener('load', done)
+        item.removeEventListener('loadedmetadata', done)
+        item.removeEventListener('error', done)
+        resolve()
+      }
+      item.addEventListener('load', done, { once: true })
+      item.addEventListener('loadedmetadata', done, { once: true })
+      item.addEventListener('error', done, { once: true })
+    }))),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs))
+  ])
+}
+
+function scrollMessageListToBottom({ behavior = 'auto', reason = 'manual', force = false } = {}) {
+  const threadId = appState.selectedThreadId || ''
+  if (!threadId) return
   const list = inboxRoot.querySelector('[data-message-list]')
   if (!list) return
-  requestAnimationFrame(() => {
-    if (behavior === 'smooth' && typeof list.scrollTo === 'function') {
-      list.scrollTo({ top: list.scrollHeight, behavior })
+  if (!force && !isMessageListNearBottom()) return
+  if (appState.pendingBottomScrollTimer) clearTimeout(appState.pendingBottomScrollTimer)
+  appState.bottomScrollRequestByThreadId[threadId] = { reason, requestedAt: Date.now() }
+  const applyScroll = () => {
+    const currentList = inboxRoot.querySelector('[data-message-list]')
+    if (!currentList || appState.selectedThreadId !== threadId) return
+    if (behavior === 'smooth' && typeof currentList.scrollTo === 'function') {
+      currentList.scrollTo({ top: currentList.scrollHeight, behavior })
     } else {
-      list.scrollTop = list.scrollHeight
+      currentList.scrollTop = currentList.scrollHeight
     }
-    requestAnimationFrame(() => {
-      list.scrollTop = list.scrollHeight
+  }
+  requestAnimationFrame(() => {
+    requestAnimationFrame(async () => {
+      const currentList = inboxRoot.querySelector('[data-message-list]')
+      await waitForVisibleMessageMedia(currentList, 1000)
+      applyScroll()
+      const observer = typeof ResizeObserver === 'function' && reason === 'initial'
+        ? new ResizeObserver(() => applyScroll())
+        : null
+      if (observer && currentList) {
+        observer.observe(currentList)
+        appState.pendingBottomScrollTimer = setTimeout(() => observer.disconnect(), 1200)
+      } else {
+        appState.pendingBottomScrollTimer = setTimeout(applyScroll, 250)
+      }
     })
   })
 }
@@ -1814,18 +1875,28 @@ async function handleThreadConfirmAction() {
   renderFloatingUi()
   try {
     if (modal.type === 'pin') {
-      await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: true })
+      const previousThreads = appState.threads
       appState.threads = appState.threads.map((thread) => (thread.id === modal.threadId
         ? { ...thread, pinned: true, pinnedAt: new Date().toISOString() }
         : thread))
       appState.threads = sortInboxThreadsLocal(appState.threads)
+      renderSignedInState()
+      await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: true }).catch((error) => {
+        appState.threads = previousThreads
+        throw error
+      })
     }
     if (modal.type === 'unpin') {
-      await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: false })
+      const previousThreads = appState.threads
       appState.threads = appState.threads.map((thread) => (thread.id === modal.threadId
         ? { ...thread, pinned: false, pinnedAt: null }
         : thread))
       appState.threads = sortInboxThreadsLocal(appState.threads)
+      renderSignedInState()
+      await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: false }).catch((error) => {
+        appState.threads = previousThreads
+        throw error
+      })
     }
     if (modal.type === 'delete') {
       await deleteThreadForUser({ uid: appState.user.uid, threadId: modal.threadId })
@@ -2491,7 +2562,7 @@ async function handleCreateChatSubmit() {
     }
     closeCreateChatModal()
     renderSignedInState()
-    scrollMessageListToBottom()
+    scrollMessageListToBottom({ reason: 'open-created-thread', force: true })
   } catch (error) {
     appState.isCreatingChat = false
     appState.createChatError = error?.message || 'Unable to create chat.'
@@ -3007,6 +3078,7 @@ function bindSharedEvents() {
       startMessageSubscription(threadId)
       hydrateProfilesForThread(getSelectedThread())
       renderSignedInState()
+      scrollMessageListToBottom({ reason: 'thread-switch', force: true })
 
       if (canMarkThreadRead(threadId)) {
         await markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
@@ -3207,7 +3279,7 @@ function bindSharedEvents() {
         appState.errorMessage = getSendErrorMessage(error, thread)
       }
       renderSignedInState()
-      scrollMessageListToBottom()
+      scrollMessageListToBottom({ reason: 'retry-message', force: true })
     })
   })
 
@@ -3313,7 +3385,6 @@ function renderSignedInState() {
   renderCreateChatModal()
   renderChatSettingsModal()
   renderFloatingUi()
-  scrollMessageListToBottom()
 }
 
 function createClientMessageId() {
@@ -3366,7 +3437,7 @@ async function handleMessageSubmit(form) {
   setAttachmentDraft(thread.id, [])
   form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
   renderSignedInState()
-  scrollMessageListToBottom({ behavior: 'smooth' })
+  scrollMessageListToBottom({ behavior: 'smooth', reason: 'sent-optimistic', force: true })
 
   try {
     await sendMessage(thread.id, {
@@ -3390,7 +3461,7 @@ async function handleMessageSubmit(form) {
   }
 
   renderSignedInState()
-  scrollMessageListToBottom()
+  scrollMessageListToBottom({ reason: 'sent-confirmed', force: true })
 }
 
 function startThreadDetailSubscriptions(threadId) {
@@ -3447,8 +3518,7 @@ function startSelectedSourceThreadSubscription(threadId) {
     appState.threads = appState.threads.map((thread) => {
       if (thread.id !== sourceThread.id) return thread
       return {
-        ...thread,
-        ...sourceThread,
+        ...mergeSourceThreadState(thread, sourceThread),
         title: thread.title || sourceThread.title,
         imageURL: thread.imageURL || sourceThread.imageURL,
         otherProfile: thread.otherProfile || sourceThread.otherProfile,
@@ -3484,6 +3554,8 @@ function startMessageSubscription(threadId) {
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
     reconcileOptimisticMessages(threadId, messages)
     const existing = appState.messagesByThreadId[threadId] || []
+    const isInitialMessageBatch = appState.loadingMessageThreadId === threadId || !existing.length
+    const shouldAutoScroll = isInitialMessageBatch || isMessageListNearBottom()
     appState.messagesByThreadId[threadId] = mergeMessages(existing, messages)
     appState.messagePaginationByThreadId[threadId] = {
       ...(appState.messagePaginationByThreadId[threadId] || {}),
@@ -3504,6 +3576,13 @@ function startMessageSubscription(threadId) {
     })
     if (appState.selectedThreadId === threadId) {
       renderSignedInState()
+      if (shouldAutoScroll) {
+        scrollMessageListToBottom({
+          reason: isInitialMessageBatch ? 'initial' : 'new-message',
+          force: isInitialMessageBatch,
+          behavior: isInitialMessageBatch ? 'auto' : 'smooth'
+        })
+      }
       if (canMarkThreadRead(threadId)) {
         await markThreadRead({ threadId, uid: appState.user.uid }).catch((error) => {
           warnRealtimePermission(`participants-read-${threadId}`, error)
