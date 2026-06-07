@@ -19,6 +19,15 @@ const MOD_TARGETS = [
   { value: 'output.volume', label: 'Output Volume' }
 ]
 
+const MWT_PAGES = [
+  { id: 'osc', label: 'OSC' },
+  { id: 'filter', label: 'FILTER' },
+  { id: 'mod', label: 'MOD' },
+  { id: 'matrix', label: 'MATRIX' },
+  { id: 'fx', label: 'FX' },
+  { id: 'global', label: 'GLOBAL' }
+]
+
 function esc(value = '') {
   return String(value ?? '').replace(/[&<>"']/g, (char) => ({
     '&': '&amp;',
@@ -127,8 +136,9 @@ export function renderMelogicWavetableShell(instance = {}, { hostMode = 'inline'
   const keyboard = [
     ['C', 60], ['D', 62], ['E', 64], ['F', 65], ['G', 67], ['A', 69], ['B', 71], ['C', 72]
   ]
+  const activePage = MWT_PAGES.some((page) => page.id === params.mwtPage) ? params.mwtPage : 'osc'
   return `
-    <article class="daw-plugin-shell daw-wavetable-shell melogic-plugin-fixed-frame" data-plugin-shell="${esc(instance.pluginInstanceId || '')}" data-host-mode="${esc(hostMode)}">
+    <article class="daw-plugin-shell daw-wavetable-shell melogic-plugin-fixed-frame" data-plugin-shell="${esc(instance.pluginInstanceId || '')}" data-host-mode="${esc(hostMode)}" data-mwt-page="${esc(activePage)}">
       <div class="melogic-plugin-design-surface">
         <header class="mwt-topbar">
           <strong>MWT</strong>
@@ -146,6 +156,10 @@ export function renderMelogicWavetableShell(instance = {}, { hostMode = 'inline'
             <div class="daw-plugin-output-meter" aria-label="Output meter placeholder"><i style="width:${esc(Math.round(numberParam(params, 'volume', 0.45) * 72 + 12))}%"></i></div>
           </div>
         </header>
+        <nav class="mwt-tabbar" aria-label="Melogic Wavetable pages">
+          ${MWT_PAGES.map((page) => `<button type="button" data-plugin-page="${esc(page.id)}" class="${activePage === page.id ? 'is-active' : ''}">${esc(page.label)}</button>`).join('')}
+          <span>Main DAW tab owns audio</span>
+        </nav>
         <div class="mwt-layout">
           <section class="mwt-panel mwt-panel--osc-a">
             <header><span>OSC A</span><em>On</em></header>
@@ -240,6 +254,25 @@ export function renderMelogicWavetableShell(instance = {}, { hostMode = 'inline'
             <header><span>OUTPUT</span><em>Main tab audio</em></header>
             <div class="mwt-controls">
               ${sliderControl({ label: 'Volume', param: 'volume', value: numberParam(params, 'volume', 0.45), min: 0, max: 1, step: 0.01 })}
+            </div>
+          </section>
+          <section class="mwt-panel mwt-panel--fx">
+            <header><span>FX RACK</span><em>Scaffold</em></header>
+            <div class="mwt-placeholder-stack">
+              <strong>Original Melogic effects chain</strong>
+              <p>Distortion, chorus, delay, and reverb slots will land here without recreating the synth engine.</p>
+            </div>
+          </section>
+          <section class="mwt-panel mwt-panel--global">
+            <header><span>GLOBAL</span><em>Host</em></header>
+            <div class="mwt-controls">
+              ${sliderControl({ label: 'Volume', param: 'volume', value: numberParam(params, 'volume', 0.45), min: 0, max: 1, step: 0.01 })}
+              ${sliderControl({ label: 'Voices', param: 'unisonVoices', value: numberParam(params, 'unisonVoices', 1), min: 1, max: 5, step: 1 })}
+              ${sliderControl({ label: 'Detune', param: 'detune', value: numberParam(params, 'detune', 0.08), min: 0, max: 1, step: 0.01 })}
+            </div>
+            <div class="mwt-placeholder-stack">
+              <strong>Session-safe plugin state</strong>
+              <p>Settings live in the plugin instance and communicate as parameter patches to the main DAW audio graph.</p>
             </div>
           </section>
           <section class="mwt-keyboard-strip" aria-label="Keyboard placeholder">

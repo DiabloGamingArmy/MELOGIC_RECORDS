@@ -10,6 +10,7 @@ export const DAW_PLUGIN_DEFINITIONS = {
     defaultSize: { width: 1100, height: 762 },
     fixedFrame: { width: 1100, height: 720, minScale: 0.75, maxScale: 1.25, headerHeight: 42 },
     defaultParams: {
+      mwtPage: 'osc',
       preset: 'init',
       wavetableId: 'builtin-saw',
       wavetablePosition: 0.35,

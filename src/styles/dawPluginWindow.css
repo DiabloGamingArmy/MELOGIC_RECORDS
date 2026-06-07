@@ -170,6 +170,46 @@
   background: linear-gradient(180deg, #151d2c, #0f1521);
 }
 
+.mwt-tabbar {
+  height: 42px;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(86px, 1fr)) 190px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(126, 147, 191, 0.18);
+  background: linear-gradient(180deg, rgba(15, 22, 34, 0.98), rgba(10, 15, 24, 0.98));
+}
+
+.mwt-tabbar button {
+  height: 28px;
+  border: 1px solid rgba(126, 147, 191, 0.22);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.035);
+  color: #aebdda;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.mwt-tabbar button.is-active {
+  border-color: rgba(118, 222, 255, 0.72);
+  background: linear-gradient(180deg, rgba(61, 96, 138, 0.55), rgba(23, 36, 56, 0.88));
+  color: #eefbff;
+  box-shadow: inset 0 0 0 1px rgba(118, 222, 255, 0.12), 0 0 14px rgba(118, 222, 255, 0.1);
+}
+
+.mwt-tabbar span {
+  justify-self: end;
+  color: #7487aa;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .mwt-topbar strong {
   color: #8be6ff;
   font-size: 13px;
@@ -233,7 +273,7 @@
 }
 
 .mwt-layout {
-  height: 676px;
+  height: 634px;
   display: grid;
   grid-template-columns: 290px 230px 240px 292px;
   grid-template-rows: 216px 120px 140px 104px 58px;
@@ -297,10 +337,90 @@
 .mwt-panel--macros { grid-area: macros; }
 .mwt-panel--matrix { grid-area: matrix; }
 .mwt-panel--output { grid-area: output; }
+.mwt-panel--fx { grid-area: fx; }
+.mwt-panel--global { grid-area: global; }
+
+.daw-wavetable-shell[data-mwt-page] .mwt-panel {
+  display: none;
+}
+
+.daw-wavetable-shell[data-mwt-page] .mwt-keyboard-strip {
+  display: grid;
+}
+
+.daw-wavetable-shell[data-mwt-page="osc"] .mwt-layout {
+  grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.75fr);
+  grid-template-rows: minmax(0, 1fr) 150px 58px;
+  grid-template-areas:
+    "oscA assets"
+    "oscB noise"
+    "keyboard keyboard";
+}
+
+.daw-wavetable-shell[data-mwt-page="filter"] .mwt-layout {
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1fr) minmax(260px, 0.8fr);
+  grid-template-rows: minmax(0, 1fr) 58px;
+  grid-template-areas:
+    "filter env lfo"
+    "keyboard keyboard keyboard";
+}
+
+.daw-wavetable-shell[data-mwt-page="mod"] .mwt-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 190px 58px;
+  grid-template-areas:
+    "lfo env"
+    "macros matrix"
+    "keyboard keyboard";
+}
+
+.daw-wavetable-shell[data-mwt-page="matrix"] .mwt-layout {
+  grid-template-columns: minmax(0, 1.25fr) minmax(260px, 0.75fr);
+  grid-template-rows: minmax(0, 1fr) 58px;
+  grid-template-areas:
+    "matrix macros"
+    "keyboard keyboard";
+}
+
+.daw-wavetable-shell[data-mwt-page="fx"] .mwt-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 58px;
+  grid-template-areas:
+    "fx output"
+    "keyboard keyboard";
+}
+
+.daw-wavetable-shell[data-mwt-page="global"] .mwt-layout {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.8fr);
+  grid-template-rows: minmax(0, 1fr) 58px;
+  grid-template-areas:
+    "global assets"
+    "keyboard keyboard";
+}
+
+.daw-wavetable-shell[data-mwt-page="osc"] .mwt-panel--osc-a,
+.daw-wavetable-shell[data-mwt-page="osc"] .mwt-panel--osc-b,
+.daw-wavetable-shell[data-mwt-page="osc"] .mwt-panel--noise,
+.daw-wavetable-shell[data-mwt-page="osc"] .mwt-panel--assets,
+.daw-wavetable-shell[data-mwt-page="filter"] .mwt-panel--filter,
+.daw-wavetable-shell[data-mwt-page="filter"] .mwt-panel--env,
+.daw-wavetable-shell[data-mwt-page="filter"] .mwt-panel--lfo,
+.daw-wavetable-shell[data-mwt-page="mod"] .mwt-panel--lfo,
+.daw-wavetable-shell[data-mwt-page="mod"] .mwt-panel--env,
+.daw-wavetable-shell[data-mwt-page="mod"] .mwt-panel--macros,
+.daw-wavetable-shell[data-mwt-page="mod"] .mwt-panel--matrix,
+.daw-wavetable-shell[data-mwt-page="matrix"] .mwt-panel--matrix,
+.daw-wavetable-shell[data-mwt-page="matrix"] .mwt-panel--macros,
+.daw-wavetable-shell[data-mwt-page="fx"] .mwt-panel--fx,
+.daw-wavetable-shell[data-mwt-page="fx"] .mwt-panel--output,
+.daw-wavetable-shell[data-mwt-page="global"] .mwt-panel--global,
+.daw-wavetable-shell[data-mwt-page="global"] .mwt-panel--assets {
+  display: grid;
+}
 
 .mwt-waveform {
-  height: 138px;
-  min-height: 138px;
+  height: 190px;
+  min-height: 190px;
   border-radius: 3px;
 }
 
@@ -460,6 +580,31 @@
   font-size: 10px;
   font-weight: 950;
   letter-spacing: 0.05em;
+}
+
+.mwt-placeholder-stack {
+  min-height: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 18px;
+  text-align: center;
+  border: 1px dashed rgba(126, 147, 191, 0.24);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.mwt-placeholder-stack strong {
+  color: #dceeff;
+  font-size: 13px;
+}
+
+.mwt-placeholder-stack p {
+  max-width: 430px;
+  margin: 0;
+  color: #91a4c6;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .daw-plugin-hero {

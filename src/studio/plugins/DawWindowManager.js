@@ -271,6 +271,13 @@ export class DawWindowManager {
         this.addMatrixRoute(shell.dataset.pluginShell)
       })
     })
+    scope.querySelectorAll('[data-plugin-page]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const shell = button.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell || !button.dataset.pluginPage) return
+        this.updateParam(shell.dataset.pluginShell, 'mwtPage', button.dataset.pluginPage)
+      })
+    })
     scope.querySelectorAll('[data-plugin-asset-select]').forEach((button) => {
       button.addEventListener('click', () => {
         const shell = button.closest('[data-plugin-shell]')
@@ -427,7 +434,7 @@ export class DawWindowManager {
       this.onParamChange(id, name, nextValue)
       this.updateParamValueDom(id, name, nextValue)
     })
-    if (param === 'preset' || param.startsWith('assetBrowser')) this.renderPluginBody(id)
+    if (param === 'preset' || param === 'mwtPage' || param.startsWith('assetBrowser')) this.renderPluginBody(id)
     if (['wavetableId', 'wavetablePosition'].includes(param)) this.updateVisualizerDom(id)
     this.persist()
     if (notifyHost) {
