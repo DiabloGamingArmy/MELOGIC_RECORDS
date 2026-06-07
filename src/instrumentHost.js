@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/dawPluginWindow.css'
-import { createDawPluginInstance } from './studio/plugins/pluginCatalog.js'
+import { createDawPluginInstance, getDawPluginDefinition } from './studio/plugins/pluginCatalog.js'
 import { drawWavetableVisualizers, renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 
 const CHANNEL_NAME = 'melogic-daw-plugin-host'
@@ -28,6 +28,20 @@ function parseHostInstance() {
 
 let instance = parseHostInstance()
 let connectionStatus = 'Connecting to DAW'
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value))
+}
+
+function updateHostScale() {
+  const definition = getDawPluginDefinition(instance.pluginType)
+  const frame = definition.fixedFrame
+  if (!frame) return
+  const availableWidth = window.innerWidth - 32
+  const availableHeight = window.innerHeight - 150
+  const scale = clamp(Math.min(availableWidth / frame.width, availableHeight / frame.height), frame.minScale || 0.75, frame.maxScale || 1.25)
+  app.querySelector('.daw-plugin-host-page')?.style.setProperty('--plugin-scale', String(scale))
+}
 
 function postToMain(message = {}) {
   const payload = {
@@ -64,6 +78,7 @@ function render() {
       </footer>
     </main>
   `
+  updateHostScale()
   bind()
 }
 
@@ -172,6 +187,7 @@ function handleMessage(event) {
 }
 
 window.addEventListener('message', handleMessage)
+window.addEventListener('resize', updateHostScale)
 channel?.addEventListener('message', handleMessage)
 window.addEventListener('beforeunload', () => {
   postToMain({ type: 'plugin-closed' })

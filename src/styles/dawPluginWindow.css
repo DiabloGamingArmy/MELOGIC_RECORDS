@@ -95,7 +95,7 @@
 
 .daw-plugin-window-body {
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   background: radial-gradient(circle at top left, rgba(63, 91, 150, 0.18), transparent 36%), #0c111b;
 }
 
@@ -135,6 +135,331 @@
   min-height: 100%;
   padding: 14px;
   color: #e9efff;
+}
+
+.melogic-plugin-fixed-frame {
+  width: calc(1100px * var(--plugin-scale, 1));
+  height: calc(720px * var(--plugin-scale, 1));
+  min-height: calc(720px * var(--plugin-scale, 1));
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #070b12;
+}
+
+.melogic-plugin-design-surface {
+  width: 1100px;
+  height: 720px;
+  overflow: hidden;
+  transform: scale(var(--plugin-scale, 1));
+  transform-origin: top left;
+  background:
+    linear-gradient(180deg, rgba(23, 32, 50, 0.98), rgba(8, 12, 20, 0.98)),
+    #080d15;
+}
+
+.mwt-topbar {
+  height: 44px;
+  display: grid;
+  grid-template-columns: 56px 42px minmax(260px, 1fr) 42px 58px 190px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(126, 147, 191, 0.24);
+  background: linear-gradient(180deg, #151d2c, #0f1521);
+}
+
+.mwt-topbar strong {
+  color: #8be6ff;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.mwt-topbar button,
+.mwt-preset select,
+.mwt-browser-filters select,
+.mwt-browser-filters input {
+  height: 28px;
+  min-width: 0;
+  border: 1px solid rgba(126, 147, 191, 0.28);
+  border-radius: 4px;
+  background: #0b111d;
+  color: #f1f6ff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.mwt-topbar button {
+  padding: 0 8px;
+}
+
+.mwt-topbar button:disabled {
+  opacity: 0.55;
+}
+
+.mwt-preset {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
+.mwt-preset span,
+.mwt-output-readout span {
+  color: #8ca4c8;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.mwt-output-readout {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.mwt-output-readout .daw-plugin-output-meter {
+  grid-column: auto;
+}
+
+.daw-plugin-output-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #62e1b7, #72ddff 62%, #a58bff);
+}
+
+.mwt-layout {
+  height: 676px;
+  display: grid;
+  grid-template-columns: 290px 230px 240px 292px;
+  grid-template-rows: 216px 120px 140px 104px 58px;
+  grid-template-areas:
+    "oscA oscA filter assets"
+    "oscA oscA filter assets"
+    "oscB noise env lfo"
+    "macros macros matrix matrix"
+    "output keyboard keyboard keyboard";
+  gap: 8px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.mwt-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(126, 147, 191, 0.2);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(22, 31, 48, 0.94), rgba(10, 15, 25, 0.94));
+}
+
+.mwt-panel header {
+  min-height: 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid rgba(126, 147, 191, 0.12);
+  padding-bottom: 5px;
+}
+
+.mwt-panel header span {
+  color: #82dfff;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mwt-panel header em {
+  color: #9baece;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.mwt-panel--osc-a { grid-area: oscA; }
+.mwt-panel--osc-b { grid-area: oscB; }
+.mwt-panel--noise { grid-area: noise; }
+.mwt-panel--filter { grid-area: filter; }
+.mwt-panel--assets { grid-area: assets; }
+.mwt-panel--env { grid-area: env; }
+.mwt-panel--lfo { grid-area: lfo; }
+.mwt-panel--macros { grid-area: macros; }
+.mwt-panel--matrix { grid-area: matrix; }
+.mwt-panel--output { grid-area: output; }
+
+.mwt-waveform {
+  height: 138px;
+  min-height: 138px;
+  border-radius: 3px;
+}
+
+.mwt-mini-scope {
+  height: 42px;
+  border: 1px solid rgba(126, 147, 191, 0.18);
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, transparent 0 14px, rgba(125, 227, 255, 0.16) 15px, transparent 16px),
+    linear-gradient(180deg, transparent 0 19px, rgba(125, 227, 255, 0.26) 20px, transparent 21px),
+    #08101c;
+  background-size: 32px 100%, 100% 100%, auto;
+}
+
+.mwt-controls {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mwt-controls--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.mwt-panel .daw-plugin-control {
+  grid-template-columns: 58px minmax(0, 1fr) 40px;
+  gap: 6px;
+}
+
+.mwt-panel .daw-plugin-control span,
+.mwt-panel .daw-plugin-macro span,
+.mwt-panel .daw-plugin-mod-row span {
+  font-size: 10px;
+}
+
+.mwt-panel .daw-plugin-control em {
+  font-size: 10px;
+}
+
+.mwt-panel .daw-plugin-control select,
+.mwt-panel .daw-plugin-control input[type="search"],
+.mwt-panel .daw-plugin-mod-row select {
+  min-height: 24px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.mwt-panel .daw-plugin-control input[type="range"] {
+  height: 16px;
+}
+
+.mwt-route-toggles {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.mwt-route-toggles span {
+  width: 24px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(126, 147, 191, 0.22);
+  border-radius: 3px;
+  background: rgba(103, 216, 255, 0.1);
+  color: #cfefff;
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.mwt-browser-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.mwt-browser-filters input {
+  grid-column: 1 / -1;
+  padding: 0 8px;
+}
+
+.mwt-asset-list {
+  max-height: 138px;
+  gap: 5px;
+}
+
+.mwt-asset-list button {
+  min-height: 38px;
+  padding: 6px 7px;
+  border-radius: 4px;
+}
+
+.mwt-macro-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.mwt-panel .daw-plugin-macro {
+  gap: 5px;
+  padding: 7px;
+  border-radius: 4px;
+}
+
+.mwt-mod-matrix {
+  gap: 5px;
+}
+
+.mwt-panel .daw-plugin-mod-row {
+  grid-template-columns: 42px minmax(80px, 1fr) minmax(118px, 1.2fr) minmax(128px, 1fr) 38px;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+}
+
+.mwt-panel .daw-plugin-add-mod {
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.mwt-keyboard-strip {
+  grid-area: keyboard;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) 94px;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(126, 147, 191, 0.2);
+  border-radius: 4px;
+  background: #0b1019;
+}
+
+.mwt-keyboard-strip button {
+  display: grid;
+  place-items: end center;
+  border: 1px solid rgba(126, 147, 191, 0.2);
+  border-radius: 0 0 4px 4px;
+  background: linear-gradient(180deg, #eff4fb, #aeb9ca);
+  color: #121a29;
+  padding-bottom: 5px;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.mwt-keyboard-strip button.is-playing,
+.mwt-keyboard-strip button:active {
+  background: linear-gradient(180deg, #9fe8ff, #6f87ff);
+}
+
+.mwt-keyboard-strip span {
+  display: grid;
+  place-items: center;
+  color: #91a4c6;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.05em;
 }
 
 .daw-plugin-hero {
@@ -447,12 +772,18 @@
 }
 
 .daw-plugin-host-page {
+  --plugin-scale: 1;
   min-height: 100vh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
   gap: 14px;
   padding: 16px;
   background: #080c14;
+}
+
+.daw-plugin-host-page > .daw-plugin-shell {
+  align-self: center;
 }
 
 .daw-plugin-host-header,

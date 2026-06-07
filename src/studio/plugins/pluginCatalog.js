@@ -7,7 +7,8 @@ export const DAW_PLUGIN_DEFINITIONS = {
     pluginType: DAW_PLUGIN_TYPES.melogicWavetable,
     title: 'Melogic Wavetable',
     status: 'Web Audio prototype',
-    defaultSize: { width: 820, height: 560 },
+    defaultSize: { width: 1100, height: 762 },
+    fixedFrame: { width: 1100, height: 720, minScale: 0.75, maxScale: 1.25, headerHeight: 42 },
     defaultParams: {
       preset: 'init',
       wavetableId: 'builtin-saw',
