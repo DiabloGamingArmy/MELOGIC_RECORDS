@@ -95,6 +95,7 @@ const STORY_BACKGROUNDS = [
 ]
 const STORY_LIFETIME_OPTIONS = [6, 12, 24, 48]
 const STORY_MAX_RECORD_SECONDS = 60
+const recordedStoryViews = new Set()
 const POSTING_MODES = [
   { value: 'open', label: 'Open' },
   { value: 'focused_only', label: 'Focused only' },
@@ -868,12 +869,25 @@ function renderStoryViewerModal() {
         </header>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
           ${story.mediaType === 'video' && story.mediaURL
-            ? `<video src="${escapeHtml(story.mediaURL)}" controls autoplay playsinline></video>`
+            ? `<video src="${escapeHtml(story.mediaURL)}" autoplay muted loop playsinline preload="auto" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture></video>`
             : story.mediaType === 'image' && story.mediaURL
-              ? `<img src="${escapeHtml(story.mediaURL)}" alt="" />`
+              ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="eager" decoding="async" />`
               : `<p>${escapeHtml(story.text)}</p>`
           }
           ${(story.mediaType === 'image' || story.mediaType === 'video') && (story.caption || story.text) ? `<p class="community-story-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
+        </div>
+        <div class="community-story-discussion">
+          <div class="community-story-reactions" aria-label="Story reactions">
+            <button type="button" data-story-reaction="like:${escapeHtml(story.storyId)}">${iconSvg('thumbsUp')} <span>Like</span></button>
+            <button type="button" data-story-reaction="dislike:${escapeHtml(story.storyId)}">${iconSvg('thumbsDown')} <span>Dislike</span></button>
+          </div>
+          <form data-story-comment-form="${escapeHtml(story.storyId)}">
+            <label for="story-comment-${escapeHtml(story.storyId)}">Comment</label>
+            <div>
+              <input id="story-comment-${escapeHtml(story.storyId)}" name="storyComment" type="text" maxlength="240" placeholder="Story comments are coming soon." disabled />
+              <button type="submit" disabled aria-label="Send story comment">${iconSvg('send')}</button>
+            </div>
+          </form>
         </div>
         <footer class="community-story-viewer-actions">
           <button type="button" data-story-prev ${state.stories.length <= 1 ? 'disabled' : ''}>${iconSvg('arrowLeft')} <span>Prev</span></button>
@@ -1891,24 +1905,22 @@ function renderLeftNav() {
   `
 }
 
-function trendingTags() {
-  const counts = state.posts.reduce((map, post) => {
-    ;(post.tags || []).forEach((tag) => {
-      const clean = String(tag || '').replace(/^#/, '').trim().toLowerCase()
-      if (clean) map.set(clean, (map.get(clean) || 0) + 1)
+function trendingCommunities() {
+  return displayedCommunities()
+    .filter((community) => !community.fallback)
+    .sort((a, b) => {
+      const scoreA = Number(a.focusCount || 0) + Number(a.postCount || 0)
+      const scoreB = Number(b.focusCount || 0) + Number(b.postCount || 0)
+      return scoreB - scoreA
     })
-    return map
-  }, new Map())
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 8)
+    .slice(0, 6)
 }
 
 function renderSidebar() {
   const suggested = displayedCommunities()
     .filter((community) => !state.communityFocus[community.communityId])
     .slice(0, 5)
-  const tags = trendingTags()
+  const communities = trendingCommunities()
   return `
     <aside class="community-right-rail community-sidebar">
       <section class="community-rail-card">
@@ -1929,12 +1941,24 @@ function renderSidebar() {
         ` : '<p>Communities will appear here as creators focus spaces.</p>'}
       </section>
       <section class="community-rail-card">
-        <h2>Trending Tags</h2>
-        ${tags.length ? `<div class="community-trending-tags">${tags.map(([tag, count]) => `<button type="button" data-community-tag="${escapeHtml(tag)}">#${escapeHtml(tag)} <em>${formatCount(count)}</em></button>`).join('')}</div>` : '<p>Tags will populate once posts start moving.</p>'}
+        <h2>Trending Communities</h2>
+        ${communities.length ? `
+          <div class="community-suggested-list">
+            ${communities.map((community) => `
+              <article>
+                <a href="${communityRoute(community.slug)}">
+                  <span>${escapeHtml(community.name.slice(0, 1).toUpperCase())}</span>
+                  <strong>${escapeHtml(community.name)}</strong>
+                  <em>${formatCount(community.focusCount)} focused · ${formatCount(community.postCount)} posts</em>
+                </a>
+              </article>
+            `).join('')}
+          </div>
+        ` : '<p>Communities will trend here as creators focus and post.</p>'}
       </section>
       <section class="community-rail-card">
-        <h2>Creator History</h2>
-        <p>This Day in History will connect to a richer music and creator-history source in a later phase.</p>
+        <h2>This Day in History</h2>
+        <p>Powered by Wikipedia once connected.</p>
       </section>
       <section class="community-rail-card">
         <h2>Guidelines</h2>
@@ -2159,12 +2183,12 @@ async function loadStories({ renderAfter = false } = {}) {
     const requestedStoryId = new URLSearchParams(window.location.search).get('story') || ''
     if (requestedStoryId && state.stories.some((story) => story.storyId === requestedStoryId)) {
       state.storyViewer = { ...state.storyViewer, open: true, storyId: requestedStoryId, error: '' }
+      recordedStoryViews.add(requestedStoryId)
       recordCommunityStoryView(requestedStoryId).then((result) => {
         if (Number.isFinite(Number(result.viewCount))) {
           state.stories = state.stories.map((story) => story.storyId === requestedStoryId ? { ...story, viewCount: Number(result.viewCount) } : story)
-          render()
         }
-      }).catch(() => null)
+      }).catch(() => recordedStoryViews.delete(requestedStoryId))
     }
   } catch (error) {
     console.warn('[community] stories load failed', { code: error?.code, message: error?.message, details: error?.details })
@@ -2878,6 +2902,23 @@ function updateCommentCount(commentId, patch = {}) {
   state.comments = state.comments.map((comment) => comment.commentId === commentId ? normalizeCommunityComment({ ...comment, ...patch }, commentId) : comment)
 }
 
+function updateCommentActionDom(commentId = '') {
+  const comment = state.comments.find((item) => item.commentId === commentId)
+  if (!comment) return
+  const viewer = state.commentViewerState[commentId] || {}
+  const escapedCommentId = communityCssEscape(commentId)
+  app?.querySelectorAll(`.community-comment-card[data-comment-id="${escapedCommentId}"]`).forEach((card) => {
+    const likeButton = card.querySelector(`[data-community-comment-like="${escapedCommentId}"]`)
+    const dislikeButton = card.querySelector(`[data-community-comment-dislike="${escapedCommentId}"]`)
+    likeButton?.classList.toggle('is-active', Boolean(viewer.liked))
+    dislikeButton?.classList.toggle('is-active', Boolean(viewer.disliked))
+    const likeCount = likeButton?.querySelector('span')
+    const dislikeCount = dislikeButton?.querySelector('span')
+    if (likeCount) likeCount.textContent = formatCount(comment.likeCount)
+    if (dislikeCount) dislikeCount.textContent = formatCount(comment.dislikeCount)
+  })
+}
+
 function updateDetailCommentCount(delta = 0, absoluteValue = null) {
   const post = state.posts[0]
   if (!post) return
@@ -2979,18 +3020,19 @@ async function handleCommentLike(commentId = '') {
   state.commentViewerState[commentId] = { liked: nextLiked, disliked: nextLiked ? false : previousDisliked }
   updateCommentCount(commentId, { likeCount: Math.max(0, previousLikeCount + (nextLiked ? 1 : -1)) })
   if (nextLiked && previousDisliked) updateCommentCount(commentId, { dislikeCount: Math.max(0, previousDislikeCount - 1) })
-  render()
+  updateCommentActionDom(commentId)
   trackCommunityAction(actionId, toggleCommunityCommentLike({ postId: state.detailPostId, commentId })).then((result) => {
     state.commentViewerState[commentId] = { liked: Boolean(result.liked ?? result.active), disliked: Boolean(result.disliked) }
     if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
     if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
-    render()
+    updateCommentActionDom(commentId)
   }).catch((error) => {
     console.warn('[community] comment like failed', { code: error?.code, message: error?.message, details: error?.details })
     state.commentViewerState[commentId] = { liked: previousLiked, disliked: previousDisliked }
     updateCommentCount(commentId, { likeCount: previousLikeCount })
     updateCommentCount(commentId, { dislikeCount: previousDislikeCount })
     state.commentActionError = 'Could not update this comment.'
+    updateCommentActionDom(commentId)
     render()
   })
 }
@@ -3012,18 +3054,19 @@ async function handleCommentDislike(commentId = '') {
   state.commentViewerState[commentId] = { liked: nextDisliked ? false : previousLiked, disliked: nextDisliked }
   updateCommentCount(commentId, { dislikeCount: Math.max(0, previousDislikeCount + (nextDisliked ? 1 : -1)) })
   if (nextDisliked && previousLiked) updateCommentCount(commentId, { likeCount: Math.max(0, previousLikeCount - 1) })
-  render()
+  updateCommentActionDom(commentId)
   trackCommunityAction(actionId, toggleCommunityCommentDislike({ postId: state.detailPostId, commentId })).then((result) => {
     state.commentViewerState[commentId] = { liked: Boolean(result.liked), disliked: Boolean(result.disliked ?? result.active) }
     if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
     if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
-    render()
+    updateCommentActionDom(commentId)
   }).catch((error) => {
     console.warn('[community] comment dislike failed', { code: error?.code, message: error?.message, details: error?.details })
     state.commentViewerState[commentId] = { liked: previousLiked, disliked: previousDisliked }
     updateCommentCount(commentId, { likeCount: previousLikeCount })
     updateCommentCount(commentId, { dislikeCount: previousDislikeCount })
     state.commentActionError = 'Could not update this comment.'
+    updateCommentActionDom(commentId)
     render()
   })
 }
@@ -3803,15 +3846,18 @@ async function handleStorySubmit(event) {
 function openStoryViewer(storyId = '') {
   const story = storyById(storyId)
   if (!story) return
+  const alreadyOpen = state.storyViewer.open && state.storyViewer.storyId === storyId
   state.storyViewer = { open: true, storyId, loading: false, error: '' }
-  render()
+  if (!alreadyOpen) render()
+  if (recordedStoryViews.has(storyId)) return
+  recordedStoryViews.add(storyId)
   recordCommunityStoryView(storyId).then((result) => {
     if (Number.isFinite(Number(result.viewCount))) {
       state.stories = state.stories.map((item) => item.storyId === storyId ? { ...item, viewCount: Number(result.viewCount) } : item)
-      render()
     }
   }).catch((error) => {
     console.warn('[community] story view count failed', { code: error?.code, message: error?.message, details: error?.details })
+    recordedStoryViews.delete(storyId)
   })
 }
 
@@ -4079,6 +4125,13 @@ function bindEvents() {
   })
   app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
   app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
+  app.querySelectorAll('[data-story-reaction]').forEach((button) => button.addEventListener('click', () => {
+    showCommunityToast('Story reactions are coming soon.')
+  }))
+  app.querySelector('[data-story-comment-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    showCommunityToast('Story comments are coming soon.')
+  })
   app.querySelectorAll('[data-story-report]').forEach((button) => button.addEventListener('click', () => openStoryReport(button.getAttribute('data-story-report') || '')))
   app.querySelectorAll('[data-story-delete]').forEach((button) => button.addEventListener('click', () => handleStoryDelete(button.getAttribute('data-story-delete') || '')))
   app.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
