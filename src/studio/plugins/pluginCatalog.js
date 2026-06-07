@@ -50,7 +50,7 @@ export function getDawPluginDefinition(pluginType = '') {
   return DAW_PLUGIN_DEFINITIONS[pluginType] || DAW_PLUGIN_DEFINITIONS[DAW_PLUGIN_TYPES.melogicWavetable]
 }
 
-export function createDawPluginInstance({ pluginType = DAW_PLUGIN_TYPES.melogicWavetable, trackId = 'demo-track', instanceId = '' } = {}) {
+export function createDawPluginInstance({ pluginType = DAW_PLUGIN_TYPES.melogicWavetable, trackId = 'demo-track', instanceId = '', params = {} } = {}) {
   const definition = getDawPluginDefinition(pluginType)
   const pluginInstanceId = instanceId || `${definition.pluginType}:${trackId || 'track'}`
   return {
@@ -62,6 +62,6 @@ export function createDawPluginInstance({ pluginType = DAW_PLUGIN_TYPES.melogicW
     minimized: false,
     windowPosition: { x: 96, y: 92 },
     windowSize: { ...definition.defaultSize },
-    params: { ...definition.defaultParams }
+    params: { ...definition.defaultParams, ...(params || {}) }
   }
 }
