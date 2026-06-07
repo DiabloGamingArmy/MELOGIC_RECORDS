@@ -72,6 +72,8 @@ export class DawWindowManager {
     const existing = this.windows.get(instance.pluginInstanceId)
     if (existing) {
       existing.minimized = false
+      existing.windowSize = this.sanitizeWindowSize(existing)
+      if (forceCenter) existing.windowPosition = this.sanitizeWindowPosition(existing, true)
       this.bringToFront(existing.pluginInstanceId)
       this.persist()
       this.onChange()
@@ -90,6 +92,7 @@ export class DawWindowManager {
       minimized: false,
       zIndex: ++this.zCounter
     }
+    windowState.windowSize = this.sanitizeWindowSize(windowState)
     windowState.windowPosition = this.sanitizeWindowPosition(windowState, forceCenter)
     this.windows.set(windowState.pluginInstanceId, windowState)
     this.persist()
@@ -137,16 +140,68 @@ export class DawWindowManager {
     `
   }
 
+  getPluginFrame(definition) {
+    return definition?.fixedFrame || null
+  }
+
+  getWindowScale(windowState, definition = getDawPluginDefinition(windowState.pluginType)) {
+    const frame = this.getPluginFrame(definition)
+    if (!frame) return 1
+    const headerHeight = Number(frame.headerHeight) || 42
+    const size = windowState.windowSize || definition.defaultSize || MIN_WINDOW_SIZE
+    const widthScale = Number(size.width) / frame.width
+    const heightScale = (Number(size.height) - headerHeight) / frame.height
+    const scale = Math.min(widthScale, heightScale)
+    return clamp(Number.isFinite(scale) && scale > 0 ? scale : 1, frame.minScale || 0.75, frame.maxScale || 1.25)
+  }
+
+  getRenderSize(windowState, definition = getDawPluginDefinition(windowState.pluginType)) {
+    const frame = this.getPluginFrame(definition)
+    if (!frame) return windowState.windowSize || definition.defaultSize || MIN_WINDOW_SIZE
+    const scale = this.getWindowScale(windowState, definition)
+    const headerHeight = Number(frame.headerHeight) || 42
+    return {
+      width: Math.round(frame.width * scale),
+      height: Math.round(headerHeight + frame.height * scale)
+    }
+  }
+
+  getFitScale(definition) {
+    const frame = this.getPluginFrame(definition)
+    if (!frame) return 1
+    const container = document.querySelector('.studio-editor-page') || document.documentElement
+    const rect = container.getBoundingClientRect()
+    const headerHeight = Number(frame.headerHeight) || 42
+    const widthScale = (rect.width - 32) / frame.width
+    const heightScale = (rect.height - 80 - headerHeight) / frame.height
+    const fitScale = Math.min(widthScale, heightScale)
+    return clamp(Number.isFinite(fitScale) && fitScale > 0 ? fitScale : 1, frame.minScale || 0.75, frame.maxScale || 1.25)
+  }
+
+  sanitizeWindowSize(windowState) {
+    const definition = getDawPluginDefinition(windowState.pluginType)
+    const frame = this.getPluginFrame(definition)
+    if (!frame) return windowState.windowSize || definition.defaultSize || MIN_WINDOW_SIZE
+    const currentScale = this.getWindowScale(windowState, definition)
+    const scale = Math.min(currentScale, this.getFitScale(definition))
+    const headerHeight = Number(frame.headerHeight) || 42
+    return {
+      width: Math.round(frame.width * scale),
+      height: Math.round(headerHeight + frame.height * scale)
+    }
+  }
+
   renderWindow(windowState) {
     const definition = getDawPluginDefinition(windowState.pluginType)
     const position = windowState.windowPosition || { x: 96, y: 92 }
-    const size = windowState.windowSize || definition.defaultSize
+    const size = this.getRenderSize(windowState, definition)
+    const scale = this.getWindowScale(windowState, definition)
     const status = windowState.detached ? 'Detached' : (definition.status || 'Ready')
     return `
       <article
         class="daw-plugin-window ${windowState.minimized ? 'is-minimized' : ''} ${windowState.detached ? 'is-detached' : ''}"
         data-plugin-window="${esc(windowState.pluginInstanceId)}"
-        style="left:${Number(position.x) || 0}px;top:${Number(position.y) || 0}px;width:${Number(size.width) || definition.defaultSize.width}px;height:${Number(size.height) || definition.defaultSize.height}px;z-index:${Number(windowState.zIndex) || 1};"
+        style="left:${Number(position.x) || 0}px;top:${Number(position.y) || 0}px;width:${Number(size.width) || definition.defaultSize.width}px;height:${Number(size.height) || definition.defaultSize.height}px;z-index:${Number(windowState.zIndex) || 1};--plugin-scale:${scale};"
       >
         <header class="daw-plugin-window-header" data-plugin-window-header="${esc(windowState.pluginInstanceId)}">
           <div>
@@ -278,7 +333,8 @@ export class DawWindowManager {
     if (!windowState) return
     this.bringToFront(id)
     const url = this.getHostUrl(windowState)
-    const popout = window.open(url, `melogic-plugin-${id.replace(/[^a-z0-9_-]/gi, '-')}`, 'popup=yes,width=980,height=720,resizable=yes,scrollbars=yes')
+    const size = this.getRenderSize(windowState)
+    const popout = window.open(url, `melogic-plugin-${id.replace(/[^a-z0-9_-]/gi, '-')}`, `popup=yes,width=${Math.round(size.width + 24)},height=${Math.round(size.height + 92)},resizable=yes,scrollbars=yes`)
     if (!popout) {
       windowState.detached = false
       windowState.minimized = false
@@ -467,7 +523,7 @@ export class DawWindowManager {
       id,
       startX: event.clientX,
       startY: event.clientY,
-      origin: { ...(windowState.windowSize || MIN_WINDOW_SIZE) }
+      origin: { ...this.getRenderSize(windowState) }
     }
     document.body.classList.add('is-daw-window-dragging')
     window.addEventListener('pointermove', this.handlePointerMove)
@@ -490,7 +546,7 @@ export class DawWindowManager {
   getBounds(windowState) {
     const container = document.querySelector('.studio-editor-page') || document.documentElement
     const rect = container.getBoundingClientRect()
-    const size = windowState.windowSize || MIN_WINDOW_SIZE
+    const size = this.getRenderSize(windowState)
     return {
       maxX: Math.max(0, rect.width - Math.min(180, size.width)),
       maxY: Math.max(0, rect.height - 44),
@@ -502,7 +558,7 @@ export class DawWindowManager {
   getCenteredPosition(windowState) {
     const container = document.querySelector('.studio-editor-page') || document.documentElement
     const rect = container.getBoundingClientRect()
-    const size = windowState.windowSize || MIN_WINDOW_SIZE
+    const size = this.getRenderSize(windowState)
     return {
       x: Math.max(12, Math.round((rect.width - Math.min(size.width, rect.width - 24)) / 2)),
       y: Math.max(54, Math.round((rect.height - Math.min(size.height, rect.height - 72)) / 2))
@@ -512,7 +568,7 @@ export class DawWindowManager {
   sanitizeWindowPosition(windowState, forceCenter = false) {
     if (forceCenter) return this.getCenteredPosition(windowState)
     const position = windowState.windowPosition || { x: 96, y: 92 }
-    const size = windowState.windowSize || MIN_WINDOW_SIZE
+    const size = this.getRenderSize(windowState)
     const bounds = this.getBounds({ ...windowState, windowSize: size })
     const headerReachable = position.y >= 0 && position.y <= bounds.maxY && position.x <= bounds.maxX && position.x + Math.min(180, size.width) >= 0
     if (!headerReachable) return this.getCenteredPosition({ ...windowState, windowSize: size })
@@ -537,10 +593,21 @@ export class DawWindowManager {
     const state = this.resizeState
     const windowState = this.windows.get(state.id)
     if (!windowState) return
+    const definition = getDawPluginDefinition(windowState.pluginType)
+    const frame = this.getPluginFrame(definition)
     const bounds = this.getBounds(windowState)
-    const width = clamp(state.origin.width + event.clientX - state.startX, MIN_WINDOW_SIZE.width, bounds.maxWidth)
-    const height = clamp(state.origin.height + event.clientY - state.startY, MIN_WINDOW_SIZE.height, bounds.maxHeight)
-    windowState.windowSize = { width, height }
+    const rawWidth = clamp(state.origin.width + event.clientX - state.startX, MIN_WINDOW_SIZE.width, bounds.maxWidth)
+    const rawHeight = clamp(state.origin.height + event.clientY - state.startY, MIN_WINDOW_SIZE.height, bounds.maxHeight)
+    if (frame) {
+      const headerHeight = Number(frame.headerHeight) || 42
+      const scale = clamp(Math.min(rawWidth / frame.width, (rawHeight - headerHeight) / frame.height), frame.minScale || 0.75, frame.maxScale || 1.25)
+      windowState.windowSize = {
+        width: Math.round(frame.width * scale),
+        height: Math.round(headerHeight + frame.height * scale)
+      }
+    } else {
+      windowState.windowSize = { width: rawWidth, height: rawHeight }
+    }
     this.updateWindowDom(windowState)
   }
 
@@ -549,8 +616,10 @@ export class DawWindowManager {
     if (!element) return
     element.style.left = `${windowState.windowPosition.x}px`
     element.style.top = `${windowState.windowPosition.y}px`
-    element.style.width = `${windowState.windowSize.width}px`
-    element.style.height = `${windowState.windowSize.height}px`
+    const size = this.getRenderSize(windowState)
+    element.style.width = `${size.width}px`
+    element.style.height = `${size.height}px`
     element.style.zIndex = String(windowState.zIndex || 1)
+    element.style.setProperty('--plugin-scale', String(this.getWindowScale(windowState)))
   }
 }

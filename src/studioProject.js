@@ -44,7 +44,7 @@ const dawWindowManager = new DawWindowManager({
     })
   },
   onClose: (pluginInstanceId) => {
-    dawInstrumentRegistry.dispose(pluginInstanceId)
+    // Closing a plugin window hides the UI; the track-owned instrument can keep sounding/recording.
   },
   onParamChange: (pluginInstanceId, param, value) => {
     dawInstrumentRegistry.setParam(pluginInstanceId, param, value)
@@ -52,20 +52,28 @@ const dawWindowManager = new DawWindowManager({
     if (track?.instrument) track.instrument.params = { ...(track.instrument.params || {}), [param]: value }
   },
   onNoteOn: (pluginInstanceId, note, velocity) => {
+    const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
+    if (track?.instrument?.enabled === false) return
     dawInstrumentRegistry.noteOn(pluginInstanceId, note, velocity)
+    recordMidiNoteOn(track?.id || selectedTrackId, note, velocity)
   },
   onNoteOff: (pluginInstanceId, note) => {
     dawInstrumentRegistry.noteOff(pluginInstanceId, note)
+    const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
+    recordMidiNoteOff(track?.id || selectedTrackId, note)
   },
   onChange: () => renderEditor()
 })
 let isEditorMenuOpen = false
 let selectedTrackId = 'demo-track'
 const automationOpenTrackIds = new Set()
-let openTrackMenuId = ''
+let trackMenuState = null
+let renameTrackState = null
+let colorPickerState = null
 let activeBottomPanel = ''
 const activeInstrumentNotes = new Map()
 const pressedKeyboardNotes = new Set()
+const pressedDawMidiKeys = new Map()
 let instrumentAudioContext = null
 let instrumentMasterGain = null
 let instrumentPanNode = null
@@ -124,6 +132,15 @@ let studioAudioEngine = null
 let lastMetronomeBeat = -1
 let activeLeftPanel = ""
 let inspectorMenu = null
+let globalTracks = {
+  visible: false,
+  viewMode: 'all',
+  arrangement: [],
+  markers: [],
+  tempoEvents: [],
+  signatureEvents: [],
+  videoRefs: []
+}
 let isNotesOpen = false
 let notePages = [{ id: 'page-1', title: 'Page 1', body: '' }]
 let activeNotePageId = 'page-1'
@@ -133,6 +150,11 @@ let isCountInRunning = false
 let countInTimer = 0
 let countInBeatsRemaining = 0
 let recordingStatus = ''
+let activeRecording = null
+let globalTrackDrag = null
+let globalTrackPopover = null
+let midiRegions = []
+const activeRecordingNotes = new Map()
 let cycleRange = null
 let cycleDrag = null
 let spacePlaybackStartX = null
@@ -227,15 +249,92 @@ const trackTypeIcon = (type) => ({
 
 const toolButton = (label, n, extra = '') => `<button class="studio-tool-button ${extra}" aria-label="${label}" data-tooltip="${label}">${toolIcon(n)}</button>`
 
-const renderTrackCard = (track) => `<div class="studio-track-stack"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(track.type)}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button class="studio-track-control" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan" data-tooltip="Pan" data-track-pan="${track.id}" style="--pan-angle: ${track.pan * 135}deg"></button></div></article>${track.automationOpen ? '<div class="studio-automation-lane"><span>Automation</span><button>Volume</button><button>Pan</button><button>Filter</button><button>Add</button></div>' : ''}<div class="studio-track-menu" ${openTrackMenuId === track.id ? '' : 'hidden'}><button>Rename</button><button>Duplicate</button><button disabled>Delete</button><button>Freeze Track</button><button>Freeze All Tracks</button><button>Import MIDI File</button><button>Export Track</button><button>Track Color</button><button disabled>Merge Tracks</button></div></div>`
+const GLOBAL_TRACK_VIEW_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'markers', label: 'Markers' },
+  { value: 'tempo', label: 'Tempo' },
+  { value: 'signature', label: 'Key / Signature' },
+  { value: 'video', label: 'Video / Reference' }
+]
+const GLOBAL_TRACK_ROW_LABELS = {
+  arrangement: 'Arrangement',
+  markers: 'Markers',
+  tempo: 'Tempo',
+  signature: 'Key / Signature',
+  video: 'Video / Reference'
+}
+const globalTrackRowsForView = () => globalTracks.viewMode === 'all' ? ['arrangement', 'markers', 'tempo', 'signature', 'video'] : [globalTracks.viewMode || 'markers']
+const renderTrackToolbar = () => `<div class="studio-track-toolbar" aria-label="Track toolbar"><button type="button" data-add-track data-tooltip="Add Track" aria-label="Add Track">+</button><button type="button" data-duplicate-track data-tooltip="Duplicate selected track" aria-label="Duplicate selected track">⧉</button><button type="button" class="${globalTracks.visible ? 'is-active' : ''}" data-toggle-global-tracks data-tooltip="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}" aria-label="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}">G</button><select data-global-track-view aria-label="Global track view">${GLOBAL_TRACK_VIEW_OPTIONS.map((option)=>`<option value="${option.value}" ${globalTracks.viewMode===option.value?'selected':''}>${option.label}</option>`).join('')}</select></div>`
+const renderTrackCard = (track) => `<div class="studio-track-stack"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(track.type)}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button class="studio-track-control" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan" data-tooltip="Pan" data-track-pan="${track.id}" style="--pan-angle: ${track.pan * 135}deg"></button></div></article>${track.automationOpen ? '<div class="studio-automation-lane"><span>Automation</span><button>Volume</button><button>Pan</button><button>Filter</button><button>Add</button></div>' : ''}</div>`
+const renderTrackContextMenu = () => {
+  if (!trackMenuState?.trackId) return ''
+  const track = tracks.find((item) => item.id === trackMenuState.trackId)
+  if (!track) return ''
+  return `<div class="studio-track-menu studio-track-menu--floating" data-track-menu style="left:${Math.round(trackMenuState.x)}px;top:${Math.round(trackMenuState.y)}px"><strong>${track.name}</strong><button data-track-context-action="rename">Rename Track</button><button data-track-context-action="duplicate">Duplicate Track</button><button data-track-context-action="delete" ${tracks.length <= 1 ? 'disabled' : ''}>Delete Track</button><button data-track-context-action="color">Change Color</button><button data-track-context-action="inspector">Open Inspector</button></div>`
+}
+const renderTrackRenamePopover = () => renameTrackState ? `<form class="studio-track-popover studio-track-popover--rename" data-track-rename-form style="left:${Math.round(renameTrackState.x)}px;top:${Math.round(renameTrackState.y)}px"><label>Rename Track<input data-track-rename-input value="${(renameTrackState.name || '').replace(/"/g, '&quot;')}" /></label><div><button type="submit">Save</button><button type="button" data-track-rename-cancel>Cancel</button></div></form>` : ''
+const renderTrackColorPopover = () => colorPickerState ? `<form class="studio-track-popover studio-track-popover--color" data-track-color-form style="left:${Math.round(colorPickerState.x)}px;top:${Math.round(colorPickerState.y)}px"><label>Track Color<input type="color" data-track-color-input value="${colorPickerState.color || '#58d4ff'}" /></label><button type="submit">Apply</button></form>` : ''
 
-function renderTimelineRegions() { return timelineRegions.map(() => "").join("") }
+function renderTimelineRegions() {
+  const persisted = midiRegions.map((region)=>renderMidiRegion(region, false)).join('')
+  const live = activeRecording ? renderMidiRegion({ ...activeRecording, endBeat: Math.max(activeRecording.startBeat + 0.25, xToBeatsFromBarZero(timelineState.playheadX)), color: '#ff2d55' }, true) : ''
+  return `${persisted}${live}`
+}
 function barToX(index){ return barZeroX() + (index * timelineState.pixelsPerBar) }
 function preStartBarCount(){ return Math.floor((timelineState.preStartPixels || 0) / timelineState.pixelsPerBar) }
 function renderTimelineRuler() { const labels=[]; const negBars=preStartBarCount(); for(let i=negBars; i>=1; i-=1){ const x=barZeroX() - i*timelineState.pixelsPerBar; if(x>=0) labels.push(`<span class="studio-ruler-bar-label" style="left:${x}px">-${i}</span>`) } labels.push(`<span class="studio-ruler-bar-label" style="left:${barZeroX()}px">0</span>`); const barCount=Math.max(1,Math.ceil(timelineState.positiveBeats/timelineState.beatsPerBar)); for(let index=1; index<=barCount; index+=1){ const x=barToX(index); if (x<=timelineEndX()) labels.push(`<span class="studio-ruler-bar-label" style="left:${x}px">${index}</span>`) } return labels.join('') }
 function renderCycleRange(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<div class="studio-cycle-range ${isCycleEnabled ? 'is-enabled' : ''}" data-cycle-range style="left:${start}px;width:${Math.max(0,end-start)}px"><span class="studio-cycle-range-handle" data-cycle-handle="start"></span><span class="studio-cycle-range-body" data-cycle-drag="move"></span><span class="studio-cycle-range-handle" data-cycle-handle="end"></span></div>` }
 function renderCycleBoundaryGuides(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<span class="studio-cycle-guide studio-cycle-guide--start ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${start}px"></span><span class="studio-cycle-guide studio-cycle-guide--end ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${end}px"></span>` }
 function renderTimelineLines() { const lines=[]; const ppb=beatWidth(); const negBeats=preStartBarCount()*timelineState.beatsPerBar; for (let beatIndex=-negBeats; beatIndex<=timelineState.positiveBeats; beatIndex+=1){ const left=beatsFromBarZeroToX(beatIndex); if(left<0||left>timelineEndX()) continue; lines.push(`<span class="studio-grid-line ${beatIndex%timelineState.beatsPerBar===0?'studio-grid-line--bar':'studio-grid-line--beat'}" style="left:${left}px"></span>`) } return lines.join('') }
+function normalizeTempoEvents() {
+  const current = Number(projectState?.bpm || 140)
+  const events = Array.isArray(globalTracks.tempoEvents) ? globalTracks.tempoEvents : []
+  return (events.length ? events : [{ id: 'tempo-start', beat: 0, bpm: current }])
+    .map((event)=>({ id: event.id || makeInsertId('tempo'), beat: Math.max(0, Number(event.beat) || 0), bpm: clamp(Number(event.bpm) || current, 20, 300) }))
+    .sort((a,b)=>a.beat-b.beat)
+}
+function normalizeSignatureEvents(project = projectState || {}) {
+  const events = Array.isArray(globalTracks.signatureEvents) ? globalTracks.signatureEvents : []
+  return (events.length ? events : [{ id: 'signature-start', beat: 0, key: project.key || 'C', scale: 'major', timeSignature: '4/4' }])
+    .map((event)=>({ id: event.id || makeInsertId('signature'), beat: Math.max(0, Number(event.beat) || 0), key: event.key || project.key || 'C', scale: event.scale || 'major', timeSignature: event.timeSignature || '4/4' }))
+    .sort((a,b)=>a.beat-b.beat)
+}
+function renderTempoLane(events = normalizeTempoEvents()) {
+  const rowHeight = globalTracks.viewMode === 'tempo' ? 126 : 26
+  const points = events.map((event)=>({ ...event, x: beatsFromBarZeroToX(event.beat), y: clamp(rowHeight - 12 - ((event.bpm - 20) / 280) * (rowHeight - 20), 8, rowHeight - 12) }))
+  const line = points.length > 1
+    ? points.map((point, index)=>`${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
+    : `M ${barZeroX()} ${points[0]?.y || rowHeight / 2} L ${timelineContentWidth()} ${points[0]?.y || rowHeight / 2}`
+  return `<svg class="studio-global-tempo-svg" viewBox="0 0 ${timelineContentWidth()} ${rowHeight}" preserveAspectRatio="none"><path d="${line}"></path></svg>${points.map((point)=>`<button type="button" class="studio-global-tempo-node" data-global-tempo="${point.id}" style="left:${point.x}px;top:${point.y}px"><span>${Math.round(point.bpm)} BPM</span></button>`).join('')}`
+}
+function renderGlobalTrackLane() {
+  if (!globalTracks.visible) return ''
+  const project = projectState || {}
+  const tempoEvents = normalizeTempoEvents()
+  const signatureEvents = normalizeSignatureEvents(project)
+  const rowRenderers = {
+    arrangement: () => `${(globalTracks.arrangement || []).map((item)=>`<button type="button" class="studio-global-block" data-global-arrangement="${item.id}" style="left:${beatsFromBarZeroToX(item.startBeat)}px;width:${Math.max(48, (item.endBeat - item.startBeat) * beatWidth())}px;background:${item.color || ''}">${item.label || 'Section'}</button>`).join('')}${globalTrackDrag?.type==='arrangement'?`<span class="studio-global-block studio-global-block--preview" style="left:${beatsFromBarZeroToX(Math.min(globalTrackDrag.startBeat, globalTrackDrag.currentBeat))}px;width:${Math.max(16, Math.abs(globalTrackDrag.currentBeat - globalTrackDrag.startBeat) * beatWidth())}px">Section</span>`:''}`,
+    markers: () => (globalTracks.markers || []).map((item)=>`<button type="button" class="studio-global-marker" data-global-marker="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px">${item.label || 'Marker'}</button>`).join(''),
+    tempo: () => renderTempoLane(tempoEvents),
+    signature: () => signatureEvents.map((item)=>`<button type="button" class="studio-global-block studio-global-block--small" data-global-signature="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;width:150px">${item.key || 'C'} ${item.scale || 'major'} · ${item.timeSignature || '4/4'}</button>`).join(''),
+    video: () => '<span class="studio-global-empty">No reference loaded</span>'
+  }
+  const rows = globalTrackRowsForView()
+  return `<section class="studio-global-tracks studio-global-tracks--${globalTracks.viewMode || 'all'}" data-global-tracks><div class="studio-global-tracks-inner" data-global-tracks-inner style="width:${timelineContentWidth()}px">${rows.map((id)=>`<div class="studio-global-row studio-global-row--${id}" data-global-row="${id}"><div class="studio-global-row-content">${rowRenderers[id]?.() || ''}</div></div>`).join('')}<span class="studio-global-playhead"></span></div></section>`
+}
+function renderGlobalTrackLabels() {
+  if (!globalTracks.visible) return ''
+  const rows = globalTrackRowsForView()
+  return `<section class="studio-global-track-labels studio-global-track-labels--${globalTracks.viewMode || 'all'}"><strong>Global Tracks</strong>${rows.map((id)=>`<button type="button" data-global-label="${id}" class="${globalTracks.viewMode===id?'is-active':''}">${GLOBAL_TRACK_ROW_LABELS[id] || id}</button>`).join('')}</section>`
+}
+function renderGlobalTrackPopover() {
+  if (!globalTrackPopover) return ''
+  if (globalTrackPopover.type === 'signature') {
+    const keys = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+    return `<form class="studio-global-popover" data-global-signature-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>Key<select data-global-signature-key>${keys.map((key)=>`<option ${globalTrackPopover.key===key?'selected':''}>${key}</option>`).join('')}</select></label><label>Scale<select data-global-signature-scale><option ${globalTrackPopover.scale==='major'?'selected':''}>major</option><option ${globalTrackPopover.scale==='minor'?'selected':''}>minor</option></select></label><label>Signature<select data-global-signature-time><option ${globalTrackPopover.timeSignature==='4/4'?'selected':''}>4/4</option><option ${globalTrackPopover.timeSignature==='3/4'?'selected':''}>3/4</option><option ${globalTrackPopover.timeSignature==='6/8'?'selected':''}>6/8</option></select></label><button type="submit">Save</button></form>`
+  }
+  return ''
+}
 function getInstrumentKeys(){
   const whites=[0,2,4,5,7,9,11]
   const blackOffsets={1:'S',3:'D',6:'G',8:'H',10:'J'}
@@ -252,6 +351,19 @@ function getInstrumentKeys(){
   return keys
 }
 function getSelectedTrack(){ return tracks.find((track)=>track.id===selectedTrackId) || tracks[0] }
+function renderMidiRegion(region, isRecording = false) {
+  const trackIndex = Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))
+  const startBeat = Number(region.startBeat) || 0
+  const endBeat = Math.max(startBeat + 0.15, Number(region.endBeat) || startBeat + 0.25)
+  const left = beatsFromBarZeroToX(startBeat)
+  const width = Math.max(18, (endBeat - startBeat) * beatWidth())
+  const top = trackIndex * timelineState.trackHeight + 8
+  const height = Math.max(28, timelineState.trackHeight - 16)
+  const track = tracks[trackIndex] || getSelectedTrack()
+  const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
+  const notes = Array.isArray(region.notes) ? region.notes : []
+  return `<article class="studio-midi-region ${isRecording ? 'is-recording' : ''}" data-midi-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${color}"><strong>${isRecording ? 'Recording MIDI' : (region.name || 'MIDI Region')}</strong>${notes.slice(0,24).map((note)=>{ const noteLeft=Math.max(0, ((note.startBeat - startBeat) / (endBeat - startBeat)) * 100); const noteWidth=Math.max(4, (note.durationBeats / (endBeat - startBeat)) * 100); const noteTop=clamp(82 - (((note.note || 60) - 48) / 36) * 70, 8, 82); return `<span style="left:${noteLeft}%;width:${noteWidth}%;top:${noteTop}%"></span>` }).join('')}</article>`
+}
 function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=app.querySelector(`[data-track-volume="${track.id}"]`); if(!input) return; input.value=String(track.volume); input.setAttribute('value', String(track.volume)) }
 function getInstrumentKnobDescriptors(){
   const selected=getSelectedTrack()
@@ -307,12 +419,115 @@ function renderInstrumentPanel(){
 function renderBottomPanel(panel,motionClass=''){ if(panel==='instrument') return renderInstrumentPanel().replace('studio-bottom-panel studio-instrument-panel', `studio-bottom-panel studio-instrument-panel ${motionClass}`.trim()); const t={loops:['Loop Browser','Loops and samples will appear here.'],fx:['Effects','Track effects and processors will appear here.'],mixer:['Mixer','Channel strips and routing will appear here.'],collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']; return `<section class="studio-bottom-panel ${motionClass}"><header class="studio-bottom-panel-header"><strong>${t[0]}</strong><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></header><div class="studio-bottom-panel-body"><p>${t[1]}</p></div></section>` }
 
 function makeInsertId(prefix = 'insert') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}` }
+function makeTrackId() { return makeInsertId('track') }
+function cloneInsertList(list = []) {
+  return Array.isArray(list) ? list.map((item)=>({ ...item, id: makeInsertId(item.type || 'insert'), params: { ...(item.params || {}) } })) : []
+}
 function ensureTrackInsertState(track) {
   if (!track) return null
   if (!Array.isArray(track.midiEffects)) track.midiEffects = []
   if (!Array.isArray(track.audioEffects)) track.audioEffects = []
   if (track.instrument && typeof track.instrument !== 'object') track.instrument = null
   return track
+}
+function nextTrackColor(index = tracks.length) {
+  const colors = [
+    ['#ff4d5d', 'rgba(255, 77, 93, 0.26)'],
+    ['#58d4ff', 'rgba(88, 212, 255, 0.24)'],
+    ['#8f78ff', 'rgba(143, 120, 255, 0.24)'],
+    ['#62e0aa', 'rgba(98, 224, 170, 0.22)'],
+    ['#ffb45d', 'rgba(255, 180, 93, 0.22)']
+  ]
+  const [color, colorSoft] = colors[index % colors.length]
+  return { color, colorSoft }
+}
+function addTrack({ sourceTrack = null } = {}) {
+  const id = makeTrackId()
+  const colors = sourceTrack ? { color: sourceTrack.color, colorSoft: sourceTrack.colorSoft } : nextTrackColor(tracks.length)
+  const base = sourceTrack ? ensureTrackInsertState(sourceTrack) : null
+  const instrument = base?.instrument ? { ...base.instrument, id: makeInsertId('instrument'), pluginInstanceId: `${base.instrument.type}:${id}`, params: { ...(base.instrument.params || {}) } } : null
+  const track = {
+    id,
+    name: base ? `${base.name} Copy` : `Instrument ${tracks.length + 1}`,
+    type: base?.type || 'instrument',
+    color: colors.color,
+    colorSoft: colors.colorSoft,
+    icon: base?.icon || 'instrument',
+    muted: false,
+    soloed: false,
+    recordArmed: false,
+    automationOpen: Boolean(base?.automationOpen),
+    volume: Number.isFinite(Number(base?.volume)) ? Number(base.volume) : 72,
+    pan: Number.isFinite(Number(base?.pan)) ? Number(base.pan) : 0,
+    outputLevel: 0,
+    midiEffects: cloneInsertList(base?.midiEffects || []),
+    instrument,
+    audioEffects: cloneInsertList(base?.audioEffects || [])
+  }
+  tracks.push(track)
+  selectedTrackId = id
+  activeLeftPanel = 'inspector'
+  inspectorMenu = null
+  trackMenuState = null
+  scheduleEditorSave()
+  renderEditor()
+}
+function duplicateSelectedTrack() {
+  const track = ensureTrackInsertState(getSelectedTrack())
+  if (!track) return
+  addTrack({ sourceTrack: track })
+}
+function deleteSelectedTrack() {
+  const index = tracks.findIndex((track)=>track.id===selectedTrackId)
+  if (index < 0 || tracks.length <= 1) return
+  if (!window.confirm(`Delete "${tracks[index].name}"? This removes the track from this project.`)) return
+  const [removed] = tracks.splice(index, 1)
+  if (removed?.instrument?.pluginInstanceId) dawWindowManager.closeWindow(removed.instrument.pluginInstanceId)
+  midiRegions = midiRegions.filter((region)=>region.trackId !== removed.id)
+  selectedTrackId = tracks[Math.max(0, index - 1)]?.id || tracks[0]?.id || ''
+  trackMenuState = null
+  inspectorMenu = null
+  scheduleEditorSave()
+  renderEditor()
+}
+function renameSelectedTrack(name = '') {
+  const track = getSelectedTrack()
+  const nextName = String(name || '').trim()
+  if (!track || !nextName) return
+  track.name = nextName.slice(0, 80)
+  renameTrackState = null
+  scheduleEditorSave()
+  renderEditor()
+}
+function cycleSelectedTrackColor() {
+  const track = getSelectedTrack()
+  if (!track) return
+  const colors = nextTrackColor((tracks.findIndex((item)=>item.id===track.id) || 0) + 1)
+  track.color = colors.color
+  track.colorSoft = colors.colorSoft
+  scheduleEditorSave()
+  renderEditor()
+}
+function setSelectedTrackColor(color = '', { close = true } = {}) {
+  const track = getSelectedTrack()
+  const normalized = /^#[0-9a-f]{6}$/i.test(String(color)) ? String(color) : ''
+  if (!track || !normalized) return
+  track.color = normalized
+  track.colorSoft = `${normalized}42`
+  if (colorPickerState) colorPickerState.color = normalized
+  if (close) colorPickerState = null
+  scheduleEditorSave()
+  renderEditor()
+}
+function getClampedTrackMenuPosition(clientX = 0, clientY = 0) {
+  const width = 210
+  const height = 250
+  const margin = 8
+  const appRect = app?.querySelector?.('.studio-editor-page')?.getBoundingClientRect?.() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+  return {
+    x: clamp(clientX, appRect.left + margin, Math.max(appRect.left + margin, appRect.right - width - margin)),
+    y: clamp(clientY, appRect.top + margin, Math.max(appRect.top + margin, appRect.bottom - height - margin))
+  }
 }
 function createInsert(type, catalog = []) {
   const item = catalog.find((entry) => entry.type === type) || catalog[0]
@@ -380,9 +595,95 @@ function getActiveNotePage(){ return notePages.find((page)=>page.id===activeNote
 function stashActiveNoteInput(){ const input = app.querySelector('[data-notes-input]'); const active = getActiveNotePage(); if (!input || !active) return; active.body = input.value }
 function renderNotesModal(){ if(!isNotesOpen) return ''; const activePage = getActiveNotePage(); return `<div class="studio-notes-modal"><div class="studio-notes-panel"><header class="studio-notes-header"><h3>Project Notes</h3></header><div class="studio-notes-body"><div class="studio-notes-pages">${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${page.id}" aria-pressed="${String(page.id===activeNotePageId)}">${page.title}</button>`).join('')}<button class="studio-notes-page-button" data-add-notes-page>Add Page</button></div><textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${activePage?.body || ''}</textarea></div><div class="studio-notes-actions"><button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button><button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button></div></div></div>` }
 
-function buildEditorStateForSave(){ return { version:1, timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null }, notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId }, tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects:midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})),instrument:instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:audioEffects.map((fx)=>({...fx,params:{...(fx.params||{})}}))} }), toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled } } }
-function applyLoadedEditorState(editorState){ if(!editorState||typeof editorState!=='object') return; const tl=editorState.timeline||{}; if(Number.isFinite(tl.bars)) timelineState.bars=Math.max(2,Number(tl.bars)); if(Number.isFinite(tl.beatsPerBar)) timelineState.beatsPerBar=Math.max(1,Number(tl.beatsPerBar)); timelineState.positiveBeats = Number.isFinite(Number(tl.positiveBeats)) ? Math.max(timelineState.beatsPerBar, Math.round(Number(tl.positiveBeats))) : timelineState.bars * timelineState.beatsPerBar; timelineState.bars = Math.max(2, Math.ceil(timelineState.positiveBeats / timelineState.beatsPerBar)); if(Number.isFinite(tl.pixelsPerBar)) timelineState.pixelsPerBar=Math.max(40,Number(tl.pixelsPerBar)); if(Number.isFinite(tl.preStartPixels)) timelineState.preStartPixels=clamp(Number(tl.preStartPixels),0,timelineState.pixelsPerBar*10); if(Number.isFinite(tl.trackHeight)) timelineState.trackHeight=clamp(Number(tl.trackHeight),44,220); if(tl.cycleRange&&typeof tl.cycleRange==='object') cycleRange={ startX:Number(tl.cycleRange.startX)||0, endX:Number(tl.cycleRange.endX)||beatWidth() }; else ensureDefaultCycleRange(); const ns=editorState.notes||{}; if(Array.isArray(ns.pages)&&ns.pages.length) notePages=ns.pages.map((x)=>({id:String(x.id||''),title:String(x.title||'Page'),body:String(x.body||'')})).filter((x)=>x.id)||notePages; if(ns.activePageId) activeNotePageId=String(ns.activePageId); const tg=editorState.toggles||{}; if(typeof tg.followPlayhead==='boolean') followPlayhead=tg.followPlayhead; if(typeof tg.metronome==='boolean') isMetronomeEnabled=tg.metronome; if(typeof tg.countIn==='boolean') isCountInEnabled=tg.countIn; if(typeof tg.snap==='boolean') isSnapEnabled=tg.snap; if(typeof tg.cycle==='boolean') isCycleEnabled=tg.cycle; if(Array.isArray(editorState.tracks)){ editorState.tracks.forEach((saved)=>{ const t=tracks.find((x)=>x.id===saved.id); if(!t) return; Object.assign(t,{ name:saved.name??t.name,type:saved.type??t.type,color:saved.color??t.color,colorSoft:saved.colorSoft??t.colorSoft,muted:!!saved.muted,soloed:!!saved.soloed,recordArmed:!!saved.recordArmed,automationOpen:!!saved.automationOpen,volume:Number.isFinite(Number(saved.volume))?Number(saved.volume):t.volume,pan:Number.isFinite(Number(saved.pan))?Number(saved.pan):t.pan,outputLevel:Number.isFinite(Number(saved.outputLevel))?Number(saved.outputLevel):t.outputLevel,midiEffects:Array.isArray(saved.midiEffects)?saved.midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:saved.instrument&&typeof saved.instrument==='object'?{...saved.instrument,params:{...(saved.instrument.params||{})}}:null,audioEffects:Array.isArray(saved.audioEffects)?saved.audioEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[] }); ensureTrackInsertState(t) }) }
- timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX }
+function buildEditorStateForSave(){ return { version:1, timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null }, globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] }, regions:midiRegions.map((region)=>({ ...region, notes:(region.notes||[]).map((note)=>({ ...note })) })), notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId }, tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects:midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})),instrument:instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:audioEffects.map((fx)=>({...fx,params:{...(fx.params||{})}}))} }), toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled } } }
+function applyLoadedEditorState(editorState) {
+  if (!editorState || typeof editorState !== 'object') return
+  const tl = editorState.timeline || {}
+  if (Number.isFinite(tl.bars)) timelineState.bars = Math.max(2, Number(tl.bars))
+  if (Number.isFinite(tl.beatsPerBar)) timelineState.beatsPerBar = Math.max(1, Number(tl.beatsPerBar))
+  timelineState.positiveBeats = Number.isFinite(Number(tl.positiveBeats))
+    ? Math.max(timelineState.beatsPerBar, Math.round(Number(tl.positiveBeats)))
+    : timelineState.bars * timelineState.beatsPerBar
+  timelineState.bars = Math.max(2, Math.ceil(timelineState.positiveBeats / timelineState.beatsPerBar))
+  if (Number.isFinite(tl.pixelsPerBar)) timelineState.pixelsPerBar = Math.max(40, Number(tl.pixelsPerBar))
+  if (Number.isFinite(tl.preStartPixels)) timelineState.preStartPixels = clamp(Number(tl.preStartPixels), 0, timelineState.pixelsPerBar * 10)
+  if (Number.isFinite(tl.trackHeight)) timelineState.trackHeight = clamp(Number(tl.trackHeight), 44, 220)
+  if (tl.cycleRange && typeof tl.cycleRange === 'object') cycleRange = { startX: Number(tl.cycleRange.startX) || 0, endX: Number(tl.cycleRange.endX) || beatWidth() }
+  else ensureDefaultCycleRange()
+
+  const gt = editorState.globalTracks || {}
+  if (gt && typeof gt === 'object') {
+    globalTracks = {
+      ...globalTracks,
+      visible: !!gt.visible,
+      viewMode: GLOBAL_TRACK_VIEW_OPTIONS.some((option)=>option.value===gt.viewMode) ? gt.viewMode : (globalTracks.viewMode || 'all'),
+      arrangement: Array.isArray(gt.arrangement) ? gt.arrangement : globalTracks.arrangement,
+      markers: Array.isArray(gt.markers) ? gt.markers : globalTracks.markers,
+      tempoEvents: Array.isArray(gt.tempoEvents) ? gt.tempoEvents : globalTracks.tempoEvents,
+      signatureEvents: Array.isArray(gt.signatureEvents) ? gt.signatureEvents : globalTracks.signatureEvents,
+      videoRefs: Array.isArray(gt.videoRefs) ? gt.videoRefs : globalTracks.videoRefs
+    }
+  }
+
+  const ns = editorState.notes || {}
+  if (Array.isArray(editorState.regions)) {
+    midiRegions = editorState.regions.map((region)=>({ ...region, notes: Array.isArray(region.notes) ? region.notes.map((note)=>({ ...note })) : [] })).filter((region)=>region.id && region.trackId)
+  }
+  if (Array.isArray(ns.pages) && ns.pages.length) notePages = ns.pages.map((x) => ({ id: String(x.id || ''), title: String(x.title || 'Page'), body: String(x.body || '') })).filter((x) => x.id) || notePages
+  if (ns.activePageId) activeNotePageId = String(ns.activePageId)
+
+  const tg = editorState.toggles || {}
+  if (typeof tg.followPlayhead === 'boolean') followPlayhead = tg.followPlayhead
+  if (typeof tg.metronome === 'boolean') isMetronomeEnabled = tg.metronome
+  if (typeof tg.countIn === 'boolean') isCountInEnabled = tg.countIn
+  if (typeof tg.snap === 'boolean') isSnapEnabled = tg.snap
+  if (typeof tg.cycle === 'boolean') isCycleEnabled = tg.cycle
+
+  if (Array.isArray(editorState.tracks)) {
+    editorState.tracks.forEach((saved) => {
+      if (!saved?.id) return
+      let t = tracks.find((x) => x.id === saved.id)
+      if (!t) {
+        t = {
+          id: String(saved.id),
+          name: saved.name || `Instrument ${tracks.length + 1}`,
+          type: saved.type || 'instrument',
+          ...nextTrackColor(tracks.length),
+          muted: false,
+          soloed: false,
+          recordArmed: false,
+          automationOpen: false,
+          volume: 72,
+          pan: 0,
+          outputLevel: 0,
+          midiEffects: [],
+          instrument: null,
+          audioEffects: []
+        }
+        tracks.push(t)
+      }
+      Object.assign(t, {
+        name: saved.name ?? t.name,
+        type: saved.type ?? t.type,
+        color: saved.color ?? t.color,
+        colorSoft: saved.colorSoft ?? t.colorSoft,
+        muted: !!saved.muted,
+        soloed: !!saved.soloed,
+        recordArmed: !!saved.recordArmed,
+        automationOpen: !!saved.automationOpen,
+        volume: Number.isFinite(Number(saved.volume)) ? Number(saved.volume) : t.volume,
+        pan: Number.isFinite(Number(saved.pan)) ? Number(saved.pan) : t.pan,
+        outputLevel: Number.isFinite(Number(saved.outputLevel)) ? Number(saved.outputLevel) : t.outputLevel,
+        midiEffects: Array.isArray(saved.midiEffects) ? saved.midiEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : [],
+        instrument: saved.instrument && typeof saved.instrument === 'object' ? { ...saved.instrument, params: { ...(saved.instrument.params || {}) } } : null,
+        audioEffects: Array.isArray(saved.audioEffects) ? saved.audioEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : []
+      })
+      ensureTrackInsertState(t)
+    })
+    if (!tracks.some((track) => track.id === selectedTrackId)) selectedTrackId = tracks[0]?.id || selectedTrackId
+  }
+  timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
+}
 function scheduleEditorSave(){ if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } renderEditor() },800) }
 
 function isTextEntryTarget(target){ return target?.matches?.('input, textarea, [contenteditable="true"]') }
@@ -485,6 +786,145 @@ async function startInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOf
 function stopInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(isSustainEnabled) return; const voice=activeInstrumentNotes.get(shifted); if(!voice||!instrumentAudioContext) return; voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.08); voice.osc.stop(instrumentAudioContext.currentTime+0.1); activeInstrumentNotes.delete(shifted); setVirtualKeyPressed(midi,false) }
 function stopAllInstrumentNotes(){ if(!instrumentAudioContext) { activeInstrumentNotes.clear(); return } for(const [m,voice] of activeInstrumentNotes){ voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.05); voice.osc.stop(instrumentAudioContext.currentTime+0.08); activeInstrumentNotes.delete(m); setVirtualKeyPressed(voice.midi - instrumentOctaveOffset*12,false) } }
 
+function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
+  const target = ensureTrackInsertState(track)
+  if (!target?.instrument) return null
+  if (!target.instrument.pluginInstanceId) target.instrument.pluginInstanceId = `${target.instrument.type}:${target.id}`
+  return dawInstrumentRegistry.createOrGet({
+    id: target.instrument.pluginInstanceId,
+    type: target.instrument.type,
+    trackId: target.id,
+    params: target.instrument.params || {}
+  })
+}
+function playTrackMidiNote(track, note, velocity = 0.85) {
+  if (!track?.instrument || track.instrument.enabled === false) return
+  ensureTrackInstrumentInstance(track)
+  dawInstrumentRegistry.noteOn(track.instrument.pluginInstanceId, note, velocity)
+  recordMidiNoteOn(track.id, note, velocity)
+}
+function stopTrackMidiNote(track, note) {
+  if (!track?.instrument) return
+  dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note)
+  recordMidiNoteOff(track.id, note)
+}
+function getRecordingTrack() {
+  const selected = getSelectedTrack()
+  if (selected?.recordArmed || selected?.instrument) return selected
+  return tracks.find((track)=>track.recordArmed && track.instrument) || selected
+}
+function startMidiRecordFlow() {
+  const track = getRecordingTrack()
+  if (!track) { recordingStatus = 'Select or arm an instrument track to record MIDI.'; renderEditor(); return }
+  if (!track.instrument) { recordingStatus = 'Choose an instrument before recording MIDI.'; activeLeftPanel = 'inspector'; renderEditor(); return }
+  if (track.instrument.enabled === false) { recordingStatus = 'Instrument is disabled.'; renderEditor(); return }
+  stopPlayback()
+  if (countInTimer) clearInterval(countInTimer)
+  if (!isCountInEnabled) { beginMidiRecording(track); return }
+  isCountInRunning = true
+  countInBeatsRemaining = 3
+  renderEditor()
+  const intervalMs = (60 / Number(projectState?.bpm || 140)) * 1000
+  playMetronomeClick(true)
+  countInTimer = setInterval(()=>{
+    countInBeatsRemaining -= 1
+    if (countInBeatsRemaining > 0) playMetronomeClick(false)
+    if (countInBeatsRemaining <= 0) {
+      clearInterval(countInTimer)
+      countInTimer = 0
+      isCountInRunning = false
+      beginMidiRecording(track)
+      return
+    }
+    renderEditor()
+  }, intervalMs)
+}
+function beginMidiRecording(track) {
+  ensureTrackInstrumentInstance(track)
+  const startBeat = Math.max(0, xToBeatsFromBarZero(timelineState.playheadX))
+  activeRecording = { id: makeInsertId('midi-region'), trackId: track.id, name: 'MIDI Recording', startBeat, endBeat: startBeat, color: '#ff2d55', notes: [] }
+  activeRecordingNotes.clear()
+  recordingStatus = `Recording ${track.name}`
+  if (!isPlaying) startPlayback()
+  renderEditor()
+}
+function recordMidiNoteOn(trackId, note, velocity = 0.85) {
+  if (!activeRecording || activeRecording.trackId !== trackId) return
+  const key = `${trackId}:${note}`
+  if (activeRecordingNotes.has(key)) return
+  activeRecordingNotes.set(key, { note, velocity, startBeat: Math.max(0, xToBeatsFromBarZero(timelineState.playheadX)) })
+}
+function recordMidiNoteOff(trackId, note) {
+  if (!activeRecording || activeRecording.trackId !== trackId) return
+  const key = `${trackId}:${note}`
+  const started = activeRecordingNotes.get(key)
+  if (!started) return
+  const endBeat = Math.max(started.startBeat + 0.05, xToBeatsFromBarZero(timelineState.playheadX))
+  activeRecording.notes.push({ note: started.note, velocity: started.velocity, startBeat: started.startBeat, durationBeats: endBeat - started.startBeat })
+  activeRecordingNotes.delete(key)
+}
+function finalizeMidiRecording({ keepEmpty = false } = {}) {
+  if (!activeRecording) return
+  const endBeat = Math.max(activeRecording.startBeat + 0.25, xToBeatsFromBarZero(timelineState.playheadX))
+  activeRecordingNotes.forEach((started, key)=>{
+    activeRecording.notes.push({ note: started.note, velocity: started.velocity, startBeat: started.startBeat, durationBeats: Math.max(0.05, endBeat - started.startBeat) })
+    activeRecordingNotes.delete(key)
+  })
+  const track = tracks.find((item)=>item.id===activeRecording.trackId)
+  if (activeRecording.notes.length || keepEmpty) midiRegions.push({ ...activeRecording, endBeat, color: track?.color || activeRecording.color, name: 'MIDI Region' })
+  activeRecording = null
+  recordingStatus = ''
+  activeRecordingNotes.clear()
+  scheduleEditorSave()
+}
+function stopAllTrackInstrumentNotes() {
+  activeRecordingNotes.forEach((started)=> {
+    const track = tracks.find((item)=>item.id===activeRecording?.trackId)
+    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, started.note)
+  })
+  pressedDawMidiKeys.forEach(({ trackId, note }) => {
+    const track = tracks.find((item)=>item.id===trackId)
+    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note)
+  })
+  pressedDawMidiKeys.clear()
+}
+
+function beatFromGlobalEvent(event) {
+  const lane = app.querySelector('[data-global-tracks]')
+  const rect = lane?.getBoundingClientRect?.()
+  const scrollLeft = lane?.scrollLeft || 0
+  if (!rect) return 0
+  const x = clamp(event.clientX - rect.left + scrollLeft, timelineStartX(), maxTimelineX())
+  const beat = xToBeatsFromBarZero(x)
+  return Math.max(0, isSnapEnabled ? Math.round(beat) : Math.round(beat * 4) / 4)
+}
+function openSignatureEditor(event, existing = null) {
+  const beat = existing?.beat ?? beatFromGlobalEvent(event)
+  const signature = existing || { id: makeInsertId('signature'), beat, key: projectState?.key || 'C', scale: 'major', timeSignature: '4/4' }
+  if (!existing) globalTracks.signatureEvents = [...normalizeSignatureEvents(projectState).filter((item)=>item.id !== 'signature-default'), signature]
+  globalTrackPopover = { type: 'signature', ...signature, x: event.clientX, y: event.clientY }
+  scheduleEditorSave()
+  renderEditor()
+}
+function renameGlobalArrangement(id) {
+  const item = globalTracks.arrangement.find((section)=>section.id===id)
+  if (!item) return
+  const next = window.prompt('Rename section', item.label || 'Section')
+  if (next == null) return
+  item.label = next.trim() || 'Section'
+  scheduleEditorSave()
+  renderEditor()
+}
+function renameGlobalMarker(id) {
+  const item = globalTracks.markers.find((marker)=>marker.id===id)
+  if (!item) return
+  const next = window.prompt('Rename marker', item.label || 'Marker')
+  if (next == null) return
+  item.label = next.trim() || 'Marker'
+  scheduleEditorSave()
+  renderEditor()
+}
+
 function bindEditorEvents() {
   const trigger = app.querySelector('[data-editor-left-menu]')
   const leftWrap = app.querySelector('.studio-editor-left')
@@ -493,11 +933,11 @@ function bindEditorEvents() {
   const selectionBox = app.querySelector('[data-selection-box]')
   const tooltip = app.querySelector('[data-studio-tooltip]')
   trigger?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); setEditorMenuOpen(!isEditorMenuOpen) })
-  document.onclick = (event) => { if (event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('.studio-track-stack') && openTrackMenuId) { openTrackMenuId = ''; changed = true } if (!event.target.closest('.studio-left-panel') && inspectorMenu) { inspectorMenu = null; changed = true } if (changed) renderEditor() }
-  document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if (event.key === 'Escape') { let changed = false; if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (openTrackMenuId) { openTrackMenuId = ''; changed = true } if (changed) renderEditor() } }
+  document.onclick = (event) => { if (event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('.studio-left-panel') && inspectorMenu) { inspectorMenu = null; changed = true } if (changed) renderEditor() }
+  document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if (event.key === 'Escape') { let changed = false; if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (changed) renderEditor() } }
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
   app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
-  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { selectedTrackId = el.dataset.trackRow; openTrackMenuId = ''; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }))
+  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { selectedTrackId = el.dataset.trackRow; trackMenuState = null; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }))
   app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); inspectorMenu = inspectorMenu === el.dataset.toggleInspectorMenu ? null : el.dataset.toggleInspectorMenu; renderEditor() }))
   app.querySelectorAll('[data-inspector-menu-choice]').forEach((el) => el.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -531,7 +971,97 @@ function bindEditorEvents() {
   app.querySelectorAll('[data-track-record]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackRecord); if (!t) return; t.recordArmed = !t.recordArmed; scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-volume]').forEach((el) => { el.addEventListener('input', () => { const t = getTrack(el.dataset.trackVolume); if (!t) return; t.volume = Number(el.value) }); el.addEventListener('change', ()=>scheduleEditorSave()) })
   app.querySelectorAll('[data-track-automation]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackAutomation); if (!t) return; t.automationOpen = !t.automationOpen; renderEditor() }))
-  app.querySelectorAll('[data-track-options]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const id = el.dataset.trackOptions; openTrackMenuId = openTrackMenuId === id ? '' : id; renderEditor() }))
+  app.querySelectorAll('[data-track-options]').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const id = el.dataset.trackOptions
+    selectedTrackId = id
+    trackMenuState = { trackId: id, ...getClampedTrackMenuPosition(e.clientX, e.clientY) }
+    activeLeftPanel = 'inspector'
+    inspectorMenu = null
+    renderEditor()
+  }))
+  app.querySelector('[data-add-track]')?.addEventListener('click', (event) => { event.stopPropagation(); addTrack() })
+  app.querySelector('[data-duplicate-track]')?.addEventListener('click', (event) => { event.stopPropagation(); duplicateSelectedTrack() })
+  app.querySelector('[data-toggle-global-tracks]')?.addEventListener('click', (event) => { event.stopPropagation(); globalTracks.visible = !globalTracks.visible; trackMenuState = null; scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-global-track-view]')?.addEventListener('change', (event) => { globalTracks.viewMode = event.target.value || 'all'; scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-global-signature-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (!globalTrackPopover?.id) return
+    const eventId = globalTrackPopover.id
+    const events = normalizeSignatureEvents(projectState).filter((item)=>item.id !== 'signature-default')
+    const existing = events.find((item)=>item.id===eventId)
+    const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
+    next.key = app.querySelector('[data-global-signature-key]')?.value || 'C'
+    next.scale = app.querySelector('[data-global-signature-scale]')?.value || 'major'
+    next.timeSignature = app.querySelector('[data-global-signature-time]')?.value || '4/4'
+    if (!existing) events.push(next)
+    globalTracks.signatureEvents = events.sort((a,b)=>a.beat-b.beat)
+    globalTrackPopover = null
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelectorAll('[data-global-arrangement]').forEach((button)=>button.addEventListener('dblclick', (event)=>{ event.preventDefault(); event.stopPropagation(); renameGlobalArrangement(button.dataset.globalArrangement) }))
+  app.querySelectorAll('[data-global-marker]').forEach((button)=>button.addEventListener('dblclick', (event)=>{ event.preventDefault(); event.stopPropagation(); renameGlobalMarker(button.dataset.globalMarker) }))
+  app.querySelectorAll('[data-global-signature]').forEach((button)=>button.addEventListener('dblclick', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const item = normalizeSignatureEvents(projectState).find((signature)=>signature.id===button.dataset.globalSignature)
+    if (item) openSignatureEditor(event, item)
+  }))
+  app.querySelectorAll('[data-global-tempo]').forEach((button)=>button.addEventListener('pointerdown', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    let item = normalizeTempoEvents().find((tempo)=>tempo.id===button.dataset.globalTempo)
+    if (!item) return
+    if (item.id === 'tempo-default') {
+      item = { ...item, id: makeInsertId('tempo') }
+      globalTracks.tempoEvents = [item]
+    }
+    globalTrackDrag = { type: 'tempo', id: item.id, startBeat: item.beat, currentBeat: item.beat, bpm: item.bpm }
+    document.body.classList.add('is-studio-dragging')
+  }))
+  app.querySelectorAll('[data-global-row]').forEach((row)=> {
+    row.addEventListener('pointerdown', (event)=> {
+      if (event.target.closest('button')) return
+      if (row.dataset.globalRow !== 'arrangement') return
+      event.preventDefault()
+      const beat = beatFromGlobalEvent(event)
+      globalTrackDrag = { type: 'arrangement', startBeat: beat, currentBeat: beat }
+      document.body.classList.add('is-studio-dragging')
+      renderEditor()
+    })
+    row.addEventListener('dblclick', (event)=> {
+      if (event.target.closest('button')) return
+      event.preventDefault()
+      const beat = beatFromGlobalEvent(event)
+      if (row.dataset.globalRow === 'markers') {
+        globalTracks.markers.push({ id: makeInsertId('marker'), beat, label: 'Marker' })
+        scheduleEditorSave()
+        renderEditor()
+      } else if (row.dataset.globalRow === 'tempo') {
+        globalTracks.tempoEvents = [...normalizeTempoEvents().filter((item)=>item.id !== 'tempo-default'), { id: makeInsertId('tempo'), beat, bpm: Number(projectState?.bpm || 140) }].sort((a,b)=>a.beat-b.beat)
+        scheduleEditorSave()
+        renderEditor()
+      } else if (row.dataset.globalRow === 'signature') {
+        openSignatureEditor(event)
+      }
+    })
+  })
+  app.querySelector('[data-track-rename-form]')?.addEventListener('submit', (event) => { event.preventDefault(); renameSelectedTrack(app.querySelector('[data-track-rename-input]')?.value || '') })
+  app.querySelector('[data-track-rename-cancel]')?.addEventListener('click', (event) => { event.preventDefault(); renameTrackState = null; renderEditor() })
+  app.querySelector('[data-track-color-form]')?.addEventListener('submit', (event) => { event.preventDefault(); setSelectedTrackColor(app.querySelector('[data-track-color-input]')?.value || '') })
+  app.querySelector('[data-track-color-input]')?.addEventListener('input', (event) => { setSelectedTrackColor(event.target.value, { close: false }) })
+  app.querySelectorAll('[data-track-context-action]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    const action = button.dataset.trackContextAction
+    const menuPos = trackMenuState ? { x: trackMenuState.x, y: trackMenuState.y } : getClampedTrackMenuPosition(event.clientX, event.clientY)
+    trackMenuState = null
+    if (action === 'duplicate') duplicateSelectedTrack()
+    else if (action === 'delete') deleteSelectedTrack()
+    else if (action === 'color') { const track = getSelectedTrack(); colorPickerState = { ...menuPos, trackId: selectedTrackId, color: track?.color || '#58d4ff' }; renderEditor() }
+    else if (action === 'inspector') { activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }
+    else if (action === 'rename') { const track = getSelectedTrack(); renameTrackState = { ...menuPos, trackId: selectedTrackId, name: track?.name || '' }; activeLeftPanel = 'inspector'; renderEditor(); requestAnimationFrame(()=>app.querySelector('[data-track-rename-input]')?.select?.()) }
+  }))
   app.querySelectorAll('[data-track-pan]').forEach((knob) => knob.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); const t = getTrack(knob.dataset.trackPan); if (!t) return; panDrag = { trackId: t.id, startX: event.clientX, startPan: t.pan, knob }; knob.setPointerCapture?.(event.pointerId) }))
   grid?.addEventListener('scroll', () => { if (ruler) ruler.scrollLeft = grid.scrollLeft })
   const getRulerLocalX = (event) => { const rect = ruler.getBoundingClientRect(); return clamp(event.clientX - rect.left + ruler.scrollLeft, 0, maxTimelineX()) }
@@ -542,12 +1072,13 @@ function bindEditorEvents() {
   let extensionDrag = null
   let didMovePlayhead = false
   let didCycleChange = false
-  const syncTimelineScroll = (source = null) => { const scrollLeft = source?.scrollLeft ?? grid?.scrollLeft ?? 0; if (grid && grid !== source) grid.scrollLeft = scrollLeft; if (ruler && ruler !== source) ruler.scrollLeft = scrollLeft; if (extensionLane && extensionLane !== source) extensionLane.scrollLeft = scrollLeft }
+  const syncTimelineScroll = (source = null) => { const scrollLeft = source?.scrollLeft ?? grid?.scrollLeft ?? 0; const liveGlobalLane = app.querySelector('[data-global-tracks]'); if (grid && grid !== source) grid.scrollLeft = scrollLeft; if (ruler && ruler !== source) ruler.scrollLeft = scrollLeft; if (liveGlobalLane && liveGlobalLane !== source) liveGlobalLane.scrollLeft = scrollLeft; if (extensionLane && extensionLane !== source) extensionLane.scrollLeft = scrollLeft }
   const updateTimelineRulerDom = () => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
   const updateTimelineGridLinesDom = () => { const gridInner = app.querySelector('[data-arrangement-grid-inner]'); if (!gridInner) return; const selection = gridInner.querySelector('[data-selection-box]'); const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'; const selectionHtml = selection ? selection.outerHTML : selectionMarkup; gridInner.innerHTML = `<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}` }
+  const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
   const applyTimelineGeometry = () => { syncBarsFromPositiveBeats(); app.querySelector('[data-arrangement]')?.style.setProperty('--bars', timelineState.bars); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-beat', `${timelineState.pixelsPerBar / timelineState.beatsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--timeline-content-width', `${timelineContentWidth()}px`); clampTimelineSystems(); updateCycleDomFromState(); setPlayhead(timelineState.playheadX) }
   let timelineVisualRefreshRaf = 0
-  const refreshTimelineVisualsLive = () => { applyTimelineGeometry(); updateTimelineRulerDom(); updateTimelineGridLinesDom(); updateCycleDomFromState(); updateTransportDisplay(); syncTimelineScroll() }
+  const refreshTimelineVisualsLive = () => { applyTimelineGeometry(); updateTimelineRulerDom(); updateTimelineGridLinesDom(); updateGlobalTrackLaneDom(); updateCycleDomFromState(); updateTransportDisplay(); syncTimelineScroll() }
   const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
   const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact)); }
   const isPinnedRight = () => !!grid && (grid.scrollLeft + grid.clientWidth >= grid.scrollWidth - 4)
@@ -557,19 +1088,49 @@ function bindEditorEvents() {
   }, { passive:false })
   grid?.addEventListener('scroll', () => syncTimelineScroll(grid), { passive:true })
   ruler?.addEventListener('scroll', () => syncTimelineScroll(ruler), { passive:true })
+  app.querySelector('[data-global-tracks]')?.addEventListener('scroll', (event) => syncTimelineScroll(event.currentTarget), { passive:true })
   extensionLane?.addEventListener('scroll', () => syncTimelineScroll(extensionLane), { passive:true })
   app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight }; document.body.classList.add('is-studio-dragging') }))
   ruler?.addEventListener('pointerdown', (event) => { const cycleHandle = event.target.closest('[data-cycle-handle]'); const cycleMove = event.target.closest('[data-cycle-drag]'); const inCycleStrip = isCycleStripPointerEvent(event, ruler); if (cycleHandle && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: cycleHandle.dataset.cycleHandle === 'start' ? 'resize-start' : 'resize-end', fixedX: cycleHandle.dataset.cycleHandle === 'start' ? cycleRange.endX : cycleRange.startX }; return } if (cycleMove && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: 'move', startPointerX: x, startRange: { ...cycleRange } }; return } if (inCycleStrip) { event.preventDefault(); const x = getRulerLocalX(event); setCycleEnabled(true); cycleDrag = { mode: 'create', anchorX: x }; applyCycleRange(x, x + beatWidth()); document.body.classList.add('is-studio-dragging'); return } event.preventDefault(); timelineState.isDraggingPlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); scheduleEditorSave() })
   grid?.addEventListener('pointerdown', (event) => { if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.hidden = false } })
-  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) { t.pan = clamp(panDrag.startPan + (event.clientX-panDrag.startX)/100, -1, 1); panDrag.knob?.style.setProperty('--pan-angle', `${t.pan * 135}deg`) } } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); if (grid) { grid.scrollLeft = extensionDrag.side==='right' ? Math.max(0, grid.scrollWidth-grid.clientWidth) : extensionDrag.scrollLeft; syncTimelineScroll() } return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
-  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
+	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) { t.pan = clamp(panDrag.startPan + (event.clientX-panDrag.startX)/100, -1, 1); panDrag.knob?.style.setProperty('--pan-angle', `${t.pan * 135}deg`) } } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); if (grid) { grid.scrollLeft = extensionDrag.side==='right' ? Math.max(0, grid.scrollWidth-grid.clientWidth) : extensionDrag.scrollLeft; syncTimelineScroll() } return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
+	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
+  window.addEventListener('pointermove', (event) => {
+    if (!globalTrackDrag) return
+    event.preventDefault()
+    globalTrackDrag.currentBeat = beatFromGlobalEvent(event)
+    if (globalTrackDrag.type === 'tempo') {
+      const row = app.querySelector('.studio-global-row--tempo')
+      const rect = row?.getBoundingClientRect?.()
+      const y = rect ? clamp(event.clientY - rect.top, 4, Math.max(8, rect.height - 4)) : 20
+      const ratio = rect ? 1 - (y / Math.max(1, rect.height)) : 0.5
+      globalTrackDrag.bpm = Math.round(clamp(20 + ratio * 280, 20, 300))
+      globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===globalTrackDrag.id ? { ...item, beat: globalTrackDrag.currentBeat, bpm: globalTrackDrag.bpm } : item).filter((item)=>item.id !== 'tempo-default').sort((a,b)=>a.beat-b.beat)
+    }
+    updateGlobalTrackLaneDom()
+  })
+  window.addEventListener('pointerup', () => {
+    if (!globalTrackDrag) return
+    const drag = globalTrackDrag
+    globalTrackDrag = null
+    document.body.classList.remove('is-studio-dragging')
+    if (drag.type === 'arrangement') {
+      const startBeat = Math.min(drag.startBeat, drag.currentBeat)
+      const endBeat = Math.max(drag.startBeat, drag.currentBeat)
+      if (endBeat - startBeat >= 0.25) {
+        globalTracks.arrangement.push({ id: makeInsertId('section'), startBeat, endBeat, label: 'Section', color: '#3a8bff' })
+      }
+    }
+    scheduleEditorSave()
+    renderEditor()
+  })
   app.querySelector('[data-transport-play]')?.addEventListener('click', (e)=>{ e.stopPropagation(); togglePlayback() })
-  app.querySelector('[data-transport-stop]')?.addEventListener('click', (e)=>{ e.stopPropagation(); stopPlayback(); recordingStatus = '' ; renderEditor() })
+  app.querySelector('[data-transport-stop]')?.addEventListener('click', (e)=>{ e.stopPropagation(); finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = '' ; renderEditor() })
   app.querySelector('[data-transport-start]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(barZeroX()); scheduleEditorSave() })
   app.querySelector('[data-transport-end]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(maxTimelineX()); scheduleEditorSave() })
   app.querySelector('[data-transport-rewind]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(timelineState.playheadX - (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
   app.querySelector('[data-transport-forward]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(timelineState.playheadX + (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
-  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ const startRecording = () => { recordingStatus = 'Recording ready'; renderEditor() }; if (!isCountInEnabled) return startRecording(); stopPlayback(); if (countInTimer) clearInterval(countInTimer); isCountInRunning = true; countInBeatsRemaining = timelineState.beatsPerBar; recordingStatus = ''; renderEditor(); const intervalMs = (60 / Number(projectState?.bpm || 140)) * 1000; playMetronomeClick(true); countInTimer = setInterval(()=>{ countInBeatsRemaining -= 1; if (countInBeatsRemaining > 0) playMetronomeClick(false); if (countInBeatsRemaining <= 0) { clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; startRecording(); return } renderEditor() }, intervalMs) }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if (isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; if(activeInstrumentSubpage==='keyboard'&&next!=='keyboard') stopAllInstrumentNotes(); activeInstrumentSubpage=next; renderEditor() }) })
+  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); renderEditor(); return } startMidiRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if (isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; if(activeInstrumentSubpage==='keyboard'&&next!=='keyboard') stopAllInstrumentNotes(); activeInstrumentSubpage=next; renderEditor() }) })
   app.querySelectorAll('[data-midi]').forEach((key)=>{ const midi=Number(key.dataset.midi); key.addEventListener('pointerdown',(e)=>{ e.preventDefault(); startInstrumentNote(midi) }); key.addEventListener('pointerup',()=>{ stopInstrumentNote(midi) }); key.addEventListener('pointerleave',()=>{ stopInstrumentNote(midi) }) }); app.querySelector('[data-sustain-toggle]')?.addEventListener('click',()=>{ isSustainEnabled=!isSustainEnabled; if(!isSustainEnabled) stopAllInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-down]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.max(-2,instrumentOctaveOffset-1); stopAllInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-up]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.min(2,instrumentOctaveOffset+1); stopAllInstrumentNotes(); renderEditor() }); app.querySelectorAll('[data-instrument-knob]').forEach((input)=>{ input.addEventListener('input',(e)=>{ const knob=e.target.dataset.instrumentKnob; const value=Number(e.target.value); const selected=getSelectedTrack(); if(knob==='volume'){ instrumentVolume=value; if(selected){ selected.volume=Math.round(value*100); syncSelectedTrackVolumeControl(selected) } if(instrumentMasterGain&&instrumentAudioContext) instrumentMasterGain.gain.setValueAtTime(instrumentVolume,instrumentAudioContext.currentTime) } else if(knob==='pan'){ instrumentPan=value; if(selected) selected.pan=value; if(instrumentPanNode&&instrumentAudioContext) instrumentPanNode.pan.setValueAtTime(instrumentPan,instrumentAudioContext.currentTime); app.querySelector(`[data-track-pan="${selected?.id}"]`)?.style.setProperty('--pan-angle', `${value * 135}deg`) } const dial=app.querySelector(`[data-instrument-knob-dial="${knob}"]`); const valueEl=app.querySelector(`[data-instrument-knob-value="${knob}"]`); if(dial) dial.style.setProperty('--knob-angle',`${-135 + ((value-Number(e.target.min))/(Number(e.target.max)-Number(e.target.min)))*270}deg`); if(valueEl) valueEl.textContent = knob==='pan' ? value.toFixed(2) : `${Math.round(value*100)}%` }); input.addEventListener('change',()=>scheduleEditorSave()); input.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const startY=event.clientY; const startValue=Number(input.value); const min=Number(input.min); const max=Number(input.max); const speed = input.dataset.instrumentKnob==='pan' ? 0.004 : 0.002; const onMove=(ev)=>{ const delta=-(ev.clientY-startY)*speed; const next=clamp(startValue+delta,min,max); input.value=String(next); input.dispatchEvent(new Event('input',{bubbles:true})) }; const onUp=()=>{ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); scheduleEditorSave() }; window.addEventListener('pointermove',onMove); window.addEventListener('pointerup',onUp,{once:true}) }) }); app.querySelectorAll('[data-preset-load]').forEach((button)=>{ button.addEventListener('click',(event)=>{ event.stopPropagation(); const preset=instrumentPresetItems.find((item)=>item.id===button.dataset.presetLoad); if(!preset) return; selectedInstrumentName=preset.name; renderEditor() }) }); app.querySelector('[data-arp-toggle]')?.addEventListener('click',()=>{ arpEnabled=!arpEnabled; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-mode]')?.addEventListener('change',(e)=>{ arpMode=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-rate]')?.addEventListener('change',(e)=>{ arpRate=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-length]')?.addEventListener('change',(e)=>{ arpLength=Number(e.target.value)||16; if(selectedArpStepIndex>=arpLength) selectedArpStepIndex=arpLength-1; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-octave]').forEach((btn)=>btn.addEventListener('click',()=>{ const d=Number(btn.dataset.arpOctave||0); arpOctaves=clamp(arpOctaves+d,1,4); renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-gate]')?.addEventListener('input',(e)=>{ arpGate=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpGate}%` }); app.querySelector('[data-arp-swing]')?.addEventListener('input',(e)=>{ arpSwing=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpSwing}%` }); app.querySelector('[data-arp-velocity]')?.addEventListener('input',(e)=>{ arpVelocity=Number(e.target.value); e.target.nextElementSibling.textContent=String(arpVelocity) }); app.querySelectorAll('[data-arp-gate],[data-arp-swing],[data-arp-velocity]').forEach((el)=>el.addEventListener('change',()=>scheduleEditorSave())); app.querySelectorAll('[data-arp-edit-mode]').forEach((button)=>{ button.addEventListener('click',()=>{ const next=button.dataset.arpEditMode; if(!next||arpEditMode===next) return; arpEditMode=next; if(next!=='note') arpNotePickerStepIndex=null; renderEditor() }) }); app.querySelectorAll('[data-arp-step]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ const i=Number(el.dataset.arpStep); if(!Number.isFinite(i)||!arpSteps[i]) return; const step=arpSteps[i]=normalizeArpStep(arpSteps[i],i); selectedArpStepIndex=i; if(event.ctrlKey||event.metaKey){ step.active=!step.active; renderEditor(); scheduleEditorSave(); return } if(event.shiftKey){ step.accent=!step.accent; renderEditor(); scheduleEditorSave(); return } if(event.altKey){ step.octave=step.octave>=2?-1:step.octave+1; renderEditor(); scheduleEditorSave(); return } if(arpEditMode==='note'){ arpNotePickerStepIndex=i; arpNotePickerOctave=step.noteOctave ?? arpNotePickerOctave; renderEditor(); return } if(arpEditMode==='velocity'){ step.active=true; step.velocity=getVelocityFromStepPointer(event, el); renderEditor(); scheduleEditorSave(); return } cycleArpStepByMode(step, arpEditMode); step.active=true; renderEditor(); scheduleEditorSave() })); app.querySelectorAll('[data-arp-note-picker-octave]').forEach((button)=>{ button.addEventListener('click',()=>{ arpNotePickerOctave=clamp(arpNotePickerOctave+Number(button.dataset.arpNotePickerOctave||0),0,8); renderEditor() }) }); app.querySelector('[data-arp-note-picker-close]')?.addEventListener('click',()=>{ arpNotePickerStepIndex=null; renderEditor() }); app.querySelectorAll('[data-arp-note-value]').forEach((button)=>{ button.addEventListener('click',()=>{ const stepIndex=arpNotePickerStepIndex; if(stepIndex==null||!arpSteps[stepIndex]) return; const st=arpSteps[stepIndex]=normalizeArpStep(arpSteps[stepIndex],stepIndex); st.note=clamp(Number(button.dataset.arpNoteValue),0,11); st.noteOctave=arpNotePickerOctave; st.active=true; selectedArpStepIndex=stepIndex; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-reset]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ ...createDefaultArpStep(i), octave:0, accent:false },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-randomize]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ active:Math.random()>.35, note:Math.floor(Math.random()*12), noteOctave:Math.floor(3+Math.random()*3), velocity:Math.floor(35+Math.random()*92), octave:[-1,0,0,1][Math.floor(Math.random()*4)], gate:[10,25,50,70,85,100][Math.floor(Math.random()*6)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.75, tie:Math.random()>.9 },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-pattern]').forEach((el)=>el.addEventListener('click',()=>{ const name=el.dataset.arpPattern||''; if(name.includes('Straight')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:i%2===0, velocity:95, octave:0, accent:false },i)); else if(name.includes('Random')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:Math.random()>.45, velocity:Math.floor(45+Math.random()*80), octave:[-1,0,1][Math.floor(Math.random()*3)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.8 },i)); else if(name.includes('Chord')) arpMode='Chord Repeat'; currentArpPatternName=name; renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-step-active]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.active=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.note=clamp(Number(e.target.value)||0,0,11); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.noteOctave=clamp(Number(e.target.value)||4,0,8); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.octave=clamp(Number(e.target.value)||0,-2,4); renderEditor(); scheduleEditorSave() }); [['[data-arp-step-velocity]','velocity','[data-arp-step-velocity-value]',''],['[data-arp-step-gate]','gate','[data-arp-step-gate-value]','%'],['[data-arp-step-probability]','probability','[data-arp-step-probability-value]','%']].forEach(([sel,key,valSel,suffix])=>{ const input=app.querySelector(sel); const valueEl=app.querySelector(valSel); if(!input) return; input.addEventListener('input',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st[key]=Number(e.target.value); if(valueEl) valueEl.textContent=`${st[key]}${suffix}` }); input.addEventListener('change',()=>{ renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-step-accent]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.accent=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-tie]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.tie=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-instrument-select]')?.addEventListener('change',(e)=>{ selectedInstrumentName=e.target.value });
   app.querySelector('[data-close-bottom-panel]')?.addEventListener('click', ()=>{ closeBottomPanel() })
   updateTransportPlaybackUI()
@@ -580,7 +1141,7 @@ function renderEditor() {
   const project = projectState
   if (studioAudioEngine) studioAudioEngine.setBpm(Number(project?.bpm || 140))
   document.body.classList.add('is-studio-editor')
-  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button>File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button>Help</button></nav><aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''}" aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${tracks.map(renderTrackCard).join('')}</aside><section class="studio-arrangement" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div><div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section><aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="fx" class="${activeBottomPanel==='fx' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='fx')}">FX</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${(activeBottomPanel||closingBottomPanel) ? renderBottomPanel((activeBottomPanel||closingBottomPanel), bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderNotesModal()}</main>`
+  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button>File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button>Help</button></nav><aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''}" aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section><aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="fx" class="${activeBottomPanel==='fx' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='fx')}">FX</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${(activeBottomPanel||closingBottomPanel) ? renderBottomPanel((activeBottomPanel||closingBottomPanel), bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}</main>`
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   if (keepSiteMenuOpen) initShellChrome()
   app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
@@ -591,9 +1152,49 @@ function renderEditor() {
 
 
 
-function handleStudioKeydown(event){ if(event.ctrlKey||event.metaKey||event.altKey) return; if(isTextEntryTarget(event.target)) return; const instrumentKeyMap={KeyZ:48,KeyS:49,KeyX:50,KeyD:51,KeyC:52,KeyV:53,KeyG:54,KeyB:55,KeyH:56,KeyN:57,KeyJ:58,KeyM:59,Comma:60,KeyQ:60,Digit2:61,KeyW:62,Digit3:63,KeyE:64,KeyR:65,Digit5:66,KeyT:67,Digit6:68,KeyY:69,Digit7:70,KeyU:71,KeyI:72,Digit9:73,KeyO:74,Digit0:75,KeyP:76}; if(activeBottomPanel==='instrument'&&activeInstrumentSubpage==='keyboard'&&instrumentKeyMap[event.code]!=null){ if(event.repeat||pressedKeyboardNotes.has(event.code)) return; pressedKeyboardNotes.add(event.code); event.preventDefault(); startInstrumentNote(instrumentKeyMap[event.code]); return } const t=tracks.find((x)=>x.id===selectedTrackId); const step=timelineState.pixelsPerBar/timelineState.beatsPerBar; if(event.code==='Space'){handleSpaceTransport(event)} else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1} else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(timelineState.playheadX-step)} else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(timelineState.playheadX+step)} else if(event.code==='KeyR'){event.preventDefault(); if(t){t.recordArmed=!t.recordArmed; renderEditor()}} else if(event.code==='KeyC'){event.preventDefault(); isCycleEnabled=!isCycleEnabled; renderEditor()} else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); renderEditor()} }
-if(!window.__melogicStudioKeybindsBound){ window.__melogicStudioKeybindsBound=true; document.addEventListener('keydown', handleStudioKeydown); document.addEventListener('keyup',(event)=>{ const instrumentKeyMap={KeyZ:48,KeyS:49,KeyX:50,KeyD:51,KeyC:52,KeyV:53,KeyG:54,KeyB:55,KeyH:56,KeyN:57,KeyJ:58,KeyM:59,Comma:60,KeyQ:60,Digit2:61,KeyW:62,Digit3:63,KeyE:64,KeyR:65,Digit5:66,KeyT:67,Digit6:68,KeyY:69,Digit7:70,KeyU:71,KeyI:72,Digit9:73,KeyO:74,Digit0:75,KeyP:76}; if(instrumentKeyMap[event.code]==null) return; pressedKeyboardNotes.delete(event.code); stopInstrumentNote(instrumentKeyMap[event.code]);  }) }
-if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',()=>{ dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
+const bottomPanelInstrumentKeyMap = { KeyZ:48, KeyS:49, KeyX:50, KeyD:51, KeyC:52, KeyV:53, KeyG:54, KeyB:55, KeyH:56, KeyN:57, KeyJ:58, KeyM:59, Comma:60, KeyQ:60, Digit2:61, KeyW:62, Digit3:63, KeyE:64, KeyR:65, Digit5:66, KeyT:67, Digit6:68, KeyY:69, Digit7:70, KeyU:71, KeyI:72, Digit9:73, KeyO:74, Digit0:75, KeyP:76 }
+const dawInstrumentKeyMap = { KeyA:60, KeyW:61, KeyS:62, KeyE:63, KeyD:64, KeyF:65, KeyT:66, KeyG:67, KeyY:68, KeyH:69, KeyU:70, KeyJ:71, KeyK:72 }
+function handleStudioKeydown(event){
+  if(event.ctrlKey||event.metaKey||event.altKey) return
+  if(isTextEntryTarget(event.target)) return
+  if(activeBottomPanel==='instrument'&&activeInstrumentSubpage==='keyboard'&&bottomPanelInstrumentKeyMap[event.code]!=null){
+    if(event.repeat||pressedKeyboardNotes.has(event.code)) return
+    pressedKeyboardNotes.add(event.code)
+    event.preventDefault()
+    startInstrumentNote(bottomPanelInstrumentKeyMap[event.code])
+    return
+  }
+  const t=tracks.find((x)=>x.id===selectedTrackId)
+  if(t?.instrument && t.instrument.enabled !== false && dawInstrumentKeyMap[event.code]!=null){
+    if(event.repeat||pressedDawMidiKeys.has(event.code)) return
+    event.preventDefault()
+    const note = dawInstrumentKeyMap[event.code]
+    pressedDawMidiKeys.set(event.code, { trackId: t.id, note })
+    playTrackMidiNote(t, note, 0.85)
+    return
+  }
+  const step=timelineState.pixelsPerBar/timelineState.beatsPerBar
+  if(event.code==='Space'){handleSpaceTransport(event)}
+  else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1}
+  else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(timelineState.playheadX-step)}
+  else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(timelineState.playheadX+step)}
+  else if(event.code==='KeyR'){event.preventDefault(); if(t){t.recordArmed=!t.recordArmed; renderEditor()}}
+  else if(event.code==='KeyC'){event.preventDefault(); isCycleEnabled=!isCycleEnabled; renderEditor()}
+  else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); renderEditor()}
+}
+if(!window.__melogicStudioKeybindsBound){ window.__melogicStudioKeybindsBound=true; document.addEventListener('keydown', handleStudioKeydown); document.addEventListener('keyup',(event)=>{
+  if(bottomPanelInstrumentKeyMap[event.code]!=null){
+    pressedKeyboardNotes.delete(event.code)
+    stopInstrumentNote(bottomPanelInstrumentKeyMap[event.code])
+  }
+  const held = pressedDawMidiKeys.get(event.code)
+  if (held) {
+    const track = tracks.find((item)=>item.id===held.trackId)
+    pressedDawMidiKeys.delete(event.code)
+    stopTrackMidiNote(track, held.note)
+  }
+}) }
+if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
 async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor() }
 init()
