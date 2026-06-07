@@ -6,15 +6,18 @@ export const DAW_PLUGIN_DEFINITIONS = {
   [DAW_PLUGIN_TYPES.melogicWavetable]: {
     pluginType: DAW_PLUGIN_TYPES.melogicWavetable,
     title: 'Melogic Wavetable',
-    status: 'Instrument shell',
+    status: 'Web Audio prototype',
     defaultSize: { width: 820, height: 560 },
     defaultParams: {
       preset: 'Init Patch',
-      oscillatorBlend: 0.5,
+      oscillatorType: 'sawtooth',
+      volume: 0.45,
+      attack: 0.02,
+      decay: 0.14,
+      sustain: 0.62,
+      release: 0.24,
       filterCutoff: 0.62,
-      ampAttack: 0.08,
-      lfoRate: 0.25,
-      outputGain: 0.72
+      lfoRate: 0.25
     }
   }
 }

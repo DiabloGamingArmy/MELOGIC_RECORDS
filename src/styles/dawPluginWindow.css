@@ -172,12 +172,33 @@
   line-height: 1.45;
 }
 
-.daw-plugin-preset {
+.daw-plugin-preset,
+.daw-plugin-control {
   display: grid;
   gap: 7px;
 }
 
-.daw-plugin-preset select {
+.daw-plugin-control {
+  grid-template-columns: 78px minmax(0, 1fr) 46px;
+  align-items: center;
+}
+
+.daw-plugin-control span {
+  color: #c9d5ee;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.daw-plugin-control em {
+  color: #8bdfff;
+  font-size: 11px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.daw-plugin-preset select,
+.daw-plugin-control select {
   width: 100%;
   border: 1px solid rgba(126, 147, 191, 0.28);
   border-radius: 8px;
@@ -185,6 +206,15 @@
   color: #f6f8ff;
   padding: 9px 10px;
   font-weight: 800;
+}
+
+.daw-plugin-control select {
+  grid-column: span 2;
+}
+
+.daw-plugin-control input[type="range"] {
+  width: 100%;
+  accent-color: #67d8ff;
 }
 
 .daw-plugin-grid {
@@ -230,7 +260,7 @@
   min-height: 72px;
 }
 
-.daw-plugin-keyboard span {
+.daw-plugin-keyboard button {
   display: grid;
   place-items: end center;
   min-height: 72px;
@@ -241,6 +271,14 @@
   font-size: 12px;
   font-weight: 900;
   padding-bottom: 7px;
+  cursor: pointer;
+}
+
+.daw-plugin-keyboard button.is-playing,
+.daw-plugin-keyboard button:active {
+  background: linear-gradient(180deg, #9fe8ff, #6f87ff);
+  color: #07101d;
+  transform: translateY(1px);
 }
 
 .daw-plugin-host-page {
