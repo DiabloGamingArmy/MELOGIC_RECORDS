@@ -67,8 +67,8 @@ export class DawWindowManager {
     this.channel?.close()
   }
 
-  openPlugin({ pluginType, trackId } = {}) {
-    const instance = createDawPluginInstance({ pluginType, trackId })
+  openPlugin({ pluginType, trackId, instanceId = '', params = {}, forceCenter = false } = {}) {
+    const instance = createDawPluginInstance({ pluginType, trackId, instanceId, params })
     const existing = this.windows.get(instance.pluginInstanceId)
     if (existing) {
       existing.minimized = false
@@ -79,7 +79,7 @@ export class DawWindowManager {
       return existing
     }
 
-    const saved = this.sessionState[instance.pluginInstanceId] || {}
+    const saved = forceCenter ? {} : (this.sessionState[instance.pluginInstanceId] || {})
     const windowState = {
       ...instance,
       ...saved,
@@ -90,6 +90,7 @@ export class DawWindowManager {
       minimized: false,
       zIndex: ++this.zCounter
     }
+    windowState.windowPosition = this.sanitizeWindowPosition(windowState, forceCenter)
     this.windows.set(windowState.pluginInstanceId, windowState)
     this.persist()
     this.onOpen(windowState)
@@ -265,6 +266,8 @@ export class DawWindowManager {
     if (popout && !popout.closed) popout.close()
     this.hostWindows.delete(id)
     this.windows.delete(id)
+    delete this.sessionState[id]
+    writeSessionState(this.sessionState)
     this.onClose(id)
     this.persist()
     this.onChange()
@@ -493,6 +496,29 @@ export class DawWindowManager {
       maxY: Math.max(0, rect.height - 44),
       maxWidth: Math.max(MIN_WINDOW_SIZE.width, rect.width - 32),
       maxHeight: Math.max(MIN_WINDOW_SIZE.height, rect.height - 80)
+    }
+  }
+
+  getCenteredPosition(windowState) {
+    const container = document.querySelector('.studio-editor-page') || document.documentElement
+    const rect = container.getBoundingClientRect()
+    const size = windowState.windowSize || MIN_WINDOW_SIZE
+    return {
+      x: Math.max(12, Math.round((rect.width - Math.min(size.width, rect.width - 24)) / 2)),
+      y: Math.max(54, Math.round((rect.height - Math.min(size.height, rect.height - 72)) / 2))
+    }
+  }
+
+  sanitizeWindowPosition(windowState, forceCenter = false) {
+    if (forceCenter) return this.getCenteredPosition(windowState)
+    const position = windowState.windowPosition || { x: 96, y: 92 }
+    const size = windowState.windowSize || MIN_WINDOW_SIZE
+    const bounds = this.getBounds({ ...windowState, windowSize: size })
+    const headerReachable = position.y >= 0 && position.y <= bounds.maxY && position.x <= bounds.maxX && position.x + Math.min(180, size.width) >= 0
+    if (!headerReachable) return this.getCenteredPosition({ ...windowState, windowSize: size })
+    return {
+      x: clamp(Number(position.x) || 0, 0, bounds.maxX),
+      y: clamp(Number(position.y) || 0, 0, bounds.maxY)
     }
   }
 
