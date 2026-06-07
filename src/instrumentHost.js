@@ -41,6 +41,7 @@ function postToMain(message = {}) {
     } catch {
       // The opener can disappear while the pop-out remains open.
     }
+    return
   }
   channel?.postMessage(payload)
 }
@@ -69,6 +70,19 @@ function render() {
 function bind() {
   app.querySelector('[data-close-host]')?.addEventListener('click', () => window.close())
   app.querySelectorAll('[data-plugin-param]').forEach((input) => {
+    input.addEventListener('input', () => {
+      if (input.type !== 'range') return
+      instance = {
+        ...instance,
+        params: { ...(instance.params || {}), [input.dataset.pluginParam]: input.value }
+      }
+      const valueEl = app.querySelector(`[data-plugin-param-value="${input.dataset.pluginParam}"]`)
+      if (valueEl) {
+        const numeric = Number(input.value)
+        valueEl.textContent = Number.isFinite(numeric) ? numeric.toFixed(input.dataset.pluginParam === 'attack' || input.dataset.pluginParam === 'decay' ? 3 : 2) : input.value
+      }
+      postToMain({ type: 'plugin-param-change', param: input.dataset.pluginParam, value: input.value })
+    })
     input.addEventListener('change', () => {
       instance = {
         ...instance,
@@ -76,6 +90,21 @@ function bind() {
       }
       postToMain({ type: 'plugin-param-change', param: input.dataset.pluginParam, value: input.value })
     })
+  })
+  app.querySelectorAll('[data-plugin-note]').forEach((button) => {
+    const start = (event) => {
+      event.preventDefault()
+      button.classList.add('is-playing')
+      postToMain({ type: 'plugin-note-on', note: Number(button.dataset.pluginNote), velocity: 0.85 })
+    }
+    const stop = () => {
+      button.classList.remove('is-playing')
+      postToMain({ type: 'plugin-note-off', note: Number(button.dataset.pluginNote) })
+    }
+    button.addEventListener('pointerdown', start)
+    button.addEventListener('pointerup', stop)
+    button.addEventListener('pointerleave', stop)
+    button.addEventListener('blur', stop)
   })
 }
 

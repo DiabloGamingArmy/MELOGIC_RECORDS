@@ -7,6 +7,7 @@ import { ROUTES, authRoute } from './utils/routes'
 import { getStudioProject, touchStudioProject, saveStudioProjectEditorState } from './data/studioProjectService'
 import { StudioAudioEngine } from './studio/audio/StudioAudioEngine.js'
 import { normalizeStudioProjectModel } from './studio/model/studioProjectModel.js'
+import { InstrumentRegistry } from './studio/instruments/InstrumentRegistry.js'
 import { DawWindowManager } from './studio/plugins/DawWindowManager.js'
 import { DAW_PLUGIN_TYPES } from './studio/plugins/pluginCatalog.js'
 import { renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
@@ -17,6 +18,10 @@ const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw'
 const PREF_KEY = 'melogic_studio_keep_site_menu_open'
 let keepSiteMenuOpen = localStorage.getItem(PREF_KEY) === '1'
 let projectState = null
+const dawInstrumentRegistry = new InstrumentRegistry({
+  getAudioContext: () => getAudioContext(),
+  getDestination: () => getAudioContext().destination
+})
 const dawWindowManager = new DawWindowManager({
   renderContent: (pluginWindow) => renderPluginShell(pluginWindow, { hostMode: 'inline' }),
   getHostUrl: (pluginWindow) => {
@@ -26,6 +31,26 @@ const dawWindowManager = new DawWindowManager({
       trackId: pluginWindow.trackId || ''
     })
     return `${ROUTES.studioInstrumentHost}?${params.toString()}`
+  },
+  onOpen: (pluginWindow) => {
+    dawInstrumentRegistry.createOrGet({
+      id: pluginWindow.pluginInstanceId,
+      type: pluginWindow.pluginType,
+      trackId: pluginWindow.trackId,
+      params: pluginWindow.params
+    })
+  },
+  onClose: (pluginInstanceId) => {
+    dawInstrumentRegistry.dispose(pluginInstanceId)
+  },
+  onParamChange: (pluginInstanceId, param, value) => {
+    dawInstrumentRegistry.setParam(pluginInstanceId, param, value)
+  },
+  onNoteOn: (pluginInstanceId, note, velocity) => {
+    dawInstrumentRegistry.noteOn(pluginInstanceId, note, velocity)
+  },
+  onNoteOff: (pluginInstanceId, note) => {
+    dawInstrumentRegistry.noteOff(pluginInstanceId, note)
   },
   onChange: () => renderEditor()
 })
@@ -468,6 +493,7 @@ function renderEditor() {
 
 function handleStudioKeydown(event){ if(event.ctrlKey||event.metaKey||event.altKey) return; if(isTextEntryTarget(event.target)) return; const instrumentKeyMap={KeyZ:48,KeyS:49,KeyX:50,KeyD:51,KeyC:52,KeyV:53,KeyG:54,KeyB:55,KeyH:56,KeyN:57,KeyJ:58,KeyM:59,Comma:60,KeyQ:60,Digit2:61,KeyW:62,Digit3:63,KeyE:64,KeyR:65,Digit5:66,KeyT:67,Digit6:68,KeyY:69,Digit7:70,KeyU:71,KeyI:72,Digit9:73,KeyO:74,Digit0:75,KeyP:76}; if(activeBottomPanel==='instrument'&&activeInstrumentSubpage==='keyboard'&&instrumentKeyMap[event.code]!=null){ if(event.repeat||pressedKeyboardNotes.has(event.code)) return; pressedKeyboardNotes.add(event.code); event.preventDefault(); startInstrumentNote(instrumentKeyMap[event.code]); return } const t=tracks.find((x)=>x.id===selectedTrackId); const step=timelineState.pixelsPerBar/timelineState.beatsPerBar; if(event.code==='Space'){handleSpaceTransport(event)} else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1} else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(timelineState.playheadX-step)} else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(timelineState.playheadX+step)} else if(event.code==='KeyR'){event.preventDefault(); if(t){t.recordArmed=!t.recordArmed; renderEditor()}} else if(event.code==='KeyC'){event.preventDefault(); isCycleEnabled=!isCycleEnabled; renderEditor()} else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); renderEditor()} }
 if(!window.__melogicStudioKeybindsBound){ window.__melogicStudioKeybindsBound=true; document.addEventListener('keydown', handleStudioKeydown); document.addEventListener('keyup',(event)=>{ const instrumentKeyMap={KeyZ:48,KeyS:49,KeyX:50,KeyD:51,KeyC:52,KeyV:53,KeyG:54,KeyB:55,KeyH:56,KeyN:57,KeyJ:58,KeyM:59,Comma:60,KeyQ:60,Digit2:61,KeyW:62,Digit3:63,KeyE:64,KeyR:65,Digit5:66,KeyT:67,Digit6:68,KeyY:69,Digit7:70,KeyU:71,KeyI:72,Digit9:73,KeyO:74,Digit0:75,KeyP:76}; if(instrumentKeyMap[event.code]==null) return; pressedKeyboardNotes.delete(event.code); stopInstrumentNote(instrumentKeyMap[event.code]);  }) }
+if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',()=>{ dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
 async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor() }
 init()

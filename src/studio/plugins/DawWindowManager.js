@@ -36,10 +36,15 @@ function writeSessionState(state) {
 }
 
 export class DawWindowManager {
-  constructor({ renderContent, getHostUrl, onChange } = {}) {
+  constructor({ renderContent, getHostUrl, onChange, onOpen, onClose, onParamChange, onNoteOn, onNoteOff } = {}) {
     this.renderContent = typeof renderContent === 'function' ? renderContent : () => ''
     this.getHostUrl = typeof getHostUrl === 'function' ? getHostUrl : () => '/instrument-host.html'
     this.onChange = typeof onChange === 'function' ? onChange : () => {}
+    this.onOpen = typeof onOpen === 'function' ? onOpen : () => {}
+    this.onClose = typeof onClose === 'function' ? onClose : () => {}
+    this.onParamChange = typeof onParamChange === 'function' ? onParamChange : () => {}
+    this.onNoteOn = typeof onNoteOn === 'function' ? onNoteOn : () => {}
+    this.onNoteOff = typeof onNoteOff === 'function' ? onNoteOff : () => {}
     this.windows = new Map()
     this.zCounter = 30
     this.dragState = null
@@ -68,6 +73,7 @@ export class DawWindowManager {
       this.bringToFront(existing.pluginInstanceId)
       this.persist()
       this.onChange()
+      this.onOpen(existing)
       return existing
     }
 
@@ -84,6 +90,7 @@ export class DawWindowManager {
     }
     this.windows.set(windowState.pluginInstanceId, windowState)
     this.persist()
+    this.onOpen(windowState)
     this.onChange()
     return windowState
   }
@@ -178,11 +185,36 @@ export class DawWindowManager {
       button.addEventListener('click', () => this.detachWindow(button.dataset.pluginWindowDetach))
     })
     scope.querySelectorAll('[data-plugin-param]').forEach((input) => {
+      input.addEventListener('input', () => {
+        if (input.type !== 'range') return
+        const shell = input.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell) return
+        this.updateParam(shell.dataset.pluginShell, input.dataset.pluginParam, input.value)
+      })
       input.addEventListener('change', () => {
         const shell = input.closest('[data-plugin-shell]')
         if (!shell?.dataset?.pluginShell) return
         this.updateParam(shell.dataset.pluginShell, input.dataset.pluginParam, input.value)
       })
+    })
+    scope.querySelectorAll('[data-plugin-note]').forEach((button) => {
+      const start = (event) => {
+        event.preventDefault()
+        const shell = button.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell) return
+        this.onNoteOn(shell.dataset.pluginShell, Number(button.dataset.pluginNote), 0.85)
+        button.classList.add('is-playing')
+      }
+      const stop = () => {
+        const shell = button.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell) return
+        this.onNoteOff(shell.dataset.pluginShell, Number(button.dataset.pluginNote))
+        button.classList.remove('is-playing')
+      }
+      button.addEventListener('pointerdown', start)
+      button.addEventListener('pointerup', stop)
+      button.addEventListener('pointerleave', stop)
+      button.addEventListener('blur', stop)
     })
   }
 
@@ -206,6 +238,7 @@ export class DawWindowManager {
     if (popout && !popout.closed) popout.close()
     this.hostWindows.delete(id)
     this.windows.delete(id)
+    this.onClose(id)
     this.persist()
     this.onChange()
   }
@@ -245,7 +278,10 @@ export class DawWindowManager {
   postHostMessage(message, target = null) {
     const safeMessage = { source: 'melogic-daw', ...message }
     try {
-      if (target && !target.closed) target.postMessage(safeMessage, window.location.origin)
+      if (target && !target.closed) {
+        target.postMessage(safeMessage, window.location.origin)
+        return
+      }
     } catch {
       // Pop-out may be closed between checks.
     }
@@ -268,6 +304,12 @@ export class DawWindowManager {
     }
     if (data.type === 'plugin-param-change' && data.param) {
       this.updateParam(id, data.param, data.value, { notifyHost: false })
+    }
+    if (data.type === 'plugin-note-on') {
+      this.onNoteOn(id, Number(data.note), Number(data.velocity ?? 0.85))
+    }
+    if (data.type === 'plugin-note-off') {
+      this.onNoteOff(id, Number(data.note))
     }
     if (data.type === 'plugin-ping') {
       this.postHostMessage({ type: 'plugin-pong', pluginInstanceId: id }, event.source || this.hostWindows.get(id))
@@ -292,8 +334,18 @@ export class DawWindowManager {
     const windowState = this.windows.get(id)
     if (!windowState || !param) return
     windowState.params = { ...(windowState.params || {}), [param]: value }
+    this.onParamChange(id, param, value)
+    this.updateParamValueDom(id, param, value)
     this.persist()
     if (notifyHost) this.postHostMessage({ type: 'plugin-param-change', pluginInstanceId: id, param, value }, this.hostWindows.get(id))
+  }
+
+  updateParamValueDom(id, param, value) {
+    const root = document.querySelector(`[data-plugin-shell="${CSS.escape(id)}"]`)
+    const valueElement = root?.querySelector(`[data-plugin-param-value="${CSS.escape(param)}"]`)
+    if (!valueElement) return
+    const numeric = Number(value)
+    valueElement.textContent = Number.isFinite(numeric) ? numeric.toFixed(param === 'attack' || param === 'decay' ? 3 : 2) : String(value)
   }
 
   startDrag(event, id) {
