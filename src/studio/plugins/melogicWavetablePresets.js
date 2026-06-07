@@ -1,3 +1,15 @@
+const INIT_MATRIX = [
+  { source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, enabled: false },
+  { source: 'macro1', target: 'filter.cutoff', amount: 0, bipolar: false, enabled: false }
+]
+
+const DEFAULT_MACROS = {
+  macro1: 0,
+  macro2: 0,
+  macro3: 0,
+  macro4: 0
+}
+
 export const MELOGIC_WAVETABLE_PRESETS = [
   {
     id: 'init',
@@ -25,6 +37,8 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       lfoShape: 'sine',
       lfoAmount: 0,
       lfoTarget: 'none',
+      ...DEFAULT_MACROS,
+      modulationMatrix: INIT_MATRIX,
       volume: 0.45
     }
   },
@@ -54,6 +68,14 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       lfoShape: 'triangle',
       lfoAmount: 0.12,
       lfoTarget: 'filterCutoff',
+      macro1: 0.35,
+      macro2: 0,
+      macro3: 0,
+      macro4: 0,
+      modulationMatrix: [
+        { source: 'lfo1', target: 'filter.cutoff', amount: 0.16, bipolar: true, enabled: true },
+        { source: 'macro1', target: 'filter.cutoff', amount: 0.18, bipolar: false, enabled: true }
+      ],
       volume: 0.52
     }
   },
@@ -83,6 +105,14 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       lfoShape: 'sine',
       lfoAmount: 0.08,
       lfoTarget: 'wavetablePosition',
+      macro1: 0,
+      macro2: 0.28,
+      macro3: 0,
+      macro4: 0,
+      modulationMatrix: [
+        { source: 'lfo1', target: 'osc1.pitch', amount: 0.07, bipolar: true, enabled: true },
+        { source: 'macro2', target: 'osc1.position', amount: 0.32, bipolar: false, enabled: true }
+      ],
       volume: 0.46
     }
   },
@@ -112,6 +142,14 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       lfoShape: 'triangle',
       lfoAmount: 0.18,
       lfoTarget: 'pitch',
+      macro1: 0.22,
+      macro2: 0.4,
+      macro3: 0,
+      macro4: 0,
+      modulationMatrix: [
+        { source: 'lfo1', target: 'osc1.pitch', amount: 0.12, bipolar: true, enabled: true },
+        { source: 'macro1', target: 'filter.cutoff', amount: 0.14, bipolar: false, enabled: true }
+      ],
       volume: 0.4
     }
   }

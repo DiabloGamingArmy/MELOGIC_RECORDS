@@ -1,5 +1,6 @@
 import { createDawPluginInstance, getDawPluginDefinition } from './pluginCatalog.js'
 import { getMelogicWavetablePreset } from './melogicWavetablePresets.js'
+import { drawWavetableVisualizers } from './MelogicWavetableShell.js'
 
 const SESSION_KEY = 'melogic-daw-plugin-window-state-v1'
 const CHANNEL_NAME = 'melogic-daw-plugin-host'
@@ -198,6 +199,30 @@ export class DawWindowManager {
         this.updateParam(shell.dataset.pluginShell, input.dataset.pluginParam, input.value)
       })
     })
+    scope.querySelectorAll('[data-plugin-matrix-field]').forEach((input) => {
+      const update = () => {
+        const shell = input.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell) return
+        this.updateMatrixParam(shell.dataset.pluginShell, Number(input.dataset.pluginMatrixRow), input.dataset.pluginMatrixField, input.type === 'checkbox' ? input.checked : input.value)
+      }
+      input.addEventListener('input', update)
+      input.addEventListener('change', update)
+    })
+    scope.querySelectorAll('[data-plugin-add-mod]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const shell = button.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell) return
+        this.addMatrixRoute(shell.dataset.pluginShell)
+      })
+    })
+    scope.querySelectorAll('[data-plugin-asset-select]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const shell = button.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell) return
+        this.updateParam(shell.dataset.pluginShell, 'wavetableId', button.dataset.pluginAssetSelect)
+        this.renderPluginBody(shell.dataset.pluginShell)
+      })
+    })
     scope.querySelectorAll('[data-plugin-note]').forEach((button) => {
       const start = (event) => {
         event.preventDefault()
@@ -217,6 +242,7 @@ export class DawWindowManager {
       button.addEventListener('pointerleave', stop)
       button.addEventListener('blur', stop)
     })
+    this.scheduleVisualizerDraw(scope)
   }
 
   bringToFront(id) {
@@ -342,11 +368,43 @@ export class DawWindowManager {
       this.onParamChange(id, name, nextValue)
       this.updateParamValueDom(id, name, nextValue)
     })
-    if (param === 'preset') this.renderPluginBody(id)
+    if (param === 'preset' || param.startsWith('assetBrowser')) this.renderPluginBody(id)
+    if (['wavetableId', 'wavetablePosition'].includes(param)) this.updateVisualizerDom(id)
     this.persist()
     if (notifyHost) {
       this.postHostMessage({ type: 'plugin-state', pluginInstanceId: id, instance: this.serializeForHost(windowState) }, this.hostWindows.get(id))
     }
+  }
+
+  updateMatrixParam(id, rowIndex, field, value) {
+    const windowState = this.windows.get(id)
+    if (!windowState || !Number.isFinite(rowIndex) || !field) return
+    const matrix = Array.isArray(windowState.params?.modulationMatrix)
+      ? windowState.params.modulationMatrix.map((route) => ({ ...route }))
+      : []
+    while (matrix.length <= rowIndex) {
+      matrix.push({ source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, enabled: false })
+    }
+    matrix[rowIndex][field] = field === 'amount' ? Number(value) : value
+    windowState.params = { ...(windowState.params || {}), modulationMatrix: matrix }
+    this.onParamChange(id, 'modulationMatrix', matrix)
+    this.persist()
+    this.postHostMessage({ type: 'plugin-state', pluginInstanceId: id, instance: this.serializeForHost(windowState) }, this.hostWindows.get(id))
+  }
+
+  addMatrixRoute(id) {
+    const windowState = this.windows.get(id)
+    if (!windowState) return
+    const matrix = Array.isArray(windowState.params?.modulationMatrix)
+      ? windowState.params.modulationMatrix.map((route) => ({ ...route }))
+      : []
+    if (matrix.length >= 4) return
+    matrix.push({ source: 'macro1', target: 'filter.cutoff', amount: 0, bipolar: false, enabled: false })
+    windowState.params = { ...(windowState.params || {}), modulationMatrix: matrix }
+    this.onParamChange(id, 'modulationMatrix', matrix)
+    this.persist()
+    this.renderPluginBody(id)
+    this.postHostMessage({ type: 'plugin-state', pluginInstanceId: id, instance: this.serializeForHost(windowState) }, this.hostWindows.get(id))
   }
 
   renderPluginBody(id) {
@@ -355,6 +413,20 @@ export class DawWindowManager {
     if (!windowState || !body || windowState.detached) return
     body.innerHTML = this.renderContent(windowState)
     this.bind(body)
+  }
+
+  scheduleVisualizerDraw(root = document) {
+    window.requestAnimationFrame(() => drawWavetableVisualizers(root))
+  }
+
+  updateVisualizerDom(id) {
+    const root = document.querySelector(`[data-plugin-shell="${CSS.escape(id)}"]`)
+    const windowState = this.windows.get(id)
+    const canvas = root?.querySelector('[data-wavetable-visualizer]')
+    if (!canvas || !windowState) return
+    canvas.dataset.wavetableId = windowState.params?.wavetableId || 'builtin-saw'
+    canvas.dataset.wavetablePosition = String(windowState.params?.wavetablePosition ?? 0.35)
+    this.scheduleVisualizerDraw(root)
   }
 
   updateParamValueDom(id, param, value) {
