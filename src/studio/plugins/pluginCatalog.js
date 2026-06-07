@@ -9,15 +9,27 @@ export const DAW_PLUGIN_DEFINITIONS = {
     status: 'Web Audio prototype',
     defaultSize: { width: 820, height: 560 },
     defaultParams: {
-      preset: 'Init Patch',
-      oscillatorType: 'sawtooth',
-      volume: 0.45,
+      preset: 'init',
+      wavetableId: 'builtin-saw',
+      wavetablePosition: 0.35,
+      coarsePitch: 0,
+      finePitch: 0,
+      unisonVoices: 1,
+      detune: 0.08,
+      oscLevel: 0.85,
+      filterEnabled: true,
+      filterType: 'lowpass',
+      filterCutoff: 0.72,
+      resonance: 0.18,
       attack: 0.02,
-      decay: 0.14,
-      sustain: 0.62,
+      decay: 0.16,
+      sustain: 0.68,
       release: 0.24,
-      filterCutoff: 0.62,
-      lfoRate: 0.25
+      lfoRate: 0.35,
+      lfoShape: 'sine',
+      lfoAmount: 0,
+      lfoTarget: 'none',
+      volume: 0.45
     }
   }
 }

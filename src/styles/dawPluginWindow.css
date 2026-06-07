@@ -181,6 +181,7 @@
 .daw-plugin-control {
   grid-template-columns: 78px minmax(0, 1fr) 46px;
   align-items: center;
+  min-width: 0;
 }
 
 .daw-plugin-control span {
@@ -215,6 +216,7 @@
 .daw-plugin-control input[type="range"] {
   width: 100%;
   accent-color: #67d8ff;
+  min-width: 0;
 }
 
 .daw-plugin-grid {
@@ -232,6 +234,10 @@
   border: 1px solid rgba(126, 147, 191, 0.2);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
+}
+
+.daw-plugin-section--wide {
+  grid-column: span 2;
 }
 
 .daw-plugin-section header {
@@ -310,5 +316,9 @@
   .daw-plugin-hero,
   .daw-plugin-grid {
     grid-template-columns: 1fr;
+  }
+
+  .daw-plugin-section--wide {
+    grid-column: auto;
   }
 }
