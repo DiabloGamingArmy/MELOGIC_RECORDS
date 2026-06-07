@@ -13,13 +13,18 @@ This avoids duplicate audio engines, duplicate voices, and inconsistent transpor
 
 ## Current Prototype
 
-`melogic-wavetable` currently maps to `BasicSynthInstrument`, a temporary Web Audio prototype with:
+`melogic-wavetable` currently maps to `BasicSynthInstrument`, a Web Audio wavetable MVP with:
 
-- one oscillator per active note
-- sine, sawtooth, square, and triangle oscillator types
+- generated built-in wavetable metadata and frames
+- `PeriodicWave` oscillators
+- wavetable position, pitch, level, basic unison, and detune params
+- lowpass, highpass, and bandpass filter modes
 - output gain
-- simple ADSR envelope
+- ADSR envelope
+- simple LFO targeting pitch or filter cutoff
 - click-reducing gain ramps
 - `noteOn`, `noteOff`, `setParam`, and `dispose`
 
-This is not the final wavetable engine. Future instruments can register new factories in `InstrumentRegistry`.
+Audio binary assets must live in storage, not Firestore. The future remote metadata shape is represented by `audioAssets/{assetId}` records with fields like `type`, `title`, `creatorUid`, `storagePath`, `frameCount`, `frameSize`, `sampleRate`, `tags`, `visibility`, `license`, `checksum`, and `version`. The current MVP uses generated built-in tables only.
+
+Presets are local JSON objects for now and include Init, Bass Test, Pluck Test, and Pad Test. This is not the final wavetable engine. Future instruments can register new factories in `InstrumentRegistry`.

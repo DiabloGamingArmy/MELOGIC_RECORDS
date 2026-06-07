@@ -1,4 +1,5 @@
 import { createDawPluginInstance, getDawPluginDefinition } from './pluginCatalog.js'
+import { getMelogicWavetablePreset } from './melogicWavetablePresets.js'
 
 const SESSION_KEY = 'melogic-daw-plugin-window-state-v1'
 const CHANNEL_NAME = 'melogic-daw-plugin-host'
@@ -333,11 +334,27 @@ export class DawWindowManager {
   updateParam(id, param, value, { notifyHost = true } = {}) {
     const windowState = this.windows.get(id)
     if (!windowState || !param) return
-    windowState.params = { ...(windowState.params || {}), [param]: value }
-    this.onParamChange(id, param, value)
-    this.updateParamValueDom(id, param, value)
+    const patch = param === 'preset'
+      ? { ...getMelogicWavetablePreset(value).params, preset: getMelogicWavetablePreset(value).id }
+      : { [param]: value }
+    windowState.params = { ...(windowState.params || {}), ...patch }
+    Object.entries(patch).forEach(([name, nextValue]) => {
+      this.onParamChange(id, name, nextValue)
+      this.updateParamValueDom(id, name, nextValue)
+    })
+    if (param === 'preset') this.renderPluginBody(id)
     this.persist()
-    if (notifyHost) this.postHostMessage({ type: 'plugin-param-change', pluginInstanceId: id, param, value }, this.hostWindows.get(id))
+    if (notifyHost) {
+      this.postHostMessage({ type: 'plugin-state', pluginInstanceId: id, instance: this.serializeForHost(windowState) }, this.hostWindows.get(id))
+    }
+  }
+
+  renderPluginBody(id) {
+    const windowState = this.windows.get(id)
+    const body = document.querySelector(`[data-plugin-window="${CSS.escape(id)}"] .daw-plugin-window-body`)
+    if (!windowState || !body || windowState.detached) return
+    body.innerHTML = this.renderContent(windowState)
+    this.bind(body)
   }
 
   updateParamValueDom(id, param, value) {

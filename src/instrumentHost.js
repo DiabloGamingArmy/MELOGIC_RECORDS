@@ -113,7 +113,7 @@ function handleMessage(event) {
   const data = event?.data || {}
   if (data.source !== 'melogic-daw') return
   if (data.pluginInstanceId && data.pluginInstanceId !== instance.pluginInstanceId) return
-  if (data.type === 'plugin-opened' && data.instance) {
+  if ((data.type === 'plugin-opened' || data.type === 'plugin-state') && data.instance) {
     instance = { ...instance, ...data.instance, params: { ...(instance.params || {}), ...(data.instance.params || {}) } }
     connectionStatus = 'Connected to DAW'
     render()
