@@ -29,6 +29,18 @@ export const DAW_PLUGIN_DEFINITIONS = {
       lfoShape: 'sine',
       lfoAmount: 0,
       lfoTarget: 'none',
+      macro1: 0,
+      macro2: 0,
+      macro3: 0,
+      macro4: 0,
+      modulationMatrix: [
+        { source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, enabled: false },
+        { source: 'macro1', target: 'filter.cutoff', amount: 0, bipolar: false, enabled: false }
+      ],
+      assetBrowserType: 'wavetable',
+      assetBrowserPack: '',
+      assetBrowserTag: '',
+      assetBrowserSearch: '',
       volume: 0.45
     }
   }

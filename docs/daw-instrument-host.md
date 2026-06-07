@@ -22,6 +22,9 @@ This avoids duplicate audio engines, duplicate voices, and inconsistent transpor
 - output gain
 - ADSR envelope
 - simple LFO targeting pitch or filter cutoff
+- four stored macro controls
+- a lightweight modulation matrix model for LFO, macro, and future envelope routes
+- a metadata-first wavetable browser backed by local/generated catalog records
 - click-reducing gain ramps
 - `noteOn`, `noteOff`, `setParam`, and `dispose`
 

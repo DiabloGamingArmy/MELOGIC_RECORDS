@@ -18,6 +18,17 @@ function cutoffToFrequency(value) {
   return 40 * (2 ** (normalized * 9.2))
 }
 
+function normalizeModulationMatrix(matrix = []) {
+  if (!Array.isArray(matrix)) return []
+  return matrix.slice(0, 8).map((route) => ({
+    source: String(route?.source || 'lfo1'),
+    target: String(route?.target || 'filter.cutoff'),
+    amount: clamp(route?.amount ?? 0, -1, 1),
+    bipolar: route?.bipolar !== false && route?.bipolar !== 'false',
+    enabled: route?.enabled === true || route?.enabled === 'true'
+  }))
+}
+
 function pickFrame(frames, position = 0) {
   if (!frames?.length) return null
   const index = Math.round(clamp(position, 0, 1) * (frames.length - 1))
@@ -60,8 +71,38 @@ export class BasicSynthInstrument {
       lfoShape: LFO_SHAPES.has(params.lfoShape) ? params.lfoShape : 'sine',
       lfoAmount: clamp(params.lfoAmount ?? 0, 0, 1),
       lfoTarget: LFO_TARGETS.has(params.lfoTarget) ? params.lfoTarget : 'none',
+      macro1: clamp(params.macro1 ?? 0, 0, 1),
+      macro2: clamp(params.macro2 ?? 0, 0, 1),
+      macro3: clamp(params.macro3 ?? 0, 0, 1),
+      macro4: clamp(params.macro4 ?? 0, 0, 1),
+      modulationMatrix: normalizeModulationMatrix(params.modulationMatrix),
       volume: clamp(params.volume ?? 0.45, 0, 1)
     }
+  }
+
+  getEnabledRoutes(source = '') {
+    return (this.params.modulationMatrix || []).filter((route) => route.enabled && (!source || route.source === source))
+  }
+
+  getMacroValue(source = '') {
+    if (!/^macro[1-4]$/.test(source)) return 0
+    return clamp(this.params[source] ?? 0, 0, 1)
+  }
+
+  getEffectiveFilterCutoff() {
+    let cutoff = this.params.filterCutoff
+    this.getEnabledRoutes().forEach((route) => {
+      if (route.target !== 'filter.cutoff' || !/^macro[1-4]$/.test(route.source)) return
+      cutoff += this.getMacroValue(route.source) * route.amount
+    })
+    return clamp(cutoff, 0, 1)
+  }
+
+  getLfoRouteTarget() {
+    const matrixRoute = this.getEnabledRoutes('lfo1').find((route) => route.amount > 0 && ['filter.cutoff', 'osc1.pitch'].includes(route.target))
+    if (matrixRoute?.target === 'filter.cutoff') return { target: 'filterCutoff', amount: matrixRoute.amount }
+    if (matrixRoute?.target === 'osc1.pitch') return { target: 'pitch', amount: matrixRoute.amount }
+    return { target: this.params.lfoTarget, amount: this.params.lfoAmount }
   }
 
   async ensureRunning() {
@@ -96,7 +137,7 @@ export class BasicSynthInstrument {
     envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, velocityGain), now + this.params.attack)
     envelope.gain.linearRampToValueAtTime(Math.max(0.0001, this.params.sustain * velocityGain), now + this.params.attack + this.params.decay)
     filter.type = this.params.filterType
-    filter.frequency.setValueAtTime(cutoffToFrequency(this.params.filterCutoff), now)
+    filter.frequency.setValueAtTime(cutoffToFrequency(this.getEffectiveFilterCutoff()), now)
     filter.Q.setValueAtTime(clamp(this.params.resonance * 24, 0.0001, 24), now)
     voiceGain.gain.setValueAtTime(this.params.oscLevel / Math.max(1, unison), now)
 
@@ -107,13 +148,13 @@ export class BasicSynthInstrument {
       oscillator.melogicSpread = spread
       oscillator.frequency.setValueAtTime(baseFrequency, now)
       oscillator.detune.setValueAtTime(this.params.finePitch + (spread * this.params.detune * 28), now)
-      if (lfo && this.params.lfoTarget === 'pitch') lfo.gain.connect(oscillator.detune)
+      if (lfo && lfo.target === 'pitch') lfo.gain.connect(oscillator.detune)
       oscillator.connect(voiceGain)
       oscillator.start(now)
       oscillators.push(oscillator)
     }
 
-    if (lfo && this.params.lfoTarget === 'filterCutoff') lfo.gain.connect(filter.frequency)
+    if (lfo && lfo.target === 'filterCutoff') lfo.gain.connect(filter.frequency)
     voiceGain.connect(envelope)
     if (this.params.filterEnabled) {
       envelope.connect(filter)
@@ -126,19 +167,20 @@ export class BasicSynthInstrument {
   }
 
   createLfo() {
-    if (this.params.lfoTarget === 'none' || this.params.lfoAmount <= 0) return null
+    const route = this.getLfoRouteTarget()
+    if (route.target === 'none' || route.amount <= 0) return null
     const oscillator = this.audioContext.createOscillator()
     const gain = this.audioContext.createGain()
     oscillator.type = this.params.lfoShape
     oscillator.frequency.value = this.params.lfoRate
-    const depth = this.params.lfoTarget === 'pitch'
-      ? this.params.lfoAmount * 40
-      : this.params.lfoTarget === 'filterCutoff'
-        ? this.params.lfoAmount * 1800
+    const depth = route.target === 'pitch'
+      ? route.amount * 40
+      : route.target === 'filterCutoff'
+        ? route.amount * 1800
         : 0
     gain.gain.value = depth
     oscillator.connect(gain)
-    return { oscillator, gain }
+    return { oscillator, gain, target: route.target }
   }
 
   noteOff(note, { immediate = false } = {}) {
@@ -185,7 +227,9 @@ export class BasicSynthInstrument {
       }
       if (name === 'oscLevel') voice.voiceGain.gain.setTargetAtTime(this.params.oscLevel / Math.max(1, this.params.unisonVoices), now, 0.015)
       if (name === 'filterType') voice.filter.type = this.params.filterType
-      if (name === 'filterCutoff') voice.filter.frequency.setTargetAtTime(cutoffToFrequency(this.params.filterCutoff), now, 0.025)
+      if (['filterCutoff', 'macro1', 'macro2', 'macro3', 'macro4', 'modulationMatrix'].includes(name)) {
+        voice.filter.frequency.setTargetAtTime(cutoffToFrequency(this.getEffectiveFilterCutoff()), now, 0.025)
+      }
       if (name === 'resonance') voice.filter.Q.setTargetAtTime(clamp(this.params.resonance * 24, 0.0001, 24), now, 0.025)
       if (name === 'filterEnabled') {
         // Routing changes are applied on the next note to avoid audible graph pops.

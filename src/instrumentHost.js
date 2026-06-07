@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/dawPluginWindow.css'
 import { createDawPluginInstance } from './studio/plugins/pluginCatalog.js'
-import { renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
+import { drawWavetableVisualizers, renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 
 const CHANNEL_NAME = 'melogic-daw-plugin-host'
 const app = document.querySelector('#app')
@@ -81,6 +81,7 @@ function bind() {
         const numeric = Number(input.value)
         valueEl.textContent = Number.isFinite(numeric) ? numeric.toFixed(input.dataset.pluginParam === 'attack' || input.dataset.pluginParam === 'decay' ? 3 : 2) : input.value
       }
+      if (['wavetableId', 'wavetablePosition'].includes(input.dataset.pluginParam)) updateVisualizer()
       postToMain({ type: 'plugin-param-change', param: input.dataset.pluginParam, value: input.value })
     })
     input.addEventListener('change', () => {
@@ -88,7 +89,37 @@ function bind() {
         ...instance,
         params: { ...(instance.params || {}), [input.dataset.pluginParam]: input.value }
       }
+      if (input.dataset.pluginParam?.startsWith('assetBrowser')) {
+        render()
+        return
+      }
+      if (['wavetableId', 'wavetablePosition'].includes(input.dataset.pluginParam)) updateVisualizer()
       postToMain({ type: 'plugin-param-change', param: input.dataset.pluginParam, value: input.value })
+    })
+  })
+  app.querySelectorAll('[data-plugin-matrix-field]').forEach((input) => {
+    const update = () => {
+      const rowIndex = Number(input.dataset.pluginMatrixRow)
+      if (!Number.isFinite(rowIndex)) return
+      const matrix = Array.isArray(instance.params?.modulationMatrix)
+        ? instance.params.modulationMatrix.map((route) => ({ ...route }))
+        : []
+      while (matrix.length <= rowIndex) {
+        matrix.push({ source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, enabled: false })
+      }
+      const field = input.dataset.pluginMatrixField
+      matrix[rowIndex][field] = field === 'amount' ? Number(input.value) : input.type === 'checkbox' ? input.checked : input.value
+      instance = { ...instance, params: { ...(instance.params || {}), modulationMatrix: matrix } }
+      postToMain({ type: 'plugin-param-change', param: 'modulationMatrix', value: matrix })
+    }
+    input.addEventListener('input', update)
+    input.addEventListener('change', update)
+  })
+  app.querySelectorAll('[data-plugin-asset-select]').forEach((button) => {
+    button.addEventListener('click', () => {
+      instance = { ...instance, params: { ...(instance.params || {}), wavetableId: button.dataset.pluginAssetSelect } }
+      postToMain({ type: 'plugin-param-change', param: 'wavetableId', value: button.dataset.pluginAssetSelect })
+      render()
     })
   })
   app.querySelectorAll('[data-plugin-note]').forEach((button) => {
@@ -104,8 +135,17 @@ function bind() {
     button.addEventListener('pointerdown', start)
     button.addEventListener('pointerup', stop)
     button.addEventListener('pointerleave', stop)
-    button.addEventListener('blur', stop)
+      button.addEventListener('blur', stop)
   })
+  updateVisualizer()
+}
+
+function updateVisualizer() {
+  app.querySelectorAll('[data-wavetable-visualizer]').forEach((canvas) => {
+    canvas.dataset.wavetableId = instance.params?.wavetableId || 'builtin-saw'
+    canvas.dataset.wavetablePosition = String(instance.params?.wavetablePosition ?? 0.35)
+  })
+  window.requestAnimationFrame(() => drawWavetableVisualizers(app))
 }
 
 function handleMessage(event) {

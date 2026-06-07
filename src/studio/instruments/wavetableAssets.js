@@ -135,6 +135,12 @@ function digitalGlassFrame(spread = 1) {
   })
 }
 
+function pickFrame(frames, position = 0) {
+  if (!frames?.length) return null
+  const index = Math.round(Math.min(1, Math.max(0, Number(position) || 0)) * (frames.length - 1))
+  return frames[index] || frames[0]
+}
+
 export function getBuiltInWavetableFrames(assetId = 'builtin-saw') {
   if (assetId === 'builtin-sine') return [sineFrame()]
   if (assetId === 'builtin-square') return [squareFrame(0.75), squareFrame(1), squareFrame(1.3)]
@@ -149,4 +155,23 @@ export function getBuiltInWavetable(assetId = 'builtin-saw') {
     ...metadata,
     frames: getBuiltInWavetableFrames(metadata.assetId)
   }
+}
+
+export function getBuiltInWavetableSamples(assetId = 'builtin-saw', position = 0, sampleCount = 160) {
+  const wavetable = getBuiltInWavetable(assetId)
+  const frame = pickFrame(wavetable.frames, position)
+  const count = Math.max(32, Math.min(320, Math.round(Number(sampleCount) || 160)))
+  if (!frame) return []
+  const samples = []
+  for (let index = 0; index < count; index += 1) {
+    const phase = (index / (count - 1)) * Math.PI * 2
+    let value = 0
+    const harmonicLimit = Math.min(frame.imag.length - 1, 36)
+    for (let harmonic = 1; harmonic <= harmonicLimit; harmonic += 1) {
+      value += (frame.real[harmonic] || 0) * Math.cos(phase * harmonic)
+      value += (frame.imag[harmonic] || 0) * Math.sin(phase * harmonic)
+    }
+    samples.push(Math.max(-1, Math.min(1, value)))
+  }
+  return samples
 }
