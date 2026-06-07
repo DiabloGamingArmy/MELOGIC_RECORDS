@@ -42,6 +42,7 @@ export const ROUTES = {
   studioStagemaker: '/studio/stagemaker',
   stage: '/stage',
   studioProject: '/studio/daw/project',
+  studioInstrumentHost: '/instrument-host.html',
   stageProject: '/studio/stagemaker/project',
   studioDemos: '/studio/demos',
   studioTutorials: '/studio/tutorials',
