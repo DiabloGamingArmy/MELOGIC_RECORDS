@@ -3439,6 +3439,7 @@ async function handleMessageSubmit(form) {
   renderSignedInState()
   scrollMessageListToBottom({ behavior: 'smooth', reason: 'sent-optimistic', force: true })
 
+  let sendFailed = false
   try {
     await sendMessage(thread.id, {
       senderId: appState.user.uid,
@@ -3456,12 +3457,15 @@ async function handleMessageSubmit(form) {
       })
     }
   } catch (error) {
+    sendFailed = true
     setOptimisticMessageStatus(thread.id, clientMessageId, 'failed', error?.message || 'Unable to send message.')
     appState.errorMessage = getSendErrorMessage(error, thread)
   }
 
-  renderSignedInState()
-  scrollMessageListToBottom({ reason: 'sent-confirmed', force: true })
+  if (sendFailed) {
+    renderSignedInState()
+    scrollMessageListToBottom({ reason: 'sent-failed', force: true })
+  }
 }
 
 function startThreadDetailSubscriptions(threadId) {

@@ -1662,16 +1662,16 @@ body.community-chrome-hidden .community-right-rail {
 
 .community-comment-card {
   position: relative;
-  padding: .75rem;
-  border: 1px solid rgba(255, 255, 255, .08);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .035);
+  padding: .85rem 0;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 0;
+  background: transparent;
 }
 
 .community-comment-card.is-reply {
-  border-color: rgba(255, 255, 255, .055);
-  background: transparent;
-  padding: .45rem .25rem .45rem .1rem;
+  padding: .6rem .4rem .6rem .75rem;
+  border-bottom-color: rgba(255, 255, 255, .055);
 }
 
 .community-comment-actions {
@@ -1681,20 +1681,20 @@ body.community-chrome-hidden .community-right-rail {
 .community-comment-replies {
   position: relative;
   display: grid;
-  gap: .35rem;
-  margin: .75rem 0 0 1.2rem;
-  padding-left: 1rem;
-  border-left: 1px solid rgba(126, 211, 255, .24);
+  gap: .15rem;
+  margin: .75rem 0 0 1.5rem;
+  padding-left: 1.25rem;
+  border-left: 1px solid rgba(126, 211, 255, .18);
 }
 
 .community-comment-replies .community-comment-card.is-reply::before {
   content: "";
   position: absolute;
-  left: -1.05rem;
+  left: -1.3rem;
   top: 1.35rem;
   width: .72rem;
   height: 1px;
-  background: rgba(126, 211, 255, .24);
+  background: rgba(126, 211, 255, .18);
 }
 
 .community-community-tools {
@@ -1852,6 +1852,26 @@ body.community-modal-open {
   margin-bottom: .85rem;
 }
 
+.community-story-viewer {
+  width: min(980px, calc(100vw - 48px));
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, .72fr);
+  grid-template-areas:
+    "header header"
+    "media discussion"
+    "actions actions"
+    "error error";
+  gap: .85rem;
+}
+
+.community-story-viewer .community-error {
+  grid-area: error;
+}
+
+.community-story-viewer header {
+  grid-area: header;
+}
+
 .community-modal-copy {
   color: #aeb9cc;
   line-height: 1.6;
@@ -1965,6 +1985,7 @@ body.community-modal-open {
 }
 
 .community-story-surface {
+  grid-area: media;
   display: grid;
   place-items: center;
   min-height: 420px;
@@ -1998,11 +2019,78 @@ body.community-modal-open {
 }
 
 .community-story-viewer-actions {
+  grid-area: actions;
   display: flex;
   gap: .45rem;
   align-items: center;
   flex-wrap: wrap;
   margin-top: .75rem;
+}
+
+.community-story-discussion {
+  grid-area: discussion;
+  display: grid;
+  align-content: start;
+  gap: .85rem;
+  min-height: 420px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .035);
+  padding: .85rem;
+}
+
+.community-story-reactions {
+  display: flex;
+  gap: .45rem;
+  flex-wrap: wrap;
+}
+
+.community-story-reactions button {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .05);
+  color: #eaf0fb;
+  padding: .45rem .65rem;
+  font-weight: 800;
+}
+
+.community-story-reactions svg {
+  width: 15px;
+  height: 15px;
+}
+
+.community-story-discussion form {
+  display: grid;
+  gap: .45rem;
+}
+
+.community-story-discussion label {
+  color: #dce6f5;
+  font-weight: 900;
+}
+
+.community-story-discussion form > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .45rem;
+}
+
+.community-story-discussion input {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  background: rgba(5, 8, 12, .64);
+  color: #eaf0fb;
+  padding: .55rem .65rem;
+}
+
+.community-story-discussion button[disabled],
+.community-story-discussion input[disabled] {
+  opacity: .58;
+  cursor: default;
 }
 
 .community-story-viewer-actions > span {
@@ -2049,6 +2137,22 @@ body.community-modal-open {
     white-space: nowrap;
   }
 
+}
+
+@media (max-width: 860px) {
+  .community-story-viewer {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "header"
+      "media"
+      "discussion"
+      "actions"
+      "error";
+  }
+
+  .community-story-discussion {
+    min-height: 0;
+  }
 }
 
 @media (max-width: 860px) {

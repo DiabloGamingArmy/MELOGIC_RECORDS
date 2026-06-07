@@ -52,7 +52,7 @@ Fallback and deferred surfaces:
 - Fallback community chips and cards are local UI scaffolds only. Focus and scoped posting are disabled until the corresponding community document exists.
 - Live streams remain deferred.
 - Advanced For You scoring remains deferred.
-- The Creator History / This Day in History rail card is a designed placeholder for a later data source.
+- The This Day in History rail card is a designed placeholder for a later Wikipedia-powered data source.
 
 ## Routes
 
