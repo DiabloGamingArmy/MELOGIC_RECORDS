@@ -14,6 +14,7 @@ export default defineConfig({
         support: resolve(__dirname, 'support.html'),
         studio: resolve(__dirname, 'studio.html'),
         stage: resolve(__dirname, 'stage.html'),
+        instrumentHost: resolve(__dirname, 'instrument-host.html'),
         studioProject: resolve(__dirname, 'studio-project.html'),
         studioDemos: resolve(__dirname, 'studio-demos.html'),
         studioTutorials: resolve(__dirname, 'studio-tutorials.html'),
