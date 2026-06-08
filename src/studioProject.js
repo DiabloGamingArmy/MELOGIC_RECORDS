@@ -160,6 +160,8 @@ let isCountInEnabled = true
 let isCountInRunning = false
 let countInTimer = 0
 let countInBeatsRemaining = 0
+let countInTargetX = null
+let countInTargetTrackId = ''
 let recordingStatus = ''
 let activeRecording = null
 let selectedMidiRegionId = ''
@@ -169,10 +171,16 @@ let midiRegionMenuState = null
 let midiRegionClipboard = null
 let midiRollState = null
 let midiRollSelectedNoteIndex = null
+let midiRollSelectedNoteIndices = []
+let midiRollBeatWidth = 64
+let midiRollRowHeight = 22
+let midiRollSelectionDrag = null
 let midiNoteDrag = null
 let regionRenameState = null
 let regionColorPickerState = null
 let audioEnginePrewarmPromise = null
+let bottomPanelHeightPx = 0
+let bottomPanelResizeDrag = null
 const undoStack = []
 const redoStack = []
 const HISTORY_LIMIT = 80
@@ -373,34 +381,38 @@ function formatMidiNoteName(midi = 60) {
 }
 function renderMidiRollPanel(motionClass = '') {
   const region = getMidiRollRegion()
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
   if (!region) {
-    return `<section class="studio-bottom-panel studio-midi-roll-editor ${motionClass}"><header class="studio-bottom-panel-header"><strong>MIDI Roll</strong><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></header><div class="studio-bottom-panel-body"><p>Select a MIDI region, then choose View MIDI Roll.</p></div></section>`
+    return `<section class="studio-bottom-panel studio-midi-roll-editor ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>MIDI Roll</strong><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><p>Select a MIDI region to edit notes.</p></div></section>`
   }
   const track = getMidiRegionTrack(region)
   const notes = region.notes || []
   const selectedNote = getSelectedMidiRollNote()
   const rows = midiRollPitchRows()
-  const rowHeight = 22
-  const rollBeatWidth = 64
   const regionLength = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
-  const gridWidth = Math.max(420, regionLength * rollBeatWidth)
-  const gridHeight = rows.length * rowHeight
+  const gridWidth = Math.max(420, regionLength * midiRollBeatWidth)
+  const gridHeight = rows.length * midiRollRowHeight
   const quantize = midiRollState?.quantize || '0.25'
-  return `<section class="studio-bottom-panel studio-midi-roll-editor ${motionClass}" data-midi-roll-editor data-midi-roll-region="${esc(region.id)}" style="--midi-roll-beat-width:${rollBeatWidth}px;--midi-roll-row-height:${rowHeight}px;--midi-roll-grid-width:${gridWidth}px;--midi-roll-grid-height:${gridHeight}px;">
-    <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>MIDI Roll</strong><span>${esc(getMidiRegionLabel(region))} · ${esc(track?.name || 'Track')}</span></div><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></header>
+  const playheadBeat = xToBeat(timelineState.playheadX)
+  const playheadLeft = (playheadBeat - Number(region.startBeat || 0)) * midiRollBeatWidth
+  return `<section class="studio-bottom-panel studio-midi-roll-editor ${motionClass}" data-midi-roll-editor data-midi-roll-region="${esc(region.id)}" style="--midi-roll-beat-width:${midiRollBeatWidth}px;--midi-roll-row-height:${midiRollRowHeight}px;--midi-roll-grid-width:${gridWidth}px;--midi-roll-grid-height:${gridHeight}px;${bottomPanelHeightPx ? `height:${bottomPanelHeightPx}px;` : ''}">
+    <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
+    <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>MIDI Roll</strong><span>${esc(track?.name || 'Track')} · ${esc(getMidiRegionLabel(region))} · ${Number(region.startBeat || 0).toFixed(2)}-${Number(region.endBeat || 0).toFixed(2)} · ${notes.length} notes</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
     <div class="studio-bottom-panel-body studio-midi-roll-body">
       <section class="studio-midi-roll-main">
-        <div class="studio-midi-roll-meta"><span>Start ${Number(region.startBeat || 0).toFixed(2)}</span><span>End ${Number(region.endBeat || 0).toFixed(2)}</span><span>${notes.length} notes</span></div>
         <div class="studio-midi-roll-scroll">
-          <div class="studio-midi-roll-keys" style="height:${gridHeight}px">${rows.map((note)=>`<span class="${note % 12 === 0 ? 'is-root' : ''}">${esc(formatMidiNoteName(note))}</span>`).join('')}</div>
+          <div class="studio-midi-roll-keys" style="height:${gridHeight}px">${rows.map((note)=>{ const pitch=((note%12)+12)%12; const black=[1,3,6,8,10].includes(pitch); return `<span class="${black ? 'is-black' : 'is-white'} ${pitch === 0 ? 'is-root' : ''}">${pitch === 0 ? esc(formatMidiNoteName(note)) : ''}</span>` }).join('')}</div>
           <div class="studio-midi-roll-grid" data-midi-roll-grid style="width:${gridWidth}px;height:${gridHeight}px">
-            ${Array.from({ length: Math.ceil(regionLength / 0.25) + 1 }, (_, index)=>`<i class="${index % 4 === 0 ? 'is-beat' : ''}" style="left:${index * (rollBeatWidth / 4)}px"></i>`).join('')}
+            ${Array.from({ length: Math.ceil(regionLength / 0.25) + 1 }, (_, index)=>`<i class="${index % 4 === 0 ? 'is-beat' : ''}" style="left:${index * (midiRollBeatWidth / 4)}px"></i>`).join('')}
+            <span class="studio-midi-roll-playhead" data-midi-roll-playhead style="left:${playheadLeft}px"></span>
+            <span class="studio-midi-roll-selection" data-midi-roll-selection hidden></span>
             ${notes.map((note, index)=>{
               const pitchIndex = rows.indexOf(Number(note.note) || 60)
-              const left = Math.max(0, (Number(note.startBeat || region.startBeat) - Number(region.startBeat || 0)) * rollBeatWidth)
-              const width = Math.max(10, (Number(note.durationBeats) || 0.25) * rollBeatWidth)
-              const top = Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * rowHeight + 3)
-              return `<button type="button" class="studio-midi-roll-note ${index === midiRollSelectedNoteIndex ? 'is-selected' : ''}" data-midi-note-index="${index}" style="left:${left}px;top:${top}px;width:${width}px;--region-color:${esc(region.independentColor || region.color || track?.color || '#58d4ff')}"><span data-midi-note-handle="left"></span><strong>${esc(formatMidiNoteName(note.note))}</strong><span data-midi-note-handle="right"></span></button>`
+              const left = Math.max(0, (Number(note.startBeat || region.startBeat) - Number(region.startBeat || 0)) * midiRollBeatWidth)
+              const width = Math.max(10, (Number(note.durationBeats) || 0.25) * midiRollBeatWidth)
+              const top = Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)
+              const selected = index === midiRollSelectedNoteIndex || midiRollSelectedNoteIndices.includes(index)
+              return `<button type="button" class="studio-midi-roll-note ${selected ? 'is-selected' : ''}" data-midi-note-index="${index}" style="left:${left}px;top:${top}px;width:${width}px;--region-color:${esc(region.independentColor || region.color || track?.color || '#58d4ff')}"><span data-midi-note-handle="left"></span><strong>${esc(formatMidiNoteName(note.note))}</strong><span data-midi-note-handle="right"></span></button>`
             }).join('')}
           </div>
         </div>
@@ -628,13 +640,13 @@ function renderInstrumentPerformanceControls(){
 }
 function renderInstrumentPanel(){
   const showPerformanceControls=shouldShowInstrumentPerformanceControls()
-  return `<section class="studio-bottom-panel studio-instrument-panel"><header class="studio-bottom-panel-header studio-instrument-panel-header"><strong>Instrument</strong><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></header><div class="studio-bottom-panel-body">${showPerformanceControls?renderInstrumentPerformanceControls():''}<div class="studio-instrument-content" data-instrument-content>${renderInstrumentPanelContent()}</div></div></section>`
+  return `<section class="studio-bottom-panel studio-instrument-panel"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header studio-instrument-panel-header"><strong>Instrument</strong><nav><button type="button" data-detach-bottom-panel="instrument">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body">${showPerformanceControls?renderInstrumentPerformanceControls():''}<div class="studio-instrument-content" data-instrument-content>${renderInstrumentPanelContent()}</div></div></section>`
 }
 function renderBottomPanel(panel,motionClass=''){
   if(panel==='instrument') return renderInstrumentPanel().replace('studio-bottom-panel studio-instrument-panel', `studio-bottom-panel studio-instrument-panel ${motionClass}`.trim())
   if(panel==='midi-roll') return renderMidiRollPanel(motionClass)
   const t={loops:['Loop Browser','Loops and samples will appear here.'],mixer:['Mixer','Channel strips and routing will appear here.'],collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']
-  return `<section class="studio-bottom-panel ${motionClass}"><header class="studio-bottom-panel-header"><strong>${t[0]}</strong><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></header><div class="studio-bottom-panel-body"><p>${t[1]}</p></div></section>`
+  return `<section class="studio-bottom-panel ${motionClass}"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>${t[0]}</strong><nav><button type="button" data-detach-bottom-panel="${esc(panel)}">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><p>${t[1]}</p></div></section>`
 }
 
 function makeInsertId(prefix = 'insert') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}` }
@@ -981,6 +993,7 @@ function secondsFromPlayhead(){ const bpm=Number(projectState?.bpm||140); const 
 function formatTimeFromPlayhead(){ const raw=secondsFromPlayhead(); const total=Math.abs(raw)<0.0005?0:raw; const isNegative=total<0; const absTotal=Math.abs(total); const m=Math.floor(absTotal/60); const s=Math.floor(absTotal%60); const ms=Math.floor((absTotal%1)*1000); const sub=Math.floor(((absTotal*1000)%1)*100); return `${isNegative?'-':''}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}.${String(sub).padStart(2,'0')}` }
 function formatBarsFromPlayhead(){ const beatsFromZero=xToBeatsFromBarZero(timelineState.playheadX); const bar=Math.floor(beatsFromZero/timelineState.beatsPerBar); const beatWithinBar=beatsFromZero-(bar*timelineState.beatsPerBar); const beat=Math.floor(beatWithinBar)+1; const bf=beatWithinBar%1; const div=Math.floor(bf*4)+1; const tick=Math.floor((bf*4%1)*240)+1; const barLabel=bar<0?`-${String(Math.abs(bar)).padStart(3,'0')}`:String(bar).padStart(3,'0'); return `${barLabel} ${String(beat).padStart(2,'0')} ${div} ${String(tick).padStart(3,'0')}` }
 function updateTransportDisplay(){ app.querySelector('[data-display-time]')?.replaceChildren(document.createTextNode(formatTimeFromPlayhead())); app.querySelector('[data-display-bars]')?.replaceChildren(document.createTextNode(formatBarsFromPlayhead())) }
+function updateEditorTitleStatus(){ app.querySelector('[data-editor-status]')?.replaceChildren(document.createTextNode(isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded'))) }
 function updateCycleDomFromState(){ const rangeEl = app.querySelector('[data-cycle-range]'); const startGuide = app.querySelector('.studio-cycle-guide--start'); const endGuide = app.querySelector('.studio-cycle-guide--end'); if(!cycleRange){ if(rangeEl) rangeEl.style.width='0px'; return } const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); if (rangeEl){ rangeEl.style.left=`${start}px`; rangeEl.style.width=`${Math.max(beatWidth(), end-start)}px`; rangeEl.classList.toggle('is-enabled', isCycleEnabled) } if (startGuide){ startGuide.style.left=`${start}px`; startGuide.classList.toggle('is-enabled', isCycleEnabled) } if (endGuide){ endGuide.style.left=`${end}px`; endGuide.classList.toggle('is-enabled', isCycleEnabled) } }
 function updateCycleButtonDom(){ const btn=app.querySelector('[data-toggle-cycle]'); if(!btn) return; btn.classList.toggle('is-active', isCycleEnabled); btn.setAttribute('aria-pressed', String(isCycleEnabled)) }
 function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
@@ -1023,7 +1036,8 @@ function captureDawSnapshot() {
     selectedTrackId,
     selectedMidiRegionId,
     midiRollState: midiRollState ? { ...midiRollState } : null,
-    midiRollSelectedNoteIndex
+    midiRollSelectedNoteIndex,
+    midiRollSelectedNoteIndices: [...midiRollSelectedNoteIndices]
   }
 }
 function restoreDawSnapshot(snapshot) {
@@ -1036,6 +1050,7 @@ function restoreDawSnapshot(snapshot) {
   selectedMidiRegionId = snapshot.selectedMidiRegionId || ''
   midiRollState = snapshot.midiRollState ? { ...snapshot.midiRollState } : null
   midiRollSelectedNoteIndex = Number.isInteger(snapshot.midiRollSelectedNoteIndex) ? snapshot.midiRollSelectedNoteIndex : null
+  midiRollSelectedNoteIndices = Array.isArray(snapshot.midiRollSelectedNoteIndices) ? [...snapshot.midiRollSelectedNoteIndices] : []
   midiRegionMenuState = null
   regionColorPickerState = null
   regionRenameState = null
@@ -1163,22 +1178,40 @@ function closeBottomPanel(){
   renderEditor()
   bottomPanelMotionTimer=window.setTimeout(()=>{ closingBottomPanel=''; bottomPanelMotion=''; activeInstrumentSubpage='keyboard'; renderEditor() },170)
 }
+function detachBottomPanel(panelId = activeBottomPanel) {
+  const panel = panelId || activeBottomPanel
+  if (!panel) return
+  const title = panel === 'midi-roll' ? 'MIDI Roll' : panel === 'instrument' ? 'Instrument' : panel.charAt(0).toUpperCase() + panel.slice(1)
+  const popup = window.open('', `melogic-${panel}-panel`, 'width=980,height=680,resizable=yes,scrollbars=yes')
+  if (!popup) return
+  const body = app.querySelector('.studio-bottom-panel')?.outerHTML || `<section><h1>${esc(title)}</h1><p>No panel content available.</p></section>`
+  popup.document.open()
+  popup.document.write(`<!doctype html><html><head><title>${esc(title)} | Melogic DAW</title><style>body{margin:0;background:#0b111d;color:#eef4ff;font-family:Inter,system-ui,sans-serif}.studio-bottom-panel{position:static!important;inset:auto!important;width:100vw!important;height:100vh!important;max-height:none!important;border:0!important}.studio-bottom-panel-resize,.studio-bottom-panel-close,[data-detach-bottom-panel]{display:none!important}</style><link rel="stylesheet" href="/src/styles/base.css"><link rel="stylesheet" href="/src/styles/studio.css"></head><body>${body}<script>document.querySelectorAll('button,input,select,textarea').forEach((el)=>{ el.disabled=true })</script></body></html>`)
+  popup.document.close()
+}
 function snapBeatToGrid(beat){ return Math.round(beat) }
 function xToSnappedBeat(x){ const beat=xToBeatsFromBarZero(x); return isSnapEnabled ? snapBeatToGrid(beat) : beat }
 function snapXToBeat(x) { return isSnapEnabled ? beatsFromBarZeroToX(snapBeatToGrid(xToBeatsFromBarZero(x))) : x }
 function maxTimelineX() { return timelineEndX() }
-function setPlayhead(x) { timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX()); if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`); updateTransportDisplay() }
+function updateMidiRollPlayheadDom() {
+  const marker = app.querySelector('[data-midi-roll-playhead]')
+  const region = marker ? getMidiRollRegion() : null
+  if (!marker || !region) return
+  const left = (xToBeat(timelineState.playheadX) - Number(region.startBeat || 0)) * midiRollBeatWidth
+  marker.style.left = `${left}px`
+}
+function setPlayhead(x) { timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX()); if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`); updateTransportDisplay(); updateMidiRollPlayheadDom() }
 function pixelsPerSecond() { const bpm = Number(projectState?.bpm || 140); const bps = bpm / 60; const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
-function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; btn.classList.toggle('is-active', isPlaying); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
-function tickPlayback(now) { if (!isPlaying) return; const delta=(now-lastPlayTimestamp)/1000; lastPlayTimestamp=now; let nextX = timelineState.playheadX + pixelsPerSecond()*delta; const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (cycle) { if (nextX >= cycle.end) { stopAllPlaybackNotes(); nextX = cycle.start + ((nextX - cycle.end) % (cycle.end-cycle.start)) } } setPlayhead(nextX); const currentBeat = clampBeat(xToBeat(timelineState.playheadX)); updateMidiRegionPlayback(currentBeat); lastPlaybackBeat = currentBeat; if(activeRecording) refreshMidiRegionDom(); followPlayheadIfNeeded(); maybeTickMetronome(); if (timelineState.playheadX >= maxTimelineX()) return pausePlayback(); playRaf = requestAnimationFrame(tickPlayback) }
-function startPlayback() { if (isPlaying) return; const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start); prewarmDawAudio().then((engine) => { engine.setBpm(Number(projectState?.bpm || 140)); engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) }) }).catch((err)=>console.warn('[studioProject] audio engine start failed', err)); isPlaying = true; lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX)); lastPlayTimestamp = performance.now(); startTrackMeterLoop(); playRaf = requestAnimationFrame(tickPlayback); updateTransportPlaybackUI() }
+function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', !!(activeRecording || isCountInRunning)); btn.toggleAttribute('disabled', !!(activeRecording || isCountInRunning)); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
+function tickPlayback(now) { if (!isPlaying) return; const delta=(now-lastPlayTimestamp)/1000; lastPlayTimestamp=now; let nextX = timelineState.playheadX + pixelsPerSecond()*delta; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle) { if (nextX >= cycle.end) { stopAllPlaybackNotes(); nextX = cycle.start + ((nextX - cycle.end) % (cycle.end-cycle.start)) } } if (isCountInRunning && countInTargetX != null && nextX >= countInTargetX) { nextX = countInTargetX } setPlayhead(nextX); if (isCountInRunning && countInTargetX != null) { const nextRemaining = clamp(Math.ceil((countInTargetX - timelineState.playheadX) / Math.max(1, beatWidth())), 0, 4); if (nextRemaining !== countInBeatsRemaining) { countInBeatsRemaining = nextRemaining; updateEditorTitleStatus() } if (timelineState.playheadX >= countInTargetX - 0.5) { const track = tracks.find((item)=>item.id === countInTargetTrackId) || getRecordingTrack(); isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = ''; beginMidiRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) }); playRaf = requestAnimationFrame(tickPlayback); return } } const currentBeat = clampBeat(xToBeat(timelineState.playheadX)); updateMidiRegionPlayback(currentBeat); lastPlaybackBeat = currentBeat; if(activeRecording) refreshMidiRegionDom(); followPlayheadIfNeeded(); maybeTickMetronome(); if (timelineState.playheadX >= maxTimelineX()) return pausePlayback(); playRaf = requestAnimationFrame(tickPlayback) }
+function startPlayback() { if (isPlaying) return; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start); prewarmDawAudio().then((engine) => { engine.setBpm(Number(projectState?.bpm || 140)); engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) }) }).catch((err)=>console.warn('[studioProject] audio engine start failed', err)); isPlaying = true; lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX)); lastPlayTimestamp = performance.now(); startTrackMeterLoop(); playRaf = requestAnimationFrame(tickPlayback); updateTransportPlaybackUI() }
 function pausePlayback() { isPlaying = false; stopAllPlaybackNotes(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI() }
 function togglePlayback(){ isPlaying ? pausePlayback() : startPlayback() }
-function stopPlayback() { pausePlayback(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0 }
+function stopPlayback() { pausePlayback(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = '' }
 function getNormalizedCycleRange(){ if(!cycleRange) return null; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return end-start>=cycleMinWidth()?{start,end}:null }
 function hasValidCycleRange(){ return !!getNormalizedCycleRange() }
 function isCycleStripPointerEvent(event, ruler){ const rect = ruler?.getBoundingClientRect?.(); if(!rect) return false; const localY = event.clientY - rect.top; return localY >= 0 && localY <= 22 }
-function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
+function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
 
 
 function setVirtualKeyPressed(midi, pressed){ app.querySelectorAll(`[data-piano-midi="${midi}"]`).forEach((el)=>el.classList.toggle('is-pressed', !!pressed)) }
@@ -1338,32 +1371,47 @@ function startMidiRecordFlow() {
   if (track.instrument.enabled === false) { recordingStatus = 'Instrument is disabled.'; renderEditor(); return }
   stopPlayback()
   if (countInTimer) clearInterval(countInTimer)
+  countInTimer = 0
   if (!isCountInEnabled) { beginMidiRecording(track); return }
+  const targetBeat = clampBeat(xToBeat(timelineState.playheadX))
+  const prerollBeats = 4
+  const requiredPreStart = Math.max(0, (prerollBeats - targetBeat) * beatWidth())
+  if (requiredPreStart > timelineState.preStartPixels) {
+    timelineState.preStartPixels = clamp(Math.ceil(requiredPreStart), 0, timelineState.pixelsPerBar * 10)
+    syncBarsFromPositiveBeats()
+  }
+  const targetX = beatToX(targetBeat)
+  const startX = beatToX(targetBeat - prerollBeats)
+  countInTargetX = targetX
+  countInTargetTrackId = track.id
   isCountInRunning = true
-  countInBeatsRemaining = 3
+  countInBeatsRemaining = 4
+  recordingStatus = `Count-in for ${track.name}`
+  setPlayhead(startX)
+  startPlayback()
   renderEditor()
-  const intervalMs = (60 / Number(projectState?.bpm || 140)) * 1000
-  playMetronomeClick(true)
-  countInTimer = setInterval(()=>{
-    countInBeatsRemaining -= 1
-    if (countInBeatsRemaining > 0) playMetronomeClick(false)
-    if (countInBeatsRemaining <= 0) {
-      clearInterval(countInTimer)
-      countInTimer = 0
-      isCountInRunning = false
-      beginMidiRecording(track)
-      return
-    }
-    renderEditor()
-  }, intervalMs)
 }
-function beginMidiRecording(track) {
+function beginMidiRecording(track, { startBeat = null } = {}) {
+  if (!track) return
   ensureTrackInstrumentInstance(track)
-  const startBeat = clampBeat(xToBeat(timelineState.playheadX))
-  activeRecording = { id: makeInsertId('midi-region'), trackId: track.id, name: track?.autoNameRegions === false ? '' : track.name, startBeat, endBeat: startBeat, color: '#ff2d55', notes: [] }
+  const recordStartBeat = Number.isFinite(Number(startBeat)) ? Number(startBeat) : clampBeat(xToBeat(timelineState.playheadX))
+  activeRecording = { id: makeInsertId('midi-region'), trackId: track.id, name: track?.autoNameRegions === false ? '' : track.name, startBeat: recordStartBeat, endBeat: recordStartBeat, color: '#ff2d55', notes: [] }
   activeRecordingNotes.clear()
   recordingStatus = `Recording ${track.name}`
   if (!isPlaying) startPlayback()
+  renderEditor()
+}
+function stopRecordingAndKeep() {
+  if (isCountInRunning && !activeRecording) {
+    isCountInRunning = false
+    countInBeatsRemaining = 0
+    countInTargetX = null
+    countInTargetTrackId = ''
+  }
+  finalizeMidiRecording()
+  stopAllTrackInstrumentNotes()
+  stopPlayback()
+  recordingStatus = ''
   renderEditor()
 }
 function recordMidiNoteOn(trackId, note, velocity = 0.85) {
@@ -1505,11 +1553,14 @@ function mutateSelectedMidiNote(type, mutator) {
 }
 function deleteSelectedMidiNote() {
   const region = getMidiRollRegion()
-  const index = midiRollSelectedNoteIndex
-  if (!region || !Number.isInteger(index) || !region.notes?.[index]) return false
+  const selected = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  if (!region || !selected.some((index) => region.notes?.[index])) return false
   commitHistoryMutation('delete-midi-note', () => {
-    region.notes.splice(index, 1)
+    selected.sort((a, b) => b - a).forEach((index) => {
+      if (region.notes?.[index]) region.notes.splice(index, 1)
+    })
     midiRollSelectedNoteIndex = null
+    midiRollSelectedNoteIndices = []
   })
   return true
 }
@@ -1528,7 +1579,17 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
   event.preventDefault()
   event.stopPropagation()
   selectedMidiRegionId = regionId
+  if (event.shiftKey) {
+    const selected = new Set(midiRollSelectedNoteIndices)
+    if (selected.has(noteIndex)) selected.delete(noteIndex)
+    else selected.add(noteIndex)
+    midiRollSelectedNoteIndices = [...selected].sort((a, b) => a - b)
+    midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    renderEditor()
+    return
+  }
   midiRollSelectedNoteIndex = noteIndex
+  midiRollSelectedNoteIndices = [noteIndex]
   const handle = event.target.closest('[data-midi-note-handle]')?.dataset?.midiNoteHandle || 'move'
   midiNoteDrag = {
     regionId,
@@ -1555,8 +1616,8 @@ function applyMidiNoteDrag(event) {
   if (!midiNoteDrag.hasMoved && Math.hypot(dx, dy) < 3) return
   midiNoteDrag.hasMoved = true
   const snap = getMidiRollSnapValue()
-  const deltaBeat = snapBeat(dx / 64, snap)
-  const pitchDelta = -Math.round(dy / 22)
+  const deltaBeat = snapBeat(dx / midiRollBeatWidth, snap)
+  const pitchDelta = -Math.round(dy / midiRollRowHeight)
   const regionStart = Number(region.startBeat) || 0
   const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 0.25)
   if (midiNoteDrag.mode === 'left') {
@@ -1575,9 +1636,9 @@ function applyMidiNoteDrag(event) {
   if (noteEl) {
     const rows = midiRollPitchRows()
     const pitchIndex = rows.indexOf(Number(note.note) || 60)
-    noteEl.style.left = `${Math.max(0, (Number(note.startBeat || regionStart) - regionStart) * 64)}px`
-    noteEl.style.width = `${Math.max(10, (Number(note.durationBeats) || 0.25) * 64)}px`
-    noteEl.style.top = `${Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * 22 + 3)}px`
+    noteEl.style.left = `${Math.max(0, (Number(note.startBeat || regionStart) - regionStart) * midiRollBeatWidth)}px`
+    noteEl.style.width = `${Math.max(10, (Number(note.durationBeats) || 0.25) * midiRollBeatWidth)}px`
+    noteEl.style.top = `${Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)}px`
     const label = noteEl.querySelector('strong')
     if (label) label.textContent = formatMidiNoteName(note.note)
   }
@@ -1593,6 +1654,112 @@ function finishMidiNoteDrag() {
     scheduleEditorSave()
   }
   renderEditor()
+}
+function getMidiRollGridPoint(event) {
+  const grid = app.querySelector('[data-midi-roll-grid]')
+  const rect = grid?.getBoundingClientRect?.()
+  if (!grid || !rect) return null
+  return {
+    x: clamp(event.clientX - rect.left, 0, grid.offsetWidth || 0),
+    y: clamp(event.clientY - rect.top, 0, grid.offsetHeight || 0)
+  }
+}
+function beginMidiRollSelection(event) {
+  if (event.button !== 0 || event.target.closest('[data-midi-note-index]')) return
+  const region = getMidiRollRegion()
+  const point = getMidiRollGridPoint(event)
+  if (!region || !point) return
+  event.preventDefault()
+  event.stopPropagation()
+  midiRollSelectionDrag = { startX: point.x, startY: point.y, currentX: point.x, currentY: point.y, hasMoved: false, additive: !!event.shiftKey, existing: [...midiRollSelectedNoteIndices] }
+  if (!event.shiftKey) {
+    midiRollSelectedNoteIndex = null
+    midiRollSelectedNoteIndices = []
+  }
+  const box = app.querySelector('[data-midi-roll-selection]')
+  if (box) {
+    box.style.left = `${point.x}px`
+    box.style.top = `${point.y}px`
+    box.style.width = '0px'
+    box.style.height = '0px'
+    box.hidden = false
+  }
+}
+function updateMidiRollSelectionDrag(event) {
+  if (!midiRollSelectionDrag) return
+  const point = getMidiRollGridPoint(event)
+  const box = app.querySelector('[data-midi-roll-selection]')
+  if (!point || !box) return
+  const drag = midiRollSelectionDrag
+  drag.currentX = point.x
+  drag.currentY = point.y
+  drag.hasMoved = drag.hasMoved || Math.hypot(point.x - drag.startX, point.y - drag.startY) > 4
+  box.style.left = `${Math.min(drag.startX, drag.currentX)}px`
+  box.style.top = `${Math.min(drag.startY, drag.currentY)}px`
+  box.style.width = `${Math.abs(drag.currentX - drag.startX)}px`
+  box.style.height = `${Math.abs(drag.currentY - drag.startY)}px`
+  box.hidden = false
+}
+function finishMidiRollSelection() {
+  if (!midiRollSelectionDrag) return
+  const drag = midiRollSelectionDrag
+  midiRollSelectionDrag = null
+  const box = app.querySelector('[data-midi-roll-selection]')
+  if (box) box.hidden = true
+  if (!drag.hasMoved) {
+    renderEditor()
+    return
+  }
+  const region = getMidiRollRegion()
+  if (!region) return
+  const rows = midiRollPitchRows()
+  const regionStart = Number(region.startBeat || 0)
+  const left = Math.min(drag.startX, drag.currentX)
+  const right = Math.max(drag.startX, drag.currentX)
+  const top = Math.min(drag.startY, drag.currentY)
+  const bottom = Math.max(drag.startY, drag.currentY)
+  const selected = []
+  ;(region.notes || []).forEach((note, index) => {
+    const pitchIndex = rows.indexOf(Number(note.note) || 60)
+    const noteLeft = Math.max(0, (Number(note.startBeat || regionStart) - regionStart) * midiRollBeatWidth)
+    const noteRight = noteLeft + Math.max(10, (Number(note.durationBeats) || 0.25) * midiRollBeatWidth)
+    const noteTop = Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)
+    const noteBottom = noteTop + Math.max(10, midiRollRowHeight - 6)
+    if (noteRight >= left && noteLeft <= right && noteBottom >= top && noteTop <= bottom) selected.push(index)
+  })
+  midiRollSelectedNoteIndices = drag.additive ? [...new Set([...(drag.existing || []), ...selected])].sort((a, b) => a - b) : selected
+  midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+  renderEditor()
+}
+function handleMidiRollWheel(event) {
+  const grid = event.target.closest('[data-midi-roll-grid]')
+  if (!grid) return
+  const scroll = grid.closest('.studio-midi-roll-scroll')
+  if ((event.metaKey || event.ctrlKey) && !event.altKey) {
+    event.preventDefault()
+    const rect = grid.getBoundingClientRect()
+    const scrollRect = scroll?.getBoundingClientRect?.()
+    const localX = event.clientX - rect.left
+    const beatAtPointer = localX / Math.max(1, midiRollBeatWidth)
+    midiRollBeatWidth = Math.round(clamp(midiRollBeatWidth * (event.deltaY < 0 ? 1.12 : 0.88), 28, 180))
+    renderEditor()
+    requestAnimationFrame(() => {
+      const nextScroll = (beatAtPointer * midiRollBeatWidth) - (scrollRect ? event.clientX - scrollRect.left : localX)
+      const next = app.querySelector('.studio-midi-roll-scroll')
+      if (next) next.scrollLeft = Math.max(0, nextScroll)
+    })
+    return
+  }
+  if (event.altKey) {
+    event.preventDefault()
+    midiRollRowHeight = Math.round(clamp(midiRollRowHeight * (event.deltaY < 0 ? 1.1 : 0.9), 16, 36))
+    renderEditor()
+    return
+  }
+  if (event.shiftKey && scroll) {
+    event.preventDefault()
+    scroll.scrollLeft += event.deltaY
+  }
 }
 
 function beatFromGlobalEvent(event) {
@@ -1700,6 +1867,21 @@ function bindEditorEvents() {
   const showTooltip = (target) => { if (!tooltip || !target?.dataset?.tooltip) return; tooltip.textContent = target.dataset.tooltip; tooltip.hidden = false; const rect = target.getBoundingClientRect(); const trect = tooltip.getBoundingClientRect(); tooltip.style.left = `${Math.max(8, rect.left + rect.width / 2 - trect.width / 2)}px`; tooltip.style.top = `${Math.max(8, rect.top - trect.height - 8)}px` }
   const hideTooltip = () => { if (tooltip) tooltip.hidden = true }
   app.querySelectorAll('[data-tooltip]').forEach((target) => { target.addEventListener('pointerenter', () => showTooltip(target)); target.addEventListener('pointerleave', hideTooltip); target.addEventListener('focus', () => showTooltip(target)); target.addEventListener('blur', hideTooltip) })
+  app.querySelector('[data-bottom-panel-resize]')?.addEventListener('pointerdown', (event) => {
+    const panel = event.target.closest('.studio-bottom-panel')
+    if (!panel) return
+    event.preventDefault()
+    event.stopPropagation()
+    bottomPanelResizeDrag = { startY: event.clientY, startHeight: panel.getBoundingClientRect().height, panel }
+    document.body.classList.add('is-studio-dragging', 'is-bottom-panel-resizing')
+  })
+  app.querySelectorAll('[data-detach-bottom-panel]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    detachBottomPanel(button.dataset.detachBottomPanel)
+  }))
+  app.querySelector('[data-midi-roll-grid]')?.addEventListener('pointerdown', beginMidiRollSelection)
+  app.querySelector('[data-midi-roll-grid]')?.addEventListener('wheel', handleMidiRollWheel, { passive: false })
   app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-record]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackRecord); if (!t) return; t.recordArmed = !t.recordArmed; scheduleEditorSave(); renderEditor() }))
@@ -1830,6 +2012,19 @@ function bindEditorEvents() {
 	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) { t.pan = clamp(panDrag.startPan + (event.clientX-panDrag.startX)/100, -1, 1); panDrag.knob?.style.setProperty('--pan-angle', `${t.pan * 135}deg`) } } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); if (grid) { grid.scrollLeft = extensionDrag.side==='right' ? Math.max(0, grid.scrollWidth-grid.clientWidth) : extensionDrag.scrollLeft; syncTimelineScroll() } return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
 	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
   window.addEventListener('pointermove', (event) => {
+    if (bottomPanelResizeDrag) {
+      event.preventDefault()
+      const maxHeight = Math.max(260, window.innerHeight - 120)
+      const nextHeight = clamp(bottomPanelResizeDrag.startHeight + (bottomPanelResizeDrag.startY - event.clientY), 220, maxHeight)
+      bottomPanelHeightPx = Math.round(nextHeight)
+      bottomPanelResizeDrag.panel?.style.setProperty('height', `${bottomPanelHeightPx}px`)
+      return
+    }
+    if (midiRollSelectionDrag) {
+      event.preventDefault()
+      updateMidiRollSelectionDrag(event)
+      return
+    }
     if (midiNoteDrag) {
       event.preventDefault()
       applyMidiNoteDrag(event)
@@ -1854,6 +2049,15 @@ function bindEditorEvents() {
     updateGlobalTrackLaneDom()
   })
   window.addEventListener('pointerup', () => {
+    if (bottomPanelResizeDrag) {
+      bottomPanelResizeDrag = null
+      document.body.classList.remove('is-studio-dragging', 'is-bottom-panel-resizing')
+      return
+    }
+    if (midiRollSelectionDrag) {
+      finishMidiRollSelection()
+      return
+    }
     if (midiNoteDrag) {
       finishMidiNoteDrag()
       return
@@ -1876,12 +2080,18 @@ function bindEditorEvents() {
     scheduleEditorSave()
     renderEditor()
   })
-  app.querySelector('[data-transport-play]')?.addEventListener('click', (e)=>{ e.stopPropagation(); togglePlayback() })
-  app.querySelector('[data-transport-stop]')?.addEventListener('click', (e)=>{ e.stopPropagation(); finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = '' ; renderEditor() })
-  app.querySelector('[data-transport-start]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(barZeroX()); scheduleEditorSave() })
-  app.querySelector('[data-transport-end]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(maxTimelineX()); scheduleEditorSave() })
-  app.querySelector('[data-transport-rewind]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(timelineState.playheadX - (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
-  app.querySelector('[data-transport-forward]')?.addEventListener('click', (e)=>{ e.stopPropagation(); setPlayhead(timelineState.playheadX + (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
+  app.querySelector('[data-transport-play]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; togglePlayback() })
+  app.querySelector('[data-transport-stop]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = '' ; renderEditor() })
+  app.querySelector('[data-transport-start]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(barZeroX()); scheduleEditorSave() })
+  app.querySelector('[data-transport-end]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(maxTimelineX()); scheduleEditorSave() })
+  app.querySelector('[data-transport-rewind]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(timelineState.playheadX - (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
+  app.querySelector('[data-transport-forward]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(timelineState.playheadX + (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
+  app.querySelector('[data-transport-record]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    if (activeRecording || isCountInRunning) stopRecordingAndKeep()
+    else startMidiRecordFlow()
+  }, { capture: true })
   app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); renderEditor(); return } startMidiRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if (isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; if(activeInstrumentSubpage==='keyboard'&&next!=='keyboard') stopAllTrackInstrumentNotes(); activeInstrumentSubpage=next; renderEditor() }) })
   app.querySelectorAll('[data-midi]').forEach((key)=>{ const midi=Number(key.dataset.midi); key.addEventListener('pointerdown',(e)=>{ e.preventDefault(); const track=getSelectedTrack(); playTrackMidiNote(track, midi+(instrumentOctaveOffset*12), 0.85) }); key.addEventListener('pointerup',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }); key.addEventListener('pointerleave',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }) }); app.querySelector('[data-typing-piano-toggle]')?.addEventListener('click',()=>{ setMusicalTypingEnabled(!isTypingPianoEnabled); renderEditor() }); app.querySelector('[data-sustain-toggle]')?.addEventListener('click',()=>{ isSustainEnabled=!isSustainEnabled; if(!isSustainEnabled) stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-down]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.max(-2,instrumentOctaveOffset-1); stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-up]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.min(2,instrumentOctaveOffset+1); stopAllTrackInstrumentNotes(); renderEditor() }); bindMidiRegionEvents(); app.querySelectorAll('[data-instrument-knob]').forEach((input)=>{ input.addEventListener('input',(e)=>{ const knob=e.target.dataset.instrumentKnob; const value=Number(e.target.value); const selected=getSelectedTrack(); if(knob==='volume'){ instrumentVolume=value; if(selected){ selected.volume=Math.round(value*100); syncSelectedTrackVolumeControl(selected); if(selected.instrument?.pluginInstanceId) dawInstrumentRegistry.setParam(selected.instrument.pluginInstanceId, 'volume', value) } if(instrumentMasterGain&&instrumentAudioContext) instrumentMasterGain.gain.setValueAtTime(instrumentVolume,instrumentAudioContext.currentTime) } else if(knob==='pan'){ instrumentPan=value; if(selected) selected.pan=value; if(instrumentPanNode&&instrumentAudioContext) instrumentPanNode.pan.setValueAtTime(instrumentPan,instrumentAudioContext.currentTime); app.querySelector(`[data-track-pan="${selected?.id}"]`)?.style.setProperty('--pan-angle', `${value * 135}deg`) } const dial=app.querySelector(`[data-instrument-knob-dial="${knob}"]`); const valueEl=app.querySelector(`[data-instrument-knob-value="${knob}"]`); if(dial) dial.style.setProperty('--knob-angle',`${-135 + ((value-Number(e.target.min))/(Number(e.target.max)-Number(e.target.min)))*270}deg`); if(valueEl) valueEl.textContent = knob==='pan' ? value.toFixed(2) : `${Math.round(value*100)}%` }); input.addEventListener('change',()=>scheduleEditorSave()); input.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const startY=event.clientY; const startValue=Number(input.value); const min=Number(input.min); const max=Number(input.max); const speed = input.dataset.instrumentKnob==='pan' ? 0.004 : 0.002; const onMove=(ev)=>{ const delta=-(ev.clientY-startY)*speed; const next=clamp(startValue+delta,min,max); input.value=String(next); input.dispatchEvent(new Event('input',{bubbles:true})) }; const onUp=()=>{ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); scheduleEditorSave() }; window.addEventListener('pointermove',onMove); window.addEventListener('pointerup',onUp,{once:true}) }) }); app.querySelectorAll('[data-preset-load]').forEach((button)=>{ button.addEventListener('click',(event)=>{ event.stopPropagation(); const preset=instrumentPresetItems.find((item)=>item.id===button.dataset.presetLoad); if(!preset) return; selectedInstrumentName=preset.name; renderEditor() }) }); app.querySelector('[data-arp-toggle]')?.addEventListener('click',()=>{ arpEnabled=!arpEnabled; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-mode]')?.addEventListener('change',(e)=>{ arpMode=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-rate]')?.addEventListener('change',(e)=>{ arpRate=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-length]')?.addEventListener('change',(e)=>{ arpLength=Number(e.target.value)||16; if(selectedArpStepIndex>=arpLength) selectedArpStepIndex=arpLength-1; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-octave]').forEach((btn)=>btn.addEventListener('click',()=>{ const d=Number(btn.dataset.arpOctave||0); arpOctaves=clamp(arpOctaves+d,1,4); renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-gate]')?.addEventListener('input',(e)=>{ arpGate=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpGate}%` }); app.querySelector('[data-arp-swing]')?.addEventListener('input',(e)=>{ arpSwing=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpSwing}%` }); app.querySelector('[data-arp-velocity]')?.addEventListener('input',(e)=>{ arpVelocity=Number(e.target.value); e.target.nextElementSibling.textContent=String(arpVelocity) }); app.querySelectorAll('[data-arp-gate],[data-arp-swing],[data-arp-velocity]').forEach((el)=>el.addEventListener('change',()=>scheduleEditorSave())); app.querySelectorAll('[data-arp-edit-mode]').forEach((button)=>{ button.addEventListener('click',()=>{ const next=button.dataset.arpEditMode; if(!next||arpEditMode===next) return; arpEditMode=next; if(next!=='note') arpNotePickerStepIndex=null; renderEditor() }) }); app.querySelectorAll('[data-arp-step]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ const i=Number(el.dataset.arpStep); if(!Number.isFinite(i)||!arpSteps[i]) return; const step=arpSteps[i]=normalizeArpStep(arpSteps[i],i); selectedArpStepIndex=i; if(event.ctrlKey||event.metaKey){ step.active=!step.active; renderEditor(); scheduleEditorSave(); return } if(event.shiftKey){ step.accent=!step.accent; renderEditor(); scheduleEditorSave(); return } if(event.altKey){ step.octave=step.octave>=2?-1:step.octave+1; renderEditor(); scheduleEditorSave(); return } if(arpEditMode==='note'){ arpNotePickerStepIndex=i; arpNotePickerOctave=step.noteOctave ?? arpNotePickerOctave; renderEditor(); return } if(arpEditMode==='velocity'){ step.active=true; step.velocity=getVelocityFromStepPointer(event, el); renderEditor(); scheduleEditorSave(); return } cycleArpStepByMode(step, arpEditMode); step.active=true; renderEditor(); scheduleEditorSave() })); app.querySelectorAll('[data-arp-note-picker-octave]').forEach((button)=>{ button.addEventListener('click',()=>{ arpNotePickerOctave=clamp(arpNotePickerOctave+Number(button.dataset.arpNotePickerOctave||0),0,8); renderEditor() }) }); app.querySelector('[data-arp-note-picker-close]')?.addEventListener('click',()=>{ arpNotePickerStepIndex=null; renderEditor() }); app.querySelectorAll('[data-arp-note-value]').forEach((button)=>{ button.addEventListener('click',()=>{ const stepIndex=arpNotePickerStepIndex; if(stepIndex==null||!arpSteps[stepIndex]) return; const st=arpSteps[stepIndex]=normalizeArpStep(arpSteps[stepIndex],stepIndex); st.note=clamp(Number(button.dataset.arpNoteValue),0,11); st.noteOctave=arpNotePickerOctave; st.active=true; selectedArpStepIndex=stepIndex; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-reset]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ ...createDefaultArpStep(i), octave:0, accent:false },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-randomize]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ active:Math.random()>.35, note:Math.floor(Math.random()*12), noteOctave:Math.floor(3+Math.random()*3), velocity:Math.floor(35+Math.random()*92), octave:[-1,0,0,1][Math.floor(Math.random()*4)], gate:[10,25,50,70,85,100][Math.floor(Math.random()*6)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.75, tie:Math.random()>.9 },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-pattern]').forEach((el)=>el.addEventListener('click',()=>{ const name=el.dataset.arpPattern||''; if(name.includes('Straight')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:i%2===0, velocity:95, octave:0, accent:false },i)); else if(name.includes('Random')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:Math.random()>.45, velocity:Math.floor(45+Math.random()*80), octave:[-1,0,1][Math.floor(Math.random()*3)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.8 },i)); else if(name.includes('Chord')) arpMode='Chord Repeat'; currentArpPatternName=name; renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-step-active]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.active=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.note=clamp(Number(e.target.value)||0,0,11); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.noteOctave=clamp(Number(e.target.value)||4,0,8); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.octave=clamp(Number(e.target.value)||0,-2,4); renderEditor(); scheduleEditorSave() }); [['[data-arp-step-velocity]','velocity','[data-arp-step-velocity-value]',''],['[data-arp-step-gate]','gate','[data-arp-step-gate-value]','%'],['[data-arp-step-probability]','probability','[data-arp-step-probability-value]','%']].forEach(([sel,key,valSel,suffix])=>{ const input=app.querySelector(sel); const valueEl=app.querySelector(valSel); if(!input) return; input.addEventListener('input',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st[key]=Number(e.target.value); if(valueEl) valueEl.textContent=`${st[key]}${suffix}` }); input.addEventListener('change',()=>{ renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-step-accent]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.accent=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-tie]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.tie=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-instrument-select]')?.addEventListener('change',(e)=>{ selectedInstrumentName=e.target.value });
   app.querySelector('.studio-editor-page')?.addEventListener('click', (event) => {
@@ -1984,7 +2194,7 @@ function renderEditor() {
   const project = projectState
   if (studioAudioEngine) studioAudioEngine.setBpm(Number(project?.bpm || 140))
   document.body.classList.add('is-studio-editor')
-  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button>File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button type="button" data-toggle-controls-menu class="${isControlsMenuOpen ? 'is-active' : ''}">Controls</button><button>Help</button></nav>${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''}" aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section><aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${(activeBottomPanel||closingBottomPanel) ? renderBottomPanel((activeBottomPanel||closingBottomPanel), bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}</main>`
+  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button>File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button type="button" data-toggle-controls-menu class="${isControlsMenuOpen ? 'is-active' : ''}">Controls</button><button>Help</button></nav>${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section><aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">MIDI Roll</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${(activeBottomPanel||closingBottomPanel) ? renderBottomPanel((activeBottomPanel||closingBottomPanel), bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}</main>`
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   if (keepSiteMenuOpen) initShellChrome()
   app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
@@ -2016,6 +2226,17 @@ function handleStudioKeydown(event){
   if(event.altKey) return
   const t=tracks.find((x)=>x.id===selectedTrackId)
   const musicalTypingActive = isTypingPianoEnabled
+  if(event.code==='Space'){handleSpaceTransport(event); return}
+  if(event.code==='KeyR'){
+    event.preventDefault()
+    if(activeRecording || isCountInRunning) stopRecordingAndKeep()
+    else startMidiRecordFlow()
+    return
+  }
+  if(activeRecording || isCountInRunning){
+    if(['Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','KeyC','KeyK'].includes(event.code)) event.preventDefault()
+    return
+  }
   if(musicalTypingActive && event.code === 'KeyZ'){ event.preventDefault(); instrumentOctaveOffset=Math.max(-2,instrumentOctaveOffset-1); stopAllTrackInstrumentNotes(); renderEditor(); return }
   if(musicalTypingActive && event.code === 'KeyX'){ event.preventDefault(); instrumentOctaveOffset=Math.min(2,instrumentOctaveOffset+1); stopAllTrackInstrumentNotes(); renderEditor(); return }
   if(musicalTypingActive && t?.instrument && t.instrument.enabled !== false && dawInstrumentKeyMap[event.code]!=null){
@@ -2027,12 +2248,10 @@ function handleStudioKeydown(event){
     return
   }
   const step=timelineState.pixelsPerBar/timelineState.beatsPerBar
-  if(event.code==='Space'){handleSpaceTransport(event)}
-  else if(event.code==='Delete'||event.code==='Backspace'){event.preventDefault(); if(activeBottomPanel==='midi-roll'&&deleteSelectedMidiNote()) return; if(selectedMidiRegionId) deleteMidiRegion(selectedMidiRegionId)}
+  if(event.code==='Delete'||event.code==='Backspace'){event.preventDefault(); if(activeBottomPanel==='midi-roll'&&deleteSelectedMidiNote()) return; if(selectedMidiRegionId) deleteMidiRegion(selectedMidiRegionId)}
   else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1}
   else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(timelineState.playheadX-step)}
   else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(timelineState.playheadX+step)}
-  else if(event.code==='KeyR'){event.preventDefault(); if(t){t.recordArmed=!t.recordArmed; renderEditor()}}
   else if(event.code==='KeyC'){event.preventDefault(); isCycleEnabled=!isCycleEnabled; renderEditor()}
   else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); renderEditor()}
 }

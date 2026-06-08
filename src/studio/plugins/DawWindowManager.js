@@ -271,6 +271,13 @@ export class DawWindowManager {
         this.addMatrixRoute(shell.dataset.pluginShell)
       })
     })
+    scope.querySelectorAll('[data-plugin-remove-mod]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const shell = button.closest('[data-plugin-shell]')
+        if (!shell?.dataset?.pluginShell) return
+        this.removeMatrixRoute(shell.dataset.pluginShell, Number(button.dataset.pluginRemoveMod))
+      })
+    })
     scope.querySelectorAll('[data-plugin-param-set]').forEach((button) => {
       button.addEventListener('click', () => {
         const shell = button.closest('[data-plugin-shell]')
@@ -412,7 +419,10 @@ export class DawWindowManager {
       this.onNoteOff(id, Number(data.note))
     }
     if (data.type === 'plugin-ping') {
-      this.postHostMessage({ type: 'plugin-pong', pluginInstanceId: id }, event.source || this.hostWindows.get(id))
+      if (event.source) this.hostWindows.set(id, event.source)
+      const target = event.source || this.hostWindows.get(id)
+      this.postHostMessage({ type: 'plugin-pong', pluginInstanceId: id }, target)
+      if (data.needsState !== false) this.postHostMessage({ type: 'plugin-state', pluginInstanceId: id, instance: this.serializeForHost(windowState) }, target)
     }
   }
 
@@ -441,7 +451,7 @@ export class DawWindowManager {
       this.onParamChange(id, name, nextValue)
       this.updateParamValueDom(id, name, nextValue)
     })
-    if (param === 'preset' || param === 'mwtPage' || param.startsWith('assetBrowser') || ['oscCount', 'selectedOsc', 'fxRack', 'selectedFx', 'modSource'].includes(param)) this.renderPluginBody(id)
+    if (param === 'preset' || param === 'mwtPage' || param.endsWith('Enabled') || param.startsWith('assetBrowser') || ['oscCount', 'selectedOsc', 'fxRack', 'selectedFx', 'modSource', 'modulationMatrix'].includes(param)) this.renderPluginBody(id)
     if (['wavetableId', 'wavetablePosition'].includes(param)) this.updateVisualizerDom(id)
     this.persist()
     if (notifyHost) {
@@ -456,7 +466,7 @@ export class DawWindowManager {
       ? windowState.params.modulationMatrix.map((route) => ({ ...route }))
       : []
     while (matrix.length <= rowIndex) {
-      matrix.push({ source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, enabled: false })
+      matrix.push({ source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, curve: 'linear', enabled: false })
     }
     matrix[rowIndex][field] = field === 'amount' ? Number(value) : value
     windowState.params = { ...(windowState.params || {}), modulationMatrix: matrix }
@@ -472,7 +482,22 @@ export class DawWindowManager {
       ? windowState.params.modulationMatrix.map((route) => ({ ...route }))
       : []
     if (matrix.length >= 6) return
-    matrix.push({ source: 'macro1', target: 'osc1.position', amount: 0, bipolar: false, enabled: false })
+    matrix.push({ source: 'macro1', target: 'osc1.position', amount: 0, bipolar: false, curve: 'linear', enabled: false })
+    windowState.params = { ...(windowState.params || {}), modulationMatrix: matrix }
+    this.onParamChange(id, 'modulationMatrix', matrix)
+    this.persist()
+    this.renderPluginBody(id)
+    this.postHostMessage({ type: 'plugin-state', pluginInstanceId: id, instance: this.serializeForHost(windowState) }, this.hostWindows.get(id))
+  }
+
+  removeMatrixRoute(id, rowIndex) {
+    const windowState = this.windows.get(id)
+    if (!windowState || !Number.isFinite(rowIndex)) return
+    const matrix = Array.isArray(windowState.params?.modulationMatrix)
+      ? windowState.params.modulationMatrix.map((route) => ({ ...route }))
+      : []
+    if (!matrix[rowIndex]) return
+    matrix.splice(rowIndex, 1)
     windowState.params = { ...(windowState.params || {}), modulationMatrix: matrix }
     this.onParamChange(id, 'modulationMatrix', matrix)
     this.persist()
