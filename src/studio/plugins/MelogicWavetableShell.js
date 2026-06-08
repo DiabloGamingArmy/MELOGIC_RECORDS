@@ -133,8 +133,7 @@ function optionList(values = [], selected = '') {
   return values.map((value) => `<option value="${esc(value)}" ${String(value) === String(selected) ? 'selected' : ''}>${esc(value || 'All')}</option>`).join('')
 }
 
-function renderBrowserPage({ params, wavetableAssets, allWavetableAssets, tags }) {
-  const selected = allWavetableAssets.find((asset) => asset.assetId === params.wavetableId) || allWavetableAssets[0]
+function renderBrowserPage({ params, wavetableAssets, tags }) {
   return `
     <section class="mwt-page mwt-page--browser">
       <article class="mwt-panel mwt-panel--assets">
@@ -151,14 +150,6 @@ function renderBrowserPage({ params, wavetableAssets, allWavetableAssets, tags }
               <span>${esc(asset.packId)} - ${esc((asset.tags || []).slice(0, 3).join(', '))}</span>
             </button>
           `).join('') || '<p>No matching tables.</p>'}
-        </div>
-      </article>
-      <article class="mwt-panel mwt-browser-preview">
-        <header><span>Selected</span><em>${esc(selected?.type || 'wavetable')}</em></header>
-        <canvas class="daw-plugin-waveform mwt-waveform" width="560" height="148" data-wavetable-visualizer data-wavetable-id="${esc(selected?.assetId || params.wavetableId)}" data-wavetable-position="${esc(numberParam(params, 'wavetablePosition', 0.35))}" aria-label="Selected wavetable preview"></canvas>
-        <div class="mwt-placeholder-stack">
-          <strong>${esc(selected?.title || 'No table selected')}</strong>
-          <p>${esc(selected ? `${selected.packId} - ${(selected.tags || []).join(', ')}` : 'Choose a wavetable to load OSC 1.')}</p>
         </div>
       </article>
     </section>
@@ -193,39 +184,39 @@ function renderOscPanel({ label, enabled, params, allWavetableAssets, prefix = '
 }
 
 function renderOscPage({ params, allWavetableAssets }) {
+  const oscCount = Math.max(1, Math.min(8, Number(params.oscCount) || 1))
+  const selectedOsc = Math.max(1, Math.min(oscCount, Number(params.selectedOsc) || 1))
+  const active = selectedOsc === 1
+  const prefix = `osc${selectedOsc}`
   return `
     <section class="mwt-page mwt-page--osc">
-      ${renderOscPanel({ label: 'OSC 1', enabled: true, params, allWavetableAssets, prefix: 'osc1', active: true })}
-      ${renderOscPanel({ label: 'OSC 2', enabled: boolParam(params, 'osc2Enabled', false), params, allWavetableAssets, prefix: 'osc2' })}
-      ${renderOscPanel({ label: 'OSC 3', enabled: boolParam(params, 'osc3Enabled', false), params, allWavetableAssets, prefix: 'osc3' })}
-      <div class="mwt-noise-sub-grid">
-        <article class="mwt-panel">
-          <header><span>Noise</span><em>Prep</em></header>
-          ${selectControl({ label: 'Source', param: 'noiseSource', value: params.noiseSource || 'Air Bed', options: ['Air Bed', 'Tape Air', 'Vinyl Mist'] })}
-          ${knobControl({ label: 'Level', param: 'noiseLevel', value: numberParam(params, 'noiseLevel', 0), min: 0, max: 1, step: 0.01 })}
-        </article>
-        <article class="mwt-panel">
-          <header><span>Sub</span><em>Prep</em></header>
-          ${selectControl({ label: 'Type', param: 'subType', value: params.subType || 'Sine', options: ['Sine', 'Triangle', 'Square'] })}
-          ${knobControl({ label: 'Pitch', param: 'subPitch', value: numberParam(params, 'subPitch', -12), min: -24, max: 0, step: 1, suffix: ' st' })}
-          ${knobControl({ label: 'Level', param: 'subLevel', value: numberParam(params, 'subLevel', 0), min: 0, max: 1, step: 0.01 })}
-        </article>
-      </div>
+      <article class="mwt-panel mwt-rack-panel">
+        <header><span>Oscillator Rack</span><button type="button" data-plugin-param-set="oscCount" data-plugin-param-value="${esc(Math.min(8, oscCount + 1))}" ${oscCount >= 8 ? 'disabled' : ''}>Add Osc</button></header>
+        <div class="mwt-rack-list">
+          ${Array.from({ length: oscCount }, (_, index)=>{
+            const number = index + 1
+            const table = number === 1 ? params.wavetableId : params[`osc${number}WavetableId`] || params.wavetableId
+            return `<button type="button" class="${number === selectedOsc ? 'is-selected' : ''}" data-plugin-param-set="selectedOsc" data-plugin-param-value="${number}"><strong>OSC ${number}</strong><span>${esc(table || 'Built-in')}</span></button>`
+          }).join('')}
+        </div>
+      </article>
+      ${renderOscPanel({ label: `OSC ${selectedOsc}`, enabled: true, params, allWavetableAssets, prefix, active })}
     </section>
   `
 }
 
 function renderFxPage({ params }) {
+  const fxRack = String(params.fxRack || '')
+  const hasFilter = fxRack.split(',').includes('filter')
   return `
     <section class="mwt-page mwt-page--fx">
       <article class="mwt-panel mwt-fx-rack-panel">
-        <header><span>FX Rack</span><details class="mwt-fx-add"><summary>+</summary><button type="button">Filter</button><button type="button" disabled>Distortion</button><button type="button" disabled>Chorus</button><button type="button" disabled>Delay</button><button type="button" disabled>Reverb</button></details></header>
+        <header><span>FX Rack</span><details class="mwt-fx-add"><summary>+</summary><button type="button" data-plugin-param-set="fxRack" data-plugin-param-value="filter">Filter</button><button type="button" disabled>Distortion</button><button type="button" disabled>Chorus</button><button type="button" disabled>Delay</button><button type="button" disabled>Reverb</button></details></header>
         <div class="mwt-fx-rack-list">
-          <button type="button" class="is-selected"><strong>Filter</strong><span>${boolParam(params, 'filterEnabled', true) ? 'Active' : 'Bypass'}</span></button>
-          ${['Distortion', 'Chorus', 'Delay', 'Reverb'].map((slot)=>`<button type="button" disabled><strong>${slot}</strong><span>Coming soon</span></button>`).join('')}
+          ${hasFilter ? `<button type="button" class="is-selected" data-plugin-param-set="selectedFx" data-plugin-param-value="filter"><strong>Filter</strong><span>${boolParam(params, 'filterEnabled', true) ? 'Active' : 'Bypass'}</span></button>` : '<p class="mwt-empty-rack">No FX loaded. Add Filter to begin.</p>'}
         </div>
       </article>
-      <article class="mwt-panel mwt-filter-module">
+      ${hasFilter ? `<article class="mwt-panel mwt-filter-module">
         <header><span>Filter Module</span><em>${boolParam(params, 'filterEnabled', true) ? 'On' : 'Bypass'}</em></header>
         <div class="mwt-filter-curve" aria-hidden="true"></div>
         <div class="mwt-filter-controls">
@@ -236,40 +227,35 @@ function renderFxPage({ params }) {
           ${knobControl({ label: 'Drive', param: 'filterDrive', value: numberParam(params, 'filterDrive', 0), min: 0, max: 1, step: 0.01 })}
           ${knobControl({ label: 'Mix', param: 'filterMix', value: numberParam(params, 'filterMix', 1), min: 0, max: 1, step: 0.01 })}
         </div>
-      </article>
+      </article>` : `<article class="mwt-panel mwt-filter-module is-empty"><header><span>Detail</span><em>Empty</em></header><div class="mwt-placeholder-stack"><strong>No module selected</strong><p>The FX rack starts empty so patches only run the modules you add.</p></div></article>`}
     </section>
   `
 }
 
 function renderModPage({ params }) {
+  const source = params.modSource || 'lfo1'
+  const detail = {
+    lfo1: `<article class="mwt-panel"><header><span>LFO 1</span><em>Mod source</em></header>${selectControl({ label: 'Shape', param: 'lfoShape', value: params.lfoShape, options: ['sine', 'triangle', 'square', 'sawtooth'] })}${selectControl({ label: 'Target', param: 'lfoTarget', value: params.lfoTarget, options: [{ value: 'none', label: 'None' }, { value: 'filterCutoff', label: 'Filter Cutoff' }, { value: 'pitch', label: 'Pitch' }, { value: 'wavetablePosition', label: 'WT Position' }] })}${sliderControl({ label: 'Rate', param: 'lfoRate', value: numberParam(params, 'lfoRate', 0.35), min: 0.01, max: 20, step: 0.01, suffix: ' hz' })}${sliderControl({ label: 'Amount', param: 'lfoAmount', value: numberParam(params, 'lfoAmount', 0), min: 0, max: 1, step: 0.01 })}</article>`,
+    env1: `<article class="mwt-panel"><header><span>ENV 1</span><em>Amp</em></header>${sliderControl({ label: 'Attack', param: 'attack', value: numberParam(params, 'attack', 0.02), min: 0.001, max: 1.5, step: 0.001 })}${sliderControl({ label: 'Decay', param: 'decay', value: numberParam(params, 'decay', 0.16), min: 0.001, max: 2, step: 0.001 })}${sliderControl({ label: 'Sustain', param: 'sustain', value: numberParam(params, 'sustain', 0.68), min: 0, max: 1, step: 0.01 })}${sliderControl({ label: 'Release', param: 'release', value: numberParam(params, 'release', 0.24), min: 0.01, max: 3, step: 0.01 })}</article>`,
+    macros: `<article class="mwt-panel mwt-panel--macros"><header><span>Macros</span><em>4</em></header><div class="daw-plugin-macro-grid mwt-macro-grid">${[1, 2, 3, 4].map((index) => macroControl(index, numberParam(params, `macro${index}`, 0))).join('')}</div></article>`,
+    lfo2: `<article class="mwt-panel"><header><span>LFO 2</span><em>Scaffold</em></header><div class="mwt-placeholder-stack"><strong>Second LFO ready</strong><p>State hooks are reserved for deeper modulation.</p></div></article>`,
+    env2: `<article class="mwt-panel"><header><span>ENV 2</span><em>Scaffold</em></header><div class="mwt-placeholder-stack"><strong>Assignable envelope</strong><p>Use Matrix later to route ENV 2 to synth targets.</p></div></article>`
+  }
   return `
     <section class="mwt-page mwt-page--mod">
-      <article class="mwt-panel">
-        <header><span>LFO 1</span><em>Mod source</em></header>
-        ${selectControl({ label: 'Shape', param: 'lfoShape', value: params.lfoShape, options: ['sine', 'triangle', 'square', 'sawtooth'] })}
-        ${selectControl({ label: 'Target', param: 'lfoTarget', value: params.lfoTarget, options: [{ value: 'none', label: 'None' }, { value: 'filterCutoff', label: 'Filter Cutoff' }, { value: 'pitch', label: 'Pitch' }, { value: 'wavetablePosition', label: 'WT Position' }] })}
-        ${sliderControl({ label: 'Rate', param: 'lfoRate', value: numberParam(params, 'lfoRate', 0.35), min: 0.01, max: 20, step: 0.01, suffix: ' hz' })}
-        ${sliderControl({ label: 'Amount', param: 'lfoAmount', value: numberParam(params, 'lfoAmount', 0), min: 0, max: 1, step: 0.01 })}
+      <article class="mwt-panel mwt-rack-panel">
+        <header><span>Mod Rack</span><button type="button" disabled>Add Source</button></header>
+        <div class="mwt-rack-list">
+          ${[
+            ['lfo1', 'LFO 1', 'Active'],
+            ['env1', 'ENV 1', 'Amp'],
+            ['macros', 'Macros', '4 controls'],
+            ['lfo2', 'LFO 2', 'Scaffold'],
+            ['env2', 'ENV 2', 'Scaffold']
+          ].map(([id, label, status])=>`<button type="button" class="${source === id ? 'is-selected' : ''}" data-plugin-param-set="modSource" data-plugin-param-value="${esc(id)}"><strong>${esc(label)}</strong><span>${esc(status)}</span></button>`).join('')}
+        </div>
       </article>
-      <article class="mwt-panel">
-        <header><span>LFO 2</span><em>Scaffold</em></header>
-        <div class="mwt-placeholder-stack"><strong>Second LFO ready</strong><p>State hooks are reserved for deeper modulation.</p></div>
-      </article>
-      <article class="mwt-panel">
-        <header><span>ENV 1</span><em>Amp</em></header>
-        ${sliderControl({ label: 'Attack', param: 'attack', value: numberParam(params, 'attack', 0.02), min: 0.001, max: 1.5, step: 0.001 })}
-        ${sliderControl({ label: 'Decay', param: 'decay', value: numberParam(params, 'decay', 0.16), min: 0.001, max: 2, step: 0.001 })}
-        ${sliderControl({ label: 'Sustain', param: 'sustain', value: numberParam(params, 'sustain', 0.68), min: 0, max: 1, step: 0.01 })}
-        ${sliderControl({ label: 'Release', param: 'release', value: numberParam(params, 'release', 0.24), min: 0.01, max: 3, step: 0.01 })}
-      </article>
-      <article class="mwt-panel">
-        <header><span>ENV 2</span><em>Scaffold</em></header>
-        <div class="mwt-placeholder-stack"><strong>Assignable envelope</strong><p>Use Matrix later to route ENV 2 to synth targets.</p></div>
-      </article>
-      <article class="mwt-panel mwt-panel--macros">
-        <header><span>Macros</span><em>4</em></header>
-        <div class="daw-plugin-macro-grid mwt-macro-grid">${[1, 2, 3, 4].map((index) => macroControl(index, numberParam(params, `macro${index}`, 0))).join('')}</div>
-      </article>
+      ${detail[source] || detail.lfo1}
     </section>
   `
 }

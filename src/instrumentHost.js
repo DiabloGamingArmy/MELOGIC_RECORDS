@@ -142,6 +142,14 @@ function bind() {
       render()
     })
   })
+  app.querySelectorAll('[data-plugin-param-set]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!button.dataset.pluginParamSet) return
+      instance = { ...instance, params: { ...(instance.params || {}), [button.dataset.pluginParamSet]: button.dataset.pluginParamValue || '' } }
+      postToMain({ type: 'plugin-param-change', param: button.dataset.pluginParamSet, value: button.dataset.pluginParamValue || '' })
+      render()
+    })
+  })
   app.querySelectorAll('[data-plugin-asset-select]').forEach((button) => {
     button.addEventListener('click', () => {
       instance = { ...instance, params: { ...(instance.params || {}), wavetableId: button.dataset.pluginAssetSelect } }
