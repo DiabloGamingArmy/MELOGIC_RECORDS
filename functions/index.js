@@ -66,6 +66,7 @@ const { sendAdminSystemMessage } = require('./src/admin/sendAdminSystemMessage')
 const { forcePasswordReset, revokeRecoveryCodes, setTemporaryPassword } = require('./src/admin/adminUserSecurityTools')
 const { requestEmailVerification, requestPasswordResetEmail } = require('./src/email/authEmails')
 const { getEmailAdminStatus, listAdminEmailLogs, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
+const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -146,3 +147,4 @@ exports.sendAdminEmail = sendAdminEmail
 exports.sendAdminAuthEmail = sendAdminAuthEmail
 exports.getEmailAdminStatus = getEmailAdminStatus
 exports.listAdminEmailLogs = listAdminEmailLogs
+exports.createLiveKitToken = createLiveKitToken
