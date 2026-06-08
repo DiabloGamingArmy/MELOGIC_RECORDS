@@ -28,6 +28,10 @@ function parseHostInstance() {
 
 let instance = parseHostInstance()
 let connectionStatus = 'Connecting to DAW'
+let connectionTimer = 0
+let offlineTimer = 0
+let lastDawMessageAt = 0
+let hasReceivedHostState = false
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
@@ -55,21 +59,49 @@ function postToMain(message = {}) {
     } catch {
       // The opener can disappear while the pop-out remains open.
     }
-    return
   }
   channel?.postMessage(payload)
 }
 
+function setConnectionStatus(status) {
+  if (connectionStatus === status) return
+  connectionStatus = status
+  const statusEl = app.querySelector('[data-host-connection-status]')
+  if (statusEl) statusEl.textContent = status
+  app.querySelector('.daw-plugin-host-page')?.setAttribute('data-host-status', status.toLowerCase().includes('connected') ? 'connected' : status.toLowerCase().includes('offline') ? 'offline' : 'connecting')
+}
+
+function scheduleOfflineWatch() {
+  if (offlineTimer) window.clearTimeout(offlineTimer)
+  offlineTimer = window.setTimeout(() => {
+    if (Date.now() - lastDawMessageAt > 3500) setConnectionStatus('Offline: main DAW not found')
+  }, 3800)
+}
+
+function markConnected() {
+  lastDawMessageAt = Date.now()
+  setConnectionStatus('Connected to DAW')
+  scheduleOfflineWatch()
+}
+
+function requestConnection() {
+  if (Date.now() - lastDawMessageAt > 3500) setConnectionStatus('Connecting to DAW')
+  postToMain({ type: 'plugin-ping', needsState: !hasReceivedHostState })
+  if (connectionTimer) window.clearTimeout(connectionTimer)
+  connectionTimer = window.setTimeout(requestConnection, 1400)
+}
+
 function render() {
   document.title = `${instance.title || 'Plugin'} | Melogic DAW`
+  const statusKey = connectionStatus.toLowerCase().includes('connected') ? 'connected' : connectionStatus.toLowerCase().includes('offline') ? 'offline' : 'connecting'
   app.innerHTML = `
-    <main class="daw-plugin-host-page">
+    <main class="daw-plugin-host-page" data-host-status="${esc(statusKey)}">
       <header class="daw-plugin-host-header">
         <div>
           <span>Detached instrument</span>
           <h1>${esc(instance.title || 'Melogic Wavetable')}</h1>
         </div>
-        <p>${esc(connectionStatus)}</p>
+        <p data-host-connection-status>${esc(connectionStatus)}</p>
       </header>
       ${renderPluginShell(instance, { hostMode: 'detached' })}
       <footer class="daw-plugin-host-footer">
@@ -120,7 +152,7 @@ function bind() {
         ? instance.params.modulationMatrix.map((route) => ({ ...route }))
         : []
       while (matrix.length <= rowIndex) {
-        matrix.push({ source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, enabled: false })
+        matrix.push({ source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, curve: 'linear', enabled: false })
       }
       const field = input.dataset.pluginMatrixField
       matrix[rowIndex][field] = field === 'amount' ? Number(input.value) : input.type === 'checkbox' ? input.checked : input.value
@@ -136,7 +168,21 @@ function bind() {
         ? instance.params.modulationMatrix.map((route) => ({ ...route }))
         : []
       if (matrix.length >= 6) return
-      matrix.push({ source: 'macro1', target: 'osc1.position', amount: 0, bipolar: false, enabled: false })
+      matrix.push({ source: 'macro1', target: 'osc1.position', amount: 0, bipolar: false, curve: 'linear', enabled: false })
+      instance = { ...instance, params: { ...(instance.params || {}), modulationMatrix: matrix } }
+      postToMain({ type: 'plugin-param-change', param: 'modulationMatrix', value: matrix })
+      render()
+    })
+  })
+  app.querySelectorAll('[data-plugin-remove-mod]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const rowIndex = Number(button.dataset.pluginRemoveMod)
+      if (!Number.isFinite(rowIndex)) return
+      const matrix = Array.isArray(instance.params?.modulationMatrix)
+        ? instance.params.modulationMatrix.map((route) => ({ ...route }))
+        : []
+      if (!matrix[rowIndex]) return
+      matrix.splice(rowIndex, 1)
       instance = { ...instance, params: { ...(instance.params || {}), modulationMatrix: matrix } }
       postToMain({ type: 'plugin-param-change', param: 'modulationMatrix', value: matrix })
       render()
@@ -196,11 +242,13 @@ function handleMessage(event) {
   if (data.source !== 'melogic-daw') return
   if (data.pluginInstanceId && data.pluginInstanceId !== instance.pluginInstanceId) return
   if ((data.type === 'plugin-opened' || data.type === 'plugin-state') && data.instance) {
+    hasReceivedHostState = true
     instance = { ...instance, ...data.instance, params: { ...(instance.params || {}), ...(data.instance.params || {}) } }
-    connectionStatus = 'Connected to DAW'
+    markConnected()
     render()
   }
   if (data.type === 'plugin-param-change' && data.param) {
+    markConnected()
     instance = {
       ...instance,
       params: { ...(instance.params || {}), [data.param]: data.value }
@@ -208,8 +256,7 @@ function handleMessage(event) {
     render()
   }
   if (data.type === 'plugin-pong') {
-    connectionStatus = 'Connected to DAW'
-    render()
+    markConnected()
   }
 }
 
@@ -217,9 +264,11 @@ window.addEventListener('message', handleMessage)
 window.addEventListener('resize', updateHostScale)
 channel?.addEventListener('message', handleMessage)
 window.addEventListener('beforeunload', () => {
+  if (connectionTimer) window.clearTimeout(connectionTimer)
+  if (offlineTimer) window.clearTimeout(offlineTimer)
   postToMain({ type: 'plugin-closed' })
   channel?.close()
 })
 
 render()
-postToMain({ type: 'plugin-ping' })
+requestConnection()

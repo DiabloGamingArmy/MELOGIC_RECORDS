@@ -1,6 +1,6 @@
 const INIT_MATRIX = [
-  { source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, enabled: false },
-  { source: 'macro1', target: 'filter.cutoff', amount: 0, bipolar: false, enabled: false }
+  { source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, curve: 'linear', enabled: false },
+  { source: 'macro1', target: 'filter.cutoff', amount: 0, bipolar: false, curve: 'linear', enabled: false }
 ]
 
 const DEFAULT_MACROS = {
@@ -25,7 +25,8 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       unisonVoices: 1,
       detune: 0.08,
       oscLevel: 0.85,
-      filterEnabled: true,
+      fxRack: '',
+      filterEnabled: false,
       filterType: 'lowpass',
       filterCutoff: 0.72,
       resonance: 0.18,
@@ -56,6 +57,7 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       unisonVoices: 1,
       detune: 0.04,
       oscLevel: 0.95,
+      fxRack: 'filter',
       filterEnabled: true,
       filterType: 'lowpass',
       filterCutoff: 0.38,
@@ -73,8 +75,8 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       macro3: 0,
       macro4: 0,
       modulationMatrix: [
-        { source: 'lfo1', target: 'filter.cutoff', amount: 0.16, bipolar: true, enabled: true },
-        { source: 'macro1', target: 'filter.cutoff', amount: 0.18, bipolar: false, enabled: true }
+        { source: 'lfo1', target: 'filter.cutoff', amount: 0.16, bipolar: true, curve: 'linear', enabled: true },
+        { source: 'macro1', target: 'filter.cutoff', amount: 0.18, bipolar: false, curve: 'linear', enabled: true }
       ],
       volume: 0.52
     }
@@ -93,6 +95,7 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       unisonVoices: 1,
       detune: 0.12,
       oscLevel: 0.78,
+      fxRack: 'filter',
       filterEnabled: true,
       filterType: 'bandpass',
       filterCutoff: 0.58,
@@ -110,8 +113,8 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       macro3: 0,
       macro4: 0,
       modulationMatrix: [
-        { source: 'lfo1', target: 'osc1.pitch', amount: 0.07, bipolar: true, enabled: true },
-        { source: 'macro2', target: 'osc1.position', amount: 0.32, bipolar: false, enabled: true }
+        { source: 'lfo1', target: 'osc1.pitch', amount: 0.07, bipolar: true, curve: 'linear', enabled: true },
+        { source: 'macro2', target: 'osc1.position', amount: 0.32, bipolar: false, curve: 'linear', enabled: true }
       ],
       volume: 0.46
     }
@@ -130,6 +133,7 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       unisonVoices: 3,
       detune: 0.2,
       oscLevel: 0.72,
+      fxRack: 'filter',
       filterEnabled: true,
       filterType: 'lowpass',
       filterCutoff: 0.52,
@@ -147,8 +151,8 @@ export const MELOGIC_WAVETABLE_PRESETS = [
       macro3: 0,
       macro4: 0,
       modulationMatrix: [
-        { source: 'lfo1', target: 'osc1.pitch', amount: 0.12, bipolar: true, enabled: true },
-        { source: 'macro1', target: 'filter.cutoff', amount: 0.14, bipolar: false, enabled: true }
+        { source: 'lfo1', target: 'osc1.pitch', amount: 0.12, bipolar: true, curve: 'linear', enabled: true },
+        { source: 'macro1', target: 'filter.cutoff', amount: 0.14, bipolar: false, curve: 'linear', enabled: true }
       ],
       volume: 0.4
     }

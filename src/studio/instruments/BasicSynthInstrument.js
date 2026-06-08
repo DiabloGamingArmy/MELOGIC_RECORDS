@@ -54,12 +54,18 @@ export class BasicSynthInstrument {
     return {
       wavetableId: String(params.wavetableId || 'builtin-saw'),
       wavetablePosition: clamp(params.wavetablePosition ?? 0.35, 0, 1),
+      oscEnabled: params.oscEnabled !== false && params.oscEnabled !== 'false',
+      octave: clamp(Math.round(Number(params.octave ?? 0)), -4, 4),
       coarsePitch: clamp(params.coarsePitch ?? 0, -24, 24),
       finePitch: clamp(params.finePitch ?? 0, -100, 100),
       unisonVoices: clamp(Math.round(Number(params.unisonVoices ?? 1)), 1, 5),
       detune: clamp(params.detune ?? 0.08, 0, 1),
+      unisonBlend: clamp(params.unisonBlend ?? 1, 0, 1),
+      phase: clamp(params.phase ?? 0, 0, 1),
+      phaseRandom: clamp(params.phaseRandom ?? 0.15, 0, 1),
       oscLevel: clamp(params.oscLevel ?? 0.85, 0, 1),
-      filterEnabled: params.filterEnabled !== false && params.filterEnabled !== 'false',
+      oscPan: clamp(params.oscPan ?? 0, -1, 1),
+      filterEnabled: params.filterEnabled === true || params.filterEnabled === 'true',
       filterType: FILTER_TYPES.has(params.filterType) ? params.filterType : 'lowpass',
       filterCutoff: clamp(params.filterCutoff ?? 0.72, 0, 1),
       resonance: clamp(params.resonance ?? 0.18, 0, 1),
@@ -123,6 +129,7 @@ export class BasicSynthInstrument {
   noteOn(note, velocity = 0.8) {
     const midi = Number(note)
     if (!Number.isFinite(midi)) return
+    if (!this.params.oscEnabled) return
     this.noteOff(midi, { immediate: true })
     const now = this.audioContext.currentTime
     const velocityGain = clamp(velocity, 0, 1)
@@ -132,7 +139,7 @@ export class BasicSynthInstrument {
     const lfo = this.createLfo()
     const oscillators = []
     const unison = this.params.unisonVoices
-    const baseFrequency = midiToFrequency(midi + this.params.coarsePitch)
+    const baseFrequency = midiToFrequency(midi + (this.params.octave * 12) + this.params.coarsePitch)
     envelope.gain.setValueAtTime(0.0001, now)
     envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, velocityGain), now + this.params.attack)
     envelope.gain.linearRampToValueAtTime(Math.max(0.0001, this.params.sustain * velocityGain), now + this.params.attack + this.params.decay)
@@ -218,8 +225,8 @@ export class BasicSynthInstrument {
       if (['wavetableId', 'wavetablePosition'].includes(name)) {
         voice.oscillators.forEach((oscillator) => oscillator.setPeriodicWave(this.getPeriodicWave()))
       }
-      if (['coarsePitch', 'finePitch', 'detune'].includes(name)) {
-        const baseFrequency = midiToFrequency((voice.midi ?? 60) + this.params.coarsePitch)
+      if (['octave', 'coarsePitch', 'finePitch', 'detune'].includes(name)) {
+        const baseFrequency = midiToFrequency((voice.midi ?? 60) + (this.params.octave * 12) + this.params.coarsePitch)
         voice.oscillators.forEach((oscillator) => {
           oscillator.frequency.setTargetAtTime(baseFrequency, now, 0.02)
           oscillator.detune.setTargetAtTime(this.params.finePitch + ((oscillator.melogicSpread || 0) * this.params.detune * 28), now, 0.02)
