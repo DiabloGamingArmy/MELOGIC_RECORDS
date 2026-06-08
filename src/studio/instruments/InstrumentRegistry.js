@@ -27,7 +27,7 @@ export class InstrumentRegistry {
       trackId,
       params,
       audioContext,
-      destination: this.getDestination?.() || audioContext.destination
+      destination: this.getDestination?.(trackId, id) || audioContext.destination
     })
     this.instances.set(id, instrument)
     return instrument
