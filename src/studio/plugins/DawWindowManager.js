@@ -464,8 +464,8 @@ export class DawWindowManager {
     const matrix = Array.isArray(windowState.params?.modulationMatrix)
       ? windowState.params.modulationMatrix.map((route) => ({ ...route }))
       : []
-    if (matrix.length >= 4) return
-    matrix.push({ source: 'macro1', target: 'filter.cutoff', amount: 0, bipolar: false, enabled: false })
+    if (matrix.length >= 6) return
+    matrix.push({ source: 'macro1', target: 'osc1.position', amount: 0, bipolar: false, enabled: false })
     windowState.params = { ...(windowState.params || {}), modulationMatrix: matrix }
     this.onParamChange(id, 'modulationMatrix', matrix)
     this.persist()

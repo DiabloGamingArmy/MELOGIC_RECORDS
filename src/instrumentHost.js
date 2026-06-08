@@ -130,10 +130,29 @@ function bind() {
     input.addEventListener('input', update)
     input.addEventListener('change', update)
   })
+  app.querySelectorAll('[data-plugin-add-mod]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const matrix = Array.isArray(instance.params?.modulationMatrix)
+        ? instance.params.modulationMatrix.map((route) => ({ ...route }))
+        : []
+      if (matrix.length >= 6) return
+      matrix.push({ source: 'macro1', target: 'osc1.position', amount: 0, bipolar: false, enabled: false })
+      instance = { ...instance, params: { ...(instance.params || {}), modulationMatrix: matrix } }
+      postToMain({ type: 'plugin-param-change', param: 'modulationMatrix', value: matrix })
+      render()
+    })
+  })
   app.querySelectorAll('[data-plugin-asset-select]').forEach((button) => {
     button.addEventListener('click', () => {
       instance = { ...instance, params: { ...(instance.params || {}), wavetableId: button.dataset.pluginAssetSelect } }
       postToMain({ type: 'plugin-param-change', param: 'wavetableId', value: button.dataset.pluginAssetSelect })
+      render()
+    })
+  })
+  app.querySelectorAll('[data-plugin-page]').forEach((button) => {
+    button.addEventListener('click', () => {
+      instance = { ...instance, params: { ...(instance.params || {}), mwtPage: button.dataset.pluginPage } }
+      postToMain({ type: 'plugin-param-change', param: 'mwtPage', value: button.dataset.pluginPage })
       render()
     })
   })
