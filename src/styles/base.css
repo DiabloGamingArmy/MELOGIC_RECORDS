@@ -1348,6 +1348,103 @@ body.has-cart-drawer-open .nav-shell {
   color: var(--text-muted, rgba(255, 255, 255, 0.7));
 }
 
+.support-contact-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(320px, 1.15fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.support-contact-copy,
+.support-form {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(circle at top left, rgba(32, 216, 255, 0.12), transparent 35%),
+    rgba(255, 255, 255, 0.045);
+  border-radius: 24px;
+  padding: 1.35rem;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.support-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.support-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.support-form label {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.support-form label span {
+  color: var(--text-muted, rgba(255, 255, 255, 0.72));
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.support-form input,
+.support-form textarea {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.22);
+  color: inherit;
+  padding: 0.9rem 1rem;
+  font: inherit;
+  outline: none;
+}
+
+.support-form input:focus,
+.support-form textarea:focus {
+  border-color: rgba(32, 216, 255, 0.65);
+  box-shadow: 0 0 0 4px rgba(32, 216, 255, 0.12);
+}
+
+.support-form textarea {
+  resize: vertical;
+  min-height: 170px;
+}
+
+.support-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.support-form-status {
+  min-height: 1.4rem;
+  margin: 0;
+  color: var(--text-muted, rgba(255, 255, 255, 0.72));
+}
+
+.support-form-status[data-status="success"] {
+  color: #7dffba;
+}
+
+.support-form-status[data-status="error"] {
+  color: #ff9b9b;
+}
+
+.support-form-status[data-status="loading"] {
+  color: var(--accent, #20d8ff);
+}
+
+@media (max-width: 820px) {
+  .support-contact-layout,
+  .support-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 820px) {
   .support-grid,
   .support-status-panel {
