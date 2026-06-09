@@ -48,25 +48,20 @@ app.innerHTML = `
       </div>
     </section>
 
-    <section class="section home-cinematic-section" aria-labelledby="home-cinematic-title">
-      <div class="section-inner home-cinematic-shell">
-        <div class="section-head">
-          <p class="eyebrow">Melogic Studio</p>
-          <h2 id="home-cinematic-title">A cinematic look inside the creative room.</h2>
-          <p class="section-description">Preview the Studio experience where projects, instruments, and ideas start taking shape directly in your browser.</p>
+    <section class="home-scroll-cinematic" data-home-scroll-cinematic aria-label="Melogic Studio cinematic preview">
+      <div class="home-scroll-cinematic-sticky">
+        <video
+          class="home-scroll-cinematic-video"
+          data-home-scroll-cinematic-video
+          muted
+          playsinline
+          preload="metadata"
+        ></video>
+        <div class="home-scroll-cinematic-overlay" aria-hidden="true">
+          <p>Melogic Studio</p>
+          <span>Scroll to explore the session.</span>
         </div>
-        <div class="home-cinematic-video-frame">
-          <video
-            class="home-cinematic-video"
-            data-home-cinematic-video
-            muted
-            loop
-            autoplay
-            playsinline
-            preload="metadata"
-          ></video>
-          <p class="home-cinematic-fallback" data-home-cinematic-fallback hidden>Studio preview is being prepared.</p>
-        </div>
+        <p class="home-scroll-cinematic-fallback" data-home-scroll-cinematic-fallback hidden>Studio preview is being prepared.</p>
       </div>
     </section>
 
@@ -93,36 +88,84 @@ async function initHeroBackgroundVideo() {
   })
 }
 
-async function initHomeCinematicVideo() {
-  const video = document.querySelector('[data-home-cinematic-video]')
-  const fallback = document.querySelector('[data-home-cinematic-fallback]')
-  if (!video) return false
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+async function initHomeScrollCinematicVideo() {
+  const section = document.querySelector('[data-home-scroll-cinematic]')
+  const video = document.querySelector('[data-home-scroll-cinematic-video]')
+  const fallback = document.querySelector('[data-home-scroll-cinematic-fallback]')
+  if (!section || !video) return false
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const scrollPixelsPerSecond = 850
+  const minScrollLength = 3200
+  const maxScrollLength = 10000
+  let duration = 0
+  let sectionTop = 0
+  let scrollDistance = 1
+  let raf = 0
+  let lastTime = -1
+
+  const showFallback = () => {
     video.remove()
     if (fallback) fallback.hidden = false
-    return true
   }
+
+  const measure = () => {
+    sectionTop = section.offsetTop
+    scrollDistance = Math.max(1, section.offsetHeight - window.innerHeight)
+  }
+
+  const updateVideoTime = () => {
+    raf = 0
+    if (!duration || reducedMotion) return
+    const progress = Math.min(1, Math.max(0, (window.scrollY - sectionTop) / scrollDistance))
+    const nextTime = progress * duration
+    if (Math.abs(nextTime - lastTime) < 0.035) return
+    try {
+      video.currentTime = nextTime
+      lastTime = nextTime
+    } catch {
+      // Some mobile browsers temporarily reject seeks while buffering.
+    }
+  }
+
+  const requestScrub = () => {
+    if (raf || reducedMotion) return
+    raf = window.requestAnimationFrame(updateVideoTime)
+  }
+
   const url = await getStorageAssetUrl(HOME_SCROLL_BANNER_VIDEO_PATH, {
     warnOnFail: false,
-    scopeKey: 'home-cinematic-video',
+    scopeKey: 'home-scroll-cinematic-video',
     type: 'video'
   })
   if (!url) {
-    video.remove()
-    if (fallback) fallback.hidden = false
+    showFallback()
     return false
   }
+
   video.src = url
-  video.addEventListener('error', () => {
-    video.remove()
-    if (fallback) fallback.hidden = false
+  video.pause()
+  video.addEventListener('error', showFallback, { once: true })
+  video.addEventListener('loadedmetadata', () => {
+    duration = Number.isFinite(video.duration) ? video.duration : 0
+    if (duration > 0) {
+      const scrollLength = Math.min(maxScrollLength, Math.max(minScrollLength, Math.round(duration * scrollPixelsPerSecond)))
+      section.style.setProperty('--home-scroll-length', `${scrollLength}px`)
+    }
+    video.pause()
+    measure()
+    if (!reducedMotion) requestScrub()
   }, { once: true })
-  const playPromise = video.play()
-  if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {})
+  window.addEventListener('scroll', requestScrub, { passive: true })
+  window.addEventListener('resize', () => {
+    measure()
+    requestScrub()
+  }, { passive: true })
+  measure()
+  video.load()
   return true
 }
 
 const logoReadyPromise = initShellChrome()
 const heroReadyPromise = initHeroBackgroundVideo()
 createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
-initHomeCinematicVideo()
+initHomeScrollCinematicVideo()
