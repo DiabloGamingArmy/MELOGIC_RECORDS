@@ -20,19 +20,33 @@ function serializeDate(value) {
 export function normalizeCommunity(rawOrSnap = {}, explicitId = '') {
   const raw = typeof rawOrSnap.data === 'function' ? rawOrSnap.data() || {} : rawOrSnap || {}
   const id = explicitId || rawOrSnap.id || raw.communityId || raw.slug || ''
+  const title = raw.title || raw.name || raw.slug || 'Community'
+  const imageUrl = raw.imageUrl || raw.imageURL || raw.iconURL || ''
+  const bannerImageUrl = raw.bannerImageUrl || raw.bannerURL || ''
+  const moderatorIds = Array.isArray(raw.moderatorUids) ? raw.moderatorUids : Array.isArray(raw.moderatorIds) ? raw.moderatorIds : []
   return {
     communityId: id,
     id,
     slug: raw.slug || id,
-    name: raw.name || raw.slug || 'Community',
+    title,
+    name: title,
     description: raw.description || '',
+    rules: Array.isArray(raw.rules) ? raw.rules.filter(Boolean).slice(0, 20) : [],
     category: raw.category || 'Creator Help',
-    iconURL: raw.iconURL || '',
-    bannerURL: raw.bannerURL || '',
+    imagePath: raw.imagePath || raw.iconPath || '',
+    imageUrl,
+    imageURL: imageUrl,
+    iconURL: imageUrl,
+    bannerImagePath: raw.bannerImagePath || '',
+    bannerImageUrl,
+    bannerURL: bannerImageUrl,
     createdBy: raw.createdBy || '',
+    updatedBy: raw.updatedBy || '',
     ownerUid: raw.ownerUid || '',
-    moderatorIds: Array.isArray(raw.moderatorIds) ? raw.moderatorIds : [],
+    moderatorIds,
+    moderatorUids: moderatorIds,
     memberCount: Math.max(0, Number(raw.memberCount || 0)),
+    followerCount: Math.max(0, Number(raw.followerCount ?? raw.focusCount ?? 0)),
     focusCount: Math.max(0, Number(raw.focusCount || 0)),
     postCount: Math.max(0, Number(raw.postCount || 0)),
     reportCount: Math.max(0, Number(raw.reportCount || 0)),
@@ -40,7 +54,11 @@ export function normalizeCommunity(rawOrSnap = {}, explicitId = '') {
     visibility: raw.visibility || 'public',
     postingMode: raw.postingMode || 'open',
     status: raw.status || 'active',
+    hidden: raw.hidden === true,
     official: raw.official === true,
+    lastPostAt: serializeDate(raw.lastPostAt),
+    deletedAt: serializeDate(raw.deletedAt),
+    moderatedAt: serializeDate(raw.moderatedAt),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
   }
@@ -827,6 +845,40 @@ export async function uploadCommunityStoryMedia({ uid = '', storyId = '', file =
 
 export async function uploadCommunityStoryImage({ uid = '', storyId = '', file = null } = {}) {
   return uploadCommunityStoryMedia({ uid, storyId, file })
+}
+
+function communityAssetExtension(file = null) {
+  const type = String(file?.type || '').toLowerCase()
+  const name = String(file?.name || '').toLowerCase()
+  if (type.includes('webp') || name.endsWith('.webp')) return 'webp'
+  if (type.includes('png') || name.endsWith('.png')) return 'png'
+  if (type.includes('jpeg') || type.includes('jpg') || name.endsWith('.jpeg') || name.endsWith('.jpg')) return 'jpg'
+  return 'webp'
+}
+
+export function validateCommunityImage(file = null, { maxBytes = 8 * 1024 * 1024 } = {}) {
+  const type = String(file?.type || '').toLowerCase()
+  const size = Number(file?.size || 0)
+  if (!file) return null
+  if (!type.startsWith('image/')) throw new Error('Community images must be image files.')
+  if (size > maxBytes) throw new Error('Community images must be 8 MB or smaller.')
+  return { contentType: type || 'image/webp' }
+}
+
+export async function uploadCommunityImage({ slug = '', kind = 'profile', file = null } = {}) {
+  const cleanSlug = String(slug || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)
+  const cleanKind = kind === 'banner' ? 'banner' : 'profile'
+  if (!storage) throw new Error('Storage is not available.')
+  if (!cleanSlug) throw new Error('Community slug is required before upload.')
+  const { contentType } = validateCommunityImage(file) || {}
+  const storagePath = `assets/site/community/communities/${cleanSlug}/${cleanKind}/original-${Date.now()}.${communityAssetExtension(file)}`
+  const fileRef = ref(storage, storagePath)
+  await new Promise((resolve, reject) => {
+    const task = uploadBytesResumable(fileRef, file, { contentType })
+    task.on('state_changed', null, reject, resolve)
+  })
+  const downloadURL = await getDownloadURL(fileRef).catch(() => '')
+  return { storagePath, downloadURL }
 }
 
 export async function createCommunityPost(payload = {}) {

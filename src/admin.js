@@ -34,6 +34,7 @@ import {
   uploadSellerAgreementMarkdown
 } from './data/productService'
 import {
+  createCommunity,
   hideCommunityPost,
   hideCommunityComment,
   listAdminCommunityModeration,
@@ -42,7 +43,8 @@ import {
   pinCommunityPost,
   restoreCommunityComment,
   restoreCommunityPost,
-  unpinCommunityPost
+  unpinCommunityPost,
+  uploadCommunityImage
 } from './data/communityService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
@@ -286,7 +288,27 @@ const state = {
     products: { items: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 },
     users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loadingMore: false, loaded: false, error: '', filter: 'open', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
-    community: { posts: [], communities: [], reports: [], reportedPosts: [], reportedComments: [], hiddenPosts: [], loading: false, loaded: false, error: '', filter: 'reported', actioning: '' },
+    community: {
+      posts: [],
+      communities: [],
+      reports: [],
+      reportedPosts: [],
+      reportedComments: [],
+      hiddenPosts: [],
+      loading: false,
+      loaded: false,
+      error: '',
+      filter: 'reported',
+      actioning: '',
+      auditOpen: false,
+      auditLoading: false,
+      auditError: '',
+      audit: null,
+      createOpen: false,
+      createSaving: false,
+      createError: '',
+      createMessage: ''
+    },
     orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', cursor: '', hasMore: false, pageSize: 15 },
     team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
     logs: { items: [], detail: null, detailId: '', loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 }
@@ -4204,6 +4226,34 @@ function communityTargetRoute(type = '', id = '', row = {}) {
   return ROUTES.adminCommunity
 }
 
+function adminCommunitySlug(value = '') {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+}
+
+function renderAdminCommunityPeople(items = [], empty = 'None loaded') {
+  return items.length ? `
+    <div class="admin-community-person-list">
+      ${items.map((item) => `
+        <article>
+          ${item.avatarURL ? `<img src="${escapeHtml(item.avatarURL)}" alt="" loading="lazy" />` : '<span></span>'}
+          <div>
+            <strong>${escapeHtml(item.displayName || item.uid || 'User')}</strong>
+            <small>${escapeHtml(item.username ? `@${item.username}` : item.uid || '')}</small>
+          </div>
+        </article>
+      `).join('')}
+    </div>
+  ` : `<p class="admin-muted">${escapeHtml(empty)}</p>`
+}
+
 function communityPostRows(posts = []) {
   return posts.map((post) => [
     htmlCell(`<strong>${escapeHtml(post.title || 'Community post')}</strong><small>${escapeHtml(post.postId || post.id || '')}</small>`),
@@ -4232,9 +4282,12 @@ function communityRows(communities = []) {
     htmlCell((community.pinnedPostIds || []).length ? (community.pinnedPostIds || []).map((id) => `<code class="admin-code-value">${escapeHtml(shortIdentifier(id))}</code>`).join(' ') : '<span class="admin-muted">None</span>'),
     htmlCell(`
       <div class="admin-row-actions">
+        <button type="button" class="admin-row-action-button" data-admin-community-audit="${escapeHtml(community.communityId)}">View / Audit</button>
         <a class="admin-row-action-button" href="${communityTargetRoute('community', community.communityId, community)}" target="_blank" rel="noreferrer">Open</a>
         <button type="button" class="admin-secondary-button" data-admin-community-action="hide-community" data-admin-community-id="${escapeHtml(community.communityId)}">Hide</button>
         <button type="button" class="admin-secondary-button" data-admin-community-action="restore-community" data-admin-community-id="${escapeHtml(community.communityId)}">Restore</button>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="archive-community" data-admin-community-id="${escapeHtml(community.communityId)}">Archive</button>
+        <button type="button" class="admin-secondary-button" data-admin-community-action="delete-community" data-admin-community-id="${escapeHtml(community.communityId)}">Delete</button>
       </div>
     `)
   ])
@@ -4251,6 +4304,171 @@ function communityReportRows(reports = []) {
   ])
 }
 
+function renderAdminCommunityCreatePanel(data) {
+  if (!data.createOpen) return ''
+  return `
+    <section class="admin-section-slab admin-community-create-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Create Community</h2>
+          <p class="admin-muted">Official communities are admin-managed and appear publicly only when active and public.</p>
+        </div>
+        <button type="button" class="admin-secondary-button" data-admin-community-create-close>Close</button>
+      </div>
+      ${data.createMessage ? `<p class="admin-success">${escapeHtml(data.createMessage)}</p>` : ''}
+      ${data.createError ? `<p class="admin-error">${escapeHtml(data.createError)}</p>` : ''}
+      <form class="admin-community-create-form" data-admin-community-create-form>
+        <label>
+          <span>Title</span>
+          <input name="title" maxlength="80" placeholder="StageMaker Designers" required />
+        </label>
+        <label>
+          <span>Slug</span>
+          <input name="slug" maxlength="48" placeholder="stagemaker-designers" />
+        </label>
+        <label>
+          <span>Description</span>
+          <textarea name="description" rows="4" maxlength="700" placeholder="What should creators use this community for?" required></textarea>
+        </label>
+        <label>
+          <span>Rules</span>
+          <textarea name="rules" rows="4" maxlength="1600" placeholder="One rule per line"></textarea>
+        </label>
+        <div class="admin-form-grid two">
+          <label>
+            <span>Category</span>
+            <select name="category">
+              ${['Genre', 'Production', 'Stage', 'Marketplace', 'Feedback', 'Creator Help'].map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('')}
+            </select>
+          </label>
+          <label>
+            <span>Posting mode</span>
+            <select name="postingMode">
+              ${[
+                ['open', 'Open'],
+                ['focused_only', 'Focused only'],
+                ['members_only', 'Members only'],
+                ['moderators_only', 'Moderators only']
+              ].map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join('')}
+            </select>
+          </label>
+          <label>
+            <span>Visibility</span>
+            <select name="visibility">
+              <option value="public">Public</option>
+              <option value="private">Private</option>
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select name="status">
+              <option value="active">Active</option>
+              <option value="hidden">Hidden</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+        </div>
+        <label>
+          <span>Moderator UIDs</span>
+          <textarea name="moderatorUids" rows="3" maxlength="1800" placeholder="One UID per line. Your admin UID is added automatically."></textarea>
+        </label>
+        <div class="admin-form-grid two">
+          <label>
+            <span>Profile image</span>
+            <input type="file" name="profileImage" accept="image/*" />
+          </label>
+          <label>
+            <span>Banner image</span>
+            <input type="file" name="bannerImage" accept="image/*" />
+          </label>
+        </div>
+        <div class="admin-dialog-actions">
+          <button type="submit" class="admin-primary-button" ${data.createSaving ? 'disabled' : ''}>${data.createSaving ? 'Creating...' : 'Create Community'}</button>
+        </div>
+      </form>
+    </section>
+  `
+}
+
+function renderAdminCommunityAuditPanel(data) {
+  if (!data.auditOpen) return ''
+  const audit = data.audit || {}
+  const community = audit.community || {}
+  return `
+    <div class="admin-modal-backdrop">
+      <section class="admin-dialog admin-community-audit-panel" role="dialog" aria-modal="true" aria-labelledby="community-audit-title">
+        <header>
+          <div>
+            <p class="admin-eyebrow">View / Audit</p>
+            <h2 id="community-audit-title">${escapeHtml(community.name || 'Community')}</h2>
+            <p class="admin-muted">c/${escapeHtml(community.slug || community.communityId || '')}</p>
+          </div>
+          <button type="button" class="admin-secondary-button" data-admin-community-audit-close>Close</button>
+        </header>
+        ${data.auditLoading ? '<p class="admin-muted">Loading audit data...</p>' : data.auditError ? `<p class="admin-error">${escapeHtml(data.auditError)}</p>` : `
+          <div class="admin-community-audit-actions">
+            <a class="admin-row-action-button" href="${communityTargetRoute('community', community.communityId, community)}" target="_blank" rel="noreferrer">Go to community public page</a>
+            <button type="button" class="admin-secondary-button" data-admin-community-action="hide-community" data-admin-community-id="${escapeHtml(community.communityId)}">Hide community</button>
+            <button type="button" class="admin-secondary-button" data-admin-community-action="restore-community" data-admin-community-id="${escapeHtml(community.communityId)}">Restore community</button>
+            <button type="button" class="admin-secondary-button" data-admin-community-rename="${escapeHtml(community.communityId)}">Rename community</button>
+            <button type="button" class="admin-secondary-button" data-admin-community-action="archive-community" data-admin-community-id="${escapeHtml(community.communityId)}">Archive community</button>
+            <button type="button" class="admin-secondary-button danger" data-admin-community-action="delete-community" data-admin-community-id="${escapeHtml(community.communityId)}">Delete community</button>
+          </div>
+          <div class="admin-community-audit-grid">
+            <article>
+              <h3>Metadata</h3>
+              <dl>
+                ${renderField('Status', community.status || 'active')}
+                ${renderField('Visibility', community.visibility || 'public')}
+                ${renderField('Description', community.description || '')}
+                ${renderField('Community ID', community.communityId || '', { code: true })}
+                ${renderField('Image path', community.imagePath || '', { code: true })}
+                ${renderField('Banner path', community.bannerImagePath || '', { code: true })}
+                ${renderField('Created by', community.createdBy || community.ownerUid || '', { code: true })}
+                ${renderField('Updated by', community.updatedBy || '', { code: true })}
+                ${renderField('Updated', formatDate(community.updatedAt))}
+              </dl>
+            </article>
+            <article>
+              <h3>Stats</h3>
+              <dl>
+                ${renderField('Followers', formatCount(community.followerCount || community.focusCount))}
+                ${renderField('Posts', formatCount(community.postCount))}
+                ${renderField('Reports', formatCount(community.reportCount))}
+                ${renderField('Last post', formatDate(community.lastPostAt))}
+              </dl>
+            </article>
+            <article>
+              <h3>Rules</h3>
+              ${renderBadgeList((community.rules || []).map((rule) => rule), 'No rules stored')}
+            </article>
+            <article>
+              <h3>Moderating users</h3>
+              ${renderAdminCommunityPeople(audit.moderators || [], 'No moderators loaded')}
+            </article>
+            <article>
+              <h3>Following users</h3>
+              ${renderAdminCommunityPeople(audit.followers || [], 'No focused users loaded')}
+            </article>
+            <article>
+              <h3>Users who posted</h3>
+              ${renderAdminCommunityPeople(audit.posters || [], 'No recent posters loaded')}
+            </article>
+          </div>
+          <section class="admin-section-slab">
+            <div class="admin-slab-heading"><h3>Recent posts</h3><span class="admin-muted">${formatCount(audit.recentPosts?.length || 0)} loaded</span></div>
+            ${adminSimpleTable('Recent posts', ['Post', 'Author', 'Status', 'Engagement', 'Reports', 'Actions'], communityPostRows(audit.recentPosts || []), { className: 'is-community', emptyTitle: 'No recent posts loaded.' })}
+          </section>
+          <section class="admin-section-slab">
+            <div class="admin-slab-heading"><h3>Reports</h3><span class="admin-muted">${formatCount(audit.reports?.length || 0)} loaded</span></div>
+            ${adminSimpleTable('Community reports', ['Type', 'Target', 'Reason', 'Status', 'Created', 'Actions'], communityReportRows(audit.reports || []), { className: 'is-reports', emptyTitle: 'No community reports loaded.' })}
+          </section>
+        `}
+      </section>
+    </div>
+  `
+}
+
 function communityAdminView() {
   const data = adminData('community')
   const filter = data.filter || 'reported'
@@ -4258,6 +4476,10 @@ function communityAdminView() {
   const loading = adminBusyState(data)
   return `
     ${adminPageHeader({ eyebrow: 'Community', title: 'Community Moderation', refreshLabel: 'Refresh community moderation' })}
+    <section class="admin-review-tools">
+      <button type="button" class="admin-primary-button" data-admin-community-create-open>Create Community</button>
+    </section>
+    ${renderAdminCommunityCreatePanel(data)}
     <section class="admin-review-tools">${adminFilterControls('community', [
       { key: 'reported', label: 'Reported Posts' },
       { key: 'hidden', label: 'Hidden Posts' },
@@ -4290,6 +4512,7 @@ function communityAdminView() {
         `)
       ]), { className: 'is-community-comments', emptyTitle: 'No reported comments loaded.' })}
     </section>
+    ${renderAdminCommunityAuditPanel(data)}
   `
 }
 
@@ -4435,13 +4658,15 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       }
     },
     community: async () => {
-      const result = await listAdminCommunityModeration({ limitCount: 60 })
+      const currentAuditId = state.adminData.community.auditOpen ? state.adminData.community.audit?.community?.communityId || '' : ''
+      const result = await listAdminCommunityModeration({ limitCount: 60, communityId: currentAuditId })
       state.adminData.community.posts = result.posts || []
       state.adminData.community.communities = result.communities || []
       state.adminData.community.reports = result.reports || []
       state.adminData.community.reportedPosts = result.reportedPosts || []
       state.adminData.community.reportedComments = result.reportedComments || []
       state.adminData.community.hiddenPosts = result.hiddenPosts || []
+      if (result.audit) state.adminData.community.audit = result.audit
     },
     orders: async () => {
       const orderId = adminOrderDetailId()
@@ -5094,6 +5319,10 @@ async function handleCommunityModerationAction(button) {
   const commentId = button.getAttribute('data-admin-community-comment') || ''
   const communityId = button.getAttribute('data-admin-community-id') || ''
   if (!action) return
+  if (action === 'delete-community') {
+    const confirmed = window.confirm('Soft-delete this community? It will be hidden from public Community and marked deleted, but the document will remain for audit history.')
+    if (!confirmed) return
+  }
   const needsReason = !['pin-post', 'unpin-post', 'lock-post', 'unlock-post'].includes(action)
   const reason = needsReason ? window.prompt('Reason for this community moderation action') || '' : 'Community moderation update.'
   if (needsReason && !reason.trim()) {
@@ -5116,6 +5345,8 @@ async function handleCommunityModerationAction(button) {
     else if (action === 'restore-comment') await restoreCommunityComment({ postId, commentId, reason })
     else if (action === 'hide-community') await moderateCommunity({ communityId, action: 'hide', reason })
     else if (action === 'restore-community') await moderateCommunity({ communityId, action: 'restore', reason })
+    else if (action === 'archive-community') await moderateCommunity({ communityId, action: 'archive', reason })
+    else if (action === 'delete-community') await moderateCommunity({ communityId, action: 'delete', reason })
     state.message = 'Community moderation action saved.'
     await loadAdminSectionData('community', { silent: true })
   } catch (error) {
@@ -5123,6 +5354,122 @@ async function handleCommunityModerationAction(button) {
     state.error = error?.message || 'Could not save community moderation action.'
   } finally {
     state.adminData.community.actioning = ''
+    render()
+  }
+}
+
+async function openCommunityAudit(communityId = '') {
+  const cleanId = String(communityId || '').trim()
+  if (!cleanId) return
+  const data = state.adminData.community
+  data.auditOpen = true
+  data.auditLoading = true
+  data.auditError = ''
+  data.audit = { community: data.communities.find((community) => community.communityId === cleanId) || { communityId: cleanId } }
+  render()
+  try {
+    const result = await listAdminCommunityModeration({ limitCount: 60, communityId: cleanId })
+    data.posts = result.posts || data.posts
+    data.communities = result.communities || data.communities
+    data.reports = result.reports || data.reports
+    data.reportedPosts = result.reportedPosts || data.reportedPosts
+    data.reportedComments = result.reportedComments || data.reportedComments
+    data.hiddenPosts = result.hiddenPosts || data.hiddenPosts
+    data.audit = result.audit || data.audit
+  } catch (error) {
+    console.warn('[admin] community audit load failed', { code: error?.code, message: error?.message, details: error?.details })
+    data.auditError = error?.message || 'Community audit data could not be loaded.'
+  } finally {
+    data.auditLoading = false
+    render()
+  }
+}
+
+function closeCommunityAudit() {
+  const data = state.adminData.community
+  data.auditOpen = false
+  data.auditLoading = false
+  data.auditError = ''
+  data.audit = null
+  render()
+}
+
+async function renameCommunityFromPrompt(communityId = '') {
+  const data = state.adminData.community
+  const current = data.audit?.community || data.communities.find((community) => community.communityId === communityId) || {}
+  const name = window.prompt('New community title', current.name || current.title || '')
+  if (!name || !name.trim()) return
+  const description = window.prompt('Description', current.description || '') || current.description || ''
+  const reason = window.prompt('Reason for renaming this community') || ''
+  if (!reason.trim()) {
+    state.error = 'A reason is required for this community moderation action.'
+    render()
+    return
+  }
+  state.adminData.community.actioning = 'rename-community'
+  render()
+  try {
+    await moderateCommunity({ communityId, action: 'rename', name: name.trim(), description: description.trim(), reason })
+    await loadAdminSectionData('community', { silent: true })
+    state.message = 'Community renamed.'
+  } catch (error) {
+    console.warn('[admin] community rename failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = error?.message || 'Could not rename community.'
+  } finally {
+    state.adminData.community.actioning = ''
+    render()
+  }
+}
+
+async function submitAdminCommunityCreate(form) {
+  const data = state.adminData.community
+  const formData = new FormData(form)
+  const title = String(formData.get('title') || '').trim()
+  const slug = adminCommunitySlug(formData.get('slug') || title)
+  const description = String(formData.get('description') || '').trim()
+  const rules = String(formData.get('rules') || '').split(/\r?\n/).map((row) => row.trim()).filter(Boolean)
+  const moderatorUids = String(formData.get('moderatorUids') || '').split(/\r?\n/).map((row) => row.trim()).filter(Boolean)
+  const profileImage = formData.get('profileImage') instanceof File ? formData.get('profileImage') : null
+  const bannerImage = formData.get('bannerImage') instanceof File ? formData.get('bannerImage') : null
+  if (!title || !slug || !description) {
+    data.createError = 'Title, slug, and description are required.'
+    render()
+    return
+  }
+  data.createSaving = true
+  data.createError = ''
+  data.createMessage = ''
+  render()
+  try {
+    let profileUpload = null
+    let bannerUpload = null
+    if (profileImage?.size) profileUpload = await uploadCommunityImage({ slug, kind: 'profile', file: profileImage })
+    if (bannerImage?.size) bannerUpload = await uploadCommunityImage({ slug, kind: 'banner', file: bannerImage })
+    await createCommunity({
+      title,
+      name: title,
+      slug,
+      description,
+      rules,
+      category: String(formData.get('category') || 'Creator Help'),
+      postingMode: String(formData.get('postingMode') || 'open'),
+      visibility: String(formData.get('visibility') || 'public'),
+      status: String(formData.get('status') || 'active'),
+      moderatorUids,
+      imagePath: profileUpload?.storagePath || '',
+      imageUrl: profileUpload?.downloadURL || '',
+      bannerImagePath: bannerUpload?.storagePath || '',
+      bannerImageUrl: bannerUpload?.downloadURL || ''
+    })
+    data.createSaving = false
+    data.createMessage = 'Community created.'
+    data.createOpen = false
+    data.filter = 'communities'
+    await loadAdminSectionData('community', { silent: true })
+  } catch (error) {
+    console.warn('[admin] community create failed', { code: error?.code, message: error?.message, details: error?.details })
+    data.createSaving = false
+    data.createError = error?.message || 'Could not create community.'
     render()
   }
 }
@@ -5828,6 +6175,38 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-admin-community-action]').forEach((button) => {
     button.addEventListener('click', () => handleCommunityModerationAction(button))
+  })
+  app.querySelectorAll('[data-admin-community-audit]').forEach((button) => {
+    button.addEventListener('click', () => openCommunityAudit(button.getAttribute('data-admin-community-audit') || ''))
+  })
+  app.querySelector('[data-admin-community-audit-close]')?.addEventListener('click', closeCommunityAudit)
+  app.querySelectorAll('[data-admin-community-rename]').forEach((button) => {
+    button.addEventListener('click', () => renameCommunityFromPrompt(button.getAttribute('data-admin-community-rename') || ''))
+  })
+  app.querySelector('[data-admin-community-create-open]')?.addEventListener('click', () => {
+    state.adminData.community.createOpen = true
+    state.adminData.community.createError = ''
+    state.adminData.community.createMessage = ''
+    render()
+  })
+  app.querySelector('[data-admin-community-create-close]')?.addEventListener('click', () => {
+    state.adminData.community.createOpen = false
+    state.adminData.community.createSaving = false
+    state.adminData.community.createError = ''
+    render()
+  })
+  app.querySelector('[data-admin-community-create-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitAdminCommunityCreate(event.currentTarget)
+  })
+  app.querySelector('[data-admin-community-create-form] input[name="title"]')?.addEventListener('input', (event) => {
+    const form = event.currentTarget.closest('form')
+    const slugInput = form?.querySelector('input[name="slug"]')
+    if (!slugInput || slugInput.dataset.userEdited === 'true') return
+    slugInput.value = adminCommunitySlug(event.currentTarget.value)
+  })
+  app.querySelector('[data-admin-community-create-form] input[name="slug"]')?.addEventListener('input', (event) => {
+    event.currentTarget.dataset.userEdited = 'true'
   })
   app.querySelectorAll('[data-edit-settings]').forEach((button) => {
     button.addEventListener('click', () => openSettingsDialog(button.getAttribute('data-edit-settings') || ''))

@@ -15,6 +15,14 @@ service firebase.storage {
         );
     }
 
+    function isCommunityAssetWriter() {
+      return signedIn()
+        && (
+          request.auth.token.admin == true
+          || request.auth.token.userModerate == true
+        );
+    }
+
     function isThreadParticipant(threadId) {
       return signedIn()
         && request.auth.uid in firestore.get(/databases/(default)/documents/threads/$(threadId)).data.participantIds;
@@ -122,6 +130,14 @@ service firebase.storage {
           || request.resource.contentType.matches('application/gltf-binary')
           || request.resource.contentType.matches('model/gltf-binary')
         );
+    }
+
+    match /assets/site/community/communities/{communitySlug}/{assetKind}/{fileName} {
+      allow read: if true;
+      allow write: if isCommunityAssetWriter()
+        && (assetKind == 'profile' || assetKind == 'banner')
+        && isImageUpload(8 * 1024 * 1024);
+      allow delete: if isCommunityAssetWriter();
     }
 
     // Public brand/site assets (logos, hero videos, etc.) used across unauthenticated pages.

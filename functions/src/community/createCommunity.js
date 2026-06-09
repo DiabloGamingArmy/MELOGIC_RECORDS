@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
-const { cleanString } = require('../admin/adminAuth')
-const { COMMUNITY_CATEGORIES, POSTING_MODES, cleanSlug, communityIdForSlug, seedOfficialCommunities } = require('./communityShared')
+const { cleanString, requireAdminActionSecurity } = require('../admin/adminAuth')
+const { COMMUNITY_CATEGORIES, POSTING_MODES, cleanSlug, communityIdForSlug } = require('./communityShared')
 
 function db() {
   return admin.firestore()
@@ -13,30 +13,51 @@ function requireAuth(request) {
   return uid
 }
 
-function canCreateCommunity(request = {}) {
-  const token = request.auth?.token || {}
-  return Boolean(
-    token.admin === true
-    || token.role === 'beta'
-    || token.role === 'verified'
-    || token.role === 'pro'
-    || token.verified === true
-    || token.beta === true
-    || token.pro === true
-  )
+function cleanStringArray(value = [], maxItems = 20, maxLength = 220) {
+  const rows = Array.isArray(value)
+    ? value
+    : String(value || '').split(/\r?\n/)
+  return rows
+    .map((item) => cleanString(item || '', maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems)
+}
+
+function cleanStatus(value = '') {
+  const status = cleanString(value || 'active', 40)
+  return ['active', 'hidden', 'archived', 'deleted'].includes(status) ? status : 'active'
+}
+
+function cleanVisibility(value = '') {
+  return cleanString(value || 'public', 40) === 'private' ? 'private' : 'public'
+}
+
+function cleanAssetPath(value = '', slug = '') {
+  const path = cleanString(value || '', 500)
+  if (!path) return ''
+  const prefix = `assets/site/community/communities/${slug}/`
+  return path.startsWith(prefix) && !path.includes('..') ? path : ''
 }
 
 const createCommunity = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const uid = requireAuth(request)
-  if (!canCreateCommunity(request)) {
-    throw new HttpsError('permission-denied', 'Community creation is limited during the first launch.')
-  }
+  await requireAdminActionSecurity(request, ['userModerate'])
 
-  const name = cleanString(request.data?.name || '', 80)
+  const name = cleanString(request.data?.name || request.data?.title || '', 80)
   const slug = cleanSlug(request.data?.slug || name)
   const description = cleanString(request.data?.description || '', 500)
   const category = cleanString(request.data?.category || 'Creator Help', 80)
   const postingMode = cleanString(request.data?.postingMode || 'open', 40)
+  const status = cleanStatus(request.data?.status || 'active')
+  const visibility = cleanVisibility(request.data?.visibility || 'public')
+  const rules = cleanStringArray(request.data?.rules || [], 20, 240)
+  const moderatorIds = cleanStringArray(request.data?.moderatorUids || request.data?.moderatorIds || [], 50, 180)
+    .filter((id) => !id.includes('/'))
+  const uniqueModerators = [...new Set([uid, ...moderatorIds])]
+  const imagePath = cleanAssetPath(request.data?.imagePath || request.data?.iconPath || '', slug)
+  const bannerImagePath = cleanAssetPath(request.data?.bannerImagePath || request.data?.bannerPath || '', slug)
+  const imageUrl = imagePath ? cleanString(request.data?.imageUrl || request.data?.iconURL || '', 1200) : ''
+  const bannerImageUrl = bannerImagePath ? cleanString(request.data?.bannerImageUrl || request.data?.bannerURL || '', 1200) : ''
 
   if (!name) throw new HttpsError('invalid-argument', 'Community name is required.')
   if (!slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
@@ -45,8 +66,6 @@ const createCommunity = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (
   if (!description) throw new HttpsError('invalid-argument', 'Community description is required.')
   if (!COMMUNITY_CATEGORIES.includes(category)) throw new HttpsError('invalid-argument', 'Choose a valid community category.')
   if (!POSTING_MODES.has(postingMode)) throw new HttpsError('invalid-argument', 'Choose a valid posting mode.')
-
-  await seedOfficialCommunities()
 
   const communityId = communityIdForSlug(slug)
   const communityRef = db().collection('communities').doc(communityId)
@@ -57,21 +76,35 @@ const createCommunity = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (
   const payload = {
     communityId,
     slug,
+    title: name,
     name,
     description,
+    rules,
     category,
-    iconURL: '',
-    bannerURL: '',
+    imagePath,
+    imageUrl,
+    imageURL: imageUrl,
+    iconPath: imagePath,
+    iconURL: imageUrl,
+    bannerImagePath,
+    bannerImageUrl,
+    bannerURL: bannerImageUrl,
     createdBy: uid,
+    updatedBy: uid,
     ownerUid: uid,
-    moderatorIds: [uid],
+    moderatorIds: uniqueModerators,
+    moderatorUids: uniqueModerators,
     memberCount: 0,
+    followerCount: 0,
     focusCount: 0,
     postCount: 0,
-    visibility: 'public',
+    lastPostAt: null,
+    visibility,
     postingMode,
-    status: 'active',
-    official: false,
+    status,
+    hidden: status === 'hidden',
+    deletedAt: status === 'deleted' ? now : null,
+    official: true,
     createdAt: now,
     updatedAt: now
   }
