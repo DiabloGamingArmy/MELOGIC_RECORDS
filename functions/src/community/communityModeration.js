@@ -25,6 +25,41 @@ function cleanReason(value = '') {
   return cleanString(value || 'Community moderation action', 1200)
 }
 
+function cleanStringArray(value = [], maxItems = 80, maxLength = 220) {
+  const rows = Array.isArray(value)
+    ? value
+    : String(value || '').split(/\r?\n/)
+  return rows
+    .map((item) => cleanString(item || '', maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems)
+}
+
+function cleanCommunitySlug(value = '') {
+  return cleanString(value, 80)
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+}
+
+function cleanCommunityStatus(value = '') {
+  const status = cleanString(value || 'active', 40)
+  return ['active', 'hidden', 'archived', 'deleted'].includes(status) ? status : 'active'
+}
+
+function cleanCommunityVisibility(value = '') {
+  return cleanString(value || 'public', 40) === 'private' ? 'private' : 'public'
+}
+
+function cleanCommunityAssetPath(value = '') {
+  const path = cleanString(value || '', 500)
+  if (!path) return ''
+  const root = 'assets/site/community/communities/'
+  return path.startsWith(root) && !path.includes('..') && path.split('/').length >= 6 ? path : ''
+}
+
 function isPlatformModerator(request = {}) {
   const token = request.auth?.token || {}
   return token.admin === true || token.userModerate === true
@@ -341,7 +376,7 @@ const moderateCommunity = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async
   const communityId = safeId(request.data?.communityId || '', 'community id')
   const action = cleanString(request.data?.action || '', 80)
   const reason = cleanReason(request.data?.reason || '')
-  const allowed = new Set(['hide', 'restore', 'suspend', 'archive', 'delete', 'rename'])
+  const allowed = new Set(['hide', 'restore', 'suspend', 'archive', 'delete', 'rename', 'update'])
   if (!allowed.has(action)) throw new HttpsError('invalid-argument', 'A valid community moderation action is required.')
   const ref = db().collection('communities').doc(communityId)
   const snap = await ref.get()
@@ -359,6 +394,43 @@ const moderateCommunity = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async
   let update = {}
   if (action === 'restore') {
     update = { ...baseUpdate, status: 'active', visibility: 'public', hidden: false, deletedAt: null }
+  } else if (action === 'update') {
+    const name = cleanString(request.data?.name || request.data?.title || before.name || before.title || '', 120)
+    const slug = cleanCommunitySlug(request.data?.slug || before.slug || communityId)
+    const description = cleanString(request.data?.description || '', 700)
+    if (!name) throw new HttpsError('invalid-argument', 'Community title is required.')
+    if (!slug) throw new HttpsError('invalid-argument', 'Community slug is required.')
+    const status = cleanCommunityStatus(request.data?.status || before.status || 'active')
+    const visibility = cleanCommunityVisibility(request.data?.visibility || before.visibility || 'public')
+    const imagePath = cleanCommunityAssetPath(request.data?.imagePath || before.imagePath || before.iconPath || '')
+    const bannerImagePath = cleanCommunityAssetPath(request.data?.bannerImagePath || before.bannerImagePath || '')
+    const imageUrl = imagePath ? cleanString(request.data?.imageUrl || request.data?.imageURL || before.imageUrl || before.iconURL || '', 1200) : ''
+    const bannerImageUrl = bannerImagePath ? cleanString(request.data?.bannerImageUrl || before.bannerImageUrl || before.bannerURL || '', 1200) : ''
+    const moderatorUids = [...new Set(cleanStringArray(request.data?.moderatorUids || request.data?.moderatorIds || before.moderatorUids || before.moderatorIds || [], 80, 180).filter((id) => !id.includes('/')))]
+    const pinnedPostIds = [...new Set(cleanStringArray(request.data?.pinnedPostIds || before.pinnedPostIds || [], 10, 180).filter((id) => !id.includes('/')))]
+    update = {
+      ...baseUpdate,
+      title: name,
+      name,
+      slug,
+      description,
+      rules: cleanStringArray(request.data?.rules || [], 20, 240),
+      visibility,
+      status,
+      hidden: ['hidden', 'archived', 'deleted'].includes(status) || visibility === 'private',
+      deletedAt: status === 'deleted' ? (before.deletedAt || now) : null,
+      moderatorUids,
+      moderatorIds: moderatorUids,
+      pinnedPostIds,
+      imagePath,
+      imageUrl,
+      imageURL: imageUrl,
+      iconPath: imagePath,
+      iconURL: imageUrl,
+      bannerImagePath,
+      bannerImageUrl,
+      bannerURL: bannerImageUrl
+    }
   } else if (action === 'rename') {
     const name = cleanString(request.data?.name || request.data?.title || '', 120)
     const description = cleanString(request.data?.description || before.description || '', 700)

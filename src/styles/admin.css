@@ -970,18 +970,25 @@
   resize: vertical;
 }
 
-.admin-dialog {
-  width: min(1120px, 100%);
-  max-height: min(88vh, 900px);
-  overflow: auto;
-  border: 1px solid rgba(199, 210, 223, 0.82);
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: 0 24px 70px rgba(16, 24, 34, 0.28);
-  padding: 1rem;
+.admin-community-audit-page {
+  display: grid;
+  gap: 1rem;
 }
 
-.admin-dialog > header,
+.admin-community-audit-header {
+  align-items: start;
+  padding: 1rem;
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  background:
+    radial-gradient(circle at top right, color-mix(in srgb, var(--admin-primary) 18%, transparent), transparent 36%),
+    var(--admin-card);
+}
+
+.admin-community-audit-header h1 {
+  margin: 0.2rem 0;
+}
+
 .admin-community-audit-actions {
   display: flex;
   align-items: flex-start;
@@ -992,22 +999,26 @@
 
 .admin-community-audit-actions {
   justify-content: flex-start;
-  margin: 1rem 0;
 }
 
 .admin-community-audit-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
-  margin: 1rem 0;
 }
 
-.admin-community-audit-grid article,
+.admin-community-audit-card,
 .admin-community-create-panel {
-  border: 1px solid rgba(199, 210, 223, 0.82);
-  border-radius: 8px;
-  background: rgba(247, 250, 253, 0.78);
-  padding: 0.9rem;
+  border-color: var(--admin-border);
+  background: var(--admin-card);
+  color: var(--admin-text);
+}
+
+.admin-community-audit-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin: 0;
 }
 
 .admin-community-audit-grid h3 {
@@ -1034,7 +1045,8 @@
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  background: #dbe5f0;
+  background: var(--admin-card-subtle);
+  border: 1px solid var(--admin-border);
   object-fit: cover;
   flex: 0 0 32px;
 }
@@ -1044,35 +1056,38 @@
   display: block;
 }
 
-.admin-community-create-form {
+.admin-community-create-form,
+.admin-community-edit-form {
   display: grid;
   gap: 0.85rem;
 }
 
-.admin-community-create-form label {
+.admin-community-create-form label,
+.admin-community-edit-form label {
   display: grid;
   gap: 0.35rem;
+  color: var(--admin-muted);
+  font-size: 0.82rem;
+  font-weight: 800;
 }
 
 .admin-community-create-form input,
 .admin-community-create-form textarea,
-.admin-community-create-form select {
+.admin-community-create-form select,
+.admin-community-edit-form input,
+.admin-community-edit-form textarea,
+.admin-community-edit-form select {
   width: 100%;
-  border: 1px solid #c9d2dc;
+  border: 1px solid var(--admin-border-strong);
   border-radius: 7px;
-  background: #ffffff;
-  color: #17202a;
+  background: var(--admin-input);
+  color: var(--admin-text);
   padding: 0.65rem;
   font: inherit;
 }
 
 .admin-form-grid.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.admin-secondary-button.danger {
-  color: #8f1f1f;
-  border-color: rgba(172, 54, 54, 0.4);
 }
 
 .admin-success,
@@ -2732,7 +2747,10 @@
   .admin-field-grid,
   .admin-listing-taxonomy,
   .admin-file-facts,
-  .admin-path-row {
+  .admin-path-row,
+  .admin-community-audit-grid,
+  .admin-community-audit-card dl,
+  .admin-form-grid.two {
     grid-template-columns: 1fr;
   }
 
