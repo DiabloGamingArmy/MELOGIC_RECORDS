@@ -59,9 +59,8 @@ app.innerHTML = `
           playsinline
           preload="metadata"
         ></video>
-        <div class="home-scroll-cinematic-overlay" aria-hidden="true">
-          <p>Melogic Studio</p>
-          <span>Scroll to explore the session.</span>
+        <div class="home-scroll-hint" data-home-scroll-hint aria-hidden="true">
+          <span>Scroll to see more</span>
         </div>
         <p class="home-scroll-cinematic-fallback" data-home-scroll-cinematic-fallback hidden>Studio preview is being prepared.</p>
       </div>
@@ -69,6 +68,7 @@ app.innerHTML = `
 
     <section class="section home-studio-cta">
       <div class="section-inner closing-inner">
+        <p class="home-studio-cta-eyebrow">Melogic Studio</p>
         <h2>Ready to dive in?</h2>
         <p>Step into Melogic Studio and start building directly in your browser.</p>
         <div class="hero-actions">
@@ -94,6 +94,7 @@ async function initHomeScrollCinematicVideo() {
   const section = document.querySelector('[data-home-scroll-cinematic]')
   const video = document.querySelector('[data-home-scroll-cinematic-video]')
   const fallback = document.querySelector('[data-home-scroll-cinematic-fallback]')
+  const hint = document.querySelector('[data-home-scroll-hint]')
   if (!section || !video) return false
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const scrollPixelsPerSecond = 850
@@ -117,8 +118,14 @@ async function initHomeScrollCinematicVideo() {
 
   const updateVideoTime = () => {
     raf = 0
-    if (!duration || reducedMotion) return
     const progress = Math.min(1, Math.max(0, (window.scrollY - sectionTop) / scrollDistance))
+    if (hint) {
+      const hintOpacity = Math.max(0, 1 - progress / 0.04)
+      hint.style.opacity = hintOpacity.toFixed(3)
+      hint.style.transform = `translate(-50%, calc(-50% + ${progress * -24}px))`
+      hint.style.pointerEvents = hintOpacity > 0.05 ? 'auto' : 'none'
+    }
+    if (!duration || reducedMotion) return
     const nextTime = progress * duration
     if (Math.abs(nextTime - lastTime) < 0.035) return
     try {
