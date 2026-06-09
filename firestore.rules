@@ -1722,6 +1722,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /supportCalls/{callId} {
+      allow read: if hasEmailSendClaim() || hasAuditReadClaim() || hasOrderSupportClaim();
+      allow create, update: if hasEmailSendClaim() || hasOrderSupportClaim();
+      allow delete: if false;
+    }
+
     match /emailLogs/{emailId} {
       allow read: if hasAuditReadClaim() || hasEmailSendClaim();
       allow write: if false;
@@ -2029,6 +2035,39 @@ service cloud.firestore {
         allow read: if hasProductReviewClaim();
         allow write: if false;
       }
+    }
+
+        match /supportForms/{formId} {
+      allow create: if request.resource.data.keys().hasOnly([
+          'name',
+          'email',
+          'username',
+          'subject',
+          'message',
+          'status',
+          'source',
+          'adminNote',
+          'assignedTo',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 120
+        && request.resource.data.email is string
+        && request.resource.data.email.size() > 3
+        && request.resource.data.email.size() <= 254
+        && request.resource.data.subject is string
+        && request.resource.data.subject.size() > 0
+        && request.resource.data.subject.size() <= 180
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 10
+        && request.resource.data.message.size() <= 5000
+        && request.resource.data.status == 'new'
+        && request.resource.data.source == 'support_page';
+
+      allow read, update: if hasEmailSendClaim() || hasOrderSupportClaim() || hasAuditReadClaim();
+      allow delete: if false;
     }
 
     match /orders/{orderId} {

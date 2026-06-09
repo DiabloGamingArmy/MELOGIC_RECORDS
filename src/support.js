@@ -5,6 +5,7 @@ import { initShellChrome } from './components/assetChrome'
 import { attachHeroVideo } from './components/heroVideo'
 import { createCriticalAssetPreloader } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
+import { submitSupportForm } from './data/supportFormService'
 import { ROUTES } from './utils/routes'
 
 function supportCard({ eyebrow, title, body, actions = [] }) {
@@ -52,18 +53,72 @@ function mountSupportPage() {
         <div class="section-inner hero-inner hero-content-layer">
           <div class="hero-copy">
             <p class="eyebrow">Melogic Support</p>
-            <h1>Support for creators, customers, and collaborators.</h1>
+            <h1>Contact Support</h1>
             <p>
               Get help with marketplace purchases, account access, product submissions,
               downloads, creator tools, and Melogic platform questions.
             </p>
             <div class="hero-actions">
-              <a class="button button-accent" href="${ROUTES.forms}">Submit a Support Request</a>
-              <a class="button button-muted" href="${ROUTES.inbox}">Open Inbox</a>
+              <a class="button button-accent" href="#support-form">Use Native Form</a>
+              <a class="button button-muted" href="mailto:support@melogicrecords.studio">Email Us</a>
             </div>
           </div>
         </div>
       </section>
+
+    <section class="section support-section" id="support-form">
+  <div class="section-inner">
+    <div class="support-contact-layout">
+      <div class="support-contact-copy">
+        <p class="eyebrow">Native support form</p>
+        <h2>Send a request directly to Melogic.</h2>
+        <p>
+          Use this form for account issues, marketplace questions, product problems,
+          creator support, order help, or general platform questions.
+        </p>
+        <p>
+          Your message will be sent directly into the Melogic admin panel.
+        </p>
+      </div>
+
+      <form class="support-form" data-support-form>
+        <div class="support-form-grid">
+          <label>
+            <span>Name</span>
+            <input name="name" type="text" autocomplete="name" required maxlength="120" />
+          </label>
+
+          <label>
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" required maxlength="254" />
+          </label>
+
+          <label>
+            <span>Username</span>
+            <input name="username" type="text" autocomplete="username" maxlength="80" placeholder="Optional" />
+          </label>
+
+          <label>
+            <span>Subject</span>
+            <input name="subject" type="text" required maxlength="180" />
+          </label>
+        </div>
+
+        <label>
+          <span>Message</span>
+          <textarea name="message" rows="7" required maxlength="5000"></textarea>
+        </label>
+
+        <div class="support-form-actions">
+          <button type="submit" class="button button-accent" data-support-submit>Send Support Request</button>
+          <a class="button button-muted" href="mailto:support@melogicrecords.studio">Email Us Instead</a>
+        </div>
+
+        <p class="support-form-status" data-support-form-status aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+</section>
 
       <section class="section support-section">
         <div class="section-inner">
@@ -153,6 +208,55 @@ function mountSupportPage() {
 }
 
 mountSupportPage()
+
+const supportForm = document.querySelector('[data-support-form]')
+const supportFormStatus = document.querySelector('[data-support-form-status]')
+const supportSubmitButton = document.querySelector('[data-support-submit]')
+
+supportForm?.addEventListener('submit', async (event) => {
+  event.preventDefault()
+
+  const formData = new FormData(supportForm)
+
+  if (supportFormStatus) {
+    supportFormStatus.textContent = 'Sending support request...'
+    supportFormStatus.dataset.status = 'loading'
+  }
+
+  if (supportSubmitButton) {
+    supportSubmitButton.disabled = true
+    supportSubmitButton.textContent = 'Sending...'
+  }
+
+  try {
+    await submitSupportForm({
+      name: formData.get('name'),
+      email: formData.get('email'),
+      username: formData.get('username'),
+      subject: formData.get('subject'),
+      message: formData.get('message')
+    })
+
+    supportForm.reset()
+
+    if (supportFormStatus) {
+      supportFormStatus.textContent = 'Support request sent. Melogic will review it from the admin panel.'
+      supportFormStatus.dataset.status = 'success'
+    }
+  } catch (error) {
+    console.warn('[support] form submission failed', error)
+
+    if (supportFormStatus) {
+      supportFormStatus.textContent = error?.message || 'Could not send support request. Please email support@melogicrecords.studio instead.'
+      supportFormStatus.dataset.status = 'error'
+    }
+  } finally {
+    if (supportSubmitButton) {
+      supportSubmitButton.disabled = false
+      supportSubmitButton.textContent = 'Send Support Request'
+    }
+  }
+})
 
 const logoReadyPromise = initShellChrome()
 
