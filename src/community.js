@@ -17,6 +17,7 @@ import {
   getCommunityFocusState,
   getCommunityPost,
   getCommunityPostViewerState,
+  getCommunityTopComment,
   listCommunityCommentsPage,
   listCommunities,
   listFocusedCommunityPosts,
@@ -140,6 +141,17 @@ const state = {
   feedStillLoading: false,
   feedRequestId: 0,
   openPostMenuId: '',
+  openCommentMenuKey: '',
+  topCommentPreviews: {},
+  topCommentPreviewLoading: {},
+  history: {
+    loading: false,
+    loaded: false,
+    error: '',
+    events: [],
+    index: 0,
+    dateLabel: ''
+  },
   error: '',
   message: '',
   composer: {
@@ -1454,6 +1466,62 @@ function renderPostOptionsMenu(post = {}, { isOwn = false } = {}) {
   `
 }
 
+function commentMenuKey(postId = '', commentId = '') {
+  return `${String(postId || '').trim()}:${String(commentId || '').trim()}`
+}
+
+function commentMenuItemsMarkup(comment = {}, { postId = '', isOwn = false } = {}) {
+  return `
+    <div class="community-post-options-menu community-comment-options-menu" role="menu">
+      <button type="button" role="menuitem" data-copy-comment-link="${escapeHtml(comment.commentId)}" data-comment-post-id="${escapeHtml(postId)}">Copy Link</button>
+      ${isOwn
+        ? `<button type="button" role="menuitem" class="is-danger" data-community-comment-delete="${escapeHtml(comment.commentId)}" data-comment-post-id="${escapeHtml(postId)}">Delete Comment</button>`
+        : `<button type="button" role="menuitem" data-community-comment-report="${escapeHtml(comment.commentId)}" data-comment-post-id="${escapeHtml(postId)}">Report Comment</button>`
+      }
+    </div>
+  `
+}
+
+function renderCommentOptionsMenu(comment = {}, { postId = '' } = {}) {
+  const key = commentMenuKey(postId, comment.commentId)
+  const open = state.openCommentMenuKey === key
+  const isOwn = Boolean(state.currentUser?.uid && state.currentUser.uid === comment.authorUid)
+  return `
+    <div class="community-post-options community-comment-options" data-comment-options-root data-comment-menu-key="${escapeHtml(key)}">
+      <button type="button" class="community-post-options-button" data-toggle-comment-menu="${escapeHtml(comment.commentId)}" data-comment-post-id="${escapeHtml(postId)}" aria-label="Comment options" aria-haspopup="menu" aria-expanded="${open ? 'true' : 'false'}">
+        ${iconSvg('moreVertical')}
+      </button>
+      ${open ? commentMenuItemsMarkup(comment, { postId, isOwn }) : ''}
+    </div>
+  `
+}
+
+function renderTopCommentPreview(post = {}) {
+  if (!Object.prototype.hasOwnProperty.call(state.topCommentPreviews, post.postId)) return ''
+  const comment = state.topCommentPreviews[post.postId]
+  if (!comment) return ''
+  const authorHref = comment.authorUid ? publicProfileRoute({ uid: comment.authorUid }) : ROUTES.profilePublic
+  return `
+    <section class="community-top-comment-preview" aria-label="Comment preview">
+      <header class="community-comment-header">
+        <a class="community-author" href="${authorHref}">
+          <span class="community-avatar community-top-comment-avatar">${postAvatar(comment)}</span>
+          <span>
+            <strong>${escapeHtml(comment.authorDisplayName || 'Melogic Creator')}</strong>
+            <em>${escapeHtml(formatUsername(comment.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(comment.createdAt))}</em>
+          </span>
+        </a>
+        ${renderCommentOptionsMenu(comment, { postId: post.postId })}
+      </header>
+      <p class="community-comment-body">${escapeHtml(comment.body)}</p>
+      <div class="community-top-comment-meta" aria-label="Comment engagement">
+        <span>${iconSvg('thumbsUp')} ${formatCount(comment.likeCount)}</span>
+        <span>${iconSvg('thumbsDown')} ${formatCount(comment.dislikeCount)}</span>
+      </div>
+    </section>
+  `
+}
+
 function postCard(post, { detail = false } = {}) {
   const viewer = state.viewerState[post.postId] || {}
   const body = detail ? post.body : post.body.slice(0, 640)
@@ -1498,7 +1566,7 @@ function postCard(post, { detail = false } = {}) {
         <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
         <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
       </footer>
-      ${detail ? renderComments(post) : ''}
+      ${detail ? renderComments(post) : renderTopCommentPreview(post)}
     </article>
   `
 }
@@ -1637,7 +1705,6 @@ function findLoadedComment(commentId = '') {
 
 function commentCard(comment, replies = []) {
   const viewer = state.commentViewerState[comment.commentId] || {}
-  const isOwn = state.currentUser?.uid && state.currentUser.uid === comment.authorUid
   const authorHref = comment.authorUid ? publicProfileRoute({ uid: comment.authorUid }) : ROUTES.profilePublic
   const canReply = !comment.parentCommentId
   const replyPage = repliesPageFor(comment.commentId)
@@ -1645,7 +1712,7 @@ function commentCard(comment, replies = []) {
   const repliesLoading = Boolean(replyPage.loading)
   const repliesLoadingMore = Boolean(replyPage.loadingMore)
   return `
-    <article class="community-comment-card ${comment.parentCommentId ? 'is-reply' : ''}" data-comment-id="${escapeHtml(comment.commentId)}">
+    <article class="community-comment-card ${comment.parentCommentId ? 'is-reply' : ''}" id="comment-${escapeHtml(comment.commentId)}" data-comment-id="${escapeHtml(comment.commentId)}">
       <header class="community-comment-header">
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar">${postAvatar(comment)}</span>
@@ -1654,14 +1721,13 @@ function commentCard(comment, replies = []) {
             <em>${escapeHtml(formatUsername(comment.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(comment.createdAt))}</em>
           </span>
         </a>
+        ${renderCommentOptionsMenu(comment, { postId: state.detailPostId })}
       </header>
       <p class="community-comment-body">${escapeHtml(comment.body)}</p>
       <footer class="community-comment-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-comment-like="${escapeHtml(comment.commentId)}">${iconSvg('thumbsUp')} <span>${formatCount(comment.likeCount)}</span></button>
         <button type="button" class="${viewer.disliked ? 'is-active' : ''}" data-community-comment-dislike="${escapeHtml(comment.commentId)}">${iconSvg('thumbsDown')} <span>${formatCount(comment.dislikeCount)}</span></button>
         ${canReply ? `<button type="button" data-toggle-reply-composer="${escapeHtml(comment.commentId)}">${iconSvg('messageCircle')} <span>Reply</span></button>` : ''}
-        <button type="button" data-community-comment-report="${escapeHtml(comment.commentId)}">${iconSvg('alertCircle')} <span>Report</span></button>
-        ${isOwn ? `<button type="button" data-community-comment-delete="${escapeHtml(comment.commentId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
       </footer>
       ${state.replyComposerFor === comment.commentId ? renderCommentComposer({ parentCommentId: comment.commentId }) : ''}
       ${canReply && Number(comment.replyCount || 0) > 0 ? `
@@ -2048,6 +2114,108 @@ function trendingCommunities() {
     .slice(0, 6)
 }
 
+function wikipediaEventUrl(event = {}) {
+  const raw = String(event.pages?.[0]?.content_urls?.desktop?.page || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || (url.hostname !== 'wikipedia.org' && !url.hostname.endsWith('.wikipedia.org'))) return ''
+    return url.href
+  } catch {
+    return ''
+  }
+}
+
+function selectedHistoryEvent() {
+  return state.history.events[state.history.index] || null
+}
+
+function renderHistoryWidgetBody() {
+  const event = selectedHistoryEvent()
+  const learnMoreUrl = event ? wikipediaEventUrl(event) : ''
+  const today = new Date()
+  return `
+    <div class="community-history-heading">
+      <div>
+        <h2>This Day in History</h2>
+        <time datetime="${escapeHtml(today.toISOString().slice(0, 10))}">${escapeHtml(state.history.dateLabel || new Intl.DateTimeFormat(undefined, { month: 'long', day: 'numeric' }).format(today))}</time>
+      </div>
+    </div>
+    ${state.history.loading ? '<p class="community-history-state">Loading a moment from history...</p>' : state.history.error ? '<p class="community-history-state is-error">Unable to load historical events right now.</p>' : event ? `
+      <article class="community-history-event">
+        <strong>${escapeHtml(String(event.year || ''))}</strong>
+        <p>${escapeHtml(event.text || '')}</p>
+      </article>
+      <div class="community-history-actions">
+        <button type="button" class="button button-muted" data-history-new ${state.history.events.length < 2 ? 'disabled' : ''}>New One</button>
+        ${learnMoreUrl
+          ? `<a class="button button-muted" href="${escapeHtml(learnMoreUrl)}" target="_blank" rel="noopener noreferrer">Learn More</a>`
+          : '<button type="button" class="button button-muted" disabled>Learn More</button>'
+        }
+      </div>
+    ` : '<p class="community-history-state">Unable to load historical events right now.</p>'}
+    <a class="community-history-attribution" href="https://en.wikipedia.org/wiki/Wikipedia:On_this_day/Today" target="_blank" rel="noopener noreferrer">Powered by Wikipedia</a>
+  `
+}
+
+function renderHistoryWidget() {
+  return `
+    <section class="community-rail-card community-history-card" data-community-history-widget>
+      ${renderHistoryWidgetBody()}
+    </section>
+  `
+}
+
+function bindHistoryWidgetEvents(root = app) {
+  root?.querySelector('[data-history-new]')?.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    const count = state.history.events.length
+    if (count < 2) return
+    const current = state.history.index
+    const candidate = Math.floor(Math.random() * (count - 1))
+    state.history.index = candidate >= current ? candidate + 1 : candidate
+    updateHistoryWidgetDom()
+  })
+}
+
+function updateHistoryWidgetDom() {
+  const widget = app?.querySelector('[data-community-history-widget]')
+  if (!widget) return
+  widget.innerHTML = renderHistoryWidgetBody()
+  bindHistoryWidgetEvents(widget)
+}
+
+async function loadWikipediaHistory() {
+  if (state.history.loading || state.history.loaded) return
+  const today = new Date()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  state.history.loading = true
+  state.history.error = ''
+  state.history.dateLabel = new Intl.DateTimeFormat(undefined, { month: 'long', day: 'numeric' }).format(today)
+  updateHistoryWidgetDom()
+  try {
+    const response = await fetch(`https://en.wikipedia.org/api/rest_v1/feed/onthisday/selected/${month}/${day}`, {
+      headers: { accept: 'application/json' }
+    })
+    if (!response.ok) throw new Error(`Wikipedia returned ${response.status}`)
+    const data = await response.json()
+    const events = Array.isArray(data?.selected)
+      ? data.selected.filter((item) => item && String(item.text || '').trim())
+      : []
+    if (!events.length) throw new Error('Wikipedia returned no selected events.')
+    state.history.events = events
+    state.history.index = Math.floor(Math.random() * events.length)
+    state.history.loaded = true
+  } catch (error) {
+    console.warn('[community] Wikipedia history load failed', { name: error?.name, message: error?.message })
+    state.history.error = 'Unable to load historical events right now.'
+  } finally {
+    state.history.loading = false
+    updateHistoryWidgetDom()
+  }
+}
+
 function renderSidebar() {
   const suggested = displayedCommunities()
     .filter((community) => !state.communityFocus[community.communityId])
@@ -2088,10 +2256,7 @@ function renderSidebar() {
           </div>
         ` : '<p>Communities will trend here as creators focus and post.</p>'}
       </section>
-      <section class="community-rail-card">
-        <h2>This Day in History</h2>
-        <p>Powered by Wikipedia once connected.</p>
-      </section>
+      ${renderHistoryWidget()}
       <section class="community-rail-card">
         <h2>Guidelines</h2>
         <p>Share work, give useful feedback, and respect creator ownership.</p>
@@ -2303,11 +2468,35 @@ async function loadAttachmentMediaUrls() {
   }
 }
 
+async function loadTopCommentPreviews() {
+  const candidates = state.posts
+    .filter((post) => Number(post.counts?.comments || 0) > 0)
+    .filter((post) => !Object.prototype.hasOwnProperty.call(state.topCommentPreviews, post.postId))
+    .filter((post) => !state.topCommentPreviewLoading[post.postId])
+    .slice(0, COMMUNITY_PAGE_SIZE)
+  if (!candidates.length) return
+  candidates.forEach((post) => {
+    state.topCommentPreviewLoading[post.postId] = true
+  })
+  await Promise.all(candidates.map(async (post) => {
+    try {
+      const comment = await getCommunityTopComment(post.postId)
+      state.topCommentPreviews[post.postId] = comment ? { ...comment, postId: post.postId } : null
+    } catch (error) {
+      console.warn('[community] top comment preview load failed', { postId: post.postId, code: error?.code, message: error?.message })
+      state.topCommentPreviews[post.postId] = null
+    } finally {
+      delete state.topCommentPreviewLoading[post.postId]
+    }
+  }))
+}
+
 async function loadFeedEnrichment(requestId = state.feedRequestId) {
   const startedAt = performance.now()
   await Promise.allSettled([
     loadViewerState(),
-    loadAttachmentMediaUrls()
+    loadAttachmentMediaUrls(),
+    loadTopCommentPreviews()
   ])
   if (requestId !== state.feedRequestId) return
   logCommunityPerf('feed enrichment complete', { durationMs: Math.round(performance.now() - startedAt), posts: state.posts.length })
@@ -2738,7 +2927,68 @@ function postMenuItemsMarkup(post = {}, { isOwn = false } = {}) {
 function closePostMenusDom() {
   state.openPostMenuId = ''
   app?.querySelectorAll('[data-toggle-post-menu]').forEach((button) => button.setAttribute('aria-expanded', 'false'))
-  app?.querySelectorAll('.community-post-options-menu').forEach((menu) => menu.remove())
+  app?.querySelectorAll('[data-post-options-root] > .community-post-options-menu').forEach((menu) => menu.remove())
+}
+
+function findCommentForPost(postId = '', commentId = '') {
+  const preview = state.topCommentPreviews[postId]
+  if (preview?.commentId === commentId) return preview
+  return findLoadedComment(commentId)
+}
+
+function closeCommentMenusDom() {
+  state.openCommentMenuKey = ''
+  app?.querySelectorAll('[data-toggle-comment-menu]').forEach((button) => button.setAttribute('aria-expanded', 'false'))
+  app?.querySelectorAll('.community-comment-options-menu').forEach((menu) => menu.remove())
+}
+
+async function copyCommentLink(postId = '', commentId = '') {
+  const url = `${window.location.origin}${communityPostRoute(postId)}#comment-${encodeURIComponent(commentId)}`
+  await navigator.clipboard?.writeText(url).catch(() => null)
+  closeCommentMenusDom()
+  showCommunityToast('Comment link copied.')
+}
+
+function bindCommentMenuEvents(root = app) {
+  root?.querySelectorAll('[data-copy-comment-link]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      copyCommentLink(button.getAttribute('data-comment-post-id') || '', button.getAttribute('data-copy-comment-link') || '')
+    })
+  })
+  root?.querySelectorAll('[data-community-comment-report]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      closeCommentMenusDom()
+      openCommentReport(button.getAttribute('data-community-comment-report') || '', button.getAttribute('data-comment-post-id') || '')
+    })
+  })
+  root?.querySelectorAll('[data-community-comment-delete]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      closeCommentMenusDom()
+      handleCommentDelete(button.getAttribute('data-community-comment-delete') || '', button.getAttribute('data-comment-post-id') || '')
+    })
+  })
+}
+
+function toggleCommentMenuDom(postId = '', commentId = '') {
+  const cleanPostId = String(postId || '').trim()
+  const cleanCommentId = String(commentId || '').trim()
+  const comment = findCommentForPost(cleanPostId, cleanCommentId)
+  if (!comment) return
+  const key = commentMenuKey(cleanPostId, cleanCommentId)
+  const shouldOpen = state.openCommentMenuKey !== key
+  closePostMenusDom()
+  closeCommentMenusDom()
+  if (!shouldOpen) return
+  state.openCommentMenuKey = key
+  const isOwn = Boolean(state.currentUser?.uid && state.currentUser.uid === comment.authorUid)
+  app?.querySelectorAll(`[data-comment-options-root][data-comment-menu-key="${communityCssEscape(key)}"]`).forEach((root) => {
+    root.querySelector('[data-toggle-comment-menu]')?.setAttribute('aria-expanded', 'true')
+    root.insertAdjacentHTML('beforeend', commentMenuItemsMarkup(comment, { postId: cleanPostId, isOwn }))
+    bindCommentMenuEvents(root)
+  })
 }
 
 function bindPostMenuEvents(root = app) {
@@ -2773,6 +3023,7 @@ function togglePostMenuDom(postId = '') {
   const post = postById(cleanPostId)
   if (!post) return
   const shouldOpen = state.openPostMenuId !== cleanPostId
+  closeCommentMenusDom()
   closePostMenusDom()
   if (!shouldOpen) return
   state.openPostMenuId = cleanPostId
@@ -3348,13 +3599,62 @@ async function handleCommentDislike(commentId = '') {
   })
 }
 
-async function handleCommentDelete(commentId = '') {
+function updateTopCommentPreviewDom(postId = '') {
+  const escapedPostId = communityCssEscape(postId)
+  app?.querySelectorAll(`.community-post-card[data-post-id="${escapedPostId}"]:not(.is-detail)`).forEach((card) => {
+    card.querySelector('.community-top-comment-preview')?.remove()
+    const post = postById(postId)
+    const markup = post ? renderTopCommentPreview(post) : ''
+    if (markup) {
+      card.insertAdjacentHTML('beforeend', markup)
+      bindCommentOptionTriggers(card)
+    }
+  })
+}
+
+async function handleFeedPreviewCommentDelete(commentId = '', postId = '') {
+  const actionId = `comment-delete:${postId}:${commentId}`
+  if (communityPendingActions.has(actionId)) return
+  const previousPreview = state.topCommentPreviews[postId]
+  const post = postById(postId)
+  const previousCount = Number(post?.counts?.comments || 0)
+  state.topCommentPreviews[postId] = null
+  setPostCount(postId, 'comments', Math.max(0, previousCount - 1))
+  updatePostActionDom(postId)
+  updateTopCommentPreviewDom(postId)
+  try {
+    const result = await trackCommunityAction(actionId, deleteCommunityComment({ postId, commentId }))
+    const nextCount = Number.isFinite(Number(result.commentCount)) ? Number(result.commentCount) : Math.max(0, previousCount - 1)
+    setPostCount(postId, 'comments', nextCount)
+    if (nextCount > 0) {
+      const nextPreview = await getCommunityTopComment(postId)
+      state.topCommentPreviews[postId] = nextPreview ? { ...nextPreview, postId } : null
+    }
+    updatePostActionDom(postId)
+    updateTopCommentPreviewDom(postId)
+  } catch (error) {
+    console.warn('[community] feed preview comment delete failed', { postId, commentId, code: error?.code, message: error?.message })
+    state.topCommentPreviews[postId] = previousPreview
+    setPostCount(postId, 'comments', previousCount)
+    updatePostActionDom(postId)
+    updateTopCommentPreviewDom(postId)
+    showCommunityToast('Could not delete this comment.')
+  }
+}
+
+async function handleCommentDelete(commentId = '', postId = state.detailPostId) {
   if (!state.currentUser) {
     if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  const actionId = `comment-delete:${state.detailPostId}:${commentId}`
+  const cleanPostId = String(postId || state.detailPostId || '').trim()
+  if (!cleanPostId) return
+  if (cleanPostId !== state.detailPostId) {
+    await handleFeedPreviewCommentDelete(commentId, cleanPostId)
+    return
+  }
+  const actionId = `comment-delete:${cleanPostId}:${commentId}`
   if (communityPendingActions.has(actionId)) return
   const previousComments = state.comments
   const previousCommentsByPostId = Object.fromEntries(Object.entries(state.commentsByPostId || {}).map(([postId, page]) => [
@@ -3385,7 +3685,7 @@ async function handleCommentDelete(commentId = '') {
   }
   updateDetailCommentCount(-1)
   renderCommentState()
-  trackCommunityAction(actionId, deleteCommunityComment({ postId: state.detailPostId, commentId })).then((result) => {
+  trackCommunityAction(actionId, deleteCommunityComment({ postId: cleanPostId, commentId })).then((result) => {
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
     renderCommentState()
   }).catch((error) => {
@@ -3863,6 +4163,10 @@ function setupCommunityKeyboardShortcuts() {
       closePostMenusDom()
       return
     }
+    if (state.openCommentMenuKey) {
+      closeCommentMenusDom()
+      return
+    }
     if (!communityModalIsOpen()) return
     if (state.composer.open) state.composer = { ...state.composer, open: false, submitting: false, error: '' }
     if (state.storyComposer.open) {
@@ -3881,8 +4185,8 @@ function setupCommunityOutsideClick() {
   if (communityOutsideClickReady) return
   communityOutsideClickReady = true
   document.addEventListener('click', (event) => {
-    if (!state.openPostMenuId || event.target.closest('[data-post-options-root]')) return
-    closePostMenusDom()
+    if (state.openPostMenuId && !event.target.closest('[data-post-options-root]')) closePostMenusDom()
+    if (state.openCommentMenuKey && !event.target.closest('[data-comment-options-root]')) closeCommentMenusDom()
   })
 }
 
@@ -4200,12 +4504,12 @@ function openReport(postId) {
   render()
 }
 
-function openCommentReport(commentId) {
+function openCommentReport(commentId, postId = state.detailPostId) {
   if (!state.currentUser) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  state.report = { open: true, targetType: 'community_comment', postId: state.detailPostId, commentId, storyId: '', reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
+  state.report = { open: true, targetType: 'community_comment', postId, commentId, storyId: '', reason: REPORT_REASONS[0], description: '', submitting: false, error: '', message: '' }
   render()
 }
 
@@ -4222,7 +4526,7 @@ async function handleReportSubmit(event) {
   event.preventDefault()
   const formData = new FormData(event.currentTarget)
   const post = state.posts.find((item) => item.postId === state.report.postId)
-  const comment = findLoadedComment(state.report.commentId)
+  const comment = findCommentForPost(state.report.postId, state.report.commentId)
   const story = storyById(state.report.storyId)
   const reason = String(formData.get('reason') || '').trim()
   const description = String(formData.get('description') || '').trim()
@@ -4248,7 +4552,7 @@ async function handleReportSubmit(event) {
       targetOwnerUid: targetType === 'community_comment' ? comment.authorUid : targetType === 'community_story' ? story.authorUid : post.authorUid,
       reason,
       description,
-      sourcePath: window.location.pathname,
+      sourcePath: targetType === 'community_comment' ? communityPostRoute(post.postId) : window.location.pathname,
       metadata: targetType === 'community_comment'
         ? { postId: post.postId, commentId: comment.commentId }
         : targetType === 'community_story'
@@ -4264,8 +4568,23 @@ async function handleReportSubmit(event) {
   }
 }
 
+function bindCommentOptionTriggers(root = app) {
+  if (!root) return
+  root.querySelectorAll('[data-toggle-comment-menu]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      toggleCommentMenuDom(
+        button.getAttribute('data-comment-post-id') || '',
+        button.getAttribute('data-toggle-comment-menu') || ''
+      )
+    })
+  })
+  bindCommentMenuEvents(root)
+}
+
 function bindCommentEvents(root = app) {
   if (!root) return
+  bindCommentOptionTriggers(root)
   root.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
   root.querySelector('[data-load-more-comments]')?.addEventListener('click', (event) => {
     event.preventDefault()
@@ -4317,14 +4636,6 @@ function bindCommentEvents(root = app) {
     stopCommunityActionEvent(event)
     handleCommentDislike(button.getAttribute('data-community-comment-dislike'))
   }))
-  root.querySelectorAll('[data-community-comment-delete]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleCommentDelete(button.getAttribute('data-community-comment-delete'))
-  }))
-  root.querySelectorAll('[data-community-comment-report]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    openCommentReport(button.getAttribute('data-community-comment-report'))
-  }))
 }
 
 function bindEvents() {
@@ -4350,6 +4661,7 @@ function bindEvents() {
       togglePostMenuDom(button.getAttribute('data-toggle-post-menu') || '')
     })
   })
+  bindHistoryWidgetEvents(app)
   app.querySelectorAll('[data-copy-post-link]').forEach((button) => {
     button.addEventListener('click', (event) => {
       stopCommunityActionEvent(event)
@@ -4606,6 +4918,7 @@ function bindEvents() {
 
 waitForInitialAuthState().then((user) => {
   state.currentUser = user
+  loadWikipediaHistory().catch(() => null)
   render()
   return loadCommunity()
 })
