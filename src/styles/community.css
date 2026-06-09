@@ -1772,6 +1772,25 @@ body.community-chrome-hidden .community-right-rail {
   border-left: 1px solid rgba(126, 211, 255, .18);
 }
 
+.community-comment-reply-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  align-items: center;
+  margin-top: .55rem;
+}
+
+.community-comment-reply-toggle span {
+  color: #9eacbf;
+  font-size: .84rem;
+}
+
+.community-load-more-comments,
+.community-load-more-replies {
+  justify-self: start;
+  margin-top: .55rem;
+}
+
 .community-comment-replies .community-comment-card.is-reply::before {
   content: "";
   position: absolute;

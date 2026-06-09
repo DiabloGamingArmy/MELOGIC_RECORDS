@@ -62,10 +62,10 @@ import {
   watchActiveSupportCalls
 } from './livekit/adminCallService'
 import {
+  listSupportFormsPage,
   listUnresolvedSupportForms,
   updateSupportFormAdminNote,
-  updateSupportFormStatus,
-  watchSupportForms
+  updateSupportFormStatus
 } from './data/supportFormService'
 
 const app = document.querySelector('#app')
@@ -319,13 +319,21 @@ supportForms: {
 
   loading: false,
 
+  loadingMore: false,
+
   loaded: false,
 
   error: '',
 
   selectedId: '',
 
-  savingId: ''
+  savingId: '',
+
+  cursor: null,
+
+  hasMore: false,
+
+  filter: 'unresolved'
 
 },
 call: {
@@ -3152,6 +3160,19 @@ function contactSupportFormsPanel() {
           </button>
         </div>
 
+        <div class="admin-contact-tabs is-subtabs" aria-label="Support form filters">
+          ${[
+            ['unresolved', 'Unresolved'],
+            ['resolved', 'Resolved'],
+            ['archived', 'Archived'],
+            ['all', 'All']
+          ].map(([key, label]) => `
+            <button type="button" class="${formsState.filter === key ? 'is-active' : ''}" data-support-form-filter="${key}">
+              ${escapeHtml(label)}
+            </button>
+          `).join('')}
+        </div>
+
         ${formsState.error ? `<p class="admin-status is-error">${escapeHtml(formsState.error)}</p>` : ''}
 
         <div class="admin-panel-scroll">
@@ -3163,6 +3184,7 @@ function contactSupportFormsPanel() {
             </article>
           ` : ''}
           ${forms.map((form) => supportFormListCard(form)).join('')}
+          ${formsState.hasMore ? `<div class="admin-load-more-row"><button type="button" class="admin-secondary-button" data-support-forms-load-more ${formsState.loadingMore ? 'disabled' : ''}>${formsState.loadingMore ? 'Loading older...' : 'Load older'}</button></div>` : ''}
         </div>
       </section>
 
@@ -4063,11 +4085,11 @@ async function loadAdminOverview({ silent = false } = {}) {
   try {
     const [staffResult, productsResult, ordersResult, reportsResult, logsResult, supportFormsResult] = await Promise.all([
       listActiveStaffPresence({ limitCount: 30 }).catch((error) => ({ error })),
-      (can('listingEdit') || can('productReview')) ? listAdminProducts({ limitCount: 12 }).catch((error) => ({ error })) : Promise.resolve({ products: [] }),
-      can('orderSupport') ? listAdminOrders({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ orders: [] }),
-      (can('admin') || can('userModerate') || can('productReview') || can('orderSupport')) ? listAdminReports({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ reports: [] }),
-      can('auditRead') ? listAdminLogs({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ logs: [] }),
-      (can('emailSend') || can('orderSupport') || can('auditRead')) ? listUnresolvedSupportForms({ limitCount: 8 }).then((supportForms) => ({ supportForms })).catch((error) => ({ error })) : Promise.resolve({ supportForms: [] })
+      (can('listingEdit') || can('productReview')) ? listAdminProducts({ limitCount: 6 }).catch((error) => ({ error })) : Promise.resolve({ products: [] }),
+      can('orderSupport') ? listAdminOrders({ limitCount: 6 }).catch((error) => ({ error })) : Promise.resolve({ orders: [] }),
+      (can('admin') || can('userModerate') || can('productReview') || can('orderSupport')) ? listAdminReports({ limitCount: 6 }).catch((error) => ({ error })) : Promise.resolve({ reports: [] }),
+      can('auditRead') ? listAdminLogs({ limitCount: 6 }).catch((error) => ({ error })) : Promise.resolve({ logs: [] }),
+      (can('emailSend') || can('orderSupport') || can('auditRead')) ? listUnresolvedSupportForms({ limitCount: 6 }).then((supportForms) => ({ supportForms })).catch((error) => ({ error })) : Promise.resolve({ supportForms: [] })
     ])
     const failures = [staffResult, productsResult, ordersResult, reportsResult, logsResult, supportFormsResult].filter((result) => result?.error)
     state.overview.activeStaff = staffResult.staff || []
@@ -4078,7 +4100,6 @@ async function loadAdminOverview({ silent = false } = {}) {
     state.overview.supportForms = supportFormsResult.supportForms || []
     state.overview.loaded = true
     state.overview.error = failures.length ? 'Some overview sections could not be loaded.' : ''
-    if (state.overview.products.length) await hydrateReviewMedia(state.overview.products)
   } catch (error) {
     console.warn('[admin] overview load failed', { code: error?.code, message: error?.message, details: error?.details })
     state.overview.error = error?.message || 'Could not load admin overview.'
@@ -4976,35 +4997,67 @@ function syncAdminContactCallParticipants(room) {
   state.contact.call.remoteParticipants = participants
 }
 
-function startSupportFormsWatch() {
-  if (unsubscribeSupportForms) return
+function mergeSupportForms(existing = [], incoming = []) {
+  const map = new Map()
+  existing.forEach((form) => {
+    if (form?.id) map.set(form.id, form)
+  })
+  incoming.forEach((form) => {
+    if (form?.id) map.set(form.id, form)
+  })
+  return Array.from(map.values())
+}
 
-  state.contact.supportForms.loading = true
-  state.contact.supportForms.error = ''
+async function loadSupportFormsPage({ append = false } = {}) {
+  const formsState = state.contact.supportForms
+  if (append && !formsState.hasMore) return
+
+  if (append) formsState.loadingMore = true
+  else formsState.loading = true
+  formsState.error = ''
   render()
 
-  unsubscribeSupportForms = watchSupportForms(
-    (forms) => {
-      state.contact.supportForms.items = forms
-      state.contact.supportForms.loaded = true
-      state.contact.supportForms.loading = false
-      state.contact.supportForms.error = ''
-      const requestedId = new URLSearchParams(window.location.search).get('support') || ''
-      if (requestedId && forms.some((form) => form.id === requestedId)) {
-        state.contact.supportForms.selectedId = requestedId
-      } else if (!state.contact.supportForms.selectedId && forms[0]?.id) {
-        state.contact.supportForms.selectedId = forms[0].id
-      } else if (state.contact.supportForms.selectedId && !forms.some((form) => form.id === state.contact.supportForms.selectedId)) {
-        state.contact.supportForms.selectedId = forms[0]?.id || ''
-      }
-      render()
-    },
-    (error) => {
-      state.contact.supportForms.loading = false
-      state.contact.supportForms.error = error?.message || 'Could not load support forms.'
-      render()
+  try {
+    const result = await listSupportFormsPage({
+      statusGroup: formsState.filter || 'unresolved',
+      limitCount: 25,
+      cursor: append ? formsState.cursor : null
+    })
+    const forms = result.forms || []
+    formsState.items = append ? mergeSupportForms(formsState.items || [], forms) : forms
+    formsState.cursor = result.cursor || null
+    formsState.hasMore = Boolean(result.hasMore)
+    formsState.loaded = true
+    const requestedId = new URLSearchParams(window.location.search).get('support') || ''
+    if (!append && requestedId && formsState.items.some((form) => form.id === requestedId)) {
+      formsState.selectedId = requestedId
+    } else if (!formsState.selectedId && formsState.items[0]?.id) {
+      formsState.selectedId = formsState.items[0].id
+    } else if (formsState.selectedId && !formsState.items.some((form) => form.id === formsState.selectedId)) {
+      formsState.selectedId = formsState.items[0]?.id || ''
     }
-  )
+  } catch (error) {
+    console.warn('[admin support forms] page load failed', { code: error?.code, message: error?.message, details: error?.details })
+    formsState.error = error?.message || 'Could not load support forms.'
+  } finally {
+    formsState.loading = false
+    formsState.loadingMore = false
+    render()
+  }
+}
+
+function startSupportFormsWatch() {
+  const requestedFilter = new URLSearchParams(window.location.search).get('filter') || ''
+  if (['unresolved', 'resolved', 'archived', 'all'].includes(requestedFilter) && state.contact.supportForms.filter !== requestedFilter) {
+    state.contact.supportForms.filter = requestedFilter
+    state.contact.supportForms.loaded = false
+    state.contact.supportForms.cursor = null
+    state.contact.supportForms.hasMore = false
+    state.contact.supportForms.items = []
+    state.contact.supportForms.selectedId = ''
+  }
+  if (state.contact.supportForms.loading || state.contact.supportForms.loaded) return
+  loadSupportFormsPage({ append: false })
 }
 
 function stopSupportFormsWatch() {
@@ -5638,8 +5691,35 @@ app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
   })
   app.querySelector('[data-support-forms-refresh]')?.addEventListener('click', (event) => {
   event.preventDefault()
+  state.contact.supportForms.loaded = false
+  state.contact.supportForms.cursor = null
+  state.contact.supportForms.hasMore = false
+  state.contact.supportForms.items = []
   stopSupportFormsWatch()
-  startSupportFormsWatch()
+  loadSupportFormsPage({ append: false })
+})
+
+app.querySelectorAll('[data-support-form-filter]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    state.contact.supportForms.filter = button.getAttribute('data-support-form-filter') || 'unresolved'
+    state.contact.supportForms.loaded = false
+    state.contact.supportForms.cursor = null
+    state.contact.supportForms.hasMore = false
+    state.contact.supportForms.items = []
+    state.contact.supportForms.selectedId = ''
+    const params = new URLSearchParams(window.location.search)
+    params.set('mode', 'support')
+    params.set('filter', state.contact.supportForms.filter)
+    params.delete('support')
+    window.history.replaceState({}, '', `${ROUTES.adminContact}?${params.toString()}`)
+    loadSupportFormsPage({ append: false })
+  })
+})
+
+app.querySelector('[data-support-forms-load-more]')?.addEventListener('click', (event) => {
+  event.preventDefault()
+  loadSupportFormsPage({ append: true })
 })
 
 app.querySelectorAll('[data-support-form-select]').forEach((button) => {
