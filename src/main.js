@@ -12,13 +12,15 @@ const app = document.querySelector('#app')
 const HOME_SCROLL_BANNER_VIDEO_PATH = 'assets/site/home/backgrounds/scroll-banner.mp4'
 
 installLiveKitDebugTest()
+document.documentElement.classList.add('home-page-root')
+document.body.classList.add('home-page-body')
 
 app.innerHTML = `
   ${renderPagePreloaderMarkup()}
 
   ${navShell({ currentPage: 'home' })}
 
-  <main>
+  <main class="home-main">
     <section class="hero" id="explore">
       <div class="hero-media" aria-hidden="true">
         <video
