@@ -633,7 +633,49 @@ function storyAvatar(story) {
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
+const FORUM_CATEGORIES = [
+  {
+    title: 'General Discussion',
+    description: 'Open conversation for creators, listeners, and platform questions.'
+  },
+  {
+    title: 'Production Help',
+    description: 'Ask about mixing, sound design, workflow problems, and creative blocks.'
+  },
+  {
+    title: 'Marketplace & Products',
+    description: 'Discuss product submissions, store pages, deliverables, and buyer feedback.'
+  },
+  {
+    title: 'Collaborations',
+    description: 'Find collaborators, remix partners, session players, and project support.'
+  },
+  {
+    title: 'Releases & Feedback',
+    description: 'Share release plans, early previews, and requests for constructive notes.'
+  },
+  {
+    title: 'Melogic Platform',
+    description: 'Talk through Melogic features, updates, Studio tools, and community workflows.'
+  }
+]
+
+const COMMUNITY_FORM_LINKS = [
+  {
+    title: 'Support Forms',
+    description: 'Send account, marketplace, and platform requests to the Melogic team.',
+    href: ROUTES.support || '/support'
+  },
+  {
+    title: 'Creator Forms',
+    description: 'Find request workflows and creator intake forms as they move into Community.',
+    href: ROUTES.forms || '/forms'
+  }
+]
+
 function activeFeedTitle() {
+  if (state.activeTab === 'forums') return 'Forums'
+  if (state.activeTab === 'forms') return 'Forms'
   if (state.activeTab === 'music') return 'Music'
   if (state.activeTab === 'products') return 'Products'
   if (state.activeTab === 'stage-plans') return 'Stage Plans'
@@ -1631,6 +1673,8 @@ function renderComments(post) {
 function emptyCopy() {
   if (state.activeTab === 'following') return state.currentUser ? 'Focus communities to build this feed.' : 'Sign in to focus communities.'
   if (state.activeTab === 'community') return `No posts in ${state.activeTopicLabel || 'this community'} yet.`
+  if (state.activeTab === 'forums') return 'Forum threads are coming soon.'
+  if (state.activeTab === 'forms') return 'Community forms are being organized here.'
   if (state.activeTab === 'official') return 'No official posts yet.'
   if (['music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration'].includes(state.activeTab)) return `No ${activeFeedTitle().toLowerCase()} posts yet.`
   return 'No posts yet. Be the first to share something.'
@@ -1685,6 +1729,76 @@ function renderFeed() {
       ${state.feedError ? `<div class="community-feed-state community-panel"><strong>Could not load more posts.</strong><span>${escapeHtml(state.feedError)}</span></div>` : ''}
       <div class="community-feed-sentinel" data-community-feed-sentinel aria-hidden="true"></div>
       ${state.feedLoadingMore ? '<div class="community-feed-more-state">Loading more posts...</div>' : state.feedHasMore ? '<button type="button" class="community-load-more button button-muted" data-load-more-posts>Load more</button>' : '<div class="community-feed-more-state">You are caught up.</div>'}
+    </section>
+  `
+}
+
+function renderCommunityFormsSection({ standalone = false } = {}) {
+  return `
+    <section class="community-panel community-framework-section ${standalone ? 'is-standalone' : ''}">
+      <div class="community-panel-heading">
+        <div>
+          <p class="eyebrow">Forms</p>
+          <h2>Forms & Requests</h2>
+          <p>Common request workflows now live inside Community so creators do not have to hunt through the global nav.</p>
+        </div>
+      </div>
+      <div class="community-framework-grid">
+        ${COMMUNITY_FORM_LINKS.map((item) => `
+          <a class="community-framework-card" href="${escapeHtml(item.href)}">
+            <span class="community-framework-icon">${iconSvg('fileText')}</span>
+            <strong>${escapeHtml(item.title)}</strong>
+            <p>${escapeHtml(item.description)}</p>
+            <span class="community-framework-meta">Open form</span>
+          </a>
+        `).join('')}
+      </div>
+    </section>
+  `
+}
+
+function renderForumsPage() {
+  return `
+    <section class="community-framework-page">
+      <header class="community-feed-toolbar community-framework-hero">
+        <div>
+          <p class="eyebrow">Community</p>
+          <h1>Forums</h1>
+          <p>Discuss production, releases, collaborations, marketplace tools, and Melogic platform updates.</p>
+        </div>
+        <button type="button" class="button button-accent" disabled title="Forum thread creation is coming soon.">
+          ${iconSvg('messageCircle')} <span>Start a Forum Thread</span>
+        </button>
+      </header>
+      <section class="community-framework-grid" aria-label="Forum categories">
+        ${FORUM_CATEGORIES.map((category) => `
+          <article class="community-framework-card">
+            <span class="community-framework-icon">${iconSvg('messageCircle')}</span>
+            <strong>${escapeHtml(category.title)}</strong>
+            <p>${escapeHtml(category.description)}</p>
+            <div class="community-framework-stats">
+              <span>0 threads</span>
+              <span>Coming soon</span>
+            </div>
+          </article>
+        `).join('')}
+      </section>
+      ${renderCommunityFormsSection()}
+    </section>
+  `
+}
+
+function renderFormsPage() {
+  return `
+    <section class="community-framework-page">
+      <header class="community-feed-toolbar community-framework-hero">
+        <div>
+          <p class="eyebrow">Community</p>
+          <h1>Forms</h1>
+          <p>Find Melogic request workflows, support forms, and creator intake paths from inside Community.</p>
+        </div>
+      </header>
+      ${renderCommunityFormsSection({ standalone: true })}
     </section>
   `
 }
@@ -1880,6 +1994,8 @@ function renderLeftNav() {
     { label: 'Home', icon: 'home', href: ROUTES.community },
     { label: 'For You', icon: 'star', tab: 'for-you', active: state.activeTab === 'for-you' },
     { label: 'Focused', icon: 'eye', tab: 'following', active: state.activeTab === 'following' },
+    { label: 'Forums', icon: 'messageCircle', tab: 'forums', active: state.activeTab === 'forums' },
+    { label: 'Forms', icon: 'fileText', tab: 'forms', active: state.activeTab === 'forms' },
     { label: 'Communities', icon: 'folder', href: ROUTES.communityCommunities },
     { label: 'My Posts', icon: 'fileText', action: 'My Posts' },
     { label: 'Saved', icon: 'bookmark', action: 'Saved posts' },
@@ -2117,8 +2233,7 @@ function render() {
       <div class="community-layout is-home">
         ${renderLeftNav()}
         <div class="community-main">
-          ${renderFeedToolbar()}
-          ${renderFeed()}
+          ${state.activeTab === 'forums' ? renderForumsPage() : state.activeTab === 'forms' ? renderFormsPage() : `${renderFeedToolbar()}${renderFeed()}`}
         </div>
         ${renderSidebar()}
       </div>
@@ -2376,6 +2491,18 @@ async function loadCommunity() {
 
   if (!state.communities.length && state.view.type !== 'community') {
     loadCommunities({ renderOnStart: false, renderAfter: true }).catch(() => null)
+  }
+
+  if (['forums', 'forms'].includes(state.activeTab)) {
+    state.loading = false
+    state.feedInitialLoading = false
+    state.feedLoadingMore = false
+    state.feedHasMore = false
+    state.posts = []
+    state.viewerState = {}
+    state.attachmentMediaUrls = {}
+    render()
+    return
   }
 
   if (state.view.type === 'community') {
@@ -3464,7 +3591,7 @@ function showCommunityToast(message = '') {
 }
 
 function selectTopicTab(tab = 'for-you') {
-  const supportedTabs = new Set(['following', 'new', 'official', 'music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration', 'for-you'])
+  const supportedTabs = new Set(['following', 'new', 'official', 'music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration', 'forums', 'forms', 'for-you'])
   state.activeTab = supportedTabs.has(tab) ? tab : 'for-you'
   state.activeCommunityId = ''
   state.activeCommunitySlug = ''
