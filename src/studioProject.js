@@ -172,6 +172,8 @@ let midiRegionClipboard = null
 let midiRollState = null
 let midiRollSelectedNoteIndex = null
 let midiRollSelectedNoteIndices = []
+let midiRollStatus = ''
+let midiRollViewport = { regionId: '', scrollLeft: 0, scrollTop: 0 }
 let midiRollBeatWidth = 64
 let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
@@ -419,10 +421,11 @@ function renderMidiRollPanel(motionClass = '') {
       </section>
       <aside class="studio-midi-roll-tools">
         <h3>${esc(getMidiRegionLabel(region))}</h3>
-        <p>${selectedNote ? `${esc(formatMidiNoteName(selectedNote.note))} at ${Number(selectedNote.startBeat || 0).toFixed(2)}` : 'Select a note to edit it.'}</p>
+        <p>${selectedNote ? `${esc(formatMidiNoteName(selectedNote.note))} at ${Number(selectedNote.startBeat || 0).toFixed(2)}` : (notes.length ? 'No notes selected. Quantize will apply to the active clip.' : 'No notes available to edit.')}</p>
+        ${midiRollStatus ? `<p class="studio-midi-roll-status">${esc(midiRollStatus)}</p>` : ''}
         <label>Velocity<input data-midi-note-velocity type="range" min="1" max="127" value="${Math.round(clamp(Number(selectedNote?.velocity || 0.85), 0, 1) * 127)}" ${selectedNote ? '' : 'disabled'}><small>${Math.round(clamp(Number(selectedNote?.velocity || 0.85), 0, 1) * 127)}</small></label>
         <label>Quantize<select data-midi-roll-quantize><option value="1" ${quantize==='1'?'selected':''}>1/4</option><option value="0.5" ${quantize==='0.5'?'selected':''}>1/8</option><option value="0.25" ${quantize==='0.25'?'selected':''}>1/16</option><option value="0.125" ${quantize==='0.125'?'selected':''}>1/32</option></select></label>
-        <button type="button" data-midi-quantize-note ${selectedNote ? '' : 'disabled'}>Quantize Note</button>
+        <button type="button" data-midi-quantize-note ${notes.length ? '' : 'disabled'}>${selectedNote || midiRollSelectedNoteIndices.length ? 'Quantize Selection' : 'Quantize Clip'}</button>
         <label>Note Length<input data-midi-note-length type="number" min="0.05" step="0.05" value="${Number(selectedNote?.durationBeats || 0.25).toFixed(2)}" ${selectedNote ? '' : 'disabled'}></label>
         <div class="studio-midi-roll-transpose"><button type="button" data-midi-note-transpose="-12" ${selectedNote ? '' : 'disabled'}>-12</button><button type="button" data-midi-note-transpose="-1" ${selectedNote ? '' : 'disabled'}>-1</button><button type="button" data-midi-note-transpose="1" ${selectedNote ? '' : 'disabled'}>+1</button><button type="button" data-midi-note-transpose="12" ${selectedNote ? '' : 'disabled'}>+12</button></div>
         <button type="button" data-midi-delete-note ${selectedNote ? '' : 'disabled'}>Delete Selected Note</button>
@@ -1200,6 +1203,23 @@ function updateMidiRollPlayheadDom() {
   const left = (xToBeat(timelineState.playheadX) - Number(region.startBeat || 0)) * midiRollBeatWidth
   marker.style.left = `${left}px`
 }
+function captureMidiRollViewport() {
+  const scroll = app.querySelector('.studio-midi-roll-scroll')
+  const region = getMidiRollRegion()
+  if (!scroll || !region) return
+  midiRollViewport = {
+    regionId: region.id,
+    scrollLeft: scroll.scrollLeft || 0,
+    scrollTop: scroll.scrollTop || 0
+  }
+}
+function restoreMidiRollViewport() {
+  const scroll = app.querySelector('.studio-midi-roll-scroll')
+  const region = getMidiRollRegion()
+  if (!scroll || !region || midiRollViewport.regionId !== region.id) return
+  scroll.scrollLeft = midiRollViewport.scrollLeft || 0
+  scroll.scrollTop = midiRollViewport.scrollTop || 0
+}
 function setPlayhead(x) { timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX()); if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`); updateTransportDisplay(); updateMidiRollPlayheadDom() }
 function pixelsPerSecond() { const bpm = Number(projectState?.bpm || 140); const bps = bpm / 60; const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
 function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', !!(activeRecording || isCountInRunning)); btn.toggleAttribute('disabled', !!(activeRecording || isCountInRunning)); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
@@ -1212,6 +1232,37 @@ function getNormalizedCycleRange(){ if(!cycleRange) return null; const start=Mat
 function hasValidCycleRange(){ return !!getNormalizedCycleRange() }
 function isCycleStripPointerEvent(event, ruler){ const rect = ruler?.getBoundingClientRect?.(); if(!rect) return false; const localY = event.clientY - rect.top; return localY >= 0 && localY <= 22 }
 function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
+
+function getMusicalTypingTrack() {
+  if (activeRecording?.trackId) return tracks.find((track)=>track.id === activeRecording.trackId) || getRecordingTrack()
+  return getSelectedTrack()
+}
+function handleMusicalTypingKeydown(event) {
+  if (!isTypingPianoEnabled || event.altKey || event.ctrlKey || event.metaKey || isTextEntryTarget(event.target)) return false
+  const track = getMusicalTypingTrack()
+  if (!track?.instrument || track.instrument.enabled === false) return false
+  if (event.code === 'KeyZ' && !activeRecording && !isCountInRunning) {
+    event.preventDefault()
+    instrumentOctaveOffset = Math.max(-2, instrumentOctaveOffset - 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+    return true
+  }
+  if (event.code === 'KeyX' && !activeRecording && !isCountInRunning) {
+    event.preventDefault()
+    instrumentOctaveOffset = Math.min(2, instrumentOctaveOffset + 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+    return true
+  }
+  if (dawInstrumentKeyMap[event.code] == null) return false
+  event.preventDefault()
+  if (event.repeat || pressedDawMidiKeys.has(event.code)) return true
+  const note = dawInstrumentKeyMap[event.code] + (instrumentOctaveOffset * 12)
+  pressedDawMidiKeys.set(event.code, { trackId: track.id, note })
+  playTrackMidiNote(track, note, 0.85)
+  return true
+}
 
 
 function setVirtualKeyPressed(midi, pressed){ app.querySelectorAll(`[data-piano-midi="${midi}"]`).forEach((el)=>el.classList.toggle('is-pressed', !!pressed)) }
@@ -1537,6 +1588,7 @@ function selectMidiNote(regionId, noteIndex) {
   midiRollState = { ...(midiRollState || {}), regionId }
   selectedMidiRegionId = regionId
   midiRollSelectedNoteIndex = noteIndex
+  midiRollStatus = ''
   renderEditor()
 }
 function getMidiRollSnapValue() {
@@ -1564,11 +1616,31 @@ function deleteSelectedMidiNote() {
   })
   return true
 }
+function getMidiRollTargetNoteIndices() {
+  const region = getMidiRollRegion()
+  if (!region?.notes?.length) return []
+  const selected = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  const validSelected = [...new Set(selected)].filter((index) => Number.isInteger(index) && region.notes[index])
+  return validSelected.length ? validSelected : region.notes.map((_, index) => index)
+}
 function quantizeSelectedMidiNote() {
-  mutateSelectedMidiNote('quantize-midi-note', (note) => {
-    const snap = getMidiRollSnapValue()
-    note.startBeat = clampBeat(snapBeat(Number(note.startBeat) || 0, snap))
-    note.durationBeats = Math.max(snap, snapBeat(Number(note.durationBeats) || snap, snap))
+  const region = getMidiRollRegion()
+  const indices = getMidiRollTargetNoteIndices()
+  if (!region?.notes?.length) {
+    midiRollStatus = 'No notes available to quantize.'
+    renderEditor()
+    return
+  }
+  const selectedCount = (midiRollSelectedNoteIndices.length || Number.isInteger(midiRollSelectedNoteIndex)) ? indices.length : 0
+  const snap = getMidiRollSnapValue()
+  commitHistoryMutation('quantize-midi-notes', () => {
+    indices.forEach((index) => {
+      const note = region.notes[index]
+      if (!note) return
+      note.startBeat = clampBeat(snapBeat(Number(note.startBeat) || 0, snap))
+      note.durationBeats = Math.max(snap, snapBeat(Number(note.durationBeats) || snap, snap))
+    })
+    midiRollStatus = selectedCount ? `Quantized ${indices.length} selected note${indices.length === 1 ? '' : 's'}.` : `Quantized ${indices.length} clip note${indices.length === 1 ? '' : 's'}.`
   })
 }
 function beginMidiNoteDrag(event, regionId, noteIndex) {
@@ -1585,11 +1657,13 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
     else selected.add(noteIndex)
     midiRollSelectedNoteIndices = [...selected].sort((a, b) => a - b)
     midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    midiRollStatus = ''
     renderEditor()
     return
   }
   midiRollSelectedNoteIndex = noteIndex
   midiRollSelectedNoteIndices = [noteIndex]
+  midiRollStatus = ''
   const handle = event.target.closest('[data-midi-note-handle]')?.dataset?.midiNoteHandle || 'move'
   midiNoteDrag = {
     regionId,
@@ -1675,6 +1749,7 @@ function beginMidiRollSelection(event) {
   if (!event.shiftKey) {
     midiRollSelectedNoteIndex = null
     midiRollSelectedNoteIndices = []
+    midiRollStatus = ''
   }
   const box = app.querySelector('[data-midi-roll-selection]')
   if (box) {
@@ -1729,6 +1804,7 @@ function finishMidiRollSelection() {
   })
   midiRollSelectedNoteIndices = drag.additive ? [...new Set([...(drag.existing || []), ...selected])].sort((a, b) => a - b) : selected
   midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+  midiRollStatus = ''
   renderEditor()
 }
 function handleMidiRollWheel(event) {
@@ -1880,6 +1956,7 @@ function bindEditorEvents() {
     event.stopPropagation()
     detachBottomPanel(button.dataset.detachBottomPanel)
   }))
+  app.querySelector('.studio-midi-roll-scroll')?.addEventListener('scroll', captureMidiRollViewport, { passive: true })
   app.querySelector('[data-midi-roll-grid]')?.addEventListener('pointerdown', beginMidiRollSelection)
   app.querySelector('[data-midi-roll-grid]')?.addEventListener('wheel', handleMidiRollWheel, { passive: false })
   app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); scheduleEditorSave(); renderEditor() }))
@@ -2191,6 +2268,7 @@ function bindEditorEvents() {
 
 // TODO: connect navigator.requestMIDIAccess() after MIDI permission UX is designed.
 function renderEditor() {
+  captureMidiRollViewport()
   const project = projectState
   if (studioAudioEngine) studioAudioEngine.setBpm(Number(project?.bpm || 140))
   document.body.classList.add('is-studio-editor')
@@ -2201,6 +2279,7 @@ function renderEditor() {
   setEditorMenuOpen(isEditorMenuOpen)
   bindEditorEvents()
   dawWindowManager.bind(app)
+  requestAnimationFrame(restoreMidiRollViewport)
 }
 
 
@@ -2224,8 +2303,6 @@ function handleStudioKeydown(event){
     return
   }
   if(event.altKey) return
-  const t=tracks.find((x)=>x.id===selectedTrackId)
-  const musicalTypingActive = isTypingPianoEnabled
   if(event.code==='Space'){handleSpaceTransport(event); return}
   if(event.code==='KeyR'){
     event.preventDefault()
@@ -2233,18 +2310,9 @@ function handleStudioKeydown(event){
     else startMidiRecordFlow()
     return
   }
+  if (handleMusicalTypingKeydown(event)) return
   if(activeRecording || isCountInRunning){
     if(['Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','KeyC','KeyK'].includes(event.code)) event.preventDefault()
-    return
-  }
-  if(musicalTypingActive && event.code === 'KeyZ'){ event.preventDefault(); instrumentOctaveOffset=Math.max(-2,instrumentOctaveOffset-1); stopAllTrackInstrumentNotes(); renderEditor(); return }
-  if(musicalTypingActive && event.code === 'KeyX'){ event.preventDefault(); instrumentOctaveOffset=Math.min(2,instrumentOctaveOffset+1); stopAllTrackInstrumentNotes(); renderEditor(); return }
-  if(musicalTypingActive && t?.instrument && t.instrument.enabled !== false && dawInstrumentKeyMap[event.code]!=null){
-    if(event.repeat||pressedDawMidiKeys.has(event.code)) return
-    event.preventDefault()
-    const note = dawInstrumentKeyMap[event.code] + (instrumentOctaveOffset * 12)
-    pressedDawMidiKeys.set(event.code, { trackId: t.id, note })
-    playTrackMidiNote(t, note, 0.85)
     return
   }
   const step=timelineState.pixelsPerBar/timelineState.beatsPerBar
