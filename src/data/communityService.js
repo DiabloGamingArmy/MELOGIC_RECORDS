@@ -351,8 +351,21 @@ export async function getCommunityBySlug(slug = '') {
     if (String(error?.code || '').includes('permission-denied')) return null
     throw error
   })
-  if (!snap || !snap.exists()) return null
-  const community = normalizeCommunity(snap)
+  let community = snap?.exists?.() ? normalizeCommunity(snap) : null
+  if (!community) {
+    const slugSnap = await getDocs(query(
+      collection(db, COMMUNITY_COLLECTION),
+      where('slug', '==', clean),
+      where('status', '==', 'active'),
+      where('visibility', '==', 'public'),
+      limit(1)
+    )).catch((error) => {
+      if (String(error?.code || '').includes('permission-denied')) return null
+      throw error
+    })
+    community = slugSnap?.docs?.[0] ? normalizeCommunity(slugSnap.docs[0]) : null
+  }
+  if (!community) return null
   if (community.status !== 'active' || community.visibility !== 'public') return null
   return community
 }
@@ -1029,4 +1042,24 @@ export async function moderateCommunity(payload = {}) {
   const callable = httpsCallable(functions, 'moderateCommunity')
   const result = await callable(payload)
   return result?.data || { ok: false }
+}
+
+export async function updateCommunity(communityId = '', payload = {}) {
+  return moderateCommunity({ ...payload, communityId, action: 'update' })
+}
+
+export async function hideCommunity(communityId = '', reason = '') {
+  return moderateCommunity({ communityId, action: 'hide', reason })
+}
+
+export async function restoreCommunity(communityId = '', reason = '') {
+  return moderateCommunity({ communityId, action: 'restore', reason })
+}
+
+export async function archiveCommunity(communityId = '', reason = '') {
+  return moderateCommunity({ communityId, action: 'archive', reason })
+}
+
+export async function deleteCommunity(communityId = '', reason = '') {
+  return moderateCommunity({ communityId, action: 'delete', reason })
 }

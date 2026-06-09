@@ -328,8 +328,18 @@ async function resolveCommunityForPost({ communityId = '', communitySlug = '', u
   if (!id) return { communityId: '', communitySlug: '' }
   if (id.includes('/')) throw new HttpsError('invalid-argument', 'A valid community id is required.')
 
-  const communityRef = db().collection('communities').doc(id)
-  const communitySnap = await communityRef.get()
+  let communitySnap = await db().collection('communities').doc(id).get()
+  if (!communitySnap.exists) {
+    const slugSnap = await db().collection('communities')
+      .where('slug', '==', id)
+      .where('status', '==', 'active')
+      .where('visibility', '==', 'public')
+      .limit(1)
+      .get()
+    if (!slugSnap.empty) {
+      communitySnap = slugSnap.docs[0]
+    }
+  }
   if (!communitySnap.exists) throw new HttpsError('not-found', 'Community not found.')
   const community = communitySnap.data() || {}
   if (community.status !== 'active' || community.visibility !== 'public') {
