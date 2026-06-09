@@ -5,108 +5,13 @@ import { attachHeroVideo } from './components/heroVideo'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { getStorageAssetUrl } from './firebase/storageAssets'
-import { addToCart } from './data/cartService'
-import { listHomepageReleaseProducts } from './data/productService'
-import { ROUTES, productRoute } from './utils/routes'
+import { ROUTES } from './utils/routes'
 import { installLiveKitDebugTest } from './livekit/livekitDebugTest'
 
 const app = document.querySelector('#app')
+const HOME_SCROLL_BANNER_VIDEO_PATH = 'assets/site/home/backgrounds/scroll-banner.mp4'
 
 installLiveKitDebugTest()
-
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function buildReleaseCard(product) {
-  const title = product?.title || 'Untitled product'
-  const type = product?.productType || 'Release'
-  const creator = product?.artistName || 'Unknown creator'
-  const price = product?.priceLabel || (product?.isFree ? 'Free' : '—')
-  const tags = (product?.genres?.length ? product.genres : product?.tags || [])
-    .slice(0, 3)
-    .map((tag) => `#${escapeHtml(String(tag).replace(/\s+/g, ''))}`)
-    .join(' · ')
-
-  return `
-    <article class="release-card" role="listitem" data-release-card data-product-id="${escapeHtml(product.id)}">
-      <div class="release-topline">
-        <p class="product-type">${escapeHtml(type)}</p>
-        <p class="release-price">${escapeHtml(price)}</p>
-      </div>
-      <h3>${escapeHtml(title)}</h3>
-      <p class="release-creator">by ${escapeHtml(creator)}</p>
-      <p class="tags">${tags || '#new'}</p>
-      <div class="release-actions">
-        <button type="button" class="preview-btn" data-preview-product="${escapeHtml(product.id)}" aria-label="Preview ${escapeHtml(title)}" ${product?.previewAudioURLs?.length ? '' : 'disabled'}>▶ Preview</button>
-        <button type="button" class="add-btn" data-add-product="${escapeHtml(product.id)}" aria-label="Add ${escapeHtml(title)} to cart">Add to cart</button>
-      </div>
-    </article>
-  `
-}
-
-const homeFeaturePanels = [
-  {
-    key: 'studio',
-    eyebrow: 'Melogic Studio',
-    title: 'A web-based DAW built for creation, collaboration, and release.',
-    body: 'Build tracks, use marketplace add-ons, collaborate with the community, then move toward exports and distribution without breaking the creative flow.',
-    imagePath: 'assets/site/home/featured/studio.png',
-    alt: 'Melogic Studio web-based DAW preview'
-  },
-  {
-    key: 'marketplace',
-    eyebrow: 'Marketplace',
-    title: 'Create and sell digital goods without thinking small.',
-    body: 'Sell anything from single audio samples to full sample packs, presets, wavetables, VST modules, and team-built production tools.',
-    imagePath: 'assets/site/home/featured/marketplace.png',
-    alt: 'Melogic marketplace digital goods preview'
-  },
-  {
-    key: 'community',
-    eyebrow: 'Community',
-    title: 'Find the people who can help finish the next big hit.',
-    body: 'Connect with musicians, artists, producers, friends, and collaborators through a music-first network built around actual creation.',
-    imagePath: 'assets/site/home/featured/community.png',
-    alt: 'Melogic community collaboration preview'
-  },
-  {
-    key: 'livestreams',
-    eyebrow: 'Livestreams',
-    title: 'Let people watch the record come alive in real time.',
-    body: 'Stream sessions, share ideas, and let fans or collaborators see the creative process as it happens — like watching the Mona Lisa being painted.',
-    imagePath: 'assets/site/home/featured/livestreams.png',
-    alt: 'Melogic livestream creation preview'
-  }
-]
-
-function renderHomeFeaturePanel(feature, index) {
-  const directionClass = index % 2 === 1 ? ' home-feature-panel--image-left' : ' home-feature-panel--image-right'
-  return `
-    <article class="home-feature-panel${directionClass}" data-home-feature data-feature-key="${escapeHtml(feature.key)}">
-      <img class="home-feature-image" data-home-feature-image="${escapeHtml(feature.key)}" alt="${escapeHtml(feature.alt)}" loading="lazy" hidden />
-      <div class="home-feature-placeholder" aria-hidden="true">
-        <span class="feature-meter"></span>
-        <span class="feature-waveform"></span>
-      </div>
-      <div class="home-feature-copy">
-        <p class="eyebrow">${escapeHtml(feature.eyebrow)}</p>
-        <h3>${escapeHtml(feature.title)}</h3>
-        <p>${escapeHtml(feature.body)}</p>
-        <div class="feature-chip-row" aria-hidden="true">
-          <span class="feature-chip">Live Sessions</span>
-          <span class="feature-chip">Creator Ops</span>
-          <span class="feature-chip">Release Ready</span>
-        </div>
-      </div>
-    </article>
-  `
-}
 
 app.innerHTML = `
   ${renderPagePreloaderMarkup()}
@@ -143,76 +48,37 @@ app.innerHTML = `
       </div>
     </section>
 
-    <div class="lower-page-layer" id="products-layer">
-      <canvas class="lower-network-canvas" id="lower-network-canvas" aria-hidden="true"></canvas>
-
-      <div class="lower-page-content">
-        <section class="section releases" id="products">
-          <div class="section-inner">
-            <div class="section-head">
-              <p class="eyebrow">Community releases</p>
-              <h2>Tools from the Melogic Network.</h2>
-              <p class="section-description">Explore sample packs, presets, wavetables, and production tools from creators building inside the Melogic ecosystem.</p>
-            </div>
-
-            <div class="releases-carousel" data-carousel>
-              <button class="carousel-control" type="button" data-dir="left" aria-label="Scroll products left">←</button>
-              <div class="releases-track-wrap">
-                <div class="releases-track" role="list" aria-label="Community release products" data-home-release-track>
-                  <article class="release-card release-card-loading" role="listitem">
-                    <p class="release-creator">Loading catalog products...</p>
-                  </article>
-                </div>
-              </div>
-              <button class="carousel-control" type="button" data-dir="right" aria-label="Scroll products right">→</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="section ecosystem-showcase" id="mission">
-          <div class="section-inner ecosystem-intro">
-            <div class="ecosystem-intro-grid">
-              <div>
-                <p class="eyebrow">Our perspective</p>
-                <h2>One ecosystem for making, selling, sharing, and releasing music.</h2>
-                <p>
-                  Melogic is not just a label and not just a marketplace. It is creator infrastructure:
-                  tools, collaboration, commerce, and momentum designed to keep the music moving.
-                </p>
-              </div>
-              <div class="ecosystem-kicker-row" aria-hidden="true">
-                <span class="feature-chip">Studio-First</span>
-                <span class="feature-chip">Creator Economy</span>
-                <span class="feature-chip">Community-Led</span>
-              </div>
-            </div>
-          </div>
-
-          <div class="section-inner ecosystem-map">
-            <div class="ecosystem-map-orbit" aria-hidden="true">
-              <span class="ecosystem-map-node">Studio</span>
-              <span class="ecosystem-map-node">Market</span>
-              <span class="ecosystem-map-node">Community</span>
-              <span class="ecosystem-map-node">Live</span>
-            </div>
-          </div>
-
-          <div class="section-inner home-feature-stack">
-            ${homeFeaturePanels.map((feature, index) => renderHomeFeaturePanel(feature, index)).join('')}
-          </div>
-        </section>
-
-        <section class="section closing ecosystem-closing">
-          <div class="section-inner closing-inner">
-            <h2>Build the sound. Share the process. Move the culture.</h2>
-            <div class="hero-actions">
-              <a class="button button-accent" href="#products">Explore the Catalog</a>
-              <a class="button button-muted" href="${ROUTES.studio || '#studio'}">Enter Melogic Studio</a>
-            </div>
-          </div>
-        </section>
+    <section class="section home-cinematic-section" aria-labelledby="home-cinematic-title">
+      <div class="section-inner home-cinematic-shell">
+        <div class="section-head">
+          <p class="eyebrow">Melogic Studio</p>
+          <h2 id="home-cinematic-title">A cinematic look inside the creative room.</h2>
+          <p class="section-description">Preview the Studio experience where projects, instruments, and ideas start taking shape directly in your browser.</p>
+        </div>
+        <div class="home-cinematic-video-frame">
+          <video
+            class="home-cinematic-video"
+            data-home-cinematic-video
+            muted
+            loop
+            autoplay
+            playsinline
+            preload="metadata"
+          ></video>
+          <p class="home-cinematic-fallback" data-home-cinematic-fallback hidden>Studio preview is being prepared.</p>
+        </div>
       </div>
-    </div>
+    </section>
+
+    <section class="section home-studio-cta">
+      <div class="section-inner closing-inner">
+        <h2>Ready to dive in?</h2>
+        <p>Step into Melogic Studio and start building directly in your browser.</p>
+        <div class="hero-actions">
+          <a class="button button-accent" href="${ROUTES.studio}">Open Studio</a>
+        </div>
+      </div>
+    </section>
   </main>
 `
 
@@ -227,267 +93,36 @@ async function initHeroBackgroundVideo() {
   })
 }
 
-function initCarousel() {
-  const carousel = document.querySelector('[data-carousel]')
-  if (!carousel) return
-
-  const track = carousel.querySelector('.releases-track')
-  const controls = carousel.querySelectorAll('.carousel-control')
-  if (!track || !controls.length) return
-
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const baseSpeed = reducedMotion ? 0 : 0.279
-  const manualStep = () => Math.max(track.clientWidth * 0.72, 320)
-
-  let animationFrame = null
-  let resumeTimer = null
-  let isAutoRunning = false
-  let lastTimestamp = 0
-
-  const stopAuto = () => {
-    isAutoRunning = false
-    if (animationFrame) {
-      window.cancelAnimationFrame(animationFrame)
-      animationFrame = null
-    }
-    lastTimestamp = 0
+async function initHomeCinematicVideo() {
+  const video = document.querySelector('[data-home-cinematic-video]')
+  const fallback = document.querySelector('[data-home-cinematic-fallback]')
+  if (!video) return false
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    video.remove()
+    if (fallback) fallback.hidden = false
+    return true
   }
-
-  const tick = (timestamp) => {
-    if (!isAutoRunning) return
-
-    if (!lastTimestamp) {
-      lastTimestamp = timestamp
-    }
-
-    const delta = timestamp - lastTimestamp
-    lastTimestamp = timestamp
-
-    track.scrollLeft += baseSpeed * delta
-
-    const endThreshold = track.scrollWidth - track.clientWidth - 2
-    if (track.scrollLeft >= endThreshold) {
-      track.scrollLeft = 0
-    }
-
-    animationFrame = window.requestAnimationFrame(tick)
-  }
-
-  const startAuto = () => {
-    if (isAutoRunning || reducedMotion) return
-    isAutoRunning = true
-    animationFrame = window.requestAnimationFrame(tick)
-  }
-
-  const pauseAndResume = () => {
-    stopAuto()
-    window.clearTimeout(resumeTimer)
-    resumeTimer = window.setTimeout(startAuto, 20000)
-  }
-
-  controls.forEach((control) => {
-    control.addEventListener('click', () => {
-      const direction = control.dataset.dir === 'left' ? -1 : 1
-      pauseAndResume()
-      track.scrollBy({ left: direction * manualStep(), behavior: 'smooth' })
-    })
+  const url = await getStorageAssetUrl(HOME_SCROLL_BANNER_VIDEO_PATH, {
+    warnOnFail: false,
+    scopeKey: 'home-cinematic-video',
+    type: 'video'
   })
-
-  track.addEventListener('pointerdown', pauseAndResume)
-  track.addEventListener('wheel', pauseAndResume, { passive: true })
-
-  startAuto()
-}
-
-function renderHomeReleaseCards(products = []) {
-  const track = document.querySelector('[data-home-release-track]')
-  if (!track) return
-
-  if (!products.length) {
-    track.innerHTML = `
-      <article class="release-card release-card-loading" role="listitem">
-        <p class="release-creator">No published products available yet.</p>
-      </article>
-    `
-    return
+  if (!url) {
+    video.remove()
+    if (fallback) fallback.hidden = false
+    return false
   }
-
-  track.innerHTML = products.slice(0, 12).map((product) => buildReleaseCard(product)).join('')
-}
-
-async function initHomeReleaseProducts() {
-  try {
-    const products = await listHomepageReleaseProducts()
-    renderHomeReleaseCards(products)
-    const track = document.querySelector('[data-home-release-track]')
-    track?.addEventListener('click', (event) => {
-      const addButton = event.target.closest('[data-add-product]')
-      if (addButton) {
-        event.stopPropagation()
-        const product = products.find((item) => item.id === addButton.getAttribute('data-add-product'))
-        if (product) addToCart(product)
-        return
-      }
-
-      const previewButton = event.target.closest('[data-preview-product]')
-      if (previewButton) {
-        event.stopPropagation()
-        return
-      }
-
-      const card = event.target.closest('[data-release-card]')
-      const productId = card?.getAttribute('data-product-id')
-      if (productId) {
-        const product = products.find((item) => item.id === productId)
-        window.location.href = productRoute(product || productId)
-      }
-    })
-  } catch (error) {
-    console.warn('[home] Failed to load release carousel products.', error?.code || error?.message || error)
-    renderHomeReleaseCards([])
-  }
-}
-
-async function initHomeFeatureImages() {
-  const featureEntries = await Promise.all(
-    homeFeaturePanels.map(async (feature) => {
-      const url = await getStorageAssetUrl(feature.imagePath, { warnOnFail: false })
-      return { ...feature, url }
-    })
-  )
-
-  featureEntries.forEach((feature) => {
-    if (!feature.url) return
-    const img = document.querySelector(`[data-home-feature-image="${feature.key}"]`)
-    if (!img) return
-    img.src = feature.url
-    img.hidden = false
-    img.addEventListener('load', () => {
-      img.dataset.loaded = 'true'
-    }, { once: true })
-  })
-}
-
-function initHomeFeatureReveals() {
-  const targets = document.querySelectorAll('[data-home-feature], .ecosystem-intro, .ecosystem-map, .ecosystem-closing')
-  if (!targets.length) return
-
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) {
-    targets.forEach((target) => target.classList.add('is-visible'))
-    return
-  }
-
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach((entry) => {
-      if (!entry.isIntersecting) return
-      entry.target.classList.add('is-visible')
-      observer.unobserve(entry.target)
-    })
-  }, { threshold: 0.18 })
-
-  targets.forEach((target) => observer.observe(target))
-}
-
-function initLowerBackground() {
-  const canvas = document.querySelector('#lower-network-canvas')
-  const hero = document.querySelector('.hero')
-  if (!canvas || !hero) return
-
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-
-  const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const isSmallScreen = window.matchMedia('(max-width: 720px)').matches
-  const pointCount = prefersReduced ? 22 : isSmallScreen ? 28 : 44
-  const points = []
-  const mouse = { x: -9999, y: -9999, active: false }
-
-  function updateClip() {
-    const heroBottom = hero.getBoundingClientRect().bottom
-    const clipTop = Math.max(0, heroBottom)
-    document.documentElement.style.setProperty('--hero-clip', `${clipTop}px`)
-  }
-
-  function resize() {
-    canvas.width = window.innerWidth
-    canvas.height = window.innerHeight
-    points.length = 0
-
-    for (let i = 0; i < pointCount; i += 1) {
-      points.push({
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
-        vx: (Math.random() - 0.5) * (prefersReduced ? 0.08 : 0.24),
-        vy: (Math.random() - 0.5) * (prefersReduced ? 0.08 : 0.24)
-      })
-    }
-
-    updateClip()
-  }
-
-  function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-    for (let i = 0; i < points.length; i += 1) {
-      const p = points[i]
-      p.x += p.vx
-      p.y += p.vy
-
-      if (p.x < 0 || p.x > canvas.width) p.vx *= -1
-      if (p.y < 0 || p.y > canvas.height) p.vy *= -1
-
-      const accentAlpha = mouse.active
-        ? Math.max(0.06, 0.24 - Math.hypot(mouse.x - p.x, mouse.y - p.y) / 500)
-        : 0.1
-
-      ctx.beginPath()
-      ctx.fillStyle = `rgba(137, 190, 255, ${accentAlpha})`
-      ctx.arc(p.x, p.y, 1.2, 0, Math.PI * 2)
-      ctx.fill()
-
-      for (let j = i + 1; j < points.length; j += 1) {
-        const q = points[j]
-        const dist = Math.hypot(p.x - q.x, p.y - q.y)
-        if (dist > 126) continue
-
-        const opacity = (1 - dist / 126) * (prefersReduced ? 0.1 : 0.18)
-        ctx.beginPath()
-        ctx.strokeStyle = `rgba(98, 210, 214, ${opacity})`
-        ctx.lineWidth = 0.6
-        ctx.moveTo(p.x, p.y)
-        ctx.lineTo(q.x, q.y)
-        ctx.stroke()
-      }
-    }
-
-    window.requestAnimationFrame(draw)
-  }
-
-  window.addEventListener('resize', () => {
-    resize()
-  })
-  window.addEventListener('scroll', updateClip, { passive: true })
-
-  if (!prefersReduced) {
-    window.addEventListener('pointermove', (event) => {
-      mouse.x = event.clientX
-      mouse.y = event.clientY
-      mouse.active = true
-    })
-    window.addEventListener('pointerleave', () => {
-      mouse.active = false
-    })
-  }
-
-  resize()
-  draw()
+  video.src = url
+  video.addEventListener('error', () => {
+    video.remove()
+    if (fallback) fallback.hidden = false
+  }, { once: true })
+  const playPromise = video.play()
+  if (playPromise && typeof playPromise.catch === 'function') playPromise.catch(() => {})
+  return true
 }
 
 const logoReadyPromise = initShellChrome()
 const heroReadyPromise = initHeroBackgroundVideo()
 createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
-initCarousel()
-initHomeReleaseProducts()
-initHomeFeatureImages()
-initHomeFeatureReveals()
-initLowerBackground()
+initHomeCinematicVideo()
