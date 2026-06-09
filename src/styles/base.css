@@ -42,6 +42,12 @@ body {
   overflow-x: hidden;
 }
 
+html.home-page-root,
+html.home-page-root body.home-page-body,
+html.home-page-root body.home-page-body #app {
+  overflow-x: visible;
+}
+
 body,
 #app,
 main,
@@ -144,6 +150,10 @@ main {
   padding-top: var(--nav-offset);
   max-width: 100%;
   overflow-x: clip;
+}
+
+.home-main {
+  overflow-x: visible;
 }
 
 .nav-shell {
@@ -780,14 +790,16 @@ body.has-cart-drawer-open .nav-shell {
   --home-scroll-length: 5200px;
   position: relative;
   height: calc(var(--home-scroll-length) + 100vh);
-  overflow: clip;
+  min-height: 100vh;
   background: #03050a;
+  isolation: isolate;
 }
 
 .home-scroll-cinematic-sticky {
   position: sticky;
   top: 0;
-  width: 100vw;
+  left: 0;
+  width: 100%;
   height: 100vh;
   height: 100svh;
   overflow: hidden;
