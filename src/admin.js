@@ -54,6 +54,18 @@ import './styles/base.css'
 import './styles/admin.css'
 import { Room, RoomEvent } from 'livekit-client'
 import { createLiveKitCallToken } from './livekit/livekitCallService'
+import {
+  createManualSupportCall,
+  endSupportCall,
+  markSupportCallHumanJoined,
+  requestSupportCallTakeover,
+  watchActiveSupportCalls
+} from './livekit/adminCallService'
+import {
+  updateSupportFormAdminNote,
+  updateSupportFormStatus,
+  watchSupportForms
+} from './data/supportFormService'
 
 const app = document.querySelector('#app')
 const ADMIN_THEME_KEY = 'melogic-admin-theme'
@@ -299,6 +311,21 @@ const state = {
     systemForm: { recipientUid: '', recipientLabel: '', category: 'support', priority: 'normal', subject: '', body: '', actionLabel: '', actionUrl: '', internalNote: '' },
 systemSending: false,
 systemMessage: '',
+supportForms: {
+
+  items: [],
+
+  loading: false,
+
+  loaded: false,
+
+  error: '',
+
+  selectedId: '',
+
+  savingId: ''
+
+},
 call: {
   roomName: 'melogic-phone-test',
   status: 'idle',
@@ -307,7 +334,13 @@ call: {
   muted: false,
   participants: 0,
   localIdentity: '',
-  remoteParticipants: []
+  remoteParticipants: [],
+  activeCalls: [],
+  activeCallsLoading: false,
+  activeCallsLoaded: false,
+  activeCallsError: '',
+  selectedCallId: '',
+  manualCallCreating: false
 }
   },
   dialog: {
@@ -324,6 +357,8 @@ call: {
 
 let adminContactCallRoom = null
 let adminContactCallAudioElements = []
+let unsubscribeActiveSupportCalls = null
+let unsubscribeSupportForms = null
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -3035,13 +3070,14 @@ function emailConfigurationCard() {
 function contactMode() {
   const params = new URLSearchParams(window.location.search)
   const mode = String(params.get('mode') || 'email').toLowerCase()
-  return ['email', 'system', 'text', 'call'].includes(mode) ? mode : 'email'
+  return ['email', 'system', 'support', 'text', 'call'].includes(mode) ? mode : 'email'
 }
 
 function contactModeTabs(mode = contactMode()) {
   const tabs = [
     ['email', 'Email'],
     ['system', 'System Message'],
+    ['support', 'Support Forms'],
     ['text', 'Text'],
     ['call', 'Calls']
   ]
@@ -3081,8 +3117,124 @@ function contactView() {
     ${contactModeTabs(mode)}
     ${mode === 'email' ? emailSettingsPanel() : ''}
     ${mode === 'system' ? systemMessagePanel() : ''}
+    ${mode === 'support' ? contactSupportFormsPanel() : ''}
     ${mode === 'text' ? contactComingSoonPanel('Text', 'SMS support messaging is planned for a later phase. This will require a compliant SMS provider and opt-in rules.') : ''}
     ${mode === 'call' ? contactCallPanel() : ''}
+  `
+}
+
+function contactSupportFormsPanel() {
+  const formsState = state.contact.supportForms || {}
+  const forms = formsState.items || []
+  const selected = selectedSupportForm()
+
+  return `
+    <section class="admin-contact-grid">
+      <section class="admin-section-slab admin-fixed-panel">
+        <div class="admin-slab-heading">
+          <div>
+            <h2>Support Forms</h2>
+            <p class="admin-muted">Native public support requests submitted from the Support page.</p>
+          </div>
+          <button type="button" class="admin-secondary-button" data-support-forms-refresh>
+            Refresh
+          </button>
+        </div>
+
+        ${formsState.error ? `<p class="admin-status is-error">${escapeHtml(formsState.error)}</p>` : ''}
+
+        <div class="admin-panel-scroll">
+          ${formsState.loading ? '<article class="admin-empty-state">Loading support forms...</article>' : ''}
+          ${!formsState.loading && !forms.length ? `
+            <article class="admin-empty-state">
+              <strong>No support forms yet</strong>
+              <span>Public support form submissions will appear here.</span>
+            </article>
+          ` : ''}
+          ${forms.map((form) => supportFormListCard(form)).join('')}
+        </div>
+      </section>
+
+      <section class="admin-section-slab admin-fixed-panel">
+        <div class="admin-slab-heading">
+          <div>
+            <h2>Selected Request</h2>
+            <p class="admin-muted">Review the support request and track internal handling.</p>
+          </div>
+        </div>
+
+        ${selected ? supportFormDetail(selected) : `
+          <article class="admin-empty-state">
+            <strong>No request selected</strong>
+            <span>Select a support form to review it.</span>
+          </article>
+        `}
+      </section>
+    </section>
+  `
+}
+
+function supportFormListCard(form = {}) {
+  const selected = state.contact.supportForms.selectedId === form.id
+  const status = form.status || 'new'
+
+  return `
+    <button type="button" class="admin-list-card ${selected ? 'is-selected' : ''}" data-support-form-select="${escapeHtml(form.id)}">
+      <span>
+        <strong>${escapeHtml(form.subject || 'Untitled request')}</strong>
+        <small>${escapeHtml(form.name || 'Unknown')} · ${escapeHtml(form.email || 'No email')}</small>
+      </span>
+      <span class="admin-pill status-${statusClass(status)}">${humanLabel(status)}</span>
+    </button>
+  `
+}
+
+function supportFormDetail(form = {}) {
+  const saving = state.contact.supportForms.savingId === form.id
+
+  return `
+    <article class="admin-detail-card">
+      <div class="admin-detail-header">
+        <div>
+          <p class="eyebrow">Support Request</p>
+          <h3>${escapeHtml(form.subject || 'Untitled request')}</h3>
+        </div>
+        <span class="admin-pill status-${statusClass(form.status)}">${humanLabel(form.status)}</span>
+      </div>
+
+      <dl class="admin-field-grid">
+        ${renderField('Name', form.name || 'Not provided')}
+        ${renderField('Email', form.email ? `<a href="mailto:${escapeHtml(form.email)}">${escapeHtml(form.email)}</a>` : 'Not provided')}
+        ${renderField('Username', form.username || 'Not provided')}
+        ${renderField('Created', form.createdAt ? formatDate(form.createdAt) : 'Not set')}
+        ${renderField('Source', humanLabel(form.source || 'support_page'))}
+      </dl>
+
+      <div class="admin-message-preview">
+        <h4>Message</h4>
+        <p>${escapeHtml(form.message || 'No message provided.')}</p>
+      </div>
+
+      <label class="admin-field">
+        <span>Admin note</span>
+        <textarea rows="5" data-support-form-note="${escapeHtml(form.id)}">${escapeHtml(form.adminNote || '')}</textarea>
+      </label>
+
+      <div class="admin-modal-actions">
+        <button type="button" class="admin-primary-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="reviewing" ${saving ? 'disabled' : ''}>
+          Mark Reviewing
+        </button>
+        <button type="button" class="admin-secondary-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="resolved" ${saving ? 'disabled' : ''}>
+          Mark Resolved
+        </button>
+        <button type="button" class="admin-secondary-button" data-support-form-save-note="${escapeHtml(form.id)}" ${saving ? 'disabled' : ''}>
+          ${saving ? 'Saving...' : 'Save Note'}
+        </button>
+        <a class="admin-secondary-button" href="mailto:${escapeHtml(form.email || 'support@melogicrecords.studio')}?subject=${encodeURIComponent(`Re: ${form.subject || 'Melogic Support Request'}`)}">
+          Reply by Email
+        </a>
+      </div>
+    </article>
   `
 }
 
@@ -3153,7 +3305,82 @@ function contactCallPanel() {
               </article>`}
         </div>
       </section>
+
+      ${activeSupportCallsPanel()}
+
     </section>
+  `
+}
+
+function activeSupportCallsPanel() {
+  const call = state.contact.call || {}
+  const activeCalls = call.activeCalls || []
+
+  return `
+    <section class="admin-section-slab admin-fixed-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Active Calls</h2>
+          <p class="admin-muted">Live support call records from Firestore. Webhooks will feed this automatically later.</p>
+        </div>
+        <div class="admin-modal-actions">
+          <button type="button" class="admin-secondary-button" data-admin-call-watch>
+            ${call.activeCallsLoaded ? 'Refresh Watch' : 'Watch Active Calls'}
+          </button>
+          <button type="button" class="admin-secondary-button" data-admin-call-create-manual ${call.manualCallCreating ? 'disabled' : ''}>
+            ${call.manualCallCreating ? 'Creating...' : 'Create Manual Test Call'}
+          </button>
+        </div>
+      </div>
+
+      ${call.activeCallsError ? `<p class="admin-status is-error">${escapeHtml(call.activeCallsError)}</p>` : ''}
+
+      <div class="admin-panel-scroll">
+        ${call.activeCallsLoading ? '<article class="admin-empty-state">Loading active calls...</article>' : ''}
+        ${!call.activeCallsLoading && !activeCalls.length ? `
+          <article class="admin-empty-state">
+            <strong>No active calls yet</strong>
+            <span>Create a manual test call now. Later, LiveKit webhooks will populate this automatically.</span>
+          </article>
+        ` : ''}
+        ${activeCalls.map((supportCall) => activeSupportCallCard(supportCall)).join('')}
+      </div>
+    </section>
+  `
+}
+
+function activeSupportCallCard(supportCall = {}) {
+  const selected = state.contact.call.selectedCallId === supportCall.id
+  const handlerLabel = supportCall.handledBy === 'ai'
+    ? 'AI Assistant'
+    : supportCall.handledBy === 'human'
+      ? 'Human'
+      : 'Unassigned'
+
+  return `
+    <article class="admin-empty-state ${selected ? 'is-selected' : ''}">
+      <strong>${escapeHtml(supportCall.callerNumberMasked || 'Unknown caller')}</strong>
+      <span>${escapeHtml(supportCall.roomName || 'No room assigned')}</span>
+      <dl class="admin-field-grid is-compact">
+        ${renderField('Status', humanLabel(supportCall.status || 'active'))}
+        ${renderField('Direction', humanLabel(supportCall.direction || 'inbound'))}
+        ${renderField('Handler', handlerLabel)}
+        ${renderField('AI enabled', supportCall.aiEnabled ? 'Yes' : 'No')}
+        ${renderField('Human joined', supportCall.humanJoined ? 'Yes' : 'No')}
+        ${renderField('Started', supportCall.startedAt ? formatDate(supportCall.startedAt) : 'Not set')}
+      </dl>
+      <div class="admin-modal-actions">
+        <button type="button" class="admin-primary-button" data-admin-call-join="${escapeHtml(supportCall.id)}">
+          Join Call
+        </button>
+        <button type="button" class="admin-secondary-button" data-admin-call-force="${escapeHtml(supportCall.id)}">
+          Force Connect
+        </button>
+        <button type="button" class="admin-secondary-button" data-admin-call-end="${escapeHtml(supportCall.id)}">
+          Mark Ended
+        </button>
+      </div>
+    </article>
   `
 }
 
@@ -3958,7 +4185,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       if (emailLogId) state.contact.emailLogDetailId = emailLogId
       const tab = state.contact.emailLogTab || 'sent'
       const logState = emailLogState(tab)
-      if (!logState.loaded && tab !== 'draft') {
+            if (!logState.loaded && tab !== 'draft') {
         logState.loading = true
         const result = await listAdminEmailLogs({ mode: tab, limitCount: 10, search: state.contact.emailLogSearch || '' }).catch((error) => ({ error, items: [], nextCursor: '', hasMore: false }))
         if (result.error) logState.error = result.error?.message || 'Email activity could not be loaded.'
@@ -3969,6 +4196,14 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         logState.loading = false
       } else if (tab === 'draft') {
         state.contact.emailLogs.draft.loaded = true
+      }
+
+      if (contactMode() === 'call') {
+        startActiveSupportCallWatch()
+      }
+
+      if (contactMode() === 'support') {
+        startSupportFormsWatch()
       }
     },
     settings: async () => {
@@ -4705,6 +4940,203 @@ function syncAdminContactCallParticipants(room) {
   state.contact.call.remoteParticipants = participants
 }
 
+function startSupportFormsWatch() {
+  if (unsubscribeSupportForms) return
+
+  state.contact.supportForms.loading = true
+  state.contact.supportForms.error = ''
+  render()
+
+  unsubscribeSupportForms = watchSupportForms(
+    (forms) => {
+      state.contact.supportForms.items = forms
+      state.contact.supportForms.loaded = true
+      state.contact.supportForms.loading = false
+      state.contact.supportForms.error = ''
+      if (!state.contact.supportForms.selectedId && forms[0]?.id) {
+        state.contact.supportForms.selectedId = forms[0].id
+      }
+      render()
+    },
+    (error) => {
+      state.contact.supportForms.loading = false
+      state.contact.supportForms.error = error?.message || 'Could not load support forms.'
+      render()
+    }
+  )
+}
+
+function stopSupportFormsWatch() {
+  if (typeof unsubscribeSupportForms === 'function') {
+    unsubscribeSupportForms()
+  }
+  unsubscribeSupportForms = null
+}
+
+function selectedSupportForm() {
+  const selectedId = state.contact.supportForms.selectedId
+  return (state.contact.supportForms.items || []).find((item) => item.id === selectedId)
+    || state.contact.supportForms.items?.[0]
+    || null
+}
+
+async function changeSupportFormStatus(formId = '', status = 'reviewing') {
+  if (!formId) return
+
+  state.contact.supportForms.savingId = formId
+  state.contact.error = ''
+  render()
+
+  try {
+    await updateSupportFormStatus(formId, status)
+  } catch (error) {
+    console.warn('[admin support forms] status update failed', error)
+    state.contact.supportForms.error = error?.message || 'Could not update support form status.'
+  } finally {
+    state.contact.supportForms.savingId = ''
+    render()
+  }
+}
+
+async function saveSupportFormAdminNote(formId = '') {
+  if (!formId) return
+
+  const textarea = document.querySelector(`[data-support-form-note="${CSS.escape(formId)}"]`)
+  const adminNote = textarea?.value || ''
+
+  state.contact.supportForms.savingId = formId
+  state.contact.supportForms.error = ''
+  render()
+
+  try {
+    await updateSupportFormAdminNote(formId, adminNote)
+  } catch (error) {
+    console.warn('[admin support forms] note update failed', error)
+    state.contact.supportForms.error = error?.message || 'Could not save admin note.'
+  } finally {
+    state.contact.supportForms.savingId = ''
+    render()
+  }
+}
+
+function startActiveSupportCallWatch() {
+  if (unsubscribeActiveSupportCalls) return
+
+  state.contact.call.activeCallsLoading = true
+  state.contact.call.activeCallsError = ''
+  render()
+
+  unsubscribeActiveSupportCalls = watchActiveSupportCalls(
+    (calls) => {
+      state.contact.call.activeCalls = calls
+      state.contact.call.activeCallsLoaded = true
+      state.contact.call.activeCallsLoading = false
+      state.contact.call.activeCallsError = ''
+      render()
+    },
+    (error) => {
+      state.contact.call.activeCallsLoading = false
+      state.contact.call.activeCallsError = error?.message || 'Could not load active calls.'
+      render()
+    }
+  )
+}
+
+function stopActiveSupportCallWatch() {
+  if (typeof unsubscribeActiveSupportCalls === 'function') {
+    unsubscribeActiveSupportCalls()
+  }
+  unsubscribeActiveSupportCalls = null
+}
+
+async function createManualSupportCallFromPanel() {
+  if (state.contact.call.manualCallCreating) return
+
+  const roomName = String(state.contact.call.roomName || 'melogic-phone-test').trim() || 'melogic-phone-test'
+  const callerNumber = window.prompt('Optional caller phone number or label', 'Manual test caller') || ''
+
+  state.contact.call.manualCallCreating = true
+  state.contact.call.error = ''
+  state.contact.call.message = 'Creating manual active call record...'
+  render()
+
+  try {
+    const callId = await createManualSupportCall({
+      roomName,
+      callerNumber,
+      notes: 'Created manually from Admin → Contact → Calls.'
+    })
+
+    state.contact.call.selectedCallId = callId
+    state.contact.call.message = 'Manual active call record created.'
+  } catch (error) {
+    console.warn('[admin calls] manual call create failed', error)
+    state.contact.call.error = error?.message || 'Could not create manual support call.'
+  } finally {
+    state.contact.call.manualCallCreating = false
+    render()
+  }
+}
+
+async function joinSupportCallFromPanel(callId = '') {
+  const call = (state.contact.call.activeCalls || []).find((item) => item.id === callId)
+  if (!call?.roomName) {
+    state.contact.call.error = 'This call does not have a room name.'
+    render()
+    return
+  }
+
+  state.contact.call.selectedCallId = call.id
+
+  try {
+    await markSupportCallHumanJoined(call.id, state.currentUser?.uid || '')
+  } catch (error) {
+    console.warn('[admin calls] could not mark human joined before room join', error)
+  }
+
+  joinAdminContactCallRoom(call.roomName)
+}
+
+async function forceConnectSupportCall(callId = '') {
+  const call = (state.contact.call.activeCalls || []).find((item) => item.id === callId)
+  if (!call?.roomName) {
+    state.contact.call.error = 'This call does not have a room name.'
+    render()
+    return
+  }
+
+  state.contact.call.selectedCallId = call.id
+  state.contact.call.error = ''
+  state.contact.call.message = 'Requesting human takeover...'
+  render()
+
+  try {
+    await requestSupportCallTakeover(call.id, state.currentUser?.uid || '')
+    await markSupportCallHumanJoined(call.id, state.currentUser?.uid || '')
+    joinAdminContactCallRoom(call.roomName)
+  } catch (error) {
+    console.warn('[admin calls] force connect failed', error)
+    state.contact.call.error = error?.message || 'Could not request takeover.'
+    render()
+  }
+}
+
+async function endSupportCallFromPanel(callId = '') {
+  if (!callId) return
+  if (!window.confirm('Mark this support call as ended?')) return
+
+  try {
+    await endSupportCall(callId)
+    if (state.contact.call.selectedCallId === callId) state.contact.call.selectedCallId = ''
+    state.contact.call.message = 'Support call marked ended.'
+    render()
+  } catch (error) {
+    console.warn('[admin calls] end call failed', error)
+    state.contact.call.error = error?.message || 'Could not end support call.'
+    render()
+  }
+}
+
 async function joinAdminContactCallRoom(roomName = 'melogic-phone-test') {
   if (adminContactCallRoom) {
     state.contact.call.error = 'Already connected to a call room. Leave the current room first.'
@@ -5059,6 +5491,38 @@ app.querySelector('[data-admin-call-leave]')?.addEventListener('click', (event) 
   event.preventDefault()
   leaveAdminContactCallRoom()
 })
+
+app.querySelector('[data-admin-call-watch]')?.addEventListener('click', (event) => {
+  event.preventDefault()
+  stopActiveSupportCallWatch()
+  startActiveSupportCallWatch()
+})
+
+app.querySelector('[data-admin-call-create-manual]')?.addEventListener('click', (event) => {
+  event.preventDefault()
+  createManualSupportCallFromPanel()
+})
+
+app.querySelectorAll('[data-admin-call-join]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    joinSupportCallFromPanel(button.getAttribute('data-admin-call-join') || '')
+  })
+})
+
+app.querySelectorAll('[data-admin-call-force]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    forceConnectSupportCall(button.getAttribute('data-admin-call-force') || '')
+  })
+})
+
+app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    endSupportCallFromPanel(button.getAttribute('data-admin-call-end') || '')
+  })
+})
   app.querySelectorAll('[data-copy-value]').forEach((button) => {
     button.addEventListener('click', async () => {
       const value = button.getAttribute('data-copy-value') || ''
@@ -5131,6 +5595,36 @@ app.querySelector('[data-admin-call-leave]')?.addEventListener('click', (event) 
     event.preventDefault()
     submitRoleForm(event.currentTarget)
   })
+  app.querySelector('[data-support-forms-refresh]')?.addEventListener('click', (event) => {
+  event.preventDefault()
+  stopSupportFormsWatch()
+  startSupportFormsWatch()
+})
+
+app.querySelectorAll('[data-support-form-select]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    state.contact.supportForms.selectedId = button.getAttribute('data-support-form-select') || ''
+    render()
+  })
+})
+
+app.querySelectorAll('[data-support-form-status]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    changeSupportFormStatus(
+      button.getAttribute('data-support-form-status') || '',
+      button.getAttribute('data-status-value') || 'reviewing'
+    )
+  })
+})
+
+app.querySelectorAll('[data-support-form-save-note]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.preventDefault()
+    saveSupportFormAdminNote(button.getAttribute('data-support-form-save-note') || '')
+  })
+})
 }
 
 async function init() {
