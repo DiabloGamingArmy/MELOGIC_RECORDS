@@ -638,6 +638,15 @@ export async function listCommunityCommentsPage({
   }
 }
 
+export async function getCommunityTopComment(postId = '') {
+  const result = await listCommunityCommentsPage({
+    postId,
+    parentCommentId: '',
+    limitCount: 1
+  })
+  return result.comments[0] || null
+}
+
 export async function getCommunityCommentViewerState(postId = '', commentId = '', uid = '') {
   const cleanPostId = String(postId || '').trim()
   const cleanCommentId = String(commentId || '').trim()
