@@ -9,7 +9,6 @@ import {
   createCommunityComment,
   createCommunityPost,
   createCommunityStory,
-  createCommunity,
   deleteCommunityStory,
   deleteCommunityComment,
   deleteOwnCommunityPost,
@@ -51,21 +50,6 @@ import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
 const COMMUNITY_PAGE_SIZE = 12
-const FALLBACK_COMMUNITY_DEFS = [
-  ['StageMaker', 'Stage', 'Stage design, live rigs, venue plans, and show builds.'],
-  ['Vocals', 'Production', 'Vocal production, performance, tuning, chains, and toplines.'],
-  ['Sound Design', 'Production', 'Synthesis, resampling, textures, and creative sound building.'],
-  ['Sample Packs', 'Marketplace', 'Loops, one-shots, kits, and creator pack discussion.'],
-  ['Mixing & Mastering', 'Production', 'Mix critique, mastering notes, references, and release polish.'],
-  ['Metalcore', 'Genre', 'Heavy guitars, drums, vocals, programming, and modern metalcore production.'],
-  ['Live Production', 'Stage', 'Live playback, routing, stage plots, cues, and touring workflows.'],
-  ['Feedback', 'Feedback', 'Ask for focused critique and give useful creator feedback.'],
-  ['Dubstep', 'Genre', 'Bass design, drops, arrangement, and electronic production talk.'],
-  ['Logic', 'Production', 'Logic Pro workflows, templates, plugins, and troubleshooting.'],
-  ['Ableton', 'Production', 'Ableton Live workflows, racks, performance, and production systems.'],
-  ['Serum', 'Production', 'Serum patches, wavetables, basses, leads, and sound design.'],
-  ['Vital', 'Production', 'Vital presets, modulation, wavetables, and synthesis tips.']
-]
 const DUMMY_STORIES = [
   { id: 'test1', label: 'test1', initials: 'T1' },
   { id: 'test2', label: 'test2', initials: 'T2' },
@@ -85,7 +69,6 @@ const REPORT_REASONS = [
   'Inappropriate content',
   'Other'
 ]
-const COMMUNITY_CATEGORIES = ['all', 'Genre', 'Production', 'Stage', 'Marketplace', 'Feedback', 'Creator Help']
 const STORY_BACKGROUNDS = [
   { id: 'aurora', label: 'Aurora' },
   { id: 'midnight', label: 'Midnight' },
@@ -96,12 +79,6 @@ const STORY_BACKGROUNDS = [
 const STORY_LIFETIME_OPTIONS = [6, 12, 24, 48]
 const STORY_MAX_RECORD_SECONDS = 60
 const recordedStoryViews = new Set()
-const POSTING_MODES = [
-  { value: 'open', label: 'Open' },
-  { value: 'focused_only', label: 'Focused only' },
-  { value: 'members_only', label: 'Members only' },
-  { value: 'moderators_only', label: 'Moderators only' }
-]
 const COMMUNITY_DEBUG = Boolean(import.meta.env?.DEV) || new URLSearchParams(window.location.search).has('debugCommunity')
 
 const state = {
@@ -221,17 +198,6 @@ const state = {
     submitting: false,
     error: ''
   },
-  createCommunity: {
-    open: false,
-    name: '',
-    slug: '',
-    description: '',
-    category: 'Creator Help',
-    postingMode: 'open',
-    submitting: false,
-    error: '',
-    message: ''
-  },
   report: {
     open: false,
     targetType: 'community_post',
@@ -268,8 +234,6 @@ const state = {
   commentActionError: '',
   detailPostId: parseDetailPostId()
 }
-
-if (state.view.createOpen) state.createCommunity.open = true
 
 let feedPaginationObserver = null
 let communityScrollChromeReady = false
@@ -368,45 +332,13 @@ function slugifyCommunity(value = '') {
     .replace(/^-+|-+$/g, '')
 }
 
-function fallbackCommunities() {
-  return FALLBACK_COMMUNITY_DEFS.map(([name, category, description]) => {
-    const slug = slugifyCommunity(name)
-    return {
-      communityId: slug,
-      id: slug,
-      slug,
-      name,
-      description,
-      category,
-      iconURL: '',
-      bannerURL: '',
-      createdBy: '',
-      ownerUid: '',
-      moderatorIds: [],
-      memberCount: 0,
-      focusCount: 0,
-      postCount: 0,
-      reportCount: 0,
-      pinnedPostIds: [],
-      visibility: 'public',
-      postingMode: 'open',
-      status: 'active',
-      official: false,
-      fallback: true,
-      createdAt: '',
-      updatedAt: ''
-    }
-  })
-}
-
-function fallbackCommunityBySlug(slug = '') {
-  const clean = slugifyCommunity(slug)
-  return fallbackCommunities().find((community) => community.slug === clean || community.communityId === clean) || null
-}
-
 function displayedCommunities() {
-  const real = state.communities.filter((community) => community.status === 'active' && community.visibility === 'public')
-  return real.length ? real : fallbackCommunities()
+  return state.communities.filter((community) => community.status === 'active' && community.visibility === 'public')
+}
+
+function directoryCategoryOptions() {
+  const categories = new Set(displayedCommunities().map((community) => community.category).filter(Boolean))
+  return ['all', ...[...categories].sort((a, b) => a.localeCompare(b))]
 }
 
 function directoryCommunities() {
@@ -549,7 +481,7 @@ function parseCommunityView() {
   const communityMatch = path.match(/^\/community\/c\/([^/]+)/)
   if (communityMatch) return { type: 'community', slug: decodeURIComponent(communityMatch[1] || '') }
   if (path.startsWith('/community/communities')) return { type: 'communities' }
-  if (path.startsWith('/community/create')) return { type: 'communities', createOpen: true }
+  if (path.startsWith('/community/create')) return { type: 'communities' }
   return { type: 'feed' }
 }
 
@@ -647,33 +579,6 @@ function storyAvatar(story) {
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
-const FORUM_CATEGORIES = [
-  {
-    title: 'General Discussion',
-    description: 'Open conversation for creators, listeners, and platform questions.'
-  },
-  {
-    title: 'Production Help',
-    description: 'Ask about mixing, sound design, workflow problems, and creative blocks.'
-  },
-  {
-    title: 'Marketplace & Products',
-    description: 'Discuss product submissions, store pages, deliverables, and buyer feedback.'
-  },
-  {
-    title: 'Collaborations',
-    description: 'Find collaborators, remix partners, session players, and project support.'
-  },
-  {
-    title: 'Releases & Feedback',
-    description: 'Share release plans, early previews, and requests for constructive notes.'
-  },
-  {
-    title: 'Melogic Platform',
-    description: 'Talk through Melogic features, updates, Studio tools, and community workflows.'
-  }
-]
-
 const COMMUNITY_FORM_LINKS = [
   {
     title: 'Support Forms',
@@ -688,12 +593,15 @@ const COMMUNITY_FORM_LINKS = [
 ]
 
 function activeFeedTitle() {
-  if (state.activeTab === 'forums') return 'Forums'
   if (state.activeTab === 'forms') return 'Forms'
   if (state.activeTab === 'music') return 'Music'
   if (state.activeTab === 'products') return 'Products'
-  if (state.activeTab === 'stage-plans') return 'Stage Plans'
-  if (state.activeTab === 'studio-projects') return 'Studio Projects'
+  if (state.activeTab === 'stage-plans') return 'Stagemaker Projects'
+  if (state.activeTab === 'studio-projects') return 'DAW Projects'
+  if (state.activeTab === 'live') return 'Live'
+  if (state.activeTab === 'saved') return 'Saved'
+  if (state.activeTab === 'my-content') return 'My Content'
+  if (state.activeTab === 'my-account') return 'My Account'
   if (state.activeTab === 'feedback') return 'Feedback'
   if (state.activeTab === 'collaboration') return 'Collaboration'
   if (state.activeTab === 'following') return 'Focused'
@@ -1802,8 +1710,8 @@ function renderComments(post) {
 function emptyCopy() {
   if (state.activeTab === 'following') return state.currentUser ? 'Focus communities to build this feed.' : 'Sign in to focus communities.'
   if (state.activeTab === 'community') return `No posts in ${state.activeTopicLabel || 'this community'} yet.`
-  if (state.activeTab === 'forums') return 'Forum threads are coming soon.'
   if (state.activeTab === 'forms') return 'Community forms are being organized here.'
+  if (['live', 'saved', 'my-content', 'my-account'].includes(state.activeTab)) return `${activeFeedTitle()} is coming soon.`
   if (state.activeTab === 'official') return 'No official posts yet.'
   if (['music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration'].includes(state.activeTab)) return `No ${activeFeedTitle().toLowerCase()} posts yet.`
   return 'No posts yet. Be the first to share something.'
@@ -1886,37 +1794,6 @@ function renderCommunityFormsSection({ standalone = false } = {}) {
   `
 }
 
-function renderForumsPage() {
-  return `
-    <section class="community-framework-page">
-      <header class="community-feed-toolbar community-framework-hero">
-        <div>
-          <p class="eyebrow">Community</p>
-          <h1>Forums</h1>
-          <p>Discuss production, releases, collaborations, marketplace tools, and Melogic platform updates.</p>
-        </div>
-        <button type="button" class="button button-accent" disabled title="Forum thread creation is coming soon.">
-          ${iconSvg('messageCircle')} <span>Start a Forum Thread</span>
-        </button>
-      </header>
-      <section class="community-framework-grid" aria-label="Forum categories">
-        ${FORUM_CATEGORIES.map((category) => `
-          <article class="community-framework-card">
-            <span class="community-framework-icon">${iconSvg('messageCircle')}</span>
-            <strong>${escapeHtml(category.title)}</strong>
-            <p>${escapeHtml(category.description)}</p>
-            <div class="community-framework-stats">
-              <span>0 threads</span>
-              <span>Coming soon</span>
-            </div>
-          </article>
-        `).join('')}
-      </section>
-      ${renderCommunityFormsSection()}
-    </section>
-  `
-}
-
 function renderFormsPage() {
   return `
     <section class="community-framework-page">
@@ -1932,9 +1809,56 @@ function renderFormsPage() {
   `
 }
 
+function renderCommunityPlaceholderPage({ title = '', description = '', eyebrow = 'Community' } = {}) {
+  return `
+    <section class="community-framework-page">
+      <header class="community-feed-toolbar community-framework-hero">
+        <div>
+          <p class="eyebrow">${escapeHtml(eyebrow)}</p>
+          <h1>${escapeHtml(title)}</h1>
+          <p>${escapeHtml(description)}</p>
+        </div>
+      </header>
+      <section class="community-feed-state community-panel">
+        <strong>Coming soon</strong>
+        <span>This area is being shaped into a real Community surface. Nothing is broken; it just is not live yet.</span>
+      </section>
+    </section>
+  `
+}
+
+function renderActiveCommunityTabContent() {
+  if (state.activeTab === 'forms') return renderFormsPage()
+  if (state.activeTab === 'live') {
+    return renderCommunityPlaceholderPage({
+      title: 'Live',
+      description: 'Live sessions, streams, listening rooms, and real-time creator events will live here.'
+    })
+  }
+  if (state.activeTab === 'saved') {
+    return renderCommunityPlaceholderPage({
+      title: 'Saved',
+      description: 'Saved posts and community references will be organized here.'
+    })
+  }
+  if (state.activeTab === 'my-content') {
+    return renderCommunityPlaceholderPage({
+      title: 'My Content',
+      description: 'Your posts, replies, shared music, StageMaker posts, and DAW project shares will collect here.'
+    })
+  }
+  if (state.activeTab === 'my-account') {
+    return renderCommunityPlaceholderPage({
+      title: 'My Account',
+      description: 'Community account preferences and identity controls will be collected here.'
+    })
+  }
+  return `${renderFeedToolbar()}${renderFeed()}`
+}
+
 function renderCommunityCard(community) {
   const focused = Boolean(state.communityFocus[community.communityId])
-  const focusDisabled = community.fallback === true
+  const focusDisabled = false
   return `
     <article class="community-community-card">
       <a class="community-community-main" href="${communityRoute(community.slug)}">
@@ -1958,67 +1882,21 @@ function renderCommunityCard(community) {
   `
 }
 
-function renderCreateCommunityForm() {
-  if (!state.createCommunity.open) return ''
-  return `
-    <section class="community-panel community-create-panel" id="create-community">
-      <div class="community-panel-heading">
-        <div>
-          <p class="eyebrow">Create</p>
-          <h2>Create Community</h2>
-        </div>
-        <button type="button" class="community-close-button" data-close-create-community aria-label="Close create community">${iconSvg('x')}</button>
-      </div>
-      ${state.createCommunity.message ? `<p class="community-success">${escapeHtml(state.createCommunity.message)}</p>` : `
-        <form data-create-community-form>
-          <label>
-            <span>Name</span>
-            <input name="name" maxlength="80" value="${escapeHtml(state.createCommunity.name)}" placeholder="Stage designers" />
-          </label>
-          <label>
-            <span>Slug</span>
-            <input name="slug" maxlength="48" value="${escapeHtml(state.createCommunity.slug)}" placeholder="stage-designers" />
-          </label>
-          <label>
-            <span>Description</span>
-            <textarea name="description" maxlength="500" rows="4" placeholder="What should creators post here?">${escapeHtml(state.createCommunity.description)}</textarea>
-          </label>
-          <label>
-            <span>Category</span>
-            <select name="category">${COMMUNITY_CATEGORIES.filter((category) => category !== 'all').map((category) => `<option value="${escapeHtml(category)}" ${state.createCommunity.category === category ? 'selected' : ''}>${escapeHtml(category)}</option>`).join('')}</select>
-          </label>
-          <label>
-            <span>Posting mode</span>
-            <select name="postingMode">${POSTING_MODES.map((mode) => `<option value="${escapeHtml(mode.value)}" ${state.createCommunity.postingMode === mode.value ? 'selected' : ''}>${escapeHtml(mode.label)}</option>`).join('')}</select>
-          </label>
-          ${state.createCommunity.error ? `<p class="community-error">${escapeHtml(state.createCommunity.error)}</p>` : ''}
-          <div class="community-form-actions">
-            <span>Creation is limited during first launch.</span>
-            <button type="submit" class="button button-accent" ${state.createCommunity.submitting ? 'disabled' : ''}>${state.createCommunity.submitting ? 'Creating...' : 'Create Community'}</button>
-          </div>
-        </form>
-      `}
-    </section>
-  `
-}
-
 function renderCommunitiesView() {
-  const categories = COMMUNITY_CATEGORIES
+  const categories = directoryCategoryOptions()
   return `
     <section class="community-hero compact">
       <div>
         <p class="eyebrow">Focused Communities</p>
         <h1>Communities</h1>
-        <p>Find focused spaces for genres, production, StageMaker, feedback, and creator support.</p>
+        <p>Find official Melogic spaces created and moderated by the admin team.</p>
       </div>
       <div class="community-hero-actions">
-        <button type="button" class="button button-accent" data-open-create-community>Create Community</button>
         <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back</span></a>
       </div>
     </section>
     <div class="community-layout">
       <div class="community-main">
-        ${renderCreateCommunityForm()}
         <section class="community-panel community-community-tools">
           <label>
             <span>Search</span>
@@ -2031,7 +1909,7 @@ function renderCommunitiesView() {
             </select>
           </label>
         </section>
-        ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : `<section class="community-community-grid">${directoryCommunities().map(renderCommunityCard).join('') || '<div class="community-feed-state community-panel">No communities match those filters.</div>'}</section>`}
+        ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : `<section class="community-community-grid">${directoryCommunities().map(renderCommunityCard).join('') || '<div class="community-feed-state community-panel"><strong>No communities are live yet.</strong><span>Admin-created communities will appear here once active and public.</span></div>'}</section>`}
       </div>
       ${renderSidebar()}
     </div>
@@ -2115,31 +1993,45 @@ function renderEditPostModal() {
 }
 
 function renderLeftNav() {
-  const navItems = [
-    { label: 'Home', icon: 'home', href: ROUTES.community },
-    { label: 'For You', icon: 'star', tab: 'for-you', active: state.activeTab === 'for-you' },
-    { label: 'Focused', icon: 'eye', tab: 'following', active: state.activeTab === 'following' },
-    { label: 'Forums', icon: 'messageCircle', tab: 'forums', active: state.activeTab === 'forums' },
-    { label: 'Forms', icon: 'fileText', tab: 'forms', active: state.activeTab === 'forms' },
-    { label: 'Communities', icon: 'folder', href: ROUTES.communityCommunities },
-    { label: 'My Posts', icon: 'fileText', action: 'My Posts' },
-    { label: 'Saved', icon: 'bookmark', action: 'Saved posts' },
-    { label: 'Music', icon: 'music', tab: 'music', active: state.activeTab === 'music' },
-    { label: 'Products', icon: 'package', tab: 'products', active: state.activeTab === 'products' },
-    { label: 'Stage Plans', icon: 'cube', tab: 'stage-plans', active: state.activeTab === 'stage-plans' },
-    { label: 'Studio Projects', icon: 'music', tab: 'studio-projects', active: state.activeTab === 'studio-projects' },
-    { label: 'Feedback', icon: 'messageCircle', tab: 'feedback', active: state.activeTab === 'feedback' },
-    { label: 'Collaboration', icon: 'user', tab: 'collaboration', active: state.activeTab === 'collaboration' }
+  const navGroups = [
+    {
+      label: 'Public',
+      items: [
+        { label: 'Home', icon: 'home', href: ROUTES.community },
+        { label: 'For You', icon: 'star', tab: 'for-you', active: state.activeTab === 'for-you' },
+        { label: 'Forms', icon: 'fileText', tab: 'forms', active: state.activeTab === 'forms' },
+        { label: 'Communities', icon: 'folder', href: ROUTES.communityCommunities, active: state.view.type === 'communities' },
+        { label: 'DAW Projects', icon: 'music', tab: 'studio-projects', active: state.activeTab === 'studio-projects' },
+        { label: 'Stagemaker Projects', icon: 'cube', tab: 'stage-plans', active: state.activeTab === 'stage-plans' },
+        { label: 'Music', icon: 'music', tab: 'music', active: state.activeTab === 'music' },
+        { label: 'Live', icon: 'play', tab: 'live', active: state.activeTab === 'live' },
+        { label: 'Collaboration', icon: 'user', tab: 'collaboration', active: state.activeTab === 'collaboration' }
+      ]
+    },
+    {
+      label: 'Private',
+      items: [
+        { label: 'Focused', icon: 'eye', tab: 'following', active: state.activeTab === 'following' },
+        { label: 'Saved', icon: 'bookmark', tab: 'saved', active: state.activeTab === 'saved' },
+        { label: 'Feedback', icon: 'messageCircle', tab: 'feedback', active: state.activeTab === 'feedback' },
+        { label: 'My Content', icon: 'fileText', tab: 'my-content', active: state.activeTab === 'my-content' },
+        { label: 'My Account', icon: 'user', tab: 'my-account', active: state.activeTab === 'my-account' }
+      ]
+    }
   ]
+  const renderItem = (item) => item.href ? `
+    <a class="${item.active ? 'is-active' : ''}" href="${item.href}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></a>
+  ` : `
+    <button type="button" class="${item.active ? 'is-active' : ''}" data-community-tab="${escapeHtml(item.tab)}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></button>
+  `
   return `
     <aside class="community-left-nav" aria-label="Community navigation">
       <nav>
-        ${navItems.map((item) => item.href ? `
-          <a class="${item.active ? 'is-active' : ''}" href="${item.href}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></a>
-        ` : item.tab ? `
-          <button type="button" class="${item.active ? 'is-active' : ''}" data-community-tab="${escapeHtml(item.tab)}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></button>
-        ` : `
-          <button type="button" data-community-nav-stub="${escapeHtml(item.action)}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></button>
+        ${navGroups.map((group) => `
+          <div class="community-left-nav-group">
+            <span class="community-left-nav-heading">${escapeHtml(group.label)}</span>
+            ${group.items.map(renderItem).join('')}
+          </div>
         `).join('')}
       </nav>
     </aside>
@@ -2148,7 +2040,6 @@ function renderLeftNav() {
 
 function trendingCommunities() {
   return displayedCommunities()
-    .filter((community) => !community.fallback)
     .sort((a, b) => {
       const scoreA = Number(a.focusCount || 0) + Number(a.postCount || 0)
       const scoreB = Number(b.focusCount || 0) + Number(b.postCount || 0)
@@ -2175,7 +2066,7 @@ function renderSidebar() {
                   <strong>${escapeHtml(community.name)}</strong>
                   <em>${formatCount(community.focusCount)} focused · ${formatCount(community.postCount)} posts</em>
                 </a>
-                <button type="button" ${community.fallback ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${community.fallback ? 'Soon' : state.communityFocus[community.communityId] ? 'Focused' : 'Focus'}</button>
+                <button type="button" data-toggle-community-focus="${escapeHtml(community.communityId)}">${state.communityFocus[community.communityId] ? 'Focused' : 'Focus'}</button>
               </article>
             `).join('')}
           </div>
@@ -2236,7 +2127,7 @@ function renderDetail() {
 function renderCommunityDetail() {
   const community = state.community
   const focused = community ? Boolean(state.communityFocus[community.communityId]) : false
-  const focusDisabled = community?.fallback === true
+  const focusDisabled = false
   return `
     <section class="community-hero compact community-community-hero">
       <div>
@@ -2310,7 +2201,7 @@ function renderCommunityHomeView() {
     <div class="community-layout is-home">
       ${renderLeftNav()}
       <div class="community-main">
-        ${state.activeTab === 'forums' ? renderForumsPage() : state.activeTab === 'forms' ? renderFormsPage() : `${renderFeedToolbar()}${renderFeed()}`}
+        ${renderActiveCommunityTabContent()}
       </div>
       ${renderSidebar()}
     </div>
@@ -2331,7 +2222,7 @@ function renderCommunityViewContent() {
 
 function renderFeedToolbar() {
   const title = state.view.type === 'community' && state.community ? state.community.name : activeFeedTitle()
-  const postDisabled = state.view.type === 'community' && state.community?.fallback === true
+  const postDisabled = false
   const subtitle = state.view.type === 'community' && state.community
     ? `Posts in c/${state.community.slug}.`
     : state.activeTab === 'following'
@@ -2729,7 +2620,7 @@ async function loadCommunity() {
     loadCommunities({ renderOnStart: false, renderAfter: true }).catch(() => null)
   }
 
-  if (['forums', 'forms'].includes(state.activeTab)) {
+  if (['forms', 'live', 'saved', 'my-content', 'my-account'].includes(state.activeTab)) {
     state.loading = false
     state.feedInitialLoading = false
     state.feedLoadingMore = false
@@ -2751,9 +2642,9 @@ async function loadCommunity() {
     state.attachmentMediaUrls = {}
     render()
     try {
-      const community = await getCommunityBySlug(state.view.slug) || fallbackCommunityBySlug(state.view.slug)
+      const community = await getCommunityBySlug(state.view.slug)
       state.community = community
-      state.communities = community && !community.fallback ? [community] : state.communities
+      state.communities = community ? [community] : state.communities
       state.communityFilters.loading = false
       render()
       if (community) {
@@ -3873,7 +3764,7 @@ function showCommunityToast(message = '') {
 }
 
 function selectTopicTab(tab = 'for-you') {
-  const supportedTabs = new Set(['following', 'new', 'official', 'music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration', 'forums', 'forms', 'for-you'])
+  const supportedTabs = new Set(['following', 'new', 'official', 'music', 'products', 'stage-plans', 'studio-projects', 'feedback', 'collaboration', 'forms', 'for-you', 'live', 'saved', 'my-content', 'my-account'])
   state.activeTab = supportedTabs.has(tab) ? tab : 'for-you'
   state.activeCommunityId = ''
   state.activeCommunitySlug = ''
@@ -3924,7 +3815,7 @@ function updateCommunityRailFadeState() {
 }
 
 function communityModalIsOpen() {
-  return Boolean(state.composer.open || state.storyComposer.open || state.storyViewer.open || state.report.open || state.editPost.open || state.createCommunity.open)
+  return Boolean(state.composer.open || state.storyComposer.open || state.storyViewer.open || state.report.open || state.editPost.open)
 }
 
 function activeElementIsCommunityInput() {
@@ -3982,7 +3873,6 @@ function setupCommunityKeyboardShortcuts() {
     if (state.storyViewer.open) state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
     if (state.report.open) state.report = { ...state.report, open: false, submitting: false, error: '' }
     if (state.editPost.open) state.editPost = { open: false, postId: '', title: '', body: '', tags: '', visibility: 'public', submitting: false, error: '' }
-    if (state.createCommunity.open) state.createCommunity = { ...state.createCommunity, open: false, submitting: false, error: '' }
     render()
   })
 }
@@ -4047,30 +3937,6 @@ function renderCommentState() {
     return
   }
   render()
-}
-
-async function handleCreateCommunitySubmit(event) {
-  event.preventDefault()
-  const formData = new FormData(event.currentTarget)
-  const name = String(formData.get('name') || '').trim()
-  const slug = String(formData.get('slug') || '').trim()
-  const description = String(formData.get('description') || '').trim()
-  const category = String(formData.get('category') || '').trim()
-  const postingMode = String(formData.get('postingMode') || '').trim()
-  state.createCommunity = { ...state.createCommunity, name, slug, description, category, postingMode, submitting: true, error: '', message: '' }
-  render()
-  try {
-    const result = await createCommunity({ name, slug, description, category, postingMode })
-    state.createCommunity = { ...state.createCommunity, submitting: false, message: 'Community created.' }
-    await loadCommunities()
-    if (result.slug) window.history.replaceState({}, '', communityRoute(result.slug))
-    state.view = parseCommunityView()
-    await loadCommunity()
-  } catch (error) {
-    console.warn('[community] create community failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.createCommunity = { ...state.createCommunity, submitting: false, error: error?.message || 'Could not create community.' }
-    render()
-  }
 }
 
 function stopStoryRecordingTracks() {
@@ -4680,15 +4546,6 @@ function bindEvents() {
   app.querySelectorAll('[data-select-mentioned-user]').forEach((button) => button.addEventListener('click', () => selectMentionedUser(button.getAttribute('data-select-mentioned-user') || '')))
   app.querySelectorAll('[data-remove-mentioned-user]').forEach((button) => button.addEventListener('click', () => removeMentionedUser(button.getAttribute('data-remove-mentioned-user') || '')))
   app.querySelector('[data-reload-community]')?.addEventListener('click', loadCommunity)
-  app.querySelector('[data-open-create-community]')?.addEventListener('click', () => {
-    state.createCommunity = { ...state.createCommunity, open: true, error: '', message: '' }
-    render()
-  })
-  app.querySelector('[data-close-create-community]')?.addEventListener('click', () => {
-    state.createCommunity = { ...state.createCommunity, open: false, submitting: false, error: '' }
-    render()
-  })
-  app.querySelector('[data-create-community-form]')?.addEventListener('submit', handleCreateCommunitySubmit)
   app.querySelector('[data-community-search]')?.addEventListener('input', (event) => {
     state.communityFilters.search = event.target.value
     window.clearTimeout(state.communitySearchTimer)

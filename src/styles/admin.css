@@ -970,6 +970,129 @@
   resize: vertical;
 }
 
+.admin-dialog {
+  width: min(1120px, 100%);
+  max-height: min(88vh, 900px);
+  overflow: auto;
+  border: 1px solid rgba(199, 210, 223, 0.82);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(16, 24, 34, 0.28);
+  padding: 1rem;
+}
+
+.admin-dialog > header,
+.admin-community-audit-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.admin-community-audit-actions {
+  justify-content: flex-start;
+  margin: 1rem 0;
+}
+
+.admin-community-audit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin: 1rem 0;
+}
+
+.admin-community-audit-grid article,
+.admin-community-create-panel {
+  border: 1px solid rgba(199, 210, 223, 0.82);
+  border-radius: 8px;
+  background: rgba(247, 250, 253, 0.78);
+  padding: 0.9rem;
+}
+
+.admin-community-audit-grid h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.94rem;
+}
+
+.admin-community-person-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.admin-community-person-list article {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.admin-community-person-list img,
+.admin-community-person-list article > span {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: #dbe5f0;
+  object-fit: cover;
+  flex: 0 0 32px;
+}
+
+.admin-community-person-list strong,
+.admin-community-person-list small {
+  display: block;
+}
+
+.admin-community-create-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.admin-community-create-form label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.admin-community-create-form input,
+.admin-community-create-form textarea,
+.admin-community-create-form select {
+  width: 100%;
+  border: 1px solid #c9d2dc;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17202a;
+  padding: 0.65rem;
+  font: inherit;
+}
+
+.admin-form-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-secondary-button.danger {
+  color: #8f1f1f;
+  border-color: rgba(172, 54, 54, 0.4);
+}
+
+.admin-success,
+.admin-error {
+  margin: 0.7rem 0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  font-weight: 800;
+}
+
+.admin-success {
+  color: #0f6135;
+  background: rgba(67, 181, 113, 0.14);
+}
+
+.admin-error {
+  color: #8f1f1f;
+  background: rgba(210, 68, 68, 0.14);
+}
+
 .admin-decision-modal select {
   min-height: 38px;
   border: 1px solid #c9d2dc;

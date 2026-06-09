@@ -1878,19 +1878,30 @@ service cloud.firestore {
     }
 
     match /communities/{communityId} {
-      allow read: if resource.data.status == 'active'
-        && resource.data.visibility == 'public';
-      allow create: if false;
+      allow read: if (
+          resource.data.status == 'active'
+          && resource.data.visibility == 'public'
+        )
+        || hasUserModerateClaim();
+      allow create: if hasUserModerateClaim();
       allow update: if signedIn()
         && (
           (
             (resource.data.ownerUid == request.auth.uid
               || (resource.data.moderatorIds is list && request.auth.uid in resource.data.moderatorIds))
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'title',
               'name',
               'description',
+              'rules',
               'category',
+              'imagePath',
+              'imageUrl',
+              'imageURL',
+              'iconPath',
               'iconURL',
+              'bannerImagePath',
+              'bannerImageUrl',
               'bannerURL',
               'postingMode',
               'updatedAt'
@@ -1898,21 +1909,6 @@ service cloud.firestore {
           )
           || (
             hasUserModerateClaim()
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-              'name',
-              'description',
-              'category',
-              'iconURL',
-              'bannerURL',
-              'postingMode',
-              'status',
-              'visibility',
-              'moderationStatus',
-              'moderationReason',
-              'moderatedAt',
-              'moderatedBy',
-              'updatedAt'
-            ])
           )
         );
       allow delete: if hasUserModerateClaim();

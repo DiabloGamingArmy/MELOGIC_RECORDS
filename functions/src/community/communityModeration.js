@@ -109,16 +109,37 @@ function serializeCommunity(docSnap) {
     communityId: docSnap.id,
     id: docSnap.id,
     slug: cleanString(raw.slug || docSnap.id, 80),
-    name: cleanString(raw.name || raw.slug || 'Community', 180),
-    description: cleanString(raw.description || '', 320),
+    title: cleanString(raw.title || raw.name || raw.slug || 'Community', 180),
+    name: cleanString(raw.name || raw.title || raw.slug || 'Community', 180),
+    description: cleanString(raw.description || '', 700),
+    rules: Array.isArray(raw.rules) ? raw.rules.map((rule) => cleanString(rule, 240)).filter(Boolean).slice(0, 20) : [],
     category: cleanString(raw.category || '', 80),
+    imagePath: cleanString(raw.imagePath || raw.iconPath || '', 500),
+    imageUrl: cleanString(raw.imageUrl || raw.imageURL || raw.iconURL || '', 1200),
+    iconURL: cleanString(raw.iconURL || raw.imageUrl || raw.imageURL || '', 1200),
+    bannerImagePath: cleanString(raw.bannerImagePath || '', 500),
+    bannerImageUrl: cleanString(raw.bannerImageUrl || raw.bannerURL || '', 1200),
+    bannerURL: cleanString(raw.bannerURL || raw.bannerImageUrl || '', 1200),
+    createdBy: cleanString(raw.createdBy || '', 180),
+    updatedBy: cleanString(raw.updatedBy || '', 180),
     ownerUid: cleanString(raw.ownerUid || '', 180),
+    moderatorIds: Array.isArray(raw.moderatorIds) ? raw.moderatorIds.map((id) => cleanString(id, 180)).filter(Boolean).slice(0, 80) : [],
+    moderatorUids: Array.isArray(raw.moderatorUids) ? raw.moderatorUids.map((id) => cleanString(id, 180)).filter(Boolean).slice(0, 80) : [],
     status: cleanString(raw.status || '', 80),
     visibility: cleanString(raw.visibility || '', 80),
+    hidden: raw.hidden === true,
     focusCount: Math.max(0, Number(raw.focusCount || 0)),
+    followerCount: Math.max(0, Number(raw.followerCount ?? raw.focusCount ?? 0)),
+    memberCount: Math.max(0, Number(raw.memberCount || 0)),
     postCount: Math.max(0, Number(raw.postCount || 0)),
     reportCount: Math.max(0, Number(raw.reportCount || 0)),
     pinnedPostIds: Array.isArray(raw.pinnedPostIds) ? raw.pinnedPostIds.map((id) => cleanString(id, 180)).filter(Boolean).slice(0, 3) : [],
+    moderationStatus: cleanString(raw.moderationStatus || '', 80),
+    moderationReason: cleanString(raw.moderationReason || '', 700),
+    moderatedBy: cleanString(raw.moderatedBy || '', 180),
+    moderatedAt: serializeDate(raw.moderatedAt),
+    deletedAt: serializeDate(raw.deletedAt),
+    lastPostAt: serializeDate(raw.lastPostAt),
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
   }
@@ -320,20 +341,99 @@ const moderateCommunity = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async
   const communityId = safeId(request.data?.communityId || '', 'community id')
   const action = cleanString(request.data?.action || '', 80)
   const reason = cleanReason(request.data?.reason || '')
-  const allowed = new Set(['hide', 'restore', 'suspend'])
+  const allowed = new Set(['hide', 'restore', 'suspend', 'archive', 'delete', 'rename'])
   if (!allowed.has(action)) throw new HttpsError('invalid-argument', 'A valid community moderation action is required.')
   const ref = db().collection('communities').doc(communityId)
   const snap = await ref.get()
   if (!snap.exists) throw new HttpsError('not-found', 'Community not found.')
   const before = snap.data() || {}
   const now = admin.firestore.FieldValue.serverTimestamp()
-  const update = action === 'restore'
-    ? { status: 'active', visibility: 'public', moderationStatus: 'restored', moderationReason: reason, moderatedAt: now, moderatedBy: request.auth?.uid || '', updatedAt: now }
-    : { status: action === 'suspend' ? 'suspended' : 'hidden', visibility: 'private', moderationStatus: action, moderationReason: reason, moderatedAt: now, moderatedBy: request.auth?.uid || '', updatedAt: now }
+  const baseUpdate = {
+    moderationStatus: action === 'restore' ? 'restored' : action,
+    moderationReason: reason,
+    moderatedAt: now,
+    moderatedBy: request.auth?.uid || '',
+    updatedAt: now,
+    updatedBy: request.auth?.uid || ''
+  }
+  let update = {}
+  if (action === 'restore') {
+    update = { ...baseUpdate, status: 'active', visibility: 'public', hidden: false, deletedAt: null }
+  } else if (action === 'rename') {
+    const name = cleanString(request.data?.name || request.data?.title || '', 120)
+    const description = cleanString(request.data?.description || before.description || '', 700)
+    if (!name) throw new HttpsError('invalid-argument', 'Community name is required.')
+    update = { ...baseUpdate, name, title: name, description }
+  } else if (action === 'archive') {
+    update = { ...baseUpdate, status: 'archived', visibility: 'private', hidden: true }
+  } else if (action === 'delete') {
+    update = { ...baseUpdate, status: 'deleted', visibility: 'private', hidden: true, deletedAt: now }
+  } else {
+    update = { ...baseUpdate, status: action === 'suspend' ? 'archived' : 'hidden', visibility: 'private', hidden: true }
+  }
   await ref.set(update, { merge: true })
   await audit(request, `community_${action}`, 'community', communityId, `communities/${communityId}`, reason, before, update)
   return { ok: true, communityId, status: update.status, visibility: update.visibility }
 })
+
+async function loadProfileSummary(uid = '') {
+  const cleanUid = cleanString(uid || '', 180)
+  if (!cleanUid || cleanUid.includes('/')) return null
+  const [profileSnap, userSnap] = await Promise.all([
+    db().collection('profiles').doc(cleanUid).get().catch(() => null),
+    db().collection('users').doc(cleanUid).get().catch(() => null)
+  ])
+  const raw = profileSnap?.exists ? profileSnap.data() || {} : userSnap?.exists ? userSnap.data() || {} : {}
+  return {
+    uid: cleanUid,
+    displayName: cleanString(raw.displayName || raw.name || raw.email || cleanUid, 160),
+    username: cleanString(raw.username || raw.handle || '', 80),
+    avatarURL: cleanString(raw.avatarURL || raw.photoURL || '', 1200)
+  }
+}
+
+async function loadCommunityAudit(communityId = '', baseCommunity = null) {
+  const cleanId = safeId(communityId, 'community id')
+  let community = baseCommunity
+  if (!community) {
+    const snap = await db().collection('communities').doc(cleanId).get()
+    if (!snap.exists) throw new HttpsError('not-found', 'Community not found.')
+    community = serializeCommunity(snap)
+  }
+  const moderatorIds = [...new Set([...(community.moderatorUids || []), ...(community.moderatorIds || [])])].slice(0, 25)
+  const moderators = (await Promise.all(moderatorIds.map(loadProfileSummary))).filter(Boolean)
+  const [focusSnap, postsSnap, reportsSnap] = await Promise.all([
+    db().collectionGroup('focusedCommunities').where('communityId', '==', cleanId).limit(25).get().catch(() => null),
+    safeQuery('communityPosts', (ref) => ref.where('communityId', '==', cleanId).orderBy('createdAt', 'desc').limit(25), 25),
+    safeQuery('reports', (ref) => ref.where('targetId', '==', cleanId).orderBy('createdAt', 'desc').limit(25), 25)
+  ])
+  const followers = (await Promise.all((focusSnap?.docs || []).map((docSnap) => loadProfileSummary(docSnap.ref.parent.parent?.id || '')))).filter(Boolean)
+  const recentPosts = postsSnap.docs
+    .map(serializePost)
+    .filter((post) => post.communityId === cleanId || post.communitySlug === community.slug)
+    .slice(0, 20)
+  const posterIds = [...new Set(recentPosts.map((post) => post.authorUid).filter(Boolean))].slice(0, 25)
+  const posters = (await Promise.all(posterIds.map(loadProfileSummary))).filter(Boolean)
+  const reports = reportsSnap.docs
+    .map(reportSummary)
+    .filter((report) => report.targetType === 'community' || report.type === 'community' || report.metadata?.communityId === cleanId)
+    .slice(0, 20)
+  return {
+    community,
+    moderators,
+    followers,
+    posters,
+    recentPosts,
+    reports,
+    limits: {
+      moderators: 25,
+      followers: 25,
+      posters: 25,
+      recentPosts: 20,
+      reports: 20
+    }
+  }
+}
 
 async function safeQuery(collectionName, build, fallbackLimit = 30) {
   try {
@@ -346,6 +446,7 @@ async function safeQuery(collectionName, build, fallbackLimit = 30) {
 const listAdminCommunityModeration = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const claims = assertAnyPermission(request, ['userModerate'])
   const limitCount = Math.max(1, Math.min(Math.round(Number(request.data?.limitCount || request.data?.limit || 30)), 100))
+  const detailCommunityId = cleanString(request.data?.communityId || '', 180)
   const [postsSnap, communitiesSnap, reportsSnap] = await Promise.all([
     safeQuery('communityPosts', (ref) => ref.orderBy('createdAt', 'desc').limit(limitCount), limitCount),
     safeQuery('communities', (ref) => ref.orderBy('updatedAt', 'desc').limit(limitCount), limitCount),
@@ -353,6 +454,9 @@ const listAdminCommunityModeration = onCall({ timeoutSeconds: 60, memory: '256Mi
   ])
   const posts = postsSnap.docs.map(serializePost)
   const communities = communitiesSnap.docs.map(serializeCommunity)
+  const selectedCommunity = detailCommunityId
+    ? communities.find((community) => community.communityId === detailCommunityId) || null
+    : null
   const reports = reportsSnap.docs
     .map(reportSummary)
     .filter((report) => ['community', 'community_post', 'community_comment', 'community_story'].includes(report.targetType || report.type))
@@ -372,6 +476,7 @@ const listAdminCommunityModeration = onCall({ timeoutSeconds: 60, memory: '256Mi
     reportedPosts: posts.filter((post) => post.reportCount > 0 || reports.some((report) => report.targetType === 'community_post' && report.targetId === post.postId)),
     reportedComments: comments.filter(Boolean),
     hiddenPosts: posts.filter((post) => ['hidden_by_author', 'hidden_by_moderator', 'removed'].includes(post.status)),
+    audit: detailCommunityId ? await loadCommunityAudit(detailCommunityId, selectedCommunity) : null,
     total: { posts: posts.length, communities: communities.length, reports: reports.length }
   }
 })

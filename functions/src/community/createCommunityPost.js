@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
-const { cleanSlug, seedOfficialCommunities } = require('./communityShared')
+const { cleanSlug } = require('./communityShared')
 
 const POST_TYPES = new Set(['post', 'text', 'product_share'])
 const ATTACHMENT_TYPES = new Set(['product', 'music', 'stage_plan', 'studio_project'])
@@ -327,8 +327,6 @@ async function resolveCommunityForPost({ communityId = '', communitySlug = '', u
   const id = cleanString(communityId || cleanSlug(communitySlug), 180)
   if (!id) return { communityId: '', communitySlug: '' }
   if (id.includes('/')) throw new HttpsError('invalid-argument', 'A valid community id is required.')
-
-  await seedOfficialCommunities()
 
   const communityRef = db().collection('communities').doc(id)
   const communitySnap = await communityRef.get()
