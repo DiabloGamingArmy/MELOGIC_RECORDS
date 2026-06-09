@@ -8,8 +8,11 @@ import { getStorageAssetUrl } from './firebase/storageAssets'
 import { addToCart } from './data/cartService'
 import { listHomepageReleaseProducts } from './data/productService'
 import { ROUTES, productRoute } from './utils/routes'
+import { installLiveKitDebugTest } from './livekit/livekitDebugTest'
 
 const app = document.querySelector('#app')
+
+installLiveKitDebugTest()
 
 function escapeHtml(value) {
   return String(value || '')
