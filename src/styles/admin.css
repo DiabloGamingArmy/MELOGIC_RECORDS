@@ -2028,11 +2028,20 @@
   gap: 0.7rem;
 }
 
+.admin-form-grid > .is-wide {
+  grid-column: 1 / -1;
+}
+
 .admin-email-form label {
   display: grid;
   gap: 0.35rem;
   color: var(--admin-muted);
   font-size: 0.82rem;
+}
+
+.admin-email-form label small {
+  color: var(--admin-muted);
+  line-height: 1.35;
 }
 
 .admin-email-form input,

@@ -119,6 +119,8 @@ async function verifyAccessKey(input, config) {
 
 async function initAccessGate() {
   const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname)
+  const currentPath = normalizePath(window.location.pathname)
+  if (currentPath === '/admin' || currentPath.startsWith('/admin/')) return
   let config = null
   let loadFailed = false
   try {
@@ -127,7 +129,6 @@ async function initAccessGate() {
     loadFailed = true
     config = { isKeyRequired: !isLocalhost, keyVersion: 1, title: 'Private Beta', message: 'Unable to load access requirements. Retry to continue.', supportEmail: '', brandName: 'Melogic Records', keyValue: '', keyHash: '', allowedPublicPaths: [] }
   }
-  const currentPath = normalizePath(window.location.pathname)
   if (Array.isArray(config.allowedPublicPaths) && config.allowedPublicPaths.map(normalizePath).includes(currentPath)) return
   if (!config.isKeyRequired) return
   const grant = readAccessGateGrant()
