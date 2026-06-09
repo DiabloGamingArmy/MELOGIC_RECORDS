@@ -50,6 +50,10 @@ import { formatUsername } from './utils/format'
 import { formatActionLabel as sharedActionLabel } from './utils/displayFormat'
 import { ROUTES, adminReviewRoute, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
+import './styles/base.css'
+import './styles/admin.css'
+import { Room, RoomEvent } from 'livekit-client'
+import { createLiveKitCallToken } from './livekit/livekitCallService'
 
 const app = document.querySelector('#app')
 const ADMIN_THEME_KEY = 'melogic-admin-theme'
@@ -293,8 +297,18 @@ const state = {
       draft: { items: [], loading: false, loadingMore: false, loaded: false, error: '', cursor: '', hasMore: false }
     },
     systemForm: { recipientUid: '', recipientLabel: '', category: 'support', priority: 'normal', subject: '', body: '', actionLabel: '', actionUrl: '', internalNote: '' },
-    systemSending: false,
-    systemMessage: ''
+systemSending: false,
+systemMessage: '',
+call: {
+  roomName: 'melogic-phone-test',
+  status: 'idle',
+  message: '',
+  error: '',
+  muted: false,
+  participants: 0,
+  localIdentity: '',
+  remoteParticipants: []
+}
   },
   dialog: {
     open: false,
@@ -307,6 +321,9 @@ const state = {
     uid: ''
   }
 }
+
+let adminContactCallRoom = null
+let adminContactCallAudioElements = []
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -3026,11 +3043,11 @@ function contactModeTabs(mode = contactMode()) {
     ['email', 'Email'],
     ['system', 'System Message'],
     ['text', 'Text'],
-    ['call', 'Call']
+    ['call', 'Calls']
   ]
   return `
     <nav class="admin-contact-tabs" aria-label="Contact modes">
-      ${tabs.map(([key, label]) => `<a href="${ROUTES.adminContact}?mode=${key}" class="${mode === key ? 'is-active' : ''}">${escapeHtml(label)}${['text', 'call'].includes(key) ? '<span>Coming soon</span>' : ''}</a>`).join('')}
+      ${tabs.map(([key, label]) => `<a href="${ROUTES.adminContact}?mode=${key}" class="${mode === key ? 'is-active' : ''}">${escapeHtml(label)}${key === 'text' ? '<span>Coming soon</span>' : ''}</a>`).join('')}
     </nav>
   `
 }
@@ -3065,7 +3082,78 @@ function contactView() {
     ${mode === 'email' ? emailSettingsPanel() : ''}
     ${mode === 'system' ? systemMessagePanel() : ''}
     ${mode === 'text' ? contactComingSoonPanel('Text', 'SMS support messaging is planned for a later phase. This will require a compliant SMS provider and opt-in rules.') : ''}
-    ${mode === 'call' ? contactComingSoonPanel('Call', 'Call support tools are planned for a later phase. This may include call notes, callbacks, and support history.') : ''}
+    ${mode === 'call' ? contactCallPanel() : ''}
+  `
+}
+
+function contactCallPanel() {
+  const call = state.contact.call || {}
+  const connected = call.status === 'connected'
+  const connecting = call.status === 'connecting'
+  const active = connected || connecting
+
+  return `
+    <section class="admin-section-slab admin-email-settings">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Calls</h2>
+          <p class="admin-muted">Join the LiveKit phone support room and answer inbound callers from the admin console.</p>
+        </div>
+        <span class="review-badge ${connected ? 'is-approved' : connecting ? 'is-warning' : ''}">
+          ${escapeHtml(connected ? 'Connected' : connecting ? 'Connecting' : 'Ready')}
+        </span>
+      </div>
+
+      <dl class="admin-field-grid is-compact">
+        ${renderField('Support room', call.roomName || 'melogic-phone-test')}
+        ${renderField('Status', humanLabel(call.status || 'idle'))}
+        ${renderField('Participants', String(Number(call.participants || 0)))}
+        ${renderField('Local identity', call.localIdentity || 'Not connected')}
+        ${renderField('Mic', call.muted ? 'Muted' : connected ? 'Live' : 'Not connected')}
+      </dl>
+
+      ${call.error ? `<p class="admin-status is-error">${escapeHtml(call.error)}</p>` : ''}
+      ${call.message ? `<p class="admin-status is-success">${escapeHtml(call.message)}</p>` : ''}
+
+      <form class="admin-email-form" data-admin-call-form>
+        <label>
+          <span>Room name</span>
+          <input data-admin-call-room value="${escapeHtml(call.roomName || 'melogic-phone-test')}" ${active ? 'disabled' : ''} />
+        </label>
+
+        <div class="admin-modal-actions">
+          <button type="submit" class="admin-primary-button" ${active ? 'disabled' : ''}>
+            ${connecting ? 'Joining...' : connected ? 'Connected' : 'Join Phone Room'}
+          </button>
+          <button type="button" class="admin-secondary-button" data-admin-call-mute ${connected ? '' : 'disabled'}>
+            ${call.muted ? 'Unmute Mic' : 'Mute Mic'}
+          </button>
+          <button type="button" class="admin-secondary-button" data-admin-call-leave ${active ? '' : 'disabled'}>
+            Leave Room
+          </button>
+        </div>
+      </form>
+
+      <section class="admin-section-slab admin-fixed-panel is-short">
+        <div class="admin-slab-heading">
+          <h2>Call monitor</h2>
+          <span class="admin-muted">${connected ? 'Listening for phone caller' : 'Join before calling the number'}</span>
+        </div>
+        <div class="admin-panel-scroll">
+          ${call.remoteParticipants?.length
+            ? call.remoteParticipants.map((participant) => `
+              <article class="admin-empty-state">
+                <strong>${escapeHtml(participant.identity || 'Caller')}</strong>
+                <span>${escapeHtml(participant.kind || 'remote participant')}</span>
+              </article>
+            `).join('')
+            : `<article class="admin-empty-state">
+                <strong>${connected ? 'Waiting for caller' : 'Not connected'}</strong>
+                <span>${connected ? 'Call +1 484 964 9886 to test inbound routing.' : 'Join the room first, then dial the LiveKit number.'}</span>
+              </article>`}
+        </div>
+      </section>
+    </section>
   `
 }
 
@@ -4576,6 +4664,188 @@ function navigateToReviewProduct(productId) {
   render()
 }
 
+function resetAdminContactCallAudio() {
+  adminContactCallAudioElements.forEach((element) => {
+    try {
+      element.pause()
+      element.remove()
+    } catch {
+      // Ignore stale audio cleanup failures.
+    }
+  })
+  adminContactCallAudioElements = []
+}
+
+function attachAdminContactRemoteAudio(track) {
+  const element = track.attach()
+  element.autoplay = true
+  element.controls = true
+  element.dataset.adminContactCallAudio = 'true'
+  element.style.position = 'fixed'
+  element.style.left = '-9999px'
+  element.style.width = '1px'
+  element.style.height = '1px'
+  document.body.appendChild(element)
+  adminContactCallAudioElements.push(element)
+
+  element.play().catch((error) => {
+    console.warn('[admin calls] remote audio autoplay blocked', error)
+    state.contact.call.message = 'Remote caller joined. Click the page if browser audio is blocked.'
+    render()
+  })
+}
+
+function syncAdminContactCallParticipants(room) {
+  const participants = Array.from(room?.remoteParticipants?.values?.() || []).map((participant) => ({
+    identity: participant.identity,
+    kind: participant.kind || 'remote'
+  }))
+
+  state.contact.call.participants = participants.length
+  state.contact.call.remoteParticipants = participants
+}
+
+async function joinAdminContactCallRoom(roomName = 'melogic-phone-test') {
+  if (adminContactCallRoom) {
+    state.contact.call.error = 'Already connected to a call room. Leave the current room first.'
+    render()
+    return
+  }
+
+  const cleanRoomName = String(roomName || 'melogic-phone-test').trim() || 'melogic-phone-test'
+
+  state.contact.call = {
+    ...(state.contact.call || {}),
+    roomName: cleanRoomName,
+    status: 'connecting',
+    message: 'Joining phone support room...',
+    error: '',
+    muted: false,
+    participants: 0,
+    localIdentity: '',
+    remoteParticipants: []
+  }
+  render()
+
+  try {
+    const credentials = await createLiveKitCallToken({
+      roomName: cleanRoomName,
+      displayName: 'Melogic Admin Call Console',
+      role: 'admin-call-console'
+    })
+
+    const room = new Room({
+      adaptiveStream: true,
+      dynacast: true
+    })
+
+    adminContactCallRoom = room
+
+    room.on(RoomEvent.Connected, () => {
+      state.contact.call.status = 'connected'
+      state.contact.call.message = `Connected to ${room.name}.`
+      state.contact.call.localIdentity = room.localParticipant?.identity || credentials.identity || ''
+      syncAdminContactCallParticipants(room)
+      render()
+    })
+
+    room.on(RoomEvent.Disconnected, (reason) => {
+      resetAdminContactCallAudio()
+      if (adminContactCallRoom === room) adminContactCallRoom = null
+      state.contact.call.status = 'idle'
+      state.contact.call.message = reason ? `Disconnected: ${reason}` : 'Left call room.'
+      state.contact.call.localIdentity = ''
+      state.contact.call.participants = 0
+      state.contact.call.remoteParticipants = []
+      render()
+    })
+
+    room.on(RoomEvent.ParticipantConnected, (participant) => {
+      state.contact.call.message = `Participant connected: ${participant.identity || 'caller'}`
+      syncAdminContactCallParticipants(room)
+      render()
+    })
+
+    room.on(RoomEvent.ParticipantDisconnected, () => {
+      syncAdminContactCallParticipants(room)
+      state.contact.call.message = 'Participant left the room.'
+      render()
+    })
+
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      if (track.kind === 'audio') {
+        attachAdminContactRemoteAudio(track)
+        state.contact.call.message = `Receiving audio from ${participant.identity || 'caller'}.`
+        syncAdminContactCallParticipants(room)
+        render()
+      }
+    })
+
+    await room.connect(credentials.url, credentials.token)
+    await room.localParticipant.setMicrophoneEnabled(true)
+
+    state.contact.call.status = 'connected'
+    state.contact.call.message = 'Microphone live. Waiting for caller.'
+    state.contact.call.localIdentity = room.localParticipant.identity
+    state.contact.call.muted = false
+    syncAdminContactCallParticipants(room)
+    render()
+  } catch (error) {
+    console.warn('[admin calls] join failed', error)
+    resetAdminContactCallAudio()
+    if (adminContactCallRoom) {
+      try {
+        adminContactCallRoom.disconnect()
+      } catch {
+        // Ignore disconnect cleanup failures.
+      }
+    }
+    adminContactCallRoom = null
+    state.contact.call.status = 'idle'
+    state.contact.call.error = error?.message || 'Could not join LiveKit call room.'
+    state.contact.call.message = ''
+    render()
+  }
+}
+
+async function toggleAdminContactCallMute() {
+  if (!adminContactCallRoom) return
+
+  const nextMuted = !state.contact.call.muted
+
+  try {
+    await adminContactCallRoom.localParticipant.setMicrophoneEnabled(!nextMuted)
+    state.contact.call.muted = nextMuted
+    state.contact.call.message = nextMuted ? 'Microphone muted.' : 'Microphone live.'
+    render()
+  } catch (error) {
+    console.warn('[admin calls] mute toggle failed', error)
+    state.contact.call.error = error?.message || 'Could not update microphone.'
+    render()
+  }
+}
+
+function leaveAdminContactCallRoom() {
+  if (!adminContactCallRoom) {
+    state.contact.call.status = 'idle'
+    state.contact.call.message = 'No active call room.'
+    render()
+    return
+  }
+
+  try {
+    adminContactCallRoom.disconnect()
+  } catch {
+    adminContactCallRoom = null
+    resetAdminContactCallAudio()
+    state.contact.call.status = 'idle'
+    state.contact.call.message = 'Left call room.'
+    state.contact.call.participants = 0
+    state.contact.call.remoteParticipants = []
+    render()
+  }
+}
+
 function bindEvents() {
   app.querySelector('[data-admin-theme-toggle]')?.addEventListener('click', () => {
     applyAdminTheme(state.theme === 'dark' ? 'light' : 'dark')
@@ -4774,6 +5044,21 @@ function bindEvents() {
     event.preventDefault()
     submitAdminSystemMessageForm(event.currentTarget)
   })
+  app.querySelector('[data-admin-call-form]')?.addEventListener('submit', (event) => {
+  event.preventDefault()
+  const roomName = app.querySelector('[data-admin-call-room]')?.value || 'melogic-phone-test'
+  joinAdminContactCallRoom(roomName)
+})
+
+app.querySelector('[data-admin-call-mute]')?.addEventListener('click', (event) => {
+  event.preventDefault()
+  toggleAdminContactCallMute()
+})
+
+app.querySelector('[data-admin-call-leave]')?.addEventListener('click', (event) => {
+  event.preventDefault()
+  leaveAdminContactCallRoom()
+})
   app.querySelectorAll('[data-copy-value]').forEach((button) => {
     button.addEventListener('click', async () => {
       const value = button.getAttribute('data-copy-value') || ''
