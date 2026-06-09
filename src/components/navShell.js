@@ -23,9 +23,7 @@ export function navShell(options = {}) {
           <a href="${ROUTES.products}" ${isProducts ? 'aria-current="page"' : ''}>Products</a>
           <a href="${ROUTES.studio}" ${isStudio ? 'aria-current="page"' : ''}>Studio</a>
           <a href="${ROUTES.community}">Community</a>
-          <a href="${ROUTES.live}">Live</a>
           <a href="${ROUTES.forms}">Forms</a>
-          <a href="${ROUTES.faq}">FAQ</a>
           <a href="${ROUTES.support}">Support</a>
         </nav>
 
