@@ -67,6 +67,15 @@ import {
   updateSupportFormAdminNote,
   updateSupportFormStatus
 } from './data/supportFormService'
+import {
+  arrayToLines,
+  getBannerAlertSettings,
+  getMarketplacePricingSettings,
+  getPrivateBetaSettings,
+  updateBannerAlertSettings,
+  updateMarketplacePricingSettings,
+  updatePrivateBetaSettings
+} from './data/operationsService'
 
 const app = document.querySelector('#app')
 const ADMIN_THEME_KEY = 'melogic-admin-theme'
@@ -83,6 +92,7 @@ const SECTIONS = [
   { key: 'logs', route: ROUTES.adminLogs, label: 'Logs', icon: 'fileText', permission: 'auditRead' },
   { key: 'contact', route: ROUTES.adminContact, label: 'Contact', icon: 'mailSend', permission: 'emailSend' },
   { key: 'tools', route: ROUTES.adminTools, label: 'Tools', icon: 'folderPlus', permission: 'admin' },
+  { key: 'operations', route: ROUTES.adminOperations, label: 'Operations', icon: 'fileText', permission: 'admin' },
   { key: 'settings', route: ROUTES.adminSettings, label: 'Settings', icon: 'edit', permission: 'admin' }
 ]
 
@@ -291,6 +301,24 @@ const state = {
     updatedBy: '',
     dialog: { open: false, section: '' },
     emailStatus: null
+  },
+  operations: {
+    loading: false,
+    loaded: false,
+    error: '',
+    message: '',
+    saving: '',
+    banner: {},
+    beta: {},
+    pricing: {},
+    agreement: {
+      agreementId: 'marketplace-product-seller-agreement',
+      version: 'v1',
+      uploading: false,
+      message: '',
+      error: '',
+      storagePath: ''
+    }
   },
   contact: {
     loading: false,
@@ -3048,6 +3076,250 @@ function userActionDialog() {
   return ''
 }
 
+function operationsMode() {
+  const params = new URLSearchParams(window.location.search)
+  const mode = String(params.get('mode') || 'banner').toLowerCase()
+  return ['banner', 'beta', 'pricing', 'agreement'].includes(mode) ? mode : 'banner'
+}
+
+function operationsModeTabs(mode = operationsMode()) {
+  const tabs = [
+    ['banner', 'Banner Alerts'],
+    ['beta', 'Private Beta'],
+    ['pricing', 'Marketplace Pricing'],
+    ['agreement', 'Seller Agreement']
+  ]
+  return `
+    <nav class="admin-contact-tabs" aria-label="Operations modes">
+      ${tabs.map(([key, label]) => `<a href="${ROUTES.adminOperations}?mode=${key}" class="${mode === key ? 'is-active' : ''}">${escapeHtml(label)}</a>`).join('')}
+    </nav>
+  `
+}
+
+function operationsSummaryCards() {
+  const operations = state.operations
+  const banner = operations.banner || {}
+  const beta = operations.beta || {}
+  const pricing = operations.pricing || {}
+  return `
+    <section class="admin-metric-grid is-compact">
+      <article class="admin-metric"><span>Banner</span><strong>${banner.bannerActive ? 'Active' : 'Off'}</strong></article>
+      <article class="admin-metric"><span>Private Beta</span><strong>${beta.isKeyRequired ? 'Required' : 'Open'}</strong></article>
+      <article class="admin-metric"><span>Marketplace</span><strong>${pricing.enabled === false ? 'Disabled' : 'Enabled'}</strong></article>
+      <article class="admin-metric"><span>Agreement</span><strong>${escapeHtml(operations.agreement?.version || 'v1')}</strong></article>
+    </section>
+  `
+}
+
+function formatDateTimeLocal(value) {
+  if (!value) return ''
+  const date = typeof value?.toDate === 'function' ? value.toDate() : value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const offset = date.getTimezoneOffset()
+  const local = new Date(date.getTime() - offset * 60000)
+  return local.toISOString().slice(0, 16)
+}
+
+function operationTextInput({ name, label, value = '', type = 'text', helper = '', wide = false, required = false } = {}) {
+  return `
+    <label class="${wide ? 'is-wide' : ''}">
+      <span>${escapeHtml(label)}</span>
+      <input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}" ${required ? 'required' : ''} />
+      ${helper ? `<small>${escapeHtml(helper)}</small>` : ''}
+    </label>
+  `
+}
+
+function operationTextarea({ name, label, value = '', rows = 4, helper = '', wide = false } = {}) {
+  return `
+    <label class="${wide ? 'is-wide' : ''}">
+      <span>${escapeHtml(label)}</span>
+      <textarea name="${escapeHtml(name)}" rows="${rows}">${escapeHtml(value ?? '')}</textarea>
+      ${helper ? `<small>${escapeHtml(helper)}</small>` : ''}
+    </label>
+  `
+}
+
+function operationCheckbox({ name, label, checked = false, helper = '' } = {}) {
+  return `
+    <label class="admin-checkbox-field">
+      <input type="checkbox" name="${escapeHtml(name)}" ${checked ? 'checked' : ''} />
+      <span>${escapeHtml(label)}</span>
+      ${helper ? `<small>${escapeHtml(helper)}</small>` : ''}
+    </label>
+  `
+}
+
+function operationsView() {
+  if (!can('admin')) return permissionState('admin')
+  const mode = operationsMode()
+  const operations = state.operations
+  return `
+    ${adminPageHeader({
+      eyebrow: 'Platform',
+      title: 'Operations',
+      description: 'Manage platform-wide operational settings, private beta access, marketplace fees, and legal agreements.',
+      refreshLabel: 'Refresh operations'
+    })}
+    ${operations.error ? `<p class="admin-status is-error">${escapeHtml(operations.error)}</p>` : ''}
+    ${operations.message ? `<p class="admin-status is-success">${escapeHtml(operations.message)}</p>` : ''}
+    ${operations.loading ? '<article class="admin-empty-state">Loading operations...</article>' : ''}
+    ${operationsSummaryCards()}
+    ${operationsModeTabs(mode)}
+    ${mode === 'banner' ? operationsBannerPanel() : ''}
+    ${mode === 'beta' ? operationsBetaPanel() : ''}
+    ${mode === 'pricing' ? operationsPricingPanel() : ''}
+    ${mode === 'agreement' ? operationsAgreementPanel() : ''}
+  `
+}
+
+function operationsBannerPanel() {
+  const banner = state.operations.banner || {}
+  const saving = state.operations.saving === 'banner'
+  return `
+    <section class="admin-section-slab admin-operations-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Banner Alerts</h2>
+          <p class="admin-muted">Edit the public operational banner stored at <code class="admin-code-value">/operations/bannerAlerts</code>.</p>
+        </div>
+        <span class="review-badge ${banner.bannerActive ? 'is-approved' : ''}">${banner.bannerActive ? 'Active' : 'Inactive'}</span>
+      </div>
+      <form class="admin-email-form admin-operations-form" data-operations-form="banner">
+        <div class="admin-form-grid">
+          ${operationCheckbox({ name: 'bannerActive', label: 'Active', checked: banner.bannerActive })}
+          ${operationCheckbox({ name: 'bannerDismissible', label: 'Dismissible', checked: banner.bannerDismissible !== false })}
+          ${operationTextInput({ name: 'bannerAudience', label: 'Audience', value: banner.bannerAudience || 'all', helper: 'all, signedIn, or signedOut' })}
+          ${operationTextInput({ name: 'bannerColor', label: 'Banner color', type: 'color', value: banner.bannerColor || '#20d8ff' })}
+          ${operationTextInput({ name: 'bannerButtonText', label: 'Button text', value: banner.bannerButtonText || '' })}
+          ${operationTextInput({ name: 'bannerButtonUrl', label: 'Button URL', value: banner.bannerButtonUrl || '' })}
+          ${operationTextInput({ name: 'bannerPriority', label: 'Priority', type: 'number', value: banner.bannerPriority ?? 1 })}
+          ${operationTextInput({ name: 'bannerVersion', label: 'Version', type: 'number', value: banner.bannerVersion ?? 1 })}
+          ${operationTextInput({ name: 'bannerIcon', label: 'Icon number', type: 'number', value: banner.bannerIcon ?? 1 })}
+          ${operationTextInput({ name: 'bannerType', label: 'Type number', type: 'number', value: banner.bannerType ?? 1 })}
+          ${operationTextInput({ name: 'bannerStartsAt', label: 'Starts at', type: 'datetime-local', value: formatDateTimeLocal(banner.bannerStartsAt) })}
+          ${operationTextInput({ name: 'bannerExpiresAt', label: 'Expires at', type: 'datetime-local', value: formatDateTimeLocal(banner.bannerExpiresAt) })}
+          ${operationTextarea({ name: 'bannerContent', label: 'Banner content', value: arrayToLines(banner.bannerContent), rows: 4, helper: 'One banner line per row.', wide: true })}
+          ${operationTextarea({ name: 'bannerAllowedPaths', label: 'Allowed paths', value: arrayToLines(banner.bannerAllowedPaths), rows: 4, helper: 'Optional. One path per row.', wide: true })}
+          ${operationTextarea({ name: 'bannerBlockedPaths', label: 'Blocked paths', value: arrayToLines(banner.bannerBlockedPaths), rows: 4, helper: 'Optional. One path per row.', wide: true })}
+        </div>
+        <div class="admin-modal-actions">
+          <button type="submit" class="admin-primary-button" ${saving ? 'disabled' : ''}>${saving ? 'Saving...' : 'Save Banner'}</button>
+        </div>
+      </form>
+    </section>
+  `
+}
+
+function operationsBetaPanel() {
+  const beta = state.operations.beta || {}
+  const saving = state.operations.saving === 'beta'
+  return `
+    <section class="admin-section-slab admin-operations-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Private Beta</h2>
+          <p class="admin-muted">Edit key-gate settings at <code class="admin-code-value">/operations/keyRequiredInfo</code>. Admin routes bypass this gate and still require admin auth.</p>
+        </div>
+        <span class="review-badge ${beta.isKeyRequired ? 'is-warning' : 'is-approved'}">${beta.isKeyRequired ? 'Key Required' : 'Open'}</span>
+      </div>
+      <form class="admin-email-form admin-operations-form" data-operations-form="beta">
+        <div class="admin-form-grid">
+          ${operationCheckbox({ name: 'isKeyRequired', label: 'Key required', checked: beta.isKeyRequired })}
+          ${operationTextInput({ name: 'title', label: 'Title', value: beta.title || 'Private Beta' })}
+          ${operationTextInput({ name: 'brandName', label: 'Brand name', value: beta.brandName || 'Melogic Records' })}
+          ${operationTextInput({ name: 'supportEmail', label: 'Support email', type: 'email', value: beta.supportEmail || '' })}
+          ${operationTextInput({ name: 'keyValue', label: 'Key value', value: beta.keyValue || '', helper: 'Temporary plaintext beta key. Prefer keyHash later.' })}
+          ${operationTextInput({ name: 'keyHash', label: 'Key hash', value: beta.keyHash || '' })}
+          ${operationTextInput({ name: 'keyVersion', label: 'Key version', type: 'number', value: beta.keyVersion ?? 1 })}
+          ${operationTextInput({ name: 'bypassUntil', label: 'Bypass until', type: 'datetime-local', value: formatDateTimeLocal(beta.bypassUntil) })}
+          ${operationTextarea({ name: 'message', label: 'Message', value: beta.message || '', rows: 5, wide: true })}
+          ${operationTextarea({ name: 'allowedPublicPaths', label: 'Allowed public paths', value: arrayToLines(beta.allowedPublicPaths), rows: 5, helper: 'One public path per row. Admin routes are bypassed in code, not by this public list.', wide: true })}
+        </div>
+        <div class="admin-modal-actions">
+          <button type="submit" class="admin-primary-button" ${saving ? 'disabled' : ''}>${saving ? 'Saving...' : 'Save Private Beta'}</button>
+        </div>
+      </form>
+    </section>
+  `
+}
+
+function operationsPricingPanel() {
+  const pricing = state.operations.pricing || {}
+  const notice = pricing.transactionNotice || {}
+  const saving = state.operations.saving === 'pricing'
+  return `
+    <section class="admin-section-slab admin-operations-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Marketplace Pricing</h2>
+          <p class="admin-muted">Edit payment settings at <code class="admin-code-value">/platformSettings/marketplacePricing</code>.</p>
+        </div>
+        <span class="review-badge ${pricing.enabled === false ? 'is-warning' : 'is-approved'}">${pricing.enabled === false ? 'Disabled' : 'Enabled'}</span>
+      </div>
+      <form class="admin-email-form admin-operations-form" data-operations-form="pricing">
+        <div class="admin-form-grid">
+          ${operationCheckbox({ name: 'enabled', label: 'Enabled', checked: pricing.enabled !== false })}
+          ${operationTextInput({ name: 'defaultCurrency', label: 'Default currency', value: pricing.defaultCurrency || 'USD' })}
+          ${operationTextInput({ name: 'feeMode', label: 'Fee mode', value: pricing.feeMode || 'seller_absorbs' })}
+          ${operationTextInput({ name: 'platformFeeBps', label: 'Platform fee BPS', type: 'number', value: pricing.platformFeeBps ?? 1100, helper: '1100 bps = 11%' })}
+          ${operationTextInput({ name: 'platformFeeLabel', label: 'Platform fee label', value: pricing.platformFeeLabel || 'Melogic Records Fee' })}
+          ${operationTextInput({ name: 'processorPercentBps', label: 'Processor percent BPS', type: 'number', value: pricing.processorPercentBps ?? 290, helper: '290 bps = 2.9%' })}
+          ${operationTextInput({ name: 'processorFixedFeeCents', label: 'Processor fixed fee cents', type: 'number', value: pricing.processorFixedFeeCents ?? 30, helper: '30 cents = $0.30' })}
+          ${operationTextInput({ name: 'professorFeeLabel', label: 'Processor fee label', value: pricing.professorFeeLabel || 'Stripe Fee', helper: 'Stored as existing professorFeeLabel key for compatibility.' })}
+          ${operationTextInput({ name: 'version', label: 'Version', type: 'number', value: pricing.version ?? 1 })}
+          ${operationTextarea({ name: 'supportedCurrencies', label: 'Supported currencies', value: arrayToLines(pricing.supportedCurrencies), rows: 4, wide: true })}
+          ${operationTextarea({ name: 'salesMilestones', label: 'Sales milestones', value: arrayToLines(pricing.salesMilestones), rows: 4, helper: 'One numeric milestone per row.', wide: true })}
+          ${operationTextInput({ name: 'transactionNotice.title', label: 'Transaction notice title', value: notice.title || '', wide: true })}
+          ${operationTextarea({ name: 'transactionNotice.commission', label: 'Commission notice', value: notice.commission || '', rows: 4, wide: true })}
+          ${operationTextarea({ name: 'transactionNotice.processingFees', label: 'Processing fees notice', value: notice.processingFees || '', rows: 4, wide: true })}
+          ${operationTextarea({ name: 'transactionNotice.supportedMethods', label: 'Supported methods notice', value: notice.supportedMethods || '', rows: 4, wide: true })}
+        </div>
+        <div class="admin-modal-actions">
+          <button type="submit" class="admin-primary-button" ${saving ? 'disabled' : ''}>${saving ? 'Saving...' : 'Save Marketplace Pricing'}</button>
+        </div>
+      </form>
+    </section>
+  `
+}
+
+function operationsAgreementPanel() {
+  const agreement = state.operations.agreement || {}
+  const uploading = agreement.uploading || state.operations.saving === 'agreement'
+  const basePath = 'legal/agreements/marketplace-product-seller-agreement'
+  return `
+    <section class="admin-section-slab admin-operations-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Seller Agreement</h2>
+          <p class="admin-muted">Replace the Marketplace Product Seller Agreement Markdown in Firebase Storage.</p>
+        </div>
+        <span class="review-badge">Markdown</span>
+      </div>
+      <dl class="admin-field-grid is-compact">
+        ${renderField('Base Storage path', basePath, { code: true, wide: true })}
+        ${renderField('Last uploaded path', agreement.storagePath || '', { code: true, wide: true })}
+      </dl>
+      ${agreement.error ? `<p class="admin-status is-error">${escapeHtml(agreement.error)}</p>` : ''}
+      ${agreement.message ? `<p class="admin-status is-success">${escapeHtml(agreement.message)}</p>` : ''}
+      <form class="admin-email-form admin-operations-form" data-operations-form="agreement">
+        <div class="admin-form-grid">
+          ${operationTextInput({ name: 'agreementId', label: 'Agreement ID', value: agreement.agreementId || 'marketplace-product-seller-agreement', required: true })}
+          ${operationTextInput({ name: 'version', label: 'Version', value: agreement.version || 'v1', helper: 'Use lowercase v plus a number, such as v2.', required: true })}
+          <label class="is-wide">
+            <span>Agreement Markdown file</span>
+            <input type="file" name="agreementFile" accept=".md,text/markdown,text/plain" ${uploading ? 'disabled' : ''} />
+            <small>Uses the existing uploadSellerAgreementMarkdown helper. Files are stored as legal/agreements/{agreementId}/{version}.md.</small>
+          </label>
+        </div>
+        <div class="admin-modal-actions">
+          <button type="submit" class="admin-primary-button" ${uploading ? 'disabled' : ''}>${uploading ? 'Uploading...' : 'Upload Seller Agreement'}</button>
+        </div>
+      </form>
+    </section>
+  `
+}
+
 function settingsView() {
   if (!can('admin')) return permissionState('admin')
   const settings = state.settings.data || {}
@@ -4034,6 +4306,7 @@ function render() {
   if (state.section === 'logs') return renderLayout(logsView())
   if (state.section === 'contact') return renderLayout(contactView())
   if (state.section === 'tools') return renderLayout(toolsView())
+  if (state.section === 'operations') return renderLayout(operationsView())
   if (state.section === 'settings') return renderLayout(settingsView())
   return renderLayout(placeholderView(state.section))
 }
@@ -4272,10 +4545,20 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       state.settings.updatedAt = result.updatedAt || null
       state.settings.updatedBy = result.updatedBy || ''
       state.settings.emailStatus = emailStatus
+    },
+    operations: async () => {
+      const [banner, beta, pricing] = await Promise.all([
+        getBannerAlertSettings(),
+        getPrivateBetaSettings(),
+        getMarketplacePricingSettings()
+      ])
+      state.operations.banner = banner || {}
+      state.operations.beta = beta || {}
+      state.operations.pricing = pricing || {}
     }
   }
   if (!map[sectionKey]) return
-  const data = sectionKey === 'settings' ? state.settings : sectionKey === 'contact' ? state.contact : adminData(sectionKey)
+  const data = sectionKey === 'settings' ? state.settings : sectionKey === 'contact' ? state.contact : sectionKey === 'operations' ? state.operations : adminData(sectionKey)
   if (!canLoadAdminSection(sectionKey)) return
   if (append && data.loadingMore) return
   if (append && !data.hasMore) return
@@ -4346,6 +4629,7 @@ function canLoadAdminSection(sectionKey = '') {
   if (sectionKey === 'logs') return can('auditRead')
   if (sectionKey === 'contact') return can('emailSend')
   if (sectionKey === 'tools') return can('admin') || can('userRead') || can('emailSend') || can('auditRead')
+  if (sectionKey === 'operations') return can('admin')
   if (sectionKey === 'settings') return can('admin')
   return false
 }
@@ -4523,6 +4807,73 @@ async function submitSettingsForm(form) {
     state.settings.error = error?.message || 'Could not save settings.'
   } finally {
     state.settings.saving = false
+    render()
+  }
+}
+
+function operationsFormValues(form) {
+  const values = {}
+  Array.from(form.elements || []).forEach((input) => {
+    const name = input.name || ''
+    if (!name || input.type === 'file' || input.type === 'submit' || input.type === 'button') return
+    const value = input.type === 'checkbox' ? input.checked === true : input.value
+    if (name.includes('.')) {
+      const [parent, child] = name.split('.')
+      values[parent] = { ...(values[parent] || {}), [child]: value }
+      return
+    }
+    values[name] = value
+  })
+  return values
+}
+
+async function submitOperationsForm(form) {
+  if (!can('admin') || state.operations.saving) return
+  const mode = form.getAttribute('data-operations-form') || ''
+  state.operations.saving = mode
+  state.operations.error = ''
+  state.operations.message = ''
+  if (mode === 'agreement') {
+    state.operations.agreement = { ...state.operations.agreement, uploading: true, error: '', message: '' }
+  }
+  render()
+  try {
+    if (mode === 'banner') {
+      const result = await updateBannerAlertSettings(operationsFormValues(form))
+      state.operations.banner = result
+      state.operations.message = 'Banner alert settings saved.'
+    } else if (mode === 'beta') {
+      const result = await updatePrivateBetaSettings(operationsFormValues(form))
+      state.operations.beta = result
+      state.operations.message = 'Private beta settings saved.'
+    } else if (mode === 'pricing') {
+      const result = await updateMarketplacePricingSettings(operationsFormValues(form))
+      state.operations.pricing = result
+      state.operations.message = 'Marketplace pricing settings saved.'
+    } else if (mode === 'agreement') {
+      const agreementId = String(form.elements.agreementId?.value || 'marketplace-product-seller-agreement').trim() || 'marketplace-product-seller-agreement'
+      const version = String(form.elements.version?.value || '').trim()
+      const file = form.elements.agreementFile?.files?.[0] || null
+      const uploadResult = await uploadSellerAgreementMarkdown({ file, version, agreementId })
+      state.operations.agreement = {
+        agreementId: uploadResult.agreementId,
+        version: uploadResult.version,
+        storagePath: uploadResult.storagePath,
+        uploading: false,
+        message: `Seller agreement uploaded to ${uploadResult.storagePath}.`,
+        error: ''
+      }
+      state.operations.message = 'Seller agreement uploaded.'
+    }
+    state.operations.loaded = true
+  } catch (error) {
+    console.warn('[admin] operations update failed', { mode, code: error?.code, message: error?.message, details: error?.details })
+    const message = error?.message || 'Could not save operations settings.'
+    if (mode === 'agreement') state.operations.agreement = { ...state.operations.agreement, uploading: false, error: message, message: '' }
+    else state.operations.error = message
+  } finally {
+    state.operations.saving = ''
+    if (mode === 'agreement') state.operations.agreement = { ...state.operations.agreement, uploading: false }
     render()
   }
 }
@@ -5487,6 +5838,10 @@ function bindEvents() {
   app.querySelector('[data-settings-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     submitSettingsForm(event.currentTarget)
+  })
+  app.querySelector('[data-operations-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitOperationsForm(event.currentTarget)
   })
   app.querySelector('[data-admin-email-form]')?.addEventListener('input', (event) => {
     updateEmailFormFromDom(event.currentTarget)

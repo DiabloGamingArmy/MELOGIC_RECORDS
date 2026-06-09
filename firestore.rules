@@ -1518,7 +1518,10 @@ service cloud.firestore {
         'marketplaceSellerAgreement'
       ];
 
-      allow write: if false;
+      allow write: if settingId in [
+        'marketplacePricing',
+        'marketplaceSellerAgreement'
+      ] && isOwnerAdminRole();
     }
 
     match /Reports/marketplace/products/reviews/items/{reportId} {
@@ -1705,11 +1708,11 @@ service cloud.firestore {
 
     match /operations/keyRequiredInfo {
       allow read: if true;
-      allow write: if false;
+      allow write: if isOwnerAdminRole();
     }
     match /operations/bannerAlerts {
       allow read: if true;
-      allow write: if false;
+      allow write: if isOwnerAdminRole();
     }
 
     match /adminUsers/{uid} {
