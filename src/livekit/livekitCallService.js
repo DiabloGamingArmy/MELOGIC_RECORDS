@@ -1,7 +1,8 @@
 import { getFunctions, httpsCallable } from 'firebase/functions'
+import { app } from '../firebase/firebaseConfig'
 
 export async function createLiveKitCallToken({ roomName, displayName, role = 'caller' } = {}) {
-  const functions = getFunctions(undefined, 'us-central1')
+  const functions = getFunctions(app, 'us-central1')
   const createLiveKitToken = httpsCallable(functions, 'createLiveKitToken')
 
   const result = await createLiveKitToken({
