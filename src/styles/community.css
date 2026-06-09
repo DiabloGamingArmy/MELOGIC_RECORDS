@@ -1683,6 +1683,17 @@ body.community-chrome-hidden .community-right-rail {
   color: #9eacbf;
 }
 
+.community-comments-loading,
+.community-replies-loading {
+  display: inline-flex;
+  width: fit-content;
+  margin: .75rem 0 0;
+  border: 1px solid rgba(126, 211, 255, .16);
+  border-radius: 999px;
+  background: rgba(126, 211, 255, .08);
+  padding: .4rem .65rem;
+}
+
 .community-comment-composer {
   display: grid;
   gap: .55rem;
@@ -1772,6 +1783,10 @@ body.community-chrome-hidden .community-right-rail {
   border-left: 1px solid rgba(126, 211, 255, .18);
 }
 
+.community-replies-panel {
+  min-height: 34px;
+}
+
 .community-comment-reply-toggle {
   display: flex;
   flex-wrap: wrap;
@@ -1789,6 +1804,11 @@ body.community-chrome-hidden .community-right-rail {
 .community-load-more-replies {
   justify-self: start;
   margin-top: .55rem;
+}
+
+.community-load-more-row {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .community-comment-replies .community-comment-card.is-reply::before {
