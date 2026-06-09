@@ -533,23 +533,8 @@ export async function getPublicProducts() {
   if (!db) return []
 
   try {
-    // Legacy helper: avoid using this on large marketplace catalog pages.
-    const snapshot = await getDocs(collection(db, FIRESTORE_COLLECTIONS.products))
-    const rows = snapshot.docs
-      .map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))
-      .filter((item) => item.status === 'published' && item.visibility === 'public')
-
-    const products = await Promise.all(rows.map(async (row) => {
-      const media = await resolveProductMedia({ id: row.id, ...row })
-      return normalizeProduct(row.id, row, media)
-    }))
-
-    return products.sort((a, b) => {
-      if (a.featured !== b.featured) return a.featured ? -1 : 1
-      const dateA = a.releasedAt || a.createdAt || ''
-      const dateB = b.releasedAt || b.createdAt || ''
-      return dateA < dateB ? 1 : -1
-    })
+    const { products } = await listPublicProductsPage({ sort: 'featured', pageSize: 36 })
+    return products
   } catch (error) {
     warnOnce('fetch', '[productService] Failed to fetch products.', error?.message || error)
     return []

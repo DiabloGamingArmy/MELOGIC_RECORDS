@@ -559,6 +559,54 @@ export async function listCommunityComments(postId = '', limitCount = 120) {
   }
 }
 
+export async function listCommunityCommentsPage({
+  postId = '',
+  parentCommentId = '',
+  limitCount = 10,
+  cursor = null
+} = {}) {
+  const id = String(postId || '').trim()
+  if (!id) return { comments: [], cursor: null, hasMore: false }
+  const commentsRef = collection(db, POST_COLLECTION, id, 'comments')
+  const pageSize = Math.max(1, Math.min(50, Number(limitCount) || 10))
+  const cleanParentId = String(parentCommentId || '').trim()
+  const constraints = [
+    where('status', '==', 'visible'),
+    where('parentCommentId', '==', cleanParentId),
+    orderBy('createdAt', 'asc')
+  ]
+  if (cursor) constraints.push(startAfter(cursor))
+  constraints.push(limit(pageSize + 1))
+
+  try {
+    const snapshot = await getDocs(query(commentsRef, ...constraints))
+    const pageDocs = snapshot.docs.slice(0, pageSize)
+    return {
+      comments: pageDocs.map((docSnap) => normalizeCommunityComment(docSnap)),
+      cursor: pageDocs.length ? pageDocs[pageDocs.length - 1] : cursor || null,
+      hasMore: snapshot.docs.length > pageSize
+    }
+  } catch (error) {
+    if (!String(error?.message || '').includes('requires an index')) throw error
+    const fallbackConstraints = [
+      where('status', '==', 'visible'),
+      where('parentCommentId', '==', cleanParentId)
+    ]
+    if (cursor) fallbackConstraints.push(startAfter(cursor))
+    fallbackConstraints.push(limit(pageSize + 1))
+    const snapshot = await getDocs(query(commentsRef, ...fallbackConstraints))
+    const rows = snapshot.docs
+      .map((docSnap) => ({ docSnap, comment: normalizeCommunityComment(docSnap) }))
+      .sort((a, b) => new Date(a.comment.createdAt || 0).getTime() - new Date(b.comment.createdAt || 0).getTime())
+    const pageRows = rows.slice(0, pageSize)
+    return {
+      comments: pageRows.map((row) => row.comment),
+      cursor: pageRows.length ? pageRows[pageRows.length - 1].docSnap : cursor || null,
+      hasMore: rows.length > pageSize
+    }
+  }
+}
+
 export async function getCommunityCommentViewerState(postId = '', commentId = '', uid = '') {
   const cleanPostId = String(postId || '').trim()
   const cleanCommentId = String(commentId || '').trim()

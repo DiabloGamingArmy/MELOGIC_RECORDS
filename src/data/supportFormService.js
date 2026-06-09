@@ -8,6 +8,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  startAfter,
   updateDoc,
   where
 } from 'firebase/firestore'
@@ -117,6 +118,31 @@ export async function listUnresolvedSupportForms({ limitCount = 8 } = {}) {
   )
   const snapshot = await getDocs(formsQuery)
   return snapshot.docs.map((docSnap) => normalizeSupportForm(docSnap.id, docSnap.data()))
+}
+
+export async function listSupportFormsPage({
+  statusGroup = 'unresolved',
+  limitCount = 25,
+  cursor = null
+} = {}) {
+  const pageSize = Math.max(1, Math.min(50, Number(limitCount) || 25))
+  const cleanGroup = ['unresolved', 'resolved', 'archived', 'all'].includes(statusGroup) ? statusGroup : 'unresolved'
+  const constraints = []
+  if (cleanGroup === 'unresolved') constraints.push(where('status', 'in', ['new', 'reviewing', 'reviewed']))
+  if (cleanGroup === 'resolved') constraints.push(where('status', '==', 'resolved'))
+  if (cleanGroup === 'archived') constraints.push(where('status', '==', 'archived'))
+  constraints.push(orderBy('createdAt', 'desc'))
+  if (cursor) constraints.push(startAfter(cursor))
+  constraints.push(limit(pageSize + 1))
+
+  const snapshot = await getDocs(query(collection(db, SUPPORT_FORMS_COLLECTION), ...constraints))
+  const pageDocs = snapshot.docs.slice(0, pageSize)
+  return {
+    forms: pageDocs.map((docSnap) => normalizeSupportForm(docSnap.id, docSnap.data())),
+    cursor: pageDocs.length ? pageDocs[pageDocs.length - 1] : cursor || null,
+    hasMore: snapshot.docs.length > pageSize,
+    statusGroup: cleanGroup
+  }
 }
 
 export async function updateSupportFormStatus(formId, status = 'reviewed') {

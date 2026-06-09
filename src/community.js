@@ -18,7 +18,7 @@ import {
   getCommunityFocusState,
   getCommunityPost,
   getCommunityPostViewerState,
-  listCommunityComments,
+  listCommunityCommentsPage,
   listCommunities,
   listFocusedCommunityPosts,
   listCommunityPosts,
@@ -247,7 +247,15 @@ const state = {
   comments: [],
   commentViewerState: {},
   commentsLoading: false,
+  commentsLoadingMore: false,
+  commentsCursor: null,
+  commentsHasMore: false,
   commentsError: '',
+  expandedReplies: {},
+  repliesByParent: {},
+  repliesLoadingFor: '',
+  repliesLoadingMoreFor: '',
+  replyPagination: {},
   commentDraft: '',
   replyDrafts: {},
   replySubmittingFor: '',
@@ -1617,11 +1625,50 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
   `
 }
 
+function mergeCommentsById(existing = [], incoming = []) {
+  const map = new Map()
+  existing.forEach((comment) => {
+    if (comment?.commentId) map.set(comment.commentId, comment)
+  })
+  incoming.forEach((comment) => {
+    if (comment?.commentId) map.set(comment.commentId, comment)
+  })
+  return Array.from(map.values()).sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
+}
+
+function resetCommentPaginationState() {
+  state.comments = []
+  state.commentViewerState = {}
+  state.commentsCursor = null
+  state.commentsHasMore = false
+  state.commentsLoading = false
+  state.commentsLoadingMore = false
+  state.commentsError = ''
+  state.expandedReplies = {}
+  state.repliesByParent = {}
+  state.repliesLoadingFor = ''
+  state.repliesLoadingMoreFor = ''
+  state.replyPagination = {}
+  state.replyComposerFor = ''
+}
+
+function allLoadedComments() {
+  return mergeCommentsById(state.comments, Object.values(state.repliesByParent || {}).flat())
+}
+
+function findLoadedComment(commentId = '') {
+  return allLoadedComments().find((comment) => comment.commentId === commentId) || null
+}
+
 function commentCard(comment, replies = []) {
   const viewer = state.commentViewerState[comment.commentId] || {}
   const isOwn = state.currentUser?.uid && state.currentUser.uid === comment.authorUid
   const authorHref = comment.authorUid ? publicProfileRoute({ uid: comment.authorUid }) : ROUTES.profilePublic
   const canReply = !comment.parentCommentId
+  const repliesExpanded = Boolean(state.expandedReplies[comment.commentId])
+  const replyState = state.replyPagination[comment.commentId] || {}
+  const repliesLoading = state.repliesLoadingFor === comment.commentId
+  const repliesLoadingMore = state.repliesLoadingMoreFor === comment.commentId
   return `
     <article class="community-comment-card ${comment.parentCommentId ? 'is-reply' : ''}" data-comment-id="${escapeHtml(comment.commentId)}">
       <header class="community-comment-header">
@@ -1642,19 +1689,26 @@ function commentCard(comment, replies = []) {
         ${isOwn ? `<button type="button" data-community-comment-delete="${escapeHtml(comment.commentId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
       </footer>
       ${state.replyComposerFor === comment.commentId ? renderCommentComposer({ parentCommentId: comment.commentId }) : ''}
-      ${replies.length ? `<div class="community-comment-replies">${replies.map((reply) => commentCard(reply)).join('')}</div>` : ''}
+      ${canReply && Number(comment.replyCount || 0) > 0 ? `
+        <div class="community-comment-reply-toggle">
+          <button type="button" class="button button-muted" data-toggle-comment-replies="${escapeHtml(comment.commentId)}" ${repliesLoading ? 'disabled' : ''}>
+            ${repliesExpanded ? 'Hide replies' : `View ${formatCount(comment.replyCount)} repl${Number(comment.replyCount) === 1 ? 'y' : 'ies'}`}
+          </button>
+          ${repliesLoading ? '<span>Loading replies...</span>' : ''}
+        </div>
+      ` : ''}
+      ${repliesExpanded ? `
+        <div class="community-comment-replies">
+          ${replies.length ? replies.map((reply) => commentCard(reply)).join('') : repliesLoading ? '<p class="community-comments-state">Loading replies...</p>' : '<p class="community-comments-empty">No replies loaded yet.</p>'}
+          ${replyState.hasMore ? `<button type="button" class="button button-muted community-load-more-replies" data-load-more-comment-replies="${escapeHtml(comment.commentId)}" ${repliesLoadingMore ? 'disabled' : ''}>${repliesLoadingMore ? 'Loading more...' : 'Load more replies'}</button>` : ''}
+        </div>
+      ` : ''}
     </article>
   `
 }
 
 function renderComments(post) {
   const topLevel = state.comments.filter((comment) => !comment.parentCommentId)
-  const repliesByParent = state.comments.reduce((map, comment) => {
-    if (!comment.parentCommentId) return map
-    if (!map[comment.parentCommentId]) map[comment.parentCommentId] = []
-    map[comment.parentCommentId].push(comment)
-    return map
-  }, {})
   return `
     <section class="community-comments" id="comments" aria-labelledby="community-comments-title">
       <div class="community-comments-heading">
@@ -1665,7 +1719,12 @@ function renderComments(post) {
       </div>
       ${state.commentActionError ? `<p class="community-error">${escapeHtml(state.commentActionError)}</p>` : ''}
       ${post.commentsLocked ? '<p class="community-comments-state">Comments are locked for this post.</p>' : renderCommentComposer()}
-      ${state.commentsLoading ? '<p class="community-comments-state">Loading comments...</p>' : state.commentsError ? `<p class="community-error">${escapeHtml(state.commentsError)}</p>` : topLevel.length ? `<div class="community-comment-list">${topLevel.map((comment) => commentCard(comment, repliesByParent[comment.commentId] || [])).join('')}</div>` : '<p class="community-comments-empty">No comments yet. Start the conversation.</p>'}
+      ${state.commentsLoading ? '<p class="community-comments-state">Loading comments...</p>' : state.commentsError ? `<p class="community-error">${escapeHtml(state.commentsError)}</p>` : topLevel.length ? `
+        <div class="community-comment-list">
+          ${topLevel.map((comment) => commentCard(comment, state.repliesByParent[comment.commentId] || [])).join('')}
+        </div>
+        ${state.commentsHasMore ? `<button type="button" class="button button-muted community-load-more-comments" data-load-more-comments ${state.commentsLoadingMore ? 'disabled' : ''}>${state.commentsLoadingMore ? 'Loading more...' : 'Load more comments'}</button>` : ''}
+      ` : '<p class="community-comments-empty">No comments yet. Start the conversation.</p>'}
     </section>
   `
 }
@@ -2258,11 +2317,13 @@ async function loadViewerState() {
 }
 
 async function loadCommentViewerState() {
-  if (!state.currentUser?.uid || !state.detailPostId || !state.comments.length) {
+  const replyComments = Object.values(state.repliesByParent || {}).flat()
+  const allComments = mergeCommentsById(state.comments, replyComments)
+  if (!state.currentUser?.uid || !state.detailPostId || !allComments.length) {
     state.commentViewerState = {}
     return
   }
-  const entries = await Promise.all(state.comments.map(async (comment) => [
+  const entries = await Promise.all(allComments.map(async (comment) => [
     comment.commentId,
     await getCommunityCommentViewerState(state.detailPostId, comment.commentId, state.currentUser.uid)
   ]))
@@ -2314,19 +2375,77 @@ async function loadStories({ renderAfter = false } = {}) {
   }
 }
 
-async function loadComments({ renderAfter = true } = {}) {
+async function loadCommentViewerStateFor(comments = []) {
+  if (!state.currentUser?.uid || !state.detailPostId || !comments.length) return
+  const entries = await Promise.all(comments.map(async (comment) => [
+    comment.commentId,
+    await getCommunityCommentViewerState(state.detailPostId, comment.commentId, state.currentUser.uid)
+  ]))
+  state.commentViewerState = { ...state.commentViewerState, ...Object.fromEntries(entries) }
+}
+
+async function loadComments({ renderAfter = true, append = false } = {}) {
   if (!state.detailPostId) return
-  state.commentsLoading = true
+  if (append) state.commentsLoadingMore = true
+  else state.commentsLoading = true
   state.commentsError = ''
   if (renderAfter) render()
   try {
-    state.comments = await listCommunityComments(state.detailPostId)
-    await loadCommentViewerState()
+    const result = await listCommunityCommentsPage({
+      postId: state.detailPostId,
+      parentCommentId: '',
+      limitCount: 10,
+      cursor: append ? state.commentsCursor : null
+    })
+    state.comments = append ? mergeCommentsById(state.comments, result.comments) : result.comments
+    state.commentsCursor = result.cursor || null
+    state.commentsHasMore = Boolean(result.hasMore)
+    if (!append) {
+      state.expandedReplies = {}
+      state.repliesByParent = {}
+      state.replyPagination = {}
+    }
+    await loadCommentViewerStateFor(result.comments)
   } catch (error) {
     console.warn('[community] comments load failed', { code: error?.code, message: error?.message, details: error?.details })
     state.commentsError = error?.message || 'Comments could not be loaded.'
   } finally {
     state.commentsLoading = false
+    state.commentsLoadingMore = false
+    if (renderAfter) render()
+  }
+}
+
+async function loadReplies(parentCommentId = '', { append = false, renderAfter = true } = {}) {
+  if (!state.detailPostId || !parentCommentId) return
+  if (append) state.repliesLoadingMoreFor = parentCommentId
+  else state.repliesLoadingFor = parentCommentId
+  if (renderAfter) render()
+  try {
+    const pageState = state.replyPagination[parentCommentId] || {}
+    const result = await listCommunityCommentsPage({
+      postId: state.detailPostId,
+      parentCommentId,
+      limitCount: 5,
+      cursor: append ? pageState.cursor : null
+    })
+    state.repliesByParent = {
+      ...state.repliesByParent,
+      [parentCommentId]: append
+        ? mergeCommentsById(state.repliesByParent[parentCommentId] || [], result.comments)
+        : result.comments
+    }
+    state.replyPagination = {
+      ...state.replyPagination,
+      [parentCommentId]: { cursor: result.cursor || null, hasMore: Boolean(result.hasMore) }
+    }
+    await loadCommentViewerStateFor(result.comments)
+  } catch (error) {
+    console.warn('[community] replies load failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.commentActionError = error?.message || 'Replies could not be loaded.'
+  } finally {
+    state.repliesLoadingFor = ''
+    state.repliesLoadingMoreFor = ''
     if (renderAfter) render()
   }
 }
@@ -2450,8 +2569,7 @@ async function loadCommunity() {
   if (state.detailPostId) {
     state.loading = true
     state.posts = []
-    state.comments = []
-    state.commentViewerState = {}
+    resetCommentPaginationState()
     state.attachmentMediaUrls = {}
     render()
     const startedAt = performance.now()
@@ -3027,10 +3145,14 @@ async function handleDeleteOwnPost(postId = '') {
 
 function updateCommentCount(commentId, patch = {}) {
   state.comments = state.comments.map((comment) => comment.commentId === commentId ? normalizeCommunityComment({ ...comment, ...patch }, commentId) : comment)
+  state.repliesByParent = Object.fromEntries(Object.entries(state.repliesByParent || {}).map(([parentId, replies]) => [
+    parentId,
+    (replies || []).map((comment) => comment.commentId === commentId ? normalizeCommunityComment({ ...comment, ...patch }, commentId) : comment)
+  ]))
 }
 
 function updateCommentActionDom(commentId = '') {
-  const comment = state.comments.find((item) => item.commentId === commentId)
+  const comment = findLoadedComment(commentId)
   if (!comment) return
   const viewer = state.commentViewerState[commentId] || {}
   const escapedCommentId = communityCssEscape(commentId)
@@ -3076,11 +3198,12 @@ async function handleCommentSubmit(event) {
     const tempId = `comment:${state.detailPostId}:${Date.now()}`
     const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, body }))
     const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
-    state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
+    state.comments = mergeCommentsById(state.comments.filter((item) => item.commentId !== comment.commentId), [comment])
     state.commentViewerState[comment.commentId] = { liked: false, disliked: false }
     state.commentDraft = ''
     state.commentSubmitting = false
-    updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount || 0)))
+    if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
+    else updateDetailCommentCount(1)
     render()
   } catch (error) {
     console.warn('[community] create comment failed', { code: error?.code, message: error?.message, details: error?.details })
@@ -3113,14 +3236,19 @@ async function handleReplySubmit(event, parentCommentId = '') {
     const tempId = `comment:${state.detailPostId}:${parentCommentId}:${Date.now()}`
     const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, parentCommentId, body }))
     const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
-    state.comments = [...state.comments.filter((item) => item.commentId !== comment.commentId), comment]
+    state.expandedReplies = { ...state.expandedReplies, [parentCommentId]: true }
+    state.repliesByParent = {
+      ...state.repliesByParent,
+      [parentCommentId]: mergeCommentsById(state.repliesByParent[parentCommentId] || [], [comment])
+    }
     state.commentViewerState[comment.commentId] = { liked: false, disliked: false }
     state.replyDrafts = { ...state.replyDrafts, [parentCommentId]: '' }
     state.replyErrors = { ...state.replyErrors, [parentCommentId]: '' }
     state.replyComposerFor = ''
     state.replySubmittingFor = ''
-    updateCommentCount(parentCommentId, { replyCount: (state.comments.find((item) => item.commentId === parentCommentId)?.replyCount || 0) + 1 })
-    updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount || 0)))
+    updateCommentCount(parentCommentId, { replyCount: (findLoadedComment(parentCommentId)?.replyCount || 0) + 1 })
+    if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
+    else updateDetailCommentCount(1)
     render()
   } catch (error) {
     console.warn('[community] create reply failed', { code: error?.code, message: error?.message, details: error?.details })
@@ -3138,7 +3266,7 @@ async function handleCommentLike(commentId = '') {
   }
   const actionId = `comment-like:${state.detailPostId}:${commentId}`
   if (communityPendingActions.has(actionId)) return
-  const comment = state.comments.find((item) => item.commentId === commentId)
+  const comment = findLoadedComment(commentId)
   const previousLiked = Boolean(state.commentViewerState[commentId]?.liked)
   const previousDisliked = Boolean(state.commentViewerState[commentId]?.disliked)
   const previousLikeCount = Number(comment?.likeCount || 0)
@@ -3172,7 +3300,7 @@ async function handleCommentDislike(commentId = '') {
   }
   const actionId = `comment-dislike:${state.detailPostId}:${commentId}`
   if (communityPendingActions.has(actionId)) return
-  const comment = state.comments.find((item) => item.commentId === commentId)
+  const comment = findLoadedComment(commentId)
   const previousLiked = Boolean(state.commentViewerState[commentId]?.liked)
   const previousDisliked = Boolean(state.commentViewerState[commentId]?.disliked)
   const previousLikeCount = Number(comment?.likeCount || 0)
@@ -3207,21 +3335,26 @@ async function handleCommentDelete(commentId = '') {
   const actionId = `comment-delete:${state.detailPostId}:${commentId}`
   if (communityPendingActions.has(actionId)) return
   const previousComments = state.comments
+  const previousReplies = state.repliesByParent
   const previousPosts = state.posts
-  const comment = state.comments.find((item) => item.commentId === commentId)
+  const comment = findLoadedComment(commentId)
   state.comments = state.comments.filter((item) => item.commentId !== commentId && item.parentCommentId !== commentId)
+  state.repliesByParent = Object.fromEntries(Object.entries(state.repliesByParent || {}).map(([parentId, replies]) => [
+    parentId,
+    (replies || []).filter((item) => item.commentId !== commentId && item.parentCommentId !== commentId)
+  ]))
   if (comment?.parentCommentId) {
-    updateCommentCount(comment.parentCommentId, { replyCount: Math.max(0, (state.comments.find((item) => item.commentId === comment.parentCommentId)?.replyCount || 0) - 1) })
+    updateCommentCount(comment.parentCommentId, { replyCount: Math.max(0, (findLoadedComment(comment.parentCommentId)?.replyCount || 0) - 1) })
   }
-  updateDetailCommentCount(0, state.comments.length)
+  updateDetailCommentCount(-1)
   render()
   trackCommunityAction(actionId, deleteCommunityComment({ postId: state.detailPostId, commentId })).then((result) => {
-    if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Math.max(state.comments.length, Number(result.commentCount)))
-    else updateDetailCommentCount(0, state.comments.length)
+    if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
     render()
   }).catch((error) => {
     console.warn('[community] comment delete failed', { code: error?.code, message: error?.message, details: error?.details })
     state.comments = previousComments
+    state.repliesByParent = previousReplies
     state.posts = previousPosts
     state.commentActionError = 'Could not delete this comment.'
     render()
@@ -4052,7 +4185,7 @@ async function handleReportSubmit(event) {
   event.preventDefault()
   const formData = new FormData(event.currentTarget)
   const post = state.posts.find((item) => item.postId === state.report.postId)
-  const comment = state.comments.find((item) => item.commentId === state.report.commentId)
+  const comment = findLoadedComment(state.report.commentId)
   const story = storyById(state.report.storyId)
   const reason = String(formData.get('reason') || '').trim()
   const description = String(formData.get('description') || '').trim()
@@ -4366,9 +4499,26 @@ function bindEvents() {
   app.querySelector('[data-community-edit-post-form]')?.addEventListener('submit', handleEditPostSubmit)
   app.querySelectorAll('[data-close-edit-post]').forEach((button) => button.addEventListener('click', closeEditPostModal))
   app.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
+  app.querySelector('[data-load-more-comments]')?.addEventListener('click', () => {
+    loadComments({ append: true, renderAfter: true })
+  })
   app.querySelectorAll('[data-community-reply-form]').forEach((form) => {
     form.addEventListener('submit', (event) => handleReplySubmit(event, form.getAttribute('data-community-reply-form') || ''))
   })
+  app.querySelectorAll('[data-toggle-comment-replies]').forEach((button) => button.addEventListener('click', () => {
+    const parentCommentId = button.getAttribute('data-toggle-comment-replies') || ''
+    const nextExpanded = !state.expandedReplies[parentCommentId]
+    state.expandedReplies = { ...state.expandedReplies, [parentCommentId]: nextExpanded }
+    state.commentActionError = ''
+    if (nextExpanded && !(state.repliesByParent[parentCommentId] || []).length) {
+      loadReplies(parentCommentId, { append: false, renderAfter: true })
+      return
+    }
+    render()
+  }))
+  app.querySelectorAll('[data-load-more-comment-replies]').forEach((button) => button.addEventListener('click', () => {
+    loadReplies(button.getAttribute('data-load-more-comment-replies') || '', { append: true, renderAfter: true })
+  }))
   app.querySelectorAll('[data-toggle-reply-composer]').forEach((button) => button.addEventListener('click', () => {
     state.replyComposerFor = button.getAttribute('data-toggle-reply-composer') || ''
     state.commentActionError = ''
