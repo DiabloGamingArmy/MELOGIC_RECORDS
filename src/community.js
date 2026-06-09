@@ -279,6 +279,7 @@ let communityKeyboardReady = false
 let communityOutsideClickReady = false
 let communityBeforeUnloadReady = false
 let communityRailResizeReady = false
+let communityPagePreloaderInitialized = false
 const communityPendingActions = new Map()
 let storyMediaRecorder = null
 let storyRecordingStream = null
@@ -1581,7 +1582,9 @@ function postCard(post, { detail = false } = {}) {
       <footer class="community-post-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
         <button type="button" class="${viewer.disliked ? 'is-active' : ''}" data-community-dislike="${escapeHtml(post.postId)}">${iconSvg('thumbsDown')} <span>Dislike</span><em>${formatCount(post.counts.dislikes)}</em></button>
-        <a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></a>
+        ${detail
+          ? `<button type="button" data-scroll-comments>${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></button>`
+          : `<a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></a>`}
         <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
         <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
       </footer>
@@ -2000,7 +2003,7 @@ function renderCreateCommunityForm() {
 function renderCommunitiesView() {
   const categories = COMMUNITY_CATEGORIES
   return `
-    ${renderPagePreloaderMarkup()}
+    ${renderCommunityPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
     <main class="community-page">
       <section class="community-hero compact">
@@ -2212,7 +2215,7 @@ function renderDetail() {
   const post = state.posts[0]
   const postLoading = state.detailPostLoading && !post
   return `
-    ${renderPagePreloaderMarkup()}
+    ${renderCommunityPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
     <main class="community-page">
       <section class="community-detail-topbar">
@@ -2241,7 +2244,7 @@ function renderCommunityDetail() {
   const focused = community ? Boolean(state.communityFocus[community.communityId]) : false
   const focusDisabled = community?.fallback === true
   return `
-    ${renderPagePreloaderMarkup()}
+    ${renderCommunityPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
     <main class="community-page">
       <section class="community-hero compact community-community-hero">
@@ -2277,12 +2280,19 @@ function renderCommunityDetail() {
   `
 }
 
+function renderCommunityPagePreloaderMarkup() {
+  return communityPagePreloaderInitialized ? '' : renderPagePreloaderMarkup()
+}
+
 function hydrateShell() {
   const logoReadyPromise = initShellChrome().catch((error) => {
     console.warn('[community] shell init failed', { message: error?.message })
     return false
   })
-  createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise: Promise.resolve(true) })
+  if (!communityPagePreloaderInitialized) {
+    communityPagePreloaderInitialized = true
+    createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise: Promise.resolve(true) })
+  }
 }
 
 function renderFeedToolbar() {
@@ -2350,7 +2360,7 @@ function render() {
   }
 
   app.innerHTML = `
-    ${renderPagePreloaderMarkup()}
+    ${renderCommunityPagePreloaderMarkup()}
     ${navShell({ currentPage: 'community' })}
     <main class="community-page">
       ${renderCommunityScrollChrome()}
@@ -2456,14 +2466,14 @@ async function loadComments({ renderAfter = true, append = false } = {}) {
   if (append && (!page.hasMore || page.loadingMore || page.loading)) return
   if (!append && (page.loading || page.loaded)) {
     syncActiveCommentState()
-    if (renderAfter) render()
+    if (renderAfter) renderCommentState()
     return
   }
   if (append) page.loadingMore = true
   else page.loading = true
   page.error = ''
   syncActiveCommentState()
-  if (renderAfter) render()
+  if (renderAfter) renderCommentState()
   try {
     const result = await listCommunityCommentsPage({
       postId: state.detailPostId,
@@ -2487,7 +2497,7 @@ async function loadComments({ renderAfter = true, append = false } = {}) {
     page.loading = false
     page.loadingMore = false
     syncActiveCommentState()
-    if (renderAfter) render()
+    if (renderAfter) renderCommentState()
   }
 }
 
@@ -2498,7 +2508,7 @@ async function loadReplies(parentCommentId = '', { append = false, renderAfter =
   if (!append && (page.loading || page.loaded)) {
     page.expanded = true
     syncActiveCommentState()
-    if (renderAfter) render()
+    if (renderAfter) renderCommentState()
     return
   }
   page.expanded = true
@@ -2506,7 +2516,7 @@ async function loadReplies(parentCommentId = '', { append = false, renderAfter =
   else page.loading = true
   page.error = ''
   syncActiveCommentState()
-  if (renderAfter) render()
+  if (renderAfter) renderCommentState()
   try {
     const result = await listCommunityCommentsPage({
       postId: state.detailPostId,
@@ -2527,7 +2537,7 @@ async function loadReplies(parentCommentId = '', { append = false, renderAfter =
     page.loading = false
     page.loadingMore = false
     syncActiveCommentState()
-    if (renderAfter) render()
+    if (renderAfter) renderCommentState()
   }
 }
 
@@ -3297,6 +3307,7 @@ function updateDetailCommentCount(delta = 0, absoluteValue = null) {
 
 async function handleCommentSubmit(event) {
   event.preventDefault()
+  if (state.commentSubmitting) return
   if (!state.currentUser) {
     if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
@@ -3308,11 +3319,11 @@ async function handleCommentSubmit(event) {
   state.commentActionError = ''
   if (!body) {
     state.commentActionError = 'Comment body is required.'
-    render()
+    renderCommentState()
     return
   }
   state.commentSubmitting = true
-  render()
+  renderCommentState()
   try {
     const tempId = `comment:${state.detailPostId}:${Date.now()}`
     const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, body }))
@@ -3326,17 +3337,18 @@ async function handleCommentSubmit(event) {
     state.commentSubmitting = false
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
     else updateDetailCommentCount(1)
-    render()
+    renderCommentState()
   } catch (error) {
     console.warn('[community] create comment failed', { code: error?.code, message: error?.message, details: error?.details })
     state.commentSubmitting = false
     state.commentActionError = error?.message || 'Could not post this comment.'
-    render()
+    renderCommentState()
   }
 }
 
 async function handleReplySubmit(event, parentCommentId = '') {
   event.preventDefault()
+  if (state.replySubmittingFor === parentCommentId) return
   if (!state.currentUser) {
     if (!confirmCommunityNavigation()) return
     window.location.assign(authRoute({ redirect: window.location.pathname }))
@@ -3349,11 +3361,11 @@ async function handleReplySubmit(event, parentCommentId = '') {
   state.commentActionError = ''
   if (!body) {
     state.replyErrors = { ...state.replyErrors, [parentCommentId]: 'Reply body is required.' }
-    render()
+    renderCommentState()
     return
   }
   state.replySubmittingFor = parentCommentId
-  render()
+  renderCommentState()
   try {
     const tempId = `comment:${state.detailPostId}:${parentCommentId}:${Date.now()}`
     const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, parentCommentId, body }))
@@ -3371,12 +3383,12 @@ async function handleReplySubmit(event, parentCommentId = '') {
     updateCommentCount(parentCommentId, { replyCount: (findLoadedComment(parentCommentId)?.replyCount || 0) + 1 })
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
     else updateDetailCommentCount(1)
-    render()
+    renderCommentState()
   } catch (error) {
     console.warn('[community] create reply failed', { code: error?.code, message: error?.message, details: error?.details })
     state.replySubmittingFor = ''
     state.replyErrors = { ...state.replyErrors, [parentCommentId]: error?.message || 'Could not post this reply.' }
-    render()
+    renderCommentState()
   }
 }
 
@@ -3410,7 +3422,7 @@ async function handleCommentLike(commentId = '') {
     updateCommentCount(commentId, { dislikeCount: previousDislikeCount })
     state.commentActionError = 'Could not update this comment.'
     updateCommentActionDom(commentId)
-    render()
+    renderCommentState()
   })
 }
 
@@ -3444,7 +3456,7 @@ async function handleCommentDislike(commentId = '') {
     updateCommentCount(commentId, { dislikeCount: previousDislikeCount })
     state.commentActionError = 'Could not update this comment.'
     updateCommentActionDom(commentId)
-    render()
+    renderCommentState()
   })
 }
 
@@ -3484,10 +3496,10 @@ async function handleCommentDelete(commentId = '') {
     updateCommentCount(comment.parentCommentId, { replyCount: Math.max(0, (findLoadedComment(comment.parentCommentId)?.replyCount || 0) - 1) })
   }
   updateDetailCommentCount(-1)
-  render()
+  renderCommentState()
   trackCommunityAction(actionId, deleteCommunityComment({ postId: state.detailPostId, commentId })).then((result) => {
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
-    render()
+    renderCommentState()
   }).catch((error) => {
     console.warn('[community] comment delete failed', { code: error?.code, message: error?.message, details: error?.details })
     state.comments = previousComments
@@ -3496,7 +3508,7 @@ async function handleCommentDelete(commentId = '') {
     state.repliesByCommentId = previousRepliesByCommentId
     state.posts = previousPosts
     state.commentActionError = 'Could not delete this comment.'
-    render()
+    renderCommentState()
   })
 }
 
@@ -4020,6 +4032,25 @@ function openPostDetail(postId = '', hash = '') {
   }).catch(() => null)
 }
 
+function renderCommentsOnly() {
+  const post = state.posts[0]
+  const target = app?.querySelector('#comments')
+  if (!post || !target) {
+    render()
+    return
+  }
+  target.outerHTML = renderComments(post)
+  bindCommentEvents(app?.querySelector('#comments') || app)
+}
+
+function renderCommentState() {
+  if (state.detailPostId && app?.querySelector('#comments')) {
+    renderCommentsOnly()
+    return
+  }
+  render()
+}
+
 async function handleCreateCommunitySubmit(event) {
   event.preventDefault()
   const formData = new FormData(event.currentTarget)
@@ -4369,6 +4400,69 @@ async function handleReportSubmit(event) {
   }
 }
 
+function bindCommentEvents(root = app) {
+  if (!root) return
+  root.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
+  root.querySelector('[data-load-more-comments]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    loadComments({ append: true, renderAfter: true })
+  })
+  root.querySelectorAll('[data-community-reply-form]').forEach((form) => {
+    form.addEventListener('submit', (event) => handleReplySubmit(event, form.getAttribute('data-community-reply-form') || ''))
+  })
+  root.querySelectorAll('[data-toggle-comment-replies]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const parentCommentId = button.getAttribute('data-toggle-comment-replies') || ''
+    const page = repliesPageFor(parentCommentId)
+    const nextExpanded = !page.expanded
+    page.expanded = nextExpanded
+    state.commentActionError = ''
+    syncActiveCommentState()
+    if (nextExpanded && !page.loaded && !page.loading) {
+      loadReplies(parentCommentId, { append: false, renderAfter: true })
+      return
+    }
+    renderCommentState()
+  }))
+  root.querySelectorAll('[data-load-more-comment-replies]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    loadReplies(button.getAttribute('data-load-more-comment-replies') || '', { append: true, renderAfter: true })
+  }))
+  root.querySelectorAll('[data-toggle-reply-composer]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    state.replyComposerFor = button.getAttribute('data-toggle-reply-composer') || ''
+    state.commentActionError = ''
+    renderCommentState()
+  }))
+  root.querySelectorAll('[data-cancel-reply-composer]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const parentCommentId = button.getAttribute('data-cancel-reply-composer') || ''
+    state.replyComposerFor = state.replyComposerFor === parentCommentId ? '' : state.replyComposerFor
+    renderCommentState()
+  }))
+  root.querySelectorAll('[data-community-comment-like]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleCommentLike(button.getAttribute('data-community-comment-like'))
+  }))
+  root.querySelectorAll('[data-community-comment-dislike]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleCommentDislike(button.getAttribute('data-community-comment-dislike'))
+  }))
+  root.querySelectorAll('[data-community-comment-delete]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleCommentDelete(button.getAttribute('data-community-comment-delete'))
+  }))
+  root.querySelectorAll('[data-community-comment-report]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    openCommentReport(button.getAttribute('data-community-comment-report'))
+  }))
+}
+
 function bindEvents() {
   setupCommunityPendingLeaveWarning()
   app.querySelectorAll('.community-post-card[data-post-id]:not(.is-detail)').forEach((card) => {
@@ -4626,6 +4720,11 @@ function bindEvents() {
     stopCommunityActionEvent(event)
     handleShare(button.getAttribute('data-community-share'))
   }))
+  app.querySelectorAll('[data-scroll-comments]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    app.querySelector('#comments')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+  }))
   app.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', (event) => {
     stopCommunityActionEvent(event)
     openReport(button.getAttribute('data-community-report'))
@@ -4640,55 +4739,7 @@ function bindEvents() {
   }))
   app.querySelector('[data-community-edit-post-form]')?.addEventListener('submit', handleEditPostSubmit)
   app.querySelectorAll('[data-close-edit-post]').forEach((button) => button.addEventListener('click', closeEditPostModal))
-  app.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
-  app.querySelector('[data-load-more-comments]')?.addEventListener('click', () => {
-    loadComments({ append: true, renderAfter: true })
-  })
-  app.querySelectorAll('[data-community-reply-form]').forEach((form) => {
-    form.addEventListener('submit', (event) => handleReplySubmit(event, form.getAttribute('data-community-reply-form') || ''))
-  })
-  app.querySelectorAll('[data-toggle-comment-replies]').forEach((button) => button.addEventListener('click', () => {
-    const parentCommentId = button.getAttribute('data-toggle-comment-replies') || ''
-    const page = repliesPageFor(parentCommentId)
-    const nextExpanded = !page.expanded
-    page.expanded = nextExpanded
-    state.commentActionError = ''
-    syncActiveCommentState()
-    if (nextExpanded && !page.loaded && !page.loading) {
-      loadReplies(parentCommentId, { append: false, renderAfter: true })
-      return
-    }
-    render()
-  }))
-  app.querySelectorAll('[data-load-more-comment-replies]').forEach((button) => button.addEventListener('click', () => {
-    loadReplies(button.getAttribute('data-load-more-comment-replies') || '', { append: true, renderAfter: true })
-  }))
-  app.querySelectorAll('[data-toggle-reply-composer]').forEach((button) => button.addEventListener('click', () => {
-    state.replyComposerFor = button.getAttribute('data-toggle-reply-composer') || ''
-    state.commentActionError = ''
-    render()
-  }))
-  app.querySelectorAll('[data-cancel-reply-composer]').forEach((button) => button.addEventListener('click', () => {
-    const parentCommentId = button.getAttribute('data-cancel-reply-composer') || ''
-    state.replyComposerFor = state.replyComposerFor === parentCommentId ? '' : state.replyComposerFor
-    render()
-  }))
-  app.querySelectorAll('[data-community-comment-like]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleCommentLike(button.getAttribute('data-community-comment-like'))
-  }))
-  app.querySelectorAll('[data-community-comment-dislike]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleCommentDislike(button.getAttribute('data-community-comment-dislike'))
-  }))
-  app.querySelectorAll('[data-community-comment-delete]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleCommentDelete(button.getAttribute('data-community-comment-delete'))
-  }))
-  app.querySelectorAll('[data-community-comment-report]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    openCommentReport(button.getAttribute('data-community-comment-report'))
-  }))
+  bindCommentEvents(app)
   app.querySelectorAll('[data-close-community-report]').forEach((button) => {
     button.addEventListener('click', () => {
       state.report = { ...state.report, open: false, submitting: false, error: '' }
