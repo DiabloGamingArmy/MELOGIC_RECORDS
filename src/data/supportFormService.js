@@ -2,12 +2,14 @@ import {
   addDoc,
   collection,
   doc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
-  updateDoc
+  updateDoc,
+  where
 } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 
@@ -104,6 +106,17 @@ export function watchSupportForms(callback, onError, { limitCount = 50 } = {}) {
       if (typeof onError === 'function') onError(error)
     }
   )
+}
+
+export async function listUnresolvedSupportForms({ limitCount = 8 } = {}) {
+  const formsQuery = query(
+    collection(db, SUPPORT_FORMS_COLLECTION),
+    where('status', 'in', ['new', 'reviewing', 'reviewed']),
+    orderBy('createdAt', 'desc'),
+    limit(limitCount)
+  )
+  const snapshot = await getDocs(formsQuery)
+  return snapshot.docs.map((docSnap) => normalizeSupportForm(docSnap.id, docSnap.data()))
 }
 
 export async function updateSupportFormStatus(formId, status = 'reviewed') {

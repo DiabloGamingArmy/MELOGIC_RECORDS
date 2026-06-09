@@ -62,6 +62,7 @@ import {
   watchActiveSupportCalls
 } from './livekit/adminCallService'
 import {
+  listUnresolvedSupportForms,
   updateSupportFormAdminNote,
   updateSupportFormStatus,
   watchSupportForms
@@ -268,6 +269,7 @@ const state = {
     orders: [],
     reports: [],
     logs: [],
+    supportForms: [],
     activeStaff: []
   },
   adminData: {
@@ -831,6 +833,7 @@ function dashboardView() {
   const overviewProducts = overview.products || []
   const overviewOrders = overview.orders || []
   const overviewReports = overview.reports || []
+  const overviewSupportForms = overview.supportForms || []
   return `
     <header class="admin-page-header">
       <div>
@@ -848,6 +851,7 @@ function dashboardView() {
       <article class="admin-metric"><span>Active Staff</span><strong>${overview.loaded ? overview.activeStaff.length : '...'}</strong></article>
       <article class="admin-metric"><span>Orders</span><strong>${overview.loaded ? overviewOrders.length : '...'}</strong></article>
       <article class="admin-metric"><span>Reports</span><strong>${overview.loaded ? overviewReports.length : '...'}</strong></article>
+      <article class="admin-metric"><span>Unresolved Support</span><strong>${overview.loaded ? overviewSupportForms.length : '...'}</strong></article>
     </section>
     ${overview.error ? `<p class="admin-status is-error">${escapeHtml(overview.error)}</p>` : ''}
     <section class="admin-section-slab">
@@ -879,6 +883,13 @@ function dashboardView() {
         humanLabel(order.paymentStatus),
         htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
       ]), 'No recent orders loaded.')}
+      ${overviewSnapshotTable('Support Forms Snapshot', `${ROUTES.adminContact}?mode=support`, ['Subject', 'Sender', 'Status', 'Created', 'Action'], overviewSupportForms.slice(0, 5).map((form) => [
+        htmlCell(`<strong>${escapeHtml(form.subject || 'Untitled request')}</strong><small>${escapeHtml(supportFormPreview(form, 72))}</small>`),
+        supportFormSender(form),
+        htmlCell(renderBadge(humanLabel(form.status || 'new'), statusClass(form.status || 'new'))),
+        formatDate(form.createdAt),
+        htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminContact}?mode=support&support=${encodeURIComponent(form.id)}">Review</a>`)
+      ]), 'No unresolved support forms.')}
       ${overviewSnapshotTable('Reports Snapshot', ROUTES.adminReports, ['Type', 'Target', 'Reason', 'Status', 'Created'], overviewReports.slice(0, 5).map((report) => [
         humanLabel(report.type),
         `${report.targetType || 'target'} ${report.targetId || ''}`.trim(),
@@ -3174,26 +3185,49 @@ function contactSupportFormsPanel() {
   `
 }
 
+function supportFormSender(form = {}) {
+  return [form.name || 'Unknown sender', form.email || 'No email'].filter(Boolean).join(' · ')
+}
+
+function supportFormPreview(form = {}, maxLength = 120) {
+  const value = String(form.message || '').replace(/\s+/g, ' ').trim()
+  if (!value) return 'No message preview.'
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value
+}
+
+function supportFormInitial(form = {}) {
+  return String(form.name || form.email || 'S').slice(0, 1).toUpperCase()
+}
+
 function supportFormListCard(form = {}) {
   const selected = state.contact.supportForms.selectedId === form.id
   const status = form.status || 'new'
 
   return `
-    <button type="button" class="admin-list-card ${selected ? 'is-selected' : ''}" data-support-form-select="${escapeHtml(form.id)}">
-      <span>
-        <strong>${escapeHtml(form.subject || 'Untitled request')}</strong>
-        <small>${escapeHtml(form.name || 'Unknown')} · ${escapeHtml(form.email || 'No email')}</small>
+    <button type="button" class="admin-list-card admin-support-form-card ${selected ? 'is-selected' : ''}" data-support-form-select="${escapeHtml(form.id)}">
+      <span class="admin-support-form-avatar" aria-hidden="true">${escapeHtml(supportFormInitial(form))}</span>
+      <span class="admin-support-form-card-main">
+        <span class="admin-support-form-card-top">
+          <strong>${escapeHtml(form.subject || 'Untitled request')}</strong>
+          <span class="admin-pill status-${statusClass(status)}">${humanLabel(status)}</span>
+        </span>
+        <small>${escapeHtml(supportFormSender(form))}</small>
+        <span class="admin-support-form-preview">${escapeHtml(supportFormPreview(form))}</span>
+        <span class="admin-support-form-time">${escapeHtml(form.createdAt ? formatDate(form.createdAt) : 'Not dated')}</span>
       </span>
-      <span class="admin-pill status-${statusClass(status)}">${humanLabel(status)}</span>
     </button>
   `
 }
 
 function supportFormDetail(form = {}) {
   const saving = state.contact.supportForms.savingId === form.id
+  const safeEmail = form.email || ''
+  const mailtoHref = safeEmail
+    ? `mailto:${encodeURIComponent(safeEmail)}?subject=${encodeURIComponent(`Re: ${form.subject || 'Melogic Support Request'}`)}`
+    : 'mailto:support@melogicrecords.studio'
 
   return `
-    <article class="admin-detail-card">
+    <article class="admin-detail-card admin-support-form-detail">
       <div class="admin-detail-header">
         <div>
           <p class="eyebrow">Support Request</p>
@@ -3202,15 +3236,15 @@ function supportFormDetail(form = {}) {
         <span class="admin-pill status-${statusClass(form.status)}">${humanLabel(form.status)}</span>
       </div>
 
-      <dl class="admin-field-grid">
-        ${renderField('Name', form.name || 'Not provided')}
-        ${renderField('Email', form.email ? `<a href="mailto:${escapeHtml(form.email)}">${escapeHtml(form.email)}</a>` : 'Not provided')}
-        ${renderField('Username', form.username || 'Not provided')}
-        ${renderField('Created', form.createdAt ? formatDate(form.createdAt) : 'Not set')}
-        ${renderField('Source', humanLabel(form.source || 'support_page'))}
+      <dl class="admin-field-grid admin-support-form-fields">
+        <div class="admin-field"><dt>Name</dt><dd>${escapeHtml(form.name || 'Not provided')}</dd></div>
+        <div class="admin-field"><dt>Email</dt><dd>${safeEmail ? `<a href="mailto:${escapeHtml(safeEmail)}">${escapeHtml(safeEmail)}</a>` : '<span class="admin-muted">Not provided</span>'}</dd></div>
+        <div class="admin-field"><dt>Username</dt><dd>${escapeHtml(form.username || 'Not provided')}</dd></div>
+        <div class="admin-field"><dt>Created</dt><dd>${escapeHtml(form.createdAt ? formatDate(form.createdAt) : 'Not set')}</dd></div>
+        <div class="admin-field"><dt>Source</dt><dd>${escapeHtml(humanLabel(form.source || 'support_page'))}</dd></div>
       </dl>
 
-      <div class="admin-message-preview">
+      <div class="admin-message-preview admin-support-form-message">
         <h4>Message</h4>
         <p>${escapeHtml(form.message || 'No message provided.')}</p>
       </div>
@@ -3220,19 +3254,19 @@ function supportFormDetail(form = {}) {
         <textarea rows="5" data-support-form-note="${escapeHtml(form.id)}">${escapeHtml(form.adminNote || '')}</textarea>
       </label>
 
-      <div class="admin-modal-actions">
-        <button type="button" class="admin-primary-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="reviewing" ${saving ? 'disabled' : ''}>
+      <div class="admin-support-form-actions">
+        <button type="button" class="admin-secondary-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="reviewing" ${saving ? 'disabled' : ''}>
           Mark Reviewing
-        </button>
-        <button type="button" class="admin-secondary-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="resolved" ${saving ? 'disabled' : ''}>
-          Mark Resolved
         </button>
         <button type="button" class="admin-secondary-button" data-support-form-save-note="${escapeHtml(form.id)}" ${saving ? 'disabled' : ''}>
           ${saving ? 'Saving...' : 'Save Note'}
         </button>
-        <a class="admin-secondary-button" href="mailto:${escapeHtml(form.email || 'support@melogicrecords.studio')}?subject=${encodeURIComponent(`Re: ${form.subject || 'Melogic Support Request'}`)}">
+        <a class="admin-secondary-button" href="${escapeHtml(mailtoHref)}">
           Reply by Email
         </a>
+        <button type="button" class="admin-primary-button admin-support-resolve-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="resolved" ${saving ? 'disabled' : ''}>
+          Resolve
+        </button>
       </div>
     </article>
   `
@@ -4027,19 +4061,21 @@ async function loadAdminOverview({ silent = false } = {}) {
   state.overview.error = ''
   render()
   try {
-    const [staffResult, productsResult, ordersResult, reportsResult, logsResult] = await Promise.all([
+    const [staffResult, productsResult, ordersResult, reportsResult, logsResult, supportFormsResult] = await Promise.all([
       listActiveStaffPresence({ limitCount: 30 }).catch((error) => ({ error })),
       (can('listingEdit') || can('productReview')) ? listAdminProducts({ limitCount: 12 }).catch((error) => ({ error })) : Promise.resolve({ products: [] }),
       can('orderSupport') ? listAdminOrders({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ orders: [] }),
       (can('admin') || can('userModerate') || can('productReview') || can('orderSupport')) ? listAdminReports({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ reports: [] }),
-      can('auditRead') ? listAdminLogs({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ logs: [] })
+      can('auditRead') ? listAdminLogs({ limitCount: 8 }).catch((error) => ({ error })) : Promise.resolve({ logs: [] }),
+      (can('emailSend') || can('orderSupport') || can('auditRead')) ? listUnresolvedSupportForms({ limitCount: 8 }).then((supportForms) => ({ supportForms })).catch((error) => ({ error })) : Promise.resolve({ supportForms: [] })
     ])
-    const failures = [staffResult, productsResult, ordersResult, reportsResult, logsResult].filter((result) => result?.error)
+    const failures = [staffResult, productsResult, ordersResult, reportsResult, logsResult, supportFormsResult].filter((result) => result?.error)
     state.overview.activeStaff = staffResult.staff || []
     state.overview.products = productsResult.products || []
     state.overview.orders = ordersResult.orders || []
     state.overview.reports = reportsResult.reports || []
     state.overview.logs = logsResult.logs || []
+    state.overview.supportForms = supportFormsResult.supportForms || []
     state.overview.loaded = true
     state.overview.error = failures.length ? 'Some overview sections could not be loaded.' : ''
     if (state.overview.products.length) await hydrateReviewMedia(state.overview.products)
@@ -4953,8 +4989,13 @@ function startSupportFormsWatch() {
       state.contact.supportForms.loaded = true
       state.contact.supportForms.loading = false
       state.contact.supportForms.error = ''
-      if (!state.contact.supportForms.selectedId && forms[0]?.id) {
+      const requestedId = new URLSearchParams(window.location.search).get('support') || ''
+      if (requestedId && forms.some((form) => form.id === requestedId)) {
+        state.contact.supportForms.selectedId = requestedId
+      } else if (!state.contact.supportForms.selectedId && forms[0]?.id) {
         state.contact.supportForms.selectedId = forms[0].id
+      } else if (state.contact.supportForms.selectedId && !forms.some((form) => form.id === state.contact.supportForms.selectedId)) {
+        state.contact.supportForms.selectedId = forms[0]?.id || ''
       }
       render()
     },
@@ -5605,6 +5646,10 @@ app.querySelectorAll('[data-support-form-select]').forEach((button) => {
   button.addEventListener('click', (event) => {
     event.preventDefault()
     state.contact.supportForms.selectedId = button.getAttribute('data-support-form-select') || ''
+    const params = new URLSearchParams(window.location.search)
+    params.set('mode', 'support')
+    if (state.contact.supportForms.selectedId) params.set('support', state.contact.supportForms.selectedId)
+    window.history.replaceState({}, '', `${ROUTES.adminContact}?${params.toString()}`)
     render()
   })
 })
