@@ -279,6 +279,8 @@ let communityKeyboardReady = false
 let communityOutsideClickReady = false
 let communityBeforeUnloadReady = false
 let communityRailResizeReady = false
+let communityShellMounted = false
+let communityShellChromeInitialized = false
 let communityPagePreloaderInitialized = false
 const communityPendingActions = new Map()
 let storyMediaRecorder = null
@@ -2003,40 +2005,36 @@ function renderCreateCommunityForm() {
 function renderCommunitiesView() {
   const categories = COMMUNITY_CATEGORIES
   return `
-    ${renderCommunityPagePreloaderMarkup()}
-    ${navShell({ currentPage: 'community' })}
-    <main class="community-page">
-      <section class="community-hero compact">
-        <div>
-          <p class="eyebrow">Focused Communities</p>
-          <h1>Communities</h1>
-          <p>Find focused spaces for genres, production, StageMaker, feedback, and creator support.</p>
-        </div>
-        <div class="community-hero-actions">
-          <button type="button" class="button button-accent" data-open-create-community>Create Community</button>
-          <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back</span></a>
-        </div>
-      </section>
-      <div class="community-layout">
-        <div class="community-main">
-          ${renderCreateCommunityForm()}
-          <section class="community-panel community-community-tools">
-            <label>
-              <span>Search</span>
-              <input name="communitySearch" value="${escapeHtml(state.communityFilters.search)}" placeholder="Search communities" data-community-search />
-            </label>
-            <label>
-              <span>Category</span>
-              <select data-community-category>
-                ${categories.map((category) => `<option value="${escapeHtml(category)}" ${state.communityFilters.category === category ? 'selected' : ''}>${category === 'all' ? 'All categories' : escapeHtml(category)}</option>`).join('')}
-              </select>
-            </label>
-          </section>
-          ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : `<section class="community-community-grid">${directoryCommunities().map(renderCommunityCard).join('') || '<div class="community-feed-state community-panel">No communities match those filters.</div>'}</section>`}
-        </div>
-        ${renderSidebar()}
+    <section class="community-hero compact">
+      <div>
+        <p class="eyebrow">Focused Communities</p>
+        <h1>Communities</h1>
+        <p>Find focused spaces for genres, production, StageMaker, feedback, and creator support.</p>
       </div>
-    </main>
+      <div class="community-hero-actions">
+        <button type="button" class="button button-accent" data-open-create-community>Create Community</button>
+        <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back</span></a>
+      </div>
+    </section>
+    <div class="community-layout">
+      <div class="community-main">
+        ${renderCreateCommunityForm()}
+        <section class="community-panel community-community-tools">
+          <label>
+            <span>Search</span>
+            <input name="communitySearch" value="${escapeHtml(state.communityFilters.search)}" placeholder="Search communities" data-community-search />
+          </label>
+          <label>
+            <span>Category</span>
+            <select data-community-category>
+              ${categories.map((category) => `<option value="${escapeHtml(category)}" ${state.communityFilters.category === category ? 'selected' : ''}>${category === 'all' ? 'All categories' : escapeHtml(category)}</option>`).join('')}
+            </select>
+          </label>
+        </section>
+        ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : `<section class="community-community-grid">${directoryCommunities().map(renderCommunityCard).join('') || '<div class="community-feed-state community-panel">No communities match those filters.</div>'}</section>`}
+      </div>
+      ${renderSidebar()}
+    </div>
   `
 }
 
@@ -2215,27 +2213,23 @@ function renderDetail() {
   const post = state.posts[0]
   const postLoading = state.detailPostLoading && !post
   return `
-    ${renderCommunityPagePreloaderMarkup()}
-    ${navShell({ currentPage: 'community' })}
-    <main class="community-page">
-      <section class="community-detail-topbar">
-        <div>
-          <p class="eyebrow">Community</p>
-          <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
-        </div>
-        <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
-      </section>
-      <div class="community-layout is-detail">
-        <div class="community-detail-main">
-          ${postLoading ? renderDetailSkeleton() : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
-        </div>
-        ${renderSidebar()}
+    <section class="community-detail-topbar">
+      <div>
+        <p class="eyebrow">Community</p>
+        <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
       </div>
-      ${renderStoryComposerModal()}
-      ${renderStoryViewerModal()}
-      ${renderEditPostModal()}
-      ${renderReportModal()}
-    </main>
+      <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
+    </section>
+    <div class="community-layout is-detail">
+      <div class="community-detail-main">
+        ${postLoading ? renderDetailSkeleton() : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
+      </div>
+      ${renderSidebar()}
+    </div>
+    ${renderStoryComposerModal()}
+    ${renderStoryViewerModal()}
+    ${renderEditPostModal()}
+    ${renderReportModal()}
   `
 }
 
@@ -2244,39 +2238,35 @@ function renderCommunityDetail() {
   const focused = community ? Boolean(state.communityFocus[community.communityId]) : false
   const focusDisabled = community?.fallback === true
   return `
-    ${renderCommunityPagePreloaderMarkup()}
-    ${navShell({ currentPage: 'community' })}
-    <main class="community-page">
-      <section class="community-hero compact community-community-hero">
-        <div>
-          <p class="eyebrow">Community</p>
-          <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
-          <p>${community ? escapeHtml(community.description) : 'Loading community...'}</p>
-          ${community ? `<div class="community-community-stats hero-stats"><span>c/${escapeHtml(community.slug)}</span><span>${formatCount(community.focusCount)} focused</span><span>${formatCount(community.postCount)} posts</span></div>` : ''}
-        </div>
-        <div class="community-hero-actions">
-          <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
-          <a class="button button-muted" href="${ROUTES.communityCommunities}">All Communities</a>
-          ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>` : ''}
-          ${community ? focusDisabled
-            ? `<button type="button" class="button button-muted" disabled title="Posting is available once this community is active.">${iconSvg('plus')} <span>Post soon</span></button>`
-            : `<button type="button" class="button button-accent" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>`
-          : ''}
-        </div>
-      </section>
-      <div class="community-layout">
-        <div class="community-main">
-          ${community ? renderFeedToolbar() : ''}
-          ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading community...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : community ? renderFeed() : '<section class="community-feed-state community-panel">This community is not available.</section>'}
-        </div>
-        ${renderSidebar()}
+    <section class="community-hero compact community-community-hero">
+      <div>
+        <p class="eyebrow">Community</p>
+        <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
+        <p>${community ? escapeHtml(community.description) : 'Loading community...'}</p>
+        ${community ? `<div class="community-community-stats hero-stats"><span>c/${escapeHtml(community.slug)}</span><span>${formatCount(community.focusCount)} focused</span><span>${formatCount(community.postCount)} posts</span></div>` : ''}
       </div>
-      ${renderComposerModal()}
-      ${renderStoryComposerModal()}
-      ${renderStoryViewerModal()}
-      ${renderEditPostModal()}
-      ${renderReportModal()}
-    </main>
+      <div class="community-hero-actions">
+        <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
+        <a class="button button-muted" href="${ROUTES.communityCommunities}">All Communities</a>
+        ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>` : ''}
+        ${community ? focusDisabled
+          ? `<button type="button" class="button button-muted" disabled title="Posting is available once this community is active.">${iconSvg('plus')} <span>Post soon</span></button>`
+          : `<button type="button" class="button button-accent" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>`
+        : ''}
+      </div>
+    </section>
+    <div class="community-layout">
+      <div class="community-main">
+        ${community ? renderFeedToolbar() : ''}
+        ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading community...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : community ? renderFeed() : '<section class="community-feed-state community-panel">This community is not available.</section>'}
+      </div>
+      ${renderSidebar()}
+    </div>
+    ${renderComposerModal()}
+    ${renderStoryComposerModal()}
+    ${renderStoryViewerModal()}
+    ${renderEditPostModal()}
+    ${renderReportModal()}
   `
 }
 
@@ -2285,6 +2275,8 @@ function renderCommunityPagePreloaderMarkup() {
 }
 
 function hydrateShell() {
+  if (communityShellChromeInitialized) return
+  communityShellChromeInitialized = true
   const logoReadyPromise = initShellChrome().catch((error) => {
     console.warn('[community] shell init failed', { message: error?.message })
     return false
@@ -2293,6 +2285,48 @@ function hydrateShell() {
     communityPagePreloaderInitialized = true
     createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise: Promise.resolve(true) })
   }
+}
+
+function renderCommunityShellOnce() {
+  const existingRoot = app?.querySelector('[data-community-root]')
+  if (communityShellMounted && existingRoot) return existingRoot
+  if (!app) return null
+  app.innerHTML = `
+    ${renderCommunityPagePreloaderMarkup()}
+    ${navShell({ currentPage: 'community' })}
+    <main class="community-page" data-community-page>
+      <div class="community-root" data-community-root></div>
+    </main>
+  `
+  communityShellMounted = true
+  hydrateShell()
+  return app.querySelector('[data-community-root]')
+}
+
+function renderCommunityHomeView() {
+  return `
+    ${renderCommunityScrollChrome()}
+    ${state.message ? `<p class="community-toast">${escapeHtml(state.message)}</p>` : ''}
+    <div class="community-layout is-home">
+      ${renderLeftNav()}
+      <div class="community-main">
+        ${state.activeTab === 'forums' ? renderForumsPage() : state.activeTab === 'forms' ? renderFormsPage() : `${renderFeedToolbar()}${renderFeed()}`}
+      </div>
+      ${renderSidebar()}
+    </div>
+    ${renderComposerModal()}
+    ${renderStoryComposerModal()}
+    ${renderStoryViewerModal()}
+    ${renderEditPostModal()}
+    ${renderReportModal()}
+  `
+}
+
+function renderCommunityViewContent() {
+  if (state.detailPostId) return renderDetail()
+  if (state.view.type === 'communities') return renderCommunitiesView()
+  if (state.view.type === 'community') return renderCommunityDetail()
+  return renderCommunityHomeView()
 }
 
 function renderFeedToolbar() {
@@ -2340,47 +2374,10 @@ function render() {
   if (!app) return
   document.body.classList.toggle('community-modal-open', communityModalIsOpen())
   if (state.view.type !== 'feed' || communityModalIsOpen()) setCommunityChromeHidden(false)
-  if (state.detailPostId) {
-    app.innerHTML = renderDetail()
-    bindEvents()
-    hydrateShell()
-    return
-  }
-  if (state.view.type === 'communities') {
-    app.innerHTML = renderCommunitiesView()
-    bindEvents()
-    hydrateShell()
-    return
-  }
-  if (state.view.type === 'community') {
-    app.innerHTML = renderCommunityDetail()
-    bindEvents()
-    hydrateShell()
-    return
-  }
-
-  app.innerHTML = `
-    ${renderCommunityPagePreloaderMarkup()}
-    ${navShell({ currentPage: 'community' })}
-    <main class="community-page">
-      ${renderCommunityScrollChrome()}
-      ${state.message ? `<p class="community-toast">${escapeHtml(state.message)}</p>` : ''}
-      <div class="community-layout is-home">
-        ${renderLeftNav()}
-        <div class="community-main">
-          ${state.activeTab === 'forums' ? renderForumsPage() : state.activeTab === 'forms' ? renderFormsPage() : `${renderFeedToolbar()}${renderFeed()}`}
-        </div>
-        ${renderSidebar()}
-      </div>
-      ${renderComposerModal()}
-      ${renderStoryComposerModal()}
-      ${renderStoryViewerModal()}
-      ${renderEditPostModal()}
-      ${renderReportModal()}
-    </main>
-  `
+  const communityRoot = renderCommunityShellOnce()
+  if (!communityRoot) return
+  communityRoot.innerHTML = renderCommunityViewContent()
   bindEvents()
-  hydrateShell()
 }
 
 async function loadViewerState() {
@@ -3859,11 +3856,12 @@ function removeMentionedUser(uid = '') {
 function showCommunityToast(message = '') {
   state.message = message
   let toast = app?.querySelector('.community-toast')
-  if (!toast && app?.querySelector('.community-page')) {
+  const toastContainer = app?.querySelector('[data-community-root]') || app?.querySelector('.community-page')
+  if (!toast && toastContainer) {
     toast = document.createElement('p')
     toast.className = 'community-toast'
-    const anchor = app.querySelector('.community-layout, .community-detail-topbar, .community-hero')
-    app.querySelector('.community-page')?.insertBefore(toast, anchor || null)
+    const anchor = toastContainer.querySelector('.community-layout, .community-detail-topbar, .community-hero')
+    toastContainer.insertBefore(toast, anchor || toastContainer.firstChild)
   }
   if (toast) toast.textContent = message
   window.setTimeout(() => {
