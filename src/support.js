@@ -240,7 +240,7 @@ supportForm?.addEventListener('submit', async (event) => {
     supportForm.reset()
 
     if (supportFormStatus) {
-      supportFormStatus.textContent = 'Support request sent. Melogic will review it from the admin panel.'
+      supportFormStatus.textContent = 'Support request sent. Melogic Support will contact you soon.'
       supportFormStatus.dataset.status = 'success'
     }
   } catch (error) {
