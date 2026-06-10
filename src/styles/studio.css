@@ -293,18 +293,16 @@ body.is-studio-editor main{padding-top:0}
 .studio-daw-library-browser{min-height:0;display:grid;grid-template-columns:170px minmax(0,1fr)}
 .studio-daw-library-browser>nav{min-height:0;overflow:auto;padding:8px;border-right:1px solid rgba(135,155,205,.18);background:#121720}
 .studio-daw-library-results{min-height:0;overflow:auto;padding:10px;background:#0d1119}
-.studio-daw-library-root{display:grid;gap:3px;margin-bottom:5px}
-.studio-daw-library-root-button,.studio-daw-library-children button,.studio-daw-library-instrument{width:100%;border:0;color:#dce6fa;font:inherit;text-align:left;cursor:pointer}
-.studio-daw-library-root-button{min-height:30px;display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:4px;border-radius:5px;background:transparent;padding:4px 6px}
-.studio-daw-library-root-button:hover,.studio-daw-library-root-button:focus-visible{background:rgba(130,160,220,.1)}
-.studio-daw-library-root-button span{color:#79d7ff;font-weight:900}
-.studio-daw-library-root-button strong{overflow:hidden;text-overflow:ellipsis;font-size:11px}
-.studio-daw-library-children{display:grid;gap:2px;padding-left:17px}
-.studio-daw-library-children button{min-height:34px;display:grid;gap:1px;border-radius:5px;background:transparent;padding:5px 7px}
-.studio-daw-library-children button:hover,.studio-daw-library-children button:focus-visible,.studio-daw-library-children button.is-active{background:rgba(91,137,255,.18)}
-.studio-daw-library-children span{font-size:11px;font-weight:800}
-.studio-daw-library-children small{color:#78859f;font-size:9px;text-transform:uppercase}
+.studio-daw-library-folder{display:grid;gap:2px}
+.studio-daw-library-folder-button,.studio-daw-library-instrument{width:100%;border:0;color:#dce6fa;font:inherit;text-align:left;cursor:pointer}
+.studio-daw-library-folder-button{min-height:31px;display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:4px;border-radius:5px;background:transparent;padding:4px 6px 4px calc(6px + (var(--library-depth,0) * 12px))}
+.studio-daw-library-folder-button:hover,.studio-daw-library-folder-button:focus-visible,.studio-daw-library-folder-button.is-active{background:rgba(91,137,255,.18)}
+.studio-daw-library-folder-button>span{min-width:14px;color:#79d7ff;font-weight:900;text-align:center}
+.studio-daw-library-folder-button strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.studio-daw-library-folder-button small{color:#78859f;font-size:8px;text-transform:uppercase}
+.studio-daw-library-folder-children{display:grid;gap:2px}
 .studio-daw-library-instruments{display:grid;gap:7px}
+.studio-daw-library-breadcrumb{margin-top:9px;color:#73809b;font-size:9px;line-height:1.4}
 .studio-daw-library-instrument{min-height:68px;display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;align-items:center;position:relative;border:1px solid rgba(133,155,210,.17);border-radius:7px;background:#171d29;padding:8px}
 .studio-daw-library-instrument:hover,.studio-daw-library-instrument:focus-visible,.studio-daw-library-instrument.is-selected{border-color:rgba(99,206,255,.58);background:#1b2637}
 .studio-daw-library-instrument-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:6px;background:linear-gradient(145deg,#236b82,#40348b);font-size:14px;font-weight:900}

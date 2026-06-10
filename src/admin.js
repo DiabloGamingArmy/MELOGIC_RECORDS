@@ -83,14 +83,23 @@ import {
   STUDIO_SAMPLE_STRATEGIES,
   STUDIO_LIBRARY_SOURCE_ROOTS,
   STUDIO_LIBRARY_STORAGE_ROOT,
+  addLibraryFolder,
   addDefaultInstrumentToLibrary,
   buildSamplesFromFiles,
+  deleteLibraryFolder,
+  findFolderById,
+  findFolderByPath,
+  flattenLibraryFolders,
   getDefaultLibraryContent,
+  getInstrumentsForFolder,
   getSampleStrategyWarnings,
   initializeDefaultLibraryContent,
+  moveLibraryFolder,
   parseDefaultInstrumentArchive,
-  studioLibraryFolderPath,
+  renameLibraryFolder,
+  saveDefaultLibraryContent,
   studioLibrarySlug,
+  updateLibraryFolder,
   updateDefaultInstrument,
   uploadDefaultInstrumentArtwork,
   uploadDefaultInstrumentHtmlSource,
@@ -363,6 +372,8 @@ const state = {
       htmlSourceFile: null,
       artworkFile: null,
       editingId: '',
+      selectedFolderId: '',
+      expandedFolderIds: new Set(),
       form: {},
       error: '',
       message: ''
@@ -3388,7 +3399,8 @@ function defaultStudioInstrumentForm() {
   return {
     name: '',
     id: '',
-    sourceRoot: 'melogic-records',
+    destinationFolderId: '',
+    folderPath: '',
     engineType: 'sample-based',
     description: '',
     sampleStrategy: 'thirds',
@@ -3419,36 +3431,86 @@ function studioOperationsSubnav() {
   `
 }
 
+function renderAdminStudioFolderNode(folder, studio, instruments, depth = 0) {
+  const children = folder.children || []
+  const expanded = studio.expandedFolderIds.has(folder.id)
+  const selected = studio.selectedFolderId === folder.id
+  const folderCount = instruments.filter((item) => item.folderPath === folder.path).length
+  return `<div class="admin-studio-folder-node" style="--admin-folder-depth:${depth}">
+    <div class="admin-studio-folder-row ${selected ? 'is-selected' : ''}">
+      <button type="button" class="admin-studio-folder-toggle" data-admin-studio-folder-toggle="${escapeHtml(folder.id)}" ${children.length ? '' : 'disabled'} aria-label="${expanded ? 'Collapse' : 'Expand'} ${escapeHtml(folder.label)}">${children.length ? (expanded ? '−' : '+') : ''}</button>
+      <button type="button" class="admin-studio-folder-select" data-admin-studio-folder-select="${escapeHtml(folder.id)}">
+        <strong>${escapeHtml(folder.label)}</strong>
+        <small>${escapeHtml(folder.type)}${folder.engineType ? ` · ${escapeHtml(folder.engineType)}` : ''}</small>
+      </button>
+      ${folderCount ? `<span>${folderCount}</span>` : ''}
+    </div>
+    ${children.length && expanded ? `<div class="admin-studio-folder-children">${children.map((child) => renderAdminStudioFolderNode(child, studio, instruments, depth + 1)).join('')}</div>` : ''}
+  </div>`
+}
+
 function renderAdminStudioLibraryTree(library = {}) {
+  const studio = state.operations.studio
   const instruments = Array.isArray(library.instruments) ? library.instruments : []
   const folders = Array.isArray(library.folders) ? library.folders : []
   if (!folders.length) return '<article class="admin-empty-state">Default library folders have not been initialized.</article>'
-  return `<div class="admin-studio-library-tree">${folders.map((root) => `
-    <section>
-      <header><strong>${escapeHtml(root.label)}</strong><span>${instruments.filter((item) => item.sourceRoot === root.id).length}</span></header>
-      <div>${(root.children || []).map((child) => {
-        const rows = instruments.filter((item) => item.folderPath === child.path)
-        return `<article>
-          <div><strong>${escapeHtml(child.label)}</strong><small>${escapeHtml(child.path)}</small></div>
-          <span>${rows.length ? `${rows.length} instrument${rows.length === 1 ? '' : 's'}` : 'Empty'}</span>
-          ${rows.length ? `<ul>${rows.map((instrument) => `<li><button type="button" data-studio-library-edit="${escapeHtml(instrument.id)}">${escapeHtml(instrument.name)}</button><small>${escapeHtml(instrument.engineType)} · v${instrument.version || 1}${instrument.engineType === 'sample-based' ? ` · ${instrument.samples?.length || 0} samples` : instrument.runtime ? ` · ${escapeHtml(instrument.runtime)}` : ''}</small></li>`).join('')}</ul>` : ''}
-        </article>`
-      }).join('')}</div>
-    </section>
-  `).join('')}</div>`
+  const selected = findFolderById(folders, studio.selectedFolderId) || folders[0]
+  const selectedInstruments = selected ? getInstrumentsForFolder(library, selected.path) : []
+  return `<div class="admin-studio-folder-manager">
+    <div class="admin-studio-folder-tree" role="tree">${folders.map((root) => renderAdminStudioFolderNode(root, studio, instruments)).join('')}</div>
+    <div class="admin-studio-folder-detail">
+      ${selected ? `<form data-admin-studio-folder-edit>
+        <header><div><span>Selected folder</span><strong>${escapeHtml(selected.path)}</strong></div><span class="review-badge">${escapeHtml(selected.type)}</span></header>
+        <input type="hidden" name="folderId" value="${escapeHtml(selected.id)}">
+        <div class="admin-form-grid">
+          <label><span>Label</span><input name="label" value="${escapeHtml(selected.label)}" required ${selected.type === 'source-root' ? 'readonly' : ''}></label>
+          <label><span>Folder type</span><select name="type" ${selected.type === 'source-root' ? 'disabled' : ''}>${['source-root', 'category-folder', 'engine-folder', 'generic-folder'].map((type) => `<option value="${type}" ${selected.type === type ? 'selected' : ''}>${escapeHtml(type)}</option>`).join('')}</select></label>
+          <label><span>Engine type</span><select name="engineType" ${selected.type === 'engine-folder' ? '' : 'disabled'}>${STUDIO_LIBRARY_ENGINE_TYPES.map((engine) => `<option value="${engine.id}" ${selected.engineType === engine.id ? 'selected' : ''}>${escapeHtml(engine.label)}</option>`).join('')}</select></label>
+          <div class="admin-studio-path-preview"><span>ID</span><strong>${escapeHtml(selected.id)}</strong><small>Sort order ${selected.sortOrder}</small></div>
+        </div>
+        <div class="admin-studio-folder-actions">
+          <button type="submit" class="admin-primary-button">Save folder</button>
+          <button type="button" class="admin-secondary-button" data-admin-studio-folder-move="-1">Move up</button>
+          <button type="button" class="admin-secondary-button" data-admin-studio-folder-move="1">Move down</button>
+          <button type="button" class="admin-danger-button" data-admin-studio-folder-delete ${selected.type === 'source-root' ? 'disabled title="Source roots cannot be deleted."' : ''}>Delete</button>
+          ${selected.type === 'engine-folder' ? '<button type="button" class="admin-secondary-button" data-admin-studio-use-destination>Use for instrument</button>' : ''}
+        </div>
+      </form>
+      ${selected.type !== 'engine-folder' ? `<form data-admin-studio-folder-add>
+        <header><div><span>Add child folder</span><strong>Inside ${escapeHtml(selected.label)}</strong></div></header>
+        <input type="hidden" name="parentId" value="${escapeHtml(selected.id)}">
+        <div class="admin-form-grid">
+          <label><span>Label</span><input name="label" placeholder="Strings" required></label>
+          <label><span>Folder type</span><select name="type"><option value="category-folder">category-folder</option><option value="engine-folder">engine-folder</option><option value="generic-folder">generic-folder</option></select></label>
+          <label><span>Engine type</span><select name="engineType" disabled>${STUDIO_LIBRARY_ENGINE_TYPES.map((engine) => `<option value="${engine.id}">${escapeHtml(engine.label)}</option>`).join('')}</select></label>
+        </div>
+        <button type="submit" class="admin-secondary-button">Add child folder</button>
+      </form>` : '<div class="admin-studio-folder-terminal"><strong>Final engine folder</strong><p>Assign instruments here. Add sibling categories or engines from the parent folder.</p></div>'}
+      <section class="admin-studio-folder-instruments">
+        <header><strong>Instruments in this exact folder</strong><span>${selectedInstruments.length}</span></header>
+        ${selectedInstruments.length ? `<ul>${selectedInstruments.map((instrument) => `<li><button type="button" data-studio-library-edit="${escapeHtml(instrument.id)}">${escapeHtml(instrument.name)}</button><small>${escapeHtml(instrument.engineType)} · v${instrument.version || 1}</small></li>`).join('')}</ul>` : '<p class="admin-muted">This folder is empty.</p>'}
+      </section>` : '<article class="admin-empty-state">Select a folder.</article>'}
+    </div>
+  </div>`
 }
 
 function operationsStudioPanel() {
   const studio = state.operations.studio
   const library = studio.library
   const form = studioInstrumentFormState()
-  const folderPath = studioLibraryFolderPath(form.sourceRoot, form.engineType)
+  const flatFolders = flattenLibraryFolders(library?.folders || [])
+  const destinationFolders = flatFolders.filter((folder) => folder.type === 'engine-folder')
+  const selectedDestination = findFolderById(library?.folders || [], form.destinationFolderId)
+    || findFolderByPath(library?.folders || [], form.folderPath)
+    || destinationFolders[0]
+  const folderPath = selectedDestination?.path || form.folderPath || ''
+  const engineType = selectedDestination?.engineType || form.engineType || 'sample-based'
   const instrumentId = studioLibrarySlug(form.id || form.name)
   const version = Math.max(1, Math.round(Number(form.version) || 1))
   const basePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${instrumentId || '{instrumentId}'}/v${version}`
   const editing = Boolean(studio.editingId)
-  const isSampleBased = form.engineType === 'sample-based'
-  const isVst = form.engineType === 'vst'
+  const isSampleBased = engineType === 'sample-based'
+  const isVst = engineType === 'vst'
   const strategyWarnings = isSampleBased ? getSampleStrategyWarnings(form.sampleStrategy, studio.parsedSamples) : []
   return `
     ${studioOperationsSubnav()}
@@ -3476,8 +3538,8 @@ function operationsStudioPanel() {
         <div class="admin-form-grid">
           ${operationTextInput({ name: 'name', label: 'Instrument name', value: form.name, required: true })}
           <label><span>Instrument ID / slug</span><input name="id" value="${escapeHtml(form.id)}" required ${editing ? 'readonly' : ''}><small>${editing ? 'Instrument IDs stay stable after creation.' : 'Lowercase letters, numbers, and hyphens.'}</small></label>
-          <label><span>Source root</span><select name="sourceRoot">${STUDIO_LIBRARY_SOURCE_ROOTS.map((item) => `<option value="${item.id}" ${form.sourceRoot === item.id ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
-          <label><span>Engine type</span><select name="engineType">${STUDIO_LIBRARY_ENGINE_TYPES.map((item) => `<option value="${item.id}" ${form.engineType === item.id ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
+          <label class="is-wide"><span>Destination folder</span><select name="destinationFolderId" required><option value="">Choose a final engine folder</option>${destinationFolders.map((folder) => `<option value="${escapeHtml(folder.id)}" ${(selectedDestination?.id || '') === folder.id ? 'selected' : ''}>${escapeHtml(folder.path)} · ${escapeHtml(folder.engineType || '')}</option>`).join('')}</select><small>Choose a final engine folder, such as Sample Based.</small></label>
+          <input type="hidden" name="engineType" value="${escapeHtml(engineType)}">
           ${isSampleBased ? `<label><span>Sample strategy</span><select name="sampleStrategy">${STUDIO_SAMPLE_STRATEGIES.map((strategy) => `<option value="${strategy.id}" ${form.sampleStrategy === strategy.id ? 'selected' : ''}>${escapeHtml(strategy.label)}</option>`).join('')}</select><small>${escapeHtml(STUDIO_SAMPLE_STRATEGIES.find((strategy) => strategy.id === form.sampleStrategy)?.description || 'Arbitrary valid note + octave WAV roots')}</small></label>` : ''}
           ${operationTextInput({ name: 'version', label: 'Version', type: 'number', value: version, required: true })}
           ${operationTextarea({ name: 'description', label: 'Description', value: form.description, rows: 4, wide: true })}
@@ -3492,7 +3554,7 @@ function operationsStudioPanel() {
           <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility !== 'private' ? 'selected' : ''}>Public</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
           ${isSampleBased ? `<label class="is-wide"><span>Audio ZIP</span><input type="file" name="audioZip" accept=".zip,application/zip,application/x-zip-compressed" ${studio.parsing || studio.saving ? 'disabled' : ''}><small>WAV roots use note + octave names such as C-1.wav, F#3.wav, Fs3.wav, or Bb4.wav. Strategy mismatches warn but do not block valid mappings.</small></label>` : ''}
           ${isVst ? `<label class="is-wide"><span>HTML-based VST source</span><input type="file" name="htmlSource" accept=".html,text/html" ${studio.saving ? 'disabled' : ''}><small>Upload the HTML entry point for a future sandboxed web instrument that accepts MIDI and outputs audio. Source is stored only; runtime execution is coming soon.</small>${form.htmlSourcePath ? `<strong class="admin-studio-existing-source">${escapeHtml(form.htmlSourcePath)}</strong>` : ''}</label>` : ''}
-          ${form.engineType === 'wavetable' ? '<div class="admin-studio-runtime-note is-wide"><strong>Wavetable runtime coming soon</strong><p>Save metadata now. Wavetable source and playback fields will be added with the dedicated runtime.</p></div>' : ''}
+          ${engineType === 'wavetable' ? '<div class="admin-studio-runtime-note is-wide"><strong>Wavetable runtime coming soon</strong><p>Save metadata now. Wavetable source and playback fields will be added with the dedicated runtime.</p></div>' : ''}
           <label class="is-wide"><span>Artwork (optional WebP)</span><input type="file" name="artwork" accept="image/webp" ${studio.saving ? 'disabled' : ''}><small>Stored as artwork/cover.webp.</small></label>
           ${operationCheckbox({ name: 'overwrite', label: 'Replace an existing instrument with this ID', checked: editing || form.overwrite })}
         </div>
@@ -5032,6 +5094,11 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       state.operations.beta = beta || {}
       state.operations.pricing = pricing || {}
       state.operations.studio.library = studioLibrary || null
+      if (studioLibrary?.folders?.length) {
+        const studio = state.operations.studio
+        studio.selectedFolderId = findFolderById(studioLibrary.folders, studio.selectedFolderId)?.id || studioLibrary.folders[0].id
+        if (!studio.expandedFolderIds.size) studio.expandedFolderIds = new Set(studioLibrary.folders.map((folder) => folder.id))
+      }
     }
   }
   if (!map[sectionKey]) return
@@ -5364,12 +5431,126 @@ async function initializeAdminStudioLibrary() {
   render()
   try {
     studio.library = await initializeDefaultLibraryContent()
+    const roots = studio.library?.folders || []
+    studio.selectedFolderId = findFolderById(roots, studio.selectedFolderId)?.id || roots[0]?.id || ''
+    studio.expandedFolderIds = new Set(roots.map((folder) => folder.id))
     studio.message = 'Default DAW library folders were initialized without removing existing instruments.'
   } catch (error) {
     console.warn('[admin] Studio library initialization failed', { code: error?.code, message: error?.message })
     studio.error = error?.message || 'Could not initialize the default DAW library.'
   } finally {
     studio.initializing = false
+    render()
+  }
+}
+
+function updateInstrumentFolderPaths(instruments = [], oldPath = '', newPath = '') {
+  return instruments.map((instrument) => {
+    if (instrument.folderPath !== oldPath && !instrument.folderPath.startsWith(`${oldPath}/`)) return instrument
+    return { ...instrument, folderPath: `${newPath}${instrument.folderPath.slice(oldPath.length)}` }
+  })
+}
+
+async function saveAdminStudioFolderEdit(form) {
+  const studio = state.operations.studio
+  if (!can('admin') || studio.saving || !studio.library) return
+  const values = operationsFormValues(form)
+  const folder = findFolderById(studio.library.folders, values.folderId)
+  if (!folder) return
+  studio.saving = true
+  studio.error = ''
+  studio.message = ''
+  render()
+  try {
+    const renameResult = values.label !== folder.label
+      ? renameLibraryFolder(studio.library.folders, folder.id, values.label)
+      : { folders: studio.library.folders, oldPath: folder.path, newPath: folder.path }
+    const folders = updateLibraryFolder(renameResult.folders, folder.id, {
+      type: values.type,
+      engineType: values.engineType
+    })
+    const previousInstruments = studio.library.instruments || []
+    const instruments = updateInstrumentFolderPaths(previousInstruments, renameResult.oldPath, renameResult.newPath)
+    const affected = instruments.filter((item, index) => item.folderPath !== previousInstruments[index]?.folderPath).length
+    studio.library = await saveDefaultLibraryContent({ ...studio.library, folders, instruments })
+    studio.message = `Folder saved${renameResult.oldPath !== renameResult.newPath ? `. Manifest paths were updated from ${renameResult.oldPath} to ${renameResult.newPath}; existing Storage objects were not moved.` : '.'}${affected ? ` ${affected} instrument path${affected === 1 ? '' : 's'} changed.` : ''}`
+  } catch (error) {
+    studio.error = error?.message || 'Could not save the folder.'
+  } finally {
+    studio.saving = false
+    render()
+  }
+}
+
+async function addAdminStudioFolder(form) {
+  const studio = state.operations.studio
+  if (!can('admin') || studio.saving || !studio.library) return
+  const values = operationsFormValues(form)
+  studio.saving = true
+  studio.error = ''
+  render()
+  try {
+    const folders = addLibraryFolder(studio.library.folders, values.parentId, {
+      label: values.label,
+      type: values.type,
+      engineType: values.engineType
+    })
+    studio.library = await saveDefaultLibraryContent({ ...studio.library, folders })
+    const created = flattenLibraryFolders(studio.library.folders).find((folder) => folder.path === `${findFolderById(studio.library.folders, values.parentId)?.path}/${String(values.label || '').trim().replaceAll('/', '-')}`)
+    if (created) studio.selectedFolderId = created.id
+    studio.expandedFolderIds.add(values.parentId)
+    studio.message = `${values.label} was added.`
+  } catch (error) {
+    studio.error = error?.message || 'Could not add the folder.'
+  } finally {
+    studio.saving = false
+    render()
+  }
+}
+
+async function moveAdminStudioFolder(direction) {
+  const studio = state.operations.studio
+  if (!can('admin') || studio.saving || !studio.library || !studio.selectedFolderId) return
+  studio.saving = true
+  studio.error = ''
+  render()
+  try {
+    const folders = moveLibraryFolder(studio.library.folders, studio.selectedFolderId, direction)
+    studio.library = await saveDefaultLibraryContent({ ...studio.library, folders })
+    studio.message = `Folder moved ${direction < 0 ? 'up' : 'down'}.`
+  } catch (error) {
+    studio.error = error?.message || 'Could not reorder the folder.'
+  } finally {
+    studio.saving = false
+    render()
+  }
+}
+
+async function deleteAdminStudioFolder() {
+  const studio = state.operations.studio
+  const folder = findFolderById(studio.library?.folders || [], studio.selectedFolderId)
+  if (!can('admin') || studio.saving || !folder || folder.type === 'source-root') return
+  const affected = (studio.library.instruments || []).filter((instrument) => instrument.folderPath === folder.path || instrument.folderPath.startsWith(`${folder.path}/`))
+  if (affected.length) {
+    studio.error = `Move ${affected.length} instrument${affected.length === 1 ? '' : 's'} out of this folder before deleting it.`
+    render()
+    return
+  }
+  if (!window.confirm(`Delete "${folder.label}" and all empty child folders?`)) return
+  studio.saving = true
+  studio.error = ''
+  render()
+  try {
+    const flat = flattenLibraryFolders(studio.library.folders)
+    const parent = flat.find((item) => (item.children || []).some((child) => child.id === folder.id))
+    const folders = deleteLibraryFolder(studio.library.folders, folder.id)
+    studio.library = await saveDefaultLibraryContent({ ...studio.library, folders })
+    studio.selectedFolderId = parent?.id || folders[0]?.id || ''
+    studio.message = `${folder.label} was deleted.`
+  } catch (error) {
+    studio.error = error?.message || 'Could not delete the folder.'
+  } finally {
+    studio.saving = false
     render()
   }
 }
@@ -5407,7 +5588,8 @@ function setAdminStudioEditInstrument(instrumentId = '') {
   studio.form = {
     name: instrument.name,
     id: instrument.id,
-    sourceRoot: instrument.sourceRoot,
+    destinationFolderId: findFolderByPath(studio.library?.folders || [], instrument.folderPath)?.id || '',
+    folderPath: instrument.folderPath,
     engineType: instrument.engineType,
     description: instrument.description,
     sampleStrategy: instrument.sampleStrategy,
@@ -5461,9 +5643,10 @@ async function submitAdminStudioInstrument(form) {
   if (!can('admin') || studio.saving || studio.parsing) return
   const values = operationsFormValues(form)
   const id = studioLibrarySlug(values.id || values.name)
-  const sourceRoot = values.sourceRoot || 'melogic-records'
-  const engineType = values.engineType || 'sample-based'
-  const folderPath = studioLibraryFolderPath(sourceRoot, engineType)
+  const destination = findFolderById(studio.library?.folders || [], values.destinationFolderId)
+  const folderPath = destination?.path || ''
+  const engineType = destination?.engineType || ''
+  const sourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.find((root) => folderPath === root.label || folderPath.startsWith(`${root.label}/`))?.id || 'melogic-records'
   const version = Math.max(1, Math.round(Number(values.version) || 1))
   const storageBasePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`
   const samplesPath = `${storageBasePath}/samples`
@@ -5474,8 +5657,11 @@ async function submitAdminStudioInstrument(form) {
   studio.message = ''
   render()
   try {
-    if (!values.name || !id || !folderPath) throw new Error('Instrument name, ID, source root, and engine type are required.')
+    if (!values.name || !id) throw new Error('Instrument name and ID are required.')
     if (!studio.library) throw new Error('Initialize the default DAW library before adding instruments.')
+    if (!destination || destination.type !== 'engine-folder' || !engineType) throw new Error('Choose a final engine folder, such as Sample Based.')
+    if (existing && existing.folderPath !== folderPath && engineType === 'sample-based' && !studio.parsedSamples.length) throw new Error('Upload the sample ZIP again when moving a sample-based instrument to a new Storage destination.')
+    if (existing && existing.folderPath !== folderPath && engineType === 'vst' && !studio.htmlSourceFile) throw new Error('Upload the HTML source again when moving a VST instrument to a new Storage destination.')
     if (!existing && engineType === 'sample-based' && !studio.parsedSamples.length) throw new Error('A new sample-based instrument requires a ZIP with at least one valid WAV sample.')
     const sampleRows = engineType === 'sample-based' && studio.parsedSamples.length
       ? buildSamplesFromFiles(studio.parsedSamples, samplesPath)
@@ -6687,6 +6873,56 @@ function bindEvents() {
     event.preventDefault()
     submitAdminStudioInstrument(event.currentTarget)
   })
+  app.querySelectorAll('[data-admin-studio-folder-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const id = button.dataset.adminStudioFolderToggle || ''
+      const expanded = new Set(state.operations.studio.expandedFolderIds)
+      if (expanded.has(id)) expanded.delete(id)
+      else expanded.add(id)
+      state.operations.studio.expandedFolderIds = expanded
+      render()
+    })
+  })
+  app.querySelectorAll('[data-admin-studio-folder-select]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.operations.studio.selectedFolderId = button.dataset.adminStudioFolderSelect || ''
+      state.operations.studio.error = ''
+      render()
+    })
+  })
+  app.querySelector('[data-admin-studio-folder-edit]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    saveAdminStudioFolderEdit(event.currentTarget)
+  })
+  app.querySelector('[data-admin-studio-folder-add]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    addAdminStudioFolder(event.currentTarget)
+  })
+  app.querySelectorAll('[data-admin-studio-folder-move]').forEach((button) => {
+    button.addEventListener('click', () => moveAdminStudioFolder(Number(button.dataset.adminStudioFolderMove) || 1))
+  })
+  app.querySelector('[data-admin-studio-folder-delete]')?.addEventListener('click', deleteAdminStudioFolder)
+  app.querySelector('[data-admin-studio-use-destination]')?.addEventListener('click', () => {
+    const folder = findFolderById(state.operations.studio.library?.folders || [], state.operations.studio.selectedFolderId)
+    if (!folder || folder.type !== 'engine-folder') return
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      destinationFolderId: folder.id,
+      folderPath: folder.path,
+      engineType: folder.engineType || ''
+    }
+    state.operations.studio.message = `${folder.path} selected as the instrument destination.`
+    render()
+    requestAnimationFrame(() => app.querySelector('[data-studio-library-form]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+  })
+  app.querySelector('[data-admin-studio-folder-edit] select[name="type"]')?.addEventListener('change', (event) => {
+    const engine = event.currentTarget.form?.elements?.engineType
+    if (engine) engine.disabled = event.currentTarget.value !== 'engine-folder'
+  })
+  app.querySelector('[data-admin-studio-folder-add] select[name="type"]')?.addEventListener('change', (event) => {
+    const engine = event.currentTarget.form?.elements?.engineType
+    if (engine) engine.disabled = event.currentTarget.value !== 'engine-folder'
+  })
   app.querySelector('[data-studio-library-form] input[name="audioZip"]')?.addEventListener('change', (event) => {
     state.operations.studio.form = {
       ...state.operations.studio.form,
@@ -6718,28 +6954,34 @@ function bindEvents() {
   })
   const updateStudioPathPreview = () => {
     if (!studioLibraryForm) return
-    const sourceRoot = studioLibraryForm.elements.sourceRoot?.value || 'melogic-records'
-    const engineType = studioLibraryForm.elements.engineType?.value || 'sample-based'
+    const destination = findFolderById(state.operations.studio.library?.folders || [], studioLibraryForm.elements.destinationFolderId?.value)
     const id = studioLibrarySlug(studioLibraryForm.elements.id?.value || studioLibraryForm.elements.name?.value) || '{instrumentId}'
     const version = Math.max(1, Math.round(Number(studioLibraryForm.elements.version?.value) || 1))
-    const folderPath = studioLibraryFolderPath(sourceRoot, engineType)
+    const folderPath = destination?.path || ''
     const folder = studioLibraryForm.querySelector('[data-studio-folder-preview]')
     const storagePath = studioLibraryForm.querySelector('[data-studio-storage-preview]')
     if (folder) folder.textContent = folderPath
     if (storagePath) storagePath.textContent = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`
   }
-  studioLibraryForm?.querySelectorAll('select[name="sourceRoot"],select[name="engineType"],input[name="id"],input[name="name"],input[name="version"]').forEach((input) => {
+  studioLibraryForm?.querySelectorAll('select[name="destinationFolderId"],input[name="id"],input[name="name"],input[name="version"]').forEach((input) => {
     input.addEventListener('input', updateStudioPathPreview)
     input.addEventListener('change', updateStudioPathPreview)
   })
-  studioLibraryForm?.querySelector('select[name="engineType"]')?.addEventListener('change', (event) => {
+  studioLibraryForm?.querySelector('select[name="destinationFolderId"]')?.addEventListener('change', (event) => {
+    const destination = findFolderById(state.operations.studio.library?.folders || [], event.currentTarget.value)
+    const previousEngineType = state.operations.studio.form?.engineType || studioLibraryForm.elements.engineType?.value || ''
     state.operations.studio.form = {
       ...state.operations.studio.form,
-      ...operationsFormValues(event.currentTarget.form)
+      ...operationsFormValues(event.currentTarget.form),
+      destinationFolderId: destination?.id || '',
+      folderPath: destination?.path || '',
+      engineType: destination?.engineType || ''
     }
-    state.operations.studio.zipFile = null
-    state.operations.studio.parsedSamples = []
-    state.operations.studio.htmlSourceFile = null
+    if (previousEngineType !== destination?.engineType) {
+      state.operations.studio.zipFile = null
+      state.operations.studio.parsedSamples = []
+      state.operations.studio.htmlSourceFile = null
+    }
     render()
   })
   studioLibraryForm?.querySelector('select[name="sampleStrategy"]')?.addEventListener('change', (event) => {

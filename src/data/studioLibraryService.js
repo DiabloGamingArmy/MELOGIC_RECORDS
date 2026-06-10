@@ -18,10 +18,14 @@ export const STUDIO_LIBRARY_SOURCE_ROOTS = [
 export const STUDIO_LIBRARY_ENGINE_TYPES = [
   { id: 'sample-based', label: 'Sample Based' },
   { id: 'vst', label: 'VST' },
-  { id: 'wavetable', label: 'Wavetable' }
+  { id: 'wavetable', label: 'Wavetable' },
+  { id: 'drum-kit', label: 'Drum Kit' },
+  { id: 'custom', label: 'Custom' }
 ]
 
 const LIBRARY_REF = ['studioDawDefaults', 'libraryContent']
+const LIBRARY_FOLDER_TYPES = new Set(['source-root', 'category-folder', 'engine-folder', 'generic-folder'])
+const LIBRARY_ENGINE_TYPE_IDS = new Set(STUDIO_LIBRARY_ENGINE_TYPES.map((item) => item.id))
 const VALID_SAMPLE_STRATEGIES = new Set(['octave-roots', 'double', 'thirds', 'chromatic', 'custom', 'drum-map'])
 const VALID_LICENSE_TYPES = new Set(['owned', 'CC0', 'CC BY', 'custom'])
 const assetUrlCache = new Map()
@@ -92,24 +96,82 @@ export function studioLibraryFolderPath(sourceRoot = '', engineType = '') {
   return source && engine ? `${source}/${engine}` : ''
 }
 
+export function buildFolderPath(parentPath = '', label = '') {
+  const safeParent = cleanString(parentPath, 800).replace(/^\/+|\/+$/g, '')
+  const safeLabel = cleanString(label, 120).replaceAll('/', '-')
+  return [safeParent, safeLabel].filter(Boolean).join('/')
+}
+
+export function slugifyFolderId(label = '') {
+  return studioLibrarySlug(label) || `folder-${Date.now().toString(36)}`
+}
+
+function createFolderNode({ id, label, type, engineType = '', path, sortOrder = 10, children = [] }, parentPath = '') {
+  const safeLabel = cleanString(label, 120).replaceAll('/', '-')
+  const safeType = LIBRARY_FOLDER_TYPES.has(type) ? type : 'generic-folder'
+  const safeEngineType = safeType === 'engine-folder' && LIBRARY_ENGINE_TYPE_IDS.has(engineType) ? engineType : ''
+  const resolvedPath = cleanString(path, 800).replace(/^\/+|\/+$/g, '') || buildFolderPath(parentPath, safeLabel)
+  return {
+    id: cleanString(id, 120) || slugifyFolderId(resolvedPath),
+    label: safeLabel,
+    type: safeType,
+    path: resolvedPath,
+    sortOrder: safeInteger(sortOrder, 10, 0, 100000),
+    ...(safeEngineType ? { engineType: safeEngineType } : {}),
+    children: Array.isArray(children) ? children : []
+  }
+}
+
+function defaultEngineFolder(rootId, rootLabel, categoryId, categoryLabel, engineType, sortOrder = 10) {
+  const engineLabel = engineTypeLabel(engineType)
+  return createFolderNode({
+    id: `${rootId}-${categoryId}-${engineType}`,
+    label: engineLabel,
+    type: 'engine-folder',
+    engineType,
+    sortOrder,
+    path: `${rootLabel}/${categoryLabel}/${engineLabel}`
+  })
+}
+
 export function createDefaultStudioLibraryFolders() {
-  return STUDIO_LIBRARY_SOURCE_ROOTS.map((source) => ({
+  const categoryPlan = {
+    'melogic-records': [
+      ['piano', 'Piano', 'sample-based'],
+      ['bass', 'Bass', 'sample-based'],
+      ['drums', 'Drums', 'sample-based'],
+      ['pads', 'Pads', 'sample-based'],
+      ['synths', 'Synths', 'wavetable']
+    ],
+    external: [
+      ['piano', 'Piano', 'sample-based'],
+      ['drums', 'Drums', 'sample-based']
+    ],
+    user: [
+      ['piano', 'Piano', 'sample-based'],
+      ['drums', 'Drums', 'sample-based']
+    ]
+  }
+  return STUDIO_LIBRARY_SOURCE_ROOTS.map((source, sourceIndex) => createFolderNode({
     id: source.id,
     label: source.label,
     type: 'source-root',
-    children: STUDIO_LIBRARY_ENGINE_TYPES.map((engine) => ({
-      id: `${source.id}-${engine.id}`,
-      label: engine.label,
-      type: 'engine-folder',
-      engineType: engine.id,
-      path: `${source.label}/${engine.label}`
+    path: source.label,
+    sortOrder: (sourceIndex + 1) * 10,
+    children: (categoryPlan[source.id] || []).map(([categoryId, categoryLabel, engineType], categoryIndex) => createFolderNode({
+      id: `${source.id}-${categoryId}`,
+      label: categoryLabel,
+      type: 'category-folder',
+      path: `${source.label}/${categoryLabel}`,
+      sortOrder: (categoryIndex + 1) * 10,
+      children: [defaultEngineFolder(source.id, source.label, categoryId, categoryLabel, engineType)]
     }))
   }))
 }
 
 export function createDefaultStudioLibraryContent() {
   return {
-    version: 1,
+    version: 2,
     rootLabel: 'Library',
     storageRoot: STUDIO_LIBRARY_STORAGE_ROOT,
     folders: createDefaultStudioLibraryFolders(),
@@ -117,16 +179,149 @@ export function createDefaultStudioLibraryContent() {
   }
 }
 
-function normalizeFolder(raw = {}) {
-  const children = Array.isArray(raw.children) ? raw.children : []
-  return {
-    id: cleanString(raw.id, 100),
-    label: cleanString(raw.label, 120),
-    type: raw.type === 'engine-folder' ? 'engine-folder' : 'source-root',
-    ...(children.length ? { children: children.map(normalizeFolder).filter((item) => item.id && item.label) } : {}),
-    ...(raw.engineType ? { engineType: cleanString(raw.engineType, 40) } : {}),
-    ...(raw.path ? { path: cleanString(raw.path, 240) } : {})
+function normalizeFolder(raw = {}, parentPath = '', index = 0) {
+  const folder = createFolderNode({
+    ...raw,
+    sortOrder: raw.sortOrder ?? ((index + 1) * 10)
+  }, parentPath)
+  folder.children = (Array.isArray(raw.children) ? raw.children : [])
+    .map((child, childIndex) => normalizeFolder(child, folder.path, childIndex))
+    .filter((item) => item.id && item.label)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label))
+  return folder
+}
+
+export function normalizeLibraryTree(tree = []) {
+  return (Array.isArray(tree) ? tree : [])
+    .map((folder, index) => normalizeFolder(folder, '', index))
+    .filter((item) => item.id && item.label)
+    .sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label))
+}
+
+export function flattenLibraryFolders(folders = []) {
+  const rows = []
+  const visit = (nodes, parentId = '', depth = 0) => {
+    nodes.forEach((folder) => {
+      rows.push({ ...folder, parentId, depth })
+      visit(folder.children || [], folder.id, depth + 1)
+    })
   }
+  visit(normalizeLibraryTree(folders))
+  return rows
+}
+
+export function findFolderByPath(folders = [], path = '') {
+  const target = cleanString(path, 800).replace(/^\/+|\/+$/g, '')
+  return flattenLibraryFolders(folders).find((folder) => folder.path === target) || null
+}
+
+export function findFolderById(folders = [], id = '') {
+  const target = cleanString(id, 120)
+  return flattenLibraryFolders(folders).find((folder) => folder.id === target) || null
+}
+
+function mapFolderTree(folders, mapper, parentPath = '') {
+  return folders.map((folder) => {
+    const mapped = mapper({ ...folder }, parentPath)
+    const nextPath = mapped.path || buildFolderPath(parentPath, mapped.label)
+    return {
+      ...mapped,
+      path: nextPath,
+      children: mapFolderTree(mapped.children || [], mapper, nextPath)
+    }
+  })
+}
+
+export function updateFolderPathsRecursively(folder = {}, parentPath = '') {
+  const path = buildFolderPath(parentPath, folder.label)
+  return {
+    ...folder,
+    path,
+    children: (folder.children || []).map((child) => updateFolderPathsRecursively(child, path))
+  }
+}
+
+export function addLibraryFolder(folders = [], parentId = '', folderPayload = {}) {
+  const tree = normalizeLibraryTree(folders)
+  const parent = findFolderById(tree, parentId)
+  if (!parent) throw new Error('Choose a parent folder first.')
+  const label = cleanString(folderPayload.label, 120).replaceAll('/', '-')
+  if (!label) throw new Error('Folder name is required.')
+  if (parent.type === 'engine-folder') throw new Error('Engine folders are final destinations and cannot contain child folders.')
+  if (parent.type === 'source-root' && folderPayload.type === 'engine-folder') throw new Error('Create a category folder before adding an engine folder.')
+  if ((parent.children || []).some((child) => child.label.toLowerCase() === label.toLowerCase())) throw new Error('A sibling folder already uses that name.')
+  const baseId = cleanString(folderPayload.id, 120) || `${parent.id}-${slugifyFolderId(label)}`
+  let id = baseId
+  let suffix = 2
+  const ids = new Set(flattenLibraryFolders(tree).map((folder) => folder.id))
+  while (ids.has(id)) id = `${baseId}-${suffix++}`
+  const child = createFolderNode({ ...folderPayload, id, label }, parent.path)
+  return mapFolderTree(tree, (folder) => folder.id === parentId
+    ? { ...folder, children: [...(folder.children || []), child] }
+    : folder)
+}
+
+export function renameLibraryFolder(folders = [], folderId = '', newLabel = '') {
+  const tree = normalizeLibraryTree(folders)
+  const target = findFolderById(tree, folderId)
+  if (!target) throw new Error('Folder was not found.')
+  const parent = flattenLibraryFolders(tree).find((folder) => (folder.children || []).some((child) => child.id === folderId))
+  const label = cleanString(newLabel, 120).replaceAll('/', '-')
+  if (!label) throw new Error('Folder name is required.')
+  if (parent && parent.children.some((child) => child.id !== folderId && child.label.toLowerCase() === label.toLowerCase())) throw new Error('A sibling folder already uses that name.')
+  const oldPath = target.path
+  const parentPath = parent?.path || ''
+  const nextTree = mapFolderTree(tree, (folder) => folder.id === folderId
+    ? updateFolderPathsRecursively({ ...folder, label }, parentPath)
+    : folder)
+  return { folders: nextTree, oldPath, newPath: buildFolderPath(parentPath, label) }
+}
+
+export function updateLibraryFolder(folders = [], folderId = '', patch = {}) {
+  const tree = normalizeLibraryTree(folders)
+  const target = findFolderById(tree, folderId)
+  if (!target) throw new Error('Folder was not found.')
+  const type = LIBRARY_FOLDER_TYPES.has(patch.type) ? patch.type : target.type
+  if (type === 'engine-folder' && target.children?.length) throw new Error('Move or delete child folders before converting this folder into a final engine folder.')
+  const engineType = type === 'engine-folder'
+    ? (LIBRARY_ENGINE_TYPE_IDS.has(patch.engineType) ? patch.engineType : target.engineType || 'custom')
+    : ''
+  return mapFolderTree(tree, (folder) => folder.id === folderId ? {
+    ...folder,
+    type,
+    ...(engineType ? { engineType } : {}),
+    ...(!engineType ? { engineType: undefined } : {})
+  } : folder)
+}
+
+export function deleteLibraryFolder(folders = [], folderId = '') {
+  const tree = normalizeLibraryTree(folders)
+  const remove = (nodes) => nodes
+    .filter((folder) => folder.id !== folderId)
+    .map((folder) => ({ ...folder, children: remove(folder.children || []) }))
+  return remove(tree)
+}
+
+export function moveLibraryFolder(folders = [], folderId = '', direction = 0) {
+  const tree = normalizeLibraryTree(folders)
+  const move = (nodes) => {
+    const index = nodes.findIndex((folder) => folder.id === folderId)
+    if (index >= 0) {
+      const targetIndex = Math.max(0, Math.min(nodes.length - 1, index + (direction < 0 ? -1 : 1)))
+      if (targetIndex === index) return nodes
+      const next = [...nodes]
+      const [folder] = next.splice(index, 1)
+      next.splice(targetIndex, 0, folder)
+      return next.map((item, itemIndex) => ({ ...item, sortOrder: (itemIndex + 1) * 10 }))
+    }
+    return nodes.map((folder) => ({ ...folder, children: move(folder.children || []) }))
+  }
+  return move(tree)
+}
+
+export function getInstrumentsForFolder(libraryContent = {}, folderPath = '') {
+  const target = cleanString(folderPath, 800).replace(/^\/+|\/+$/g, '')
+  return (Array.isArray(libraryContent.instruments) ? libraryContent.instruments : []).filter((instrument) => instrument.folderPath === target)
 }
 
 function normalizeSample(raw = {}) {
@@ -143,11 +338,13 @@ function normalizeSample(raw = {}) {
 }
 
 export function normalizeDefaultInstrument(raw = {}) {
-  const sourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.some((item) => item.id === raw.sourceRoot) ? raw.sourceRoot : 'melogic-records'
-  const engineType = STUDIO_LIBRARY_ENGINE_TYPES.some((item) => item.id === raw.engineType) ? raw.engineType : 'sample-based'
+  const rawFolderPath = cleanString(raw.folderPath, 800).replace(/^\/+|\/+$/g, '')
+  const derivedSourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.find((item) => rawFolderPath === item.label || rawFolderPath.startsWith(`${item.label}/`))?.id
+  const sourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.some((item) => item.id === raw.sourceRoot) ? raw.sourceRoot : derivedSourceRoot || 'melogic-records'
+  const engineType = LIBRARY_ENGINE_TYPE_IDS.has(raw.engineType) ? raw.engineType : 'sample-based'
   const id = studioLibrarySlug(raw.id || raw.name)
   const version = safeInteger(raw.version, 1)
-  const folderPath = studioLibraryFolderPath(sourceRoot, engineType)
+  const folderPath = rawFolderPath || studioLibraryFolderPath(sourceRoot, engineType)
   const storageBasePath = cleanPath(raw.storageBasePath || `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`)
   const samplesPath = engineType === 'sample-based' ? cleanPath(raw.samplesPath || `${storageBasePath}/samples`) : ''
   const license = raw.license && typeof raw.license === 'object' ? raw.license : {}
@@ -183,7 +380,7 @@ export function normalizeDefaultInstrument(raw = {}) {
 }
 
 export function normalizeDefaultLibraryContent(raw = {}) {
-  const folders = Array.isArray(raw.folders) ? raw.folders.map(normalizeFolder).filter((item) => item.id && item.label) : []
+  const folders = normalizeLibraryTree(raw.folders)
   return {
     version: safeInteger(raw.version, 1),
     rootLabel: cleanString(raw.rootLabel || 'Library', 80),
@@ -192,6 +389,25 @@ export function normalizeDefaultLibraryContent(raw = {}) {
     instruments: Array.isArray(raw.instruments) ? raw.instruments.map(normalizeDefaultInstrument).filter((item) => item.id && item.name) : [],
     updatedAt: raw.updatedAt || null
   }
+}
+
+function mergeFolderNodes(defaultNodes = [], currentNodes = [], instruments = []) {
+  const result = currentNodes
+    .filter((folder) => {
+      const isLegacyDirectEngine = folder.type === 'engine-folder' && folder.path.split('/').length === 2
+      return !isLegacyDirectEngine || instruments.some((instrument) => instrument.folderPath === folder.path)
+    })
+    .map((folder) => ({ ...folder, children: mergeFolderNodes([], folder.children || [], instruments) }))
+  defaultNodes.forEach((defaultFolder) => {
+    const index = result.findIndex((folder) => folder.id === defaultFolder.id || folder.path === defaultFolder.path)
+    if (index < 0) result.push(defaultFolder)
+    else result[index] = {
+      ...result[index],
+      ...defaultFolder,
+      children: mergeFolderNodes(defaultFolder.children || [], result[index].children || [], instruments)
+    }
+  })
+  return normalizeLibraryTree(result)
 }
 
 export async function getDefaultLibraryContent() {
@@ -213,6 +429,7 @@ export async function initializeDefaultLibraryContent() {
   const payload = {
     ...defaults,
     version: Math.max(defaults.version, current?.version || 1),
+    folders: mergeFolderNodes(defaults.folders, current?.folders || [], current?.instruments || []),
     instruments: current?.instruments || [],
     updatedAt: serverTimestamp()
   }
