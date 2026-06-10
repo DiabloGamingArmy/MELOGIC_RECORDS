@@ -68,11 +68,13 @@ const dawWindowManager = new DawWindowManager({
     if (track?.instrument?.enabled === false) return
     dawInstrumentRegistry.noteOn(pluginInstanceId, note, velocity)
     startTrackMeterLoop()
+    setTrackKeyboardNoteActive(track?.id || selectedTrackId, note, `plugin:${pluginInstanceId}:${note}`, true)
     recordMidiNoteOn(track?.id || selectedTrackId, note, velocity)
   },
   onNoteOff: (pluginInstanceId, note) => {
     dawInstrumentRegistry.noteOff(pluginInstanceId, note)
     const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
+    setTrackKeyboardNoteActive(track?.id || selectedTrackId, note, `plugin:${pluginInstanceId}:${note}`, false)
     recordMidiNoteOff(track?.id || selectedTrackId, note)
   },
   onChange: () => renderEditor()
@@ -88,6 +90,7 @@ let isControlsMenuOpen = false
 const activeInstrumentNotes = new Map()
 const pressedKeyboardNotes = new Set()
 const pressedDawMidiKeys = new Map()
+const activeKeyboardNoteSources = new Map()
 let isTypingPianoEnabled = localStorage.getItem(MUSICAL_TYPING_PREF_KEY) === '1'
 let instrumentAudioContext = null
 let instrumentMasterGain = null
@@ -98,6 +101,11 @@ let instrumentTreble = 0.5
 let instrumentReverb = 0.3
 let instrumentOctaveOffset = 0
 let instrumentMacroView = 'knobs'
+let typingExpressionTarget = 'pitch'
+let typingPitchTrigger = 0
+let typingModTrigger = 0
+let typingPitchFine = 0
+let typingModFine = 0
 let macroPadPosition = { x: 0.5, y: 0.5 }
 let instrumentMacros = [
   { id: 'macro-1', label: 'Tone', value: 0.5 },
@@ -110,23 +118,13 @@ let instrumentMacros = [
   { id: 'macro-8', label: 'Texture', value: 0.4 }
 ]
 let isSustainEnabled = false
-let selectedInstrumentName = 'Grand Piano'
+let selectedInstrumentName = ''
 let activeInstrumentSubpage = 'keyboard'
-const instrumentSubpages = [
-  { id: 'keyboard', label: 'Keyboard' },
-  { id: 'chords', label: 'Chords' },
-  { id: 'arp', label: 'Arp' }
-]
+const instrumentSubpages = []
+const instrumentPresetItems = []
 const chordRoots = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 const chordOctaves = ['Oct 1','Oct 2','Oct 3','Oct 4','Oct 5','Oct 6']
-const instrumentPresetCategories = ['All', 'Piano', 'Keys', 'Synth', 'Bass', 'Pads', 'Leads']
-const instrumentPresetItems = [
-  { id: 'grand-piano', name: 'Grand Piano', category: 'Piano', description: 'Clean default piano tone', tags: ['Natural', 'Starter'] },
-  { id: 'soft-keys', name: 'Soft Keys', category: 'Keys', description: 'Rounded keyboard tone for chords', tags: ['Warm', 'Smooth'] },
-  { id: 'analog-lead', name: 'Analog Lead', category: 'Leads', description: 'Simple bright lead tone', tags: ['Mono', 'Bright'] },
-  { id: 'sub-bass', name: 'Sub Bass', category: 'Bass', description: 'Low simple bass patch', tags: ['Low', 'Clean'] },
-  { id: 'wide-pad', name: 'Wide Pad', category: 'Pads', description: 'Soft atmospheric pad', tags: ['Wide', 'Ambient'] }
-]
+let activeMidiEffectEditor = null
 const arpModes = ['Up','Down','Up/Down','Random','As Played','Chord Repeat']
 const arpRates = ['1/4','1/8','1/16','1/32','1/8D','1/8T']
 const arpLengths = [4,8,12,16,24,32]
@@ -187,6 +185,7 @@ let midiRollSelectedNoteIndex = null
 let midiRollSelectedNoteIndices = []
 let midiRollStatus = ''
 let midiRollViewport = { regionId: '', scrollLeft: 0, scrollTop: 0 }
+let pendingMidiRollViewport = null
 let midiRollBeatWidth = 64
 let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
@@ -318,7 +317,7 @@ const globalTrackRowsForView = () => globalTracks.viewMode === 'all' ? ['arrange
 const renderTrackToolbar = () => `<div class="studio-track-toolbar" aria-label="Track toolbar"><button type="button" data-add-track data-tooltip="Add Track" aria-label="Add Track">+</button><button type="button" data-duplicate-track data-tooltip="Duplicate selected track" aria-label="Duplicate selected track">⧉</button><button type="button" class="${globalTracks.visible ? 'is-active' : ''}" data-toggle-global-tracks data-tooltip="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}" aria-label="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}">G</button><select data-global-track-view aria-label="Global track view">${GLOBAL_TRACK_VIEW_OPTIONS.map((option)=>`<option value="${option.value}" ${globalTracks.viewMode===option.value?'selected':''}>${option.label}</option>`).join('')}</select></div>`
 const renderTrackCard = (track) => {
   const level = clamp(Number(track.outputLevel) || 0, 0, 1)
-  return `<div class="studio-track-stack"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(track.type)}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button class="studio-track-control" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan" data-tooltip="Pan" data-track-pan="${track.id}" style="--pan-angle: ${track.pan * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></article>${track.automationOpen ? '<div class="studio-automation-lane"><span>Automation</span><button>Volume</button><button>Pan</button><button>Filter</button><button>Add</button></div>' : ''}</div>`
+  return `<div class="studio-track-stack"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(track.type)}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></article>${track.automationOpen ? '<div class="studio-automation-lane"><span>Automation</span><button type="button">Volume</button><button type="button">Pan</button><button type="button">Filter</button><button type="button">Add</button></div>' : ''}</div>`
 }
 const renderTrackContextMenu = () => {
   if (!trackMenuState?.trackId) return ''
@@ -383,9 +382,16 @@ function renderMidiRegionRenamePopover() {
 function renderMidiRollModal() {
   return ''
 }
-function midiRollPitchRows() {
+function midiRollPitchRows(region = getMidiRollRegion()) {
+  const track = getMidiRegionTrack(region)
+  const playable = getInstrumentPlayableRange(track)
+  const notes = (region?.notes || []).map((note)=>Number(note?.note)).filter(Number.isFinite)
+  const minNote = Math.min(36, playable.hasMappedRange ? playable.min : 36, ...(notes.length ? notes : [36]))
+  const maxNote = Math.max(84, playable.hasMappedRange ? playable.max : 84, ...(notes.length ? notes : [84]))
+  const rowMin = Math.floor(minNote / 12) * 12
+  const rowMax = (Math.ceil((maxNote + 1) / 12) * 12) - 1
   const rows = []
-  for (let note = 84; note >= 36; note -= 1) rows.push(note)
+  for (let note = rowMax; note >= rowMin; note -= 1) rows.push(note)
   return rows
 }
 function formatMidiNoteName(midi = 60) {
@@ -565,18 +571,53 @@ function renderGlobalTrackPopover() {
   }
   return ''
 }
-function getInstrumentKeys(){
+function getAssignedLibraryManifest(track = getSelectedTrack()) {
+  if (track?.instrument?.type !== DAW_PLUGIN_TYPES.librarySampler) return null
+  const instrumentId = track.instrument.params?.libraryInstrumentId
+  return studioLibraryState.data?.instruments?.find((item)=>item.id === instrumentId) || null
+}
+function getInstrumentPlayableRange(track = getSelectedTrack()) {
+  const roots = (getAssignedLibraryManifest(track)?.samples || [])
+    .map((sample)=>Number(sample?.rootMidi))
+    .filter(Number.isFinite)
+  if (!roots.length) return { min: 0, max: 127, hasMappedRange: false, belowMidi: false }
+  return {
+    min: Math.min(...roots),
+    max: Math.max(...roots),
+    hasMappedRange: true,
+    belowMidi: Math.min(...roots) < 0
+  }
+}
+function getInstrumentOctaveBounds(track = getSelectedTrack()) {
+  const range = getInstrumentPlayableRange(track)
+  return {
+    min: Math.floor((range.min - 48) / 12),
+    max: Math.ceil((range.max - 84) / 12)
+  }
+}
+function clampInstrumentOctaveOffset(track = getSelectedTrack()) {
+  const bounds = getInstrumentOctaveBounds(track)
+  instrumentOctaveOffset = clamp(instrumentOctaveOffset, Math.min(bounds.min, 0), Math.max(bounds.max, 0))
+  return bounds
+}
+function getInstrumentKeys(track = getSelectedTrack()){
   const whites=[0,2,4,5,7,9,11]
-  const blackOffsets={1:'S',3:'D',6:'G',8:'H',10:'J'}
-  const labels=['Z','X','C','V','B','N','M',',','.','Q','W','E','R','T','Y','U','I','O','P']
+  const labelByMidi = Object.entries(dawInstrumentKeyMap).reduce((labels, [code, midi]) => {
+    const display = ({ KeyA:'A',KeyS:'S',KeyD:'D',KeyF:'F',KeyG:'G',KeyH:'H',KeyJ:'J',KeyK:'K',KeyL:'L',Semicolon:';',Quote:"'",KeyW:'W',KeyE:'E',KeyT:'T',KeyY:'Y',KeyU:'U',KeyO:'O',KeyP:'P' })[code]
+    if (display) labels[midi + (instrumentOctaveOffset * 12)] = display
+    return labels
+  }, {})
   const keys=[]
   let whiteIndex=0
-  for(let midi=48;midi<=84;midi+=1){
+  const startMidi = 48 + (instrumentOctaveOffset * 12)
+  const endMidi = 84 + (instrumentOctaveOffset * 12)
+  for(let midi=startMidi;midi<=endMidi;midi+=1){
     const pitchClass=((midi%12)+12)%12
     const isWhite=whites.includes(pitchClass)
     const octave=Math.floor(midi/12)-1
     const whiteSlot = isWhite ? whiteIndex : Math.max(0, whiteIndex - 1)
-    keys.push({ midi, isWhite, whiteSlot, octaveLabel:isWhite&&pitchClass===0?`C${octave}`:'', keyLabel:isWhite?(labels[whiteIndex++]||''):(blackOffsets[pitchClass]||''), keyboardCode:'' })
+    keys.push({ midi, isWhite, whiteSlot, octaveLabel:isWhite&&pitchClass===0?`C${octave}`:'', keyLabel:labelByMidi[midi] || '', keyboardCode:'' })
+    if (isWhite) whiteIndex += 1
   }
   return keys
 }
@@ -601,10 +642,10 @@ function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=a
 function getInstrumentKnobDescriptors(){
   const selected=getSelectedTrack()
   const trackVolume=Number.isFinite(Number(selected?.volume)) ? Number(selected.volume) : Math.round(instrumentVolume*100)
-  const trackPan=Number.isFinite(Number(selected?.pan)) ? Number(selected.pan) : instrumentPan
+  const trackPan=Number.isFinite(Number(selected?.pan)) ? Number(selected.pan) : Math.round(instrumentPan*100)
   instrumentVolume=clamp(trackVolume/100,0,1)
-  instrumentPan=clamp(trackPan,-1,1)
-  return [{label:'Pan',value:instrumentPan,min:-1,max:1,step:0.01,key:'pan'},{label:'Volume',value:instrumentVolume,min:0,max:1,step:0.01,key:'volume'}]
+  instrumentPan=clamp(trackPan/100,-1,1)
+  return [{label:'Pan',value:clamp(trackPan,-100,100),min:-100,max:100,step:1,key:'pan'},{label:'Volume',value:instrumentVolume,min:0,max:1,step:0.01,key:'volume'}]
 }
 function getInstrumentPanelStatus() {
   const track = getSelectedTrack()
@@ -615,18 +656,18 @@ function getInstrumentPanelStatus() {
 }
 function renderInstrumentKeyboardView(){
   const status = getInstrumentPanelStatus()
-  const keys=getInstrumentKeys();
+  const range = getInstrumentPlayableRange(status.track)
+  const keys=getInstrumentKeys(status.track);
   const white=keys.filter(k=>k.isWhite); const black=keys.filter(k=>!k.isWhite); const whiteCount=Math.max(1,white.length)
-  const isPressed = (midi) => Array.from(pressedDawMidiKeys.values()).some((held)=>held.trackId===status.track?.id && held.note===midi+(instrumentOctaveOffset*12))
-  return `<div class="studio-virtual-keyboard ${status.ok ? '' : 'is-disabled'}" data-virtual-keyboard style="--white-key-count:${whiteCount};--track-color:${status.track?.color || '#58d4ff'};">${status.ok ? '' : `<div class="studio-keyboard-empty">${status.message}</div>`}<div class="studio-piano-white-keys">${white.map(k=>`<button class="studio-piano-key studio-piano-key--white ${isPressed(k.midi)?'is-pressed':''}" data-midi="${k.midi}" data-piano-midi="${k.midi}" data-key-type="white" ${status.ok?'':'disabled'}><span>${k.octaveLabel}</span><small>${k.keyLabel}</small></button>`).join('')}</div><div class="studio-piano-black-keys" aria-hidden="false">${black.map(k=>`<button class="studio-piano-key studio-piano-key--black ${isPressed(k.midi)?'is-pressed':''}" data-midi="${k.midi}" data-piano-midi="${k.midi}" style="left:${((k.whiteSlot + 1) / whiteCount) * 100}%" ${status.ok?'':'disabled'}><small>${k.keyLabel}</small></button>`).join('')}</div></div>`
+  const isPressed = (midi) => isTrackKeyboardNoteActive(status.track?.id, midi)
+  const rangeLabel = range.hasMappedRange
+    ? `${formatMidiNoteName(range.min)} to ${formatMidiNoteName(range.max)}${range.belowMidi ? ' · internal notes below MIDI 0 supported' : ''}`
+    : 'Full MIDI range'
+  return `<div class="studio-virtual-keyboard ${status.ok ? '' : 'is-disabled'}" data-virtual-keyboard style="--white-key-count:${whiteCount};--track-color:${status.track?.color || '#58d4ff'};"><div class="studio-keyboard-status"><strong>${esc(status.ok ? status.message : 'Instrument keyboard')}</strong><span>${esc(rangeLabel)}</span></div>${status.ok ? '' : `<div class="studio-keyboard-empty">${status.message}</div>`}<div class="studio-piano-white-keys">${white.map(k=>`<button type="button" class="studio-piano-key studio-piano-key--white ${isPressed(k.midi)?'is-pressed':''}" data-midi="${k.midi}" data-piano-midi="${k.midi}" data-key-type="white" ${status.ok?'':'disabled'}><span>${k.octaveLabel}</span><small>${k.keyLabel}</small></button>`).join('')}</div><div class="studio-piano-black-keys" aria-hidden="false">${black.map(k=>`<button type="button" class="studio-piano-key studio-piano-key--black ${isPressed(k.midi)?'is-pressed':''}" data-midi="${k.midi}" data-piano-midi="${k.midi}" style="left:${((k.whiteSlot + 1) / whiteCount) * 100}%" ${status.ok?'':'disabled'}><small>${k.keyLabel}</small></button>`).join('')}</div></div>`
 }
 function renderInstrumentChordsView(){
   return `<div class="studio-chord-keyboard" data-chord-keyboard>${chordRoots.map((root)=>`<button class="studio-chord-key" type="button" data-chord-root="${root}"><strong>${root}</strong><span class="studio-chord-key-quality">Major / Minor</span><span class="studio-chord-key-octaves" aria-hidden="true">${chordOctaves.map((octave)=>`<span>${octave}</span>`).join('')}</span></button>`).join('')}</div>`
 }
-function renderInstrumentPresetsView() {
-  return `<section class="studio-presets-page" data-instrument-subpage-view="presets"><header class="studio-presets-header"><div><h3>Presets</h3><p>Choose a starting sound for the selected instrument.</p></div><label class="studio-presets-search"><span>Search</span><input data-preset-search type="search" placeholder="Search presets..." /></label></header><div class="studio-presets-categories" role="list">${instrumentPresetCategories.map((category,index)=>`<button type="button" class="studio-presets-category ${index===0?'is-active':''}" data-preset-category="${category}">${category}</button>`).join('')}</div><section class="studio-presets-list" role="table" aria-label="Instrument presets"><div class="studio-presets-list-header" role="row"><span>Name</span><span>Category</span><span>Description</span><span>Tags</span><span>Action</span></div><div class="studio-presets-list-body">${instrumentPresetItems.map((preset)=>`<article class="studio-preset-row" role="row" data-preset-id="${preset.id}" data-preset-category-name="${preset.category}"><strong>${preset.name}</strong><span>${preset.category}</span><span>${preset.description}</span><span class="studio-preset-row-tags">${preset.tags.map((tag)=>`<em>${tag}</em>`).join('')}</span><button type="button" data-preset-load="${preset.id}">Load</button></article>`).join('')}</div></section></section>`
-}
-
 function getArpStepValueForMode(step, mode){ if(!step) return 0; if(mode==='note') return step.note ?? 0; if(mode==='velocity') return step.velocity ?? 0; if(mode==='octave') return step.octave ?? 0; if(mode==='gate') return step.gate ?? arpGate; if(mode==='probability') return step.probability ?? 100; if(mode==='accent') return step.accent ? 1 : 0; if(mode==='tie') return step.tie ? 1 : 0; return step.velocity ?? 0 }
 function getArpStepBarHeight(step, mode){ if(!step?.active) return 0; if(mode==='velocity') return Math.max(4, Math.round(((step.velocity ?? 0)/127)*100)); if(mode==='gate') return Math.max(4, Math.round(((step.gate ?? arpGate)/100)*100)); if(mode==='probability') return Math.max(4, Math.round(((step.probability ?? 100)/100)*100)); if(mode==='octave') return Math.max(10, 50 + ((step.octave ?? 0)*20)); if(mode==='note') return Math.max(10, 50 + ((step.note ?? 0)*3)); if(mode==='accent') return step.accent ? 100 : 18; if(mode==='tie') return step.tie ? 100 : 18; return 50 }
 function getArpStepLabelForMode(step, mode){ if(!step) return ''; if(mode==='note') return `${(step.note ?? 0) >= 0 ? '+' : ''}${step.note ?? 0} st`; if(mode==='velocity') return String(step.velocity ?? 0); if(mode==='octave') return (step.octave ?? 0) === 0 ? '0' : ((step.octave ?? 0) > 0 ? `+${step.octave}` : `${step.octave}`); if(mode==='gate') return `${step.gate ?? arpGate}%`; if(mode==='probability') return `${step.probability ?? 100}%`; if(mode==='accent') return step.accent ? 'Accent' : 'Normal'; if(mode==='tie') return step.tie ? 'Tie' : 'Free'; return '' }
@@ -645,27 +686,35 @@ function renderInstrumentArpView(){
     : `<div class="studio-arp-steps ${arpEnabled?'':'is-arp-disabled'}">${arpSteps.slice(0,arpLength).map((raw,i)=>{ const st=normalizeArpStep(raw,i); const bar=getArpStepBarHeight(st,arpEditMode); return `<button type="button" class="studio-arp-step studio-arp-step--${arpEditMode} ${(st.octave??0)<0?'is-negative-octave':''} ${(st.octave??0)>0?'is-positive-octave':''} ${(st.probability??100)===0?'is-probability-zero':''} ${st.active?'is-active':'is-muted'} ${st.accent?'is-accent':''} ${st.tie?'is-tie':''} ${selectedArpStepIndex===i?'is-selected':''}" data-arp-step="${i}"><span>${i+1}</span>${st.active?`<em style="height:${bar}%"></em>`:'<i>•</i>'}${arpEditMode==='note'?`<span class="studio-arp-step-note-label">${getArpStepNoteLabel(st)}</span>`:''}<small>${getArpStepLabelForMode(st,arpEditMode)}</small></button>` }).join('')}</div>`
   return `<section class="studio-arp-page" data-instrument-subpage-view="arp" data-arp-edit-mode="${arpEditMode}"><section class="studio-arp-top-grid"><div class="studio-arp-top-left"><div class="studio-arp-control-group studio-arp-control-group--playback"><span>Playback</span><button type="button" class="studio-arp-power-switch ${arpEnabled?'is-active':''}" data-arp-toggle aria-pressed="${String(arpEnabled)}"><span class="studio-arp-power-track"><span class="studio-arp-power-thumb"></span></span><strong>Arp</strong><em>${arpEnabled?'On':'Off'}</em></button><label>Mode<select data-arp-mode>${arpModes.map((x)=>`<option ${arpMode===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Rate<select data-arp-rate>${arpRates.map((x)=>`<option ${arpRate===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Length<select data-arp-length>${arpLengths.map((x)=>`<option ${arpLength===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Octaves<div class="studio-arp-stepper"><button type="button" class="studio-arp-button" data-arp-octave="-1">−</button><strong data-arp-octave-value>${arpOctaves}</strong><button type="button" class="studio-arp-button" data-arp-octave="+1">+</button></div></label></div><nav class="studio-arp-edit-modes" aria-label="Arp step assignment mode">${arpEditModes.map((mode)=>`<button type="button" class="studio-arp-button ${arpEditMode===mode.id?'is-active':''}" data-arp-edit-mode="${mode.id}" aria-pressed="${String(arpEditMode===mode.id)}">${mode.label}</button>`).join('')}</nav></div><div class="studio-arp-control-group studio-arp-control-group--feel"><span>Feel</span><label>Gate<input data-arp-gate type="range" min="10" max="100" value="${arpGate}"/><small>${arpGate}%</small></label><label>Swing<input data-arp-swing type="range" min="0" max="75" value="${arpSwing}"/><small>${arpSwing}%</small></label><label>Velocity<input data-arp-velocity type="range" min="1" max="127" value="${arpVelocity}"/><small>${arpVelocity}</small></label></div></section><div class="studio-arp-legend">${arpLegendByMode[arpEditMode]||''}</div><div class="studio-arp-main">${arpStepArea}<aside class="studio-arp-properties studio-arp-presets"><header class="studio-arp-properties-header"><div><strong>Arp Properties</strong><span>Pattern: ${currentArpPatternName}</span></div><div class="studio-arp-actions"><button type="button" class="studio-arp-button" data-arp-reset>Reset</button><button type="button" class="studio-arp-button" data-arp-randomize>Randomize</button><button type="button" class="studio-arp-button" disabled title="Print to MIDI will be available once MIDI regions are enabled.">Print to MIDI</button></div></header><div class="studio-arp-properties-scroll"><section class="studio-arp-pattern-list">${arpPatternPresets.map((name)=>`<button type="button" class="studio-arp-button studio-arp-button--ghost" data-arp-pattern="${name}">${name}</button>`).join('')}</section><section class="studio-arp-step-inspector"><header><strong>Step ${selectedArpStepIndex+1}</strong><span>${arpEditModes.find((m)=>m.id===arpEditMode)?.label||'Step'} Mode</span></header><label class="studio-arp-inspector-toggle"><input type="checkbox" data-arp-step-active ${step.active?'checked':''}>Active</label><label>Note<input type="number" data-arp-step-note min="0" max="11" value="${step.note ?? 0}"><small>${getArpStepNoteLabel(step)}</small></label><label>Octave<input type="number" data-arp-step-note-octave min="0" max="8" value="${step.noteOctave ?? 4}"></label><label>Velocity<input type="range" data-arp-step-velocity min="1" max="127" value="${step.velocity ?? arpVelocity}"><small data-arp-step-velocity-value>${step.velocity ?? arpVelocity}</small></label><label>Step Octave<input type="number" data-arp-step-octave min="-2" max="4" value="${step.octave ?? 0}"></label><label>Gate<input type="range" data-arp-step-gate min="10" max="100" value="${step.gate ?? arpGate}"><small data-arp-step-gate-value>${step.gate ?? arpGate}%</small></label><label>Probability<input type="range" data-arp-step-probability min="0" max="100" value="${step.probability ?? 100}"><small data-arp-step-probability-value>${step.probability ?? 100}%</small></label><label class="studio-arp-inspector-toggle"><input type="checkbox" data-arp-step-accent ${step.accent?'checked':''}>Accent</label><label class="studio-arp-inspector-toggle"><input type="checkbox" data-arp-step-tie ${step.tie?'checked':''}>Tie</label></section></div></aside></div></section>`
 }
-function renderInstrumentPlaceholderView(){
-  const page=instrumentSubpages.find((item)=>item.id===activeInstrumentSubpage)
-  return `<section class="studio-instrument-subpage-placeholder" data-instrument-subpage-view="${activeInstrumentSubpage}"><h3>${page?.label || 'Instrument'}</h3><p>${page?.label || 'This'} controls will appear here.</p></section>`
-}
-function renderInstrumentPanelContent(){ if(activeInstrumentSubpage==='keyboard') return renderInstrumentKeyboardView(); if(activeInstrumentSubpage==='chords') return renderInstrumentChordsView(); if(activeInstrumentSubpage==='arp') return renderInstrumentArpView(); return renderInstrumentPlaceholderView() }
-function shouldShowInstrumentPerformanceControls(){ return ['keyboard','chords'].includes(activeInstrumentSubpage) }
 function renderInstrumentPerformanceControls(){
-  const activeInstrumentName = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
-    ? getSelectedTrack()?.instrument?.params?.libraryInstrumentName || 'Library Sampler'
-    : selectedInstrumentName
-  const stockInstrumentNames = ['Grand Piano', 'Soft Keys', 'Analog Lead', 'Bass']
-  const assignedOption = stockInstrumentNames.includes(activeInstrumentName) ? '' : `<option selected>${esc(activeInstrumentName)}</option>`
-  return `<div class="studio-instrument-toolbar"><div class="studio-instrument-left"><div class="studio-instrument-selector"><label>Instrument</label><select data-instrument-select>${assignedOption}<option ${activeInstrumentName==='Grand Piano'?'selected':''}>Grand Piano</option><option ${activeInstrumentName==='Soft Keys'?'selected':''}>Soft Keys</option><option ${activeInstrumentName==='Analog Lead'?'selected':''}>Analog Lead</option><option ${activeInstrumentName==='Bass'?'selected':''}>Bass</option></select></div><div class="studio-instrument-controls"><button data-sustain-toggle class="${isSustainEnabled?'is-active':''}">Sustain</button><button type="button" data-typing-piano-toggle class="${isTypingPianoEnabled?'is-active':''}" aria-pressed="${String(isTypingPianoEnabled)}">Typing Piano</button><div class="studio-instrument-octave"><span class="studio-instrument-octave-label">Octave</span><div class="studio-instrument-octave-controls"><button data-octave-down aria-label="Octave down">−</button><strong class="studio-octave-readout">${instrumentOctaveOffset>0?'+':''}${instrumentOctaveOffset}</strong><button data-octave-up aria-label="Octave up">+</button></div></div></div></div><div class="studio-instrument-knob-bank">${getInstrumentKnobDescriptors().map((knob)=>`<label class="studio-instrument-knob"><span class="studio-instrument-knob-label">${knob.label}</span><button class="studio-instrument-knob-dial" type="button" data-instrument-knob-dial="${knob.key}" style="--knob-angle:${-135 + ((knob.value-knob.min)/(knob.max-knob.min))*270}deg" aria-label="${knob.label}"><input data-instrument-knob="${knob.key}" type="range" min="${knob.min}" max="${knob.max}" step="${knob.step}" value="${knob.value}"></button><span class="studio-instrument-knob-value" data-instrument-knob-value="${knob.key}">${knob.key==='pan'?knob.value.toFixed(2):`${Math.round(knob.value*100)}%`}</span></label>`).join('')}</div></div><div class="studio-instrument-divider"></div>`
+  clampInstrumentOctaveOffset()
+  const bounds = getInstrumentOctaveBounds()
+  const expressionValue = typingExpressionTarget === 'pitch' ? typingPitchFine : typingModFine
+  return `<div class="studio-instrument-toolbar"><div class="studio-instrument-left"><div class="studio-instrument-controls"><button type="button" data-sustain-toggle class="${isSustainEnabled?'is-active':''}">Sustain</button><button type="button" data-typing-piano-toggle class="${isTypingPianoEnabled?'is-active':''}" aria-pressed="${String(isTypingPianoEnabled)}">Typing Piano</button><div class="studio-instrument-octave"><span class="studio-instrument-octave-label">Octave</span><div class="studio-instrument-octave-controls"><button type="button" data-octave-down aria-label="Octave down" ${instrumentOctaveOffset<=Math.min(bounds.min,0)?'disabled':''}>−</button><strong class="studio-octave-readout">${instrumentOctaveOffset>0?'+':''}${instrumentOctaveOffset}</strong><button type="button" data-octave-up aria-label="Octave up" ${instrumentOctaveOffset>=Math.max(bounds.max,0)?'disabled':''}>+</button></div></div><div class="studio-typing-expression" aria-label="Musical typing expression"><span>${typingExpressionTarget === 'pitch' ? 'Pitch' : 'Mod'} fine</span><strong>${expressionValue}</strong><small>C/V pitch · B/N mod · 1-0 fine · − target</small></div></div></div><div class="studio-instrument-knob-bank">${getInstrumentKnobDescriptors().map((knob)=>`<label class="studio-instrument-knob"><span class="studio-instrument-knob-label">${knob.label}</span><button class="studio-instrument-knob-dial" type="button" data-instrument-knob-dial="${knob.key}" style="--knob-angle:${-135 + ((knob.value-knob.min)/(knob.max-knob.min))*270}deg" aria-label="${knob.label}"><input data-instrument-knob="${knob.key}" type="range" min="${knob.min}" max="${knob.max}" step="${knob.step}" value="${knob.value}"></button><span class="studio-instrument-knob-value" data-instrument-knob-value="${knob.key}">${knob.key==='pan'?`${Math.round(knob.value)}`:`${Math.round(knob.value*100)}%`}</span></label>`).join('')}</div></div><div class="studio-instrument-divider"></div>`
 }
 function renderInstrumentPanel(){
-  const showPerformanceControls=shouldShowInstrumentPerformanceControls()
-  return `<section class="studio-bottom-panel studio-instrument-panel"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header studio-instrument-panel-header"><strong>Instrument</strong><nav><button type="button" data-detach-bottom-panel="instrument">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body">${showPerformanceControls?renderInstrumentPerformanceControls():''}<div class="studio-instrument-content" data-instrument-content>${renderInstrumentPanelContent()}</div></div></section>`
+  return `<section class="studio-bottom-panel studio-instrument-panel"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header studio-instrument-panel-header"><strong>Instrument Keyboard</strong><nav><button type="button" data-detach-bottom-panel="instrument">Detach</button><button type="button" class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body">${renderInstrumentPerformanceControls()}<div class="studio-instrument-content" data-instrument-content>${renderInstrumentKeyboardView()}</div></div></section>`
+}
+function getActiveMidiEffectEditor() {
+  const track = tracks.find((item)=>item.id === activeMidiEffectEditor?.trackId)
+  const insert = track?.midiEffects?.find((item)=>item.id === activeMidiEffectEditor?.insertId)
+  return track && insert ? { track, insert } : null
+}
+function renderMidiEffectEditorPanel(motionClass = '') {
+  const editor = getActiveMidiEffectEditor()
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  if (!editor) return `<section class="studio-bottom-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>MIDI Effect</strong><nav><button type="button" class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel">Close</button></nav></header><div class="studio-bottom-panel-body"><p>Select a MIDI effect to edit.</p></div></section>`
+  const content = editor.insert.type === 'chord-trigger'
+    ? renderInstrumentChordsView()
+    : editor.insert.type === 'arpeggiator'
+      ? renderInstrumentArpView()
+      : `<section class="studio-instrument-subpage-placeholder"><h3>${esc(editor.insert.name)}</h3><p>This MIDI effect does not have a dedicated editor yet.</p></section>`
+  return `<section class="studio-bottom-panel studio-midi-effect-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><div><strong>${esc(editor.insert.name)}</strong><span>${esc(editor.track.name)} · MIDI Effect</span></div><nav><button type="button" data-detach-bottom-panel="midi-effect">Detach</button><button type="button" class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><div class="studio-instrument-content">${content}</div></div></section>`
 }
 function renderBottomPanel(panel,motionClass=''){
   if(panel==='instrument') return renderInstrumentPanel().replace('studio-bottom-panel studio-instrument-panel', `studio-bottom-panel studio-instrument-panel ${motionClass}`.trim())
   if(panel==='midi-roll') return renderMidiRollPanel(motionClass)
+  if(panel==='midi-effect') return renderMidiEffectEditorPanel(motionClass)
   const t={loops:['Loop Browser','Loops and samples will appear here.'],mixer:['Mixer','Channel strips and routing will appear here.'],collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']
   return `<section class="studio-bottom-panel ${motionClass}"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>${t[0]}</strong><nav><button type="button" data-detach-bottom-panel="${esc(panel)}">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><p>${t[1]}</p></div></section>`
 }
@@ -841,7 +890,7 @@ function renderInstrumentSlot(track) {
     <div class="studio-instrument-slot-main studio-insert-slot-label"><strong>${esc(instrument.name)}</strong><span>${instrument.enabled ? 'Enabled' : 'Disabled'} · ${esc(track.name)}</span></div>
     <div class="studio-instrument-slot-actions">
       <button type="button" class="${instrument.enabled ? 'is-active' : ''}" data-toggle-track-instrument>${instrument.enabled ? 'On' : 'Off'}</button>
-      ${canEdit ? '<button type="button" data-edit-track-instrument>Edit</button>' : '<button type="button" disabled title="Library Sampler controls are managed from the Library.">Library</button>'}
+      ${canEdit ? '<button type="button" data-edit-track-instrument>Edit</button>' : '<button type="button" disabled title="Library instruments are managed from the Library.">Library</button>'}
       <button type="button" data-toggle-inspector-menu="instrument">Change</button>
       <button type="button" data-remove-track-instrument>Remove</button>
     </div>
@@ -858,7 +907,7 @@ function renderChannelStripSettings(track) {
       <details data-channel-accordion="identity" ${detailOpen('identity', true)}><summary>Track Identity</summary><label>Name<input data-channel-setting="name" value="${esc(track.name)}"></label><label>Color<input data-channel-setting="color" type="color" value="${esc(track.color || '#58d4ff')}"></label><label>Notes<textarea data-channel-setting="notes" placeholder="Track notes">${esc(track.notes || '')}</textarea></label></details>
       <details data-channel-accordion="routing" ${detailOpen('routing', true)}><summary>Routing</summary><label>MIDI Input<select data-channel-setting="midiInput"><option ${selected(track.midiInput, 'All Inputs')}>All Inputs</option><option ${selected(track.midiInput, 'Computer Keyboard')}>Computer Keyboard</option><option disabled>Web MIDI Device</option></select></label><label>MIDI Channel<select data-channel-setting="midiChannel"><option ${selected(track.midiChannel, 'All')}>All</option>${Array.from({length:16},(_,i)=>`<option ${selected(track.midiChannel, i+1)}>${i+1}</option>`).join('')}</select></label><label>Audio Output<select data-channel-setting="audioOutput"><option ${selected(track.audioOutput, 'Stereo Out')}>Stereo Out</option><option disabled>Bus 1</option><option disabled>Bus 2</option></select></label><label class="studio-channel-toggle"><input data-channel-setting="monitor" type="checkbox" ${track.monitor ? 'checked' : ''}>Monitor Input</label></details>
       <details data-channel-accordion="performance" ${detailOpen('performance')}><summary>Performance</summary><label>Transpose<input data-channel-setting="transpose" type="number" min="-48" max="48" value="${Number(track.transpose || 0)}"></label><label>Octave Shift<input data-channel-setting="octaveShift" type="number" min="-4" max="4" value="${Number(track.octaveShift || 0)}"></label><label>Velocity Offset<input data-channel-setting="velocityOffset" type="number" min="-64" max="64" value="${Number(track.velocityOffset || 0)}"></label><label>Quantize Input<select data-channel-setting="quantize"><option ${selected(track.quantize, 'Off')}>Off</option><option ${selected(track.quantize, '1/4')}>1/4</option><option ${selected(track.quantize, '1/8')}>1/8</option><option ${selected(track.quantize, '1/16')}>1/16</option><option ${selected(track.quantize, '1/32')}>1/32</option></select></label></details>
-      <details data-channel-accordion="audio" ${detailOpen('audio')}><summary>Channel Audio</summary><label>Volume<input data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}"></label><label>Pan<input data-channel-setting="pan" type="range" min="-1" max="1" step="0.01" value="${track.pan}"></label><label>Gain Trim<input data-channel-setting="gainTrim" type="range" min="-24" max="24" step="0.5" value="${Number(track.gainTrim || 0)}"></label><label>Meter Mode<select data-channel-setting="meterMode"><option ${selected(track.meterMode, 'Peak + RMS')}>Peak + RMS</option><option ${selected(track.meterMode, 'Peak')}>Peak</option><option ${selected(track.meterMode, 'RMS')}>RMS</option></select></label></details>
+      <details data-channel-accordion="audio" ${detailOpen('audio')}><summary>Channel Audio</summary><label>Volume<input data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}"></label><label>Pan<input data-channel-setting="pan" type="range" min="-100" max="100" step="1" value="${track.pan}"></label><label>Gain Trim<input data-channel-setting="gainTrim" type="range" min="-24" max="24" step="0.5" value="${Number(track.gainTrim || 0)}"></label><label>Meter Mode<select data-channel-setting="meterMode"><option ${selected(track.meterMode, 'Peak + RMS')}>Peak + RMS</option><option ${selected(track.meterMode, 'Peak')}>Peak</option><option ${selected(track.meterMode, 'RMS')}>RMS</option></select></label></details>
       <details data-channel-accordion="latency" ${detailOpen('latency')}><summary>Latency / Browser Audio</summary><p>Engine: ${ctx ? ctx.state : 'Not started'}</p><p>Sample rate: ${ctx?.sampleRate ? `${ctx.sampleRate} Hz` : 'Not available'}</p><p>Base latency: ${ctx?.baseLatency ? `${Math.round(ctx.baseLatency * 1000)} ms` : 'Not available'}</p><p>Output latency: ${ctx?.outputLatency ? `${Math.round(ctx.outputLatency * 1000)} ms` : 'Not available'}</p><label>MIDI latency compensation<input data-channel-setting="midiLatencyMs" type="number" min="0" max="500" value="${Number(track.midiLatencyMs || 0)}"></label></details>
       <details data-channel-accordion="regions" ${detailOpen('regions')}><summary>Region Defaults</summary><label>Default Region Color<select data-channel-setting="regionColorMode"><option ${selected(track.regionColorMode, 'Track color')}>Track color</option><option ${selected(track.regionColorMode, 'Custom')}>Custom</option></select></label><label>Default Length<input data-channel-setting="defaultRegionLength" type="number" min="0.25" step="0.25" value="${Number(track.defaultRegionLength || 4)}"></label><label class="studio-channel-toggle"><input data-channel-setting="autoNameRegions" type="checkbox" ${track.autoNameRegions !== false ? 'checked' : ''}>Auto-name recorded regions</label></details>
       <details data-channel-accordion="safety" ${detailOpen('safety')}><summary>Safety</summary><button type="button" data-stop-stuck-notes>Stop Stuck Notes</button><button type="button" data-reset-track-audio>Reset Track Audio Engine</button><label class="studio-channel-toggle"><input data-disable-track-instrument type="checkbox" ${track.instrument?.enabled === false ? 'checked' : ''}>Disable instrument on track</label></details>
@@ -955,7 +1004,7 @@ function renderStudioLibrarySelection() {
       : loadState?.status === 'error'
         ? loadState.message
         : loadState?.status === 'loaded'
-          ? 'Loaded into the selected track through Library Sampler.'
+          ? 'Loaded into the selected track through Library.'
           : 'Click to assign this instrument to the selected track and load its samples.'
   return `<section class="studio-daw-library-selection">
     <div><span>${esc(instrument.folderPath)}</span><strong>${esc(instrument.name)}</strong></div>
@@ -1050,7 +1099,7 @@ async function assignStudioLibraryInstrument(instrumentId = '') {
   track.instrument = {
     id: makeInsertId('instrument'),
     type: DAW_PLUGIN_TYPES.librarySampler,
-    name: `Library Sampler · ${instrument.name}`,
+    name: `Library · ${instrument.name}`,
     enabled: true,
     pluginInstanceId: `${DAW_PLUGIN_TYPES.librarySampler}:${track.id}`,
     params: {
@@ -1062,7 +1111,6 @@ async function assignStudioLibraryInstrument(instrumentId = '') {
       release: 0.16
     }
   }
-  selectedInstrumentName = instrument.name
   studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'loading', message: '' })
   pushHistory('assign-library-instrument', before, captureDawSnapshot())
   scheduleEditorSave()
@@ -1085,7 +1133,7 @@ function stashActiveNoteInput(){ const input = app.querySelector('[data-notes-in
 function renderNotesModal(){ if(!isNotesOpen) return ''; const activePage = getActiveNotePage(); return `<div class="studio-notes-modal"><div class="studio-notes-panel"><header class="studio-notes-header"><h3>Project Notes</h3></header><div class="studio-notes-body"><div class="studio-notes-pages">${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${page.id}" aria-pressed="${String(page.id===activeNotePageId)}">${page.title}</button>`).join('')}<button class="studio-notes-page-button" data-add-notes-page>Add Page</button></div><textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${activePage?.body || ''}</textarea></div><div class="studio-notes-actions"><button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button><button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button></div></div></div>` }
 function renderControlsMenu(){ if(!isControlsMenuOpen) return ''; return `<div class="studio-controls-menu" data-controls-menu><label><input type="checkbox" data-musical-typing-toggle ${isTypingPianoEnabled ? 'checked' : ''}> Musical Typing</label><p>${isTypingPianoEnabled ? 'Typing keys play the selected instrument.' : 'Typing keys run DAW commands.'}</p></div>` }
 
-function buildEditorStateForSave(){ return { version:1, timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null }, globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] }, regions:midiRegions.map((region)=>({ ...region, notes:(region.notes||[]).map((note)=>({ ...note })) })), notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId }, tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,channelSettings,midiEffects:midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})),instrument:instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:audioEffects.map((fx)=>({...fx,params:{...(fx.params||{})}}))} }), toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled } } }
+function buildEditorStateForSave(){ return { version:2, timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null }, globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] }, regions:midiRegions.map((region)=>({ ...region, notes:(region.notes||[]).map((note)=>({ ...note })) })), notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId }, tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,channelSettings,midiEffects:midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})),instrument:instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:audioEffects.map((fx)=>({...fx,params:{...(fx.params||{})}}))} }), toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled } } }
 function applyLoadedEditorState(editorState) {
   if (!editorState || typeof editorState !== 'object') return
   const tl = editorState.timeline || {}
@@ -1162,7 +1210,9 @@ function applyLoadedEditorState(editorState) {
         recordArmed: !!saved.recordArmed,
         automationOpen: !!saved.automationOpen,
         volume: Number.isFinite(Number(saved.volume)) ? Number(saved.volume) : t.volume,
-        pan: Number.isFinite(Number(saved.pan)) ? Number(saved.pan) : t.pan,
+        pan: Number.isFinite(Number(saved.pan))
+          ? clamp(Number(editorState.version || 1) < 2 ? Number(saved.pan) * 100 : Number(saved.pan), -100, 100)
+          : t.pan,
         outputLevel: Number.isFinite(Number(saved.outputLevel)) ? Number(saved.outputLevel) : t.outputLevel,
         midiEffects: Array.isArray(saved.midiEffects) ? saved.midiEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : [],
         instrument: saved.instrument && typeof saved.instrument === 'object' ? { ...saved.instrument, params: { ...(saved.instrument.params || {}) } } : null,
@@ -1172,10 +1222,6 @@ function applyLoadedEditorState(editorState) {
       ensureTrackInsertState(t)
     })
     if (!tracks.some((track) => track.id === selectedTrackId)) selectedTrackId = tracks[0]?.id || selectedTrackId
-    const selectedInstrument = tracks.find((track) => track.id === selectedTrackId)?.instrument
-    if (selectedInstrument?.type === DAW_PLUGIN_TYPES.librarySampler) {
-      selectedInstrumentName = selectedInstrument.params?.libraryInstrumentName || selectedInstrument.name || 'Library Sampler'
-    }
   }
   timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
 }
@@ -1199,12 +1245,17 @@ function getTrackAudioChannel(trackId = selectedTrackId) {
   if (existing) return existing
   const ctx = getAudioContext()
   const input = ctx.createGain()
+  const panner = ctx.createStereoPanner()
   const analyser = ctx.createAnalyser()
   analyser.fftSize = 512
   analyser.smoothingTimeConstant = 0.72
-  input.connect(analyser)
+  const track = tracks.find((item)=>item.id === id)
+  input.gain.value = clamp((Number(track?.volume) || 0) / 100, 0, 1)
+  panner.pan.value = clamp((Number(track?.pan) || 0) / 100, -1, 1)
+  input.connect(panner)
+  panner.connect(analyser)
   analyser.connect(ctx.destination)
-  const channel = { input, analyser, data: new Float32Array(analyser.fftSize), level: 0, peak: 0 }
+  const channel = { input, panner, analyser, data: new Float32Array(analyser.fftSize), level: 0, peak: 0 }
   trackAudioChannels.set(id, channel)
   return channel
 }
@@ -1212,6 +1263,7 @@ function disposeTrackAudioChannel(trackId = '') {
   const channel = trackAudioChannels.get(trackId)
   if (!channel) return
   try { channel.input.disconnect() } catch {}
+  try { channel.panner.disconnect() } catch {}
   try { channel.analyser.disconnect() } catch {}
   trackAudioChannels.delete(trackId)
 }
@@ -1389,11 +1441,12 @@ function openBottomPanel(panelId){
   clearBottomPanelMotionTimer()
   if(activeBottomPanel===panelId){ closeBottomPanel(); return }
   if(activeBottomPanel==='instrument'&&panelId!=='instrument') { stopAllInstrumentNotes(); stopAllTrackInstrumentNotes() }
-  if(panelId==='instrument'&&activeBottomPanel!=='instrument') activeInstrumentSubpage='keyboard'
+  if(panelId !== 'midi-effect') activeMidiEffectEditor = null
   activeBottomPanel=panelId
   closingBottomPanel=''
   bottomPanelMotion='entering'
   renderEditor()
+  if (panelId === 'instrument' && !studioLibraryState.loaded && !studioLibraryState.loading) loadStudioLibrary()
   bottomPanelMotionTimer=window.setTimeout(()=>{ bottomPanelMotion=''; renderEditor() },190)
 }
 function closeBottomPanel(){
@@ -1404,7 +1457,7 @@ function closeBottomPanel(){
   activeBottomPanel=''
   bottomPanelMotion='exiting'
   renderEditor()
-  bottomPanelMotionTimer=window.setTimeout(()=>{ closingBottomPanel=''; bottomPanelMotion=''; activeInstrumentSubpage='keyboard'; renderEditor() },170)
+  bottomPanelMotionTimer=window.setTimeout(()=>{ closingBottomPanel=''; bottomPanelMotion=''; activeMidiEffectEditor=null; renderEditor() },170)
 }
 function detachBottomPanel(panelId = activeBottomPanel) {
   const panel = panelId || activeBottomPanel
@@ -1462,22 +1515,62 @@ function getMusicalTypingTrack() {
   if (activeRecording?.trackId) return tracks.find((track)=>track.id === activeRecording.trackId) || getRecordingTrack()
   return getSelectedTrack()
 }
+function applyTypingExpressionState() {
+  const track = getMusicalTypingTrack()
+  if (!track?.instrument?.pluginInstanceId) return
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'pitchBend', typingPitchTrigger)
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'modulation', typingModTrigger)
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'pitchFine', typingPitchFine)
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'modFine', typingModFine)
+}
 function handleMusicalTypingKeydown(event) {
   if (!isTypingPianoEnabled || event.altKey || event.ctrlKey || event.metaKey || isTextEntryTarget(event.target)) return false
   const track = getMusicalTypingTrack()
   if (!track?.instrument || track.instrument.enabled === false) return false
-  if (event.code === 'KeyZ' && !activeRecording && !isCountInRunning) {
+  if (event.code === 'KeyZ') {
     event.preventDefault()
-    instrumentOctaveOffset = Math.max(-2, instrumentOctaveOffset - 1)
+    const bounds = getInstrumentOctaveBounds(track)
+    instrumentOctaveOffset = Math.max(Math.min(bounds.min, 0), instrumentOctaveOffset - 1)
     stopAllTrackInstrumentNotes()
     renderEditor()
     return true
   }
-  if (event.code === 'KeyX' && !activeRecording && !isCountInRunning) {
+  if (event.code === 'KeyX') {
     event.preventDefault()
-    instrumentOctaveOffset = Math.min(2, instrumentOctaveOffset + 1)
+    const bounds = getInstrumentOctaveBounds(track)
+    instrumentOctaveOffset = Math.min(Math.max(bounds.max, 0), instrumentOctaveOffset + 1)
     stopAllTrackInstrumentNotes()
     renderEditor()
+    return true
+  }
+  if (event.code === 'Minus') {
+    event.preventDefault()
+    if (!event.repeat) {
+      typingExpressionTarget = typingExpressionTarget === 'pitch' ? 'mod' : 'pitch'
+      renderEditor()
+    }
+    return true
+  }
+  if (/^Digit[0-9]$/.test(event.code)) {
+    event.preventDefault()
+    if (!event.repeat) {
+      const value = event.code === 'Digit0' ? 10 : Number(event.code.slice(-1))
+      if (typingExpressionTarget === 'pitch') typingPitchFine = value
+      else typingModFine = value
+      applyTypingExpressionState()
+      renderEditor()
+    }
+    return true
+  }
+  if (['KeyC', 'KeyV', 'KeyB', 'KeyN'].includes(event.code)) {
+    event.preventDefault()
+    if (!event.repeat) {
+      if (event.code === 'KeyC') typingPitchTrigger = -1
+      if (event.code === 'KeyV') typingPitchTrigger = 1
+      if (event.code === 'KeyB') typingModTrigger = -1
+      if (event.code === 'KeyN') typingModTrigger = 1
+      applyTypingExpressionState()
+    }
     return true
   }
   if (dawInstrumentKeyMap[event.code] == null) return false
@@ -1490,7 +1583,30 @@ function handleMusicalTypingKeydown(event) {
 }
 
 
-function setVirtualKeyPressed(midi, pressed){ app.querySelectorAll(`[data-piano-midi="${midi}"]`).forEach((el)=>el.classList.toggle('is-pressed', !!pressed)) }
+function keyboardNoteSourceKey(trackId, midi) { return `${trackId}:${Number(midi)}` }
+function isTrackKeyboardNoteActive(trackId, midi) {
+  return !!activeKeyboardNoteSources.get(keyboardNoteSourceKey(trackId, midi))?.size
+}
+function refreshTrackKeyboardNoteDom(trackId, midi) {
+  if (trackId !== selectedTrackId) return
+  app.querySelectorAll(`[data-piano-midi="${Number(midi)}"]`).forEach((el)=>el.classList.toggle('is-pressed', isTrackKeyboardNoteActive(trackId, midi)))
+}
+function setTrackKeyboardNoteActive(trackId, midi, source, active) {
+  if (!trackId || !Number.isFinite(Number(midi)) || !source) return
+  const key = keyboardNoteSourceKey(trackId, midi)
+  const sources = activeKeyboardNoteSources.get(key) || new Set()
+  if (active) sources.add(source)
+  else sources.delete(source)
+  if (sources.size) activeKeyboardNoteSources.set(key, sources)
+  else activeKeyboardNoteSources.delete(key)
+  refreshTrackKeyboardNoteDom(trackId, midi)
+}
+function clearTrackKeyboardNotes(trackId = '') {
+  Array.from(activeKeyboardNoteSources.keys()).forEach((key) => {
+    if (!trackId || key.startsWith(`${trackId}:`)) activeKeyboardNoteSources.delete(key)
+  })
+  app.querySelectorAll('[data-piano-midi].is-pressed').forEach((key)=>key.classList.remove('is-pressed'))
+}
 function updateTrackMeterDom(track) {
   if (!track) return
   const level = clamp(Number(track.outputLevel) || 0, 0, 1)
@@ -1535,9 +1651,9 @@ function startTrackMeterLoop() {
 }
 function midiToFrequency(midi){ return 440 * (2 ** ((midi - 69) / 12)) }
 async function ensureInstrumentAudio(){ if(!instrumentAudioContext){ instrumentAudioContext = new (window.AudioContext || window.webkitAudioContext)(); instrumentMasterGain = instrumentAudioContext.createGain(); instrumentPanNode = instrumentAudioContext.createStereoPanner(); instrumentMasterGain.gain.value=instrumentVolume; instrumentPanNode.pan.value=instrumentPan; instrumentPanNode.connect(instrumentMasterGain); instrumentMasterGain.connect(instrumentAudioContext.destination) } if(instrumentAudioContext.state==='suspended') await instrumentAudioContext.resume(); }
-async function startInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(activeInstrumentNotes.has(shifted)) return; try{ await ensureInstrumentAudio(); const osc=instrumentAudioContext.createOscillator(); const gain=instrumentAudioContext.createGain(); osc.type='triangle'; osc.frequency.value=midiToFrequency(shifted); gain.gain.setValueAtTime(0.0001,instrumentAudioContext.currentTime); gain.gain.exponentialRampToValueAtTime(0.16*instrumentVolume,instrumentAudioContext.currentTime+0.02); osc.connect(gain); gain.connect(instrumentPanNode); osc.start(); activeInstrumentNotes.set(shifted,{osc,gain,midi:shifted}); setVirtualKeyPressed(midi,true) }catch(err){ console.warn('[studioProject] instrument note start failed',err) } }
-function stopInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(isSustainEnabled) return; const voice=activeInstrumentNotes.get(shifted); if(!voice||!instrumentAudioContext) return; voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.08); voice.osc.stop(instrumentAudioContext.currentTime+0.1); activeInstrumentNotes.delete(shifted); setVirtualKeyPressed(midi,false) }
-function stopAllInstrumentNotes(){ if(!instrumentAudioContext) { activeInstrumentNotes.clear(); return } for(const [m,voice] of activeInstrumentNotes){ voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.05); voice.osc.stop(instrumentAudioContext.currentTime+0.08); activeInstrumentNotes.delete(m); setVirtualKeyPressed(voice.midi - instrumentOctaveOffset*12,false) } }
+async function startInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(activeInstrumentNotes.has(shifted)) return; try{ await ensureInstrumentAudio(); const osc=instrumentAudioContext.createOscillator(); const gain=instrumentAudioContext.createGain(); osc.type='triangle'; osc.frequency.value=midiToFrequency(shifted); gain.gain.setValueAtTime(0.0001,instrumentAudioContext.currentTime); gain.gain.exponentialRampToValueAtTime(0.16*instrumentVolume,instrumentAudioContext.currentTime+0.02); osc.connect(gain); gain.connect(instrumentPanNode); osc.start(); activeInstrumentNotes.set(shifted,{osc,gain,midi:shifted}); setTrackKeyboardNoteActive(selectedTrackId, shifted, `legacy:${shifted}`, true) }catch(err){ console.warn('[studioProject] instrument note start failed',err) } }
+function stopInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(isSustainEnabled) return; const voice=activeInstrumentNotes.get(shifted); if(!voice||!instrumentAudioContext) return; voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.08); voice.osc.stop(instrumentAudioContext.currentTime+0.1); activeInstrumentNotes.delete(shifted); setTrackKeyboardNoteActive(selectedTrackId, shifted, `legacy:${shifted}`, false) }
+function stopAllInstrumentNotes(){ if(!instrumentAudioContext) { activeInstrumentNotes.clear(); return } for(const [m,voice] of activeInstrumentNotes){ voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.05); voice.osc.stop(instrumentAudioContext.currentTime+0.08); activeInstrumentNotes.delete(m); setTrackKeyboardNoteActive(selectedTrackId, voice.midi, `legacy:${voice.midi}`, false) } }
 
 function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
   const target = ensureTrackInsertState(track)
@@ -1545,6 +1661,7 @@ function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
   if (!target.instrument.pluginInstanceId) target.instrument.pluginInstanceId = `${target.instrument.type}:${target.id}`
   const channel = getTrackAudioChannel(target.id)
   if (channel?.input && audioContext) channel.input.gain.setTargetAtTime(clamp((Number(target.volume) || 0) / 100, 0, 1), audioContext.currentTime, 0.015)
+  if (channel?.panner && audioContext) channel.panner.pan.setTargetAtTime(clamp((Number(target.pan) || 0) / 100, -1, 1), audioContext.currentTime, 0.015)
   return dawInstrumentRegistry.createOrGet({
     id: target.instrument.pluginInstanceId,
     type: target.instrument.type,
@@ -1560,13 +1677,13 @@ function playTrackMidiNote(track, note, velocity = 0.85) {
   ensureTrackInstrumentInstance(track)
   dawInstrumentRegistry.noteOn(track.instrument.pluginInstanceId, note, velocity)
   startTrackMeterLoop()
-  setVirtualKeyPressed(note - (instrumentOctaveOffset * 12), true)
+  setTrackKeyboardNoteActive(track.id, note, `live:${track.id}:${note}`, true)
   recordMidiNoteOn(track.id, note, velocity)
 }
 function stopTrackMidiNote(track, note) {
   if (!track?.instrument) return
   dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note)
-  setVirtualKeyPressed(note - (instrumentOctaveOffset * 12), false)
+  setTrackKeyboardNoteActive(track.id, note, `live:${track.id}:${note}`, false)
   recordMidiNoteOff(track.id, note)
 }
 function hasSoloedTracks() { return tracks.some((track)=>track.soloed) }
@@ -1588,6 +1705,7 @@ function stopPlaybackNote(key) {
   if (!active) return
   const track = tracks.find((item)=>item.id === active.trackId)
   if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, active.note)
+  setTrackKeyboardNoteActive(active.trackId, active.note, `playback:${key}`, false)
   activePlaybackNotes.delete(key)
 }
 function stopAllPlaybackNotes() {
@@ -1612,6 +1730,7 @@ function updateMidiRegionPlayback(currentBeat) {
       if (beat >= startBeat && beat < endBeat && !activePlaybackNotes.has(key)) {
         dawInstrumentRegistry.noteOn(track.instrument.pluginInstanceId, note.note, clamp((Number(note.velocity) || 0.85), 0, 1))
         activePlaybackNotes.set(key, { regionId: region.id, trackId: track.id, note: note.note, startBeat, endBeat })
+        setTrackKeyboardNoteActive(track.id, note.note, `playback:${key}`, true)
         startTrackMeterLoop()
       }
     })
@@ -1736,7 +1855,9 @@ function stopAllTrackInstrumentNotes() {
     if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note)
   })
   pressedDawMidiKeys.clear()
-  app.querySelectorAll('[data-piano-midi].is-pressed').forEach((key)=>key.classList.remove('is-pressed'))
+  typingPitchTrigger = 0
+  typingModTrigger = 0
+  clearTrackKeyboardNotes()
 }
 function getTrackIndexFromClientY(clientY) {
   return getTrackLaneFromY(clientY)
@@ -1931,7 +2052,8 @@ function applyMidiNoteDrag(event) {
     note.durationBeats = Math.max(0.05, nextEnd - midiNoteDrag.startBeat)
   } else {
     note.startBeat = clamp(snapBeat(midiNoteDrag.startBeat + deltaBeat, snap), regionStart, Math.max(regionStart, regionEnd - midiNoteDrag.durationBeats))
-    note.note = clamp(midiNoteDrag.note + pitchDelta, 36, 84)
+    const rows = midiRollPitchRows(region)
+    note.note = clamp(midiNoteDrag.note + pitchDelta, rows[rows.length - 1], rows[0])
   }
   refreshMidiRegionDom()
   const noteEl = app.querySelector(`[data-midi-note-index="${CSS.escape(String(midiNoteDrag.noteIndex))}"]`)
@@ -2041,22 +2163,29 @@ function handleMidiRollWheel(event) {
   const scroll = grid.closest('.studio-midi-roll-scroll')
   if ((event.metaKey || event.ctrlKey) && !event.altKey) {
     event.preventDefault()
-    const rect = grid.getBoundingClientRect()
     const scrollRect = scroll?.getBoundingClientRect?.()
-    const localX = event.clientX - rect.left
-    const beatAtPointer = localX / Math.max(1, midiRollBeatWidth)
+    const pointerX = scrollRect ? event.clientX - scrollRect.left : 0
+    const beatAtPointer = ((scroll?.scrollLeft || 0) + pointerX) / Math.max(1, midiRollBeatWidth)
     midiRollBeatWidth = Math.round(clamp(midiRollBeatWidth * (event.deltaY < 0 ? 1.12 : 0.88), 28, 180))
+    pendingMidiRollViewport = {
+      regionId: getMidiRollRegion()?.id || '',
+      scrollLeft: Math.max(0, (beatAtPointer * midiRollBeatWidth) - pointerX),
+      scrollTop: scroll?.scrollTop || 0
+    }
     renderEditor()
-    requestAnimationFrame(() => {
-      const nextScroll = (beatAtPointer * midiRollBeatWidth) - (scrollRect ? event.clientX - scrollRect.left : localX)
-      const next = app.querySelector('.studio-midi-roll-scroll')
-      if (next) next.scrollLeft = Math.max(0, nextScroll)
-    })
     return
   }
   if (event.altKey) {
     event.preventDefault()
+    const scrollRect = scroll?.getBoundingClientRect?.()
+    const pointerY = scrollRect ? event.clientY - scrollRect.top : 0
+    const rowAtPointer = ((scroll?.scrollTop || 0) + pointerY) / Math.max(1, midiRollRowHeight)
     midiRollRowHeight = Math.round(clamp(midiRollRowHeight * (event.deltaY < 0 ? 1.1 : 0.9), 16, 36))
+    pendingMidiRollViewport = {
+      regionId: getMidiRollRegion()?.id || '',
+      scrollLeft: scroll?.scrollLeft || 0,
+      scrollTop: Math.max(0, (rowAtPointer * midiRollRowHeight) - pointerY)
+    }
     renderEditor()
     return
   }
@@ -2102,6 +2231,48 @@ function renameGlobalMarker(id) {
   renderEditor()
 }
 
+function setTrackPan(track, value, { save = false } = {}) {
+  if (!track) return
+  track.pan = clamp(Math.round(Number(value) || 0), -100, 100)
+  const channel = trackAudioChannels.get(track.id)
+  if (channel?.panner && audioContext) channel.panner.pan.setTargetAtTime(track.pan / 100, audioContext.currentTime, 0.015)
+  const knob = app.querySelector(`[data-track-pan="${CSS.escape(track.id)}"]`)
+  knob?.style.setProperty('--pan-angle', `${(track.pan / 100) * 135}deg`)
+  knob?.setAttribute('aria-label', `${track.name} pan ${track.pan}`)
+  knob?.setAttribute('data-tooltip', `Pan ${track.pan}`)
+  if (save) scheduleEditorSave()
+}
+function openInlineNumericEditor(event, { value, min, max, step = 1, label = 'Value', apply } = {}) {
+  event.preventDefault()
+  event.stopPropagation()
+  app.querySelector('[data-inline-number-editor]')?.remove()
+  const page = app.querySelector('.studio-editor-page')
+  if (!page) return
+  const position = getClampedFloatingPosition(event.clientX, event.clientY, 150, 82)
+  const form = document.createElement('form')
+  form.className = 'studio-inline-number-editor'
+  form.dataset.inlineNumberEditor = ''
+  form.style.left = `${position.x}px`
+  form.style.top = `${position.y}px`
+  form.innerHTML = `<label>${esc(label)}<input type="number" min="${min}" max="${max}" step="${step}" value="${Number(value)}"></label>`
+  page.append(form)
+  const input = form.querySelector('input')
+  let closed = false
+  const close = (commit) => {
+    if (closed) return
+    closed = true
+    if (commit) apply?.(clamp(Number(input.value), Number(min), Number(max)))
+    form.remove()
+  }
+  form.addEventListener('submit', (submitEvent) => { submitEvent.preventDefault(); close(true) })
+  input.addEventListener('keydown', (keyEvent) => {
+    if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); close(false) }
+  })
+  input.addEventListener('blur', () => window.setTimeout(() => close(true), 0), { once: true })
+  input.focus()
+  input.select()
+}
+
 function bindEditorEvents() {
   const trigger = app.querySelector('[data-editor-left-menu]')
   const leftWrap = app.querySelector('.studio-editor-left')
@@ -2116,7 +2287,7 @@ function bindEditorEvents() {
   document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if (event.key === 'Escape') { let changed = false; if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (isControlsMenuOpen) { isControlsMenuOpen = false; changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
   app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
-  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) stopAllTrackInstrumentNotes(); selectedTrackId = el.dataset.trackRow; trackMenuState = null; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }))
+  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes() } selectedTrackId = el.dataset.trackRow; trackMenuState = null; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }))
   app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const nextMenu = el.dataset.toggleInspectorMenu; inspectorMenu = inspectorMenu === nextMenu ? null : nextMenu; inspectorMenuPosition = null; if (inspectorMenu === 'instrument') { const rect = el.getBoundingClientRect(); inspectorMenuPosition = getClampedFloatingPosition(rect.left + rect.width / 2, rect.bottom + 8, 260, 210) } renderEditor() }))
   app.querySelectorAll('[data-inspector-menu-choice]').forEach((el) => el.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -2145,6 +2316,19 @@ function bindEditorEvents() {
   app.querySelector('[data-remove-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); if (track.instrument.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId); track.instrument = null; scheduleEditorSave(); renderEditor() })
   app.querySelector('[data-edit-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; if (!track.instrument.pluginInstanceId) track.instrument.pluginInstanceId = `${track.instrument.type}:${track.id}`; dawWindowManager.openPlugin({ pluginType: track.instrument.type, trackId: track.id, instanceId: track.instrument.pluginInstanceId, params: track.instrument.params || {}, forceCenter: true }) })
   app.querySelectorAll('[data-toggle-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); const list = el.dataset.toggleInsert === 'midi' ? track?.midiEffects : track?.audioEffects; const insert = list?.find((item)=>item.id===el.dataset.insertId); if (!insert) return; insert.enabled = !insert.enabled; scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-edit-insert]').forEach((el) => el.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (el.dataset.editInsert !== 'midi') return
+    const track = ensureTrackInsertState(getSelectedTrack())
+    const insert = track?.midiEffects?.find((item)=>item.id === el.dataset.insertId)
+    if (!track || !insert) return
+    activeMidiEffectEditor = { trackId: track.id, insertId: insert.id }
+    activeBottomPanel = 'midi-effect'
+    closingBottomPanel = ''
+    bottomPanelMotion = 'entering'
+    renderEditor()
+  }))
   app.querySelectorAll('[data-remove-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track) return; if (el.dataset.removeInsert === 'midi') track.midiEffects = track.midiEffects.filter((item)=>item.id!==el.dataset.insertId); if (el.dataset.removeInsert === 'audio') track.audioEffects = track.audioEffects.filter((item)=>item.id!==el.dataset.insertId); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-channel-setting]').forEach((input)=>input.addEventListener('change', () => {
     const track = ensureTrackInsertState(getSelectedTrack())
@@ -2156,7 +2340,7 @@ function bindEditorEvents() {
     else track[key] = input.value
     if (key === 'name') track.name = input.value || track.name
     if (key === 'color') { track.color = input.value; track.colorSoft = `${input.value}44` }
-    if (key === 'pan') track.pan = Number(input.value)
+    if (key === 'pan') setTrackPan(track, input.value)
     if (before) pushHistory(key === 'name' ? 'rename-track' : 'color-track', before, captureDawSnapshot())
     scheduleEditorSave()
     renderEditor()
@@ -2190,7 +2374,15 @@ function bindEditorEvents() {
   app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-record]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackRecord); if (!t) return; t.recordArmed = !t.recordArmed; scheduleEditorSave(); renderEditor() }))
-  app.querySelectorAll('[data-track-volume]').forEach((el) => { el.addEventListener('input', () => { const t = getTrack(el.dataset.trackVolume); if (!t) return; t.volume = Number(el.value); const channel=trackAudioChannels.get(t.id); if(channel?.input&&audioContext) channel.input.gain.setTargetAtTime(clamp(t.volume/100,0,1), audioContext.currentTime, 0.015) }); el.addEventListener('change', ()=>scheduleEditorSave()) })
+  app.querySelectorAll('[data-track-volume]').forEach((el) => {
+    el.addEventListener('input', () => { const t = getTrack(el.dataset.trackVolume); if (!t) return; t.volume = clamp(Number(el.value), 0, 100); const channel=trackAudioChannels.get(t.id); if(channel?.input&&audioContext) channel.input.gain.setTargetAtTime(t.volume/100, audioContext.currentTime, 0.015) })
+    el.addEventListener('change', ()=>scheduleEditorSave())
+    el.addEventListener('dblclick', (event) => {
+      const track = getTrack(el.dataset.trackVolume)
+      if (!track) return
+      openInlineNumericEditor(event, { label: 'Volume', value: track.volume, min: 0, max: 100, step: 1, apply: (value) => { track.volume = value; const channel=trackAudioChannels.get(track.id); if(channel?.input&&audioContext) channel.input.gain.setTargetAtTime(value/100, audioContext.currentTime, 0.015); scheduleEditorSave(); renderEditor() } })
+    })
+  })
   app.querySelectorAll('[data-track-automation]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackAutomation); if (!t) return; t.automationOpen = !t.automationOpen; renderEditor() }))
   app.querySelectorAll('[data-track-options]').forEach((el) => el.addEventListener('click', (e) => {
     e.stopPropagation()
@@ -2283,7 +2475,114 @@ function bindEditorEvents() {
     else if (action === 'inspector') { activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }
     else if (action === 'rename') { const track = getSelectedTrack(); renameTrackState = { ...menuPos, trackId: selectedTrackId, name: track?.name || '' }; activeLeftPanel = 'inspector'; renderEditor(); requestAnimationFrame(()=>app.querySelector('[data-track-rename-input]')?.select?.()) }
   }))
-  app.querySelectorAll('[data-track-pan]').forEach((knob) => knob.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); const t = getTrack(knob.dataset.trackPan); if (!t) return; panDrag = { trackId: t.id, startX: event.clientX, startPan: t.pan, knob }; knob.setPointerCapture?.(event.pointerId) }))
+  app.querySelectorAll('[data-track-pan]').forEach((knob) => {
+    knob.addEventListener('pointerdown', (event) => { if (event.detail > 1) return; event.preventDefault(); event.stopPropagation(); const t = getTrack(knob.dataset.trackPan); if (!t) return; panDrag = { trackId: t.id, startX: event.clientX, startPan: t.pan, knob }; knob.setPointerCapture?.(event.pointerId) })
+    knob.addEventListener('dblclick', (event) => {
+      const track = getTrack(knob.dataset.trackPan)
+      if (!track) return
+      panDrag = null
+      openInlineNumericEditor(event, { label: 'Pan', value: track.pan, min: -100, max: 100, step: 1, apply: (value) => { setTrackPan(track, value, { save: true }); renderEditor() } })
+    })
+  })
+  app.querySelectorAll('[data-midi]').forEach((key) => {
+    const midi = Number(key.dataset.midi)
+    const stop = () => stopTrackMidiNote(getSelectedTrack(), midi)
+    key.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      playTrackMidiNote(getSelectedTrack(), midi, 0.85)
+    })
+    key.addEventListener('pointerup', (event) => { event.stopImmediatePropagation(); stop() })
+    key.addEventListener('pointerleave', (event) => { event.stopImmediatePropagation(); stop() })
+  })
+  app.querySelector('[data-octave-down]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const bounds = getInstrumentOctaveBounds()
+    instrumentOctaveOffset = Math.max(Math.min(bounds.min, 0), instrumentOctaveOffset - 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+  })
+  app.querySelector('[data-octave-up]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const bounds = getInstrumentOctaveBounds()
+    instrumentOctaveOffset = Math.min(Math.max(bounds.max, 0), instrumentOctaveOffset + 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+  })
+  app.querySelector('[data-instrument-knob="pan"]')?.addEventListener('input', (event) => {
+    event.stopImmediatePropagation()
+    const track = getSelectedTrack()
+    const value = clamp(Number(event.target.value), -100, 100)
+    instrumentPan = value / 100
+    setTrackPan(track, value)
+    const dial = app.querySelector('[data-instrument-knob-dial="pan"]')
+    const valueEl = app.querySelector('[data-instrument-knob-value="pan"]')
+    dial?.style.setProperty('--knob-angle', `${-135 + ((value + 100) / 200) * 270}deg`)
+    if (valueEl) valueEl.textContent = String(Math.round(value))
+  })
+  app.querySelector('[data-instrument-knob="volume"]')?.addEventListener('input', (event) => {
+    event.stopImmediatePropagation()
+    const track = getSelectedTrack()
+    const value = clamp(Number(event.target.value), 0, 1)
+    instrumentVolume = value
+    if (track) {
+      track.volume = Math.round(value * 100)
+      syncSelectedTrackVolumeControl(track)
+      const channel = trackAudioChannels.get(track.id)
+      if (channel?.input && audioContext) channel.input.gain.setTargetAtTime(value, audioContext.currentTime, 0.015)
+    }
+    const dial = app.querySelector('[data-instrument-knob-dial="volume"]')
+    const valueEl = app.querySelector('[data-instrument-knob-value="volume"]')
+    dial?.style.setProperty('--knob-angle', `${-135 + (value * 270)}deg`)
+    if (valueEl) valueEl.textContent = `${Math.round(value * 100)}%`
+  })
+  app.querySelector('[data-instrument-knob="pan"]')?.addEventListener('change', (event) => {
+    event.stopImmediatePropagation()
+    scheduleEditorSave()
+  })
+  app.querySelector('[data-instrument-knob="pan"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const input = event.currentTarget
+    const startY = event.clientY
+    const startValue = Number(input.value)
+    const onMove = (moveEvent) => {
+      input.value = String(clamp(startValue - ((moveEvent.clientY - startY) * 0.8), -100, 100))
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      scheduleEditorSave()
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp, { once: true })
+  })
+  app.querySelectorAll('[data-instrument-knob-dial]').forEach((dial) => dial.addEventListener('dblclick', (event) => {
+    const key = dial.dataset.instrumentKnobDial
+    const track = getSelectedTrack()
+    if (!track || !['volume', 'pan'].includes(key)) return
+    const config = key === 'volume'
+      ? { label: 'Volume', value: track.volume, min: 0, max: 100 }
+      : { label: 'Pan', value: track.pan, min: -100, max: 100 }
+    openInlineNumericEditor(event, {
+      ...config,
+      step: 1,
+      apply: (value) => {
+        if (key === 'volume') {
+          track.volume = value
+          const channel = trackAudioChannels.get(track.id)
+          if (channel?.input && audioContext) channel.input.gain.setTargetAtTime(value / 100, audioContext.currentTime, 0.015)
+        } else {
+          setTrackPan(track, value)
+        }
+        scheduleEditorSave()
+        renderEditor()
+      }
+    })
+  }))
   grid?.addEventListener('scroll', () => { if (ruler) ruler.scrollLeft = grid.scrollLeft })
   const getRulerLocalX = (event) => { const rect = ruler.getBoundingClientRect(); return clamp(event.clientX - rect.left + ruler.scrollLeft, 0, maxTimelineX()) }
   const applyCycleRange = (start, end) => { const minW = cycleMinWidth(); const min = Math.min(start, end); const max = Math.max(start, end); let s = clamp(isSnapEnabled ? snapXToBeat(min) : min, timelineStartX(), maxTimelineX()); let e = clamp(isSnapEnabled ? snapXToBeat(max) : max, timelineStartX(), maxTimelineX()); if (e - s < minW) e = clamp(s + minW, s + minW, maxTimelineX()); cycleRange = { startX: s, endX: e } }
@@ -2314,7 +2613,7 @@ function bindEditorEvents() {
   app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight }; document.body.classList.add('is-studio-dragging') }))
   ruler?.addEventListener('pointerdown', (event) => { const cycleHandle = event.target.closest('[data-cycle-handle]'); const cycleMove = event.target.closest('[data-cycle-drag]'); const inCycleStrip = isCycleStripPointerEvent(event, ruler); if (cycleHandle && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: cycleHandle.dataset.cycleHandle === 'start' ? 'resize-start' : 'resize-end', fixedX: cycleHandle.dataset.cycleHandle === 'start' ? cycleRange.endX : cycleRange.startX }; return } if (cycleMove && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: 'move', startPointerX: x, startRange: { ...cycleRange } }; return } if (inCycleStrip) { event.preventDefault(); const x = getRulerLocalX(event); setCycleEnabled(true); cycleDrag = { mode: 'create', anchorX: x }; applyCycleRange(x, x + beatWidth()); document.body.classList.add('is-studio-dragging'); return } event.preventDefault(); timelineState.isDraggingPlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); scheduleEditorSave() })
   grid?.addEventListener('pointerdown', (event) => { if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); selectedMidiRegionId = ''; midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.hidden = false } })
-	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) { t.pan = clamp(panDrag.startPan + (event.clientX-panDrag.startX)/100, -1, 1); panDrag.knob?.style.setProperty('--pan-angle', `${t.pan * 135}deg`) } } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); if (grid) { grid.scrollLeft = extensionDrag.side==='right' ? Math.max(0, grid.scrollWidth-grid.clientWidth) : extensionDrag.scrollLeft; syncTimelineScroll() } return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
+	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); if (grid) { grid.scrollLeft = extensionDrag.side==='right' ? Math.max(0, grid.scrollWidth-grid.clientWidth) : extensionDrag.scrollLeft; syncTimelineScroll() } return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
 	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
   window.addEventListener('pointermove', (event) => {
     if (bottomPanelResizeDrag) {
@@ -2516,7 +2815,12 @@ function bindEditorEvents() {
 
 // TODO: connect navigator.requestMIDIAccess() after MIDI permission UX is designed.
 function renderEditor() {
-  captureMidiRollViewport()
+  if (pendingMidiRollViewport) {
+    midiRollViewport = pendingMidiRollViewport
+    pendingMidiRollViewport = null
+  } else {
+    captureMidiRollViewport()
+  }
   const project = projectState
   if (studioAudioEngine) studioAudioEngine.setBpm(Number(project?.bpm || 140))
   document.body.classList.add('is-studio-editor')
@@ -2527,13 +2831,16 @@ function renderEditor() {
   setEditorMenuOpen(isEditorMenuOpen)
   bindEditorEvents()
   dawWindowManager.bind(app)
-  requestAnimationFrame(restoreMidiRollViewport)
+  restoreMidiRollViewport()
 }
 
 
 
-const bottomPanelInstrumentKeyMap = { KeyZ:48, KeyS:49, KeyX:50, KeyD:51, KeyC:52, KeyV:53, KeyG:54, KeyB:55, KeyH:56, KeyN:57, KeyJ:58, KeyM:59, Comma:60, KeyQ:60, Digit2:61, KeyW:62, Digit3:63, KeyE:64, KeyR:65, Digit5:66, KeyT:67, Digit6:68, KeyY:69, Digit7:70, KeyU:71, KeyI:72, Digit9:73, KeyO:74, Digit0:75, KeyP:76 }
-const dawInstrumentKeyMap = { KeyA:60, KeyW:61, KeyS:62, KeyE:63, KeyD:64, KeyF:65, KeyT:66, KeyG:67, KeyY:68, KeyH:69, KeyU:70, KeyJ:71, KeyK:72 }
+const dawInstrumentKeyMap = {
+  KeyA:60, KeyW:61, KeyS:62, KeyE:63, KeyD:64, KeyF:65, KeyT:66,
+  KeyG:67, KeyY:68, KeyH:69, KeyU:70, KeyJ:71, KeyK:72, KeyO:73,
+  KeyL:74, KeyP:75, Semicolon:76, Quote:77
+}
 function handleStudioKeydown(event){
   if(isTextEntryTarget(event.target)) return
   if((event.ctrlKey || event.metaKey) && !event.altKey){
@@ -2578,6 +2885,11 @@ if(!window.__melogicStudioKeybindsBound){ window.__melogicStudioKeybindsBound=tr
     pressedDawMidiKeys.delete(event.code)
     stopTrackMidiNote(track, held.note)
   }
+  if (event.code === 'KeyC' && typingPitchTrigger < 0) typingPitchTrigger = 0
+  if (event.code === 'KeyV' && typingPitchTrigger > 0) typingPitchTrigger = 0
+  if (event.code === 'KeyB' && typingModTrigger < 0) typingModTrigger = 0
+  if (event.code === 'KeyN' && typingModTrigger > 0) typingModTrigger = 0
+  if (['KeyC', 'KeyV', 'KeyB', 'KeyN'].includes(event.code)) applyTypingExpressionState()
 }) }
 if(!window.__melogicDawAudioPrewarmBound){
   window.__melogicDawAudioPrewarmBound = true

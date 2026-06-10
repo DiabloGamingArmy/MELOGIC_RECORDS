@@ -6,7 +6,7 @@ export const DAW_PLUGIN_TYPES = {
 export const DAW_PLUGIN_DEFINITIONS = {
   [DAW_PLUGIN_TYPES.librarySampler]: {
     pluginType: DAW_PLUGIN_TYPES.librarySampler,
-    title: 'Library Sampler',
+    title: 'Library',
     status: 'Track instrument',
     defaultSize: { width: 720, height: 480 },
     defaultParams: {
