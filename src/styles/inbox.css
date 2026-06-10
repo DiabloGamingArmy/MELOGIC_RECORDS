@@ -520,7 +520,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 }
 
 .chat-settings-trigger {
-  margin-left: auto;
+  margin-left: 0;
   width: 2rem;
   height: 2rem;
   border-radius: 0.62rem;
@@ -553,6 +553,70 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   margin-top: 0.12rem;
 }
 
+.message-find-trigger {
+  margin-left: auto;
+  border: 1px solid rgba(130, 160, 214, 0.38);
+  border-radius: 0.62rem;
+  background: rgba(18, 28, 45, 0.85);
+  color: #dce8ff;
+  padding: 0.42rem 0.72rem;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.message-find {
+  margin-left: auto;
+  display: grid;
+  grid-template-columns: minmax(120px, 190px) auto repeat(3, 2rem);
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.message-find input {
+  min-width: 0;
+  height: 2rem;
+  border: 1px solid rgba(130, 160, 214, 0.38);
+  border-radius: 0.58rem;
+  background: rgba(7, 12, 22, 0.88);
+  color: #eef4ff;
+  padding: 0 0.58rem;
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.message-find input:focus-visible,
+.message-find button:focus-visible,
+.message-find-trigger:focus-visible {
+  border-color: rgba(145, 181, 246, 0.85);
+  outline: 2px solid rgba(90, 145, 240, 0.28);
+  outline-offset: 1px;
+}
+
+.message-find-count {
+  min-width: 3.8rem;
+  color: #9fb2d8;
+  font-size: 0.72rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.message-find button {
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(130, 160, 214, 0.32);
+  border-radius: 0.55rem;
+  background: rgba(18, 28, 45, 0.85);
+  color: #dce8ff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.message-find button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
 .conversation-stack {
   min-height: 0;
   display: grid;
@@ -569,6 +633,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   flex-direction: column;
   align-items: stretch;
   gap: 0.5rem;
+  overflow-anchor: auto;
 }
 
 .message-attachment-list {
@@ -621,6 +686,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   color: inherit;
   cursor: zoom-in;
   border-radius: 0.8rem;
+  aspect-ratio: 16 / 10;
 }
 
 .message-attachment-list img,
@@ -795,6 +861,18 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.message-bubble mark[data-message-find-match] {
+  border-radius: 0.2rem;
+  background: rgba(255, 213, 92, 0.72);
+  color: #111827;
+  padding: 0 0.08em;
+}
+
+.message-bubble mark[data-message-find-match].is-active {
+  background: #fff0a8;
+  box-shadow: 0 0 0 2px rgba(255, 224, 122, 0.42);
 }
 
 .message-bubble.is-deleted {
@@ -1785,6 +1863,16 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 
   .message-cluster-body {
     max-width: 86%;
+  }
+
+  .conversation-header {
+    flex-wrap: wrap;
+  }
+
+  .message-find {
+    order: 3;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto repeat(3, 2rem);
   }
 
   .message-attachment-list img,
