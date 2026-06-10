@@ -786,31 +786,30 @@ body.has-cart-drawer-open .nav-shell {
   background: linear-gradient(to bottom, rgba(3, 5, 10, 0.96), rgba(3, 5, 10, 0.9));
 }
 
-.home-scroll-cinematic {
-  --home-scroll-length: 5200px;
+.home-video-showcase {
   position: relative;
-  height: calc(var(--home-scroll-length) + 100vh);
-  min-height: 100vh;
-  background: #03050a;
-  isolation: isolate;
-}
-
-.home-scroll-cinematic-sticky {
-  position: sticky;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100vh;
-  height: 100svh;
+  padding: clamp(3rem, 7vw, 6rem) clamp(1rem, 3vw, 2rem);
   overflow: hidden;
   background:
-    radial-gradient(900px 420px at 50% 12%, rgba(86, 130, 238, 0.16), transparent 74%),
+    radial-gradient(900px 440px at 50% 42%, rgba(86, 130, 238, 0.13), transparent 74%),
     #03050a;
 }
 
-.home-scroll-cinematic-video {
-  position: absolute;
-  inset: 0;
+.home-video-showcase-inner {
+  position: relative;
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid rgba(170, 198, 255, 0.14);
+  border-radius: clamp(0.75rem, 1.5vw, 1.15rem);
+  background: #03050a;
+  box-shadow:
+    0 36px 90px rgba(0, 0, 0, 0.48),
+    0 0 70px rgba(75, 116, 220, 0.1);
+}
+
+.home-video-showcase-video {
   width: 100%;
   height: 100%;
   display: block;
@@ -818,43 +817,9 @@ body.has-cart-drawer-open .nav-shell {
   background: #03050a;
 }
 
-.home-scroll-hint {
-  position: absolute;
-  top: 24%;
-  left: 50%;
-  z-index: 2;
-  transform: translate(-50%, -50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 1;
-  pointer-events: auto;
-  transition: opacity 120ms linear;
-  will-change: opacity, transform;
-}
-
-.home-scroll-hint span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2.35rem;
-  padding: 0 1.05rem;
-  border: 1px solid rgba(219, 231, 255, 0.2);
-  border-radius: 999px;
-  background: rgba(5, 8, 14, 0.38);
-  color: rgba(239, 246, 255, 0.8);
-  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(18px);
-  font-size: clamp(0.76rem, 1.15vw, 0.92rem);
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.home-scroll-cinematic-fallback {
+.home-video-showcase-fallback {
   position: absolute;
   inset: 0;
-  z-index: 3;
   display: grid;
   place-items: center;
   margin: 0;
@@ -867,7 +832,7 @@ body.has-cart-drawer-open .nav-shell {
   text-align: center;
 }
 
-.home-scroll-cinematic-fallback[hidden] {
+.home-video-showcase-fallback[hidden] {
   display: none;
 }
 
@@ -1730,14 +1695,6 @@ body.has-cart-drawer-open .nav-shell {
 
   .lower-network-canvas {
     opacity: 0.2;
-  }
-
-  .home-scroll-cinematic {
-    height: 100vh;
-  }
-
-  .home-scroll-cinematic-sticky {
-    position: relative;
   }
 
   .ecosystem-intro,
