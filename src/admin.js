@@ -95,7 +95,9 @@ import {
   getSampleStrategyWarnings,
   initializeDefaultLibraryContent,
   moveLibraryFolder,
+  moveLibraryFolderToParent,
   parseDefaultInstrumentArchive,
+  removeDefaultInstrumentFromLibrary,
   renameLibraryFolder,
   saveDefaultLibraryContent,
   studioLibrarySlug,
@@ -373,7 +375,17 @@ const state = {
       artworkFile: null,
       editingId: '',
       selectedFolderId: '',
+      selectedInstrumentId: '',
       expandedFolderIds: new Set(),
+      addFolderOpen: false,
+      folderPicker: {
+        open: false,
+        mode: '',
+        targetId: '',
+        selectedId: '',
+        engineOnly: false,
+        title: ''
+      },
       form: {},
       error: '',
       message: ''
@@ -3449,6 +3461,68 @@ function renderAdminStudioFolderNode(folder, studio, instruments, depth = 0) {
   </div>`
 }
 
+function adminStudioFolderBreadcrumb(folder) {
+  return String(folder?.path || '').split('/').filter(Boolean).map((part) => `<span>${escapeHtml(part)}</span>`).join('<i>/</i>')
+}
+
+function isAdminStudioPickerDestinationAllowed(folder, picker, library) {
+  if (!folder) return false
+  if (picker.engineOnly) {
+    if (folder.type !== 'engine-folder') return false
+    const instrument = picker.mode === 'move-instrument'
+      ? library.instruments?.find((item) => item.id === picker.targetId)
+      : null
+    return !instrument || !instrument.engineType || instrument.engineType === folder.engineType
+  }
+  if (picker.mode !== 'move-folder') return true
+  const target = findFolderById(library.folders, picker.targetId)
+  if (!target || target.type === 'source-root' || folder.type === 'engine-folder') return false
+  if (target.id === folder.id) return false
+  if (target.path && (folder.path === target.path || folder.path.startsWith(`${target.path}/`))) return false
+  if (target.type === 'engine-folder' && folder.type === 'source-root') return false
+  return !(folder.children || []).some((child) => child.id !== target.id && child.label.toLowerCase() === target.label.toLowerCase())
+}
+
+function renderAdminStudioPickerNode(folder, picker, library, depth = 0) {
+  const allowed = isAdminStudioPickerDestinationAllowed(folder, picker, library)
+  const selected = picker.selectedId === folder.id
+  return `<div class="admin-daw-picker-node" style="--admin-picker-depth:${depth}">
+    <button type="button" class="${selected ? 'is-selected' : ''}" data-admin-studio-picker-folder="${escapeHtml(folder.id)}" ${allowed ? '' : 'disabled'}>
+      <span class="admin-daw-folder-glyph">${folder.type === 'engine-folder' ? 'E' : 'F'}</span>
+      <span><strong>${escapeHtml(folder.label)}</strong><small>${escapeHtml(folder.path)}</small></span>
+      <em>${escapeHtml(folder.engineType || folder.type)}</em>
+    </button>
+    ${(folder.children || []).map((child) => renderAdminStudioPickerNode(child, picker, library, depth + 1)).join('')}
+  </div>`
+}
+
+function renderAdminStudioFolderPicker(library = {}) {
+  const studio = state.operations.studio
+  const picker = studio.folderPicker || {}
+  if (!picker.open) return ''
+  const selected = findFolderById(library.folders || [], picker.selectedId)
+  const helper = picker.mode === 'move-instrument'
+    ? 'Moving an instrument changes its library location. Existing sample and Storage file paths are preserved.'
+    : picker.mode === 'move-folder'
+      ? 'The folder and descendant manifest paths will be recalculated. Existing Storage objects are not moved.'
+      : 'Choose a final engine folder for this instrument.'
+  return `<div class="admin-modal-backdrop admin-daw-picker-backdrop" data-admin-studio-picker-close>
+    <section class="admin-decision-modal admin-daw-folder-picker" role="dialog" aria-modal="true" aria-label="${escapeHtml(picker.title || 'Choose folder')}">
+      <header><div><span class="eyebrow">Default DAW Library</span><h2>${escapeHtml(picker.title || 'Choose folder')}</h2></div><button type="button" class="admin-icon-button" data-admin-studio-picker-close aria-label="Close folder picker">×</button></header>
+      <p class="admin-muted">${escapeHtml(helper)}</p>
+      <div class="admin-daw-picker-tree">${(library.folders || []).map((folder) => renderAdminStudioPickerNode(folder, picker, library)).join('')}</div>
+      <div class="admin-daw-picker-selection">
+        <span>Destination</span>
+        <strong>${escapeHtml(selected?.path || 'No folder selected')}</strong>
+      </div>
+      <div class="admin-modal-actions">
+        <button type="button" class="admin-secondary-button" data-admin-studio-picker-close>Cancel</button>
+        <button type="button" class="admin-primary-button" data-admin-studio-picker-confirm ${selected && isAdminStudioPickerDestinationAllowed(selected, picker, library) ? '' : 'disabled'}>Confirm destination</button>
+      </div>
+    </section>
+  </div>`
+}
+
 function renderAdminStudioLibraryTree(library = {}) {
   const studio = state.operations.studio
   const instruments = Array.isArray(library.instruments) ? library.instruments : []
@@ -3456,11 +3530,12 @@ function renderAdminStudioLibraryTree(library = {}) {
   if (!folders.length) return '<article class="admin-empty-state">Default library folders have not been initialized.</article>'
   const selected = findFolderById(folders, studio.selectedFolderId) || folders[0]
   const selectedInstruments = selected ? getInstrumentsForFolder(library, selected.path) : []
+  const selectedChildCount = selected?.children?.length || 0
   return `<div class="admin-studio-folder-manager">
     <div class="admin-studio-folder-tree" role="tree">${folders.map((root) => renderAdminStudioFolderNode(root, studio, instruments)).join('')}</div>
     <div class="admin-studio-folder-detail">
       ${selected ? `<form data-admin-studio-folder-edit>
-        <header><div><span>Selected folder</span><strong>${escapeHtml(selected.path)}</strong></div><span class="review-badge">${escapeHtml(selected.type)}</span></header>
+        <header><div><span>Selected folder</span><div class="admin-daw-breadcrumb">${adminStudioFolderBreadcrumb(selected)}</div></div><span class="review-badge">${escapeHtml(selected.type)}</span></header>
         <input type="hidden" name="folderId" value="${escapeHtml(selected.id)}">
         <div class="admin-form-grid">
           <label><span>Label</span><input name="label" value="${escapeHtml(selected.label)}" required ${selected.type === 'source-root' ? 'readonly' : ''}></label>
@@ -3470,13 +3545,16 @@ function renderAdminStudioLibraryTree(library = {}) {
         </div>
         <div class="admin-studio-folder-actions">
           <button type="submit" class="admin-primary-button">Save folder</button>
+          <button type="button" class="admin-secondary-button" data-admin-studio-folder-rename ${selected.type === 'source-root' ? 'disabled' : ''}>Rename folder</button>
+          <button type="button" class="admin-secondary-button" data-admin-studio-folder-add-open ${selected.type === 'engine-folder' ? 'disabled' : ''}>Add child folder</button>
+          <button type="button" class="admin-secondary-button" data-admin-studio-folder-move-open ${selected.type === 'source-root' ? 'disabled' : ''}>Move folder</button>
           <button type="button" class="admin-secondary-button" data-admin-studio-folder-move="-1">Move up</button>
           <button type="button" class="admin-secondary-button" data-admin-studio-folder-move="1">Move down</button>
-          <button type="button" class="admin-danger-button" data-admin-studio-folder-delete ${selected.type === 'source-root' ? 'disabled title="Source roots cannot be deleted."' : ''}>Delete</button>
+          <button type="button" class="admin-danger-button" data-admin-studio-folder-delete ${selected.type === 'source-root' || selectedChildCount || selectedInstruments.length ? 'disabled title="Folders containing children or instruments cannot be deleted."' : ''}>Delete folder</button>
           ${selected.type === 'engine-folder' ? '<button type="button" class="admin-secondary-button" data-admin-studio-use-destination>Use for instrument</button>' : ''}
         </div>
       </form>
-      ${selected.type !== 'engine-folder' ? `<form data-admin-studio-folder-add>
+      ${studio.addFolderOpen && selected.type !== 'engine-folder' ? `<form data-admin-studio-folder-add class="admin-daw-add-folder-form">
         <header><div><span>Add child folder</span><strong>Inside ${escapeHtml(selected.label)}</strong></div></header>
         <input type="hidden" name="parentId" value="${escapeHtml(selected.id)}">
         <div class="admin-form-grid">
@@ -3484,11 +3562,20 @@ function renderAdminStudioLibraryTree(library = {}) {
           <label><span>Folder type</span><select name="type"><option value="category-folder">category-folder</option><option value="engine-folder">engine-folder</option><option value="generic-folder">generic-folder</option></select></label>
           <label><span>Engine type</span><select name="engineType" disabled>${STUDIO_LIBRARY_ENGINE_TYPES.map((engine) => `<option value="${engine.id}">${escapeHtml(engine.label)}</option>`).join('')}</select></label>
         </div>
-        <button type="submit" class="admin-secondary-button">Add child folder</button>
-      </form>` : '<div class="admin-studio-folder-terminal"><strong>Final engine folder</strong><p>Assign instruments here. Add sibling categories or engines from the parent folder.</p></div>'}
+        <div class="admin-studio-folder-actions"><button type="submit" class="admin-primary-button">Create folder</button><button type="button" class="admin-secondary-button" data-admin-studio-folder-add-cancel>Cancel</button></div>
+      </form>` : selected.type === 'engine-folder' ? '<div class="admin-studio-folder-terminal"><strong>Final engine folder</strong><p>Assign instruments here. Add sibling categories or engines from the parent folder.</p></div>' : ''}
       <section class="admin-studio-folder-instruments">
-        <header><strong>Instruments in this exact folder</strong><span>${selectedInstruments.length}</span></header>
-        ${selectedInstruments.length ? `<ul>${selectedInstruments.map((instrument) => `<li><button type="button" data-studio-library-edit="${escapeHtml(instrument.id)}">${escapeHtml(instrument.name)}</button><small>${escapeHtml(instrument.engineType)} · v${instrument.version || 1}</small></li>`).join('')}</ul>` : '<p class="admin-muted">This folder is empty.</p>'}
+        <header><div><strong>Instruments in this exact folder</strong><small>${selectedChildCount} child folder${selectedChildCount === 1 ? '' : 's'}</small></div><span>${selectedInstruments.length}</span></header>
+        ${selectedInstruments.length ? `<ul>${selectedInstruments.map((instrument) => `<li class="${studio.selectedInstrumentId === instrument.id ? 'is-selected' : ''}">
+          <button type="button" class="admin-daw-instrument-select" data-admin-studio-instrument-select="${escapeHtml(instrument.id)}"><strong>${escapeHtml(instrument.name)}</strong><small>${escapeHtml(instrument.id)}</small></button>
+          <div class="admin-daw-instrument-facts"><span>${escapeHtml(instrument.engineType)}</span><span>${escapeHtml(instrument.sampleStrategy || 'No strategy')}</span><span>v${instrument.version || 1}</span><span class="${instrument.enabled === false ? 'is-disabled' : 'is-enabled'}">${instrument.enabled === false ? 'Disabled' : 'Enabled'}</span></div>
+          <div class="admin-daw-instrument-actions">
+            <button type="button" class="admin-secondary-button" data-studio-library-edit="${escapeHtml(instrument.id)}">Edit metadata</button>
+            <button type="button" class="admin-secondary-button" data-admin-studio-instrument-move="${escapeHtml(instrument.id)}">Move instrument</button>
+            <button type="button" class="admin-secondary-button" data-admin-studio-instrument-toggle="${escapeHtml(instrument.id)}">${instrument.enabled === false ? 'Enable' : 'Disable'}</button>
+            <button type="button" class="admin-danger-button" data-admin-studio-instrument-remove="${escapeHtml(instrument.id)}">Remove reference</button>
+          </div>
+        </li>`).join('')}</ul>` : '<p class="admin-muted">This folder is empty.</p>'}
       </section>` : '<article class="admin-empty-state">Select a folder.</article>'}
     </div>
   </div>`
@@ -3514,6 +3601,7 @@ function operationsStudioPanel() {
   const strategyWarnings = isSampleBased ? getSampleStrategyWarnings(form.sampleStrategy, studio.parsedSamples) : []
   return `
     ${studioOperationsSubnav()}
+    <div class="admin-daw-library-manager">
     ${studio.error ? `<p class="admin-status is-error">${escapeHtml(studio.error)}</p>` : ''}
     ${studio.message ? `<p class="admin-status is-success">${escapeHtml(studio.message)}</p>` : ''}
     <section class="admin-section-slab admin-operations-panel admin-studio-library-overview">
@@ -3522,7 +3610,12 @@ function operationsStudioPanel() {
           <h2>Default DAW Library</h2>
           <p class="admin-muted">Firestore manifest <code class="admin-code-value">/studioDawDefaults/libraryContent</code>. Audio remains in Firebase Storage.</p>
         </div>
-        <button type="button" class="admin-primary-button" data-studio-library-initialize ${studio.initializing ? 'disabled' : ''}>${studio.initializing ? 'Initializing...' : 'Initialize Default Library'}</button>
+        <div class="admin-daw-manager-toolbar">
+          <button type="button" class="admin-secondary-button" data-admin-studio-add-folder>Add Folder</button>
+          <button type="button" class="admin-secondary-button" data-admin-studio-expand-all>Expand All</button>
+          <button type="button" class="admin-secondary-button" data-admin-studio-collapse-all>Collapse All</button>
+          <button type="button" class="admin-primary-button" data-studio-library-initialize ${studio.initializing ? 'disabled' : ''}>${studio.initializing ? 'Initializing...' : 'Initialize / Repair'}</button>
+        </div>
       </div>
       ${studio.loading ? '<article class="admin-empty-state">Loading DAW library...</article>' : renderAdminStudioLibraryTree(library || {})}
     </section>
@@ -3538,7 +3631,7 @@ function operationsStudioPanel() {
         <div class="admin-form-grid">
           ${operationTextInput({ name: 'name', label: 'Instrument name', value: form.name, required: true })}
           <label><span>Instrument ID / slug</span><input name="id" value="${escapeHtml(form.id)}" required ${editing ? 'readonly' : ''}><small>${editing ? 'Instrument IDs stay stable after creation.' : 'Lowercase letters, numbers, and hyphens.'}</small></label>
-          <label class="is-wide"><span>Destination folder</span><select name="destinationFolderId" required><option value="">Choose a final engine folder</option>${destinationFolders.map((folder) => `<option value="${escapeHtml(folder.id)}" ${(selectedDestination?.id || '') === folder.id ? 'selected' : ''}>${escapeHtml(folder.path)} · ${escapeHtml(folder.engineType || '')}</option>`).join('')}</select><small>Choose a final engine folder, such as Sample Based.</small></label>
+          <div class="admin-daw-destination-field is-wide"><span>Destination folder</span><input type="hidden" name="destinationFolderId" value="${escapeHtml(selectedDestination?.id || '')}" required><button type="button" class="admin-daw-destination-picker" data-admin-studio-form-destination><strong>${escapeHtml(folderPath || 'Choose a final engine folder')}</strong><small>${escapeHtml(selectedDestination?.engineType || 'Select destination')}</small></button><small>Choose a final engine folder, such as Sample Based.</small></div>
           <input type="hidden" name="engineType" value="${escapeHtml(engineType)}">
           ${isSampleBased ? `<label><span>Sample strategy</span><select name="sampleStrategy">${STUDIO_SAMPLE_STRATEGIES.map((strategy) => `<option value="${strategy.id}" ${form.sampleStrategy === strategy.id ? 'selected' : ''}>${escapeHtml(strategy.label)}</option>`).join('')}</select><small>${escapeHtml(STUDIO_SAMPLE_STRATEGIES.find((strategy) => strategy.id === form.sampleStrategy)?.description || 'Arbitrary valid note + octave WAV roots')}</small></label>` : ''}
           ${operationTextInput({ name: 'version', label: 'Version', type: 'number', value: version, required: true })}
@@ -3552,10 +3645,10 @@ function operationsStudioPanel() {
           ${operationCheckbox({ name: 'commercialAllowed', label: 'Commercial use allowed', checked: form.commercialAllowed !== false })}
           ${operationCheckbox({ name: 'enabled', label: 'Instrument enabled', checked: form.enabled !== false })}
           <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility !== 'private' ? 'selected' : ''}>Public</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
-          ${isSampleBased ? `<label class="is-wide"><span>Audio ZIP</span><input type="file" name="audioZip" accept=".zip,application/zip,application/x-zip-compressed" ${studio.parsing || studio.saving ? 'disabled' : ''}><small>WAV roots use note + octave names such as C-1.wav, F#3.wav, Fs3.wav, or Bb4.wav. Strategy mismatches warn but do not block valid mappings.</small></label>` : ''}
-          ${isVst ? `<label class="is-wide"><span>HTML-based VST source</span><input type="file" name="htmlSource" accept=".html,text/html" ${studio.saving ? 'disabled' : ''}><small>Upload the HTML entry point for a future sandboxed web instrument that accepts MIDI and outputs audio. Source is stored only; runtime execution is coming soon.</small>${form.htmlSourcePath ? `<strong class="admin-studio-existing-source">${escapeHtml(form.htmlSourcePath)}</strong>` : ''}</label>` : ''}
+          ${isSampleBased ? `<label class="is-wide admin-daw-file-field"><span>Audio ZIP</span><input type="file" name="audioZip" accept=".zip,application/zip,application/x-zip-compressed" ${studio.parsing || studio.saving ? 'disabled' : ''}><small>WAV roots use note + octave names such as C-1.wav, F#3.wav, Fs3.wav, or Bb4.wav. Strategy mismatches warn but do not block valid mappings.</small></label>` : ''}
+          ${isVst ? `<label class="is-wide admin-daw-file-field"><span>HTML-based VST source</span><input type="file" name="htmlSource" accept=".html,text/html" ${studio.saving ? 'disabled' : ''}><small>Upload the HTML entry point for a future sandboxed web instrument that accepts MIDI and outputs audio. Source is stored only; runtime execution is coming soon.</small>${form.htmlSourcePath ? `<strong class="admin-studio-existing-source">${escapeHtml(form.htmlSourcePath)}</strong>` : ''}</label>` : ''}
           ${engineType === 'wavetable' ? '<div class="admin-studio-runtime-note is-wide"><strong>Wavetable runtime coming soon</strong><p>Save metadata now. Wavetable source and playback fields will be added with the dedicated runtime.</p></div>' : ''}
-          <label class="is-wide"><span>Artwork (optional WebP)</span><input type="file" name="artwork" accept="image/webp" ${studio.saving ? 'disabled' : ''}><small>Stored as artwork/cover.webp.</small></label>
+          <label class="is-wide admin-daw-file-field"><span>Artwork (optional WebP)</span><input type="file" name="artwork" accept="image/webp" ${studio.saving ? 'disabled' : ''}><small>Stored as artwork/cover.webp.</small></label>
           ${operationCheckbox({ name: 'overwrite', label: 'Replace an existing instrument with this ID', checked: editing || form.overwrite })}
         </div>
         ${isSampleBased ? `<section class="admin-studio-sample-preview">
@@ -3569,6 +3662,8 @@ function operationsStudioPanel() {
         </div>
       </form>
     </section>
+    ${renderAdminStudioFolderPicker(library || {})}
+    </div>
   `
 }
 
@@ -5451,17 +5546,106 @@ function updateInstrumentFolderPaths(instruments = [], oldPath = '', newPath = '
   })
 }
 
+function openAdminStudioFolderPicker({ mode = '', targetId = '', selectedId = '', engineOnly = false, title = 'Choose folder' } = {}) {
+  const studio = state.operations.studio
+  studio.folderPicker = { open: true, mode, targetId, selectedId, engineOnly, title }
+  studio.error = ''
+  render()
+}
+
+function closeAdminStudioFolderPicker() {
+  state.operations.studio.folderPicker = {
+    open: false,
+    mode: '',
+    targetId: '',
+    selectedId: '',
+    engineOnly: false,
+    title: ''
+  }
+  render()
+}
+
+async function confirmAdminStudioFolderPicker() {
+  const studio = state.operations.studio
+  const picker = studio.folderPicker
+  const destination = findFolderById(studio.library?.folders || [], picker?.selectedId)
+  if (!picker?.open || !destination || !isAdminStudioPickerDestinationAllowed(destination, picker, studio.library)) return
+  if (picker.mode === 'instrument-form') {
+    const previousEngineType = studio.form?.engineType || ''
+    studio.form = {
+      ...studio.form,
+      destinationFolderId: destination.id,
+      folderPath: destination.path,
+      engineType: destination.engineType || ''
+    }
+    if (previousEngineType && previousEngineType !== destination.engineType) {
+      studio.zipFile = null
+      studio.parsedSamples = []
+      studio.htmlSourceFile = null
+    }
+    studio.folderPicker.open = false
+    studio.message = `${destination.path} selected as the instrument destination.`
+    render()
+    return
+  }
+  studio.saving = true
+  studio.error = ''
+  studio.message = ''
+  render()
+  try {
+    if (picker.mode === 'move-folder') {
+      const result = moveLibraryFolderToParent(studio.library.folders, picker.targetId, destination.id)
+      const instruments = updateInstrumentFolderPaths(studio.library.instruments, result.oldPath, result.newPath)
+      studio.library = await saveDefaultLibraryContent({ ...studio.library, folders: result.folders, instruments })
+      studio.selectedFolderId = picker.targetId
+      studio.expandedFolderIds.add(destination.id)
+      studio.message = `Folder moved to ${destination.path}. Instrument library locations were updated; existing Storage paths were preserved.`
+    } else if (picker.mode === 'move-instrument') {
+      const instrument = studio.library.instruments?.find((item) => item.id === picker.targetId)
+      if (!instrument) throw new Error('Instrument was not found.')
+      if (destination.type !== 'engine-folder') throw new Error('Choose a final engine folder.')
+      if (instrument.engineType && destination.engineType !== instrument.engineType) throw new Error(`Choose a ${instrument.engineType} engine folder to preserve playback compatibility.`)
+      const sourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.find((root) => destination.path === root.label || destination.path.startsWith(`${root.label}/`))?.id || instrument.sourceRoot
+      await updateDefaultInstrument(instrument.id, {
+        ...instrument,
+        folderPath: destination.path,
+        sourceRoot,
+        engineType: destination.engineType || instrument.engineType
+      })
+      studio.library = await getDefaultLibraryContent()
+      studio.selectedFolderId = destination.id
+      studio.selectedInstrumentId = instrument.id
+      studio.message = `${instrument.name} moved to ${destination.path}. Existing sample and Storage paths were preserved.`
+    }
+    studio.folderPicker.open = false
+  } catch (error) {
+    studio.error = error?.message || 'Could not complete the move.'
+  } finally {
+    studio.saving = false
+    render()
+  }
+}
+
 async function saveAdminStudioFolderEdit(form) {
   const studio = state.operations.studio
   if (!can('admin') || studio.saving || !studio.library) return
   const values = operationsFormValues(form)
   const folder = findFolderById(studio.library.folders, values.folderId)
   if (!folder) return
+  const exactFolderInstruments = getInstrumentsForFolder(studio.library, folder.path)
   studio.saving = true
   studio.error = ''
   studio.message = ''
   render()
   try {
+    const nextType = values.type || folder.type
+    const nextEngineType = values.engineType || folder.engineType || ''
+    if (exactFolderInstruments.length && nextType !== 'engine-folder') {
+      throw new Error('Move instruments out of this folder before changing it to a non-engine folder.')
+    }
+    if (exactFolderInstruments.length && folder.engineType && nextEngineType !== folder.engineType) {
+      throw new Error(`Move instruments out of this folder before changing its engine type from ${folder.engineType}.`)
+    }
     const renameResult = values.label !== folder.label
       ? renameLibraryFolder(studio.library.folders, folder.id, values.label)
       : { folders: studio.library.folders, oldPath: folder.path, newPath: folder.path }
@@ -5499,6 +5683,7 @@ async function addAdminStudioFolder(form) {
     const created = flattenLibraryFolders(studio.library.folders).find((folder) => folder.path === `${findFolderById(studio.library.folders, values.parentId)?.path}/${String(values.label || '').trim().replaceAll('/', '-')}`)
     if (created) studio.selectedFolderId = created.id
     studio.expandedFolderIds.add(values.parentId)
+    studio.addFolderOpen = false
     studio.message = `${values.label} was added.`
   } catch (error) {
     studio.error = error?.message || 'Could not add the folder.'
@@ -5530,13 +5715,18 @@ async function deleteAdminStudioFolder() {
   const studio = state.operations.studio
   const folder = findFolderById(studio.library?.folders || [], studio.selectedFolderId)
   if (!can('admin') || studio.saving || !folder || folder.type === 'source-root') return
+  if (folder.children?.length) {
+    studio.error = 'This folder contains child folders. Move or delete them before deleting this folder.'
+    render()
+    return
+  }
   const affected = (studio.library.instruments || []).filter((instrument) => instrument.folderPath === folder.path || instrument.folderPath.startsWith(`${folder.path}/`))
   if (affected.length) {
     studio.error = `Move ${affected.length} instrument${affected.length === 1 ? '' : 's'} out of this folder before deleting it.`
     render()
     return
   }
-  if (!window.confirm(`Delete "${folder.label}" and all empty child folders?`)) return
+  if (!window.confirm(`Delete the empty folder "${folder.label}"?`)) return
   studio.saving = true
   studio.error = ''
   render()
@@ -5549,6 +5739,56 @@ async function deleteAdminStudioFolder() {
     studio.message = `${folder.label} was deleted.`
   } catch (error) {
     studio.error = error?.message || 'Could not delete the folder.'
+  } finally {
+    studio.saving = false
+    render()
+  }
+}
+
+async function toggleAdminStudioInstrument(instrumentId = '') {
+  const studio = state.operations.studio
+  const instrument = studio.library?.instruments?.find((item) => item.id === instrumentId)
+  if (!can('admin') || studio.saving || !instrument) return
+  studio.saving = true
+  studio.error = ''
+  render()
+  try {
+    await updateDefaultInstrument(instrument.id, { ...instrument, enabled: instrument.enabled === false })
+    studio.library = await getDefaultLibraryContent()
+    studio.selectedInstrumentId = instrument.id
+    studio.message = `${instrument.name} is now ${instrument.enabled === false ? 'enabled' : 'disabled'}.`
+  } catch (error) {
+    studio.error = error?.message || 'Could not update the instrument.'
+  } finally {
+    studio.saving = false
+    render()
+  }
+}
+
+async function removeAdminStudioInstrument(instrumentId = '') {
+  const studio = state.operations.studio
+  const instrument = studio.library?.instruments?.find((item) => item.id === instrumentId)
+  if (!can('admin') || studio.saving || !instrument) return
+  if (!window.confirm(`Remove "${instrument.name}" from the default library manifest? Storage files will not be deleted.`)) return
+  studio.saving = true
+  studio.error = ''
+  render()
+  try {
+    await removeDefaultInstrumentFromLibrary(instrument.id)
+    studio.library = await getDefaultLibraryContent()
+    studio.selectedInstrumentId = ''
+    if (studio.editingId === instrument.id) {
+      studio.editingId = ''
+      studio.form = defaultStudioInstrumentForm()
+      studio.parsedSamples = []
+      studio.zipFile = null
+      studio.htmlSourceFile = null
+      studio.artworkFile = null
+      studio.progress = 0
+    }
+    studio.message = `${instrument.name} was removed from the manifest. Storage files were preserved.`
+  } catch (error) {
+    studio.error = error?.message || 'Could not remove the instrument reference.'
   } finally {
     studio.saving = false
     render()
@@ -5648,9 +5888,15 @@ async function submitAdminStudioInstrument(form) {
   const engineType = destination?.engineType || ''
   const sourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.find((root) => folderPath === root.label || folderPath.startsWith(`${root.label}/`))?.id || 'melogic-records'
   const version = Math.max(1, Math.round(Number(values.version) || 1))
-  const storageBasePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`
-  const samplesPath = `${storageBasePath}/samples`
   const existing = studio.library?.instruments?.find((item) => item.id === (studio.editingId || id))
+  const proposedStorageBasePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`
+  const replacingEngineSource = Boolean(studio.parsedSamples.length || studio.htmlSourceFile)
+  const storageBasePath = existing && !replacingEngineSource
+    ? existing.storageBasePath || proposedStorageBasePath
+    : proposedStorageBasePath
+  const samplesPath = existing && engineType === 'sample-based' && !studio.parsedSamples.length
+    ? existing.samplesPath || `${storageBasePath}/samples`
+    : `${storageBasePath}/samples`
   studio.saving = true
   studio.progress = 0
   studio.error = ''
@@ -5660,8 +5906,7 @@ async function submitAdminStudioInstrument(form) {
     if (!values.name || !id) throw new Error('Instrument name and ID are required.')
     if (!studio.library) throw new Error('Initialize the default DAW library before adding instruments.')
     if (!destination || destination.type !== 'engine-folder' || !engineType) throw new Error('Choose a final engine folder, such as Sample Based.')
-    if (existing && existing.folderPath !== folderPath && engineType === 'sample-based' && !studio.parsedSamples.length) throw new Error('Upload the sample ZIP again when moving a sample-based instrument to a new Storage destination.')
-    if (existing && existing.folderPath !== folderPath && engineType === 'vst' && !studio.htmlSourceFile) throw new Error('Upload the HTML source again when moving a VST instrument to a new Storage destination.')
+    if (existing?.engineType && existing.engineType !== engineType && !replacingEngineSource) throw new Error('Choose a destination with the same engine type, or upload a replacement engine source.')
     if (!existing && engineType === 'sample-based' && !studio.parsedSamples.length) throw new Error('A new sample-based instrument requires a ZIP with at least one valid WAV sample.')
     const sampleRows = engineType === 'sample-based' && studio.parsedSamples.length
       ? buildSamplesFromFiles(studio.parsedSamples, samplesPath)
@@ -6873,6 +7118,27 @@ function bindEvents() {
     event.preventDefault()
     submitAdminStudioInstrument(event.currentTarget)
   })
+  app.querySelector('[data-admin-studio-add-folder]')?.addEventListener('click', () => {
+    const studio = state.operations.studio
+    const selected = findFolderById(studio.library?.folders || [], studio.selectedFolderId)
+    if (!selected) {
+      studio.error = 'Select a parent folder before adding a child folder.'
+    } else if (selected.type === 'engine-folder') {
+      studio.error = 'Engine folders are final destinations. Select their parent before adding a sibling folder.'
+    } else {
+      studio.addFolderOpen = true
+      studio.error = ''
+    }
+    render()
+  })
+  app.querySelector('[data-admin-studio-expand-all]')?.addEventListener('click', () => {
+    state.operations.studio.expandedFolderIds = new Set(flattenLibraryFolders(state.operations.studio.library?.folders || []).map((folder) => folder.id))
+    render()
+  })
+  app.querySelector('[data-admin-studio-collapse-all]')?.addEventListener('click', () => {
+    state.operations.studio.expandedFolderIds = new Set()
+    render()
+  })
   app.querySelectorAll('[data-admin-studio-folder-toggle]').forEach((button) => {
     button.addEventListener('click', () => {
       const id = button.dataset.adminStudioFolderToggle || ''
@@ -6886,6 +7152,8 @@ function bindEvents() {
   app.querySelectorAll('[data-admin-studio-folder-select]').forEach((button) => {
     button.addEventListener('click', () => {
       state.operations.studio.selectedFolderId = button.dataset.adminStudioFolderSelect || ''
+      state.operations.studio.selectedInstrumentId = ''
+      state.operations.studio.addFolderOpen = false
       state.operations.studio.error = ''
       render()
     })
@@ -6897,6 +7165,29 @@ function bindEvents() {
   app.querySelector('[data-admin-studio-folder-add]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     addAdminStudioFolder(event.currentTarget)
+  })
+  app.querySelector('[data-admin-studio-folder-add-open]')?.addEventListener('click', () => {
+    state.operations.studio.addFolderOpen = true
+    render()
+  })
+  app.querySelector('[data-admin-studio-folder-add-cancel]')?.addEventListener('click', () => {
+    state.operations.studio.addFolderOpen = false
+    render()
+  })
+  app.querySelector('[data-admin-studio-folder-rename]')?.addEventListener('click', () => {
+    const input = app.querySelector('[data-admin-studio-folder-edit] input[name="label"]')
+    input?.focus()
+    input?.select()
+  })
+  app.querySelector('[data-admin-studio-folder-move-open]')?.addEventListener('click', () => {
+    const studio = state.operations.studio
+    openAdminStudioFolderPicker({
+      mode: 'move-folder',
+      targetId: studio.selectedFolderId,
+      selectedId: '',
+      engineOnly: false,
+      title: 'Move folder'
+    })
   })
   app.querySelectorAll('[data-admin-studio-folder-move]').forEach((button) => {
     button.addEventListener('click', () => moveAdminStudioFolder(Number(button.dataset.adminStudioFolderMove) || 1))
@@ -6915,6 +7206,58 @@ function bindEvents() {
     render()
     requestAnimationFrame(() => app.querySelector('[data-studio-library-form]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   })
+  app.querySelectorAll('[data-admin-studio-instrument-select]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.operations.studio.selectedInstrumentId = button.dataset.adminStudioInstrumentSelect || ''
+      render()
+    })
+  })
+  app.querySelectorAll('[data-admin-studio-instrument-move]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const instrumentId = button.dataset.adminStudioInstrumentMove || ''
+      const instrument = state.operations.studio.library?.instruments?.find((item) => item.id === instrumentId)
+      openAdminStudioFolderPicker({
+        mode: 'move-instrument',
+        targetId: instrumentId,
+        selectedId: findFolderByPath(state.operations.studio.library?.folders || [], instrument?.folderPath)?.id || '',
+        engineOnly: true,
+        title: `Move ${instrument?.name || 'instrument'}`
+      })
+    })
+  })
+  app.querySelectorAll('[data-admin-studio-instrument-toggle]').forEach((button) => {
+    button.addEventListener('click', () => toggleAdminStudioInstrument(button.dataset.adminStudioInstrumentToggle || ''))
+  })
+  app.querySelectorAll('[data-admin-studio-instrument-remove]').forEach((button) => {
+    button.addEventListener('click', () => removeAdminStudioInstrument(button.dataset.adminStudioInstrumentRemove || ''))
+  })
+  app.querySelector('[data-admin-studio-form-destination]')?.addEventListener('click', () => {
+    const formElement = app.querySelector('[data-studio-library-form]')
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      ...(formElement ? operationsFormValues(formElement) : {})
+    }
+    const formState = studioInstrumentFormState()
+    openAdminStudioFolderPicker({
+      mode: 'instrument-form',
+      selectedId: formState.destinationFolderId || '',
+      engineOnly: true,
+      title: 'Choose instrument destination'
+    })
+  })
+  app.querySelectorAll('[data-admin-studio-picker-folder]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.operations.studio.folderPicker.selectedId = button.dataset.adminStudioPickerFolder || ''
+      render()
+    })
+  })
+  app.querySelectorAll('[data-admin-studio-picker-close]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      if (element.classList.contains('admin-daw-picker-backdrop') && event.target !== element) return
+      closeAdminStudioFolderPicker()
+    })
+  })
+  app.querySelector('[data-admin-studio-picker-confirm]')?.addEventListener('click', confirmAdminStudioFolderPicker)
   app.querySelector('[data-admin-studio-folder-edit] select[name="type"]')?.addEventListener('change', (event) => {
     const engine = event.currentTarget.form?.elements?.engineType
     if (engine) engine.disabled = event.currentTarget.value !== 'engine-folder'
@@ -6963,26 +7306,9 @@ function bindEvents() {
     if (folder) folder.textContent = folderPath
     if (storagePath) storagePath.textContent = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`
   }
-  studioLibraryForm?.querySelectorAll('select[name="destinationFolderId"],input[name="id"],input[name="name"],input[name="version"]').forEach((input) => {
+  studioLibraryForm?.querySelectorAll('input[name="id"],input[name="name"],input[name="version"]').forEach((input) => {
     input.addEventListener('input', updateStudioPathPreview)
     input.addEventListener('change', updateStudioPathPreview)
-  })
-  studioLibraryForm?.querySelector('select[name="destinationFolderId"]')?.addEventListener('change', (event) => {
-    const destination = findFolderById(state.operations.studio.library?.folders || [], event.currentTarget.value)
-    const previousEngineType = state.operations.studio.form?.engineType || studioLibraryForm.elements.engineType?.value || ''
-    state.operations.studio.form = {
-      ...state.operations.studio.form,
-      ...operationsFormValues(event.currentTarget.form),
-      destinationFolderId: destination?.id || '',
-      folderPath: destination?.path || '',
-      engineType: destination?.engineType || ''
-    }
-    if (previousEngineType !== destination?.engineType) {
-      state.operations.studio.zipFile = null
-      state.operations.studio.parsedSamples = []
-      state.operations.studio.htmlSourceFile = null
-    }
-    render()
   })
   studioLibraryForm?.querySelector('select[name="sampleStrategy"]')?.addEventListener('change', (event) => {
     state.operations.studio.form = {

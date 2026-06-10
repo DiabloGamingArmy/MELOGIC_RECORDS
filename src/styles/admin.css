@@ -2354,6 +2354,8 @@
   color: var(--admin-primary);
   font-size: 0.74rem;
   font-weight: 900;
+}
+
 .admin-studio-folder-instruments ul {
   display: grid;
   gap: 0.4rem;
@@ -2371,7 +2373,7 @@
   background: var(--admin-card);
 }
 
-.admin-studio-folder-instruments li button {
+.admin-daw-instrument-select {
   border: 0;
   background: transparent;
   color: var(--admin-text);
@@ -2387,9 +2389,314 @@
   font-size: 0.72rem;
 }
 
+.admin-daw-library-manager {
+  display: grid;
+  gap: 0.9rem;
+  color: var(--admin-text);
+}
+
+.admin-daw-manager-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+}
+
+.admin-daw-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.28rem;
+  color: var(--admin-text);
+  font-weight: 800;
+}
+
+.admin-daw-breadcrumb i {
+  color: var(--admin-muted);
+  font-style: normal;
+}
+
+.admin-studio-folder-instruments > header > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.admin-studio-folder-instruments > header small {
+  color: var(--admin-muted);
+}
+
+.admin-studio-folder-instruments li {
+  gap: 0.55rem;
+  border: 1px solid var(--admin-border);
+}
+
+.admin-studio-folder-instruments li.is-selected {
+  border-color: color-mix(in srgb, var(--admin-primary) 68%, var(--admin-border));
+  background: color-mix(in srgb, var(--admin-primary) 10%, var(--admin-card));
+}
+
+.admin-daw-instrument-select {
+  min-width: 0;
+  display: grid;
+  gap: 0.14rem;
+}
+
+.admin-daw-instrument-select strong,
+.admin-daw-instrument-select small {
+  overflow-wrap: anywhere;
+}
+
+.admin-daw-instrument-facts,
+.admin-daw-instrument-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.36rem;
+}
+
+.admin-daw-instrument-facts span {
+  border: 1px solid var(--admin-border);
+  border-radius: 5px;
+  background: var(--admin-card-subtle);
+  color: var(--admin-muted);
+  padding: 0.24rem 0.4rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.admin-daw-instrument-facts span.is-enabled {
+  color: #4ade80;
+}
+
+[data-admin-theme="light"] .admin-daw-instrument-facts span.is-enabled {
+  color: #18733c;
+}
+
+.admin-daw-instrument-facts span.is-disabled {
+  color: #f59e0b;
+}
+
+.admin-daw-instrument-actions button {
+  min-height: 32px;
+  padding-inline: 0.55rem;
+  font-size: 0.72rem;
+}
+
+.admin-daw-add-folder-form {
+  background: color-mix(in srgb, var(--admin-primary) 5%, var(--admin-card-subtle));
+}
+
 .admin-studio-library-form {
   display: grid;
   gap: 0.9rem;
+}
+
+.admin-daw-library-manager .admin-studio-library-form,
+.admin-daw-library-manager .admin-studio-folder-detail form {
+  color: var(--admin-text);
+}
+
+.admin-daw-library-manager input:not([type="checkbox"]):not([type="hidden"]),
+.admin-daw-library-manager select,
+.admin-daw-library-manager textarea {
+  border-color: var(--admin-border-strong);
+  background: var(--admin-input);
+  color: var(--admin-text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--admin-text) 4%, transparent);
+}
+
+.admin-daw-library-manager input::placeholder,
+.admin-daw-library-manager textarea::placeholder {
+  color: var(--admin-muted);
+}
+
+.admin-daw-library-manager input:focus,
+.admin-daw-library-manager select:focus,
+.admin-daw-library-manager textarea:focus,
+.admin-daw-destination-picker:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--admin-primary) 55%, transparent);
+  outline-offset: 1px;
+  border-color: var(--admin-primary);
+}
+
+.admin-daw-library-manager .admin-checkbox-field {
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  border: 1px solid var(--admin-border);
+  border-radius: 7px;
+  background: var(--admin-card-subtle);
+  padding: 0.65rem;
+}
+
+.admin-daw-library-manager .admin-checkbox-field input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--admin-primary);
+}
+
+.admin-daw-library-manager .admin-checkbox-field small {
+  grid-column: 2;
+}
+
+.admin-daw-destination-field {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--admin-muted);
+  font-size: 0.82rem;
+}
+
+.admin-daw-destination-picker {
+  min-height: 58px;
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid var(--admin-border-strong);
+  border-radius: 7px;
+  background: var(--admin-input);
+  color: var(--admin-text);
+  padding: 0.65rem 0.75rem;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-daw-destination-picker small,
+.admin-daw-destination-field > small {
+  color: var(--admin-muted);
+}
+
+.admin-daw-file-field {
+  border: 1px solid var(--admin-border);
+  border-radius: 7px;
+  background: var(--admin-card-subtle);
+  padding: 0.75rem;
+}
+
+.admin-daw-file-field input[type="file"] {
+  padding: 0.35rem;
+}
+
+.admin-daw-file-field input[type="file"]::file-selector-button {
+  min-height: 34px;
+  margin-right: 0.65rem;
+  border: 1px solid var(--admin-border-strong);
+  border-radius: 6px;
+  background: var(--admin-card);
+  color: var(--admin-text);
+  padding: 0 0.65rem;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.admin-daw-picker-backdrop {
+  z-index: 1200;
+}
+
+.admin-daw-folder-picker {
+  width: min(760px, calc(100vw - 2rem));
+  max-height: min(820px, calc(100vh - 2rem));
+  display: grid;
+  grid-template-rows: auto auto minmax(180px, 1fr) auto auto;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+.admin-daw-folder-picker header > div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.admin-daw-picker-tree {
+  min-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--admin-border);
+  border-radius: 7px;
+  background: var(--admin-card-subtle);
+  padding: 0.5rem;
+}
+
+.admin-daw-picker-node {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.admin-daw-picker-node > button {
+  width: 100%;
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--admin-text);
+  padding: 0.35rem 0.5rem 0.35rem calc(0.5rem + (var(--admin-picker-depth, 0) * 1rem));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-daw-picker-node > button:hover,
+.admin-daw-picker-node > button.is-selected {
+  border-color: color-mix(in srgb, var(--admin-primary) 45%, var(--admin-border));
+  background: color-mix(in srgb, var(--admin-primary) 10%, var(--admin-card));
+}
+
+.admin-daw-picker-node > button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.admin-daw-picker-node > button > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 0.1rem;
+}
+
+.admin-daw-picker-node small {
+  overflow: hidden;
+  color: var(--admin-muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-daw-picker-node em {
+  color: var(--admin-muted);
+  font-size: 0.68rem;
+  font-style: normal;
+}
+
+.admin-daw-folder-glyph {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--admin-primary) 14%, transparent);
+  color: var(--admin-primary);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.admin-daw-picker-selection {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid var(--admin-border);
+  border-radius: 7px;
+  background: var(--admin-code-bg);
+  padding: 0.65rem;
+}
+
+.admin-daw-picker-selection span {
+  color: var(--admin-muted);
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-daw-picker-selection strong {
+  overflow-wrap: anywhere;
 }
 
 .admin-studio-library-form label {
