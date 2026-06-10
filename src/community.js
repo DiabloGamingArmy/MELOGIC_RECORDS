@@ -91,7 +91,7 @@ const state = {
   activeTab: 'for-you',
   activeCommunityId: '',
   activeCommunitySlug: '',
-  activeTopicLabel: 'Home',
+  activeTopicLabel: 'For You',
   selectedCommunityFilters: [],
   activeTag: normalizeTagKey(parseFeedParam('tag')),
   feedSearch: parseFeedParam('search'),
@@ -134,6 +134,11 @@ const state = {
     loading: false,
     error: ''
   },
+  imageViewer: {
+    open: false,
+    url: '',
+    name: ''
+  },
   posts: [],
   attachmentMediaUrls: {},
   viewerState: {},
@@ -145,6 +150,7 @@ const state = {
   feedError: '',
   feedStillLoading: false,
   feedRequestId: 0,
+  activeFeedQueryKey: '',
   openPostMenuId: '',
   openCommentMenuKey: '',
   topCommentPreviews: {},
@@ -334,12 +340,25 @@ function feedQueryOptions() {
   return {
     tab: state.activeTab,
     communitySlug: state.view.type === 'community' && state.community ? state.community.slug : state.activeCommunitySlug,
-    communityIds: state.view.type === 'feed' && state.activeTab === 'for-you' ? state.selectedCommunityFilters.slice(0, 10) : [],
+    communityIds: state.view.type === 'feed' ? state.selectedCommunityFilters.slice(0, 10) : [],
     limitCount: COMMUNITY_PAGE_SIZE,
     tag: state.activeTag,
     search: state.feedSearch,
     sort: state.feedSort
   }
+}
+
+function feedQueryKey() {
+  const options = feedQueryOptions()
+  return JSON.stringify({
+    view: state.view.type,
+    slug: options.communitySlug,
+    mode: state.activeTab,
+    communityIds: [...options.communityIds].sort(),
+    tag: options.tag,
+    search: String(options.search || '').trim().toLowerCase(),
+    sort: options.sort
+  })
 }
 
 function resetFeedPagination() {
@@ -643,7 +662,7 @@ function activeFeedTitle() {
   if (state.activeTab === 'community') return state.activeTopicLabel || 'Community'
   if (state.activeTab === 'official') return 'Official'
   if (state.activeTab === 'new') return 'New'
-  return 'Home'
+  return 'For You'
 }
 
 function filterPostsForActiveTab(posts = []) {
@@ -710,7 +729,7 @@ function renderTopicBar() {
     <section class="community-topic-bar" aria-label="Community topics">
       <button type="button" class="community-topic-arrow is-left" data-topic-scroll="-1" aria-label="Scroll topics left">${iconSvg('arrowLeft')}</button>
       <div class="community-topic-scroll" data-community-topic-scroll>
-        <button type="button" class="community-topic-pill ${state.activeTab === 'for-you' && !state.selectedCommunityFilters.length ? 'is-active' : ''}" data-community-tab="for-you">Home</button>
+        <button type="button" class="community-topic-pill ${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
         <button type="button" class="community-topic-pill ${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Focused</button>
         <span class="community-topic-divider" aria-hidden="true"></span>
         ${communityPills}
@@ -1219,7 +1238,7 @@ function renderComposerStudioPicker() {
   `
 }
 
-function renderMentionPicker() {
+function renderMentionPickerContent() {
   if (!state.composer.mentionQuery && !state.composer.mentionedUsers.length) return ''
   return `
     <section class="community-mention-picker" aria-label="Mention people">
@@ -1240,6 +1259,10 @@ function renderMentionPicker() {
       ` : state.composer.mentionQuery.length >= 2 ? '<p>No creators found.</p>' : ''}
     </section>
   `
+}
+
+function renderMentionPicker() {
+  return `<div data-mention-picker-region>${renderMentionPickerContent()}</div>`
 }
 
 function renderEmojiPanel() {
@@ -1652,12 +1675,12 @@ function renderUploadedPostAttachment(attachment = {}) {
     : ''
   if (attachment.type === 'image') {
     return `
-      <a class="community-post-file-attachment is-image" href="${escapeHtml(url || '#')}" target="_blank" rel="noopener" data-stop-card-nav>
+      <button type="button" class="community-post-file-attachment is-image" data-open-community-image="${escapeHtml(url)}" data-community-image-name="${escapeHtml(name)}" data-stop-card-nav ${url ? '' : 'disabled'}>
         ${url
           ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async"${dimensions} />`
           : `<span class="community-attachment-load-state">Image preview unavailable</span>`
         }
-      </a>
+      </button>
     `
   }
   if (attachment.type === 'video') {
@@ -1881,7 +1904,7 @@ function renderCommentAttachments(comment = {}, { compact = false } = {}) {
     <div class="community-comment-attachments ${compact ? 'is-compact' : ''}">
       ${attachments.map((attachment) => {
         if (attachment.type === 'image' && attachment.url) {
-          return `<a class="community-comment-image" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name || 'Comment image')}" loading="lazy" /></a>`
+          return `<button type="button" class="community-comment-image" data-open-community-image="${escapeHtml(attachment.url)}" data-community-image-name="${escapeHtml(attachment.name || 'Comment image')}"><img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name || 'Comment image')}" loading="lazy" /></button>`
         }
         if (attachment.type === 'audio' && attachment.url) {
           return `<div class="community-comment-audio"><strong>${escapeHtml(attachment.name || 'Audio attachment')}</strong><audio controls preload="none" src="${escapeHtml(attachment.url)}"></audio></div>`
@@ -2395,6 +2418,26 @@ function renderEditPostModal() {
   `
 }
 
+function renderCommunityImageViewer() {
+  if (!state.imageViewer.open || !state.imageViewer.url) return ''
+  return `
+    <div class="community-image-viewer-backdrop" data-community-image-viewer-backdrop>
+      <section class="community-image-viewer" role="dialog" aria-modal="true" aria-label="${escapeHtml(state.imageViewer.name || 'Image attachment')}">
+        <header>
+          <span>${escapeHtml(state.imageViewer.name || 'Image attachment')}</span>
+          <button type="button" data-close-community-image-viewer aria-label="Close image viewer">${iconSvg('x')}</button>
+        </header>
+        <div class="community-image-viewer-stage">
+          <img src="${escapeHtml(state.imageViewer.url)}" alt="${escapeHtml(state.imageViewer.name || 'Community attachment')}" />
+        </div>
+        <footer>
+          <a class="button button-muted" href="${escapeHtml(state.imageViewer.url)}" target="_blank" rel="noopener noreferrer">Open original</a>
+        </footer>
+      </section>
+    </div>
+  `
+}
+
 function renderLeftNav() {
   const navGroups = [
     {
@@ -2715,10 +2758,12 @@ function renderCommunityHomeView() {
 }
 
 function renderCommunityViewContent() {
-  if (state.detailPostId) return renderDetail()
-  if (state.view.type === 'communities') return renderCommunitiesView()
-  if (state.view.type === 'community') return renderCommunityDetail()
-  return renderCommunityHomeView()
+  let content = ''
+  if (state.detailPostId) content = renderDetail()
+  else if (state.view.type === 'communities') content = renderCommunitiesView()
+  else if (state.view.type === 'community') content = renderCommunityDetail()
+  else content = renderCommunityHomeView()
+  return `${content}${renderCommunityImageViewer()}`
 }
 
 function renderFeedToolbar() {
@@ -2735,8 +2780,8 @@ function renderFeedToolbar() {
     <section class="community-feed-toolbar" aria-label="Feed controls">
       <div>
         <p class="eyebrow">Community</p>
-        <h1>${escapeHtml(title)}</h1>
-        <p>${escapeHtml(subtitle)}</p>
+        <h1 data-community-feed-title>${escapeHtml(title)}</h1>
+        <p data-community-feed-subtitle>${escapeHtml(subtitle)}</p>
         ${(state.activeTag || state.feedSearch) ? `<div class="community-active-filters">
           ${state.activeTag ? `<button type="button" data-clear-community-tag>#${escapeHtml(state.activeTag)} ${iconSvg('x')}</button>` : ''}
           ${state.feedSearch ? `<button type="button" data-clear-community-search>${escapeHtml(state.feedSearch)} ${iconSvg('x')}</button>` : ''}
@@ -2760,6 +2805,15 @@ function renderFeedToolbar() {
       </div>
     </section>
   `
+}
+
+function updateFeedToolbarText() {
+  const title = app?.querySelector('[data-community-feed-title]')
+  const subtitle = app?.querySelector('[data-community-feed-subtitle]')
+  if (title) title.textContent = activeFeedTitle()
+  if (subtitle) subtitle.textContent = state.activeTab === 'following'
+    ? 'Posts from communities you focus.'
+    : 'Fresh creator updates from across Melogic.'
 }
 
 function render() {
@@ -3053,6 +3107,27 @@ function mergeUniquePosts(existing = [], incoming = []) {
   return [...byId.values()]
 }
 
+function firebaseIndexUrl(error) {
+  return String(error?.message || error?.details || '').match(/https:\/\/console\.firebase\.google\.com\/\S+/)?.[0] || ''
+}
+
+function isFirestoreIndexError(error) {
+  const detail = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase()
+  return detail.includes('failed-precondition') || detail.includes('requires an index') || detail.includes('query requires an index')
+}
+
+function withFeedTimeout(promise, timeoutMs = 15000) {
+  let timeoutId = 0
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      const error = new Error('Community feed request timed out.')
+      error.code = 'feed-timeout'
+      reject(error)
+    }, timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId))
+}
+
 function renderFeedRegionOnly() {
   const region = app?.querySelector('[data-community-feed-region]')
   if (!region) {
@@ -3067,10 +3142,13 @@ function renderFeedRegionOnly() {
 }
 
 async function loadFeedPage({ reset = false, localOnly = false } = {}) {
+  const queryKey = feedQueryKey()
+  if (reset && state.feedInitialLoading && state.activeFeedQueryKey === queryKey) return
   if (reset) resetFeedPagination()
   if (!reset && (!state.feedHasMore || state.feedLoadingMore || state.feedInitialLoading)) return
   const requestId = reset ? state.feedRequestId + 1 : state.feedRequestId
   state.feedRequestId = requestId
+  if (reset) state.activeFeedQueryKey = queryKey
   state.feedError = ''
   if (reset) {
     state.posts = []
@@ -3103,21 +3181,25 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
     let hasMore = false
     if (state.activeTab === 'following') {
       if (reset && state.currentUser?.uid) {
-        posts = await listFocusedCommunityPosts(state.currentUser.uid, COMMUNITY_PAGE_SIZE)
+        posts = await withFeedTimeout(listFocusedCommunityPosts(
+          state.currentUser.uid,
+          COMMUNITY_PAGE_SIZE,
+          state.selectedCommunityFilters
+        ))
         posts = filterPostsForActiveTab(posts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
       }
       hasMore = false
     } else {
-      const result = await listCommunityPosts({
+      const result = await withFeedTimeout(listCommunityPosts({
         ...feedQueryOptions(),
         pageMode: true,
         cursor: reset ? null : state.feedCursor
-      })
+      }))
       posts = filterPostsForActiveTab(result.posts || [])
       cursor = result.cursor || null
       hasMore = Boolean(result.hasMore)
     }
-    if (requestId !== state.feedRequestId) return
+    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
     state.posts = reset ? sortPinnedPosts(posts) : sortPinnedPosts(mergeUniquePosts(state.posts, posts))
     state.feedCursor = cursor || state.feedCursor
     state.feedHasMore = hasMore
@@ -3127,12 +3209,20 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
       hasMore
     })
   } catch (error) {
-    if (requestId !== state.feedRequestId) return
+    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
     console.warn('[community] feed page load failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.feedError = error?.message || 'Community posts could not be loaded.'
+    if (isFirestoreIndexError(error)) {
+      const indexUrl = firebaseIndexUrl(error)
+      if (indexUrl) console.warn('[community] feed index creation URL', indexUrl)
+      state.feedError = 'Feed index required. Check console for Firebase index link.'
+    } else if (error?.code === 'feed-timeout') {
+      state.feedError = 'The feed took too long to respond. Try again.'
+    } else {
+      state.feedError = error?.message || 'Community posts could not be loaded.'
+    }
   } finally {
     if (stillLoadingTimer) window.clearTimeout(stillLoadingTimer)
-    if (requestId !== state.feedRequestId) return
+    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
     state.feedInitialLoading = false
     state.feedLoadingMore = false
     state.feedStillLoading = false
@@ -4656,26 +4746,45 @@ function insertEmoji(emoji = '') {
 
 let mentionSearchTimer = null
 
+function bindMentionPickerEvents(root = app) {
+  root?.querySelectorAll('[data-select-mentioned-user]').forEach((button) => {
+    button.addEventListener('click', () => selectMentionedUser(button.getAttribute('data-select-mentioned-user') || ''))
+  })
+  root?.querySelectorAll('[data-remove-mentioned-user]').forEach((button) => {
+    button.addEventListener('click', () => removeMentionedUser(button.getAttribute('data-remove-mentioned-user') || ''))
+  })
+}
+
+function updateMentionPickerDom() {
+  const region = app?.querySelector('[data-mention-picker-region]')
+  if (!region) return
+  region.innerHTML = renderMentionPickerContent()
+  bindMentionPickerEvents(region)
+}
+
 function queueMentionSearch(value = '') {
   const mentionQuery = String(value || '').replace(/^@/, '').trim().toLowerCase()
   state.composer = { ...state.composer, mentionQuery, mentionSearchError: '', mentionResults: mentionQuery.length >= 2 ? state.composer.mentionResults : [] }
   persistComposerDraft()
   window.clearTimeout(mentionSearchTimer)
   if (mentionQuery.length < 2) {
-    render()
+    state.composer = { ...state.composer, mentionSearchLoading: false }
+    updateMentionPickerDom()
     return
   }
   state.composer = { ...state.composer, mentionSearchLoading: true }
-  render()
+  updateMentionPickerDom()
   mentionSearchTimer = window.setTimeout(async () => {
     try {
       const rows = await searchProfilesByUsername(mentionQuery)
+      if (state.composer.mentionQuery !== mentionQuery) return
       const existing = new Set(state.composer.mentionedUsers.map((user) => user.uid))
       state.composer = { ...state.composer, mentionResults: rows.filter((user) => !existing.has(user.uid)), mentionSearchLoading: false, mentionSearchError: '' }
-      render()
+      updateMentionPickerDom()
     } catch (error) {
+      if (state.composer.mentionQuery !== mentionQuery) return
       state.composer = { ...state.composer, mentionSearchLoading: false, mentionSearchError: error?.message || 'Creator search is unavailable.' }
-      render()
+      updateMentionPickerDom()
     }
   }, 250)
 }
@@ -4696,6 +4805,19 @@ function selectMentionedUser(uid = '') {
 function removeMentionedUser(uid = '') {
   state.composer = { ...state.composer, mentionedUsers: state.composer.mentionedUsers.filter((item) => item.uid !== uid) }
   persistComposerDraft()
+  render()
+}
+
+function openCommunityImageViewer(url = '', name = '') {
+  const cleanUrl = String(url || '').trim()
+  if (!cleanUrl) return
+  state.imageViewer = { open: true, url: cleanUrl, name: String(name || 'Image attachment') }
+  render()
+}
+
+function closeCommunityImageViewer() {
+  if (!state.imageViewer.open) return
+  state.imageViewer = { open: false, url: '', name: '' }
   render()
 }
 
@@ -4723,14 +4845,12 @@ function selectTopicTab(tab = 'for-you') {
   state.activeTab = supportedTabs.has(tab) ? tab : 'for-you'
   state.activeCommunityId = ''
   state.activeCommunitySlug = ''
-  if (state.activeTab === 'for-you' && state.view.type === 'feed') {
-    state.selectedCommunityFilters = []
-    state.activeTopicLabel = 'Home'
-    app?.querySelectorAll('[data-topic-community-id]').forEach((button) => {
-      button.classList.remove('is-active')
-      button.setAttribute('aria-pressed', 'false')
+  if (['for-you', 'following'].includes(state.activeTab) && state.view.type === 'feed') {
+    state.activeTopicLabel = activeFeedTitle()
+    app?.querySelectorAll('[data-community-tab="for-you"], [data-community-tab="following"]').forEach((button) => {
+      button.classList.toggle('is-active', button.getAttribute('data-community-tab') === state.activeTab)
     })
-    app?.querySelector('[data-community-tab="for-you"]')?.classList.add('is-active')
+    updateFeedToolbarText()
     loadFeedPage({ reset: true, localOnly: true })
     return
   }
@@ -4748,7 +4868,6 @@ function selectTopicCommunity({ communityId = '' } = {}) {
     showCommunityToast('Choose up to 10 community filters at a time.')
     return
   }
-  state.activeTab = 'for-you'
   state.activeCommunityId = ''
   state.activeCommunitySlug = ''
   state.selectedCommunityFilters = [...selected]
@@ -4757,8 +4876,6 @@ function selectTopicCommunity({ communityId = '' } = {}) {
     button.classList.toggle('is-active', active)
     button.setAttribute('aria-pressed', active ? 'true' : 'false')
   })
-  const homeButton = app?.querySelector('[data-community-tab="for-you"]')
-  homeButton?.classList.toggle('is-active', selected.size === 0)
   loadFeedPage({ reset: true, localOnly: true })
 }
 
@@ -4791,7 +4908,7 @@ function updateCommunityRailFadeState() {
 }
 
 function communityModalIsOpen() {
-  return Boolean(state.composer.open || state.storyComposer.open || state.storyViewer.open || state.report.open || state.editPost.open)
+  return Boolean(state.composer.open || state.storyComposer.open || state.storyViewer.open || state.report.open || state.editPost.open || state.imageViewer.open)
 }
 
 function activeElementIsCommunityInput() {
@@ -4844,6 +4961,10 @@ function setupCommunityKeyboardShortcuts() {
       return
     }
     if (!communityModalIsOpen()) return
+    if (state.imageViewer.open) {
+      closeCommunityImageViewer()
+      return
+    }
     if (state.composer.destinationPickerOpen) {
       state.composer = {
         ...state.composer,
@@ -5392,6 +5513,15 @@ function bindCommentEvents(root = app) {
 
 function bindFeedRegionEvents(root = app) {
   if (!root) return
+  root.querySelectorAll('[data-open-community-image]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      openCommunityImageViewer(
+        button.getAttribute('data-open-community-image') || '',
+        button.getAttribute('data-community-image-name') || ''
+      )
+    })
+  })
   root.querySelectorAll('.community-post-card[data-post-id]:not(.is-detail)').forEach((card) => {
     card.addEventListener('click', (event) => {
       if (isPostCardInteractiveTarget(event.target)) return
@@ -5673,8 +5803,11 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-insert-emoji]').forEach((button) => button.addEventListener('click', () => insertEmoji(button.getAttribute('data-insert-emoji') || '')))
   app.querySelector('[data-mention-search]')?.addEventListener('input', (event) => queueMentionSearch(event.target.value))
-  app.querySelectorAll('[data-select-mentioned-user]').forEach((button) => button.addEventListener('click', () => selectMentionedUser(button.getAttribute('data-select-mentioned-user') || '')))
-  app.querySelectorAll('[data-remove-mentioned-user]').forEach((button) => button.addEventListener('click', () => removeMentionedUser(button.getAttribute('data-remove-mentioned-user') || '')))
+  bindMentionPickerEvents(app)
+  app.querySelectorAll('[data-close-community-image-viewer]').forEach((button) => button.addEventListener('click', closeCommunityImageViewer))
+  app.querySelector('[data-community-image-viewer-backdrop]')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeCommunityImageViewer()
+  })
   app.querySelector('[data-community-search]')?.addEventListener('input', (event) => {
     state.communityFilters.search = event.target.value
     window.clearTimeout(state.communitySearchTimer)

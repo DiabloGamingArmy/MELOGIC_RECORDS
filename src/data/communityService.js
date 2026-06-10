@@ -330,7 +330,8 @@ async function queryWithIndexFallback(primaryConstraints, fallbackConstraints, n
     const snapshot = await getDocs(query(collection(db, normalize === normalizeCommunity ? COMMUNITY_COLLECTION : POST_COLLECTION), ...primaryConstraints))
     return snapshot.docs.map((docSnap) => normalize(docSnap))
   } catch (error) {
-    if (!String(error?.message || '').includes('requires an index')) throw error
+    if (!isFirestoreIndexError(error)) throw error
+    logFirestoreIndexUrl(error, 'community query')
     const snapshot = await getDocs(query(collection(db, normalize === normalizeCommunity ? COMMUNITY_COLLECTION : POST_COLLECTION), ...fallbackConstraints))
     let rows = snapshot.docs.map((docSnap) => normalize(docSnap))
     if (filter) rows = rows.filter(filter)
@@ -478,6 +479,16 @@ function postSort(sort = 'new') {
   return (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
 }
 
+function isFirestoreIndexError(error) {
+  const detail = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase()
+  return detail.includes('failed-precondition') || detail.includes('requires an index') || detail.includes('query requires an index')
+}
+
+function logFirestoreIndexUrl(error, scope = 'community query') {
+  const url = String(error?.message || error?.details || '').match(/https:\/\/console\.firebase\.google\.com\/\S+/)?.[0] || ''
+  if (url) console.warn(`[communityService] ${scope} index URL`, url)
+}
+
 export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', communityIds = [], limitCount = 25, tag = '', search = '', sort = 'new', pageMode = false, cursor = null } = {}) {
   const tagKey = normalizeTagKey(tag)
   const searchToken = normalizeFeedSearchToken(search)
@@ -520,7 +531,8 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
         hasMore: snapshot.docs.length > pageLimit
       }
     } catch (error) {
-      if (!String(error?.message || '').includes('requires an index')) throw error
+      if (!isFirestoreIndexError(error)) throw error
+      logFirestoreIndexUrl(error, 'feed')
       const snapshot = await getDocs(query(collection(db, POST_COLLECTION), ...fallbackConstraints))
       const rows = snapshot.docs
         .map((docSnap) => normalizeCommunityPost(docSnap))
@@ -559,8 +571,12 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
     .slice(0, pageLimit)
 }
 
-export async function listFocusedCommunityPosts(uid = '', limitCount = 25) {
-  const focusedCommunityIds = await listFocusedCommunityIds(uid, 50)
+export async function listFocusedCommunityPosts(uid = '', limitCount = 25, selectedCommunityIds = []) {
+  const selectedIds = new Set((Array.isArray(selectedCommunityIds) ? selectedCommunityIds : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean))
+  const focusedCommunityIds = (await listFocusedCommunityIds(uid, 50))
+    .filter((communityId) => !selectedIds.size || selectedIds.has(communityId))
   if (!focusedCommunityIds.length) return []
 
   const chunks = []
@@ -582,9 +598,10 @@ export async function listFocusedCommunityPosts(uid = '', limitCount = 25) {
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
     return posts.slice(0, limitCount)
   } catch (error) {
-    if (!String(error?.message || '').includes('requires an index')) throw error
+    if (!isFirestoreIndexError(error)) throw error
+    logFirestoreIndexUrl(error, 'focused feed')
     const focusedSet = new Set(focusedCommunityIds)
-    const posts = await listCommunityPosts({ limitCount: Math.max(100, limitCount * 4) })
+    const posts = await listCommunityPosts({ limitCount: Math.min(60, Math.max(30, limitCount * 4)) })
     return posts.filter((post) => focusedSet.has(post.communityId)).slice(0, limitCount)
   }
 }

@@ -1907,7 +1907,9 @@ body.community-chrome-hidden .community-right-rail {
   display: block;
   width: fit-content;
   max-width: 100%;
+  padding: 0;
   background: rgba(0, 0, 0, .28);
+  cursor: zoom-in;
 }
 
 .community-post-file-attachment.is-image img,
@@ -2217,6 +2219,11 @@ body.community-chrome-hidden .community-right-rail {
 
 .community-comment-image {
   display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: zoom-in;
 }
 
 .community-comment-attachments img {
@@ -2488,6 +2495,83 @@ body.community-chrome-hidden .community-right-rail {
 
 body.community-modal-open {
   overflow: hidden;
+}
+
+.community-image-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 4, 8, .94);
+  backdrop-filter: blur(18px);
+}
+
+.community-image-viewer {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(96vw, 1500px);
+  height: min(94vh, 1100px);
+  min-height: 0;
+  color: #f7f9fc;
+}
+
+.community-image-viewer header,
+.community-image-viewer footer {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  min-height: 48px;
+  padding: .35rem 0;
+}
+
+.community-image-viewer header {
+  justify-content: space-between;
+}
+
+.community-image-viewer header span {
+  overflow: hidden;
+  color: #c5cfdd;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.community-image-viewer header button {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .07);
+  color: #fff;
+  cursor: pointer;
+}
+
+.community-image-viewer header button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.community-image-viewer-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  overflow: hidden;
+}
+
+.community-image-viewer-stage img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.community-image-viewer footer {
+  justify-content: center;
 }
 
 .community-report-modal,
