@@ -105,6 +105,44 @@ service firebase.storage {
         );
     }
 
+    function isCommunityPostAttachmentUpload() {
+      return request.resource != null
+        && request.resource.size > 0
+        && (
+          (
+            request.resource.size <= 10 * 1024 * 1024
+            && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+          )
+          || (
+            request.resource.size <= 150 * 1024 * 1024
+            && request.resource.contentType in ['video/mp4', 'video/webm', 'video/quicktime']
+          )
+          || (
+            request.resource.size <= 50 * 1024 * 1024
+            && request.resource.contentType in [
+              'audio/mpeg',
+              'audio/mp3',
+              'audio/wav',
+              'audio/x-wav',
+              'audio/webm',
+              'audio/mp4',
+              'audio/aac',
+              'audio/ogg'
+            ]
+          )
+          || (
+            request.resource.size <= 50 * 1024 * 1024
+            && request.resource.contentType in [
+              'application/pdf',
+              'text/plain',
+              'application/zip',
+              'application/x-zip-compressed',
+              'application/json'
+            ]
+          )
+        );
+    }
+
     function isPublishedCommunityPost(postId) {
       return firestore.get(/databases/(default)/documents/communityPosts/$(postId)).data.status == 'published'
         && firestore.get(/databases/(default)/documents/communityPosts/$(postId)).data.visibility == 'public';
@@ -115,6 +153,13 @@ service firebase.storage {
         && request.resource.metadata.postId == postId
         && request.resource.metadata.commentId == commentId
         && request.resource.metadata.attachmentType in ['image', 'audio', 'project'];
+    }
+
+    function communityPostAttachmentMetadataMatches(userId, postId) {
+      return request.resource.metadata.authorUid == userId
+        && request.resource.metadata.postId == postId
+        && request.resource.metadata.attachmentId.size() > 0
+        && request.resource.metadata.attachmentType in ['image', 'video', 'audio', 'file'];
     }
 
     function isStudioProjectOwner(projectId) {
@@ -191,6 +236,17 @@ service firebase.storage {
         && isPublishedCommunityPost(postId)
         && communityCommentAttachmentMetadataMatches(userId, postId, commentId)
         && isCommunityCommentAttachmentUpload();
+      allow delete: if isCommunityAssetWriter() || (signedIn() && request.auth.uid == userId);
+    }
+
+    match /community/posts/{userId}/{postId}/attachments/{fileName} {
+      allow read: if isCommunityAssetWriter()
+        || (signedIn() && request.auth.uid == userId)
+        || isPublishedCommunityPost(postId);
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && communityPostAttachmentMetadataMatches(userId, postId)
+        && isCommunityPostAttachmentUpload();
       allow delete: if isCommunityAssetWriter() || (signedIn() && request.auth.uid == userId);
     }
 

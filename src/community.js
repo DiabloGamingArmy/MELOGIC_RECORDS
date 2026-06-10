@@ -10,6 +10,7 @@ import {
   createCommunityPost,
   createCommunityStory,
   deleteCommunityCommentAttachments,
+  deleteCommunityPostAttachments,
   deleteCommunityStory,
   deleteCommunityComment,
   deleteOwnCommunityPost,
@@ -31,6 +32,7 @@ import {
   listShareableCommunityStudioProjects,
   newCommunityStoryId,
   newCommunityCommentId,
+  newCommunityPostId,
   normalizeCommunityComment,
   normalizeCommunityPost,
   normalizeCommunityStory,
@@ -45,8 +47,10 @@ import {
   toggleCommunityPostSave,
   updateCommunityPost,
   uploadCommunityCommentAttachments,
+  uploadCommunityPostAttachments,
   uploadCommunityStoryMedia,
   validateCommunityCommentAttachment,
+  validateCommunityPostAttachment,
   validateCommunityStoryMedia
 } from './data/communityService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -169,6 +173,8 @@ const state = {
     tags: '',
     visibility: 'public',
     attachments: [],
+    fileAttachments: [],
+    uploadProgress: 0,
     emojiOpen: false,
     mentionQuery: '',
     mentionResults: [],
@@ -390,6 +396,8 @@ function defaultComposerState(patch = {}) {
     tags: '',
     visibility: 'public',
     attachments: [],
+    fileAttachments: [],
+    uploadProgress: 0,
     emojiOpen: false,
     mentionQuery: '',
     mentionResults: [],
@@ -491,7 +499,7 @@ function clearComposerDraft() {
 }
 
 function composerHasDraft() {
-  return Boolean(state.composer.title || state.composer.body || state.composer.tags || state.composer.attachments.length || state.composer.mentionedUsers.length || state.composer.intent)
+  return Boolean(state.composer.title || state.composer.body || state.composer.tags || state.composer.attachments.length || state.composer.fileAttachments.length || state.composer.mentionedUsers.length || state.composer.intent)
 }
 
 function parseDetailPostId() {
@@ -1061,6 +1069,35 @@ function attachmentTitle(attachment = {}) {
   return 'Attachment'
 }
 
+function formatAttachmentSize(bytes = 0) {
+  const value = Math.max(0, Number(bytes || 0))
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(value < 10 * 1024 ? 1 : 0)} KB`
+  return `${(value / 1024 / 1024).toFixed(value < 10 * 1024 * 1024 ? 1 : 0)} MB`
+}
+
+function composerFileAttachmentPreview(attachment = {}) {
+  const preview = attachment.previewURL || ''
+  const media = attachment.type === 'image' && preview
+    ? `<img src="${escapeHtml(preview)}" alt="" />`
+    : attachment.type === 'video' && preview
+      ? `<video src="${escapeHtml(preview)}" muted controls preload="metadata"></video>`
+      : attachment.type === 'audio'
+        ? `<span class="community-attachment-fallback">${iconSvg('music')}</span>`
+        : `<span class="community-attachment-fallback">${iconSvg('file')}</span>`
+  return `
+    <article class="community-composer-attachment is-file">
+      ${media}
+      <span>
+        <strong>${escapeHtml(attachment.file?.name || 'Attachment')}</strong>
+        <em>${escapeHtml([attachment.type, formatAttachmentSize(attachment.file?.size)].filter(Boolean).join(' · '))}</em>
+      </span>
+      <button type="button" data-remove-composer-file="${escapeHtml(attachment.id)}" aria-label="Remove ${escapeHtml(attachment.file?.name || 'attachment')}">${iconSvg('x')}</button>
+      ${attachment.type === 'audio' && preview ? `<audio class="community-composer-audio-preview" src="${escapeHtml(preview)}" controls preload="metadata"></audio>` : ''}
+    </article>
+  `
+}
+
 function composerAttachmentPreview(attachment = {}) {
   if (attachment.type === 'product') return productAttachmentPreview(attachment)
   const key = attachmentKey(attachment)
@@ -1086,8 +1123,10 @@ function composerAttachmentPreview(attachment = {}) {
 }
 
 function renderComposerAttachments() {
-  if (!state.composer.attachments.length) return ''
-  return `<div class="community-composer-attachments">${state.composer.attachments.map(composerAttachmentPreview).join('')}</div>`
+  const linked = state.composer.attachments.map(composerAttachmentPreview)
+  const files = state.composer.fileAttachments.map(composerFileAttachmentPreview)
+  if (!linked.length && !files.length) return ''
+  return `<div class="community-composer-attachments">${[...linked, ...files].join('')}</div>`
 }
 
 function renderComposerProductPicker() {
@@ -1214,7 +1253,6 @@ function renderEmojiPanel() {
 
 function renderAttachmentToolbar() {
   const disabledActions = [
-    ['Add Attachment', 'file'],
     ['Schedule', 'calendar'],
     ['Add Poll', 'barChart']
   ]
@@ -1225,6 +1263,8 @@ function renderAttachmentToolbar() {
       <button type="button" data-open-product-picker class="${selectedProductAttachment() ? 'is-active' : ''}" title="Add Product">${iconSvg('package')} <span>Add Product</span></button>
       <button type="button" data-open-stage-picker class="${selectedAttachment('stage_plan') ? 'is-active' : ''}" title="Add Stage Plan">${iconSvg('cube')} <span>Add Stage Plan</span></button>
       <button type="button" data-open-studio-picker class="${selectedAttachment('studio_project') ? 'is-active' : ''}" title="Add Studio Project">${iconSvg('music')} <span>Add Studio Project</span></button>
+      <button type="button" data-open-post-attachment-picker class="${state.composer.fileAttachments.length ? 'is-active' : ''}" title="Add Attachment" ${state.composer.submitting ? 'disabled' : ''}>${iconSvg('file')} <span>Add Attachment</span></button>
+      <input class="community-hidden-file-input" type="file" multiple hidden data-post-attachment-input accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/webm,audio/mp4,audio/aac,audio/ogg,application/pdf,text/plain,application/zip,application/x-zip-compressed,application/json" />
       <span class="community-toolbar-group-label">Enhance</span>
       <label class="community-mention-control" title="Tag People">
         ${iconSvg('at')} <span>Tag People</span>
@@ -1517,6 +1557,11 @@ function renderComposerModal() {
             </label>
           </div>
           ${state.composer.error ? `<p class="community-error">${escapeHtml(state.composer.error)}</p>` : ''}
+          ${state.composer.submitting && state.composer.fileAttachments.length ? `
+            <div class="community-post-upload-progress" data-community-post-upload-progress role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${state.composer.uploadProgress}">
+              Uploading attachments ${state.composer.uploadProgress}%
+            </div>
+          ` : ''}
           <div class="community-form-actions">
             <span>${Math.max(0, 2000 - state.composer.body.length)} characters left</span>
             <button type="button" class="button button-muted" data-close-community-composer ${state.composer.submitting ? 'disabled' : ''}>Cancel</button>
@@ -1598,6 +1643,50 @@ function renderStudioProjectAttachment(attachment = {}) {
   `
 }
 
+function renderUploadedPostAttachment(attachment = {}) {
+  const path = attachment.path || attachment.storagePath || ''
+  const url = attachment.url || state.attachmentMediaUrls[path] || ''
+  const name = attachment.name || 'Attachment'
+  const dimensions = attachment.width && attachment.height
+    ? ` width="${Math.round(attachment.width)}" height="${Math.round(attachment.height)}" style="aspect-ratio:${Math.round(attachment.width)}/${Math.round(attachment.height)}"`
+    : ''
+  if (attachment.type === 'image') {
+    return `
+      <a class="community-post-file-attachment is-image" href="${escapeHtml(url || '#')}" target="_blank" rel="noopener" data-stop-card-nav>
+        ${url
+          ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async"${dimensions} />`
+          : `<span class="community-attachment-load-state">Image preview unavailable</span>`
+        }
+      </a>
+    `
+  }
+  if (attachment.type === 'video') {
+    return `
+      <article class="community-post-file-attachment is-video" data-stop-card-nav>
+        ${url ? `<video src="${escapeHtml(url)}" controls preload="metadata"${dimensions}></video>` : '<span class="community-attachment-load-state">Video unavailable</span>'}
+        <small>${escapeHtml(name)}</small>
+      </article>
+    `
+  }
+  if (attachment.type === 'audio') {
+    return `
+      <article class="community-post-file-attachment is-audio" data-stop-card-nav>
+        <span>${iconSvg('music')} <strong>${escapeHtml(name)}</strong></span>
+        ${url ? `<audio src="${escapeHtml(url)}" controls preload="none"></audio>` : '<small>Audio unavailable</small>'}
+      </article>
+    `
+  }
+  return `
+    <a class="community-post-file-attachment is-file" href="${escapeHtml(url || '#')}" target="_blank" rel="noopener" data-stop-card-nav>
+      <span class="community-attachment-fallback">${iconSvg('file')}</span>
+      <span>
+        <strong>${escapeHtml(name)}</strong>
+        <small>${escapeHtml([attachment.contentType || 'File', formatAttachmentSize(attachment.size)].filter(Boolean).join(' · '))}</small>
+      </span>
+    </a>
+  `
+}
+
 function renderPostAttachments(post) {
   const attachments = Array.isArray(post.attachments) ? post.attachments : []
   if (!attachments.length) return linkedProductMarkup(post)
@@ -1608,6 +1697,7 @@ function renderPostAttachments(post) {
         if (attachment.type === 'music') return renderMusicAttachment(attachment)
         if (attachment.type === 'stage_plan') return renderStagePlanAttachment(attachment)
         if (attachment.type === 'studio_project') return renderStudioProjectAttachment(attachment)
+        if (['image', 'video', 'audio', 'file'].includes(attachment.type)) return renderUploadedPostAttachment(attachment)
         return ''
       }).join('')}
     </div>
@@ -3310,8 +3400,13 @@ async function handleComposerSubmit(event) {
   state.composer = { ...state.composer, title, body, communityId, tags, error: '' }
   updateComposerFromForm()
   persistComposerDraft()
-  if (!body && !title && !state.composer.attachments.length) {
+  if (!body && !title && !state.composer.attachments.length && !state.composer.fileAttachments.length) {
     state.composer.error = 'Add text, a title, or an attachment before publishing.'
+    render()
+    return
+  }
+  if (state.composer.attachments.length + state.composer.fileAttachments.length > 8) {
+    state.composer.error = 'Posts can include up to 8 attachments.'
     render()
     return
   }
@@ -3322,22 +3417,48 @@ async function handleComposerSubmit(event) {
   }
 
   state.composer.submitting = true
+  state.composer.uploadProgress = state.composer.fileAttachments.length ? 0 : 100
   render()
+  let uploadedAttachments = []
+  let postCreated = false
   try {
     const community = currentComposerCommunity()
+    const postId = newCommunityPostId()
+    if (state.composer.fileAttachments.length) {
+      uploadedAttachments = await uploadCommunityPostAttachments({
+        uid: state.currentUser.uid,
+        postId,
+        files: state.composer.fileAttachments,
+        metadataById: Object.fromEntries(state.composer.fileAttachments.map((attachment) => [attachment.id, attachment.metadata || {}])),
+        onProgress: (progress) => {
+          state.composer.uploadProgress = Math.round(progress)
+          const status = app?.querySelector('[data-community-post-upload-progress]')
+          if (status) {
+            status.textContent = `Uploading attachments ${state.composer.uploadProgress}%`
+            status.setAttribute('aria-valuenow', String(state.composer.uploadProgress))
+          }
+        }
+      })
+    }
     const result = await createCommunityPost({
+      postId,
       type: 'post',
       title,
       body,
-      attachments: state.composer.attachments.map((attachment) => ({
-        type: attachment.type,
-        targetId: attachment.targetId || attachment.productId || attachment.projectId || attachment.storagePath || '',
-        productId: attachment.productId || '',
-        projectId: attachment.projectId || '',
-        sourceType: attachment.sourceType || '',
-        sourceId: attachment.sourceId || '',
-        storagePath: attachment.storagePath || ''
-      })),
+      attachments: [
+        ...state.composer.attachments.map((attachment) => ({
+          type: attachment.type,
+          targetId: attachment.targetId || attachment.productId || attachment.projectId || attachment.storagePath || '',
+          productId: attachment.productId || '',
+          projectId: attachment.projectId || '',
+          sourceType: attachment.sourceType || '',
+          sourceId: attachment.sourceId || '',
+          storagePath: attachment.storagePath || ''
+        })),
+        ...uploadedAttachments.map(({ id, type, name, path, storagePath, size, contentType, width, height, duration }) => ({
+          id, type, name, path, storagePath, size, contentType, width, height, duration
+        }))
+      ],
       intent: state.composer.intent,
       intentData: state.composer.intent === 'feedback_request'
         ? {
@@ -3361,7 +3482,12 @@ async function handleComposerSubmit(event) {
       communitySlug: community?.slug || '',
       tags: tags.split(/[,\s]+/).filter(Boolean)
     })
+    postCreated = true
     const post = normalizeCommunityPost(result.post || {}, result.postId)
+    post.attachments = post.attachments.map((attachment) => {
+      const uploaded = uploadedAttachments.find((item) => (item.path || item.storagePath) === (attachment.path || attachment.storagePath))
+      return uploaded ? { ...attachment, url: uploaded.url || '' } : attachment
+    })
     if (state.activeTab === 'following') {
       state.posts = post.communityId && state.communityFocus[post.communityId]
         ? [post, ...state.posts.filter((item) => item.postId !== post.postId)]
@@ -3373,6 +3499,7 @@ async function handleComposerSubmit(event) {
     if (state.community?.communityId === post.communityId) {
       state.community = { ...state.community, postCount: state.community.postCount + 1 }
     }
+    clearComposerFileAttachments()
     clearComposerDraft()
     state.composer = defaultComposerState({ communityId: state.view.type === 'community' ? state.community?.communityId || '' : '' })
     state.message = 'Post published.'
@@ -3382,8 +3509,10 @@ async function handleComposerSubmit(event) {
       render()
     }, 3000)
   } catch (error) {
+    if (!postCreated && uploadedAttachments.length) await deleteCommunityPostAttachments(uploadedAttachments)
     console.warn('[community] create post failed', { code: error?.code, message: error?.message, details: error?.details })
     state.composer.submitting = false
+    state.composer.uploadProgress = 0
     state.composer.error = error?.message || 'Could not publish this post.'
     render()
   }
@@ -4120,6 +4249,7 @@ function openCommunityComposer() {
 function closeCommunityComposer() {
   if (composerHasDraft()) {
     if (!window.confirm('Discard draft?')) return
+    clearComposerFileAttachments()
     clearComposerDraft()
     state.composer = defaultComposerState({
       communityId: state.view.type === 'community' ? state.community?.communityId || '' : ''
@@ -4357,6 +4487,81 @@ function addComposerAttachment(attachment = {}) {
   }
   persistComposerDraft()
   render()
+}
+
+function composerFileAttachmentId() {
+  if (globalThis.crypto?.randomUUID) return crypto.randomUUID()
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function readComposerMediaMetadata(file = null, type = '') {
+  if (!file || !['image', 'video', 'audio'].includes(type)) return Promise.resolve({})
+  return new Promise((resolve) => {
+    const previewURL = URL.createObjectURL(file)
+    const media = type === 'image' ? new Image() : document.createElement(type)
+    const finish = () => {
+      const metadata = type === 'image'
+        ? { width: media.naturalWidth || 0, height: media.naturalHeight || 0 }
+        : {
+            width: type === 'video' ? media.videoWidth || 0 : 0,
+            height: type === 'video' ? media.videoHeight || 0 : 0,
+            duration: Number.isFinite(media.duration) ? media.duration : 0
+          }
+      resolve({ previewURL, metadata })
+    }
+    media.addEventListener(type === 'image' ? 'load' : 'loadedmetadata', finish, { once: true })
+    media.addEventListener('error', () => resolve({ previewURL, metadata: {} }), { once: true })
+    media.src = previewURL
+  })
+}
+
+async function addComposerFiles(files = []) {
+  const selected = Array.from(files || [])
+  if (!selected.length) return
+  updateComposerFromForm()
+  const available = Math.max(0, 8 - state.composer.attachments.length - state.composer.fileAttachments.length)
+  if (!available) {
+    state.composer = { ...state.composer, error: 'Posts can include up to 8 attachments.' }
+    render()
+    return
+  }
+  const next = []
+  try {
+    for (const file of selected.slice(0, available)) {
+      const { type } = validateCommunityPostAttachment(file)
+      const id = composerFileAttachmentId()
+      const media = await readComposerMediaMetadata(file, type)
+      next.push({ id, file, type, previewURL: media.previewURL || '', metadata: media.metadata || {} })
+    }
+  } catch (error) {
+    next.forEach((item) => item.previewURL && URL.revokeObjectURL(item.previewURL))
+    state.composer = { ...state.composer, error: error?.message || 'This attachment is not supported.' }
+    render()
+    return
+  }
+  state.composer = {
+    ...state.composer,
+    fileAttachments: [...state.composer.fileAttachments, ...next],
+    error: selected.length > available ? `Only ${available} more attachment${available === 1 ? '' : 's'} could be added.` : ''
+  }
+  render()
+}
+
+function removeComposerFileAttachment(id = '') {
+  const removed = state.composer.fileAttachments.find((attachment) => attachment.id === id)
+  if (removed?.previewURL) URL.revokeObjectURL(removed.previewURL)
+  state.composer = {
+    ...state.composer,
+    fileAttachments: state.composer.fileAttachments.filter((attachment) => attachment.id !== id),
+    error: ''
+  }
+  render()
+}
+
+function clearComposerFileAttachments() {
+  state.composer.fileAttachments.forEach((attachment) => {
+    if (attachment.previewURL) URL.revokeObjectURL(attachment.previewURL)
+  })
 }
 
 function selectComposerMusic(storagePath = '') {
@@ -5429,6 +5634,13 @@ function bindEvents() {
     updateComposerFromForm()
     openStudioPicker()
   })
+  app.querySelector('[data-open-post-attachment-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    app.querySelector('[data-post-attachment-input]')?.click()
+  })
+  app.querySelector('[data-post-attachment-input]')?.addEventListener('change', async (event) => {
+    await addComposerFiles(event.target.files)
+  })
   app.querySelector('[data-close-product-picker]')?.addEventListener('click', () => {
     state.composer = { ...state.composer, productPickerOpen: false, productPickerError: '' }
     render()
@@ -5451,6 +5663,7 @@ function bindEvents() {
   app.querySelectorAll('[data-select-composer-studio]').forEach((button) => button.addEventListener('click', () => selectComposerStudio(button.getAttribute('data-select-composer-studio') || '')))
   app.querySelectorAll('[data-remove-composer-attachment]').forEach((button) => button.addEventListener('click', () => removeComposerAttachment(button.getAttribute('data-remove-composer-attachment') || '')))
   app.querySelectorAll('[data-remove-composer-attachment-key]').forEach((button) => button.addEventListener('click', () => removeComposerAttachmentByKey(button.getAttribute('data-remove-composer-attachment-key') || '')))
+  app.querySelectorAll('[data-remove-composer-file]').forEach((button) => button.addEventListener('click', () => removeComposerFileAttachment(button.getAttribute('data-remove-composer-file') || '')))
   app.querySelectorAll('[data-set-composer-intent]').forEach((button) => button.addEventListener('click', () => setComposerIntent(button.getAttribute('data-set-composer-intent') || '')))
   app.querySelectorAll('[data-clear-composer-intent]').forEach((button) => button.addEventListener('click', clearComposerIntent))
   app.querySelector('[data-toggle-emoji-panel]')?.addEventListener('click', () => {

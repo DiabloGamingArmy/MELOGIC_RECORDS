@@ -4,7 +4,20 @@ const { cleanString } = require('../admin/adminAuth')
 const { cleanSlug } = require('./communityShared')
 
 const POST_TYPES = new Set(['post', 'text', 'product_share'])
-const ATTACHMENT_TYPES = new Set(['product', 'music', 'stage_plan', 'studio_project'])
+const ATTACHMENT_TYPES = new Set(['product', 'music', 'stage_plan', 'studio_project', 'image', 'video', 'audio', 'file'])
+const FILE_ATTACHMENT_TYPES = new Set(['image', 'video', 'audio', 'file'])
+const FILE_ATTACHMENT_CONTENT_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'video/mp4', 'video/webm', 'video/quicktime',
+  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg',
+  'application/pdf', 'text/plain', 'application/zip', 'application/x-zip-compressed', 'application/json'
+])
+const FILE_ATTACHMENT_LIMITS = {
+  image: 10 * 1024 * 1024,
+  video: 150 * 1024 * 1024,
+  audio: 50 * 1024 * 1024,
+  file: 50 * 1024 * 1024
+}
 const FEEDBACK_CATEGORIES = new Set(['Mix', 'Master', 'Songwriting', 'Sound Design', 'Vocal Performance', 'Stage Layout', 'Product Listing', 'Other'])
 const COLLABORATION_ROLES = new Set(['Vocalist', 'Producer', 'Songwriter', 'Guitarist', 'Drummer', 'Mixing Engineer', 'Mastering Engineer', 'Sound Designer', 'Stage Designer', 'Lighting Designer', 'Camera Operator', 'Other'])
 const COMPENSATION_TYPES = new Set(['Paid', 'Unpaid', 'Revenue Share', 'Discuss'])
@@ -242,12 +255,58 @@ async function buildStudioProjectAttachment(attachment = {}, uid = '', author = 
   }
 }
 
-async function normalizeAttachments(value = [], uid = '', author = {}) {
+function uploadedAttachmentType(contentType = '') {
+  if (contentType.startsWith('image/')) return 'image'
+  if (contentType.startsWith('video/')) return 'video'
+  if (contentType.startsWith('audio/')) return 'audio'
+  return 'file'
+}
+
+async function buildUploadedFileAttachment(attachment = {}, uid = '', postId = '') {
+  const id = cleanString(attachment.id || '', 80).replace(/[^a-zA-Z0-9_-]+/g, '')
+  const path = cleanString(attachment.path || attachment.storagePath || '', 700)
+  const expectedPrefix = `community/posts/${uid}/${postId}/attachments/`
+  if (!id || !path.startsWith(expectedPrefix) || path.includes('../')) {
+    throw new HttpsError('invalid-argument', 'Invalid community attachment path.')
+  }
+
+  const [metadata] = await admin.storage().bucket().file(path).getMetadata().catch(() => {
+    throw new HttpsError('failed-precondition', 'An uploaded attachment could not be verified.')
+  })
+  const contentType = cleanString(metadata.contentType || '', 120).toLowerCase()
+  const size = Math.max(0, Number(metadata.size || 0))
+  const type = uploadedAttachmentType(contentType)
+  const custom = metadata.metadata || {}
+  if (!FILE_ATTACHMENT_CONTENT_TYPES.has(contentType) || !size || size > FILE_ATTACHMENT_LIMITS[type]) {
+    throw new HttpsError('invalid-argument', 'An uploaded attachment is not supported or exceeds its size limit.')
+  }
+  if (custom.authorUid !== uid || custom.postId !== postId || custom.attachmentId !== id || custom.attachmentType !== type) {
+    throw new HttpsError('permission-denied', 'Community attachment ownership could not be verified.')
+  }
+
+  return {
+    id,
+    type,
+    name: cleanString(attachment.name || path.split('/').pop() || 'Attachment', 180),
+    path,
+    storagePath: path,
+    url: '',
+    size,
+    contentType,
+    width: Number.isFinite(Number(attachment.width)) ? Math.max(0, Math.round(Number(attachment.width))) : null,
+    height: Number.isFinite(Number(attachment.height)) ? Math.max(0, Math.round(Number(attachment.height))) : null,
+    duration: Number.isFinite(Number(attachment.duration)) ? Math.max(0, Number(attachment.duration)) : null,
+    uploadedBy: uid,
+    createdAt: admin.firestore.Timestamp.now()
+  }
+}
+
+async function normalizeAttachments(value = [], uid = '', author = {}, postId = '') {
   const raw = Array.isArray(value) ? value.slice(0, 12) : []
-  if (raw.length > 4) throw new HttpsError('invalid-argument', 'Posts can include up to 4 attachments.')
+  if (raw.length > 8) throw new HttpsError('invalid-argument', 'Posts can include up to 8 attachments.')
 
   const accepted = []
-  const counts = { product: 0, music: 0, stage_plan: 0, studio_project: 0 }
+  const counts = { product: 0, music: 0, stage_plan: 0, studio_project: 0, image: 0, video: 0, audio: 0, file: 0 }
 
   for (const attachment of raw) {
     if (!attachment || typeof attachment !== 'object') continue
@@ -265,10 +324,12 @@ async function normalizeAttachments(value = [], uid = '', author = {}) {
       accepted.push(await buildStagePlanAttachment(attachment, uid, author))
     } else if (type === 'studio_project') {
       accepted.push(await buildStudioProjectAttachment(attachment, uid, author))
+    } else if (FILE_ATTACHMENT_TYPES.has(type)) {
+      accepted.push(await buildUploadedFileAttachment(attachment, uid, postId))
     }
   }
 
-  return accepted.filter(Boolean).slice(0, 4)
+  return accepted.filter(Boolean).slice(0, 8)
 }
 
 function normalizeIntent(data = {}) {
@@ -376,8 +437,12 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   const tags = normalizeTags(request.data?.tags || [])
   const mentions = normalizeMentions(request.data?.mentionedUserIds || [], request.data?.mentionedUsernames || [], uid)
   const intent = normalizeIntent(request.data || {})
+  const requestedPostId = cleanString(request.data?.postId || '', 180)
 
   if (!POST_TYPES.has(type)) throw new HttpsError('invalid-argument', 'A valid post type is required.')
+  if (requestedPostId && (requestedPostId.includes('/') || !/^[a-zA-Z0-9_-]+$/.test(requestedPostId))) {
+    throw new HttpsError('invalid-argument', 'A valid post id is required.')
+  }
   if (type === 'product_share' && !cleanString(request.data?.linkedProductId || '', 180)) {
     throw new HttpsError('invalid-argument', 'Choose a product to share.')
   }
@@ -393,9 +458,14 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
       uid
     })
   ])
+  const postRef = requestedPostId
+    ? db().collection('communityPosts').doc(requestedPostId)
+    : db().collection('communityPosts').doc()
+  if ((await postRef.get()).exists) throw new HttpsError('already-exists', 'This post already exists.')
+
   const attachments = type === 'product_share'
     ? []
-    : await normalizeAttachments(request.data?.attachments || [], uid, author)
+    : await normalizeAttachments(request.data?.attachments || [], uid, author, postRef.id)
   if (!body && !title && !attachments.length && type !== 'product_share') {
     throw new HttpsError('invalid-argument', 'Add text, a title, or an attachment before publishing.')
   }
@@ -419,10 +489,9 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     intent.intent,
     intent.intentData?.category,
     intent.intentData?.roleNeeded,
-    ...attachments.map((attachment) => attachment.snapshot?.title || '')
+    ...attachments.map((attachment) => attachment.snapshot?.title || attachment.name || '')
   )
 
-  const postRef = db().collection('communityPosts').doc()
   const now = admin.firestore.FieldValue.serverTimestamp()
   const payload = {
     postId: postRef.id,

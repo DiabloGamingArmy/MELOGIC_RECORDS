@@ -186,6 +186,21 @@ Posts are stored in `communityPosts/{postId}`:
       type: 'studio_project',
       targetId: studioProjectId,
       snapshot: { title, bpm, key, durationSeconds, trackCount, coverURL, previewAudioPath, creatorDisplayName, creatorUsername, visibility, sharePath }
+    },
+    {
+      id: attachmentId,
+      type: 'image' | 'video' | 'audio' | 'file',
+      name,
+      path: `community/posts/${authorUid}/${postId}/attachments/...`,
+      storagePath: path,
+      url: '',
+      size,
+      contentType,
+      width: null,
+      height: null,
+      duration: null,
+      uploadedBy: authorUid,
+      createdAt
     }
   ],
   attachmentTypes: ['product'],
@@ -218,6 +233,10 @@ Posts are stored in `communityPosts/{postId}`:
   updatedAt
 }
 ```
+
+Post file attachments are uploaded only when Publish is pressed. The client reserves the final post ID, uploads to Firebase Storage, and then calls `createCommunityPost`; the callable verifies the Storage object metadata, owner, post ID, content type, and size before storing attachment metadata. Failed post creation triggers best-effort deletion of files uploaded during that attempt. An interrupted browser session can still leave an orphaned upload, so a scheduled cleanup job for old unattached objects remains future work.
+
+Limits: 8 total attachments per post; images 10 MB, videos 150 MB, audio 50 MB, and PDF/text/ZIP/JSON files 50 MB. Executable and script formats are rejected.
 
 Older posts may still use `type: 'product_share'` with `linkedProductId` and `linkedProductSnapshot`. The UI keeps rendering those fields, but new product shares should use `attachments`.
 
