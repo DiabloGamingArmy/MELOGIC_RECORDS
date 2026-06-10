@@ -281,6 +281,57 @@ body.is-studio-editor main{padding-top:0}
 .studio-left-panel h3{margin:0 0 10px}
 .studio-left-panel p,.studio-left-panel li{margin:0 0 8px;color:#d7deef}
 .studio-left-panel--inspector{padding:10px;background:linear-gradient(180deg,#171c27,#10141d)}
+.studio-editor-page.has-left-panel:has(.studio-left-panel--library){--studio-left-panel-width:430px}
+.studio-editor-page.has-left-panel:has(.studio-left-panel--library) .studio-editor-workspace{grid-template-columns:430px 390px minmax(0,1fr) 56px}
+.studio-left-panel--library{width:430px;min-width:430px;max-width:430px;padding:0;background:#10141d;overflow:hidden}
+.studio-daw-library{height:100%;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;color:#eaf0ff}
+.studio-daw-library>header{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid rgba(135,155,205,.22);background:#171c27}
+.studio-daw-library>header h3,.studio-daw-library>header p{margin:0}
+.studio-daw-library>header h3{font-size:16px}
+.studio-daw-library>header p{margin-top:3px;color:#8f9bb7;font-size:11px}
+.studio-daw-library>header>span{min-width:28px;height:24px;display:grid;place-items:center;border-radius:5px;background:#252c3d;color:#a9dcff;font-size:11px;font-weight:900}
+.studio-daw-library-browser{min-height:0;display:grid;grid-template-columns:170px minmax(0,1fr)}
+.studio-daw-library-browser>nav{min-height:0;overflow:auto;padding:8px;border-right:1px solid rgba(135,155,205,.18);background:#121720}
+.studio-daw-library-results{min-height:0;overflow:auto;padding:10px;background:#0d1119}
+.studio-daw-library-root{display:grid;gap:3px;margin-bottom:5px}
+.studio-daw-library-root-button,.studio-daw-library-children button,.studio-daw-library-instrument{width:100%;border:0;color:#dce6fa;font:inherit;text-align:left;cursor:pointer}
+.studio-daw-library-root-button{min-height:30px;display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:4px;border-radius:5px;background:transparent;padding:4px 6px}
+.studio-daw-library-root-button:hover,.studio-daw-library-root-button:focus-visible{background:rgba(130,160,220,.1)}
+.studio-daw-library-root-button span{color:#79d7ff;font-weight:900}
+.studio-daw-library-root-button strong{overflow:hidden;text-overflow:ellipsis;font-size:11px}
+.studio-daw-library-children{display:grid;gap:2px;padding-left:17px}
+.studio-daw-library-children button{min-height:34px;display:grid;gap:1px;border-radius:5px;background:transparent;padding:5px 7px}
+.studio-daw-library-children button:hover,.studio-daw-library-children button:focus-visible,.studio-daw-library-children button.is-active{background:rgba(91,137,255,.18)}
+.studio-daw-library-children span{font-size:11px;font-weight:800}
+.studio-daw-library-children small{color:#78859f;font-size:9px;text-transform:uppercase}
+.studio-daw-library-instruments{display:grid;gap:7px}
+.studio-daw-library-instrument{min-height:68px;display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;align-items:center;position:relative;border:1px solid rgba(133,155,210,.17);border-radius:7px;background:#171d29;padding:8px}
+.studio-daw-library-instrument:hover,.studio-daw-library-instrument:focus-visible,.studio-daw-library-instrument.is-selected{border-color:rgba(99,206,255,.58);background:#1b2637}
+.studio-daw-library-instrument-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:6px;background:linear-gradient(145deg,#236b82,#40348b);font-size:14px;font-weight:900}
+.studio-daw-library-instrument>span:nth-child(2){min-width:0;display:grid;gap:4px;padding-right:58px}
+.studio-daw-library-instrument strong,.studio-daw-library-instrument small{overflow:hidden;text-overflow:ellipsis}
+.studio-daw-library-instrument strong{font-size:12px;white-space:nowrap}
+.studio-daw-library-instrument small{color:#98a6c2;font-size:10px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.studio-daw-library-instrument em{position:absolute;right:7px;top:7px;color:#8fdfff;font-size:8px;font-style:normal;font-weight:900;text-transform:uppercase}
+.studio-daw-library-empty,.studio-daw-library-loading{display:grid;align-content:center;justify-items:center;gap:6px;min-height:150px;padding:18px;color:#8f9bb7;text-align:center}
+.studio-daw-library-empty strong{color:#e3ebfb;font-size:12px}
+.studio-daw-library-empty p{max-width:220px;margin:0!important;color:#8f9bb7!important;font-size:10px;line-height:1.5}
+.studio-daw-library-empty button{min-height:30px;border:1px solid rgba(110,205,255,.42);border-radius:6px;background:#1a2738;color:#e9f6ff;padding:0 10px}
+.studio-daw-library-empty.is-error strong{color:#ffb2bd}
+.studio-daw-library-selection{display:grid;gap:8px;padding:10px 12px;border-top:1px solid rgba(135,155,205,.22);background:#171c27}
+.studio-daw-library-selection>div{display:grid;gap:2px}
+.studio-daw-library-selection>div span{color:#7f8ba5;font-size:9px;text-transform:uppercase}
+.studio-daw-library-selection>div strong{font-size:12px}
+.studio-daw-library-selection dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0}
+.studio-daw-library-selection dl div{display:grid;gap:2px}
+.studio-daw-library-selection dt{color:#71809c;font-size:8px;text-transform:uppercase}
+.studio-daw-library-selection dd{margin:0;color:#dfe9fb;font-size:10px}
+.studio-daw-library-selection p{margin:0!important;color:#8d9ab4!important;font-size:9px;line-height:1.4}
+@media(max-width:1280px){
+  .studio-editor-page.has-left-panel:has(.studio-left-panel--library) .studio-editor-workspace{grid-template-columns:340px 320px minmax(0,1fr) 48px}
+  .studio-left-panel--library{width:340px;min-width:340px;max-width:340px}
+  .studio-daw-library-browser{grid-template-columns:136px minmax(0,1fr)}
+}
 .studio-track-inspector{display:grid;gap:10px;min-width:0}
 .studio-track-inspector-header{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;align-items:center;padding:10px;border:1px solid rgba(130,150,210,.2);border-radius:10px;background:rgba(255,255,255,.035)}
 .studio-track-inspector-header h3{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px}

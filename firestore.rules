@@ -1698,6 +1698,11 @@ service cloud.firestore {
       allow delete: if isStudioOwnerResource();
     }
 
+    match /studioDawDefaults/libraryContent {
+      allow read: if signedIn();
+      allow write: if isOwnerAdminRole();
+    }
+
     match /stageProjects/{projectId} {
       allow get: if isPublicStageProjectResource() || isStageOwnerResource() || isStageCollaboratorResource();
       allow list: if isPublicStageProjectResource() || isStageOwnerResource() || isStageCollaboratorResource();

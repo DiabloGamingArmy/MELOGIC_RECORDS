@@ -14,6 +14,7 @@ import { renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 import { getDawPluginManifest, listDawInstruments } from './daw/pluginHost/pluginRegistry.js'
 import { MIDI_EFFECT_MANIFESTS } from './daw/midiEffects/catalog.js'
 import { AUDIO_EFFECT_MANIFESTS } from './daw/audioEffects/catalog.js'
+import { getDefaultLibraryContent } from './data/studioLibraryService.js'
 import './styles/dawPluginWindow.css'
 
 const app = document.querySelector('#app')
@@ -141,6 +142,15 @@ let audioContext = null
 let studioAudioEngine = null
 let lastMetronomeBeat = -1
 let activeLeftPanel = ""
+let studioLibraryState = {
+  data: null,
+  loading: false,
+  loaded: false,
+  error: '',
+  selectedPath: '',
+  selectedInstrumentId: '',
+  expandedRootIds: new Set()
+}
 let inspectorMenu = null
 let inspectorMenuPosition = null
 let globalTracks = {
@@ -858,7 +868,112 @@ function renderTrackInspector() {
     ${renderChannelStripSettings(track)}
   </section>`
 }
-function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":`<h3>Library</h3><ul><li>Drum Kits</li><li>Pianos</li><li>Synths</li><li>Bass</li><li>Vocals</li><li>FX</li></ul>`,"inspector":renderTrackInspector(),"smart-controls":`<h3>Smart Controls</h3><p>EQ</p><p>Compressor</p><p>Sends</p><p>Track Effects</p>`,"loop-browser":`<h3>Loop Browser</h3><input placeholder="Search loops"/><p>Drums</p><p>Melody</p><p>Bass</p><p>Vocals</p><p>FX</p>`}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''}">${views[activeLeftPanel] || ''}</aside>` }
+function selectedStudioLibraryFolder() {
+  const folders = studioLibraryState.data?.folders || []
+  for (const root of folders) {
+    const child = (root.children || []).find((item) => item.path === studioLibraryState.selectedPath)
+    if (child) return { root, child }
+  }
+  return null
+}
+
+function renderStudioLibraryTree() {
+  const folders = studioLibraryState.data?.folders || []
+  return folders.map((root) => {
+    const expanded = studioLibraryState.expandedRootIds.has(root.id)
+    return `<section class="studio-daw-library-root">
+      <button type="button" class="studio-daw-library-root-button" data-library-root="${esc(root.id)}" aria-expanded="${String(expanded)}">
+        <span>${expanded ? '−' : '+'}</span>
+        <strong>${esc(root.label)}</strong>
+      </button>
+      ${expanded ? `<div class="studio-daw-library-children">${(root.children || []).map((child) => `
+        <button type="button" class="${studioLibraryState.selectedPath === child.path ? 'is-active' : ''}" data-library-folder="${esc(child.path)}">
+          <span>${esc(child.label)}</span>
+          <small>${esc(child.engineType || '')}</small>
+        </button>
+      `).join('')}</div>` : ''}
+    </section>`
+  }).join('')
+}
+
+function renderStudioLibraryResults() {
+  const selection = selectedStudioLibraryFolder()
+  if (!selection) return '<div class="studio-daw-library-empty"><strong>Select a folder</strong><p>Choose an engine folder to browse its instruments.</p></div>'
+  const instruments = (studioLibraryState.data?.instruments || []).filter((instrument) => (
+    instrument.folderPath === selection.child.path
+    && instrument.enabled !== false
+    && instrument.visibility === 'public'
+  ))
+  if (!instruments.length) {
+    const comingSoon = selection.child.engineType !== 'sample-based'
+    return `<div class="studio-daw-library-empty">
+      <strong>${comingSoon ? 'Coming soon' : 'No instruments yet'}</strong>
+      <p>${comingSoon ? `${selection.child.label} instruments are not available in this engine yet.` : 'This folder is ready for instruments added through Admin Operations.'}</p>
+    </div>`
+  }
+  return `<div class="studio-daw-library-instruments">${instruments.map((instrument) => {
+    const selected = studioLibraryState.selectedInstrumentId === instrument.id
+    return `<button type="button" class="studio-daw-library-instrument ${selected ? 'is-selected' : ''}" data-library-instrument="${esc(instrument.id)}">
+      <span class="studio-daw-library-instrument-icon">${instrument.engineType === 'sample-based' ? 'S' : instrument.engineType === 'wavetable' ? 'W' : 'V'}</span>
+      <span><strong>${esc(instrument.name)}</strong><small>${esc(instrument.description || `${instrument.samples?.length || 0} mapped samples`)}</small></span>
+      <em>${esc(instrument.engineType === 'sample-based' ? 'Sample Based' : instrument.engineType === 'wavetable' ? 'Wavetable' : 'VST')}</em>
+    </button>`
+  }).join('')}</div>`
+}
+
+function renderStudioLibrarySelection() {
+  const instrument = (studioLibraryState.data?.instruments || []).find((item) => item.id === studioLibraryState.selectedInstrumentId)
+  if (!instrument) return ''
+  return `<section class="studio-daw-library-selection">
+    <div><span>${esc(instrument.folderPath)}</span><strong>${esc(instrument.name)}</strong></div>
+    <dl><div><dt>Engine</dt><dd>${esc(instrument.engineType)}</dd></div><div><dt>Samples</dt><dd>${instrument.samples?.length || 0}</dd></div><div><dt>Version</dt><dd>v${instrument.version || 1}</dd></div></dl>
+    <p>Metadata is ready. Audio remains unloaded until preview and sampler playback are implemented.</p>
+  </section>`
+}
+
+function renderStudioLibraryPanel() {
+  if (studioLibraryState.loading) return '<section class="studio-daw-library"><header><h3>Library</h3><p>Loading default content...</p></header><div class="studio-daw-library-loading">Reading the Studio library manifest.</div></section>'
+  if (studioLibraryState.error) return `<section class="studio-daw-library"><header><h3>Library</h3><p>Default instruments</p></header><div class="studio-daw-library-empty is-error"><strong>Library unavailable</strong><p>${esc(studioLibraryState.error)}</p><button type="button" data-library-retry>Try again</button></div></section>`
+  if (studioLibraryState.loaded && !studioLibraryState.data) return '<section class="studio-daw-library"><header><h3>Library</h3><p>Default instruments</p></header><div class="studio-daw-library-empty"><strong>Library content has not been initialized yet.</strong><p>An administrator can initialize it from Operations → Studio → DAW.</p></div></section>'
+  return `<section class="studio-daw-library">
+    <header><div><h3>${esc(studioLibraryState.data?.rootLabel || 'Library')}</h3><p>Default instruments</p></div><span>${studioLibraryState.data?.instruments?.length || 0}</span></header>
+    <div class="studio-daw-library-browser">
+      <nav aria-label="Studio Library folders">${renderStudioLibraryTree()}</nav>
+      <div class="studio-daw-library-results">${renderStudioLibraryResults()}</div>
+    </div>
+    ${renderStudioLibrarySelection()}
+  </section>`
+}
+
+async function loadStudioLibrary({ force = false } = {}) {
+  if (studioLibraryState.loading || (studioLibraryState.loaded && !force)) return
+  studioLibraryState.loading = true
+  studioLibraryState.error = ''
+  renderEditor()
+  try {
+    const data = await getDefaultLibraryContent()
+    const firstRoot = data?.folders?.[0]
+    const firstChild = firstRoot?.children?.[0]
+    studioLibraryState = {
+      ...studioLibraryState,
+      data,
+      loaded: true,
+      selectedPath: studioLibraryState.selectedPath || firstChild?.path || '',
+      expandedRootIds: studioLibraryState.expandedRootIds.size
+        ? studioLibraryState.expandedRootIds
+        : new Set(firstRoot?.id ? [firstRoot.id] : [])
+    }
+  } catch (error) {
+    console.warn('[studio-library] manifest read failed', { code: error?.code, message: error?.message })
+    studioLibraryState.error = error?.message || 'Could not load the default Studio library.'
+    studioLibraryState.loaded = true
+  } finally {
+    studioLibraryState.loading = false
+    renderEditor()
+  }
+}
+
+function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":`<h3>Smart Controls</h3><p>EQ</p><p>Compressor</p><p>Sends</p><p>Track Effects</p>`,"loop-browser":`<h3>Loop Browser</h3><input placeholder="Search loops"/><p>Drums</p><p>Melody</p><p>Bass</p><p>Vocals</p><p>FX</p>`}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''}">${views[activeLeftPanel] || ''}</aside>` }
 function getActiveNotePage(){ return notePages.find((page)=>page.id===activeNotePageId) || notePages[0] }
 function stashActiveNoteInput(){ const input = app.querySelector('[data-notes-input]'); const active = getActiveNotePage(); if (!input || !active) return; active.body = input.value }
 function renderNotesModal(){ if(!isNotesOpen) return ''; const activePage = getActiveNotePage(); return `<div class="studio-notes-modal"><div class="studio-notes-panel"><header class="studio-notes-header"><h3>Project Notes</h3></header><div class="studio-notes-body"><div class="studio-notes-pages">${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${page.id}" aria-pressed="${String(page.id===activeNotePageId)}">${page.title}</button>`).join('')}<button class="studio-notes-page-button" data-add-notes-page>Add Page</button></div><textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${activePage?.body || ''}</textarea></div><div class="studio-notes-actions"><button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button><button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button></div></div></div>` }
@@ -2169,7 +2284,28 @@ function bindEditorEvents() {
     if (activeRecording || isCountInRunning) stopRecordingAndKeep()
     else startMidiRecordFlow()
   }, { capture: true })
-  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); renderEditor(); return } startMidiRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if (isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; if(activeInstrumentSubpage==='keyboard'&&next!=='keyboard') stopAllTrackInstrumentNotes(); activeInstrumentSubpage=next; renderEditor() }) })
+  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor(); if(activeLeftPanel==='library') loadStudioLibrary() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); renderEditor(); return } startMidiRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; if(activeInstrumentSubpage==='keyboard'&&next!=='keyboard') stopAllTrackInstrumentNotes(); activeInstrumentSubpage=next; renderEditor() }) })
+  app.querySelectorAll('[data-library-root]').forEach((button)=>button.addEventListener('click',()=>{
+    const id = button.dataset.libraryRoot || ''
+    const expanded = new Set(studioLibraryState.expandedRootIds)
+    if (expanded.has(id)) expanded.delete(id)
+    else expanded.add(id)
+    studioLibraryState.expandedRootIds = expanded
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-library-folder]').forEach((button)=>button.addEventListener('click',()=>{
+    studioLibraryState.selectedPath = button.dataset.libraryFolder || ''
+    studioLibraryState.selectedInstrumentId = ''
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-library-instrument]').forEach((button)=>button.addEventListener('click',()=>{
+    studioLibraryState.selectedInstrumentId = button.dataset.libraryInstrument || ''
+    renderEditor()
+  }))
+  app.querySelector('[data-library-retry]')?.addEventListener('click',()=>{
+    studioLibraryState.loaded = false
+    loadStudioLibrary({ force:true })
+  })
   app.querySelectorAll('[data-midi]').forEach((key)=>{ const midi=Number(key.dataset.midi); key.addEventListener('pointerdown',(e)=>{ e.preventDefault(); const track=getSelectedTrack(); playTrackMidiNote(track, midi+(instrumentOctaveOffset*12), 0.85) }); key.addEventListener('pointerup',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }); key.addEventListener('pointerleave',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }) }); app.querySelector('[data-typing-piano-toggle]')?.addEventListener('click',()=>{ setMusicalTypingEnabled(!isTypingPianoEnabled); renderEditor() }); app.querySelector('[data-sustain-toggle]')?.addEventListener('click',()=>{ isSustainEnabled=!isSustainEnabled; if(!isSustainEnabled) stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-down]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.max(-2,instrumentOctaveOffset-1); stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-up]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.min(2,instrumentOctaveOffset+1); stopAllTrackInstrumentNotes(); renderEditor() }); bindMidiRegionEvents(); app.querySelectorAll('[data-instrument-knob]').forEach((input)=>{ input.addEventListener('input',(e)=>{ const knob=e.target.dataset.instrumentKnob; const value=Number(e.target.value); const selected=getSelectedTrack(); if(knob==='volume'){ instrumentVolume=value; if(selected){ selected.volume=Math.round(value*100); syncSelectedTrackVolumeControl(selected); if(selected.instrument?.pluginInstanceId) dawInstrumentRegistry.setParam(selected.instrument.pluginInstanceId, 'volume', value) } if(instrumentMasterGain&&instrumentAudioContext) instrumentMasterGain.gain.setValueAtTime(instrumentVolume,instrumentAudioContext.currentTime) } else if(knob==='pan'){ instrumentPan=value; if(selected) selected.pan=value; if(instrumentPanNode&&instrumentAudioContext) instrumentPanNode.pan.setValueAtTime(instrumentPan,instrumentAudioContext.currentTime); app.querySelector(`[data-track-pan="${selected?.id}"]`)?.style.setProperty('--pan-angle', `${value * 135}deg`) } const dial=app.querySelector(`[data-instrument-knob-dial="${knob}"]`); const valueEl=app.querySelector(`[data-instrument-knob-value="${knob}"]`); if(dial) dial.style.setProperty('--knob-angle',`${-135 + ((value-Number(e.target.min))/(Number(e.target.max)-Number(e.target.min)))*270}deg`); if(valueEl) valueEl.textContent = knob==='pan' ? value.toFixed(2) : `${Math.round(value*100)}%` }); input.addEventListener('change',()=>scheduleEditorSave()); input.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const startY=event.clientY; const startValue=Number(input.value); const min=Number(input.min); const max=Number(input.max); const speed = input.dataset.instrumentKnob==='pan' ? 0.004 : 0.002; const onMove=(ev)=>{ const delta=-(ev.clientY-startY)*speed; const next=clamp(startValue+delta,min,max); input.value=String(next); input.dispatchEvent(new Event('input',{bubbles:true})) }; const onUp=()=>{ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); scheduleEditorSave() }; window.addEventListener('pointermove',onMove); window.addEventListener('pointerup',onUp,{once:true}) }) }); app.querySelectorAll('[data-preset-load]').forEach((button)=>{ button.addEventListener('click',(event)=>{ event.stopPropagation(); const preset=instrumentPresetItems.find((item)=>item.id===button.dataset.presetLoad); if(!preset) return; selectedInstrumentName=preset.name; renderEditor() }) }); app.querySelector('[data-arp-toggle]')?.addEventListener('click',()=>{ arpEnabled=!arpEnabled; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-mode]')?.addEventListener('change',(e)=>{ arpMode=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-rate]')?.addEventListener('change',(e)=>{ arpRate=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-length]')?.addEventListener('change',(e)=>{ arpLength=Number(e.target.value)||16; if(selectedArpStepIndex>=arpLength) selectedArpStepIndex=arpLength-1; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-octave]').forEach((btn)=>btn.addEventListener('click',()=>{ const d=Number(btn.dataset.arpOctave||0); arpOctaves=clamp(arpOctaves+d,1,4); renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-gate]')?.addEventListener('input',(e)=>{ arpGate=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpGate}%` }); app.querySelector('[data-arp-swing]')?.addEventListener('input',(e)=>{ arpSwing=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpSwing}%` }); app.querySelector('[data-arp-velocity]')?.addEventListener('input',(e)=>{ arpVelocity=Number(e.target.value); e.target.nextElementSibling.textContent=String(arpVelocity) }); app.querySelectorAll('[data-arp-gate],[data-arp-swing],[data-arp-velocity]').forEach((el)=>el.addEventListener('change',()=>scheduleEditorSave())); app.querySelectorAll('[data-arp-edit-mode]').forEach((button)=>{ button.addEventListener('click',()=>{ const next=button.dataset.arpEditMode; if(!next||arpEditMode===next) return; arpEditMode=next; if(next!=='note') arpNotePickerStepIndex=null; renderEditor() }) }); app.querySelectorAll('[data-arp-step]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ const i=Number(el.dataset.arpStep); if(!Number.isFinite(i)||!arpSteps[i]) return; const step=arpSteps[i]=normalizeArpStep(arpSteps[i],i); selectedArpStepIndex=i; if(event.ctrlKey||event.metaKey){ step.active=!step.active; renderEditor(); scheduleEditorSave(); return } if(event.shiftKey){ step.accent=!step.accent; renderEditor(); scheduleEditorSave(); return } if(event.altKey){ step.octave=step.octave>=2?-1:step.octave+1; renderEditor(); scheduleEditorSave(); return } if(arpEditMode==='note'){ arpNotePickerStepIndex=i; arpNotePickerOctave=step.noteOctave ?? arpNotePickerOctave; renderEditor(); return } if(arpEditMode==='velocity'){ step.active=true; step.velocity=getVelocityFromStepPointer(event, el); renderEditor(); scheduleEditorSave(); return } cycleArpStepByMode(step, arpEditMode); step.active=true; renderEditor(); scheduleEditorSave() })); app.querySelectorAll('[data-arp-note-picker-octave]').forEach((button)=>{ button.addEventListener('click',()=>{ arpNotePickerOctave=clamp(arpNotePickerOctave+Number(button.dataset.arpNotePickerOctave||0),0,8); renderEditor() }) }); app.querySelector('[data-arp-note-picker-close]')?.addEventListener('click',()=>{ arpNotePickerStepIndex=null; renderEditor() }); app.querySelectorAll('[data-arp-note-value]').forEach((button)=>{ button.addEventListener('click',()=>{ const stepIndex=arpNotePickerStepIndex; if(stepIndex==null||!arpSteps[stepIndex]) return; const st=arpSteps[stepIndex]=normalizeArpStep(arpSteps[stepIndex],stepIndex); st.note=clamp(Number(button.dataset.arpNoteValue),0,11); st.noteOctave=arpNotePickerOctave; st.active=true; selectedArpStepIndex=stepIndex; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-reset]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ ...createDefaultArpStep(i), octave:0, accent:false },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-randomize]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ active:Math.random()>.35, note:Math.floor(Math.random()*12), noteOctave:Math.floor(3+Math.random()*3), velocity:Math.floor(35+Math.random()*92), octave:[-1,0,0,1][Math.floor(Math.random()*4)], gate:[10,25,50,70,85,100][Math.floor(Math.random()*6)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.75, tie:Math.random()>.9 },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-pattern]').forEach((el)=>el.addEventListener('click',()=>{ const name=el.dataset.arpPattern||''; if(name.includes('Straight')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:i%2===0, velocity:95, octave:0, accent:false },i)); else if(name.includes('Random')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:Math.random()>.45, velocity:Math.floor(45+Math.random()*80), octave:[-1,0,1][Math.floor(Math.random()*3)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.8 },i)); else if(name.includes('Chord')) arpMode='Chord Repeat'; currentArpPatternName=name; renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-step-active]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.active=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.note=clamp(Number(e.target.value)||0,0,11); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.noteOctave=clamp(Number(e.target.value)||4,0,8); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.octave=clamp(Number(e.target.value)||0,-2,4); renderEditor(); scheduleEditorSave() }); [['[data-arp-step-velocity]','velocity','[data-arp-step-velocity-value]',''],['[data-arp-step-gate]','gate','[data-arp-step-gate-value]','%'],['[data-arp-step-probability]','probability','[data-arp-step-probability-value]','%']].forEach(([sel,key,valSel,suffix])=>{ const input=app.querySelector(sel); const valueEl=app.querySelector(valSel); if(!input) return; input.addEventListener('input',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st[key]=Number(e.target.value); if(valueEl) valueEl.textContent=`${st[key]}${suffix}` }); input.addEventListener('change',()=>{ renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-step-accent]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.accent=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-tie]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.tie=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-instrument-select]')?.addEventListener('change',(e)=>{ selectedInstrumentName=e.target.value });
   app.querySelector('.studio-editor-page')?.addEventListener('click', (event) => {
     const actionButton = event.target.closest('[data-midi-region-action]')

@@ -348,6 +348,23 @@ service firebase.storage {
       allow read, write: if false;
     }
 
+    match /studioDawDefaults/libraryContent/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if isAdminStorageWriter()
+        && (
+          request.resource == null
+          || (
+            request.resource.size <= 500 * 1024 * 1024
+            && (
+              request.resource.contentType.matches('audio/.*')
+              || request.resource.contentType.matches('image/.*')
+              || request.resource.contentType.matches('application/json')
+              || request.resource.contentType.matches('application/octet-stream')
+            )
+          )
+        );
+    }
+
     match /stage-projects/{userId}/{projectId}/exports/{fileName} {
       allow read: if canReadStageProject(projectId);
       allow write: if signedIn()

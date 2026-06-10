@@ -78,6 +78,21 @@ import {
   updateMarketplacePricingSettings,
   updatePrivateBetaSettings
 } from './data/operationsService'
+import {
+  STUDIO_LIBRARY_ENGINE_TYPES,
+  STUDIO_LIBRARY_SOURCE_ROOTS,
+  STUDIO_LIBRARY_STORAGE_ROOT,
+  addDefaultInstrumentToLibrary,
+  buildSamplesFromFiles,
+  getDefaultLibraryContent,
+  initializeDefaultLibraryContent,
+  parseDefaultInstrumentArchive,
+  studioLibraryFolderPath,
+  studioLibrarySlug,
+  updateDefaultInstrument,
+  uploadDefaultInstrumentArtwork,
+  uploadDefaultInstrumentSample
+} from './data/studioLibraryService'
 
 const app = document.querySelector('#app')
 const ADMIN_THEME_KEY = 'melogic-admin-theme'
@@ -333,6 +348,21 @@ const state = {
     banner: {},
     beta: {},
     pricing: {},
+    studio: {
+      library: null,
+      loading: false,
+      initializing: false,
+      parsing: false,
+      saving: false,
+      progress: 0,
+      parsedSamples: [],
+      zipFile: null,
+      artworkFile: null,
+      editingId: '',
+      form: {},
+      error: '',
+      message: ''
+    },
     agreement: {
       agreementId: 'marketplace-product-seller-agreement',
       version: 'v1',
@@ -3107,7 +3137,7 @@ function userActionDialog() {
 function operationsMode() {
   const params = new URLSearchParams(window.location.search)
   const mode = String(params.get('mode') || 'banner').toLowerCase()
-  return ['banner', 'beta', 'pricing', 'agreement'].includes(mode) ? mode : 'banner'
+  return ['banner', 'beta', 'pricing', 'agreement', 'studio'].includes(mode) ? mode : 'banner'
 }
 
 function operationsModeTabs(mode = operationsMode()) {
@@ -3115,7 +3145,8 @@ function operationsModeTabs(mode = operationsMode()) {
     ['banner', 'Banner Alerts'],
     ['beta', 'Private Beta'],
     ['pricing', 'Marketplace Pricing'],
-    ['agreement', 'Seller Agreement']
+    ['agreement', 'Seller Agreement'],
+    ['studio', 'Studio']
   ]
   return `
     <nav class="admin-contact-tabs" aria-label="Operations modes">
@@ -3198,6 +3229,7 @@ function operationsView() {
     ${mode === 'beta' ? operationsBetaPanel() : ''}
     ${mode === 'pricing' ? operationsPricingPanel() : ''}
     ${mode === 'agreement' ? operationsAgreementPanel() : ''}
+    ${mode === 'studio' ? operationsStudioPanel() : ''}
   `
 }
 
@@ -3342,6 +3374,124 @@ function operationsAgreementPanel() {
         </div>
         <div class="admin-modal-actions">
           <button type="submit" class="admin-primary-button" ${uploading ? 'disabled' : ''}>${uploading ? 'Uploading...' : 'Upload Seller Agreement'}</button>
+        </div>
+      </form>
+    </section>
+  `
+}
+
+function defaultStudioInstrumentForm() {
+  return {
+    name: '',
+    id: '',
+    sourceRoot: 'melogic-records',
+    engineType: 'sample-based',
+    description: '',
+    sampleStrategy: 'thirds',
+    version: 1,
+    licenseType: 'owned',
+    sourceName: 'Melogic Records',
+    sourceUrl: '',
+    licenseUrl: '',
+    attributionRequired: false,
+    commercialAllowed: true,
+    enabled: true,
+    visibility: 'public',
+    overwrite: false
+  }
+}
+
+function studioInstrumentFormState() {
+  return { ...defaultStudioInstrumentForm(), ...(state.operations.studio.form || {}) }
+}
+
+function studioOperationsSubnav() {
+  return `
+    <nav class="admin-contact-tabs admin-operations-subtabs" aria-label="Studio operations">
+      <a class="is-active" href="${ROUTES.adminOperations}?mode=studio&studioMode=daw">DAW</a>
+    </nav>
+  `
+}
+
+function renderAdminStudioLibraryTree(library = {}) {
+  const instruments = Array.isArray(library.instruments) ? library.instruments : []
+  const folders = Array.isArray(library.folders) ? library.folders : []
+  if (!folders.length) return '<article class="admin-empty-state">Default library folders have not been initialized.</article>'
+  return `<div class="admin-studio-library-tree">${folders.map((root) => `
+    <section>
+      <header><strong>${escapeHtml(root.label)}</strong><span>${instruments.filter((item) => item.sourceRoot === root.id).length}</span></header>
+      <div>${(root.children || []).map((child) => {
+        const rows = instruments.filter((item) => item.folderPath === child.path)
+        return `<article>
+          <div><strong>${escapeHtml(child.label)}</strong><small>${escapeHtml(child.path)}</small></div>
+          <span>${rows.length ? `${rows.length} instrument${rows.length === 1 ? '' : 's'}` : 'Empty'}</span>
+          ${rows.length ? `<ul>${rows.map((instrument) => `<li><button type="button" data-studio-library-edit="${escapeHtml(instrument.id)}">${escapeHtml(instrument.name)}</button><small>${escapeHtml(instrument.engineType)} · v${instrument.version || 1} · ${instrument.samples?.length || 0} samples</small></li>`).join('')}</ul>` : ''}
+        </article>`
+      }).join('')}</div>
+    </section>
+  `).join('')}</div>`
+}
+
+function operationsStudioPanel() {
+  const studio = state.operations.studio
+  const library = studio.library
+  const form = studioInstrumentFormState()
+  const folderPath = studioLibraryFolderPath(form.sourceRoot, form.engineType)
+  const instrumentId = studioLibrarySlug(form.id || form.name)
+  const version = Math.max(1, Math.round(Number(form.version) || 1))
+  const basePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${instrumentId || '{instrumentId}'}/v${version}`
+  const editing = Boolean(studio.editingId)
+  return `
+    ${studioOperationsSubnav()}
+    ${studio.error ? `<p class="admin-status is-error">${escapeHtml(studio.error)}</p>` : ''}
+    ${studio.message ? `<p class="admin-status is-success">${escapeHtml(studio.message)}</p>` : ''}
+    <section class="admin-section-slab admin-operations-panel admin-studio-library-overview">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Default DAW Library</h2>
+          <p class="admin-muted">Firestore manifest <code class="admin-code-value">/studioDawDefaults/libraryContent</code>. Audio remains in Firebase Storage.</p>
+        </div>
+        <button type="button" class="admin-primary-button" data-studio-library-initialize ${studio.initializing ? 'disabled' : ''}>${studio.initializing ? 'Initializing...' : 'Initialize Default Library'}</button>
+      </div>
+      ${studio.loading ? '<article class="admin-empty-state">Loading DAW library...</article>' : renderAdminStudioLibraryTree(library || {})}
+    </section>
+    <section class="admin-section-slab admin-operations-panel">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>${editing ? `Edit ${escapeHtml(form.name || studio.editingId)}` : 'Add Default Instrument'}</h2>
+          <p class="admin-muted">${editing ? 'Update metadata or upload a replacement sample set.' : 'Create a manifest entry and upload mapped samples from a ZIP archive.'}</p>
+        </div>
+        ${editing ? '<button type="button" class="admin-secondary-button" data-studio-library-edit-cancel>Cancel edit</button>' : ''}
+      </div>
+      <form class="admin-studio-library-form" data-studio-library-form>
+        <div class="admin-form-grid">
+          ${operationTextInput({ name: 'name', label: 'Instrument name', value: form.name, required: true })}
+          <label><span>Instrument ID / slug</span><input name="id" value="${escapeHtml(form.id)}" required ${editing ? 'readonly' : ''}><small>${editing ? 'Instrument IDs stay stable after creation.' : 'Lowercase letters, numbers, and hyphens.'}</small></label>
+          <label><span>Source root</span><select name="sourceRoot">${STUDIO_LIBRARY_SOURCE_ROOTS.map((item) => `<option value="${item.id}" ${form.sourceRoot === item.id ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
+          <label><span>Engine type</span><select name="engineType">${STUDIO_LIBRARY_ENGINE_TYPES.map((item) => `<option value="${item.id}" ${form.engineType === item.id ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
+          <label><span>Sample strategy</span><select name="sampleStrategy">${['octave-roots', 'thirds', 'chromatic', 'custom', 'drum-map'].map((value) => `<option value="${value}" ${form.sampleStrategy === value ? 'selected' : ''}>${escapeHtml(humanLabel(value))}</option>`).join('')}</select></label>
+          ${operationTextInput({ name: 'version', label: 'Version', type: 'number', value: version, required: true })}
+          ${operationTextarea({ name: 'description', label: 'Description', value: form.description, rows: 4, wide: true })}
+          <div class="admin-studio-path-preview is-wide"><span>Folder path</span><strong data-studio-folder-preview>${escapeHtml(folderPath)}</strong><small data-studio-storage-preview>${escapeHtml(basePath)}</small></div>
+          <label><span>License type</span><select name="licenseType">${['owned', 'CC0', 'CC BY', 'custom'].map((value) => `<option value="${value}" ${form.licenseType === value ? 'selected' : ''}>${escapeHtml(value)}</option>`).join('')}</select></label>
+          ${operationTextInput({ name: 'sourceName', label: 'Source name', value: form.sourceName })}
+          ${operationTextInput({ name: 'sourceUrl', label: 'Source URL', type: 'url', value: form.sourceUrl, wide: true })}
+          ${operationTextInput({ name: 'licenseUrl', label: 'License URL', type: 'url', value: form.licenseUrl, wide: true })}
+          ${operationCheckbox({ name: 'attributionRequired', label: 'Attribution required', checked: form.attributionRequired })}
+          ${operationCheckbox({ name: 'commercialAllowed', label: 'Commercial use allowed', checked: form.commercialAllowed !== false })}
+          ${operationCheckbox({ name: 'enabled', label: 'Instrument enabled', checked: form.enabled !== false })}
+          <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility !== 'private' ? 'selected' : ''}>Public</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
+          <label class="is-wide"><span>Audio ZIP</span><input type="file" name="audioZip" accept=".zip,application/zip,application/x-zip-compressed" ${studio.parsing || studio.saving ? 'disabled' : ''}><small>Valid pitched WAV files use note+octave names such as C3.wav, Ds3.wav, Fs3.wav, or Bb4.wav. Unsupported files are ignored.</small></label>
+          <label class="is-wide"><span>Artwork (optional WebP)</span><input type="file" name="artwork" accept="image/webp" ${studio.saving ? 'disabled' : ''}><small>Stored as artwork/cover.webp.</small></label>
+          ${operationCheckbox({ name: 'overwrite', label: 'Replace an existing instrument with this ID', checked: editing || form.overwrite })}
+        </div>
+        <section class="admin-studio-sample-preview">
+          <header><div><strong>Parsed samples</strong><span>${studio.parsing ? 'Reading ZIP...' : `${studio.parsedSamples.length} valid WAV file${studio.parsedSamples.length === 1 ? '' : 's'}`}</span></div>${studio.zipFile ? `<small>${escapeHtml(studio.zipFile.name)}</small>` : ''}</header>
+          ${studio.parsedSamples.length ? `<div>${studio.parsedSamples.slice(0, 36).map((sample) => `<span><strong>${escapeHtml(sample.note)}</strong><small>${escapeHtml(sample.fileName)} · MIDI ${sample.rootMidi}</small></span>`).join('')}</div>${studio.parsedSamples.length > 36 ? `<p class="admin-muted">Showing 36 of ${studio.parsedSamples.length} samples.</p>` : ''}` : '<p class="admin-muted">Choose a ZIP to validate its sample map before saving.</p>'}
+        </section>
+        ${studio.saving ? `<div class="admin-studio-upload-progress"><span style="width:${Math.round(studio.progress * 100)}%"></span><strong>${Math.round(studio.progress * 100)}%</strong></div>` : ''}
+        <div class="admin-modal-actions">
+          <button type="submit" class="admin-primary-button" ${studio.saving || studio.parsing ? 'disabled' : ''}>${studio.saving ? 'Uploading...' : editing ? 'Update Instrument' : 'Add Instrument'}</button>
         </div>
       </form>
     </section>
@@ -4860,14 +5010,16 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       state.settings.emailStatus = emailStatus
     },
     operations: async () => {
-      const [banner, beta, pricing] = await Promise.all([
+      const [banner, beta, pricing, studioLibrary] = await Promise.all([
         getBannerAlertSettings(),
         getPrivateBetaSettings(),
-        getMarketplacePricingSettings()
+        getMarketplacePricingSettings(),
+        operationsMode() === 'studio' ? getDefaultLibraryContent() : Promise.resolve(state.operations.studio.library)
       ])
       state.operations.banner = banner || {}
       state.operations.beta = beta || {}
       state.operations.pricing = pricing || {}
+      state.operations.studio.library = studioLibrary || null
     }
   }
   if (!map[sectionKey]) return
@@ -5187,6 +5339,192 @@ async function submitOperationsForm(form) {
   } finally {
     state.operations.saving = ''
     if (mode === 'agreement') state.operations.agreement = { ...state.operations.agreement, uploading: false }
+    render()
+  }
+}
+
+async function initializeAdminStudioLibrary() {
+  const studio = state.operations.studio
+  if (!can('admin') || studio.initializing) return
+  studio.initializing = true
+  studio.error = ''
+  studio.message = ''
+  render()
+  try {
+    studio.library = await initializeDefaultLibraryContent()
+    studio.message = 'Default DAW library folders were initialized without removing existing instruments.'
+  } catch (error) {
+    console.warn('[admin] Studio library initialization failed', { code: error?.code, message: error?.message })
+    studio.error = error?.message || 'Could not initialize the default DAW library.'
+  } finally {
+    studio.initializing = false
+    render()
+  }
+}
+
+async function parseAdminStudioArchive(file) {
+  const studio = state.operations.studio
+  studio.zipFile = file || null
+  studio.parsedSamples = []
+  studio.error = ''
+  if (!file) {
+    render()
+    return
+  }
+  studio.parsing = true
+  render()
+  try {
+    studio.parsedSamples = await parseDefaultInstrumentArchive(file)
+    if (!studio.parsedSamples.length) {
+      studio.error = 'No valid note+octave WAV files were found in this ZIP.'
+    }
+  } catch (error) {
+    console.warn('[admin] Studio instrument ZIP parse failed', { name: error?.name, message: error?.message })
+    studio.error = error?.message || 'The ZIP archive could not be read.'
+  } finally {
+    studio.parsing = false
+    render()
+  }
+}
+
+function setAdminStudioEditInstrument(instrumentId = '') {
+  const studio = state.operations.studio
+  const instrument = studio.library?.instruments?.find((item) => item.id === instrumentId)
+  if (!instrument) return
+  studio.editingId = instrument.id
+  studio.form = {
+    name: instrument.name,
+    id: instrument.id,
+    sourceRoot: instrument.sourceRoot,
+    engineType: instrument.engineType,
+    description: instrument.description,
+    sampleStrategy: instrument.sampleStrategy,
+    version: instrument.version,
+    licenseType: instrument.license?.type || 'owned',
+    sourceName: instrument.license?.sourceName || '',
+    sourceUrl: instrument.license?.sourceUrl || '',
+    licenseUrl: instrument.license?.licenseUrl || '',
+    attributionRequired: instrument.license?.attributionRequired === true,
+    commercialAllowed: instrument.license?.commercialAllowed !== false,
+    enabled: instrument.enabled !== false,
+    visibility: instrument.visibility || 'public',
+    overwrite: true
+  }
+  studio.parsedSamples = []
+  studio.zipFile = null
+  studio.artworkFile = null
+  studio.error = ''
+  studio.message = ''
+  render()
+  requestAnimationFrame(() => app.querySelector('[data-studio-library-form]')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+}
+
+function resetAdminStudioInstrumentForm() {
+  const studio = state.operations.studio
+  studio.editingId = ''
+  studio.form = defaultStudioInstrumentForm()
+  studio.parsedSamples = []
+  studio.zipFile = null
+  studio.artworkFile = null
+  studio.progress = 0
+  studio.error = ''
+  render()
+}
+
+function updateAdminStudioProgress(progress) {
+  const studio = state.operations.studio
+  studio.progress = Math.max(0, Math.min(1, Number(progress) || 0))
+  const bar = app.querySelector('.admin-studio-upload-progress span')
+  const label = app.querySelector('.admin-studio-upload-progress strong')
+  if (bar) bar.style.width = `${Math.round(studio.progress * 100)}%`
+  if (label) label.textContent = `${Math.round(studio.progress * 100)}%`
+}
+
+async function submitAdminStudioInstrument(form) {
+  const studio = state.operations.studio
+  if (!can('admin') || studio.saving || studio.parsing) return
+  const values = operationsFormValues(form)
+  const id = studioLibrarySlug(values.id || values.name)
+  const sourceRoot = values.sourceRoot || 'melogic-records'
+  const engineType = values.engineType || 'sample-based'
+  const folderPath = studioLibraryFolderPath(sourceRoot, engineType)
+  const version = Math.max(1, Math.round(Number(values.version) || 1))
+  const storageBasePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`
+  const samplesPath = `${storageBasePath}/samples`
+  const existing = studio.library?.instruments?.find((item) => item.id === (studio.editingId || id))
+  studio.saving = true
+  studio.progress = 0
+  studio.error = ''
+  studio.message = ''
+  render()
+  try {
+    if (!values.name || !id || !folderPath) throw new Error('Instrument name, ID, source root, and engine type are required.')
+    if (!studio.library) throw new Error('Initialize the default DAW library before adding instruments.')
+    if (!existing && engineType === 'sample-based' && !studio.parsedSamples.length) throw new Error('A new sample-based instrument requires a ZIP with at least one valid WAV sample.')
+    const sampleRows = studio.parsedSamples.length
+      ? buildSamplesFromFiles(studio.parsedSamples, samplesPath)
+      : []
+    const totalUploads = sampleRows.length + (studio.artworkFile ? 1 : 0)
+    for (let index = 0; index < sampleRows.length; index += 1) {
+      const row = sampleRows[index]
+      await uploadDefaultInstrumentSample(row.file, row.path, (fileProgress) => {
+        updateAdminStudioProgress(totalUploads ? (index + fileProgress) / totalUploads : 0)
+      })
+    }
+    let artworkPath = existing?.artworkPath || ''
+    if (studio.artworkFile) {
+      if (studio.artworkFile.type && studio.artworkFile.type !== 'image/webp') throw new Error('Artwork must be a WebP image.')
+      artworkPath = `${storageBasePath}/artwork/cover.webp`
+      await uploadDefaultInstrumentArtwork(studio.artworkFile, artworkPath, (fileProgress) => {
+        updateAdminStudioProgress(totalUploads ? (sampleRows.length + fileProgress) / totalUploads : 0)
+      })
+    }
+    const payload = {
+      ...(existing || {}),
+      id,
+      name: values.name,
+      sourceRoot,
+      engineType,
+      folderPath,
+      description: values.description || '',
+      sampleStrategy: values.sampleStrategy || 'custom',
+      version,
+      enabled: values.enabled === true,
+      visibility: values.visibility === 'private' ? 'private' : 'public',
+      storageBasePath,
+      samplesPath,
+      artworkPath,
+      samples: sampleRows.length
+        ? sampleRows.map(({ file, ...sample }) => sample)
+        : (existing?.samples || []),
+      license: {
+        type: values.licenseType || 'owned',
+        sourceName: values.sourceName || '',
+        sourceUrl: values.sourceUrl || '',
+        licenseUrl: values.licenseUrl || '',
+        attributionRequired: values.attributionRequired === true,
+        commercialAllowed: values.commercialAllowed === true
+      }
+    }
+    const overwrite = values.overwrite === true || Boolean(studio.editingId)
+    if (studio.editingId && studio.editingId === id && !sampleRows.length) {
+      await updateDefaultInstrument(id, payload)
+    } else {
+      await addDefaultInstrumentToLibrary(payload, { overwrite })
+    }
+    updateAdminStudioProgress(1)
+    studio.library = await getDefaultLibraryContent()
+    studio.message = `${values.name} ${existing ? 'updated' : 'added'} in ${folderPath}.`
+    studio.editingId = ''
+    studio.form = defaultStudioInstrumentForm()
+    studio.parsedSamples = []
+    studio.zipFile = null
+    studio.artworkFile = null
+  } catch (error) {
+    console.warn('[admin] Studio instrument save failed', { code: error?.code, message: error?.message })
+    studio.error = error?.message || 'Could not save the default instrument.'
+  } finally {
+    studio.saving = false
     render()
   }
 }
@@ -6305,6 +6643,58 @@ function bindEvents() {
   app.querySelector('[data-operations-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     submitOperationsForm(event.currentTarget)
+  })
+  app.querySelector('[data-studio-library-initialize]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    initializeAdminStudioLibrary()
+  })
+  app.querySelector('[data-studio-library-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitAdminStudioInstrument(event.currentTarget)
+  })
+  app.querySelector('[data-studio-library-form] input[name="audioZip"]')?.addEventListener('change', (event) => {
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      ...operationsFormValues(event.currentTarget.form)
+    }
+    parseAdminStudioArchive(event.currentTarget.files?.[0] || null)
+  })
+  app.querySelector('[data-studio-library-form] input[name="artwork"]')?.addEventListener('change', (event) => {
+    state.operations.studio.artworkFile = event.currentTarget.files?.[0] || null
+  })
+  const studioLibraryForm = app.querySelector('[data-studio-library-form]')
+  const studioNameInput = studioLibraryForm?.elements?.name
+  const studioIdInput = studioLibraryForm?.elements?.id
+  studioNameInput?.addEventListener('input', () => {
+    if (!studioIdInput || studioIdInput.readOnly || studioIdInput.dataset.userEdited === 'true') return
+    studioIdInput.value = studioLibrarySlug(studioNameInput.value)
+    studioIdInput.dispatchEvent(new Event('input'))
+  })
+  studioIdInput?.addEventListener('input', () => {
+    if (document.activeElement === studioIdInput) studioIdInput.dataset.userEdited = 'true'
+  })
+  const updateStudioPathPreview = () => {
+    if (!studioLibraryForm) return
+    const sourceRoot = studioLibraryForm.elements.sourceRoot?.value || 'melogic-records'
+    const engineType = studioLibraryForm.elements.engineType?.value || 'sample-based'
+    const id = studioLibrarySlug(studioLibraryForm.elements.id?.value || studioLibraryForm.elements.name?.value) || '{instrumentId}'
+    const version = Math.max(1, Math.round(Number(studioLibraryForm.elements.version?.value) || 1))
+    const folderPath = studioLibraryFolderPath(sourceRoot, engineType)
+    const folder = studioLibraryForm.querySelector('[data-studio-folder-preview]')
+    const storagePath = studioLibraryForm.querySelector('[data-studio-storage-preview]')
+    if (folder) folder.textContent = folderPath
+    if (storagePath) storagePath.textContent = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`
+  }
+  studioLibraryForm?.querySelectorAll('select[name="sourceRoot"],select[name="engineType"],input[name="id"],input[name="name"],input[name="version"]').forEach((input) => {
+    input.addEventListener('input', updateStudioPathPreview)
+    input.addEventListener('change', updateStudioPathPreview)
+  })
+  app.querySelectorAll('[data-studio-library-edit]').forEach((button) => {
+    button.addEventListener('click', () => setAdminStudioEditInstrument(button.getAttribute('data-studio-library-edit') || ''))
+  })
+  app.querySelector('[data-studio-library-edit-cancel]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    resetAdminStudioInstrumentForm()
   })
   app.querySelector('[data-admin-email-form]')?.addEventListener('input', (event) => {
     updateEmailFormFromDom(event.currentTarget)
