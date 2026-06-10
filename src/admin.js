@@ -107,7 +107,7 @@ import {
 } from './data/studioLibraryService'
 
 const app = document.querySelector('#app')
-const ADMIN_THEME_KEY = 'melogic-admin-theme'
+const ADMIN_THEME_KEY = 'melogic-admin-theme-v2'
 
 const SECTIONS = [
   { key: 'dashboard', route: ROUTES.admin, label: 'Overview', icon: 'barChart', permission: 'admin' },
@@ -296,7 +296,7 @@ const state = {
   sort: 'newest',
   message: '',
   error: '',
-  theme: 'light',
+  theme: 'dark',
   mediaByProductId: {},
   mediaRequests: {},
   auditTab: 'listing',
@@ -477,14 +477,14 @@ function escapeHtml(value) {
 function readAdminTheme() {
   try {
     const value = window.localStorage?.getItem(ADMIN_THEME_KEY)
-    return value === 'dark' ? 'dark' : 'light'
+    return value === 'light' ? 'light' : 'dark'
   } catch {
-    return 'light'
+    return 'dark'
   }
 }
 
-function applyAdminTheme(theme = 'light') {
-  const nextTheme = theme === 'dark' ? 'dark' : 'light'
+function applyAdminTheme(theme = 'dark') {
+  const nextTheme = theme === 'light' ? 'light' : 'dark'
   state.theme = nextTheme
   document.documentElement.dataset.adminTheme = nextTheme
   try {

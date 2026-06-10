@@ -507,9 +507,10 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-piano-key--black small{margin:0;font-size:10px;color:#d4def4;background:rgba(24,31,47,.5);padding:1px 4px;border-radius:999px}
 .studio-piano-key--white.is-pressed{background:linear-gradient(180deg,#eef9ff,#cce0fb);box-shadow:inset 0 0 0 2px rgba(97,205,255,.42)}
 .studio-piano-key--black.is-pressed{background:linear-gradient(180deg,#5b4aa5,#233969);box-shadow:0 0 0 1px rgba(129,153,255,.65),0 0 12px rgba(119,136,255,.48)}
-.studio-keyboard-status{position:absolute;left:10px;top:10px;right:10px;z-index:8;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;padding:5px 8px;border-radius:6px;border:1px solid rgba(35,48,76,.22);background:rgba(245,248,255,.86);color:#1e283b;box-shadow:0 8px 18px rgba(15,20,32,.16);pointer-events:none}
+.studio-instrument-keyboard-shell{flex:1 1 auto;min-height:0;width:100%;display:flex;flex-direction:column;gap:5px}
+.studio-keyboard-status{position:relative;z-index:1;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;padding:5px 8px;border-radius:6px;border:1px solid rgba(130,150,210,.28);background:#171e2d;color:#eaf1ff;box-sizing:border-box;pointer-events:none}
 .studio-keyboard-status strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
-.studio-keyboard-status span{flex:0 0 auto;color:#40506b;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+.studio-keyboard-status span{flex:0 0 auto;color:#9eacd0;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
 .studio-keyboard-empty{position:absolute;inset:0;z-index:7;display:grid;place-items:center;padding:42px 18px 18px;text-align:center;background:rgba(14,20,33,.78);color:#f4f7ff;font-weight:900}
 .studio-virtual-keyboard.is-disabled .studio-piano-key{cursor:not-allowed;filter:saturate(.65);opacity:.7}
 .studio-virtual-keyboard.is-disabled .studio-piano-key--white{background:linear-gradient(180deg,#e2e7ef,#c0c8d5)}
@@ -633,6 +634,7 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-instrument-content .studio-presets-page,
 .studio-instrument-content .studio-instrument-subpage-placeholder{flex:1 1 auto;width:100%;height:100%;min-height:0;max-height:none}
 .studio-instrument-content .studio-virtual-keyboard{min-height:0;max-height:none}
+.studio-instrument-content .studio-instrument-keyboard-shell{height:100%}
 .studio-virtual-keyboard{max-height:none}
 
 .studio-module-grid{
