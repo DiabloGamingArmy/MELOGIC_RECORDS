@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, limit, orderBy, query, startAfter, Timestamp, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
-import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
+import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
@@ -256,10 +256,26 @@ export function normalizeCommunityComment(docSnapOrData = {}, explicitId = '') {
     likeCount: Math.max(0, Number(raw.likeCount || 0)),
     dislikeCount: Math.max(0, Number(raw.dislikeCount || 0)),
     reportCount: Math.max(0, Number(raw.reportCount || 0)),
+    attachments: Array.isArray(raw.attachments) ? raw.attachments.slice(0, 3).map((attachment) => ({
+      type: attachment?.type || 'file',
+      name: attachment?.name || 'Attachment',
+      path: attachment?.path || '',
+      url: attachment?.url || '',
+      size: Math.max(0, Number(attachment?.size || 0)),
+      contentType: attachment?.contentType || ''
+    })) : [],
     status: raw.status || 'visible',
     createdAt: serializeDate(raw.createdAt),
     updatedAt: serializeDate(raw.updatedAt)
   }
+}
+
+async function attachCommunityCommentUrls(comment = {}) {
+  const attachments = await Promise.all((comment.attachments || []).map(async (attachment) => ({
+    ...attachment,
+    url: attachment.url || await safeStorageUrl(attachment.path)
+  })))
+  return { ...comment, attachments }
 }
 
 export function normalizeCommunityStory(docSnapOrData = {}, explicitId = '') {
@@ -443,9 +459,12 @@ function postSort(sort = 'new') {
   return (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
 }
 
-export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', limitCount = 25, tag = '', search = '', sort = 'new', pageMode = false, cursor = null } = {}) {
+export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', communityIds = [], limitCount = 25, tag = '', search = '', sort = 'new', pageMode = false, cursor = null } = {}) {
   const tagKey = normalizeTagKey(tag)
   const searchToken = normalizeFeedSearchToken(search)
+  const selectedCommunityIds = [...new Set((Array.isArray(communityIds) ? communityIds : [])
+    .map((id) => String(id || '').trim())
+    .filter((id) => id && !id.includes('/')))].slice(0, 10)
   const cleanSort = ['new', 'top-today', 'top-week', 'most-discussed'].includes(sort) ? sort : 'new'
   const pageLimit = Math.max(1, Number(limitCount || 25))
   const constraints = [
@@ -453,6 +472,7 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
     where('visibility', '==', 'public')
   ]
   if (communitySlug) constraints.push(where('communitySlug', '==', communitySlug))
+  else if (selectedCommunityIds.length) constraints.push(where('communityId', 'in', selectedCommunityIds))
   if (tab === 'official') constraints.push(where('official', '==', true))
   if (tagKey) constraints.push(where('tagKeys', 'array-contains', tagKey))
   else if (searchToken) constraints.push(where('searchKeywords', 'array-contains', searchToken))
@@ -487,6 +507,7 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
         .map((docSnap) => normalizeCommunityPost(docSnap))
         .filter((post) => (
           (!communitySlug || post.communitySlug === communitySlug)
+          && (!selectedCommunityIds.length || selectedCommunityIds.includes(post.communityId))
           && (tab !== 'official' || post.official)
           && (!tagKey || (post.tagKeys || post.tags || []).includes(tagKey))
           && postMatchesFeedSearch(post, searchToken)
@@ -506,6 +527,7 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
     normalizeCommunityPost,
     (post) => (
       (!communitySlug || post.communitySlug === communitySlug)
+      && (!selectedCommunityIds.length || selectedCommunityIds.includes(post.communityId))
       && (tab !== 'official' || post.official)
       && (!tagKey || (post.tagKeys || post.tags || []).includes(tagKey))
       && postMatchesFeedSearch(post, searchToken)
@@ -580,13 +602,14 @@ export async function listCommunityComments(postId = '', limitCount = 120) {
   const commentsRef = collection(db, POST_COLLECTION, id, 'comments')
   try {
     const snapshot = await getDocs(query(commentsRef, where('status', '==', 'visible'), orderBy('createdAt', 'asc'), limit(limitCount)))
-    return snapshot.docs.map((docSnap) => normalizeCommunityComment(docSnap))
+    return Promise.all(snapshot.docs.map((docSnap) => attachCommunityCommentUrls(normalizeCommunityComment(docSnap))))
   } catch (error) {
     if (!String(error?.message || '').includes('requires an index')) throw error
     const snapshot = await getDocs(query(commentsRef, where('status', '==', 'visible'), limit(limitCount)))
-    return snapshot.docs
+    return Promise.all(snapshot.docs
       .map((docSnap) => normalizeCommunityComment(docSnap))
       .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
+      .map(attachCommunityCommentUrls))
   }
 }
 
@@ -613,7 +636,7 @@ export async function listCommunityCommentsPage({
     const snapshot = await getDocs(query(commentsRef, ...constraints))
     const pageDocs = snapshot.docs.slice(0, pageSize)
     return {
-      comments: pageDocs.map((docSnap) => normalizeCommunityComment(docSnap)),
+      comments: await Promise.all(pageDocs.map((docSnap) => attachCommunityCommentUrls(normalizeCommunityComment(docSnap)))),
       cursor: pageDocs.length ? pageDocs[pageDocs.length - 1] : cursor || null,
       hasMore: snapshot.docs.length > pageSize
     }
@@ -631,7 +654,7 @@ export async function listCommunityCommentsPage({
       .sort((a, b) => new Date(a.comment.createdAt || 0).getTime() - new Date(b.comment.createdAt || 0).getTime())
     const pageRows = rows.slice(0, pageSize)
     return {
-      comments: pageRows.map((row) => row.comment),
+      comments: await Promise.all(pageRows.map((row) => attachCommunityCommentUrls(row.comment))),
       cursor: pageRows.length ? pageRows[pageRows.length - 1].docSnap : cursor || null,
       hasMore: rows.length > pageSize
     }
@@ -907,6 +930,106 @@ export async function createCommunityPost(payload = {}) {
   const callable = httpsCallable(functions, 'createCommunityPost')
   const result = await callable(payload)
   return result?.data || { ok: false }
+}
+
+export function newCommunityCommentId(postId = '') {
+  const cleanPostId = String(postId || '').trim()
+  if (!cleanPostId) throw new Error('A post is required before attaching files.')
+  return doc(collection(db, POST_COLLECTION, cleanPostId, 'comments')).id
+}
+
+function commentAttachmentType(file = null) {
+  const contentType = String(file?.type || '').toLowerCase()
+  const name = String(file?.name || '').toLowerCase()
+  if (contentType.startsWith('image/')) return 'image'
+  if (contentType.startsWith('audio/')) return 'audio'
+  if (/\.(json|zip|mid|midi|als|flp|logicx|ptx)$/i.test(name)) return 'project'
+  return ''
+}
+
+export function validateCommunityCommentAttachment(file = null) {
+  if (!file) throw new Error('Choose a file to attach.')
+  const type = commentAttachmentType(file)
+  const size = Math.max(0, Number(file.size || 0))
+  const limits = {
+    image: 8 * 1024 * 1024,
+    audio: 25 * 1024 * 1024,
+    project: 15 * 1024 * 1024
+  }
+  if (!type) throw new Error('Comments support images, audio, MIDI, JSON, ZIP, and common project files.')
+  if (!size) throw new Error('Choose a non-empty file to attach.')
+  if (size > limits[type]) throw new Error(`${type === 'audio' ? 'Audio' : type === 'image' ? 'Images' : 'Project files'} must be ${Math.round(limits[type] / 1024 / 1024)} MB or smaller.`)
+  const rawContentType = String(file.type || '').toLowerCase()
+  const allowedProjectContentTypes = new Set([
+    'application/json',
+    'application/zip',
+    'application/x-zip-compressed',
+    'application/octet-stream',
+    'audio/midi',
+    'audio/x-midi'
+  ])
+  const contentType = type === 'project'
+    ? (allowedProjectContentTypes.has(rawContentType) ? rawContentType : 'application/octet-stream')
+    : rawContentType
+  return { type, contentType, size }
+}
+
+function safeCommentAttachmentName(value = '') {
+  const clean = String(value || 'attachment')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return clean.slice(-140) || 'attachment'
+}
+
+export async function uploadCommunityCommentAttachments({
+  uid = '',
+  postId = '',
+  commentId = '',
+  files = [],
+  onProgress = null
+} = {}) {
+  const cleanUid = String(uid || '').trim()
+  const cleanPostId = String(postId || '').trim()
+  const cleanCommentId = String(commentId || '').trim()
+  const selectedFiles = Array.from(files || []).slice(0, 3)
+  if (!storage) throw new Error('Storage is not available.')
+  if (!cleanUid || !cleanPostId || !cleanCommentId) throw new Error('Sign in and choose a post before attaching files.')
+  const uploads = []
+  try {
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const file = selectedFiles[index]
+      const { type, contentType, size } = validateCommunityCommentAttachment(file)
+      const name = safeCommentAttachmentName(file.name)
+      const path = `community/comments/${cleanUid}/${cleanPostId}/${cleanCommentId}/${Date.now()}-${index}-${name}`
+      const fileRef = ref(storage, path)
+      await new Promise((resolve, reject) => {
+        const task = uploadBytesResumable(fileRef, file, {
+          contentType,
+          customMetadata: { authorUid: cleanUid, postId: cleanPostId, commentId: cleanCommentId, attachmentType: type }
+        })
+        task.on('state_changed', (snapshot) => {
+          const current = snapshot.totalBytes ? snapshot.bytesTransferred / snapshot.totalBytes : 0
+          onProgress?.(((index + current) / selectedFiles.length) * 100)
+        }, reject, resolve)
+      })
+      const url = await getDownloadURL(fileRef).catch(() => '')
+      uploads.push({ type, name: file.name || name, path, url, size, contentType })
+    }
+  } catch (error) {
+    await deleteCommunityCommentAttachments(uploads)
+    throw error
+  }
+  onProgress?.(100)
+  return uploads
+}
+
+export async function deleteCommunityCommentAttachments(attachments = []) {
+  if (!storage) return
+  await Promise.allSettled((Array.isArray(attachments) ? attachments : [])
+    .map((attachment) => String(attachment?.path || '').trim())
+    .filter((path) => path.startsWith('community/comments/'))
+    .map((path) => deleteObject(ref(storage, path))))
 }
 
 export async function createCommunityComment(payload = {}) {

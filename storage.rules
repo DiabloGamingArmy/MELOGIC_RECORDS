@@ -79,6 +79,44 @@ service firebase.storage {
         );
     }
 
+    function isCommunityCommentAttachmentUpload() {
+      return request.resource != null
+        && request.resource.size > 0
+        && (
+          (
+            request.resource.size <= 8 * 1024 * 1024
+            && request.resource.contentType.matches('image/.*')
+          )
+          || (
+            request.resource.size <= 25 * 1024 * 1024
+            && request.resource.contentType.matches('audio/.*')
+          )
+          || (
+            request.resource.size <= 15 * 1024 * 1024
+            && request.resource.contentType in [
+              'application/json',
+              'application/zip',
+              'application/x-zip-compressed',
+              'application/octet-stream',
+              'audio/midi',
+              'audio/x-midi'
+            ]
+          )
+        );
+    }
+
+    function isPublishedCommunityPost(postId) {
+      return firestore.get(/databases/(default)/documents/communityPosts/$(postId)).data.status == 'published'
+        && firestore.get(/databases/(default)/documents/communityPosts/$(postId)).data.visibility == 'public';
+    }
+
+    function communityCommentAttachmentMetadataMatches(userId, postId, commentId) {
+      return request.resource.metadata.authorUid == userId
+        && request.resource.metadata.postId == postId
+        && request.resource.metadata.commentId == commentId
+        && request.resource.metadata.attachmentType in ['image', 'audio', 'project'];
+    }
+
     function isStudioProjectOwner(projectId) {
       return signedIn()
         && firestore.get(/databases/(default)/documents/studioProjects/$(projectId)).data.ownerId == request.auth.uid;
@@ -138,6 +176,22 @@ service firebase.storage {
         && (assetKind == 'profile' || assetKind == 'banner')
         && isImageUpload(8 * 1024 * 1024);
       allow delete: if isCommunityAssetWriter();
+    }
+
+    match /community/comments/{userId}/{postId}/{commentId}/{fileName} {
+      allow read: if isCommunityAssetWriter() || (
+          signedIn() && request.auth.uid == userId
+        ) || (
+          firestore.get(/databases/(default)/documents/communityPosts/$(postId)).data.status == 'published'
+          && firestore.get(/databases/(default)/documents/communityPosts/$(postId)).data.visibility == 'public'
+          && firestore.get(/databases/(default)/documents/communityPosts/$(postId)/comments/$(commentId)).data.status == 'visible'
+        );
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && isPublishedCommunityPost(postId)
+        && communityCommentAttachmentMetadataMatches(userId, postId, commentId)
+        && isCommunityCommentAttachmentUpload();
+      allow delete: if isCommunityAssetWriter() || (signedIn() && request.auth.uid == userId);
     }
 
     // Public brand/site assets (logos, hero videos, etc.) used across unauthenticated pages.
