@@ -360,6 +360,14 @@ export async function listCommunities({ category = 'all', search = '', limitCoun
   return rows.filter((community) => `${community.name} ${community.slug} ${community.description} ${community.category}`.toLowerCase().includes(needle))
 }
 
+export async function listSelectableCommunities({ search = '', limitCount = 80 } = {}) {
+  const safeLimit = Math.max(10, Math.min(100, Number(limitCount) || 80))
+  const rows = await listCommunities({ category: 'all', search, limitCount: safeLimit })
+  return rows
+    .filter((community) => community.status === 'active' && community.visibility === 'public' && community.hidden !== true)
+    .slice(0, safeLimit)
+}
+
 export async function getCommunityBySlug(slug = '') {
   const clean = String(slug || '').trim()
   if (!clean) return null
