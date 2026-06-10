@@ -24,6 +24,7 @@ import {
   listFocusedCommunityPosts,
   listCommunityPosts,
   listCommunityStories,
+  listSelectableCommunities,
   listShareableCommunityMusicPreviews,
   listShareableCommunityProducts,
   listShareableCommunityStagePlans,
@@ -160,6 +161,11 @@ const state = {
     body: '',
     linkedProductId: '',
     communityId: '',
+    destinationPickerOpen: false,
+    destinationSearch: '',
+    destinationLoading: false,
+    destinationError: '',
+    destinationItems: [],
     tags: '',
     visibility: 'public',
     attachments: [],
@@ -376,6 +382,11 @@ function defaultComposerState(patch = {}) {
     body: '',
     linkedProductId: '',
     communityId: '',
+    destinationPickerOpen: false,
+    destinationSearch: '',
+    destinationLoading: false,
+    destinationError: '',
+    destinationItems: [],
     tags: '',
     visibility: 'public',
     attachments: [],
@@ -746,6 +757,7 @@ function renderStoryComposerModal() {
   const isRecordMode = state.storyComposer.mode === 'record'
   const isVideo = state.storyComposer.mediaType === 'video'
   const hasPreview = Boolean(state.storyComposer.previewURL)
+  const progress = Math.max(0, Math.min(100, Number(state.storyComposer.uploadProgress || 0)))
   return `
     <div class="community-modal-backdrop">
       <section class="community-story-modal" role="dialog" aria-modal="true" aria-labelledby="community-story-composer-title">
@@ -753,70 +765,109 @@ function renderStoryComposerModal() {
           <div>
             <p class="eyebrow">Story</p>
             <h2 id="community-story-composer-title">Create Story</h2>
+            <p>Share a short update with the Melogic community.</p>
           </div>
-          <button type="button" data-close-story-composer aria-label="Close story composer">${iconSvg('x')}</button>
+          <button type="button" data-close-story-composer aria-label="Close story composer" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('x')}</button>
         </header>
         ${state.storyComposer.message ? `<p class="community-success">${escapeHtml(state.storyComposer.message)}</p>` : `
           <form data-story-composer-form>
-            <div class="community-type-toggle" role="group" aria-label="Story type">
-              <button type="button" data-story-mode="upload" class="${state.storyComposer.mode === 'upload' ? 'is-active' : ''}">${iconSvg('image')} <span>Upload Video</span></button>
-              <button type="button" data-story-mode="record" class="${isRecordMode ? 'is-active' : ''}">${iconSvg('play')} <span>Record Video</span></button>
+            <div class="community-story-mode-switch" role="group" aria-label="Story media source">
+              <button type="button" data-story-mode="upload" class="${state.storyComposer.mode === 'upload' ? 'is-active' : ''}" aria-pressed="${state.storyComposer.mode === 'upload' ? 'true' : 'false'}" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('upload')} <span>Upload</span></button>
+              <button type="button" data-story-mode="record" class="${isRecordMode ? 'is-active' : ''}" aria-pressed="${isRecordMode ? 'true' : 'false'}" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('play')} <span>Record</span></button>
             </div>
-            <div class="community-story-preview ${hasPreview || state.storyComposer.recording ? 'has-media' : ''}">
-              ${hasPreview
-                ? isVideo
-                  ? `<video src="${escapeHtml(state.storyComposer.previewURL)}" controls playsinline preload="metadata"></video>`
-                  : `<img src="${escapeHtml(state.storyComposer.previewURL)}" alt="Story preview" />`
-                : isRecordMode
-                  ? `<video data-story-record-preview autoplay muted playsinline></video>`
-                  : `<div>${iconSvg('play')}<span>Choose an MP4/WebM video or JPG/PNG/WebP image.</span></div>`
-              }
-            </div>
-            ${isRecordMode ? `
-              <div class="community-story-record-controls">
-                <span data-story-record-timer>${state.storyComposer.recording ? `${state.storyComposer.recordingSeconds}s / ${STORY_MAX_RECORD_SECONDS}s` : 'Ready to record up to 60 seconds.'}</span>
-                ${state.storyComposer.recording
-                  ? `<button type="button" class="button button-accent" data-stop-story-recording>Stop Recording</button>`
-                  : `<button type="button" class="button button-accent" data-start-story-recording ${state.storyComposer.submitting ? 'disabled' : ''}>Start Recording</button>`
-                }
+            <div class="community-story-composer-layout">
+              <div class="community-story-media-column">
+                <div class="community-story-preview ${hasPreview || state.storyComposer.recording ? 'has-media' : ''}" data-story-dropzone>
+                  ${hasPreview
+                    ? isVideo
+                      ? `<video src="${escapeHtml(state.storyComposer.previewURL)}" controls playsinline preload="metadata"></video>`
+                      : `<img src="${escapeHtml(state.storyComposer.previewURL)}" alt="Story preview" />`
+                    : isRecordMode
+                      ? `<video data-story-record-preview autoplay muted playsinline></video>`
+                      : `
+                        <label class="community-story-dropzone ${state.storyComposer.submitting ? 'is-disabled' : ''}">
+                          ${iconSvg('upload')}
+                          <strong>Drop media here or choose a file</strong>
+                          <span>MP4, WebM, JPG, PNG, or WebP</span>
+                          <em>Stories can be up to 60 seconds.</em>
+                          <input name="storyMedia" type="file" accept="video/mp4,video/webm,image/jpeg,image/png,image/webp" data-story-file ${state.storyComposer.submitting ? 'disabled' : ''} />
+                        </label>
+                      `
+                  }
+                </div>
+                ${isRecordMode ? `
+                  <div class="community-story-record-controls">
+                    <div>
+                      <strong>${state.storyComposer.recording ? 'Recording story' : hasPreview ? 'Recording ready' : 'Camera and microphone'}</strong>
+                      <span data-story-record-timer>${state.storyComposer.recording ? `${state.storyComposer.recordingSeconds}s / ${STORY_MAX_RECORD_SECONDS}s` : hasPreview ? storyFileLabel(state.storyComposer.file) : 'Record up to 60 seconds in this browser.'}</span>
+                    </div>
+                    ${state.storyComposer.recording
+                      ? `<button type="button" class="button button-accent" data-stop-story-recording>Stop Recording</button>`
+                      : `<button type="button" class="button button-accent" data-start-story-recording ${state.storyComposer.submitting ? 'disabled' : ''}>${hasPreview ? 'Record Again' : 'Start Recording'}</button>`
+                    }
+                  </div>
+                  <p class="community-muted-note">Your browser will ask for camera and microphone access. You can switch back to Upload at any time.</p>
+                ` : `
+                  ${hasPreview ? `
+                    <div class="community-story-selected-file">
+                      <span>${isVideo ? iconSvg('play') : iconSvg('image')}</span>
+                      <div><strong>${escapeHtml(state.storyComposer.file?.name || 'Story media')}</strong><small>${escapeHtml(storyFileLabel(state.storyComposer.file).split(' · ').slice(1).join(' · ') || (isVideo ? 'Video' : 'Image'))}</small></div>
+                      <label class="button button-muted ${state.storyComposer.submitting ? 'is-disabled' : ''}">
+                        Replace
+                        <input name="storyMedia" type="file" accept="video/mp4,video/webm,image/jpeg,image/png,image/webp" data-story-file ${state.storyComposer.submitting ? 'disabled' : ''} />
+                      </label>
+                      <button type="button" class="community-story-remove-file" data-remove-story-file aria-label="Remove selected story media" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('x')}</button>
+                    </div>
+                  ` : ''}
+                `}
               </div>
-              <p class="community-muted-note">Recording uses this browser's camera and microphone permissions. If recording is not supported, upload a video instead.</p>
-            ` : `
-              <label>
-                <span>Story media</span>
-                <input name="storyMedia" type="file" accept="video/mp4,video/webm,image/jpeg,image/png,image/webp" data-story-file />
-              </label>
-              ${state.storyComposer.file ? `<p class="community-story-file">${escapeHtml(storyFileLabel(state.storyComposer.file))}</p>` : ''}
-            `}
-            <label>
-              <span>Caption</span>
-              <textarea name="text" maxlength="500" rows="3" placeholder="Add a short caption...">${escapeHtml(state.storyComposer.text)}</textarea>
-            </label>
-            <div class="community-story-options-grid">
-              <label>
-                <span>Lifetime</span>
-                <select name="lifetimeHours" data-story-lifetime>
-                  ${STORY_LIFETIME_OPTIONS.map((hours) => `<option value="${hours}" ${Number(state.storyComposer.lifetimeHours) === hours ? 'selected' : ''}>${hours} hours</option>`).join('')}
-                </select>
-              </label>
-              <label>
-                <span>Visibility</span>
-                <select name="visibility" data-story-visibility>
-                  <option value="public" selected>Public</option>
-                  <option value="focused" disabled>Focused coming soon</option>
-                  <option value="followers" disabled>Followers coming soon</option>
-                </select>
-              </label>
+              <aside class="community-story-settings">
+                <div class="community-story-settings-heading">
+                  <span>Story Details</span>
+                  <small>Keep it short and easy to scan.</small>
+                </div>
+                <label>
+                  <span>Caption</span>
+                  <textarea name="text" maxlength="500" rows="5" placeholder="What would you like to share?" ${state.storyComposer.submitting ? 'disabled' : ''}>${escapeHtml(state.storyComposer.text)}</textarea>
+                  <small>${Math.max(0, 500 - state.storyComposer.text.length)} characters remaining</small>
+                </label>
+                <div class="community-story-options-grid">
+                  <label>
+                    <span>Lifetime</span>
+                    <select name="lifetimeHours" data-story-lifetime ${state.storyComposer.submitting ? 'disabled' : ''}>
+                      ${STORY_LIFETIME_OPTIONS.map((hours) => `<option value="${hours}" ${Number(state.storyComposer.lifetimeHours) === hours ? 'selected' : ''}>${hours} hours</option>`).join('')}
+                    </select>
+                    <small>Automatically disappears.</small>
+                  </label>
+                  <label>
+                    <span>Visibility</span>
+                    <select name="visibility" data-story-visibility ${state.storyComposer.submitting ? 'disabled' : ''}>
+                      <option value="public" selected>Public</option>
+                      <option value="focused" disabled>Focused coming soon</option>
+                      <option value="followers" disabled>Followers coming soon</option>
+                    </select>
+                    <small>Visible across Community.</small>
+                  </label>
+                </div>
+                <div class="community-story-publish-summary">
+                  ${iconSvg('eye')}
+                  <span><strong>Public Story</strong><small>Expires after ${formatCount(state.storyComposer.lifetimeHours)} hours.</small></span>
+                </div>
+              </aside>
             </div>
             ${state.storyComposer.submitting ? `
-              <div class="community-story-progress" aria-label="Story upload progress">
-                <span style="width: ${Math.max(0, Math.min(100, Number(state.storyComposer.uploadProgress || 0)))}%"></span>
-                <em>${formatCount(state.storyComposer.uploadProgress || 0)}%</em>
+              <div class="community-story-progress-block" aria-live="polite">
+                <div><strong>${progress >= 100 ? 'Finishing your story...' : 'Uploading story...'}</strong><span>${formatCount(progress)}%</span></div>
+                <div class="community-story-progress" aria-label="Story upload progress">
+                  <span style="width: ${progress}%"></span>
+                  <em>${formatCount(progress)}%</em>
+                </div>
               </div>
             ` : ''}
             ${state.storyComposer.error ? `<p class="community-error">${escapeHtml(state.storyComposer.error)}</p>` : ''}
-            <div class="community-form-actions">
-              <span>Stories can stay up for 1-48 hours.</span>
+            <div class="community-form-actions community-story-actions">
+              <span>${state.storyComposer.file ? 'Your selected media is ready to publish.' : 'Add media before publishing your Story.'}</span>
+              <button type="button" class="button button-muted" data-close-story-composer ${state.storyComposer.submitting ? 'disabled' : ''}>Cancel</button>
               <button type="submit" class="button button-accent" ${state.storyComposer.submitting ? 'disabled' : ''}>${state.storyComposer.submitting ? 'Publishing...' : 'Publish Story'}</button>
             </div>
           </form>
@@ -882,14 +933,10 @@ function renderStoryViewerModal() {
 }
 
 function currentComposerCommunity() {
-  if (state.view.type === 'community' && state.community?.communityId) return state.community
-  if (state.activeTab === 'community' && state.activeCommunityId) {
-    return state.communities.find((community) => community.communityId === state.activeCommunityId) || null
-  }
-  if (state.composer.communityId) {
-    return state.communities.find((community) => community.communityId === state.composer.communityId) || null
-  }
-  return null
+  const communityId = String(state.composer.communityId || '').trim()
+  if (!communityId) return null
+  return [...state.composer.destinationItems, ...state.communities, state.community]
+    .find((community) => community?.communityId === communityId) || null
 }
 
 function selectedProductAttachment() {
@@ -1256,6 +1303,150 @@ function renderComposerIntentFields() {
   return ''
 }
 
+function composerDestinationCommunities() {
+  const byId = new Map()
+  ;[...state.composer.destinationItems, ...state.communities, state.community].forEach((community) => {
+    if (community?.communityId && community.status === 'active' && community.visibility === 'public' && community.hidden !== true) {
+      byId.set(community.communityId, community)
+    }
+  })
+  return [...byId.values()]
+}
+
+function composerDestinationMatches() {
+  const needle = String(state.composer.destinationSearch || '').trim().toLowerCase()
+  const rows = composerDestinationCommunities()
+  if (!needle) return rows
+  return rows.filter((community) => [
+    community.name,
+    community.slug,
+    community.description,
+    community.category
+  ].some((value) => String(value || '').toLowerCase().includes(needle)))
+}
+
+function renderCommunityDestinationAvatar(community = {}, { large = false } = {}) {
+  const imageURL = community.imageUrl || community.imageURL || community.iconURL || ''
+  return `
+    <span class="community-destination-avatar ${large ? 'is-large' : ''}">
+      ${imageURL
+        ? `<img src="${escapeHtml(imageURL)}" alt="" loading="lazy" />`
+        : `<span>${escapeHtml((community.name || community.slug || 'M').slice(0, 1).toUpperCase())}</span>`
+      }
+    </span>
+  `
+}
+
+function renderComposerDestinationButton() {
+  const community = currentComposerCommunity()
+  return `
+    <section class="community-destination-picker" aria-labelledby="community-destination-label">
+      <div>
+        <span id="community-destination-label">Community Selection</span>
+        <small>Choose a community or publish to the General feed.</small>
+      </div>
+      <input type="hidden" name="communityId" value="${escapeHtml(state.composer.communityId)}" />
+      <button type="button" class="community-destination-button" data-open-community-destination ${state.composer.submitting ? 'disabled' : ''}>
+        ${community
+          ? renderCommunityDestinationAvatar(community, { large: true })
+          : `<span class="community-destination-avatar is-large is-general">${iconSvg('user')}</span>`
+        }
+        <span class="community-destination-button-copy">
+          <strong>${escapeHtml(community?.name || 'Choose where to post')}</strong>
+          <small>${community ? `c/${escapeHtml(community.slug)} · ${escapeHtml(community.category || 'Community')}` : 'No community selected · General feed'}</small>
+        </span>
+        ${iconSvg('chevronRight')}
+      </button>
+    </section>
+  `
+}
+
+function renderCommunityDestinationResults() {
+  if (state.composer.destinationLoading) {
+    return `
+      <div class="community-destination-state" role="status">
+        <span class="community-destination-loader" aria-hidden="true"></span>
+        <strong>Loading communities...</strong>
+        <small>Finding active public spaces.</small>
+      </div>
+    `
+  }
+  if (state.composer.destinationError) {
+    return `
+      <div class="community-destination-state is-error">
+        <strong>Communities could not be loaded.</strong>
+        <small>${escapeHtml(state.composer.destinationError)}</small>
+        <button type="button" class="button button-muted" data-retry-community-destination>Try again</button>
+      </div>
+    `
+  }
+  const rows = composerDestinationMatches()
+  const generalMatches = !state.composer.destinationSearch
+    || 'general feed'.includes(String(state.composer.destinationSearch || '').trim().toLowerCase())
+  return `
+    <div class="community-destination-list" role="listbox" aria-label="Post destination">
+      ${generalMatches ? `
+        <button type="button" class="community-destination-result ${state.composer.communityId ? '' : 'is-selected'}" data-select-community-destination="" role="option" aria-selected="${state.composer.communityId ? 'false' : 'true'}">
+          <span class="community-destination-avatar is-general">${iconSvg('home')}</span>
+          <span class="community-destination-meta">
+            <strong>General feed</strong>
+            <small>Share with the wider Melogic community without choosing a specific space.</small>
+            <em>Default destination</em>
+          </span>
+          <span class="community-destination-check">${state.composer.communityId ? iconSvg('chevronRight') : iconSvg('checkCircle')}</span>
+        </button>
+      ` : ''}
+      ${rows.map((community) => `
+        <button type="button" class="community-destination-result ${state.composer.communityId === community.communityId ? 'is-selected' : ''}" data-select-community-destination="${escapeHtml(community.communityId)}" role="option" aria-selected="${state.composer.communityId === community.communityId ? 'true' : 'false'}">
+          ${renderCommunityDestinationAvatar(community)}
+          <span class="community-destination-meta">
+            <strong>${escapeHtml(community.name)}</strong>
+            <small>${escapeHtml(String(community.description || 'A Melogic creator community.').slice(0, 100))}</small>
+            <em>c/${escapeHtml(community.slug)} · ${formatCount(community.focusCount || community.followerCount)} focused · ${formatCount(community.postCount)} posts</em>
+          </span>
+          <span class="community-destination-check">${state.composer.communityId === community.communityId ? iconSvg('checkCircle') : iconSvg('chevronRight')}</span>
+        </button>
+      `).join('')}
+      ${!generalMatches && !rows.length ? `
+        <div class="community-destination-state">
+          ${iconSvg('search')}
+          <strong>No communities found</strong>
+          <small>Try a community name, category, or c/slug.</small>
+        </div>
+      ` : ''}
+    </div>
+  `
+}
+
+function renderCommunityDestinationPickerModal() {
+  if (!state.composer.destinationPickerOpen) return ''
+  return `
+    <div class="community-modal-backdrop community-destination-backdrop" data-community-destination-backdrop>
+      <section class="community-destination-modal" role="dialog" aria-modal="true" aria-labelledby="community-destination-title" data-community-destination-modal>
+        <header>
+          <div>
+            <p class="eyebrow">Post Destination</p>
+            <h2 id="community-destination-title">Choose a Community</h2>
+            <p>Search active public communities and choose where this post belongs.</p>
+          </div>
+          <button type="button" class="community-close-button" data-close-community-destination aria-label="Close community selection">${iconSvg('x')}</button>
+        </header>
+        <label class="community-destination-search">
+          ${iconSvg('search')}
+          <input type="search" value="${escapeHtml(state.composer.destinationSearch)}" placeholder="Search communities" data-community-destination-search autocomplete="off" />
+        </label>
+        <div data-community-destination-results>
+          ${renderCommunityDestinationResults()}
+        </div>
+        <footer>
+          <span>${composerDestinationCommunities().length} communities available</span>
+          <button type="button" class="button button-muted" data-close-community-destination>Cancel</button>
+        </footer>
+      </section>
+    </div>
+  `
+}
+
 function renderComposerModal() {
   if (!state.composer.open) return ''
   if (!state.currentUser) {
@@ -1286,10 +1477,12 @@ function renderComposerModal() {
           <div>
             <p class="eyebrow">Create</p>
             <h2 id="community-composer-title">New Post</h2>
+            <p>Share an update, ask for feedback, or bring collaborators into your work.</p>
           </div>
           <button type="button" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
         </header>
         <form data-community-composer-form>
+          ${renderComposerDestinationButton()}
           <div class="community-composer-primary">
             <label class="community-composer-title-field">
               <span>Title</span>
@@ -1312,18 +1505,6 @@ function renderComposerModal() {
             ${renderComposerIntentFields()}
           </div>
           <div class="community-composer-meta-grid">
-            ${state.view.type === 'community' && state.community ? `
-              <input type="hidden" name="communityId" value="${escapeHtml(state.community.communityId)}" />
-              <p class="community-context-note">Posting to <a href="${communityRoute(state.community.slug)}">c/${escapeHtml(state.community.slug)}</a></p>
-            ` : `
-              <label>
-                <span>Community destination</span>
-                <select name="communityId">
-                  <option value="">General feed</option>
-                  ${state.communities.map((community) => `<option value="${escapeHtml(community.communityId)}" ${state.composer.communityId === community.communityId ? 'selected' : ''}>${escapeHtml(community.name)} · c/${escapeHtml(community.slug)}</option>`).join('')}
-                </select>
-              </label>
-            `}
             <label>
               <span>Visibility</span>
               <select name="visibility" disabled title="Public posts only in this phase">
@@ -1344,6 +1525,7 @@ function renderComposerModal() {
         </form>
       </section>
     </div>
+    ${renderCommunityDestinationPickerModal()}
   `
 }
 
@@ -3924,6 +4106,11 @@ function openCommunityComposer() {
       : state.activeTab === 'community'
         ? state.activeCommunityId
         : draft?.communityId || state.composer.communityId,
+    destinationPickerOpen: false,
+    destinationSearch: '',
+    destinationLoading: false,
+    destinationError: '',
+    destinationItems: state.composer.destinationItems.length ? state.composer.destinationItems : state.communities,
     submitting: false,
     error: ''
   }
@@ -3968,6 +4155,100 @@ function updateComposerFromForm() {
     }
   }
   persistComposerDraft()
+}
+
+function mergeCommunities(existing = [], incoming = []) {
+  const byId = new Map()
+  ;[...existing, ...incoming].forEach((community) => {
+    if (community?.communityId) byId.set(community.communityId, community)
+  })
+  return [...byId.values()]
+}
+
+function bindCommunityDestinationResultEvents(root = app) {
+  root?.querySelectorAll('[data-select-community-destination]').forEach((button) => {
+    button.addEventListener('click', () => selectComposerCommunityDestination(button.getAttribute('data-select-community-destination') || ''))
+  })
+  root?.querySelector('[data-retry-community-destination]')?.addEventListener('click', () => loadComposerDestinationCommunities({ force: true }))
+}
+
+function updateCommunityDestinationResultsDom() {
+  const target = app?.querySelector('[data-community-destination-results]')
+  if (!target) return
+  target.innerHTML = renderCommunityDestinationResults()
+  bindCommunityDestinationResultEvents(target)
+  const footerCount = app?.querySelector('.community-destination-modal footer span')
+  if (footerCount) footerCount.textContent = `${composerDestinationCommunities().length} communities available`
+}
+
+async function loadComposerDestinationCommunities({ force = false } = {}) {
+  if (state.composer.destinationLoading && !force) return
+  state.composer = {
+    ...state.composer,
+    destinationLoading: true,
+    destinationError: ''
+  }
+  updateCommunityDestinationResultsDom()
+  try {
+    const rows = await listSelectableCommunities({ limitCount: 80 })
+    state.communities = mergeCommunities(state.communities, rows)
+    state.composer = {
+      ...state.composer,
+      destinationItems: rows,
+      destinationLoading: false,
+      destinationError: ''
+    }
+  } catch (error) {
+    console.warn('[community] destination communities failed', { code: error?.code, message: error?.message })
+    state.composer = {
+      ...state.composer,
+      destinationLoading: false,
+      destinationError: error?.message || 'Try again in a moment.'
+    }
+  }
+  updateCommunityDestinationResultsDom()
+}
+
+function openCommunityDestinationPicker() {
+  updateComposerFromForm()
+  state.composer = {
+    ...state.composer,
+    destinationPickerOpen: true,
+    destinationSearch: '',
+    destinationLoading: true,
+    destinationError: ''
+  }
+  render()
+  window.requestAnimationFrame(() => app?.querySelector('[data-community-destination-search]')?.focus())
+  loadComposerDestinationCommunities({ force: true }).catch(() => null)
+}
+
+function closeCommunityDestinationPicker() {
+  state.composer = {
+    ...state.composer,
+    destinationPickerOpen: false,
+    destinationSearch: '',
+    destinationLoading: false,
+    destinationError: ''
+  }
+  render()
+  window.requestAnimationFrame(() => app?.querySelector('[data-open-community-destination]')?.focus())
+}
+
+function selectComposerCommunityDestination(communityId = '') {
+  const cleanId = String(communityId || '').trim()
+  if (cleanId && !composerDestinationCommunities().some((community) => community.communityId === cleanId)) return
+  state.composer = {
+    ...state.composer,
+    communityId: cleanId,
+    destinationPickerOpen: false,
+    destinationSearch: '',
+    destinationLoading: false,
+    destinationError: ''
+  }
+  persistComposerDraft()
+  render()
+  window.requestAnimationFrame(() => app?.querySelector('[data-open-community-destination]')?.focus())
 }
 
 async function openProductPicker() {
@@ -4358,6 +4639,17 @@ function setupCommunityKeyboardShortcuts() {
       return
     }
     if (!communityModalIsOpen()) return
+    if (state.composer.destinationPickerOpen) {
+      state.composer = {
+        ...state.composer,
+        destinationPickerOpen: false,
+        destinationSearch: '',
+        destinationLoading: false,
+        destinationError: ''
+      }
+      render()
+      return
+    }
     if (state.composer.open) state.composer = { ...state.composer, open: false, submitting: false, error: '' }
     if (state.storyComposer.open) {
       resetStoryRecording()
@@ -4465,6 +4757,18 @@ function bindStoryRecordingPreview() {
   }
 }
 
+function updateStoryComposerFromForm() {
+  const form = app?.querySelector('[data-story-composer-form]')
+  if (!form) return
+  const formData = new FormData(form)
+  state.storyComposer = {
+    ...state.storyComposer,
+    text: String(formData.get('text') || '').slice(0, 500),
+    lifetimeHours: Math.min(48, Math.max(1, Number(formData.get('lifetimeHours') || state.storyComposer.lifetimeHours || 24))),
+    visibility: String(formData.get('visibility') || 'public') === 'public' ? 'public' : 'public'
+  }
+}
+
 function setStoryFile(file = null, mediaType = '') {
   resetStoryPreviewURL()
   const previewURL = file ? URL.createObjectURL(file) : ''
@@ -4478,7 +4782,44 @@ function setStoryFile(file = null, mediaType = '') {
   }
 }
 
+function selectStoryFile(file = null) {
+  try {
+    const { mediaType } = validateCommunityStoryMedia(file)
+    setStoryFile(file, mediaType)
+  } catch (error) {
+    resetStoryPreviewURL()
+    state.storyComposer = {
+      ...state.storyComposer,
+      file: null,
+      previewURL: '',
+      error: error?.message || 'Choose a supported story video or image.'
+    }
+  }
+  render()
+}
+
+function removeStoryFile() {
+  resetStoryPreviewURL()
+  state.storyComposer = {
+    ...state.storyComposer,
+    file: null,
+    previewURL: '',
+    uploadProgress: 0,
+    error: ''
+  }
+  render()
+}
+
+function closeStoryComposer() {
+  if (state.storyComposer.submitting) return
+  resetStoryRecording()
+  resetStoryPreviewURL()
+  state.storyComposer = cleanStoryComposerState()
+  render()
+}
+
 async function startStoryRecording() {
+  updateStoryComposerFromForm()
   if (!state.currentUser) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
@@ -4968,6 +5309,16 @@ function bindEvents() {
   setupCommunityKeyboardShortcuts()
   setupFeedPaginationObserver()
   app.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
+  app.querySelector('[data-open-community-destination]')?.addEventListener('click', openCommunityDestinationPicker)
+  app.querySelectorAll('[data-close-community-destination]').forEach((button) => button.addEventListener('click', closeCommunityDestinationPicker))
+  app.querySelector('[data-community-destination-backdrop]')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeCommunityDestinationPicker()
+  })
+  app.querySelector('[data-community-destination-search]')?.addEventListener('input', (event) => {
+    state.composer.destinationSearch = String(event.target.value || '').slice(0, 80)
+    updateCommunityDestinationResultsDom()
+  })
+  bindCommunityDestinationResultEvents(app)
   app.querySelectorAll('[data-open-story-composer]').forEach((button) => button.addEventListener('click', openStoryComposer))
   app.querySelectorAll('[data-community-nav-stub]').forEach((button) => {
     button.addEventListener('click', () => showCommunityToast(`${button.getAttribute('data-community-nav-stub')} is coming in a later community pass.`))
@@ -4984,6 +5335,7 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-story-mode]').forEach((button) => {
     button.addEventListener('click', () => {
+      updateStoryComposerFromForm()
       const mode = button.getAttribute('data-story-mode') === 'record' ? 'record' : 'upload'
       if (mode !== 'record') resetStoryRecording()
       state.storyComposer = {
@@ -5006,29 +5358,42 @@ function bindEvents() {
       render()
     })
   })
-  app.querySelector('[data-story-file]')?.addEventListener('change', (event) => {
-    const file = event.target.files?.[0] || null
-    try {
-      const { mediaType } = validateCommunityStoryMedia(file)
-      setStoryFile(file, mediaType)
-    } catch (error) {
-      resetStoryPreviewURL()
-      state.storyComposer = { ...state.storyComposer, file: null, previewURL: '', error: error?.message || 'Choose a supported story video or image.' }
-    }
-    render()
-  })
+  app.querySelectorAll('[data-story-file]').forEach((input) => input.addEventListener('change', (event) => {
+    updateStoryComposerFromForm()
+    selectStoryFile(event.target.files?.[0] || null)
+  }))
+  app.querySelector('[data-remove-story-file]')?.addEventListener('click', removeStoryFile)
+  const storyDropzone = app.querySelector('[data-story-dropzone]')
+  if (storyDropzone && state.storyComposer.mode === 'upload') {
+    ;['dragenter', 'dragover'].forEach((type) => storyDropzone.addEventListener(type, (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      storyDropzone.classList.add('is-dragging')
+    }))
+    ;['dragleave', 'drop'].forEach((type) => storyDropzone.addEventListener(type, (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      storyDropzone.classList.remove('is-dragging')
+    }))
+    storyDropzone.addEventListener('drop', (event) => {
+      updateStoryComposerFromForm()
+      selectStoryFile(event.dataTransfer?.files?.[0] || null)
+    })
+  }
   app.querySelector('[data-story-lifetime]')?.addEventListener('change', (event) => {
     state.storyComposer = { ...state.storyComposer, lifetimeHours: Math.min(48, Math.max(1, Number(event.target.value || 24))) }
+    const summary = app.querySelector('.community-story-publish-summary small')
+    if (summary) summary.textContent = `Expires after ${formatCount(state.storyComposer.lifetimeHours)} hours.`
+  })
+  app.querySelector('[data-story-composer-form] textarea[name="text"]')?.addEventListener('input', (event) => {
+    state.storyComposer.text = String(event.target.value || '').slice(0, 500)
+    const counter = event.target.closest('label')?.querySelector('small')
+    if (counter) counter.textContent = `${Math.max(0, 500 - state.storyComposer.text.length)} characters remaining`
   })
   app.querySelector('[data-start-story-recording]')?.addEventListener('click', startStoryRecording)
   app.querySelector('[data-stop-story-recording]')?.addEventListener('click', stopStoryRecording)
   app.querySelector('[data-story-composer-form]')?.addEventListener('submit', handleStorySubmit)
-  app.querySelector('[data-close-story-composer]')?.addEventListener('click', () => {
-    resetStoryRecording()
-    resetStoryPreviewURL()
-    state.storyComposer = cleanStoryComposerState()
-    render()
-  })
+  app.querySelectorAll('[data-close-story-composer]').forEach((button) => button.addEventListener('click', closeStoryComposer))
   bindStoryRecordingPreview()
   app.querySelectorAll('[data-open-story]').forEach((button) => button.addEventListener('click', () => openStoryViewer(button.getAttribute('data-open-story') || '')))
   app.querySelector('[data-close-story-viewer]')?.addEventListener('click', () => {
