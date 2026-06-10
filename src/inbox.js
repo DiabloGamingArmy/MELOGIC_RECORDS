@@ -175,8 +175,13 @@ const appState = {
   hasLoadedThreadsOnce: false,
   inboxRepairAttempted: false,
   isRepairingInbox: false,
-  bottomScrollRequestByThreadId: {},
-  pendingBottomScrollTimer: null
+  messageScrollByThreadId: {},
+  messageFind: {
+    open: false,
+    query: '',
+    activeIndex: -1,
+    matchCount: 0
+  }
 }
 
 let searchDebounceTimer = null
@@ -232,6 +237,14 @@ function setupInboxDelegates() {
   hasBoundInboxDelegates = true
 
   inboxRoot.addEventListener('input', (event) => {
+    const findInput = event.target.closest('[data-message-find-input]')
+    if (findInput) {
+      appState.messageFind.query = findInput.value
+      appState.messageFind.activeIndex = findInput.value.trim() ? 0 : -1
+      applyMessageFind()
+      return
+    }
+
     const composer = event.target.closest('[data-message-composer-input]')
     if (!composer) return
     const threadId = composer.dataset.messageComposerInput || appState.selectedThreadId
@@ -245,7 +258,20 @@ function setupInboxDelegates() {
     updateTypingHeartbeat(threadId, composer.value)
   })
 
+  inboxRoot.addEventListener('keydown', (event) => {
+    if (!event.target.closest('[data-message-find-input]') || event.key !== 'Enter') return
+    event.preventDefault()
+    handleMessageFindAction(event.shiftKey ? 'previous' : 'next')
+  })
+
   inboxRoot.addEventListener('click', (event) => {
+    const findAction = event.target.closest('[data-message-find-action]')
+    if (findAction) {
+      event.preventDefault()
+      handleMessageFindAction(findAction.getAttribute('data-message-find-action') || '')
+      return
+    }
+
     const loadOlderButton = event.target.closest('[data-load-older-messages]')
     if (loadOlderButton) {
       event.preventDefault()
@@ -367,10 +393,10 @@ async function hydrateProfilesForThread(thread) {
   console.info(`[inbox] loaded profiles for thread ${thread.id} ${loadedKeys.length}`)
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   preloadProfileImagesByUid(loadedKeys)
-  if (appState.selectedThreadId === thread.id) renderSignedInState()
+  if (appState.selectedThreadId === thread.id) renderSelectedConversation({ preserveScroll: true })
 }
 
-async function hydrateProfilesForMessages(threadId, messages = []) {
+async function hydrateProfilesForMessages(threadId, messages = [], { render = true } = {}) {
   if (!threadId || !messages.length) return
   const senderIds = Array.from(new Set(messages.map((message) => message?.senderId).filter(Boolean)))
   const missing = senderIds.filter((uid) => !appState.profileByUid[uid])
@@ -379,7 +405,7 @@ async function hydrateProfilesForMessages(threadId, messages = []) {
   if (!Object.keys(loaded).length) return
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   preloadProfileImagesByUid(Object.keys(loaded))
-  if (appState.selectedThreadId === threadId) renderSignedInState()
+  if (render && appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
 }
 
 async function hydrateProfilesForThreads(threads = []) {
@@ -864,68 +890,88 @@ function updateTypingHeartbeat(threadId, value) {
   }, TYPING_IDLE_CLEAR_MS)
 }
 
-function isMessageListNearBottom(threshold = 120) {
-  const list = inboxRoot.querySelector('[data-message-list]')
-  if (!list) return true
-  return list.scrollHeight - list.scrollTop - list.clientHeight <= threshold
+const BOTTOM_THRESHOLD_PX = 96
+
+function getMessageScroller() {
+  return inboxRoot.querySelector('[data-message-list]')
 }
 
-function waitForVisibleMessageMedia(list, timeoutMs = 1000) {
-  if (!list) return Promise.resolve()
-  const media = Array.from(list.querySelectorAll('img, video'))
-    .filter((item) => {
-      if (item.tagName === 'IMG') return !item.complete
-      return Number(item.readyState || 0) < 1
-    })
-  if (!media.length) return Promise.resolve()
-  return Promise.race([
-    Promise.all(media.map((item) => new Promise((resolve) => {
-      const done = () => {
-        item.removeEventListener('load', done)
-        item.removeEventListener('loadedmetadata', done)
-        item.removeEventListener('error', done)
-        resolve()
-      }
-      item.addEventListener('load', done, { once: true })
-      item.addEventListener('loadedmetadata', done, { once: true })
-      item.addEventListener('error', done, { once: true })
-    }))),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs))
-  ])
+function getMessageScrollState(threadId = appState.selectedThreadId) {
+  if (!threadId) return { isPinnedToBottom: true, userHasScrolledAway: false, pendingBottomScroll: false }
+  if (!appState.messageScrollByThreadId[threadId]) {
+    appState.messageScrollByThreadId[threadId] = {
+      isPinnedToBottom: true,
+      userHasScrolledAway: false,
+      pendingBottomScroll: false,
+      rafId: 0
+    }
+  }
+  return appState.messageScrollByThreadId[threadId]
+}
+
+function isMessageListNearBottom(list = getMessageScroller(), threshold = BOTTOM_THRESHOLD_PX) {
+  if (!list) return true
+  return list.scrollHeight - list.scrollTop - list.clientHeight <= threshold
 }
 
 function scrollMessageListToBottom({ behavior = 'auto', reason = 'manual', force = false } = {}) {
   const threadId = appState.selectedThreadId || ''
   if (!threadId) return
-  const list = inboxRoot.querySelector('[data-message-list]')
+  const list = getMessageScroller()
   if (!list) return
-  if (!force && !isMessageListNearBottom()) return
-  if (appState.pendingBottomScrollTimer) clearTimeout(appState.pendingBottomScrollTimer)
-  appState.bottomScrollRequestByThreadId[threadId] = { reason, requestedAt: Date.now() }
-  const applyScroll = () => {
-    const currentList = inboxRoot.querySelector('[data-message-list]')
-    if (!currentList || appState.selectedThreadId !== threadId) return
-    if (behavior === 'smooth' && typeof currentList.scrollTo === 'function') {
-      currentList.scrollTo({ top: currentList.scrollHeight, behavior })
-    } else {
-      currentList.scrollTop = currentList.scrollHeight
-    }
-  }
-  requestAnimationFrame(() => {
-    requestAnimationFrame(async () => {
-      const currentList = inboxRoot.querySelector('[data-message-list]')
-      await waitForVisibleMessageMedia(currentList, 1000)
-      applyScroll()
-      const observer = typeof ResizeObserver === 'function' && reason === 'initial'
-        ? new ResizeObserver(() => applyScroll())
-        : null
-      if (observer && currentList) {
-        observer.observe(currentList)
-        appState.pendingBottomScrollTimer = setTimeout(() => observer.disconnect(), 1200)
+  const scrollState = getMessageScrollState(threadId)
+  if (!force && !scrollState.isPinnedToBottom) return
+  if (scrollState.rafId) cancelAnimationFrame(scrollState.rafId)
+  scrollState.pendingBottomScroll = true
+  scrollState.rafId = requestAnimationFrame(() => {
+    scrollState.rafId = requestAnimationFrame(() => {
+      scrollState.rafId = 0
+      const currentList = getMessageScroller()
+      if (!currentList || appState.selectedThreadId !== threadId) return
+      if (behavior === 'smooth' && typeof currentList.scrollTo === 'function') {
+        currentList.scrollTo({ top: currentList.scrollHeight, behavior })
       } else {
-        appState.pendingBottomScrollTimer = setTimeout(applyScroll, 250)
+        currentList.scrollTop = currentList.scrollHeight
       }
+      scrollState.pendingBottomScroll = false
+      scrollState.isPinnedToBottom = true
+      scrollState.userHasScrolledAway = false
     })
+  })
+}
+
+function bindMessageScrollLock(list = getMessageScroller()) {
+  const threadId = appState.selectedThreadId
+  if (!list || !threadId || list.dataset.scrollLockBound === 'true') return
+  list.dataset.scrollLockBound = 'true'
+  const scrollState = getMessageScrollState(threadId)
+  list.addEventListener('scroll', () => {
+    if (scrollState.pendingBottomScroll) return
+    const pinned = isMessageListNearBottom(list)
+    scrollState.isPinnedToBottom = pinned
+    scrollState.userHasScrolledAway = !pinned
+  }, { passive: true })
+}
+
+function bindMessageMediaStabilization(list = getMessageScroller()) {
+  if (!list) return
+  list.querySelectorAll('img, video').forEach((media) => {
+    if (media.dataset.scrollStabilized === 'true') return
+    media.dataset.scrollStabilized = 'true'
+    let previousHeight = list.scrollHeight
+    const stabilize = () => {
+      const scrollState = getMessageScrollState()
+      const heightDelta = list.scrollHeight - previousHeight
+      previousHeight = list.scrollHeight
+      if (scrollState.isPinnedToBottom) {
+        scrollMessageListToBottom({ force: true, reason: 'message-media-loaded' })
+      } else if (heightDelta > 0 && media.getBoundingClientRect().top < list.getBoundingClientRect().top) {
+        list.scrollTop += heightDelta
+      }
+    }
+    media.addEventListener(media.tagName === 'IMG' ? 'load' : 'loadedmetadata', stabilize, { once: true })
+    media.addEventListener('error', stabilize, { once: true })
+    if (media.tagName === 'IMG' && media.complete) stabilize()
   })
 }
 
@@ -951,7 +997,7 @@ async function loadOlderMessagesForThread(threadId = '') {
     ...(appState.messagePaginationByThreadId[threadId] || {}),
     loadingOlder: true
   }
-  renderSignedInState()
+  renderSelectedConversation({ preserveScroll: true })
   try {
     const older = await listOlderMessages(threadId, earliest)
     appState.messagesByThreadId[threadId] = mergeMessages(older, appState.messagesByThreadId[threadId] || [])
@@ -959,9 +1005,9 @@ async function loadOlderMessagesForThread(threadId = '') {
       loadingOlder: false,
       hasOlder: older.length > 0
     }
-    await hydrateProfilesForMessages(threadId, older)
+    await hydrateProfilesForMessages(threadId, older, { render: false })
     if (appState.selectedThreadId === threadId) {
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
       requestAnimationFrame(() => {
         const nextList = inboxRoot.querySelector('[data-message-list]')
         if (!nextList) return
@@ -974,7 +1020,7 @@ async function loadOlderMessagesForThread(threadId = '') {
       loadingOlder: false
     }
     warnRealtimePermission(`older-messages-${threadId}`, error)
-    if (appState.selectedThreadId === threadId) renderSignedInState()
+    if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
   }
 }
 
@@ -1485,7 +1531,10 @@ function getMessageGroupsMarkup(thread) {
           const attachmentsMarkup = Array.isArray(message.attachments) && message.attachments.length
             ? `<div class="message-attachment-list">${message.attachments.map((attachment) => {
               const mime = String(attachment.mimeType || '')
-              if (mime.startsWith('image/')) return `<button type="button" class="message-image-preview-button" data-preview-message-image="${escapeHtml(attachment.url || '')}" data-preview-message-image-name="${escapeHtml(attachment.name || 'Image attachment')}"><img decoding="async" src="${escapeHtml(attachment.url || '')}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" onerror="this.closest('button')?.classList.add('is-image-load-failed')" /></button>`
+              const width = Math.max(0, Number(attachment.width || 0))
+              const height = Math.max(0, Number(attachment.height || 0))
+              const dimensions = width && height ? ` width="${Math.round(width)}" height="${Math.round(height)}"` : ''
+              if (mime.startsWith('image/')) return `<button type="button" class="message-image-preview-button" data-preview-message-image="${escapeHtml(attachment.url || '')}" data-preview-message-image-name="${escapeHtml(attachment.name || 'Image attachment')}"><img decoding="async" src="${escapeHtml(attachment.url || '')}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy"${dimensions} onerror="this.closest('button')?.classList.add('is-image-load-failed')" /></button>`
               if (mime.startsWith('video/')) return `<video src="${escapeHtml(attachment.url)}" controls preload="metadata"></video>`
               if (mime.startsWith('audio/')) return `<audio src="${escapeHtml(attachment.url)}" controls></audio>`
               return `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener" class="message-file-link">${escapeHtml(attachment.name || 'Download attachment')}</a>`
@@ -1880,7 +1929,7 @@ async function handleThreadConfirmAction() {
         ? { ...thread, pinned: true, pinnedAt: new Date().toISOString() }
         : thread))
       appState.threads = sortInboxThreadsLocal(appState.threads)
-      renderSignedInState()
+      renderThreadListOnly()
       await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: true }).catch((error) => {
         appState.threads = previousThreads
         throw error
@@ -1892,7 +1941,7 @@ async function handleThreadConfirmAction() {
         ? { ...thread, pinned: false, pinnedAt: null }
         : thread))
       appState.threads = sortInboxThreadsLocal(appState.threads)
-      renderSignedInState()
+      renderThreadListOnly()
       await setThreadPinnedForUser({ uid: appState.user.uid, threadId: modal.threadId, pinned: false }).catch((error) => {
         appState.threads = previousThreads
         throw error
@@ -1916,7 +1965,9 @@ async function handleThreadConfirmAction() {
       else await unblockDmContact(thread)
     }
     closeThreadActionUi()
-    renderSignedInState()
+    renderThreadListOnly()
+    renderSidebarOnly()
+    renderSelectedConversation({ preserveScroll: true })
   } catch (error) {
     appState.errorMessage = error?.message || 'Unable to update chat action.'
     appState.isSavingThreadAction = false
@@ -1933,7 +1984,7 @@ async function saveInboxPin(pin) {
     appState.errorMessage = error?.message || 'Unable to pin item.'
   } finally {
     appState.isSavingInboxPin = ''
-    renderSignedInState()
+    renderSidebarOnly()
   }
 }
 
@@ -1946,7 +1997,7 @@ async function removeInboxPin(pinId) {
     appState.errorMessage = error?.message || 'Unable to remove pinned item.'
   } finally {
     appState.isSavingInboxPin = ''
-    renderSignedInState()
+    renderSidebarOnly()
   }
 }
 
@@ -1962,7 +2013,8 @@ async function openInboxPin(pinId) {
     if (hydratedThread) upsertThreadInState(hydratedThread)
     startMessageSubscription(pin.targetId)
     hydrateProfilesForThread(getSelectedThread())
-    renderSignedInState()
+    renderThreadListOnly()
+    renderSelectedConversation({ forceBottom: true })
     return
   }
   if (pin.sourceCategory === 'System' || pin.type === 'systemNotification' || pin.type === 'accountEvent') {
@@ -2075,6 +2127,25 @@ function getFilterContentMarkup(filterName) {
   `
 }
 
+function getMessageFindMarkup() {
+  if (!appState.messageFind.open) {
+    return '<button type="button" class="message-find-trigger" data-message-find-action="open" aria-label="Find in messages">Find</button>'
+  }
+  const countLabel = appState.messageFind.matchCount
+    ? `${Math.max(1, appState.messageFind.activeIndex + 1)} of ${appState.messageFind.matchCount}`
+    : '0 results'
+  return `
+    <div class="message-find" role="search">
+      <label class="sr-only" for="message-find-input">Find in messages</label>
+      <input id="message-find-input" type="search" value="${escapeHtml(appState.messageFind.query)}" placeholder="Find" autocomplete="off" data-message-find-input />
+      <span class="message-find-count" data-message-find-count>${countLabel}</span>
+      <button type="button" data-message-find-action="previous" aria-label="Previous match" ${appState.messageFind.matchCount ? '' : 'disabled'}>↑</button>
+      <button type="button" data-message-find-action="next" aria-label="Next match" ${appState.messageFind.matchCount ? '' : 'disabled'}>↓</button>
+      <button type="button" data-message-find-action="close" aria-label="Close find">×</button>
+    </div>
+  `
+}
+
 function getConversationHeaderMarkup(thread) {
   if (!thread) {
     return `
@@ -2101,9 +2172,110 @@ function getConversationHeaderMarkup(thread) {
         <h3>${escapeHtml(headerMeta.displayName || thread.title)}</h3>
         <p>${escapeHtml(getConversationSubtitle(thread))}</p>
       </div>
+      ${getMessageFindMarkup()}
       <button type="button" class="chat-settings-trigger" data-action="open-chat-settings" aria-label="Open chat settings">⋯</button>
     </header>
   `
+}
+
+function clearMessageFindHighlights() {
+  const list = getMessageScroller()
+  if (!list) return
+  list.querySelectorAll('[data-message-find-text]').forEach((element) => {
+    if (element.dataset.messageFindOriginal !== undefined) {
+      element.textContent = element.dataset.messageFindOriginal
+      delete element.dataset.messageFindOriginal
+    }
+    element.removeAttribute('data-message-find-text')
+  })
+}
+
+function updateMessageFindControls() {
+  const count = inboxRoot.querySelector('[data-message-find-count]')
+  if (count) {
+    count.textContent = appState.messageFind.matchCount
+      ? `${appState.messageFind.activeIndex + 1} of ${appState.messageFind.matchCount}`
+      : '0 results'
+  }
+  inboxRoot.querySelectorAll('[data-message-find-action="previous"], [data-message-find-action="next"]').forEach((button) => {
+    button.disabled = !appState.messageFind.matchCount
+  })
+}
+
+function focusActiveMessageFindMatch() {
+  const matches = Array.from(inboxRoot.querySelectorAll('mark[data-message-find-match]'))
+  matches.forEach((match, index) => match.classList.toggle('is-active', index === appState.messageFind.activeIndex))
+  const active = matches[appState.messageFind.activeIndex]
+  if (!active) return
+  const scrollState = getMessageScrollState()
+  scrollState.isPinnedToBottom = false
+  scrollState.userHasScrolledAway = true
+  active.closest('[data-message-id]')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+function applyMessageFind() {
+  clearMessageFindHighlights()
+  const query = appState.messageFind.query.trim()
+  if (!query) {
+    appState.messageFind.matchCount = 0
+    appState.messageFind.activeIndex = -1
+    updateMessageFindControls()
+    return
+  }
+
+  const normalizedQuery = query.toLocaleLowerCase()
+  const matches = []
+  getMessageScroller()?.querySelectorAll('.message-bubble > p').forEach((paragraph) => {
+    const original = paragraph.textContent || ''
+    const normalized = original.toLocaleLowerCase()
+    if (!normalized.includes(normalizedQuery)) return
+    paragraph.dataset.messageFindText = 'true'
+    paragraph.dataset.messageFindOriginal = original
+    paragraph.textContent = ''
+    let cursor = 0
+    while (cursor < original.length) {
+      const matchIndex = normalized.indexOf(normalizedQuery, cursor)
+      if (matchIndex < 0) {
+        paragraph.append(document.createTextNode(original.slice(cursor)))
+        break
+      }
+      if (matchIndex > cursor) paragraph.append(document.createTextNode(original.slice(cursor, matchIndex)))
+      const mark = document.createElement('mark')
+      mark.dataset.messageFindMatch = 'true'
+      mark.textContent = original.slice(matchIndex, matchIndex + query.length)
+      paragraph.append(mark)
+      matches.push(mark)
+      cursor = matchIndex + query.length
+    }
+  })
+
+  appState.messageFind.matchCount = matches.length
+  if (!matches.length) appState.messageFind.activeIndex = -1
+  else appState.messageFind.activeIndex = Math.min(Math.max(appState.messageFind.activeIndex, 0), matches.length - 1)
+  updateMessageFindControls()
+  focusActiveMessageFindMatch()
+}
+
+function handleMessageFindAction(action) {
+  if (action === 'open') {
+    appState.messageFind.open = true
+    renderSelectedConversation({ preserveScroll: true })
+    requestAnimationFrame(() => inboxRoot.querySelector('[data-message-find-input]')?.focus())
+    return
+  }
+  if (action === 'close') {
+    clearMessageFindHighlights()
+    appState.messageFind = { open: false, query: '', activeIndex: -1, matchCount: 0 }
+    renderSelectedConversation({ preserveScroll: true })
+    return
+  }
+  if (!appState.messageFind.matchCount) return
+  const offset = action === 'previous' ? -1 : 1
+  appState.messageFind.activeIndex = (
+    appState.messageFind.activeIndex + offset + appState.messageFind.matchCount
+  ) % appState.messageFind.matchCount
+  updateMessageFindControls()
+  focusActiveMessageFindMatch()
 }
 
 function clampMenuPosition(x, y, width = 180, height = 220) {
@@ -2216,7 +2388,7 @@ async function handleFloatingMenuAction(button) {
     const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
     appState.editDraftByMessageId[menu.messageId] = message?.body || ''
     clearFloatingOverlays()
-    renderSignedInState()
+    renderSelectedConversation({ preserveScroll: true })
     return
   }
   if (action === 'reply') {
@@ -2226,7 +2398,7 @@ async function handleFloatingMenuAction(button) {
       appState.replyDraftByThreadId[menu.threadId] = buildReplyPreview(thread, message)
     }
     clearFloatingOverlays()
-    renderSignedInState()
+    renderSelectedConversation({ preserveScroll: true })
     return
   }
   if (action === 'react') {
@@ -2290,14 +2462,14 @@ async function handleFloatingMenuAction(button) {
       uid: appState.user?.uid,
       add: !mine
     })
-    renderSignedInState()
+    renderSelectedConversation({ preserveScroll: true })
     try {
       if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
       else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
     } catch {
       rollback()
       appState.errorMessage = 'Unable to update reaction.'
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     }
   }
   clearFloatingOverlays()
@@ -2561,8 +2733,8 @@ async function handleCreateChatSubmit() {
       warnRealtimePermission(`threads-refresh-after-create-${appState.user.uid}`, refreshError)
     }
     closeCreateChatModal()
-    renderSignedInState()
-    scrollMessageListToBottom({ reason: 'open-created-thread', force: true })
+    renderThreadListOnly()
+    renderSelectedConversation({ forceBottom: true })
   } catch (error) {
     appState.isCreatingChat = false
     appState.createChatError = error?.message || 'Unable to create chat.'
@@ -3040,8 +3212,8 @@ function renderSignedOutState() {
   floatingRoot.innerHTML = ''
 }
 
-function bindSharedEvents() {
-  inboxRoot.querySelectorAll('[data-inbox-filter]').forEach((button) => {
+function bindSharedEvents(scope = inboxRoot) {
+  scope.querySelectorAll('[data-inbox-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       const nextFilter = button.dataset.inboxFilter || 'Messages'
       if (nextFilter !== 'Messages' && activeTypingThreadId) {
@@ -3052,7 +3224,7 @@ function bindSharedEvents() {
     })
   })
 
-  inboxRoot.querySelectorAll('[data-select-thread-id]').forEach((button) => {
+  scope.querySelectorAll('[data-select-thread-id]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (appState.activeFilter !== 'Messages') {
         appState.activeFilter = 'Messages'
@@ -3066,6 +3238,7 @@ function bindSharedEvents() {
       }
       appState.threadActionMenu = null
       appState.threadConfirmModal = null
+      appState.messageFind = { open: false, query: '', activeIndex: -1, matchCount: 0 }
 
       appState.selectedThreadId = threadId
       saveLastSelectedThread(appState.user?.uid, threadId)
@@ -3077,8 +3250,8 @@ function bindSharedEvents() {
       }
       startMessageSubscription(threadId)
       hydrateProfilesForThread(getSelectedThread())
-      renderSignedInState()
-      scrollMessageListToBottom({ reason: 'thread-switch', force: true })
+      renderThreadListOnly()
+      renderSelectedConversation({ forceBottom: true })
 
       if (canMarkThreadRead(threadId)) {
         await markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
@@ -3088,7 +3261,7 @@ function bindSharedEvents() {
     })
   })
 
-  inboxRoot.querySelectorAll('[data-thread-menu-id]').forEach((button) => {
+  scope.querySelectorAll('[data-thread-menu-id]').forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
@@ -3097,13 +3270,13 @@ function bindSharedEvents() {
     })
   })
 
-  inboxRoot.querySelectorAll('[data-open-inbox-pin]').forEach((button) => {
+  scope.querySelectorAll('[data-open-inbox-pin]').forEach((button) => {
     button.addEventListener('click', async () => {
       await openInboxPin(button.getAttribute('data-open-inbox-pin') || '')
     })
   })
 
-  inboxRoot.querySelectorAll('[data-unpin-inbox-pin]').forEach((button) => {
+  scope.querySelectorAll('[data-unpin-inbox-pin]').forEach((button) => {
     button.addEventListener('click', async (event) => {
       event.preventDefault()
       event.stopPropagation()
@@ -3111,28 +3284,28 @@ function bindSharedEvents() {
     })
   })
 
-  inboxRoot.querySelectorAll('[data-system-filter]').forEach((button) => {
+  scope.querySelectorAll('[data-system-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       appState.systemFilter = button.getAttribute('data-system-filter') || 'all'
       renderSignedInState()
     })
   })
 
-  inboxRoot.querySelectorAll('[data-system-id]').forEach((card) => {
+  scope.querySelectorAll('[data-system-id]').forEach((card) => {
     card.addEventListener('click', async () => {
       if (!appState.user?.uid) return
       await markSystemNotificationRead(appState.user.uid, card.getAttribute('data-system-id')).catch(() => {})
     })
   })
 
-  inboxRoot.querySelectorAll('[data-account-event-id]').forEach((card) => {
+  scope.querySelectorAll('[data-account-event-id]').forEach((card) => {
     card.addEventListener('click', async () => {
       if (!appState.user?.uid) return
       await markAccountEventRead(appState.user.uid, card.getAttribute('data-account-event-id')).catch(() => {})
     })
   })
 
-  inboxRoot.querySelectorAll('[data-pin-system-item]').forEach((button) => {
+  scope.querySelectorAll('[data-pin-system-item]').forEach((button) => {
     button.addEventListener('click', async (event) => {
       event.preventDefault()
       event.stopPropagation()
@@ -3149,19 +3322,19 @@ function bindSharedEvents() {
     })
   })
 
-  const openCreateChatButton = inboxRoot.querySelector('[data-action="open-create-chat"]')
+  const openCreateChatButton = scope.querySelector('[data-action="open-create-chat"]')
   if (openCreateChatButton) {
     openCreateChatButton.addEventListener('click', () => {
       openCreateChatModal()
     })
   }
 
-  const openChatSettingsButton = inboxRoot.querySelector('[data-action="open-chat-settings"]')
+  const openChatSettingsButton = scope.querySelector('[data-action="open-chat-settings"]')
   if (openChatSettingsButton) {
     openChatSettingsButton.addEventListener('click', () => openChatSettingsModal())
   }
 
-  const messageForm = inboxRoot.querySelector('[data-message-form]')
+  const messageForm = scope.querySelector('[data-message-form]')
   const textarea = messageForm?.querySelector('textarea[name="message"]')
   const attachmentInput = messageForm?.querySelector('[data-attachment-input]')
   const thread = getSelectedThread()
@@ -3184,7 +3357,7 @@ function bindSharedEvents() {
       const hasText = Array.from(event.clipboardData?.types || []).includes('text/plain')
       if (!hasText) event.preventDefault()
       appendAttachmentDraft(thread.id, imageFiles)
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     })
     textarea.addEventListener('blur', () => {
       clearTypingForThread(thread.id)
@@ -3200,7 +3373,7 @@ function bindSharedEvents() {
     if (!thread) return
     if (isThreadInteractionLocked(thread)) return
     appendAttachmentDraft(thread.id, Array.from(attachmentInput.files || []))
-    renderSignedInState()
+    renderSelectedConversation({ preserveScroll: true })
   })
 
   messageForm?.querySelectorAll('[data-remove-attachment]').forEach((button) => {
@@ -3209,14 +3382,14 @@ function bindSharedEvents() {
       const index = Number(button.getAttribute('data-remove-attachment'))
       const current = appState.attachmentDraftByThreadId[thread.id] || []
       setAttachmentDraft(thread.id, current.filter((_, idx) => idx !== index))
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     })
   })
 
   messageForm?.querySelector('[data-clear-reply-draft]')?.addEventListener('click', () => {
     if (!thread?.id) return
     delete appState.replyDraftByThreadId[thread.id]
-    renderSignedInState()
+    renderSelectedConversation({ preserveScroll: true })
   })
 
   messageForm?.querySelectorAll('[data-reveal-blocked-message]').forEach((button) => {
@@ -3225,11 +3398,11 @@ function bindSharedEvents() {
       const threadId = button.getAttribute('data-reveal-blocked-thread-id') || ''
       if (!threadId || !messageId) return
       revealBlockedMessage(threadId, messageId)
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     })
   })
 
-  inboxRoot.querySelectorAll('[data-message-id]').forEach((messageEl) => {
+  scope.querySelectorAll('[data-message-id]').forEach((messageEl) => {
     messageEl.addEventListener('contextmenu', (event) => {
       event.preventDefault()
       const threadId = messageEl.getAttribute('data-message-thread-id')
@@ -3256,14 +3429,14 @@ function bindSharedEvents() {
     })
   })
 
-  inboxRoot.querySelectorAll('[data-retry-message]').forEach((button) => {
+  scope.querySelectorAll('[data-retry-message]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (!thread?.id || !appState.user?.uid) return
       const clientMessageId = button.getAttribute('data-retry-message') || ''
       const message = (appState.optimisticMessagesByThreadId[thread.id] || []).find((entry) => entry.clientMessageId === clientMessageId)
       if (!message) return
       setOptimisticMessageStatus(thread.id, clientMessageId, 'sending')
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
       try {
         await sendMessage(thread.id, {
           senderId: appState.user.uid,
@@ -3278,37 +3451,36 @@ function bindSharedEvents() {
         setOptimisticMessageStatus(thread.id, clientMessageId, 'failed', error?.message || 'Unable to send message.')
         appState.errorMessage = getSendErrorMessage(error, thread)
       }
-      renderSignedInState()
-      scrollMessageListToBottom({ reason: 'retry-message', force: true })
+      renderSelectedConversation({ forceBottom: true })
     })
   })
 
-  inboxRoot.querySelectorAll('[data-remove-failed-message]').forEach((button) => {
+  scope.querySelectorAll('[data-remove-failed-message]').forEach((button) => {
     button.addEventListener('click', () => {
       if (!thread?.id) return
       const clientMessageId = button.getAttribute('data-remove-failed-message') || ''
       removeOptimisticMessage(thread.id, clientMessageId)
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     })
   })
 
-  inboxRoot.querySelectorAll('[data-edit-message-input]').forEach((input) => {
+  scope.querySelectorAll('[data-edit-message-input]').forEach((input) => {
     input.addEventListener('input', () => {
       const messageId = input.getAttribute('data-edit-message-input')
       appState.editDraftByMessageId[messageId] = input.value
     })
   })
 
-  inboxRoot.querySelectorAll('[data-edit-cancel]').forEach((button) => {
+  scope.querySelectorAll('[data-edit-cancel]').forEach((button) => {
     button.addEventListener('click', () => {
       const messageId = button.getAttribute('data-edit-cancel')
       if (thread?.id) appState.editingMessageByThreadId[thread.id] = ''
       delete appState.editDraftByMessageId[messageId]
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     })
   })
 
-  inboxRoot.querySelectorAll('[data-edit-save]').forEach((button) => {
+  scope.querySelectorAll('[data-edit-save]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (!thread?.id) return
       if (isThreadInteractionLocked(thread)) return
@@ -3317,24 +3489,27 @@ function bindSharedEvents() {
       await editMessage({ threadId: thread.id, messageId, uid: appState.user?.uid, body })
       appState.editingMessageByThreadId[thread.id] = ''
       delete appState.editDraftByMessageId[messageId]
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     })
   })
 
-  inboxRoot.querySelectorAll('[data-jump-reply-message-id]').forEach((button) => {
+  scope.querySelectorAll('[data-jump-reply-message-id]').forEach((button) => {
     button.addEventListener('click', () => {
       const targetId = button.getAttribute('data-jump-reply-message-id')
       if (!targetId) return
       const safeId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(targetId) : targetId.replace(/"/g, '\\"')
       const target = inboxRoot.querySelector(`[data-message-id="${safeId}"]`)
       if (!target) return
+      const scrollState = getMessageScrollState()
+      scrollState.isPinnedToBottom = false
+      scrollState.userHasScrolledAway = true
       target.scrollIntoView({ block: 'center', behavior: 'smooth' })
       target.classList.add('is-reply-target-highlight')
       window.setTimeout(() => target.classList.remove('is-reply-target-highlight'), 1100)
     })
   })
 
-  inboxRoot.querySelectorAll('[data-reaction-pill]').forEach((button) => {
+  scope.querySelectorAll('[data-reaction-pill]').forEach((button) => {
     button.addEventListener('click', async () => {
       const messageId = button.getAttribute('data-reaction-pill')
       const emoji = button.getAttribute('data-emoji') || ''
@@ -3349,14 +3524,14 @@ function bindSharedEvents() {
         uid: appState.user?.uid,
         add: !mine
       })
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
       try {
         if (mine) await removeMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
         else await addMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
       } catch {
         rollback()
         appState.errorMessage = 'Unable to update reaction.'
-        renderSignedInState()
+        renderSelectedConversation({ preserveScroll: true })
       }
     })
   })
@@ -3369,7 +3544,7 @@ function bindSharedEvents() {
     })
   }
 
-  const list = inboxRoot.querySelector('[data-message-list]')
+  const list = scope.querySelector('[data-message-list]')
   if (list && (appState.messageContextMenu || appState.threadActionMenu)) {
     list.addEventListener('scroll', () => {
       clearFloatingOverlays()
@@ -3382,9 +3557,67 @@ function bindSharedEvents() {
 function renderSignedInState() {
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
+  if (appState.activeFilter === 'Messages') {
+    bindMessageScrollLock()
+    bindMessageMediaStabilization()
+    if (appState.messageFind.open && appState.messageFind.query) applyMessageFind()
+  }
   renderCreateChatModal()
   renderChatSettingsModal()
   renderFloatingUi()
+}
+
+function renderSelectedConversation({ forceBottom = false, preserveScroll = false, behavior = 'auto' } = {}) {
+  if (appState.activeFilter !== 'Messages') return
+  const panel = inboxRoot.querySelector('.inbox-main-panel')
+  if (!panel) {
+    renderSignedInState()
+    return
+  }
+  const previousList = getMessageScroller()
+  const previousScrollTop = previousList?.scrollTop || 0
+  const previousScrollHeight = previousList?.scrollHeight || 0
+  const scrollState = getMessageScrollState()
+  const nextContent = document.createElement('div')
+  nextContent.innerHTML = `${getConversationHeaderMarkup(getSelectedThread())}${getConversationBodyMarkup()}`
+  const generatedList = nextContent.querySelector('[data-message-list]')
+  if (previousList && generatedList) {
+    previousList.innerHTML = generatedList.innerHTML
+    generatedList.replaceWith(previousList)
+  }
+  panel.replaceChildren(...nextContent.childNodes)
+  bindSharedEvents(panel)
+  const nextList = getMessageScroller()
+  bindMessageScrollLock(nextList)
+  bindMessageMediaStabilization(nextList)
+  if (appState.messageFind.open && appState.messageFind.query) applyMessageFind()
+  if (!nextList) return
+  if (forceBottom || scrollState.isPinnedToBottom) {
+    scrollMessageListToBottom({ force: true, behavior, reason: forceBottom ? 'forced-local-render' : 'pinned-local-render' })
+  } else if (preserveScroll) {
+    nextList.scrollTop = Math.max(0, nextList.scrollHeight - previousScrollHeight + previousScrollTop)
+  } else {
+    nextList.scrollTop = previousScrollTop
+  }
+}
+
+function renderThreadListOnly() {
+  if (appState.activeFilter !== 'Messages') return
+  const currentList = inboxRoot.querySelector('.inbox-thread-list')
+  if (!currentList) {
+    renderSignedInState()
+    return
+  }
+  currentList.outerHTML = getMessagesThreadListMarkup()
+  const nextList = inboxRoot.querySelector('.inbox-thread-list')
+  if (nextList) bindSharedEvents(nextList)
+}
+
+function renderSidebarOnly() {
+  const sidebar = inboxRoot.querySelector('.inbox-sidebar')
+  if (!sidebar) return
+  sidebar.innerHTML = getMessagesSidebarMarkup()
+  bindSharedEvents(sidebar)
 }
 
 function createClientMessageId() {
@@ -3412,7 +3645,7 @@ async function handleMessageSubmit(form) {
     appState.errorMessage = blockState.currentUserBlockedOther
       ? 'You blocked this user. Unblock to send messages.'
       : 'This user can no longer receive messages from you.'
-    renderSignedInState()
+    renderSelectedConversation({ preserveScroll: true })
     return
   }
 
@@ -3422,7 +3655,7 @@ async function handleMessageSubmit(form) {
   const oversized = attachments.find((file) => Number(file?.size || 0) > MAX_ATTACHMENT_BYTES)
   if (oversized) {
     appState.errorMessage = `Attachment is too large. Maximum size is ${MAX_ATTACHMENT_LABEL}.`
-    renderSignedInState()
+    renderSelectedConversation({ preserveScroll: true })
     return
   }
   if (!body && !attachments.length) return
@@ -3436,8 +3669,7 @@ async function handleMessageSubmit(form) {
   delete appState.replyDraftByThreadId[thread.id]
   setAttachmentDraft(thread.id, [])
   form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
-  renderSignedInState()
-  scrollMessageListToBottom({ behavior: 'smooth', reason: 'sent-optimistic', force: true })
+  renderSelectedConversation({ forceBottom: true })
 
   let sendFailed = false
   try {
@@ -3463,8 +3695,7 @@ async function handleMessageSubmit(form) {
   }
 
   if (sendFailed) {
-    renderSignedInState()
-    scrollMessageListToBottom({ reason: 'sent-failed', force: true })
+    renderSelectedConversation({ forceBottom: true })
   }
 }
 
@@ -3484,7 +3715,7 @@ function startThreadDetailSubscriptions(threadId) {
       }
     })
     hydrateProfilesForThread(getSelectedThread())
-    if (appState.selectedThreadId === threadId) renderSignedInState()
+    if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
   }, (error) => {
     warnRealtimePermission(`participants-${threadId}`, error)
   })
@@ -3532,7 +3763,7 @@ function startSelectedSourceThreadSubscription(threadId) {
     })
     if (appState.selectedThreadId === sourceThread.id) {
       if (getDmBlockState(sourceThread).isDmBlocked) clearTypingForThread(sourceThread.id)
-      renderSignedInState()
+      renderSelectedConversation({ preserveScroll: true })
     }
   }, (error) => {
     warnRealtimePermission(`thread-source-${threadId}`, error)
@@ -3559,7 +3790,12 @@ function startMessageSubscription(threadId) {
     reconcileOptimisticMessages(threadId, messages)
     const existing = appState.messagesByThreadId[threadId] || []
     const isInitialMessageBatch = appState.loadingMessageThreadId === threadId || !existing.length
-    const shouldAutoScroll = isInitialMessageBatch || isMessageListNearBottom()
+    const scrollState = getMessageScrollState(threadId)
+    if (isInitialMessageBatch) {
+      scrollState.isPinnedToBottom = true
+      scrollState.userHasScrolledAway = false
+    }
+    const shouldAutoScroll = isInitialMessageBatch || scrollState.isPinnedToBottom
     appState.messagesByThreadId[threadId] = mergeMessages(existing, messages)
     appState.messagePaginationByThreadId[threadId] = {
       ...(appState.messagePaginationByThreadId[threadId] || {}),
@@ -3568,25 +3804,22 @@ function startMessageSubscription(threadId) {
     }
     preloadMessageImages(messages)
     appState.loadingMessageThreadId = ''
-    await hydrateProfilesForMessages(threadId, messages)
+    await hydrateProfilesForMessages(threadId, messages, { render: false })
     appState.reactionUnsubscribe()
     appState.reactionUnsubscribe = subscribeToMessageReactions(threadId, messages.map((message) => message.id), (reactionsByMessageId) => {
       appState.reactionsByThreadId[threadId] = reactionsByMessageId
-      if (appState.selectedThreadId === threadId) renderSignedInState()
+      if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
     }, (error) => warnRealtimePermission(`reactions-${threadId}`, error))
 
     await markThreadDelivered({ threadId, uid: appState.user.uid }).catch((error) => {
       warnRealtimePermission(`participants-delivered-${threadId}`, error)
     })
     if (appState.selectedThreadId === threadId) {
-      renderSignedInState()
-      if (shouldAutoScroll) {
-        scrollMessageListToBottom({
-          reason: isInitialMessageBatch ? 'initial' : 'new-message',
-          force: isInitialMessageBatch,
-          behavior: isInitialMessageBatch ? 'auto' : 'smooth'
-        })
-      }
+      renderSelectedConversation({
+        forceBottom: shouldAutoScroll,
+        preserveScroll: !shouldAutoScroll,
+        behavior: 'auto'
+      })
       if (canMarkThreadRead(threadId)) {
         await markThreadRead({ threadId, uid: appState.user.uid }).catch((error) => {
           warnRealtimePermission(`participants-read-${threadId}`, error)
@@ -3606,7 +3839,7 @@ function startMessageSubscription(threadId) {
       if (replyDraft?.messageId && hiddenIds.includes(replyDraft.messageId)) {
         delete appState.replyDraftByThreadId[threadId]
       }
-      if (appState.selectedThreadId === threadId) renderSignedInState()
+      if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
     },
     onError: (error) => warnRealtimePermission(`hidden-${threadId}`, error)
   })
@@ -3628,6 +3861,7 @@ function startThreadSubscription() {
 
   appState.threadUnsubscribe()
   appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, (threads) => {
+    const previousSelectedThreadId = appState.selectedThreadId
     appState.threads = sortInboxThreadsLocal(threads)
     preloadThreadImages(threads)
     hydrateProfilesForThreads(threads).catch(() => {})
@@ -3750,7 +3984,15 @@ function startThreadSubscription() {
     }
     hydrateProfilesForThread(threads.find((thread) => thread.id === appState.selectedThreadId))
 
-    renderSignedInState()
+    if (
+      previousSelectedThreadId
+      && previousSelectedThreadId === appState.selectedThreadId
+      && inboxRoot.querySelector('.inbox-layout-messages')
+    ) {
+      renderThreadListOnly()
+    } else {
+      renderSignedInState()
+    }
   }, async (error) => {
     warnRealtimePermission(`threads-${appState.user.uid}`, error)
     appState.isLoadingThreads = false
@@ -3820,7 +4062,8 @@ function startInboxPinsSubscription() {
     appState.user.uid,
     (items) => {
       appState.inboxPins = items
-      renderSignedInState()
+      if (appState.activeFilter === 'Messages') renderSidebarOnly()
+      else renderSignedInState()
     },
     (error) => {
       warnSystemPermission(error)
@@ -3839,7 +4082,7 @@ function startBlockedUsersSubscription() {
         if (row?.targetUid) acc[row.targetUid] = row
         return acc
       }, {})
-      if (appState.activeFilter === 'Messages') renderSignedInState()
+      if (appState.activeFilter === 'Messages') renderSelectedConversation({ preserveScroll: true })
     },
     (error) => {
       warnRealtimePermission(`blocked-users-${appState.user.uid}`, error)
@@ -3848,6 +4091,24 @@ function startBlockedUsersSubscription() {
 }
 
 function handleGlobalKeydown(event) {
+  const inboxHasFocus = inboxRoot.contains(document.activeElement)
+  if (
+    (event.metaKey || event.ctrlKey)
+    && event.key.toLowerCase() === 'f'
+    && appState.activeFilter === 'Messages'
+    && appState.selectedThreadId
+    && inboxHasFocus
+  ) {
+    event.preventDefault()
+    if (!appState.messageFind.open) handleMessageFindAction('open')
+    else inboxRoot.querySelector('[data-message-find-input]')?.focus()
+    return
+  }
+  if (event.key === 'Escape' && appState.messageFind.open) {
+    event.preventDefault()
+    handleMessageFindAction('close')
+    return
+  }
   if (event.key === 'Escape' && appState.reactionDetailModal) {
     appState.reactionDetailModal = null
     renderFloatingUi()
