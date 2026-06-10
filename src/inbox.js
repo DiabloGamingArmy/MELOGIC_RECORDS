@@ -175,7 +175,6 @@ const appState = {
   hasLoadedThreadsOnce: false,
   inboxRepairAttempted: false,
   isRepairingInbox: false,
-  messageScrollByThreadId: {},
   messageFind: {
     open: false,
     query: '',
@@ -393,7 +392,7 @@ async function hydrateProfilesForThread(thread) {
   console.info(`[inbox] loaded profiles for thread ${thread.id} ${loadedKeys.length}`)
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   preloadProfileImagesByUid(loadedKeys)
-  if (appState.selectedThreadId === thread.id) renderSelectedConversation({ preserveScroll: true })
+  if (appState.selectedThreadId === thread.id) renderSelectedConversation({ reason: 'state-update' })
 }
 
 async function hydrateProfilesForMessages(threadId, messages = [], { render = true } = {}) {
@@ -405,7 +404,7 @@ async function hydrateProfilesForMessages(threadId, messages = [], { render = tr
   if (!Object.keys(loaded).length) return
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   preloadProfileImagesByUid(Object.keys(loaded))
-  if (render && appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
+  if (render && appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
 }
 
 async function hydrateProfilesForThreads(threads = []) {
@@ -787,6 +786,7 @@ function scheduleTypingExpiryRefresh(threadId) {
 
 function clearRealtimeListeners() {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
+  messageScrollController.detach()
   appState.threadUnsubscribe()
   appState.messageUnsubscribe()
   appState.sourceThreadUnsubscribe()
@@ -891,22 +891,10 @@ function updateTypingHeartbeat(threadId, value) {
 }
 
 const BOTTOM_THRESHOLD_PX = 96
+const MESSAGE_SCROLL_DEBUG = false
 
 function getMessageScroller() {
   return inboxRoot.querySelector('[data-message-list]')
-}
-
-function getMessageScrollState(threadId = appState.selectedThreadId) {
-  if (!threadId) return { isPinnedToBottom: true, userHasScrolledAway: false, pendingBottomScroll: false }
-  if (!appState.messageScrollByThreadId[threadId]) {
-    appState.messageScrollByThreadId[threadId] = {
-      isPinnedToBottom: true,
-      userHasScrolledAway: false,
-      pendingBottomScroll: false,
-      rafId: 0
-    }
-  }
-  return appState.messageScrollByThreadId[threadId]
 }
 
 function isMessageListNearBottom(list = getMessageScroller(), threshold = BOTTOM_THRESHOLD_PX) {
@@ -914,65 +902,151 @@ function isMessageListNearBottom(list = getMessageScroller(), threshold = BOTTOM
   return list.scrollHeight - list.scrollTop - list.clientHeight <= threshold
 }
 
-function scrollMessageListToBottom({ behavior = 'auto', reason = 'manual', force = false } = {}) {
-  const threadId = appState.selectedThreadId || ''
-  if (!threadId) return
-  const list = getMessageScroller()
-  if (!list) return
-  const scrollState = getMessageScrollState(threadId)
-  if (!force && !scrollState.isPinnedToBottom) return
-  if (scrollState.rafId) cancelAnimationFrame(scrollState.rafId)
-  scrollState.pendingBottomScroll = true
-  scrollState.rafId = requestAnimationFrame(() => {
-    scrollState.rafId = requestAnimationFrame(() => {
-      scrollState.rafId = 0
-      const currentList = getMessageScroller()
-      if (!currentList || appState.selectedThreadId !== threadId) return
-      if (behavior === 'smooth' && typeof currentList.scrollTo === 'function') {
-        currentList.scrollTo({ top: currentList.scrollHeight, behavior })
-      } else {
-        currentList.scrollTop = currentList.scrollHeight
-      }
-      scrollState.pendingBottomScroll = false
-      scrollState.isPinnedToBottom = true
-      scrollState.userHasScrolledAway = false
-    })
-  })
-}
+const messageScrollController = {
+  scroller: null,
+  threadId: '',
+  mode: 'bottom',
+  lastScrollHeight: 0,
+  lastScrollTop: 0,
+  isProgrammaticScroll: false,
+  rafId: 0,
+  releaseRafId: 0,
+  onScroll: null,
+  onMediaSettled: null,
 
-function bindMessageScrollLock(list = getMessageScroller()) {
-  const threadId = appState.selectedThreadId
-  if (!list || !threadId || list.dataset.scrollLockBound === 'true') return
-  list.dataset.scrollLockBound = 'true'
-  const scrollState = getMessageScrollState(threadId)
-  list.addEventListener('scroll', () => {
-    if (scrollState.pendingBottomScroll) return
-    const pinned = isMessageListNearBottom(list)
-    scrollState.isPinnedToBottom = pinned
-    scrollState.userHasScrolledAway = !pinned
-  }, { passive: true })
-}
+  debug(...args) {
+    if (MESSAGE_SCROLL_DEBUG) console.info('[inbox scroll]', ...args)
+  },
 
-function bindMessageMediaStabilization(list = getMessageScroller()) {
-  if (!list) return
-  list.querySelectorAll('img, video').forEach((media) => {
-    if (media.dataset.scrollStabilized === 'true') return
-    media.dataset.scrollStabilized = 'true'
-    let previousHeight = list.scrollHeight
-    const stabilize = () => {
-      const scrollState = getMessageScrollState()
-      const heightDelta = list.scrollHeight - previousHeight
-      previousHeight = list.scrollHeight
-      if (scrollState.isPinnedToBottom) {
-        scrollMessageListToBottom({ force: true, reason: 'message-media-loaded' })
-      } else if (heightDelta > 0 && media.getBoundingClientRect().top < list.getBoundingClientRect().top) {
-        list.scrollTop += heightDelta
-      }
+  attach(scroller, { threadId = appState.selectedThreadId, resetMode = false } = {}) {
+    if (!scroller) {
+      this.detach()
+      return
     }
-    media.addEventListener(media.tagName === 'IMG' ? 'load' : 'loadedmetadata', stabilize, { once: true })
-    media.addEventListener('error', stabilize, { once: true })
-    if (media.tagName === 'IMG' && media.complete) stabilize()
-  })
+    const isNewScroller = this.scroller !== scroller
+    const isNewThread = this.threadId !== threadId
+    if (isNewScroller) this.detach()
+    this.scroller = scroller
+    this.threadId = threadId || ''
+    if (resetMode || isNewThread) this.mode = 'bottom'
+    this.lastScrollHeight = scroller.scrollHeight
+    this.lastScrollTop = scroller.scrollTop
+    if (!isNewScroller) return
+
+    this.onScroll = () => {
+      if (this.isProgrammaticScroll || this.scroller !== scroller) return
+      if (this.rafId) {
+        cancelAnimationFrame(this.rafId)
+        this.rafId = 0
+      }
+      const nextMode = isMessageListNearBottom(scroller) ? 'bottom' : 'detached'
+      if (nextMode !== this.mode) this.debug('mode', this.mode, '->', nextMode)
+      this.mode = nextMode
+      this.lastScrollTop = scroller.scrollTop
+      this.lastScrollHeight = scroller.scrollHeight
+    }
+    this.onMediaSettled = (event) => {
+      const media = event.target
+      if (!(media instanceof HTMLImageElement || media instanceof HTMLVideoElement)) return
+      this.stabilizeMedia(media)
+    }
+    scroller.addEventListener('scroll', this.onScroll, { passive: true })
+    scroller.addEventListener('load', this.onMediaSettled, true)
+    scroller.addEventListener('loadedmetadata', this.onMediaSettled, true)
+    scroller.addEventListener('error', this.onMediaSettled, true)
+  },
+
+  detach() {
+    if (this.rafId) cancelAnimationFrame(this.rafId)
+    if (this.releaseRafId) cancelAnimationFrame(this.releaseRafId)
+    if (this.scroller && this.onScroll) this.scroller.removeEventListener('scroll', this.onScroll)
+    if (this.scroller && this.onMediaSettled) {
+      this.scroller.removeEventListener('load', this.onMediaSettled, true)
+      this.scroller.removeEventListener('loadedmetadata', this.onMediaSettled, true)
+      this.scroller.removeEventListener('error', this.onMediaSettled, true)
+    }
+    this.scroller = null
+    this.threadId = ''
+    this.isProgrammaticScroll = false
+    this.rafId = 0
+    this.releaseRafId = 0
+    this.onScroll = null
+    this.onMediaSettled = null
+  },
+
+  setScrollTop(nextTop, reason = 'programmatic') {
+    const scroller = this.scroller
+    if (!scroller) return
+    this.isProgrammaticScroll = true
+    scroller.scrollTop = Math.max(0, nextTop)
+    this.lastScrollTop = scroller.scrollTop
+    this.lastScrollHeight = scroller.scrollHeight
+    this.debug(reason, { top: scroller.scrollTop, height: scroller.scrollHeight, mode: this.mode })
+    if (this.releaseRafId) cancelAnimationFrame(this.releaseRafId)
+    this.releaseRafId = requestAnimationFrame(() => {
+      this.releaseRafId = 0
+      this.isProgrammaticScroll = false
+    })
+  },
+
+  scheduleBottom({ force = false, reason = 'bottom' } = {}) {
+    if (!this.scroller || (!force && this.mode !== 'bottom')) return
+    if (force) this.mode = 'bottom'
+    if (this.rafId) cancelAnimationFrame(this.rafId)
+    this.debug('schedule bottom', reason)
+    this.rafId = requestAnimationFrame(() => {
+      this.rafId = 0
+      if (!this.scroller || (!force && this.mode !== 'bottom')) return
+      this.setScrollTop(this.scroller.scrollHeight, reason)
+      this.mode = 'bottom'
+    })
+  },
+
+  snapshot() {
+    const scroller = this.scroller
+    return {
+      mode: this.mode,
+      scrollTop: scroller?.scrollTop || 0,
+      scrollHeight: scroller?.scrollHeight || 0
+    }
+  },
+
+  stabilizeAfterRender(snapshot, { reason = 'render', forceBottom = false, preservePrepend = false } = {}) {
+    const scroller = this.scroller
+    if (!scroller) return
+    if (forceBottom || snapshot?.mode === 'bottom') {
+      this.mode = 'bottom'
+      this.scheduleBottom({ force: true, reason })
+      return
+    }
+    this.mode = 'detached'
+    const heightDelta = scroller.scrollHeight - Number(snapshot?.scrollHeight || 0)
+    const nextTop = Number(snapshot?.scrollTop || 0) + (preservePrepend ? heightDelta : 0)
+    this.setScrollTop(nextTop, `${reason}-detached`)
+  },
+
+  stabilizeMedia(media) {
+    const scroller = this.scroller
+    if (!scroller) return
+    const heightDelta = scroller.scrollHeight - this.lastScrollHeight
+    if (this.mode === 'bottom') {
+      this.scheduleBottom({ force: true, reason: 'media-settled' })
+    } else if (heightDelta && media.getBoundingClientRect().top < scroller.getBoundingClientRect().top) {
+      this.setScrollTop(scroller.scrollTop + heightDelta, 'media-settled-detached')
+    }
+    this.lastScrollHeight = scroller.scrollHeight
+    this.lastScrollTop = scroller.scrollTop
+  },
+
+  navigateToElement(element, reason = 'navigate') {
+    const scroller = this.scroller
+    if (!scroller || !element) return
+    this.mode = 'detached'
+    const scrollerRect = scroller.getBoundingClientRect()
+    const elementRect = element.getBoundingClientRect()
+    const targetTop = scroller.scrollTop + elementRect.top - scrollerRect.top - ((scroller.clientHeight - elementRect.height) / 2)
+    this.setScrollTop(targetTop, reason)
+  }
 }
 
 function mergeMessages(existing = [], incoming = []) {
@@ -990,14 +1064,12 @@ async function loadOlderMessagesForThread(threadId = '') {
   const current = appState.messagesByThreadId[threadId] || []
   const earliest = current[0]?.createdAt || ''
   if (!earliest) return
-  const list = inboxRoot.querySelector('[data-message-list]')
-  const previousScrollHeight = list?.scrollHeight || 0
-  const previousScrollTop = list?.scrollTop || 0
+  messageScrollController.mode = 'detached'
   appState.messagePaginationByThreadId[threadId] = {
     ...(appState.messagePaginationByThreadId[threadId] || {}),
     loadingOlder: true
   }
-  renderSelectedConversation({ preserveScroll: true })
+  renderSelectedConversation({ reason: 'state-update' })
   try {
     const older = await listOlderMessages(threadId, earliest)
     appState.messagesByThreadId[threadId] = mergeMessages(older, appState.messagesByThreadId[threadId] || [])
@@ -1007,12 +1079,7 @@ async function loadOlderMessagesForThread(threadId = '') {
     }
     await hydrateProfilesForMessages(threadId, older, { render: false })
     if (appState.selectedThreadId === threadId) {
-      renderSelectedConversation({ preserveScroll: true })
-      requestAnimationFrame(() => {
-        const nextList = inboxRoot.querySelector('[data-message-list]')
-        if (!nextList) return
-        nextList.scrollTop = Math.max(0, nextList.scrollHeight - previousScrollHeight + previousScrollTop)
-      })
+      renderSelectedConversation({ preservePrepend: true, reason: 'older-messages' })
     }
   } catch (error) {
     appState.messagePaginationByThreadId[threadId] = {
@@ -1020,7 +1087,7 @@ async function loadOlderMessagesForThread(threadId = '') {
       loadingOlder: false
     }
     warnRealtimePermission(`older-messages-${threadId}`, error)
-    if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
+    if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
   }
 }
 
@@ -1967,7 +2034,7 @@ async function handleThreadConfirmAction() {
     closeThreadActionUi()
     renderThreadListOnly()
     renderSidebarOnly()
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
   } catch (error) {
     appState.errorMessage = error?.message || 'Unable to update chat action.'
     appState.isSavingThreadAction = false
@@ -2207,10 +2274,7 @@ function focusActiveMessageFindMatch() {
   matches.forEach((match, index) => match.classList.toggle('is-active', index === appState.messageFind.activeIndex))
   const active = matches[appState.messageFind.activeIndex]
   if (!active) return
-  const scrollState = getMessageScrollState()
-  scrollState.isPinnedToBottom = false
-  scrollState.userHasScrolledAway = true
-  active.closest('[data-message-id]')?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  messageScrollController.navigateToElement(active.closest('[data-message-id]'), 'find-result')
 }
 
 function applyMessageFind() {
@@ -2259,14 +2323,14 @@ function applyMessageFind() {
 function handleMessageFindAction(action) {
   if (action === 'open') {
     appState.messageFind.open = true
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
     requestAnimationFrame(() => inboxRoot.querySelector('[data-message-find-input]')?.focus())
     return
   }
   if (action === 'close') {
     clearMessageFindHighlights()
     appState.messageFind = { open: false, query: '', activeIndex: -1, matchCount: 0 }
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
     return
   }
   if (!appState.messageFind.matchCount) return
@@ -2388,7 +2452,7 @@ async function handleFloatingMenuAction(button) {
     const message = (appState.messagesByThreadId[menu.threadId] || []).find((entry) => entry.id === menu.messageId)
     appState.editDraftByMessageId[menu.messageId] = message?.body || ''
     clearFloatingOverlays()
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
     return
   }
   if (action === 'reply') {
@@ -2398,7 +2462,7 @@ async function handleFloatingMenuAction(button) {
       appState.replyDraftByThreadId[menu.threadId] = buildReplyPreview(thread, message)
     }
     clearFloatingOverlays()
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
     return
   }
   if (action === 'react') {
@@ -2462,14 +2526,14 @@ async function handleFloatingMenuAction(button) {
       uid: appState.user?.uid,
       add: !mine
     })
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
     try {
       if (mine) await removeMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, reactionId: mine.id })
       else await addMessageReaction({ threadId: menu.threadId, messageId: menu.messageId, uid: appState.user?.uid, emoji })
     } catch {
       rollback()
       appState.errorMessage = 'Unable to update reaction.'
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     }
   }
   clearFloatingOverlays()
@@ -3357,7 +3421,7 @@ function bindSharedEvents(scope = inboxRoot) {
       const hasText = Array.from(event.clipboardData?.types || []).includes('text/plain')
       if (!hasText) event.preventDefault()
       appendAttachmentDraft(thread.id, imageFiles)
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     })
     textarea.addEventListener('blur', () => {
       clearTypingForThread(thread.id)
@@ -3373,7 +3437,7 @@ function bindSharedEvents(scope = inboxRoot) {
     if (!thread) return
     if (isThreadInteractionLocked(thread)) return
     appendAttachmentDraft(thread.id, Array.from(attachmentInput.files || []))
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
   })
 
   messageForm?.querySelectorAll('[data-remove-attachment]').forEach((button) => {
@@ -3382,14 +3446,14 @@ function bindSharedEvents(scope = inboxRoot) {
       const index = Number(button.getAttribute('data-remove-attachment'))
       const current = appState.attachmentDraftByThreadId[thread.id] || []
       setAttachmentDraft(thread.id, current.filter((_, idx) => idx !== index))
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     })
   })
 
   messageForm?.querySelector('[data-clear-reply-draft]')?.addEventListener('click', () => {
     if (!thread?.id) return
     delete appState.replyDraftByThreadId[thread.id]
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
   })
 
   messageForm?.querySelectorAll('[data-reveal-blocked-message]').forEach((button) => {
@@ -3398,7 +3462,7 @@ function bindSharedEvents(scope = inboxRoot) {
       const threadId = button.getAttribute('data-reveal-blocked-thread-id') || ''
       if (!threadId || !messageId) return
       revealBlockedMessage(threadId, messageId)
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     })
   })
 
@@ -3436,7 +3500,7 @@ function bindSharedEvents(scope = inboxRoot) {
       const message = (appState.optimisticMessagesByThreadId[thread.id] || []).find((entry) => entry.clientMessageId === clientMessageId)
       if (!message) return
       setOptimisticMessageStatus(thread.id, clientMessageId, 'sending')
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
       try {
         await sendMessage(thread.id, {
           senderId: appState.user.uid,
@@ -3460,7 +3524,7 @@ function bindSharedEvents(scope = inboxRoot) {
       if (!thread?.id) return
       const clientMessageId = button.getAttribute('data-remove-failed-message') || ''
       removeOptimisticMessage(thread.id, clientMessageId)
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     })
   })
 
@@ -3476,7 +3540,7 @@ function bindSharedEvents(scope = inboxRoot) {
       const messageId = button.getAttribute('data-edit-cancel')
       if (thread?.id) appState.editingMessageByThreadId[thread.id] = ''
       delete appState.editDraftByMessageId[messageId]
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     })
   })
 
@@ -3489,7 +3553,7 @@ function bindSharedEvents(scope = inboxRoot) {
       await editMessage({ threadId: thread.id, messageId, uid: appState.user?.uid, body })
       appState.editingMessageByThreadId[thread.id] = ''
       delete appState.editDraftByMessageId[messageId]
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     })
   })
 
@@ -3500,10 +3564,7 @@ function bindSharedEvents(scope = inboxRoot) {
       const safeId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(targetId) : targetId.replace(/"/g, '\\"')
       const target = inboxRoot.querySelector(`[data-message-id="${safeId}"]`)
       if (!target) return
-      const scrollState = getMessageScrollState()
-      scrollState.isPinnedToBottom = false
-      scrollState.userHasScrolledAway = true
-      target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      messageScrollController.navigateToElement(target, 'reply-target')
       target.classList.add('is-reply-target-highlight')
       window.setTimeout(() => target.classList.remove('is-reply-target-highlight'), 1100)
     })
@@ -3524,14 +3585,14 @@ function bindSharedEvents(scope = inboxRoot) {
         uid: appState.user?.uid,
         add: !mine
       })
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
       try {
         if (mine) await removeMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
         else await addMessageReaction({ threadId: thread.id, messageId, uid: appState.user?.uid, emoji })
       } catch {
         rollback()
         appState.errorMessage = 'Unable to update reaction.'
-        renderSelectedConversation({ preserveScroll: true })
+        renderSelectedConversation({ reason: 'state-update' })
       }
     })
   })
@@ -3555,29 +3616,42 @@ function bindSharedEvents(scope = inboxRoot) {
 }
 
 function renderSignedInState() {
+  const scrollSnapshot = messageScrollController.snapshot()
+  const previousThreadId = messageScrollController.threadId
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
   if (appState.activeFilter === 'Messages') {
-    bindMessageScrollLock()
-    bindMessageMediaStabilization()
+    const scroller = getMessageScroller()
+    messageScrollController.attach(scroller, {
+      threadId: appState.selectedThreadId,
+      resetMode: !previousThreadId || previousThreadId !== appState.selectedThreadId
+    })
     if (appState.messageFind.open && appState.messageFind.query) applyMessageFind()
+    messageScrollController.stabilizeAfterRender(scrollSnapshot, {
+      reason: 'inbox-layout',
+      forceBottom: !previousThreadId || previousThreadId !== appState.selectedThreadId
+    })
+  } else {
+    messageScrollController.detach()
   }
   renderCreateChatModal()
   renderChatSettingsModal()
   renderFloatingUi()
 }
 
-function renderSelectedConversation({ forceBottom = false, preserveScroll = false, behavior = 'auto' } = {}) {
+function renderSelectedConversation({
+  forceBottom = false,
+  preservePrepend = false,
+  reason = 'conversation-render'
+} = {}) {
   if (appState.activeFilter !== 'Messages') return
   const panel = inboxRoot.querySelector('.inbox-main-panel')
   if (!panel) {
     renderSignedInState()
     return
   }
+  const scrollSnapshot = messageScrollController.snapshot()
   const previousList = getMessageScroller()
-  const previousScrollTop = previousList?.scrollTop || 0
-  const previousScrollHeight = previousList?.scrollHeight || 0
-  const scrollState = getMessageScrollState()
   const nextContent = document.createElement('div')
   nextContent.innerHTML = `${getConversationHeaderMarkup(getSelectedThread())}${getConversationBodyMarkup()}`
   const generatedList = nextContent.querySelector('[data-message-list]')
@@ -3588,17 +3662,16 @@ function renderSelectedConversation({ forceBottom = false, preserveScroll = fals
   panel.replaceChildren(...nextContent.childNodes)
   bindSharedEvents(panel)
   const nextList = getMessageScroller()
-  bindMessageScrollLock(nextList)
-  bindMessageMediaStabilization(nextList)
+  messageScrollController.attach(nextList, {
+    threadId: appState.selectedThreadId,
+    resetMode: messageScrollController.threadId !== appState.selectedThreadId
+  })
   if (appState.messageFind.open && appState.messageFind.query) applyMessageFind()
-  if (!nextList) return
-  if (forceBottom || scrollState.isPinnedToBottom) {
-    scrollMessageListToBottom({ force: true, behavior, reason: forceBottom ? 'forced-local-render' : 'pinned-local-render' })
-  } else if (preserveScroll) {
-    nextList.scrollTop = Math.max(0, nextList.scrollHeight - previousScrollHeight + previousScrollTop)
-  } else {
-    nextList.scrollTop = previousScrollTop
-  }
+  messageScrollController.stabilizeAfterRender(scrollSnapshot, {
+    reason,
+    forceBottom,
+    preservePrepend
+  })
 }
 
 function renderThreadListOnly() {
@@ -3645,7 +3718,7 @@ async function handleMessageSubmit(form) {
     appState.errorMessage = blockState.currentUserBlockedOther
       ? 'You blocked this user. Unblock to send messages.'
       : 'This user can no longer receive messages from you.'
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
     return
   }
 
@@ -3655,7 +3728,7 @@ async function handleMessageSubmit(form) {
   const oversized = attachments.find((file) => Number(file?.size || 0) > MAX_ATTACHMENT_BYTES)
   if (oversized) {
     appState.errorMessage = `Attachment is too large. Maximum size is ${MAX_ATTACHMENT_LABEL}.`
-    renderSelectedConversation({ preserveScroll: true })
+    renderSelectedConversation({ reason: 'state-update' })
     return
   }
   if (!body && !attachments.length) return
@@ -3715,7 +3788,7 @@ function startThreadDetailSubscriptions(threadId) {
       }
     })
     hydrateProfilesForThread(getSelectedThread())
-    if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
+    if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
   }, (error) => {
     warnRealtimePermission(`participants-${threadId}`, error)
   })
@@ -3763,7 +3836,7 @@ function startSelectedSourceThreadSubscription(threadId) {
     })
     if (appState.selectedThreadId === sourceThread.id) {
       if (getDmBlockState(sourceThread).isDmBlocked) clearTypingForThread(sourceThread.id)
-      renderSelectedConversation({ preserveScroll: true })
+      renderSelectedConversation({ reason: 'state-update' })
     }
   }, (error) => {
     warnRealtimePermission(`thread-source-${threadId}`, error)
@@ -3790,12 +3863,8 @@ function startMessageSubscription(threadId) {
     reconcileOptimisticMessages(threadId, messages)
     const existing = appState.messagesByThreadId[threadId] || []
     const isInitialMessageBatch = appState.loadingMessageThreadId === threadId || !existing.length
-    const scrollState = getMessageScrollState(threadId)
-    if (isInitialMessageBatch) {
-      scrollState.isPinnedToBottom = true
-      scrollState.userHasScrolledAway = false
-    }
-    const shouldAutoScroll = isInitialMessageBatch || scrollState.isPinnedToBottom
+    const shouldAutoScroll = isInitialMessageBatch
+      || (appState.selectedThreadId === threadId && messageScrollController.mode === 'bottom')
     appState.messagesByThreadId[threadId] = mergeMessages(existing, messages)
     appState.messagePaginationByThreadId[threadId] = {
       ...(appState.messagePaginationByThreadId[threadId] || {}),
@@ -3808,7 +3877,7 @@ function startMessageSubscription(threadId) {
     appState.reactionUnsubscribe()
     appState.reactionUnsubscribe = subscribeToMessageReactions(threadId, messages.map((message) => message.id), (reactionsByMessageId) => {
       appState.reactionsByThreadId[threadId] = reactionsByMessageId
-      if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
+      if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
     }, (error) => warnRealtimePermission(`reactions-${threadId}`, error))
 
     await markThreadDelivered({ threadId, uid: appState.user.uid }).catch((error) => {
@@ -3817,8 +3886,7 @@ function startMessageSubscription(threadId) {
     if (appState.selectedThreadId === threadId) {
       renderSelectedConversation({
         forceBottom: shouldAutoScroll,
-        preserveScroll: !shouldAutoScroll,
-        behavior: 'auto'
+        reason: isInitialMessageBatch ? 'initial-messages' : 'realtime-messages'
       })
       if (canMarkThreadRead(threadId)) {
         await markThreadRead({ threadId, uid: appState.user.uid }).catch((error) => {
@@ -3839,7 +3907,7 @@ function startMessageSubscription(threadId) {
       if (replyDraft?.messageId && hiddenIds.includes(replyDraft.messageId)) {
         delete appState.replyDraftByThreadId[threadId]
       }
-      if (appState.selectedThreadId === threadId) renderSelectedConversation({ preserveScroll: true })
+      if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
     },
     onError: (error) => warnRealtimePermission(`hidden-${threadId}`, error)
   })
@@ -4082,7 +4150,7 @@ function startBlockedUsersSubscription() {
         if (row?.targetUid) acc[row.targetUid] = row
         return acc
       }, {})
-      if (appState.activeFilter === 'Messages') renderSelectedConversation({ preserveScroll: true })
+      if (appState.activeFilter === 'Messages') renderSelectedConversation({ reason: 'state-update' })
     },
     (error) => {
       warnRealtimePermission(`blocked-users-${appState.user.uid}`, error)
