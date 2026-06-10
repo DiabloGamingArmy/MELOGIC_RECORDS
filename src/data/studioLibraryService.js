@@ -106,12 +106,14 @@ export function slugifyFolderId(label = '') {
   return studioLibrarySlug(label) || `folder-${Date.now().toString(36)}`
 }
 
-function createFolderNode({ id, label, type, engineType = '', path, sortOrder = 10, children = [] }, parentPath = '') {
+function createFolderNode(raw = {}, parentPath = '') {
+  const { id, label, type, engineType = '', path, sortOrder = 10, children = [], ...unknownFields } = raw
   const safeLabel = cleanString(label, 120).replaceAll('/', '-')
   const safeType = LIBRARY_FOLDER_TYPES.has(type) ? type : 'generic-folder'
   const safeEngineType = safeType === 'engine-folder' && LIBRARY_ENGINE_TYPE_IDS.has(engineType) ? engineType : ''
   const resolvedPath = cleanString(path, 800).replace(/^\/+|\/+$/g, '') || buildFolderPath(parentPath, safeLabel)
   return {
+    ...unknownFields,
     id: cleanString(id, 120) || slugifyFolderId(resolvedPath),
     label: safeLabel,
     type: safeType,
@@ -319,6 +321,50 @@ export function moveLibraryFolder(folders = [], folderId = '', direction = 0) {
   return move(tree)
 }
 
+export function moveLibraryFolderToParent(folders = [], folderId = '', newParentId = '') {
+  const tree = normalizeLibraryTree(folders)
+  const target = findFolderById(tree, folderId)
+  const destination = findFolderById(tree, newParentId)
+  if (!target || !destination) throw new Error('Choose a valid folder and destination.')
+  if (target.type === 'source-root') throw new Error('Source roots cannot be moved.')
+  if (destination.type === 'engine-folder') throw new Error('Engine folders are final destinations and cannot contain child folders.')
+  if (target.type === 'engine-folder' && destination.type === 'source-root') {
+    throw new Error('Engine folders must stay inside a category or generic folder.')
+  }
+  if (target.id === destination.id) throw new Error('A folder cannot be moved into itself.')
+  const descendantIds = new Set(flattenLibraryFolders([target]).map((folder) => folder.id))
+  if (descendantIds.has(destination.id)) throw new Error('A folder cannot be moved into one of its descendants.')
+  if ((destination.children || []).some((child) => child.id !== target.id && child.label.toLowerCase() === target.label.toLowerCase())) {
+    throw new Error('The destination already contains a folder with that name.')
+  }
+  let detached = null
+  const remove = (nodes) => nodes
+    .filter((folder) => {
+      if (folder.id !== folderId) return true
+      detached = folder
+      return false
+    })
+    .map((folder) => ({ ...folder, children: remove(folder.children || []) }))
+  const withoutTarget = remove(tree)
+  if (!detached) throw new Error('Folder was not found.')
+  const oldPath = detached.path
+  const movedFolder = updateFolderPathsRecursively(detached, destination.path)
+  const insert = (nodes) => nodes.map((folder) => folder.id === destination.id
+    ? {
+        ...folder,
+        children: [...(folder.children || []), {
+          ...movedFolder,
+          sortOrder: ((folder.children || []).length + 1) * 10
+        }]
+      }
+    : { ...folder, children: insert(folder.children || []) })
+  return {
+    folders: normalizeLibraryTree(insert(withoutTarget)),
+    oldPath,
+    newPath: movedFolder.path
+  }
+}
+
 export function getInstrumentsForFolder(libraryContent = {}, folderPath = '') {
   const target = cleanString(folderPath, 800).replace(/^\/+|\/+$/g, '')
   return (Array.isArray(libraryContent.instruments) ? libraryContent.instruments : []).filter((instrument) => instrument.folderPath === target)
@@ -330,6 +376,7 @@ function normalizeSample(raw = {}) {
   const path = cleanPath(raw.path)
   if (!path.startsWith(`${STUDIO_LIBRARY_STORAGE_ROOT}/`)) return null
   return {
+    ...raw,
     fileName: parsed.fileName,
     note: parsed.note,
     rootMidi: parsed.rootMidi,
@@ -349,6 +396,7 @@ export function normalizeDefaultInstrument(raw = {}) {
   const samplesPath = engineType === 'sample-based' ? cleanPath(raw.samplesPath || `${storageBasePath}/samples`) : ''
   const license = raw.license && typeof raw.license === 'object' ? raw.license : {}
   return {
+    ...raw,
     id,
     name: cleanString(raw.name || id, 160),
     folderPath,
@@ -369,6 +417,7 @@ export function normalizeDefaultInstrument(raw = {}) {
     outputsAudio: engineType === 'vst' ? raw.outputsAudio !== false : false,
     sandboxed: engineType === 'vst' ? raw.sandboxed !== false : false,
     license: {
+      ...license,
       type: VALID_LICENSE_TYPES.has(license.type) ? license.type : 'owned',
       attributionRequired: license.attributionRequired === true,
       commercialAllowed: license.commercialAllowed !== false,
@@ -382,6 +431,7 @@ export function normalizeDefaultInstrument(raw = {}) {
 export function normalizeDefaultLibraryContent(raw = {}) {
   const folders = normalizeLibraryTree(raw.folders)
   return {
+    ...raw,
     version: safeInteger(raw.version, 1),
     rootLabel: cleanString(raw.rootLabel || 'Library', 80),
     storageRoot: cleanPath(raw.storageRoot || STUDIO_LIBRARY_STORAGE_ROOT),
@@ -393,10 +443,6 @@ export function normalizeDefaultLibraryContent(raw = {}) {
 
 function mergeFolderNodes(defaultNodes = [], currentNodes = [], instruments = []) {
   const result = currentNodes
-    .filter((folder) => {
-      const isLegacyDirectEngine = folder.type === 'engine-folder' && folder.path.split('/').length === 2
-      return !isLegacyDirectEngine || instruments.some((instrument) => instrument.folderPath === folder.path)
-    })
     .map((folder) => ({ ...folder, children: mergeFolderNodes([], folder.children || [], instruments) }))
   defaultNodes.forEach((defaultFolder) => {
     const index = result.findIndex((folder) => folder.id === defaultFolder.id || folder.path === defaultFolder.path)
@@ -482,6 +528,22 @@ export async function updateDefaultInstrument(instrumentId = '', patch = {}) {
     transaction.update(reference, { instruments, updatedAt: serverTimestamp() })
   })
   return updated
+}
+
+export async function removeDefaultInstrumentFromLibrary(instrumentId = '') {
+  const id = studioLibrarySlug(instrumentId)
+  if (!id) throw new Error('Instrument ID is required.')
+  await runTransaction(db, async (transaction) => {
+    const reference = doc(db, ...LIBRARY_REF)
+    const snapshot = await transaction.get(reference)
+    if (!snapshot.exists()) throw new Error('Default Studio library has not been initialized.')
+    const library = normalizeDefaultLibraryContent(snapshot.data())
+    if (!library.instruments.some((instrument) => instrument.id === id)) throw new Error('Instrument was not found.')
+    transaction.update(reference, {
+      instruments: library.instruments.filter((instrument) => instrument.id !== id),
+      updatedAt: serverTimestamp()
+    })
+  })
 }
 
 export async function parseDefaultInstrumentArchive(zipFile) {
