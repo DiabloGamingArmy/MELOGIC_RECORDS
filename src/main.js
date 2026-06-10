@@ -56,7 +56,6 @@ app.innerHTML = `
           class="home-scroll-cinematic-video"
           data-home-scroll-cinematic-video
           muted
-          loop
           playsinline
           preload="metadata"
         ></video>
@@ -98,27 +97,18 @@ async function initHomeScrollCinematicVideo() {
   const hint = document.querySelector('[data-home-scroll-hint]')
   if (!section || !video) return false
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const BASE_PLAYBACK_RATE = 0.45
-  const MAX_PLAYBACK_RATE = 2.5
-  const SCROLL_SPEED_MULTIPLIER = 8
-  const RATE_EASE = 0.08
-  const VELOCITY_DECAY = 0.88
-  const SOFT_SYNC_THRESHOLD_SECONDS = 1.2
+  const SEEK_EPSILON = 0.04
   const scrollPixelsPerSecond = 850
   const minScrollLength = 3200
   const maxScrollLength = 10000
   let duration = 0
   let sectionTop = 0
   let scrollDistance = 1
+  let viewportHeight = window.innerHeight
   let raf = 0
-  let lastFrameTime = performance.now()
-  let lastScrollTime = performance.now()
-  let lastScrollY = window.scrollY
-  let lastProgress = 0
-  let scrollVelocity = 0
-  let currentRate = BASE_PLAYBACK_RATE
-  let pendingSoftSync = false
-  let playPromise = null
+  let lastAppliedTime = -1
+  let pendingTime = null
+  let isSeeking = false
   let failed = false
 
   const showFallback = () => {
@@ -129,13 +119,10 @@ async function initHomeScrollCinematicVideo() {
     if (fallback) fallback.hidden = false
   }
 
-  const setPlaybackFallback = (visible) => {
-    if (fallback) fallback.hidden = !visible
-  }
-
   const measure = () => {
-    sectionTop = section.offsetTop
-    scrollDistance = Math.max(1, section.offsetHeight - window.innerHeight)
+    viewportHeight = window.innerHeight
+    sectionTop = section.getBoundingClientRect().top + window.scrollY
+    scrollDistance = Math.max(1, section.offsetHeight - viewportHeight)
   }
 
   const getProgress = () => Math.min(1, Math.max(0, (window.scrollY - sectionTop) / scrollDistance))
@@ -149,78 +136,39 @@ async function initHomeScrollCinematicVideo() {
     }
   }
 
-  const startVideo = () => {
-    if (failed || playPromise || !video.paused || video.ended) return
-    playPromise = video.play()
-      .then(() => setPlaybackFallback(false))
-      .catch(() => setPlaybackFallback(true))
-      .finally(() => {
-        playPromise = null
-      })
-  }
-
-  const isSectionActive = () => (
-    window.scrollY >= sectionTop - 1
-    && window.scrollY <= sectionTop + scrollDistance + 1
-  )
-
-  const softSyncIfNeeded = (progress) => {
-    if (!pendingSoftSync || !duration || video.readyState < 1) return
-    pendingSoftSync = false
-    const expectedTime = progress * duration
-    if (Math.abs(expectedTime - video.currentTime) <= SOFT_SYNC_THRESHOLD_SECONDS) return
+  const applyScrubTime = (nextTime) => {
+    if (failed || reducedMotion || !duration || video.readyState < 1) return
+    const maxTime = Math.max(0, duration - SEEK_EPSILON)
+    const clampedTime = Math.min(maxTime, Math.max(0, nextTime))
+    if (
+      Math.abs(clampedTime - lastAppliedTime) < SEEK_EPSILON
+      && Math.abs(clampedTime - video.currentTime) < SEEK_EPSILON
+    ) return
+    if (isSeeking || video.seeking) {
+      pendingTime = clampedTime
+      return
+    }
     try {
-      video.currentTime = expectedTime
+      pendingTime = null
+      lastAppliedTime = clampedTime
+      video.currentTime = clampedTime
     } catch {
       // Some mobile browsers temporarily reject seeks while buffering.
+      pendingTime = clampedTime
     }
   }
 
-  const animateVideoRate = (now) => {
+  const updateScrub = () => {
+    raf = 0
     if (failed) return
-    const elapsed = Math.min(64, Math.max(1, now - lastFrameTime))
-    lastFrameTime = now
     const progress = getProgress()
     updateHint(progress)
-
-    if (Math.abs(progress - lastProgress) > 0.12) pendingSoftSync = true
-    lastProgress = progress
-
-    if (duration && isSectionActive()) {
-      startVideo()
-      if (!reducedMotion) {
-        const boost = Math.min(
-          scrollVelocity * SCROLL_SPEED_MULTIPLIER,
-          MAX_PLAYBACK_RATE - BASE_PLAYBACK_RATE
-        )
-        const targetRate = BASE_PLAYBACK_RATE + boost
-        const ease = 1 - Math.pow(1 - RATE_EASE, elapsed / 16.67)
-        currentRate += (targetRate - currentRate) * ease
-        if (Math.abs(video.playbackRate - currentRate) > 0.01) {
-          video.playbackRate = currentRate
-        }
-        scrollVelocity *= Math.pow(VELOCITY_DECAY, elapsed / 16.67)
-        softSyncIfNeeded(progress)
-      }
-    } else if (!video.paused) {
-      video.pause()
-    }
-
-    raf = window.requestAnimationFrame(animateVideoRate)
+    if (!reducedMotion) applyScrubTime(progress * duration)
   }
 
-  const recordScrollVelocity = () => {
-    const now = performance.now()
-    const nextScrollY = window.scrollY
-    const deltaY = nextScrollY - lastScrollY
-    const elapsed = Math.max(16, now - lastScrollTime)
-    scrollVelocity = Math.max(scrollVelocity, Math.abs(deltaY / elapsed))
-    if (Math.abs(deltaY) > Math.max(window.innerHeight * 0.75, scrollDistance * 0.08)) {
-      pendingSoftSync = true
-    }
-    lastScrollY = nextScrollY
-    lastScrollTime = now
-    if (isSectionActive()) startVideo()
+  const scheduleScrub = () => {
+    if (failed || raf) return
+    raf = window.requestAnimationFrame(updateScrub)
   }
 
   const url = await getStorageAssetUrl(HOME_SCROLL_BANNER_VIDEO_PATH, {
@@ -235,9 +183,19 @@ async function initHomeScrollCinematicVideo() {
 
   video.src = url
   video.pause()
-  video.defaultPlaybackRate = BASE_PLAYBACK_RATE
-  video.playbackRate = BASE_PLAYBACK_RATE
   video.addEventListener('error', showFallback, { once: true })
+  video.addEventListener('seeking', () => {
+    isSeeking = true
+  })
+  video.addEventListener('seeked', () => {
+    isSeeking = false
+    if (pendingTime === null) return
+    const nextTime = pendingTime
+    pendingTime = null
+    if (Math.abs(nextTime - video.currentTime) >= SEEK_EPSILON) {
+      applyScrubTime(nextTime)
+    }
+  })
   video.addEventListener('loadedmetadata', () => {
     duration = Number.isFinite(video.duration) ? video.duration : 0
     if (duration > 0) {
@@ -245,30 +203,33 @@ async function initHomeScrollCinematicVideo() {
       section.style.setProperty('--home-scroll-length', `${scrollLength}px`)
     }
     measure()
-    lastProgress = getProgress()
-    updateHint(lastProgress)
+    const progress = getProgress()
+    updateHint(progress)
     if (reducedMotion) {
-      currentRate = BASE_PLAYBACK_RATE
-      video.playbackRate = BASE_PLAYBACK_RATE
+      // Reduced motion keeps the cinematic on a static first frame.
+      video.pause()
       if (hint) {
         hint.style.opacity = '0'
         hint.style.pointerEvents = 'none'
       }
-    } else if (lastProgress > 0.08) {
-      pendingSoftSync = true
+    } else {
+      // For smooth MP4 scroll scrubbing, encode the source with frequent keyframes.
+      // Normal keyframe spacing can cause Safari and other browsers to seek with visible jitter.
+      applyScrubTime(progress * duration)
     }
-    if (!raf) raf = window.requestAnimationFrame(animateVideoRate)
   }, { once: true })
-  window.addEventListener('scroll', recordScrollVelocity, { passive: true })
+  window.addEventListener('scroll', scheduleScrub, { passive: true })
   window.addEventListener('resize', () => {
     measure()
+    scheduleScrub()
+  }, { passive: true })
+  window.addEventListener('orientationchange', () => {
+    measure()
+    scheduleScrub()
   }, { passive: true })
   document.addEventListener('visibilitychange', () => {
-    lastFrameTime = performance.now()
-    lastScrollTime = lastFrameTime
-    lastScrollY = window.scrollY
-    if (document.hidden) video.pause()
-    else if (isSectionActive()) startVideo()
+    video.pause()
+    if (!document.hidden) scheduleScrub()
   })
   measure()
   video.load()
