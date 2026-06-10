@@ -1,19 +1,4 @@
 :root,
-[data-admin-theme="light"] {
-  --admin-bg: #f4f6f8;
-  --admin-card: #ffffff;
-  --admin-card-subtle: #fafbfc;
-  --admin-text: #141821;
-  --admin-muted: #647084;
-  --admin-border: #d8dee8;
-  --admin-border-strong: #c7d2df;
-  --admin-primary: #1b4e7a;
-  --admin-primary-strong: #12284a;
-  --admin-input: #ffffff;
-  --admin-code-bg: #f6f8fa;
-  --admin-shadow: rgba(20, 30, 42, 0.12);
-}
-
 [data-admin-theme="dark"] {
   --admin-bg: #101319;
   --admin-card: #171b23;
@@ -27,6 +12,21 @@
   --admin-input: #111722;
   --admin-code-bg: #111722;
   --admin-shadow: rgba(0, 0, 0, 0.38);
+}
+
+[data-admin-theme="light"] {
+  --admin-bg: #f4f6f8;
+  --admin-card: #ffffff;
+  --admin-card-subtle: #fafbfc;
+  --admin-text: #141821;
+  --admin-muted: #647084;
+  --admin-border: #d8dee8;
+  --admin-border-strong: #c7d2df;
+  --admin-primary: #1b4e7a;
+  --admin-primary-strong: #12284a;
+  --admin-input: #ffffff;
+  --admin-code-bg: #f6f8fa;
+  --admin-shadow: rgba(20, 30, 42, 0.12);
 }
 
 .admin-console-page {
@@ -53,9 +53,10 @@
 .admin-status,
 .admin-empty-state,
 .admin-metric {
-  border: 1px solid #d4dbe3;
+  border: 1px solid var(--admin-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--admin-card);
+  color: var(--admin-text);
 }
 
 .admin-sidebar {
@@ -70,7 +71,7 @@
   display: grid;
   gap: 0.16rem;
   padding: 0.45rem 0.5rem 0.75rem;
-  border-bottom: 1px solid #e2e7ed;
+  border-bottom: 1px solid var(--admin-border);
 }
 
 .admin-sidebar-kicker,
@@ -81,7 +82,7 @@
 .review-field span,
 .admin-role-form span,
 .admin-muted {
-  color: #66717d;
+  color: var(--admin-muted);
   font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -113,7 +114,7 @@
 
 .admin-sidebar-nav a {
   justify-content: start;
-  color: #2c3743;
+  color: var(--admin-text);
   padding: 0 0.58rem;
 }
 
@@ -261,10 +262,10 @@
   justify-content: center;
   gap: 0.42rem;
   min-height: 38px;
-  border: 1px solid #c9d2dc;
+  border: 1px solid var(--admin-border-strong);
   border-radius: 7px;
-  background: #ffffff;
-  color: #26313d;
+  background: var(--admin-card);
+  color: var(--admin-text);
   font: inherit;
   font-weight: 800;
   text-decoration: none;
@@ -295,10 +296,10 @@
 .admin-segmented button,
 .admin-review-tools select {
   min-height: 38px;
-  border: 1px solid #c9d2dc;
+  border: 1px solid var(--admin-border-strong);
   border-radius: 7px;
-  background: #ffffff;
-  color: #26313d;
+  background: var(--admin-card);
+  color: var(--admin-text);
   font: inherit;
   font-weight: 800;
   padding: 0 0.66rem;
