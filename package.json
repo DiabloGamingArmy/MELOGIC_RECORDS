@@ -20,6 +20,7 @@
     "@livekit/components-styles": "^1.2.0",
     "@stripe/stripe-js": "^9.3.0",
     "firebase": "^12.12.1",
+    "jszip": "^3.10.1",
     "livekit-client": "^2.19.2",
     "qrcode": "^1.5.4",
     "three": "^0.184.0"
