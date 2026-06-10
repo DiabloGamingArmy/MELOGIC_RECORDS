@@ -2481,6 +2481,25 @@
   font-size: 0.72rem;
 }
 
+.admin-daw-selected-instrument-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--admin-primary) 38%, var(--admin-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--admin-primary) 8%, var(--admin-card));
+  padding: 0.55rem 0.65rem;
+}
+
+.admin-daw-selected-instrument-actions > span {
+  color: var(--admin-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .admin-daw-add-folder-form {
   background: color-mix(in srgb, var(--admin-primary) 5%, var(--admin-card-subtle));
 }
@@ -2595,7 +2614,7 @@
   width: min(760px, calc(100vw - 2rem));
   max-height: min(820px, calc(100vh - 2rem));
   display: grid;
-  grid-template-rows: auto auto minmax(180px, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(180px, 1fr) auto auto auto;
   gap: 0.75rem;
   overflow: hidden;
 }
@@ -2697,6 +2716,22 @@
 
 .admin-daw-picker-selection strong {
   overflow-wrap: anywhere;
+}
+
+.admin-daw-picker-selection small {
+  color: var(--admin-muted);
+  font-size: 0.72rem;
+}
+
+.admin-daw-picker-warning {
+  margin: 0;
+  border: 1px solid color-mix(in srgb, #f59e0b 42%, var(--admin-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, #f59e0b 8%, var(--admin-card));
+  color: var(--admin-text);
+  padding: 0.6rem 0.7rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
 }
 
 .admin-studio-library-form label {

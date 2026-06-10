@@ -86,6 +86,7 @@ import {
   addLibraryFolder,
   addDefaultInstrumentToLibrary,
   buildSamplesFromFiles,
+  defaultSamplePlaybackMode,
   deleteLibraryFolder,
   findFolderById,
   findFolderByPath,
@@ -99,6 +100,7 @@ import {
   parseDefaultInstrumentArchive,
   removeDefaultInstrumentFromLibrary,
   renameLibraryFolder,
+  samplePlaybackModeLabel,
   saveDefaultLibraryContent,
   studioLibrarySlug,
   updateLibraryFolder,
@@ -376,6 +378,7 @@ const state = {
       editingId: '',
       selectedFolderId: '',
       selectedInstrumentId: '',
+      samplePlaybackModeTouched: false,
       expandedFolderIds: new Set(),
       addFolderOpen: false,
       folderPicker: {
@@ -3416,6 +3419,7 @@ function defaultStudioInstrumentForm() {
     engineType: 'sample-based',
     description: '',
     sampleStrategy: 'thirds',
+    samplePlaybackMode: 'pitch-modified',
     version: 1,
     licenseType: 'owned',
     sourceName: 'Melogic Records',
@@ -3466,14 +3470,8 @@ function adminStudioFolderBreadcrumb(folder) {
 }
 
 function isAdminStudioPickerDestinationAllowed(folder, picker, library) {
-  if (!folder) return false
-  if (picker.engineOnly) {
-    if (folder.type !== 'engine-folder') return false
-    const instrument = picker.mode === 'move-instrument'
-      ? library.instruments?.find((item) => item.id === picker.targetId)
-      : null
-    return !instrument || !instrument.engineType || instrument.engineType === folder.engineType
-  }
+  if (!folder || !folder.path || folder.path.includes('..')) return false
+  if (picker.mode === 'move-instrument' || picker.mode === 'instrument-form') return true
   if (picker.mode !== 'move-folder') return true
   const target = findFolderById(library.folders, picker.targetId)
   if (!target || target.type === 'source-root' || folder.type === 'engine-folder') return false
@@ -3502,10 +3500,13 @@ function renderAdminStudioFolderPicker(library = {}) {
   if (!picker.open) return ''
   const selected = findFolderById(library.folders || [], picker.selectedId)
   const helper = picker.mode === 'move-instrument'
-    ? 'Moving an instrument changes its library location. Existing sample and Storage file paths are preserved.'
+    ? 'Moving an instrument changes where it appears in the library. Existing sample file paths are preserved.'
     : picker.mode === 'move-folder'
       ? 'The folder and descendant manifest paths will be recalculated. Existing Storage objects are not moved.'
-      : 'Choose a final engine folder for this instrument.'
+      : 'Choose any library folder. Engine folders are recommended, but organizational folders are also valid.'
+  const unusualDestination = selected
+    && (picker.mode === 'move-instrument' || picker.mode === 'instrument-form')
+    && selected.type !== 'engine-folder'
   return `<div class="admin-modal-backdrop admin-daw-picker-backdrop" data-admin-studio-picker-close>
     <section class="admin-decision-modal admin-daw-folder-picker" role="dialog" aria-modal="true" aria-label="${escapeHtml(picker.title || 'Choose folder')}">
       <header><div><span class="eyebrow">Default DAW Library</span><h2>${escapeHtml(picker.title || 'Choose folder')}</h2></div><button type="button" class="admin-icon-button" data-admin-studio-picker-close aria-label="Close folder picker">×</button></header>
@@ -3514,7 +3515,9 @@ function renderAdminStudioFolderPicker(library = {}) {
       <div class="admin-daw-picker-selection">
         <span>Destination</span>
         <strong>${escapeHtml(selected?.path || 'No folder selected')}</strong>
+        ${selected ? `<small>${escapeHtml(selected.type)}${selected.engineType ? ` · ${escapeHtml(selected.engineType)}` : ' · no folder engine type'}</small>` : ''}
       </div>
+      ${unusualDestination ? '<p class="admin-daw-picker-warning">This folder is not an engine folder. The instrument will keep its current engine type and appear directly inside this folder.</p>' : ''}
       <div class="admin-modal-actions">
         <button type="button" class="admin-secondary-button" data-admin-studio-picker-close>Cancel</button>
         <button type="button" class="admin-primary-button" data-admin-studio-picker-confirm ${selected && isAdminStudioPickerDestinationAllowed(selected, picker, library) ? '' : 'disabled'}>Confirm destination</button>
@@ -3551,7 +3554,7 @@ function renderAdminStudioLibraryTree(library = {}) {
           <button type="button" class="admin-secondary-button" data-admin-studio-folder-move="-1">Move up</button>
           <button type="button" class="admin-secondary-button" data-admin-studio-folder-move="1">Move down</button>
           <button type="button" class="admin-danger-button" data-admin-studio-folder-delete ${selected.type === 'source-root' || selectedChildCount || selectedInstruments.length ? 'disabled title="Folders containing children or instruments cannot be deleted."' : ''}>Delete folder</button>
-          ${selected.type === 'engine-folder' ? '<button type="button" class="admin-secondary-button" data-admin-studio-use-destination>Use for instrument</button>' : ''}
+          <button type="button" class="admin-secondary-button" data-admin-studio-use-destination>Use as instrument destination</button>
         </div>
       </form>
       ${studio.addFolderOpen && selected.type !== 'engine-folder' ? `<form data-admin-studio-folder-add class="admin-daw-add-folder-form">
@@ -3566,9 +3569,10 @@ function renderAdminStudioLibraryTree(library = {}) {
       </form>` : selected.type === 'engine-folder' ? '<div class="admin-studio-folder-terminal"><strong>Final engine folder</strong><p>Assign instruments here. Add sibling categories or engines from the parent folder.</p></div>' : ''}
       <section class="admin-studio-folder-instruments">
         <header><div><strong>Instruments in this exact folder</strong><small>${selectedChildCount} child folder${selectedChildCount === 1 ? '' : 's'}</small></div><span>${selectedInstruments.length}</span></header>
+        ${studio.selectedInstrumentId && selectedInstruments.some((instrument) => instrument.id === studio.selectedInstrumentId) ? `<div class="admin-daw-selected-instrument-actions"><span>Selected instrument</span><button type="button" class="admin-secondary-button" data-admin-studio-instrument-move="${escapeHtml(studio.selectedInstrumentId)}">Move selected instrument</button></div>` : ''}
         ${selectedInstruments.length ? `<ul>${selectedInstruments.map((instrument) => `<li class="${studio.selectedInstrumentId === instrument.id ? 'is-selected' : ''}">
           <button type="button" class="admin-daw-instrument-select" data-admin-studio-instrument-select="${escapeHtml(instrument.id)}"><strong>${escapeHtml(instrument.name)}</strong><small>${escapeHtml(instrument.id)}</small></button>
-          <div class="admin-daw-instrument-facts"><span>${escapeHtml(instrument.engineType)}</span><span>${escapeHtml(instrument.sampleStrategy || 'No strategy')}</span><span>v${instrument.version || 1}</span><span class="${instrument.enabled === false ? 'is-disabled' : 'is-enabled'}">${instrument.enabled === false ? 'Disabled' : 'Enabled'}</span></div>
+          <div class="admin-daw-instrument-facts"><span>${escapeHtml(instrument.engineType)}</span><span>${escapeHtml(instrument.sampleStrategy || 'No strategy')}</span>${instrument.engineType === 'sample-based' ? `<span>${escapeHtml(samplePlaybackModeLabel(instrument.samplePlaybackMode))}</span>` : ''}<span>v${instrument.version || 1}</span><span class="${instrument.enabled === false ? 'is-disabled' : 'is-enabled'}">${instrument.enabled === false ? 'Disabled' : 'Enabled'}</span></div>
           <div class="admin-daw-instrument-actions">
             <button type="button" class="admin-secondary-button" data-studio-library-edit="${escapeHtml(instrument.id)}">Edit metadata</button>
             <button type="button" class="admin-secondary-button" data-admin-studio-instrument-move="${escapeHtml(instrument.id)}">Move instrument</button>
@@ -3591,14 +3595,14 @@ function operationsStudioPanel() {
     || findFolderByPath(library?.folders || [], form.folderPath)
     || destinationFolders[0]
   const folderPath = selectedDestination?.path || form.folderPath || ''
-  const engineType = selectedDestination?.engineType || form.engineType || 'sample-based'
+  const engineType = form.engineType || selectedDestination?.engineType || 'sample-based'
   const instrumentId = studioLibrarySlug(form.id || form.name)
   const version = Math.max(1, Math.round(Number(form.version) || 1))
   const basePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${instrumentId || '{instrumentId}'}/v${version}`
   const editing = Boolean(studio.editingId)
   const isSampleBased = engineType === 'sample-based'
   const isVst = engineType === 'vst'
-  const strategyWarnings = isSampleBased ? getSampleStrategyWarnings(form.sampleStrategy, studio.parsedSamples) : []
+  const strategyWarnings = isSampleBased ? getSampleStrategyWarnings(form.sampleStrategy, studio.parsedSamples, form.samplePlaybackMode) : []
   return `
     ${studioOperationsSubnav()}
     <div class="admin-daw-library-manager">
@@ -3631,9 +3635,10 @@ function operationsStudioPanel() {
         <div class="admin-form-grid">
           ${operationTextInput({ name: 'name', label: 'Instrument name', value: form.name, required: true })}
           <label><span>Instrument ID / slug</span><input name="id" value="${escapeHtml(form.id)}" required ${editing ? 'readonly' : ''}><small>${editing ? 'Instrument IDs stay stable after creation.' : 'Lowercase letters, numbers, and hyphens.'}</small></label>
-          <div class="admin-daw-destination-field is-wide"><span>Destination folder</span><input type="hidden" name="destinationFolderId" value="${escapeHtml(selectedDestination?.id || '')}" required><button type="button" class="admin-daw-destination-picker" data-admin-studio-form-destination><strong>${escapeHtml(folderPath || 'Choose a final engine folder')}</strong><small>${escapeHtml(selectedDestination?.engineType || 'Select destination')}</small></button><small>Choose a final engine folder, such as Sample Based.</small></div>
-          <input type="hidden" name="engineType" value="${escapeHtml(engineType)}">
+          <div class="admin-daw-destination-field is-wide"><span>Destination folder</span><input type="hidden" name="destinationFolderId" value="${escapeHtml(selectedDestination?.id || '')}" required><button type="button" class="admin-daw-destination-picker" data-admin-studio-form-destination><strong>${escapeHtml(folderPath || 'Choose a library folder')}</strong><small>${escapeHtml(selectedDestination ? `${selectedDestination.type}${selectedDestination.engineType ? ` · ${selectedDestination.engineType}` : ''}` : 'Select destination')}</small></button><small>Engine folders are recommended, but any valid library folder can contain instruments.</small></div>
+          <label><span>Engine type</span><select name="engineType">${STUDIO_LIBRARY_ENGINE_TYPES.map((engine) => `<option value="${engine.id}" ${engineType === engine.id ? 'selected' : ''}>${escapeHtml(engine.label)}</option>`).join('')}</select><small>The instrument keeps this engine type regardless of its folder.</small></label>
           ${isSampleBased ? `<label><span>Sample strategy</span><select name="sampleStrategy">${STUDIO_SAMPLE_STRATEGIES.map((strategy) => `<option value="${strategy.id}" ${form.sampleStrategy === strategy.id ? 'selected' : ''}>${escapeHtml(strategy.label)}</option>`).join('')}</select><small>${escapeHtml(STUDIO_SAMPLE_STRATEGIES.find((strategy) => strategy.id === form.sampleStrategy)?.description || 'Arbitrary valid note + octave WAV roots')}</small></label>` : ''}
+          ${isSampleBased ? `<label><span>Sample playback mode</span><select name="samplePlaybackMode"><option value="pitch-modified" ${form.samplePlaybackMode !== 'exact-position' ? 'selected' : ''}>Pitch Modified Samples</option><option value="exact-position" ${form.samplePlaybackMode === 'exact-position' ? 'selected' : ''}>Exact Position Samples</option></select><small>Pitch Modified uses the nearest available sample and pitch-shifts it. Exact Position only plays samples on their exact mapped notes.</small></label>` : ''}
           ${operationTextInput({ name: 'version', label: 'Version', type: 'number', value: version, required: true })}
           ${operationTextarea({ name: 'description', label: 'Description', value: form.description, rows: 4, wide: true })}
           <div class="admin-studio-path-preview is-wide"><span>Folder path</span><strong data-studio-folder-preview>${escapeHtml(folderPath)}</strong><small data-studio-storage-preview>${escapeHtml(basePath)}</small></div>
@@ -5572,13 +5577,14 @@ async function confirmAdminStudioFolderPicker() {
   if (!picker?.open || !destination || !isAdminStudioPickerDestinationAllowed(destination, picker, studio.library)) return
   if (picker.mode === 'instrument-form') {
     const previousEngineType = studio.form?.engineType || ''
+    const nextEngineType = destination.engineType || previousEngineType || 'sample-based'
     studio.form = {
       ...studio.form,
       destinationFolderId: destination.id,
       folderPath: destination.path,
-      engineType: destination.engineType || ''
+      engineType: nextEngineType
     }
-    if (previousEngineType && previousEngineType !== destination.engineType) {
+    if (previousEngineType && previousEngineType !== nextEngineType) {
       studio.zipFile = null
       studio.parsedSamples = []
       studio.htmlSourceFile = null
@@ -5603,14 +5609,11 @@ async function confirmAdminStudioFolderPicker() {
     } else if (picker.mode === 'move-instrument') {
       const instrument = studio.library.instruments?.find((item) => item.id === picker.targetId)
       if (!instrument) throw new Error('Instrument was not found.')
-      if (destination.type !== 'engine-folder') throw new Error('Choose a final engine folder.')
-      if (instrument.engineType && destination.engineType !== instrument.engineType) throw new Error(`Choose a ${instrument.engineType} engine folder to preserve playback compatibility.`)
       const sourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.find((root) => destination.path === root.label || destination.path.startsWith(`${root.label}/`))?.id || instrument.sourceRoot
       await updateDefaultInstrument(instrument.id, {
         ...instrument,
         folderPath: destination.path,
-        sourceRoot,
-        engineType: destination.engineType || instrument.engineType
+        sourceRoot
       })
       studio.library = await getDefaultLibraryContent()
       studio.selectedFolderId = destination.id
@@ -5784,6 +5787,7 @@ async function removeAdminStudioInstrument(instrumentId = '') {
       studio.zipFile = null
       studio.htmlSourceFile = null
       studio.artworkFile = null
+      studio.samplePlaybackModeTouched = false
       studio.progress = 0
     }
     studio.message = `${instrument.name} was removed from the manifest. Storage files were preserved.`
@@ -5833,6 +5837,7 @@ function setAdminStudioEditInstrument(instrumentId = '') {
     engineType: instrument.engineType,
     description: instrument.description,
     sampleStrategy: instrument.sampleStrategy,
+    samplePlaybackMode: instrument.samplePlaybackMode || defaultSamplePlaybackMode(instrument.sampleStrategy),
     runtime: instrument.runtime || '',
     htmlSourcePath: instrument.htmlSourcePath || '',
     version: instrument.version,
@@ -5850,6 +5855,7 @@ function setAdminStudioEditInstrument(instrumentId = '') {
   studio.zipFile = null
   studio.htmlSourceFile = null
   studio.artworkFile = null
+  studio.samplePlaybackModeTouched = true
   studio.error = ''
   studio.message = ''
   render()
@@ -5864,6 +5870,7 @@ function resetAdminStudioInstrumentForm() {
   studio.zipFile = null
   studio.htmlSourceFile = null
   studio.artworkFile = null
+  studio.samplePlaybackModeTouched = false
   studio.progress = 0
   studio.error = ''
   render()
@@ -5885,7 +5892,9 @@ async function submitAdminStudioInstrument(form) {
   const id = studioLibrarySlug(values.id || values.name)
   const destination = findFolderById(studio.library?.folders || [], values.destinationFolderId)
   const folderPath = destination?.path || ''
-  const engineType = destination?.engineType || ''
+  const engineType = STUDIO_LIBRARY_ENGINE_TYPES.some((engine) => engine.id === values.engineType)
+    ? values.engineType
+    : destination?.engineType || 'sample-based'
   const sourceRoot = STUDIO_LIBRARY_SOURCE_ROOTS.find((root) => folderPath === root.label || folderPath.startsWith(`${root.label}/`))?.id || 'melogic-records'
   const version = Math.max(1, Math.round(Number(values.version) || 1))
   const existing = studio.library?.instruments?.find((item) => item.id === (studio.editingId || id))
@@ -5905,8 +5914,9 @@ async function submitAdminStudioInstrument(form) {
   try {
     if (!values.name || !id) throw new Error('Instrument name and ID are required.')
     if (!studio.library) throw new Error('Initialize the default DAW library before adding instruments.')
-    if (!destination || destination.type !== 'engine-folder' || !engineType) throw new Error('Choose a final engine folder, such as Sample Based.')
-    if (existing?.engineType && existing.engineType !== engineType && !replacingEngineSource) throw new Error('Choose a destination with the same engine type, or upload a replacement engine source.')
+    if (!destination || !destination.path || destination.path.includes('..')) throw new Error('Choose a valid library destination folder.')
+    if (!engineType) throw new Error('Choose an instrument engine type.')
+    if (existing?.engineType && existing.engineType !== engineType && !replacingEngineSource) throw new Error('Changing engine type requires a compatible replacement engine source.')
     if (!existing && engineType === 'sample-based' && !studio.parsedSamples.length) throw new Error('A new sample-based instrument requires a ZIP with at least one valid WAV sample.')
     const sampleRows = engineType === 'sample-based' && studio.parsedSamples.length
       ? buildSamplesFromFiles(studio.parsedSamples, samplesPath)
@@ -5948,6 +5958,9 @@ async function submitAdminStudioInstrument(form) {
       folderPath,
       description: values.description || '',
       sampleStrategy: engineType === 'sample-based' ? values.sampleStrategy || 'custom' : '',
+      samplePlaybackMode: engineType === 'sample-based'
+        ? (values.samplePlaybackMode === 'exact-position' ? 'exact-position' : 'pitch-modified')
+        : '',
       version,
       enabled: values.enabled === true,
       visibility: values.visibility === 'private' ? 'private' : 'public',
@@ -5986,6 +5999,7 @@ async function submitAdminStudioInstrument(form) {
     studio.zipFile = null
     studio.htmlSourceFile = null
     studio.artworkFile = null
+    studio.samplePlaybackModeTouched = false
   } catch (error) {
     console.warn('[admin] Studio instrument save failed', { code: error?.code, message: error?.message })
     studio.error = error?.message || 'Could not save the default instrument.'
@@ -7195,12 +7209,12 @@ function bindEvents() {
   app.querySelector('[data-admin-studio-folder-delete]')?.addEventListener('click', deleteAdminStudioFolder)
   app.querySelector('[data-admin-studio-use-destination]')?.addEventListener('click', () => {
     const folder = findFolderById(state.operations.studio.library?.folders || [], state.operations.studio.selectedFolderId)
-    if (!folder || folder.type !== 'engine-folder') return
+    if (!folder?.path) return
     state.operations.studio.form = {
       ...state.operations.studio.form,
       destinationFolderId: folder.id,
       folderPath: folder.path,
-      engineType: folder.engineType || ''
+      engineType: folder.engineType || state.operations.studio.form?.engineType || 'sample-based'
     }
     state.operations.studio.message = `${folder.path} selected as the instrument destination.`
     render()
@@ -7220,7 +7234,7 @@ function bindEvents() {
         mode: 'move-instrument',
         targetId: instrumentId,
         selectedId: findFolderByPath(state.operations.studio.library?.folders || [], instrument?.folderPath)?.id || '',
-        engineOnly: true,
+        engineOnly: false,
         title: `Move ${instrument?.name || 'instrument'}`
       })
     })
@@ -7241,7 +7255,7 @@ function bindEvents() {
     openAdminStudioFolderPicker({
       mode: 'instrument-form',
       selectedId: formState.destinationFolderId || '',
-      engineOnly: true,
+      engineOnly: false,
       title: 'Choose instrument destination'
     })
   })
@@ -7310,12 +7324,37 @@ function bindEvents() {
     input.addEventListener('input', updateStudioPathPreview)
     input.addEventListener('change', updateStudioPathPreview)
   })
+  studioLibraryForm?.querySelector('select[name="engineType"]')?.addEventListener('change', (event) => {
+    const previousEngineType = state.operations.studio.form?.engineType || ''
+    const nextForm = operationsFormValues(event.currentTarget.form)
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      ...nextForm
+    }
+    if (previousEngineType && previousEngineType !== nextForm.engineType) {
+      state.operations.studio.zipFile = null
+      state.operations.studio.parsedSamples = []
+      state.operations.studio.htmlSourceFile = null
+    }
+    render()
+  })
   studioLibraryForm?.querySelector('select[name="sampleStrategy"]')?.addEventListener('change', (event) => {
+    const nextForm = operationsFormValues(event.currentTarget.form)
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      ...nextForm,
+      ...(!state.operations.studio.samplePlaybackModeTouched
+        ? { samplePlaybackMode: defaultSamplePlaybackMode(nextForm.sampleStrategy) }
+        : {})
+    }
+    render()
+  })
+  studioLibraryForm?.querySelector('select[name="samplePlaybackMode"]')?.addEventListener('change', (event) => {
+    state.operations.studio.samplePlaybackModeTouched = true
     state.operations.studio.form = {
       ...state.operations.studio.form,
       ...operationsFormValues(event.currentTarget.form)
     }
-    render()
   })
   app.querySelectorAll('[data-studio-library-edit]').forEach((button) => {
     button.addEventListener('click', () => setAdminStudioEditInstrument(button.getAttribute('data-studio-library-edit') || ''))
