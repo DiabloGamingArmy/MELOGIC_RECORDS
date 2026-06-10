@@ -50,19 +50,18 @@ app.innerHTML = `
       </div>
     </section>
 
-    <section class="home-scroll-cinematic" data-home-scroll-cinematic aria-label="Melogic Studio cinematic preview">
-      <div class="home-scroll-cinematic-sticky">
+    <section class="home-video-showcase" aria-label="Melogic Studio cinematic preview">
+      <div class="home-video-showcase-inner">
         <video
-          class="home-scroll-cinematic-video"
-          data-home-scroll-cinematic-video
+          class="home-video-showcase-video"
+          data-home-video-showcase
           muted
+          loop
+          autoplay
           playsinline
-          preload="metadata"
+          preload="auto"
         ></video>
-        <div class="home-scroll-hint" data-home-scroll-hint aria-hidden="true">
-          <span>Scroll to see more</span>
-        </div>
-        <p class="home-scroll-cinematic-fallback" data-home-scroll-cinematic-fallback hidden>Studio preview is being prepared.</p>
+        <p class="home-video-showcase-fallback" data-home-video-showcase-fallback hidden>Studio preview is being prepared.</p>
       </div>
     </section>
 
@@ -90,90 +89,18 @@ async function initHeroBackgroundVideo() {
   })
 }
 
-async function initHomeScrollCinematicVideo() {
-  const section = document.querySelector('[data-home-scroll-cinematic]')
-  const video = document.querySelector('[data-home-scroll-cinematic-video]')
-  const fallback = document.querySelector('[data-home-scroll-cinematic-fallback]')
-  const hint = document.querySelector('[data-home-scroll-hint]')
-  if (!section || !video) return false
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const SEEK_EPSILON = 0.04
-  const scrollPixelsPerSecond = 850
-  const minScrollLength = 3200
-  const maxScrollLength = 10000
-  let duration = 0
-  let sectionTop = 0
-  let scrollDistance = 1
-  let viewportHeight = window.innerHeight
-  let raf = 0
-  let lastAppliedTime = -1
-  let pendingTime = null
-  let isSeeking = false
-  let failed = false
-
+async function initHomeVideoShowcase() {
+  const video = document.querySelector('[data-home-video-showcase]')
+  const fallback = document.querySelector('[data-home-video-showcase-fallback]')
+  if (!video) return false
   const showFallback = () => {
-    failed = true
-    if (raf) window.cancelAnimationFrame(raf)
-    raf = 0
     video.remove()
     if (fallback) fallback.hidden = false
   }
 
-  const measure = () => {
-    viewportHeight = window.innerHeight
-    sectionTop = section.getBoundingClientRect().top + window.scrollY
-    scrollDistance = Math.max(1, section.offsetHeight - viewportHeight)
-  }
-
-  const getProgress = () => Math.min(1, Math.max(0, (window.scrollY - sectionTop) / scrollDistance))
-
-  const updateHint = (progress) => {
-    if (hint) {
-      const hintOpacity = Math.max(0, 1 - progress / 0.04)
-      hint.style.opacity = hintOpacity.toFixed(3)
-      hint.style.transform = `translate(-50%, calc(-50% + ${progress * -24}px))`
-      hint.style.pointerEvents = hintOpacity > 0.05 ? 'auto' : 'none'
-    }
-  }
-
-  const applyScrubTime = (nextTime) => {
-    if (failed || reducedMotion || !duration || video.readyState < 1) return
-    const maxTime = Math.max(0, duration - SEEK_EPSILON)
-    const clampedTime = Math.min(maxTime, Math.max(0, nextTime))
-    if (
-      Math.abs(clampedTime - lastAppliedTime) < SEEK_EPSILON
-      && Math.abs(clampedTime - video.currentTime) < SEEK_EPSILON
-    ) return
-    if (isSeeking || video.seeking) {
-      pendingTime = clampedTime
-      return
-    }
-    try {
-      pendingTime = null
-      lastAppliedTime = clampedTime
-      video.currentTime = clampedTime
-    } catch {
-      // Some mobile browsers temporarily reject seeks while buffering.
-      pendingTime = clampedTime
-    }
-  }
-
-  const updateScrub = () => {
-    raf = 0
-    if (failed) return
-    const progress = getProgress()
-    updateHint(progress)
-    if (!reducedMotion) applyScrubTime(progress * duration)
-  }
-
-  const scheduleScrub = () => {
-    if (failed || raf) return
-    raf = window.requestAnimationFrame(updateScrub)
-  }
-
   const url = await getStorageAssetUrl(HOME_SCROLL_BANNER_VIDEO_PATH, {
     warnOnFail: false,
-    scopeKey: 'home-scroll-cinematic-video',
+    scopeKey: 'home-video-showcase',
     type: 'video'
   })
   if (!url) {
@@ -181,62 +108,17 @@ async function initHomeScrollCinematicVideo() {
     return false
   }
 
+  // For true 60fps playback, upload a 60fps MP4 at the configured Storage path.
   video.src = url
-  video.pause()
   video.addEventListener('error', showFallback, { once: true })
-  video.addEventListener('seeking', () => {
-    isSeeking = true
-  })
-  video.addEventListener('seeked', () => {
-    isSeeking = false
-    if (pendingTime === null) return
-    const nextTime = pendingTime
-    pendingTime = null
-    if (Math.abs(nextTime - video.currentTime) >= SEEK_EPSILON) {
-      applyScrubTime(nextTime)
-    }
-  })
-  video.addEventListener('loadedmetadata', () => {
-    duration = Number.isFinite(video.duration) ? video.duration : 0
-    if (duration > 0) {
-      const scrollLength = Math.min(maxScrollLength, Math.max(minScrollLength, Math.round(duration * scrollPixelsPerSecond)))
-      section.style.setProperty('--home-scroll-length', `${scrollLength}px`)
-    }
-    measure()
-    const progress = getProgress()
-    updateHint(progress)
-    if (reducedMotion) {
-      // Reduced motion keeps the cinematic on a static first frame.
-      video.pause()
-      if (hint) {
-        hint.style.opacity = '0'
-        hint.style.pointerEvents = 'none'
-      }
-    } else {
-      // For smooth MP4 scroll scrubbing, encode the source with frequent keyframes.
-      // Normal keyframe spacing can cause Safari and other browsers to seek with visible jitter.
-      applyScrubTime(progress * duration)
-    }
-  }, { once: true })
-  window.addEventListener('scroll', scheduleScrub, { passive: true })
-  window.addEventListener('resize', () => {
-    measure()
-    scheduleScrub()
-  }, { passive: true })
-  window.addEventListener('orientationchange', () => {
-    measure()
-    scheduleScrub()
-  }, { passive: true })
-  document.addEventListener('visibilitychange', () => {
-    video.pause()
-    if (!document.hidden) scheduleScrub()
-  })
-  measure()
   video.load()
+  video.play().catch(() => {
+    // Muted autoplay may still be blocked by an explicit browser preference.
+  })
   return true
 }
 
 const logoReadyPromise = initShellChrome()
 const heroReadyPromise = initHeroBackgroundVideo()
 createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
-initHomeScrollCinematicVideo()
+initHomeVideoShowcase()
