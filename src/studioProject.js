@@ -19,6 +19,7 @@ import {
   flattenLibraryFolders,
   getDefaultLibraryContent,
   getInstrumentsForFolder,
+  samplePlaybackModeLabel,
   sampleStrategyDefinition
 } from './data/studioLibraryService.js'
 import './styles/dawPluginWindow.css'
@@ -958,7 +959,7 @@ function renderStudioLibraryTree() {
 
 function renderStudioLibraryResults() {
   const selection = selectedStudioLibraryFolder()
-  if (!selection) return '<div class="studio-daw-library-empty"><strong>Select a folder</strong><p>Choose an engine folder to browse its instruments.</p></div>'
+  if (!selection) return '<div class="studio-daw-library-empty"><strong>Select a folder</strong><p>Choose any library folder to browse its instruments.</p></div>'
   const instruments = getInstrumentsForFolder(studioLibraryState.data, selection.path).filter((instrument) => (
     instrument.enabled !== false
     && instrument.visibility === 'public'
@@ -977,6 +978,7 @@ function renderStudioLibraryResults() {
     const selected = studioLibraryState.selectedInstrumentId === instrument.id || activeOnSelectedTrack
     const loadState = studioLibraryState.loadStatusByInstrumentId.get(instrument.id)
     const strategy = sampleStrategyDefinition(instrument.sampleStrategy)
+    const playbackMode = samplePlaybackModeLabel(instrument.samplePlaybackMode)
     const statusLabel = loadState?.status === 'loading'
       ? 'Loading'
       : loadState?.status === 'loaded'
@@ -988,7 +990,7 @@ function renderStudioLibraryResults() {
           : 'Coming soon'
     return `<button type="button" class="studio-daw-library-instrument ${selected ? 'is-selected' : ''}" data-library-instrument="${esc(instrument.id)}">
       <span class="studio-daw-library-instrument-icon">${instrument.engineType === 'sample-based' ? 'S' : instrument.engineType === 'wavetable' ? 'W' : 'V'}</span>
-      <span><strong>${esc(instrument.name)}</strong><small>${esc(instrument.description || `${instrument.samples?.length || 0} mapped samples`)}</small><span class="studio-daw-library-instrument-meta">${instrument.engineType === 'sample-based' ? `<b>${esc(strategy?.label || 'Custom')}</b>` : ''}<b class="${loadState?.status === 'error' ? 'is-error' : ''}">${esc(statusLabel)}</b></span></span>
+      <span><strong>${esc(instrument.name)}</strong><small>${esc(instrument.description || `${instrument.samples?.length || 0} mapped samples`)}</small><span class="studio-daw-library-instrument-meta">${instrument.engineType === 'sample-based' ? `<b>${esc(strategy?.label || 'Custom')}</b><b>${esc(playbackMode)}</b>` : ''}<b class="${loadState?.status === 'error' ? 'is-error' : ''}">${esc(statusLabel)}</b></span></span>
       <em>${esc(instrument.engineType === 'sample-based' ? 'Sample Based' : instrument.engineType === 'wavetable' ? 'Wavetable' : 'VST')}</em>
     </button>`
   }).join('')}</div><div class="studio-daw-library-breadcrumb">${breadcrumb}</div>`
@@ -999,6 +1001,7 @@ function renderStudioLibrarySelection() {
   if (!instrument) return ''
   const loadState = studioLibraryState.loadStatusByInstrumentId.get(instrument.id)
   const strategy = sampleStrategyDefinition(instrument.sampleStrategy)
+  const playbackMode = samplePlaybackModeLabel(instrument.samplePlaybackMode)
   const message = instrument.engineType !== 'sample-based'
     ? `${instrument.engineType === 'vst' ? 'HTML VST' : 'Wavetable'} runtime is coming soon. Its manifest can be managed without executing untrusted source.`
     : loadState?.status === 'loading'
@@ -1010,7 +1013,7 @@ function renderStudioLibrarySelection() {
           : 'Click to assign this instrument to the selected track and load its samples.'
   return `<section class="studio-daw-library-selection">
     <div><span>${esc(instrument.folderPath)}</span><strong>${esc(instrument.name)}</strong></div>
-    <dl><div><dt>Engine</dt><dd>${esc(instrument.engineType)}</dd></div><div><dt>${instrument.engineType === 'sample-based' ? 'Strategy' : 'Runtime'}</dt><dd>${esc(instrument.engineType === 'sample-based' ? strategy?.label || 'Custom' : instrument.runtime || 'Coming soon')}</dd></div><div><dt>Version</dt><dd>v${instrument.version || 1}</dd></div></dl>
+    <dl><div><dt>Engine</dt><dd>${esc(instrument.engineType)}</dd></div><div><dt>${instrument.engineType === 'sample-based' ? 'Strategy' : 'Runtime'}</dt><dd>${esc(instrument.engineType === 'sample-based' ? strategy?.label || 'Custom' : instrument.runtime || 'Coming soon')}</dd></div>${instrument.engineType === 'sample-based' ? `<div><dt>Playback</dt><dd>${esc(playbackMode)}</dd></div>` : ''}<div><dt>Version</dt><dd>v${instrument.version || 1}</dd></div></dl>
     <p>${esc(message)}</p>
   </section>`
 }

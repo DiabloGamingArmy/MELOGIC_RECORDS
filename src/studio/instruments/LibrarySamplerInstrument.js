@@ -1,4 +1,7 @@
 import { getStudioLibraryAssetUrl } from '../../data/studioLibraryService.js'
+import { selectLibrarySample } from './librarySampleSelection.js'
+
+export { selectLibrarySample } from './librarySampleSelection.js'
 
 const decodedBufferCaches = new WeakMap()
 
@@ -57,6 +60,7 @@ export class LibrarySamplerInstrument {
     this.manifest = null
     this.manifestSignature = ''
     this.samples = []
+    this.samplePlaybackMode = 'pitch-modified'
     this.status = 'idle'
     this.error = ''
     this.loadPromise = null
@@ -77,13 +81,14 @@ export class LibrarySamplerInstrument {
 
   setManifest(manifest = null) {
     if (!manifest || manifest.id !== this.params.libraryInstrumentId) return
-    if (manifest === this.manifest) return
     const samples = normalizeSamples(manifest)
-    const signature = `${manifest.id}:v${manifest.version || 1}:${samples.map((sample) => `${sample.rootMidi}:${sample.path}`).join('|')}`
+    const samplePlaybackMode = manifest.samplePlaybackMode === 'exact-position' ? 'exact-position' : 'pitch-modified'
+    const signature = `${manifest.id}:v${manifest.version || 1}:${samplePlaybackMode}:${samples.map((sample) => `${sample.rootMidi}:${sample.path}`).join('|')}`
     if (signature === this.manifestSignature) return
     this.manifest = manifest
     this.manifestSignature = signature
     this.samples = samples
+    this.samplePlaybackMode = samplePlaybackMode
     this.loadPromise = null
     this.status = this.samples.length ? 'ready' : 'error'
     this.error = this.samples.length ? '' : 'This library instrument has no mapped samples.'
@@ -130,10 +135,7 @@ export class LibrarySamplerInstrument {
   }
 
   nearestSample(note) {
-    const target = Number(note)
-    return this.samples.reduce((nearest, sample) => (
-      !nearest || Math.abs(sample.rootMidi - target) < Math.abs(nearest.rootMidi - target) ? sample : nearest
-    ), null)
+    return selectLibrarySample(this.samples, note, this.samplePlaybackMode)
   }
 
   async noteOn(note, velocity = 0.8) {
@@ -145,7 +147,10 @@ export class LibrarySamplerInstrument {
     this.pendingNotes.set(midi, requestToken)
     await this.ensureManifest()
     const sample = this.nearestSample(midi)
-    if (!sample) throw new Error('No mapped sample is available for this instrument.')
+    if (!sample) {
+      this.pendingNotes.delete(midi)
+      return
+    }
     const buffer = await decodeLibrarySample(this.audioContext, sample.path)
     if (!this.heldNotes.has(midi) || this.pendingNotes.get(midi) !== requestToken) return
     this.pendingNotes.delete(midi)
@@ -154,7 +159,10 @@ export class LibrarySamplerInstrument {
     const source = this.audioContext.createBufferSource()
     const envelope = this.audioContext.createGain()
     source.buffer = buffer
-    source.playbackRate.setValueAtTime(2 ** ((midi - sample.rootMidi) / 12), now)
+    const playbackRate = this.samplePlaybackMode === 'exact-position'
+      ? 1
+      : 2 ** ((midi - sample.rootMidi) / 12)
+    source.playbackRate.setValueAtTime(playbackRate, now)
     envelope.gain.setValueAtTime(0.0001, now)
     envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, clamp(velocity, 0, 1)), now + this.params.attack)
     source.connect(envelope)
@@ -204,6 +212,7 @@ export class LibrarySamplerInstrument {
       this.manifest = null
       this.manifestSignature = ''
       this.samples = []
+      this.samplePlaybackMode = 'pitch-modified'
       this.loadPromise = null
       this.status = 'idle'
       this.error = ''
@@ -211,7 +220,12 @@ export class LibrarySamplerInstrument {
   }
 
   getStatus() {
-    return { status: this.status, error: this.error, sampleCount: this.samples.length }
+    return {
+      status: this.status,
+      error: this.error,
+      sampleCount: this.samples.length,
+      samplePlaybackMode: this.samplePlaybackMode
+    }
   }
 
   stopAll() {

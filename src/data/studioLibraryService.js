@@ -27,6 +27,7 @@ const LIBRARY_REF = ['studioDawDefaults', 'libraryContent']
 const LIBRARY_FOLDER_TYPES = new Set(['source-root', 'category-folder', 'engine-folder', 'generic-folder'])
 const LIBRARY_ENGINE_TYPE_IDS = new Set(STUDIO_LIBRARY_ENGINE_TYPES.map((item) => item.id))
 const VALID_SAMPLE_STRATEGIES = new Set(['octave-roots', 'double', 'thirds', 'chromatic', 'custom', 'drum-map'])
+const VALID_SAMPLE_PLAYBACK_MODES = new Set(['pitch-modified', 'exact-position'])
 const VALID_LICENSE_TYPES = new Set(['owned', 'CC0', 'CC BY', 'custom'])
 const assetUrlCache = new Map()
 
@@ -78,7 +79,15 @@ export function sampleStrategyDefinition(strategy = '') {
   return STUDIO_SAMPLE_STRATEGIES.find((item) => item.id === strategy) || STUDIO_SAMPLE_STRATEGIES.find((item) => item.id === 'custom')
 }
 
-export function getSampleStrategyWarnings(strategy = '', samples = []) {
+export function defaultSamplePlaybackMode(strategy = '') {
+  return strategy === 'drum-map' ? 'exact-position' : 'pitch-modified'
+}
+
+export function samplePlaybackModeLabel(mode = '') {
+  return mode === 'exact-position' ? 'Exact Position' : 'Pitch Modified'
+}
+
+export function getSampleStrategyWarnings(strategy = '', samples = [], playbackMode = 'pitch-modified') {
   const definition = sampleStrategyDefinition(strategy)
   if (!definition?.pitchClasses || !Array.isArray(samples) || !samples.length) return []
   const found = new Set(samples.map((sample) => ((Number(sample.rootMidi) % 12) + 12) % 12))
@@ -86,7 +95,11 @@ export function getSampleStrategyWarnings(strategy = '', samples = []) {
   const unexpected = [...found].filter((pitchClass) => !definition.pitchClasses.includes(pitchClass))
   const warnings = []
   if (missing.length) warnings.push(`${definition.label} usually includes ${definition.description.toLowerCase()}; this upload is missing ${missing.length} expected pitch class${missing.length === 1 ? '' : 'es'}.`)
-  if (unexpected.length) warnings.push(`${unexpected.length} additional pitch class${unexpected.length === 1 ? '' : 'es'} will still be mapped by nearest sample.`)
+  if (unexpected.length) {
+    warnings.push(playbackMode === 'exact-position'
+      ? `${unexpected.length} additional pitch class${unexpected.length === 1 ? '' : 'es'} will remain available only at their exact mapped notes.`
+      : `${unexpected.length} additional pitch class${unexpected.length === 1 ? '' : 'es'} will still be mapped by nearest sample.`)
+  }
   return warnings
 }
 
@@ -395,6 +408,9 @@ export function normalizeDefaultInstrument(raw = {}) {
   const storageBasePath = cleanPath(raw.storageBasePath || `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`)
   const samplesPath = engineType === 'sample-based' ? cleanPath(raw.samplesPath || `${storageBasePath}/samples`) : ''
   const license = raw.license && typeof raw.license === 'object' ? raw.license : {}
+  const samplePlaybackMode = VALID_SAMPLE_PLAYBACK_MODES.has(raw.samplePlaybackMode)
+    ? raw.samplePlaybackMode
+    : defaultSamplePlaybackMode(raw.sampleStrategy)
   return {
     ...raw,
     id,
@@ -403,6 +419,7 @@ export function normalizeDefaultInstrument(raw = {}) {
     sourceRoot,
     engineType,
     sampleStrategy: engineType === 'sample-based' && VALID_SAMPLE_STRATEGIES.has(raw.sampleStrategy) ? raw.sampleStrategy : '',
+    samplePlaybackMode: engineType === 'sample-based' ? samplePlaybackMode : '',
     description: cleanString(raw.description, 1200),
     enabled: raw.enabled !== false,
     visibility: raw.visibility === 'private' ? 'private' : 'public',
