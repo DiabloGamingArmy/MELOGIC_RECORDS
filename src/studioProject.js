@@ -14,7 +14,13 @@ import { renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 import { getDawPluginManifest, listDawInstruments } from './daw/pluginHost/pluginRegistry.js'
 import { MIDI_EFFECT_MANIFESTS } from './daw/midiEffects/catalog.js'
 import { AUDIO_EFFECT_MANIFESTS } from './daw/audioEffects/catalog.js'
-import { getDefaultLibraryContent, sampleStrategyDefinition } from './data/studioLibraryService.js'
+import {
+  findFolderByPath,
+  flattenLibraryFolders,
+  getDefaultLibraryContent,
+  getInstrumentsForFolder,
+  sampleStrategyDefinition
+} from './data/studioLibraryService.js'
 import './styles/dawPluginWindow.css'
 
 const app = document.querySelector('#app')
@@ -928,47 +934,43 @@ function renderTrackInspector() {
 }
 function selectedStudioLibraryFolder() {
   const folders = studioLibraryState.data?.folders || []
-  for (const root of folders) {
-    const child = (root.children || []).find((item) => item.path === studioLibraryState.selectedPath)
-    if (child) return { root, child }
-  }
-  return null
+  return findFolderByPath(folders, studioLibraryState.selectedPath)
+}
+
+function renderStudioLibraryFolderNode(folder, depth = 0) {
+  const children = folder.children || []
+  const expanded = studioLibraryState.expandedRootIds.has(folder.id)
+  const selected = studioLibraryState.selectedPath === folder.path
+  return `<div class="studio-daw-library-folder" style="--library-depth:${depth}">
+    <button type="button" class="studio-daw-library-folder-button ${selected ? 'is-active' : ''}" data-library-folder="${esc(folder.path)}" data-library-folder-id="${esc(folder.id)}" aria-expanded="${children.length ? String(expanded) : 'false'}">
+      <span data-library-folder-toggle="${esc(folder.id)}">${children.length ? (expanded ? '−' : '+') : ''}</span>
+      <strong>${esc(folder.label)}</strong>
+      ${folder.type === 'engine-folder' ? `<small>${esc(folder.engineType || '')}</small>` : ''}
+    </button>
+    ${children.length && expanded ? `<div class="studio-daw-library-folder-children">${children.map((child) => renderStudioLibraryFolderNode(child, depth + 1)).join('')}</div>` : ''}
+  </div>`
 }
 
 function renderStudioLibraryTree() {
   const folders = studioLibraryState.data?.folders || []
-  return folders.map((root) => {
-    const expanded = studioLibraryState.expandedRootIds.has(root.id)
-    return `<section class="studio-daw-library-root">
-      <button type="button" class="studio-daw-library-root-button" data-library-root="${esc(root.id)}" aria-expanded="${String(expanded)}">
-        <span>${expanded ? '−' : '+'}</span>
-        <strong>${esc(root.label)}</strong>
-      </button>
-      ${expanded ? `<div class="studio-daw-library-children">${(root.children || []).map((child) => `
-        <button type="button" class="${studioLibraryState.selectedPath === child.path ? 'is-active' : ''}" data-library-folder="${esc(child.path)}">
-          <span>${esc(child.label)}</span>
-          <small>${esc(child.engineType || '')}</small>
-        </button>
-      `).join('')}</div>` : ''}
-    </section>`
-  }).join('')
+  return folders.map((root) => renderStudioLibraryFolderNode(root)).join('')
 }
 
 function renderStudioLibraryResults() {
   const selection = selectedStudioLibraryFolder()
   if (!selection) return '<div class="studio-daw-library-empty"><strong>Select a folder</strong><p>Choose an engine folder to browse its instruments.</p></div>'
-  const instruments = (studioLibraryState.data?.instruments || []).filter((instrument) => (
-    instrument.folderPath === selection.child.path
-    && instrument.enabled !== false
+  const instruments = getInstrumentsForFolder(studioLibraryState.data, selection.path).filter((instrument) => (
+    instrument.enabled !== false
     && instrument.visibility === 'public'
   ))
   if (!instruments.length) {
-    const comingSoon = selection.child.engineType !== 'sample-based'
+    const comingSoon = selection.type === 'engine-folder' && selection.engineType !== 'sample-based'
     return `<div class="studio-daw-library-empty">
       <strong>${comingSoon ? 'Coming soon' : 'No instruments yet'}</strong>
-      <p>${comingSoon ? `${selection.child.label} instruments are not available in this engine yet.` : 'This folder is ready for instruments added through Admin Operations.'}</p>
+      <p>${comingSoon ? `${selection.label} instruments are not available in this engine yet.` : 'This folder does not contain instruments yet.'}</p>
     </div>`
   }
+  const breadcrumb = selection.path.split('/').map(esc).join(' / ')
   return `<div class="studio-daw-library-instruments">${instruments.map((instrument) => {
     const activeOnSelectedTrack = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
       && getSelectedTrack()?.instrument?.params?.libraryInstrumentId === instrument.id
@@ -989,7 +991,7 @@ function renderStudioLibraryResults() {
       <span><strong>${esc(instrument.name)}</strong><small>${esc(instrument.description || `${instrument.samples?.length || 0} mapped samples`)}</small><span class="studio-daw-library-instrument-meta">${instrument.engineType === 'sample-based' ? `<b>${esc(strategy?.label || 'Custom')}</b>` : ''}<b class="${loadState?.status === 'error' ? 'is-error' : ''}">${esc(statusLabel)}</b></span></span>
       <em>${esc(instrument.engineType === 'sample-based' ? 'Sample Based' : instrument.engineType === 'wavetable' ? 'Wavetable' : 'VST')}</em>
     </button>`
-  }).join('')}</div>`
+  }).join('')}</div><div class="studio-daw-library-breadcrumb">${breadcrumb}</div>`
 }
 
 function renderStudioLibrarySelection() {
@@ -1034,8 +1036,9 @@ async function loadStudioLibrary({ force = false } = {}) {
   renderEditor()
   try {
     const data = await getDefaultLibraryContent()
+    const flatFolders = flattenLibraryFolders(data?.folders || [])
     const firstRoot = data?.folders?.[0]
-    const firstChild = firstRoot?.children?.[0]
+    const firstDestination = flatFolders.find((folder) => folder.type === 'engine-folder') || flatFolders[0]
     const assignedInstrumentId = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
       ? getSelectedTrack()?.instrument?.params?.libraryInstrumentId || ''
       : ''
@@ -1044,11 +1047,11 @@ async function loadStudioLibrary({ force = false } = {}) {
       ...studioLibraryState,
       data,
       loaded: true,
-      selectedPath: studioLibraryState.selectedPath || assignedInstrument?.folderPath || firstChild?.path || '',
+      selectedPath: studioLibraryState.selectedPath || assignedInstrument?.folderPath || firstDestination?.path || '',
       selectedInstrumentId: studioLibraryState.selectedInstrumentId || assignedInstrumentId,
       expandedRootIds: studioLibraryState.expandedRootIds.size
         ? studioLibraryState.expandedRootIds
-        : new Set(firstRoot?.id ? [firstRoot.id] : [])
+        : new Set(flatFolders.filter((folder) => firstDestination?.path.startsWith(folder.path)).map((folder) => folder.id))
     }
   } catch (error) {
     console.warn('[studio-library] manifest read failed', { code: error?.code, message: error?.message })
@@ -2697,15 +2700,15 @@ function bindEditorEvents() {
     else startMidiRecordFlow()
   }, { capture: true })
   app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor(); if(activeLeftPanel==='library') loadStudioLibrary() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); renderEditor(); return } startMidiRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; if(activeInstrumentSubpage==='keyboard'&&next!=='keyboard') stopAllTrackInstrumentNotes(); activeInstrumentSubpage=next; renderEditor() }) })
-  app.querySelectorAll('[data-library-root]').forEach((button)=>button.addEventListener('click',()=>{
-    const id = button.dataset.libraryRoot || ''
-    const expanded = new Set(studioLibraryState.expandedRootIds)
-    if (expanded.has(id)) expanded.delete(id)
-    else expanded.add(id)
-    studioLibraryState.expandedRootIds = expanded
-    renderEditor()
-  }))
-  app.querySelectorAll('[data-library-folder]').forEach((button)=>button.addEventListener('click',()=>{
+  app.querySelectorAll('[data-library-folder]').forEach((button)=>button.addEventListener('click',(event)=>{
+    const toggle = event.target.closest('[data-library-folder-toggle]')
+    if (toggle) {
+      const id = toggle.dataset.libraryFolderToggle || ''
+      const expanded = new Set(studioLibraryState.expandedRootIds)
+      if (expanded.has(id)) expanded.delete(id)
+      else expanded.add(id)
+      studioLibraryState.expandedRootIds = expanded
+    }
     studioLibraryState.selectedPath = button.dataset.libraryFolder || ''
     studioLibraryState.selectedInstrumentId = ''
     renderEditor()
