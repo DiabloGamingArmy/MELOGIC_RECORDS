@@ -193,7 +193,10 @@ const TYPING_IDLE_CLEAR_MS = 4500
 const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
 const MAX_ATTACHMENT_LABEL = '256 MB'
 const DEBUG_TYPING = false
+const INBOX_RENDER_DEBUG = false
 const imagePreloadCache = new Map()
+const attachmentUrlCache = new Map()
+const attachmentUrlErrorCache = new Map()
 let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let hasBoundInboxDelegates = false
@@ -203,6 +206,10 @@ const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1'
 
 function debugTyping(...args) {
   if (DEBUG_TYPING) console.info('[inbox typing]', ...args)
+}
+
+function debugInboxRender(...args) {
+  if (INBOX_RENDER_DEBUG) console.info('[inbox render]', ...args)
 }
 
 app.innerHTML = `
@@ -262,6 +269,29 @@ function setupInboxDelegates() {
     event.preventDefault()
     handleMessageFindAction(event.shiftKey ? 'previous' : 'next')
   })
+
+  inboxRoot.addEventListener('load', (event) => {
+    const image = event.target
+    if (!(image instanceof HTMLImageElement)) return
+    const attachmentKey = image.dataset.messageAttachmentKey || ''
+    if (!attachmentKey) return
+    const currentUrl = image.currentSrc || image.src || ''
+    if (attachmentUrlErrorCache.get(attachmentKey) === currentUrl) {
+      attachmentUrlErrorCache.delete(attachmentKey)
+    }
+    image.closest('.message-image-preview-button')?.classList.remove('is-image-load-failed')
+  }, true)
+
+  inboxRoot.addEventListener('error', (event) => {
+    const image = event.target
+    if (!(image instanceof HTMLImageElement)) return
+    const attachmentKey = image.dataset.messageAttachmentKey || ''
+    if (!attachmentKey) return
+    const currentUrl = image.currentSrc || image.src || ''
+    attachmentUrlErrorCache.set(attachmentKey, currentUrl)
+    image.closest('.message-image-preview-button')?.classList.add('is-image-load-failed')
+    debugInboxRender('attachment load failed', attachmentKey)
+  }, true)
 
   inboxRoot.addEventListener('click', (event) => {
     const findAction = event.target.closest('[data-message-find-action]')
@@ -1544,14 +1574,88 @@ function getOutgoingStatusLabel(thread, message) {
   return `Sent · ${formatTime(message.createdAt)}`
 }
 
-function getMessageGroupsMarkup(thread) {
+function getRenderableMessages(thread) {
   const hiddenIds = new Set(appState.hiddenMessageIdsByThreadId[thread.id] || [])
   const confirmedMessages = appState.messagesByThreadId[thread.id] || []
   const optimisticMessages = appState.optimisticMessagesByThreadId[thread.id] || []
   const confirmedClientIds = new Set(confirmedMessages.map((message) => message.clientMessageId).filter(Boolean))
-  const messages = [...confirmedMessages, ...optimisticMessages.filter((message) => !confirmedClientIds.has(message.clientMessageId))]
+  return [...confirmedMessages, ...optimisticMessages.filter((message) => !confirmedClientIds.has(message.clientMessageId))]
     .filter((message) => !hiddenIds.has(message.id))
     .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
+}
+
+function normalizeRenderSignatureValue(value) {
+  if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value
+  if (value instanceof Date) return value.toISOString()
+  if (typeof value?.toMillis === 'function') return value.toMillis()
+  if (value instanceof Set) return [...value].sort()
+  if (Array.isArray(value)) return value.map(normalizeRenderSignatureValue)
+  if (typeof File !== 'undefined' && value instanceof File) {
+    return {
+      name: value.name,
+      size: value.size,
+      type: value.type,
+      lastModified: value.lastModified
+    }
+  }
+  if (typeof value === 'object') {
+    return Object.keys(value)
+      .sort()
+      .reduce((result, key) => {
+        result[key] = normalizeRenderSignatureValue(value[key])
+        return result
+      }, {})
+  }
+  return String(value)
+}
+
+function hashRenderSignature(value) {
+  const input = JSON.stringify(normalizeRenderSignatureValue(value))
+  let hash = 2166136261
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function getMessageRenderSignature(thread, messages = getRenderableMessages(thread)) {
+  const senderIds = [...new Set(messages.map((message) => message.senderId).filter(Boolean))]
+  const profiles = senderIds.map((uid) => [uid, appState.profileByUid[uid] || null])
+  return hashRenderSignature({
+    threadId: thread.id,
+    messages,
+    pagination: appState.messagePaginationByThreadId[thread.id] || {},
+    participants: getThreadParticipants(thread.id),
+    profiles,
+    reactions: appState.reactionsByThreadId[thread.id] || {},
+    editingMessageId: appState.editingMessageByThreadId[thread.id] || '',
+    editDrafts: appState.editDraftByMessageId,
+    revealedBlockedMessages: appState.revealBlockedMessageIdsByThreadId[thread.id] || []
+  })
+}
+
+function getAttachmentCacheKey(messageId, attachment = {}, index = 0) {
+  return `${messageId}:${attachment.storagePath || attachment.path || attachment.name || index}`
+}
+
+function getStableAttachmentUrl(messageId, attachment = {}, index = 0) {
+  const cacheKey = getAttachmentCacheKey(messageId, attachment, index)
+  const incomingUrl = String(attachment.url || '')
+  const cachedUrl = attachmentUrlCache.get(cacheKey) || ''
+  if (incomingUrl && incomingUrl !== cachedUrl) {
+    attachmentUrlCache.set(cacheKey, incomingUrl)
+    attachmentUrlErrorCache.delete(cacheKey)
+    debugInboxRender(cachedUrl ? 'attachment URL changed' : 'attachment URL cached', cacheKey)
+    return incomingUrl
+  }
+  return incomingUrl || cachedUrl
+}
+
+function getMessageGroupsMarkup(thread, {
+  messages = getRenderableMessages(thread),
+  renderSignature = getMessageRenderSignature(thread, messages)
+} = {}) {
   if (!messages.length) {
     return `
       <section class="inbox-empty-panel inbox-empty-panel-inline">
@@ -1596,15 +1700,19 @@ function getMessageGroupsMarkup(thread) {
           const isEditing = editingMessageId === message.id && canEdit
           const editDraft = appState.editDraftByMessageId[message.id] || message.body || ''
           const attachmentsMarkup = Array.isArray(message.attachments) && message.attachments.length
-            ? `<div class="message-attachment-list">${message.attachments.map((attachment) => {
+            ? `<div class="message-attachment-list">${message.attachments.map((attachment, attachmentIndex) => {
               const mime = String(attachment.mimeType || '')
               const width = Math.max(0, Number(attachment.width || 0))
               const height = Math.max(0, Number(attachment.height || 0))
               const dimensions = width && height ? ` width="${Math.round(width)}" height="${Math.round(height)}"` : ''
-              if (mime.startsWith('image/')) return `<button type="button" class="message-image-preview-button" data-preview-message-image="${escapeHtml(attachment.url || '')}" data-preview-message-image-name="${escapeHtml(attachment.name || 'Image attachment')}"><img decoding="async" src="${escapeHtml(attachment.url || '')}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy"${dimensions} onerror="this.closest('button')?.classList.add('is-image-load-failed')" /></button>`
-              if (mime.startsWith('video/')) return `<video src="${escapeHtml(attachment.url)}" controls preload="metadata"></video>`
-              if (mime.startsWith('audio/')) return `<audio src="${escapeHtml(attachment.url)}" controls></audio>`
-              return `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener" class="message-file-link">${escapeHtml(attachment.name || 'Download attachment')}</a>`
+              const attachmentKey = getAttachmentCacheKey(message.id, attachment, attachmentIndex)
+              const attachmentUrl = getStableAttachmentUrl(message.id, attachment, attachmentIndex)
+              const aspectRatio = width && height ? ` style="aspect-ratio: ${Math.round(width)} / ${Math.round(height)}"` : ''
+              const hasFailed = attachmentUrlErrorCache.get(attachmentKey) === attachmentUrl
+              if (mime.startsWith('image/')) return `<button type="button" class="message-image-preview-button ${hasFailed ? 'is-image-load-failed' : ''}" data-message-media-key="${escapeHtml(attachmentKey)}" data-preview-message-image="${escapeHtml(attachmentUrl)}" data-preview-message-image-name="${escapeHtml(attachment.name || 'Image attachment')}"${aspectRatio}><img decoding="async" src="${escapeHtml(attachmentUrl)}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" data-message-attachment-key="${escapeHtml(attachmentKey)}"${dimensions} /></button>`
+              if (mime.startsWith('video/')) return `<video src="${escapeHtml(attachmentUrl)}" controls preload="metadata" data-message-media-key="${escapeHtml(attachmentKey)}"></video>`
+              if (mime.startsWith('audio/')) return `<audio src="${escapeHtml(attachmentUrl)}" controls></audio>`
+              return `<a href="${escapeHtml(attachmentUrl)}" target="_blank" rel="noopener" class="message-file-link">${escapeHtml(attachment.name || 'Download attachment')}</a>`
             }).join('')}</div>`
             : ''
           const failedActions = message.optimistic && message.sendStatus === 'failed'
@@ -1650,7 +1758,7 @@ function getMessageGroupsMarkup(thread) {
             `
           }
           return `
-            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''} ${message.optimistic ? 'is-optimistic' : ''} ${message.sendStatus === 'failed' ? 'is-send-failed' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''} ${attachmentsMarkup ? 'has-media' : ''} ${message.optimistic ? 'is-optimistic' : ''} ${message.sendStatus === 'failed' ? 'is-send-failed' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
               ${replyMarkup}
               ${bodyMarkup}
               ${attachmentsMarkup}
@@ -1675,10 +1783,14 @@ function getMessageGroupsMarkup(thread) {
     })
     .join('')
 
-  return `<div class="message-list" data-message-list>${olderControl}${messageGroups}</div>`
+  return `<div class="message-list" data-message-list data-message-render-signature="${escapeHtml(renderSignature)}">${olderControl}${messageGroups}</div>`
 }
 
-function getConversationBodyMarkup() {
+function getConversationBodyMarkup({
+  reuseMessageList = false,
+  messages = null,
+  renderSignature = ''
+} = {}) {
   const thread = getSelectedThread()
   if (!thread) {
     return `
@@ -1718,7 +1830,12 @@ function getConversationBodyMarkup() {
 
   return `
     <div class="conversation-stack">
-      ${getMessageGroupsMarkup(thread)}
+      ${reuseMessageList
+        ? '<div data-message-list-slot></div>'
+        : getMessageGroupsMarkup(thread, {
+            messages: messages || getRenderableMessages(thread),
+            renderSignature: renderSignature || getMessageRenderSignature(thread, messages || getRenderableMessages(thread))
+          })}
       <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length ? '' : 'hidden'}>${typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : ''}</p>
       ${blockAlertMarkup}
       <form class="message-composer ${isDmComposerBlocked ? 'is-blocked' : ''}" data-message-form>
@@ -3639,6 +3756,24 @@ function renderSignedInState() {
   renderFloatingUi()
 }
 
+function preserveRenderedMessageMedia(previousList, generatedList) {
+  if (!previousList || !generatedList) return
+  const existingMediaByKey = new Map()
+  previousList.querySelectorAll('[data-message-media-key]').forEach((media) => {
+    const key = media.getAttribute('data-message-media-key') || ''
+    if (key) existingMediaByKey.set(key, media)
+  })
+  generatedList.querySelectorAll('[data-message-media-key]').forEach((nextMedia) => {
+    const key = nextMedia.getAttribute('data-message-media-key') || ''
+    const existingMedia = existingMediaByKey.get(key)
+    if (!existingMedia) return
+    const nextUrl = nextMedia.getAttribute('data-preview-message-image') || nextMedia.getAttribute('src') || ''
+    const existingUrl = existingMedia.getAttribute('data-preview-message-image') || existingMedia.getAttribute('src') || ''
+    if (nextUrl !== existingUrl) return
+    nextMedia.replaceWith(existingMedia)
+  })
+}
+
 function renderSelectedConversation({
   forceBottom = false,
   preservePrepend = false,
@@ -3652,21 +3787,41 @@ function renderSelectedConversation({
   }
   const scrollSnapshot = messageScrollController.snapshot()
   const previousList = getMessageScroller()
+  const thread = getSelectedThread()
+  const messages = thread ? getRenderableMessages(thread) : []
+  const nextRenderSignature = thread ? getMessageRenderSignature(thread, messages) : ''
+  const previousRenderSignature = previousList?.dataset.messageRenderSignature || ''
+  const reuseMessageList = Boolean(previousList && nextRenderSignature && previousRenderSignature === nextRenderSignature)
   const nextContent = document.createElement('div')
-  nextContent.innerHTML = `${getConversationHeaderMarkup(getSelectedThread())}${getConversationBodyMarkup()}`
+  nextContent.innerHTML = `${getConversationHeaderMarkup(thread)}${getConversationBodyMarkup({
+    reuseMessageList,
+    messages,
+    renderSignature: nextRenderSignature
+  })}`
   const generatedList = nextContent.querySelector('[data-message-list]')
-  if (previousList && generatedList) {
-    previousList.innerHTML = generatedList.innerHTML
-    generatedList.replaceWith(previousList)
+  if (!reuseMessageList && previousList && generatedList) {
+    preserveRenderedMessageMedia(previousList, generatedList)
   }
   panel.replaceChildren(...nextContent.childNodes)
-  bindSharedEvents(panel)
+  if (reuseMessageList) {
+    const messageListSlot = panel.querySelector('[data-message-list-slot]')
+    bindSharedEvents(panel)
+    messageListSlot?.replaceWith(previousList)
+    debugInboxRender('message list reused', { reason, signature: nextRenderSignature })
+  } else {
+    bindSharedEvents(panel)
+    debugInboxRender('message list rendered', {
+      reason,
+      previousSignature: previousRenderSignature,
+      nextSignature: nextRenderSignature
+    })
+  }
   const nextList = getMessageScroller()
   messageScrollController.attach(nextList, {
     threadId: appState.selectedThreadId,
     resetMode: messageScrollController.threadId !== appState.selectedThreadId
   })
-  if (appState.messageFind.open && appState.messageFind.query) applyMessageFind()
+  if (!reuseMessageList && appState.messageFind.open && appState.messageFind.query) applyMessageFind()
   messageScrollController.stabilizeAfterRender(scrollSnapshot, {
     reason,
     forceBottom,
