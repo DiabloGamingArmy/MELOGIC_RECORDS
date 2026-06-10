@@ -2410,6 +2410,41 @@
   white-space: nowrap;
 }
 
+.admin-studio-strategy-warnings {
+  display: grid;
+  gap: 0.35rem;
+  grid-template-columns: 1fr !important;
+}
+
+.admin-studio-strategy-warnings p,
+.admin-studio-runtime-note p {
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.admin-studio-strategy-warnings p {
+  border-left: 3px solid #d9a441;
+  padding: 0.45rem 0.6rem;
+  background: color-mix(in srgb, #d9a441 10%, transparent);
+}
+
+.admin-studio-runtime-note {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: var(--admin-card-subtle);
+}
+
+.admin-studio-existing-source {
+  overflow-wrap: anywhere;
+  color: var(--admin-text);
+  font-size: 0.76rem;
+}
+
 .admin-studio-upload-progress {
   position: relative;
   height: 28px;

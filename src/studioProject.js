@@ -14,7 +14,7 @@ import { renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 import { getDawPluginManifest, listDawInstruments } from './daw/pluginHost/pluginRegistry.js'
 import { MIDI_EFFECT_MANIFESTS } from './daw/midiEffects/catalog.js'
 import { AUDIO_EFFECT_MANIFESTS } from './daw/audioEffects/catalog.js'
-import { getDefaultLibraryContent } from './data/studioLibraryService.js'
+import { getDefaultLibraryContent, sampleStrategyDefinition } from './data/studioLibraryService.js'
 import './styles/dawPluginWindow.css'
 
 const app = document.querySelector('#app')
@@ -34,7 +34,8 @@ let channelAccordionState = (() => {
 let projectState = null
 const dawInstrumentRegistry = new InstrumentRegistry({
   getAudioContext: () => getAudioContext(),
-  getDestination: (trackId) => getTrackAudioChannel(trackId).input
+  getDestination: (trackId) => getTrackAudioChannel(trackId).input,
+  resolveLibraryInstrument: (instrumentId) => resolveStudioLibraryInstrument(instrumentId)
 })
 const dawWindowManager = new DawWindowManager({
   renderContent: (pluginWindow) => renderPluginShell(pluginWindow, { hostMode: 'inline' }),
@@ -149,8 +150,10 @@ let studioLibraryState = {
   error: '',
   selectedPath: '',
   selectedInstrumentId: '',
-  expandedRootIds: new Set()
+  expandedRootIds: new Set(),
+  loadStatusByInstrumentId: new Map()
 }
+let studioLibraryManifestPromise = null
 let inspectorMenu = null
 let inspectorMenuPosition = null
 let globalTracks = {
@@ -649,7 +652,12 @@ function renderInstrumentPlaceholderView(){
 function renderInstrumentPanelContent(){ if(activeInstrumentSubpage==='keyboard') return renderInstrumentKeyboardView(); if(activeInstrumentSubpage==='chords') return renderInstrumentChordsView(); if(activeInstrumentSubpage==='arp') return renderInstrumentArpView(); return renderInstrumentPlaceholderView() }
 function shouldShowInstrumentPerformanceControls(){ return ['keyboard','chords'].includes(activeInstrumentSubpage) }
 function renderInstrumentPerformanceControls(){
-  return `<div class="studio-instrument-toolbar"><div class="studio-instrument-left"><div class="studio-instrument-selector"><label>Instrument</label><select data-instrument-select><option ${selectedInstrumentName==='Grand Piano'?'selected':''}>Grand Piano</option><option ${selectedInstrumentName==='Soft Keys'?'selected':''}>Soft Keys</option><option ${selectedInstrumentName==='Analog Lead'?'selected':''}>Analog Lead</option><option ${selectedInstrumentName==='Bass'?'selected':''}>Bass</option></select></div><div class="studio-instrument-controls"><button data-sustain-toggle class="${isSustainEnabled?'is-active':''}">Sustain</button><button type="button" data-typing-piano-toggle class="${isTypingPianoEnabled?'is-active':''}" aria-pressed="${String(isTypingPianoEnabled)}">Typing Piano</button><div class="studio-instrument-octave"><span class="studio-instrument-octave-label">Octave</span><div class="studio-instrument-octave-controls"><button data-octave-down aria-label="Octave down">−</button><strong class="studio-octave-readout">${instrumentOctaveOffset>0?'+':''}${instrumentOctaveOffset}</strong><button data-octave-up aria-label="Octave up">+</button></div></div></div></div><div class="studio-instrument-knob-bank">${getInstrumentKnobDescriptors().map((knob)=>`<label class="studio-instrument-knob"><span class="studio-instrument-knob-label">${knob.label}</span><button class="studio-instrument-knob-dial" type="button" data-instrument-knob-dial="${knob.key}" style="--knob-angle:${-135 + ((knob.value-knob.min)/(knob.max-knob.min))*270}deg" aria-label="${knob.label}"><input data-instrument-knob="${knob.key}" type="range" min="${knob.min}" max="${knob.max}" step="${knob.step}" value="${knob.value}"></button><span class="studio-instrument-knob-value" data-instrument-knob-value="${knob.key}">${knob.key==='pan'?knob.value.toFixed(2):`${Math.round(knob.value*100)}%`}</span></label>`).join('')}</div></div><div class="studio-instrument-divider"></div>`
+  const activeInstrumentName = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
+    ? getSelectedTrack()?.instrument?.params?.libraryInstrumentName || 'Library Sampler'
+    : selectedInstrumentName
+  const stockInstrumentNames = ['Grand Piano', 'Soft Keys', 'Analog Lead', 'Bass']
+  const assignedOption = stockInstrumentNames.includes(activeInstrumentName) ? '' : `<option selected>${esc(activeInstrumentName)}</option>`
+  return `<div class="studio-instrument-toolbar"><div class="studio-instrument-left"><div class="studio-instrument-selector"><label>Instrument</label><select data-instrument-select>${assignedOption}<option ${activeInstrumentName==='Grand Piano'?'selected':''}>Grand Piano</option><option ${activeInstrumentName==='Soft Keys'?'selected':''}>Soft Keys</option><option ${activeInstrumentName==='Analog Lead'?'selected':''}>Analog Lead</option><option ${activeInstrumentName==='Bass'?'selected':''}>Bass</option></select></div><div class="studio-instrument-controls"><button data-sustain-toggle class="${isSustainEnabled?'is-active':''}">Sustain</button><button type="button" data-typing-piano-toggle class="${isTypingPianoEnabled?'is-active':''}" aria-pressed="${String(isTypingPianoEnabled)}">Typing Piano</button><div class="studio-instrument-octave"><span class="studio-instrument-octave-label">Octave</span><div class="studio-instrument-octave-controls"><button data-octave-down aria-label="Octave down">−</button><strong class="studio-octave-readout">${instrumentOctaveOffset>0?'+':''}${instrumentOctaveOffset}</strong><button data-octave-up aria-label="Octave up">+</button></div></div></div></div><div class="studio-instrument-knob-bank">${getInstrumentKnobDescriptors().map((knob)=>`<label class="studio-instrument-knob"><span class="studio-instrument-knob-label">${knob.label}</span><button class="studio-instrument-knob-dial" type="button" data-instrument-knob-dial="${knob.key}" style="--knob-angle:${-135 + ((knob.value-knob.min)/(knob.max-knob.min))*270}deg" aria-label="${knob.label}"><input data-instrument-knob="${knob.key}" type="range" min="${knob.min}" max="${knob.max}" step="${knob.step}" value="${knob.value}"></button><span class="studio-instrument-knob-value" data-instrument-knob-value="${knob.key}">${knob.key==='pan'?knob.value.toFixed(2):`${Math.round(knob.value*100)}%`}</span></label>`).join('')}</div></div><div class="studio-instrument-divider"></div>`
 }
 function renderInstrumentPanel(){
   const showPerformanceControls=shouldShowInstrumentPerformanceControls()
@@ -828,11 +836,12 @@ function renderInstrumentSlot(track) {
   if (!instrument) {
     return `<article class="studio-instrument-slot is-empty"><div class="studio-insert-slot-label"><strong>No instrument loaded</strong><span>Empty</span></div><div class="studio-instrument-slot-actions"><button type="button" data-toggle-inspector-menu="instrument">Choose</button></div></article>${renderInsertMenu({ menuId: 'instrument', items: instruments.map((item)=>({ type: item.id, name: item.name })), action: 'instrument' })}`
   }
+  const canEdit = instrument.type !== DAW_PLUGIN_TYPES.librarySampler
   return `<article class="studio-instrument-slot ${instrument.enabled ? 'is-enabled' : 'is-disabled'}">
     <div class="studio-instrument-slot-main studio-insert-slot-label"><strong>${esc(instrument.name)}</strong><span>${instrument.enabled ? 'Enabled' : 'Disabled'} · ${esc(track.name)}</span></div>
     <div class="studio-instrument-slot-actions">
       <button type="button" class="${instrument.enabled ? 'is-active' : ''}" data-toggle-track-instrument>${instrument.enabled ? 'On' : 'Off'}</button>
-      <button type="button" data-edit-track-instrument>Edit</button>
+      ${canEdit ? '<button type="button" data-edit-track-instrument>Edit</button>' : '<button type="button" disabled title="Library Sampler controls are managed from the Library.">Library</button>'}
       <button type="button" data-toggle-inspector-menu="instrument">Change</button>
       <button type="button" data-remove-track-instrument>Remove</button>
     </div>
@@ -912,10 +921,23 @@ function renderStudioLibraryResults() {
     </div>`
   }
   return `<div class="studio-daw-library-instruments">${instruments.map((instrument) => {
-    const selected = studioLibraryState.selectedInstrumentId === instrument.id
+    const activeOnSelectedTrack = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
+      && getSelectedTrack()?.instrument?.params?.libraryInstrumentId === instrument.id
+    const selected = studioLibraryState.selectedInstrumentId === instrument.id || activeOnSelectedTrack
+    const loadState = studioLibraryState.loadStatusByInstrumentId.get(instrument.id)
+    const strategy = sampleStrategyDefinition(instrument.sampleStrategy)
+    const statusLabel = loadState?.status === 'loading'
+      ? 'Loading'
+      : loadState?.status === 'loaded'
+        ? 'Loaded'
+        : activeOnSelectedTrack
+          ? 'Assigned'
+        : instrument.engineType === 'sample-based'
+          ? `${instrument.samples?.length || 0} samples`
+          : 'Coming soon'
     return `<button type="button" class="studio-daw-library-instrument ${selected ? 'is-selected' : ''}" data-library-instrument="${esc(instrument.id)}">
       <span class="studio-daw-library-instrument-icon">${instrument.engineType === 'sample-based' ? 'S' : instrument.engineType === 'wavetable' ? 'W' : 'V'}</span>
-      <span><strong>${esc(instrument.name)}</strong><small>${esc(instrument.description || `${instrument.samples?.length || 0} mapped samples`)}</small></span>
+      <span><strong>${esc(instrument.name)}</strong><small>${esc(instrument.description || `${instrument.samples?.length || 0} mapped samples`)}</small><span class="studio-daw-library-instrument-meta">${instrument.engineType === 'sample-based' ? `<b>${esc(strategy?.label || 'Custom')}</b>` : ''}<b class="${loadState?.status === 'error' ? 'is-error' : ''}">${esc(statusLabel)}</b></span></span>
       <em>${esc(instrument.engineType === 'sample-based' ? 'Sample Based' : instrument.engineType === 'wavetable' ? 'Wavetable' : 'VST')}</em>
     </button>`
   }).join('')}</div>`
@@ -924,10 +946,21 @@ function renderStudioLibraryResults() {
 function renderStudioLibrarySelection() {
   const instrument = (studioLibraryState.data?.instruments || []).find((item) => item.id === studioLibraryState.selectedInstrumentId)
   if (!instrument) return ''
+  const loadState = studioLibraryState.loadStatusByInstrumentId.get(instrument.id)
+  const strategy = sampleStrategyDefinition(instrument.sampleStrategy)
+  const message = instrument.engineType !== 'sample-based'
+    ? `${instrument.engineType === 'vst' ? 'HTML VST' : 'Wavetable'} runtime is coming soon. Its manifest can be managed without executing untrusted source.`
+    : loadState?.status === 'loading'
+      ? `Loading ${instrument.samples?.length || 0} mapped samples for the selected track...`
+      : loadState?.status === 'error'
+        ? loadState.message
+        : loadState?.status === 'loaded'
+          ? 'Loaded into the selected track through Library Sampler.'
+          : 'Click to assign this instrument to the selected track and load its samples.'
   return `<section class="studio-daw-library-selection">
     <div><span>${esc(instrument.folderPath)}</span><strong>${esc(instrument.name)}</strong></div>
-    <dl><div><dt>Engine</dt><dd>${esc(instrument.engineType)}</dd></div><div><dt>Samples</dt><dd>${instrument.samples?.length || 0}</dd></div><div><dt>Version</dt><dd>v${instrument.version || 1}</dd></div></dl>
-    <p>Metadata is ready. Audio remains unloaded until preview and sampler playback are implemented.</p>
+    <dl><div><dt>Engine</dt><dd>${esc(instrument.engineType)}</dd></div><div><dt>${instrument.engineType === 'sample-based' ? 'Strategy' : 'Runtime'}</dt><dd>${esc(instrument.engineType === 'sample-based' ? strategy?.label || 'Custom' : instrument.runtime || 'Coming soon')}</dd></div><div><dt>Version</dt><dd>v${instrument.version || 1}</dd></div></dl>
+    <p>${esc(message)}</p>
   </section>`
 }
 
@@ -954,11 +987,16 @@ async function loadStudioLibrary({ force = false } = {}) {
     const data = await getDefaultLibraryContent()
     const firstRoot = data?.folders?.[0]
     const firstChild = firstRoot?.children?.[0]
+    const assignedInstrumentId = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
+      ? getSelectedTrack()?.instrument?.params?.libraryInstrumentId || ''
+      : ''
+    const assignedInstrument = data?.instruments?.find((item) => item.id === assignedInstrumentId)
     studioLibraryState = {
       ...studioLibraryState,
       data,
       loaded: true,
-      selectedPath: studioLibraryState.selectedPath || firstChild?.path || '',
+      selectedPath: studioLibraryState.selectedPath || assignedInstrument?.folderPath || firstChild?.path || '',
+      selectedInstrumentId: studioLibraryState.selectedInstrumentId || assignedInstrumentId,
       expandedRootIds: studioLibraryState.expandedRootIds.size
         ? studioLibraryState.expandedRootIds
         : new Set(firstRoot?.id ? [firstRoot.id] : [])
@@ -971,6 +1009,74 @@ async function loadStudioLibrary({ force = false } = {}) {
     studioLibraryState.loading = false
     renderEditor()
   }
+}
+
+async function resolveStudioLibraryInstrument(instrumentId = '') {
+  const current = studioLibraryState.data?.instruments?.find((item) => item.id === instrumentId)
+  if (current) return current
+  if (!studioLibraryManifestPromise) {
+    studioLibraryManifestPromise = getDefaultLibraryContent().finally(() => {
+      studioLibraryManifestPromise = null
+    })
+  }
+  const data = await studioLibraryManifestPromise
+  if (data) {
+    studioLibraryState.data = data
+    studioLibraryState.loaded = true
+  }
+  return data?.instruments?.find((item) => item.id === instrumentId) || null
+}
+
+async function assignStudioLibraryInstrument(instrumentId = '') {
+  const instrument = await resolveStudioLibraryInstrument(instrumentId)
+  if (!instrument) return
+  studioLibraryState.selectedInstrumentId = instrument.id
+  if (instrument.engineType !== 'sample-based') {
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'coming-soon', message: 'Runtime coming soon.' })
+    renderEditor()
+    return
+  }
+  const track = ensureTrackInsertState(getSelectedTrack())
+  if (!track) {
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'error', message: 'Select a track before loading an instrument.' })
+    renderEditor()
+    return
+  }
+  const before = captureDawSnapshot()
+  stopAllTrackInstrumentNotes()
+  stopAllPlaybackNotes()
+  if (track.instrument?.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId)
+  track.type = 'instrument'
+  track.instrument = {
+    id: makeInsertId('instrument'),
+    type: DAW_PLUGIN_TYPES.librarySampler,
+    name: `Library Sampler · ${instrument.name}`,
+    enabled: true,
+    pluginInstanceId: `${DAW_PLUGIN_TYPES.librarySampler}:${track.id}`,
+    params: {
+      libraryInstrumentId: instrument.id,
+      libraryInstrumentName: instrument.name,
+      libraryInstrumentVersion: instrument.version || 1,
+      volume: 0.8,
+      attack: 0.006,
+      release: 0.16
+    }
+  }
+  selectedInstrumentName = instrument.name
+  studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'loading', message: '' })
+  pushHistory('assign-library-instrument', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+  try {
+    const sampler = ensureTrackInstrumentInstance(track)
+    sampler?.setManifest?.(instrument)
+    await sampler?.preload?.()
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'loaded', message: '' })
+  } catch (error) {
+    console.warn('[studio-library] sampler load failed', { instrumentId: instrument.id, message: error?.message })
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'error', message: error?.message || 'Samples could not be loaded.' })
+  }
+  renderEditor()
 }
 
 function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":`<h3>Smart Controls</h3><p>EQ</p><p>Compressor</p><p>Sends</p><p>Track Effects</p>`,"loop-browser":`<h3>Loop Browser</h3><input placeholder="Search loops"/><p>Drums</p><p>Melody</p><p>Bass</p><p>Vocals</p><p>FX</p>`}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''}">${views[activeLeftPanel] || ''}</aside>` }
@@ -1066,6 +1172,10 @@ function applyLoadedEditorState(editorState) {
       ensureTrackInsertState(t)
     })
     if (!tracks.some((track) => track.id === selectedTrackId)) selectedTrackId = tracks[0]?.id || selectedTrackId
+    const selectedInstrument = tracks.find((track) => track.id === selectedTrackId)?.instrument
+    if (selectedInstrument?.type === DAW_PLUGIN_TYPES.librarySampler) {
+      selectedInstrumentName = selectedInstrument.params?.libraryInstrumentName || selectedInstrument.name || 'Library Sampler'
+    }
   }
   timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
 }
@@ -1439,7 +1549,10 @@ function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
     id: target.instrument.pluginInstanceId,
     type: target.instrument.type,
     trackId: target.id,
-    params: target.instrument.params || {}
+    params: target.instrument.params || {},
+    manifest: target.instrument.type === DAW_PLUGIN_TYPES.librarySampler
+      ? studioLibraryState.data?.instruments?.find((item) => item.id === target.instrument.params?.libraryInstrumentId)
+      : null
   })
 }
 function playTrackMidiNote(track, note, velocity = 0.85) {
@@ -2299,8 +2412,7 @@ function bindEditorEvents() {
     renderEditor()
   }))
   app.querySelectorAll('[data-library-instrument]').forEach((button)=>button.addEventListener('click',()=>{
-    studioLibraryState.selectedInstrumentId = button.dataset.libraryInstrument || ''
-    renderEditor()
+    assignStudioLibraryInstrument(button.dataset.libraryInstrument || '')
   }))
   app.querySelector('[data-library-retry]')?.addEventListener('click',()=>{
     studioLibraryState.loaded = false
