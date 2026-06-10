@@ -9,6 +9,7 @@ import {
   createCommunityComment,
   createCommunityPost,
   createCommunityStory,
+  deleteCommunityCommentAttachments,
   deleteCommunityStory,
   deleteCommunityComment,
   deleteOwnCommunityPost,
@@ -28,6 +29,7 @@ import {
   listShareableCommunityStagePlans,
   listShareableCommunityStudioProjects,
   newCommunityStoryId,
+  newCommunityCommentId,
   normalizeCommunityComment,
   normalizeCommunityPost,
   normalizeCommunityStory,
@@ -41,7 +43,9 @@ import {
   toggleCommunityPostLike,
   toggleCommunityPostSave,
   updateCommunityPost,
+  uploadCommunityCommentAttachments,
   uploadCommunityStoryMedia,
+  validateCommunityCommentAttachment,
   validateCommunityStoryMedia
 } from './data/communityService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -51,11 +55,6 @@ import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
 const COMMUNITY_PAGE_SIZE = 12
-const DUMMY_STORIES = [
-  { id: 'test1', label: 'test1', initials: 'T1' },
-  { id: 'test2', label: 'test2', initials: 'T2' },
-  { id: 'test3', label: 'test3', initials: 'T3' }
-]
 const COMPOSER_DRAFT_KEY = 'melogic-community-composer-draft-v2'
 const QUICK_EMOJIS = ['🔥', '🎧', '🎹', '🥁', '🎚️', '✨', '🙌', '💡', '🚀', '❤️', '🤘', '✅']
 const FEEDBACK_CATEGORIES = ['Mix', 'Master', 'Songwriting', 'Sound Design', 'Vocal Performance', 'Stage Layout', 'Product Listing', 'Other']
@@ -87,7 +86,8 @@ const state = {
   activeTab: 'for-you',
   activeCommunityId: '',
   activeCommunitySlug: '',
-  activeTopicLabel: 'For You',
+  activeTopicLabel: 'Home',
+  selectedCommunityFilters: [],
   activeTag: normalizeTagKey(parseFeedParam('tag')),
   feedSearch: parseFeedParam('search'),
   feedSort: ['new', 'top-today', 'top-week', 'most-discussed'].includes(parseFeedParam('sort')) ? parseFeedParam('sort') : 'new',
@@ -242,6 +242,9 @@ const state = {
   replySubmittingFor: '',
   replyErrors: {},
   replyComposerFor: '',
+  commentAttachmentDrafts: {},
+  commentAttachmentErrors: {},
+  commentAttachmentProgress: {},
   commentSubmitting: false,
   commentActionError: '',
   detailPostId: parseDetailPostId()
@@ -319,6 +322,7 @@ function feedQueryOptions() {
   return {
     tab: state.activeTab,
     communitySlug: state.view.type === 'community' && state.community ? state.community.slug : state.activeCommunitySlug,
+    communityIds: state.view.type === 'feed' && state.activeTab === 'for-you' ? state.selectedCommunityFilters.slice(0, 10) : [],
     limitCount: COMMUNITY_PAGE_SIZE,
     tag: state.activeTag,
     search: state.feedSearch,
@@ -620,7 +624,7 @@ function activeFeedTitle() {
   if (state.activeTab === 'community') return state.activeTopicLabel || 'Community'
   if (state.activeTab === 'official') return 'Official'
   if (state.activeTab === 'new') return 'New'
-  return 'For You'
+  return 'Home'
 }
 
 function filterPostsForActiveTab(posts = []) {
@@ -678,7 +682,7 @@ function visibleTopicCommunities() {
 function renderTopicBar() {
   const communities = visibleTopicCommunities()
   const communityPills = communities.map((community) => `
-      <button type="button" class="community-topic-pill ${state.activeTab === 'community' && state.activeCommunityId === community.communityId ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(community.communityId)}" data-topic-community-slug="${escapeHtml(community.slug)}" data-topic-community-label="${escapeHtml(community.name)}">
+      <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.includes(community.communityId) ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(community.communityId)}" aria-pressed="${state.selectedCommunityFilters.includes(community.communityId) ? 'true' : 'false'}">
         ${escapeHtml(community.name)}
       </button>
     `).join('')
@@ -687,7 +691,7 @@ function renderTopicBar() {
     <section class="community-topic-bar" aria-label="Community topics">
       <button type="button" class="community-topic-arrow is-left" data-topic-scroll="-1" aria-label="Scroll topics left">${iconSvg('arrowLeft')}</button>
       <div class="community-topic-scroll" data-community-topic-scroll>
-        <button type="button" class="community-topic-pill ${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
+        <button type="button" class="community-topic-pill ${state.activeTab === 'for-you' && !state.selectedCommunityFilters.length ? 'is-active' : ''}" data-community-tab="for-you">Home</button>
         <button type="button" class="community-topic-pill ${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Focused</button>
         <span class="community-topic-divider" aria-hidden="true"></span>
         ${communityPills}
@@ -699,12 +703,6 @@ function renderTopicBar() {
 
 function renderStoriesRow() {
   const hasOwnActiveStory = Boolean(state.currentUser?.uid && state.stories.some((story) => story.authorUid === state.currentUser.uid))
-  const placeholderItems = !state.stories.length ? DUMMY_STORIES.map((story) => `
-    <button type="button" class="community-story-item is-placeholder" data-story-coming-soon="${escapeHtml(story.label)}">
-      <span class="community-story-ring"><span class="community-story-avatar">${escapeHtml(story.initials)}</span></span>
-      <strong>${escapeHtml(story.label)}</strong>
-    </button>
-  `).join('') : ''
   const realStoryItems = state.stories.slice(0, 12).map((story) => `
     <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
       <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
@@ -720,8 +718,13 @@ function renderStoriesRow() {
         <span class="community-story-ring"><span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span></span>
         <strong>${hasOwnActiveStory ? 'Add Story' : 'Your Story'}</strong>
       </button>
-      ${placeholderItems}
       ${realStoryItems}
+      ${!state.storiesLoading && !state.storiesError && !state.stories.length ? `
+        <div class="community-story-empty-state">
+          <span>No Stories Yet</span>
+          <button type="button" data-open-story-composer>Be the first</button>
+        </div>
+      ` : ''}
       ${state.storiesLoading ? '<span class="community-story-empty">Loading stories...</span>' : ''}
       ${state.storiesError ? `<span class="community-story-empty">${escapeHtml(state.storiesError)}</span>` : ''}
     </section>
@@ -1513,7 +1516,8 @@ function renderTopCommentPreview(post = {}) {
         </a>
         ${renderCommentOptionsMenu(comment, { postId: post.postId })}
       </header>
-      <p class="community-comment-body">${escapeHtml(comment.body)}</p>
+      ${comment.body ? `<p class="community-comment-body">${escapeHtml(comment.body)}</p>` : ''}
+      ${renderCommentAttachments(comment, { compact: true })}
       <div class="community-top-comment-meta" aria-label="Comment engagement">
         <span>${iconSvg('thumbsUp')} ${formatCount(comment.likeCount)}</span>
         <span>${iconSvg('thumbsDown')} ${formatCount(comment.dislikeCount)}</span>
@@ -1571,6 +1575,53 @@ function postCard(post, { detail = false } = {}) {
   `
 }
 
+function commentComposerKey(parentCommentId = '') {
+  return String(parentCommentId || '').trim() || 'root'
+}
+
+function commentAttachmentDrafts(parentCommentId = '') {
+  return state.commentAttachmentDrafts[commentComposerKey(parentCommentId)] || []
+}
+
+function renderCommentAttachmentDrafts(parentCommentId = '') {
+  const items = commentAttachmentDrafts(parentCommentId)
+  if (!items.length) return ''
+  return `
+    <div class="community-comment-attachment-drafts">
+      ${items.map((item) => `
+        <article>
+          ${item.type === 'image' && item.previewURL ? `<img src="${escapeHtml(item.previewURL)}" alt="" />` : `<span>${iconSvg(item.type === 'audio' ? 'music' : 'fileText')}</span>`}
+          <div>
+            <strong>${escapeHtml(item.file?.name || 'Attachment')}</strong>
+            <small>${escapeHtml(item.type)} · ${formatCount(Math.ceil(Number(item.file?.size || 0) / 1024))} KB</small>
+          </div>
+          <button type="button" data-remove-comment-attachment="${escapeHtml(item.id)}" data-comment-parent-id="${escapeHtml(parentCommentId)}" aria-label="Remove attachment">${iconSvg('x')}</button>
+        </article>
+      `).join('')}
+    </div>
+  `
+}
+
+function renderCommentAttachments(comment = {}, { compact = false } = {}) {
+  const attachments = Array.isArray(comment.attachments) ? comment.attachments : []
+  if (!attachments.length) return ''
+  return `
+    <div class="community-comment-attachments ${compact ? 'is-compact' : ''}">
+      ${attachments.map((attachment) => {
+        if (attachment.type === 'image' && attachment.url) {
+          return `<a class="community-comment-image" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer"><img src="${escapeHtml(attachment.url)}" alt="${escapeHtml(attachment.name || 'Comment image')}" loading="lazy" /></a>`
+        }
+        if (attachment.type === 'audio' && attachment.url) {
+          return `<div class="community-comment-audio"><strong>${escapeHtml(attachment.name || 'Audio attachment')}</strong><audio controls preload="none" src="${escapeHtml(attachment.url)}"></audio></div>`
+        }
+        return attachment.url
+          ? `<a class="community-comment-file" href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener noreferrer">${iconSvg('fileText')}<span><strong>${escapeHtml(attachment.name || 'Project attachment')}</strong><small>Open project file</small></span></a>`
+          : `<div class="community-comment-file is-unavailable">${iconSvg('fileText')}<span><strong>${escapeHtml(attachment.name || 'Attachment')}</strong><small>Attachment unavailable</small></span></div>`
+      }).join('')}
+    </div>
+  `
+}
+
 function renderCommentComposer({ parentCommentId = '' } = {}) {
   if (!state.currentUser) {
     return `
@@ -1583,7 +1634,9 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
   const isReply = Boolean(parentCommentId)
   const body = isReply ? state.replyDrafts[parentCommentId] || '' : state.commentDraft
   const isSubmitting = isReply ? state.replySubmittingFor === parentCommentId : state.commentSubmitting
-  const localError = isReply ? state.replyErrors[parentCommentId] || '' : ''
+  const composerKey = commentComposerKey(parentCommentId)
+  const localError = (isReply ? state.replyErrors[parentCommentId] || '' : state.commentActionError || '') || state.commentAttachmentErrors[composerKey] || ''
+  const progress = Number(state.commentAttachmentProgress[composerKey] || 0)
   return `
     <form class="community-comment-composer" ${isReply ? `data-community-reply-form="${escapeHtml(parentCommentId)}"` : 'data-community-comment-form'}>
       <div class="community-comment-composer-row">
@@ -1594,12 +1647,17 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
         </label>
         <button type="submit" class="button button-accent" ${isSubmitting ? 'disabled' : ''}>${isSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post'}</button>
       </div>
+      ${renderCommentAttachmentDrafts(parentCommentId)}
       ${localError ? `<p class="community-error">${escapeHtml(localError)}</p>` : ''}
+      ${isSubmitting && commentAttachmentDrafts(parentCommentId).length ? `<p class="community-comment-upload-state">Uploading attachments ${Math.round(progress)}%</p>` : ''}
       <div class="community-comment-tool-row" aria-label="Comment attachments">
-        <button type="button" disabled title="Image comments are coming soon.">${iconSvg('image')} <span>Image</span></button>
-        <button type="button" disabled title="Music comments are coming soon.">${iconSvg('music')} <span>Music</span></button>
-        <button type="button" disabled title="Project comments are coming soon.">${iconSvg('cube')} <span>Project</span></button>
+        <button type="button" data-add-comment-attachment="image" data-comment-parent-id="${escapeHtml(parentCommentId)}" ${isSubmitting ? 'disabled' : ''}>${iconSvg('image')} <span>Image</span></button>
+        <button type="button" data-add-comment-attachment="audio" data-comment-parent-id="${escapeHtml(parentCommentId)}" ${isSubmitting ? 'disabled' : ''}>${iconSvg('music')} <span>Music</span></button>
+        <button type="button" data-add-comment-attachment="project" data-comment-parent-id="${escapeHtml(parentCommentId)}" ${isSubmitting ? 'disabled' : ''}>${iconSvg('cube')} <span>Project</span></button>
         <button type="button" disabled title="Comment emoji picker is coming soon.">${iconSvg('smile')} <span>Emoji</span></button>
+        <input type="file" hidden data-comment-attachment-input="image" data-comment-parent-id="${escapeHtml(parentCommentId)}" accept="image/*" multiple />
+        <input type="file" hidden data-comment-attachment-input="audio" data-comment-parent-id="${escapeHtml(parentCommentId)}" accept="audio/*" multiple />
+        <input type="file" hidden data-comment-attachment-input="project" data-comment-parent-id="${escapeHtml(parentCommentId)}" accept=".json,.zip,.mid,.midi,.als,.flp,.logicx,.ptx,application/json,application/zip,application/octet-stream,audio/midi,audio/x-midi" multiple />
       </div>
       <div class="community-comment-form-actions is-quiet">
         <span>${Math.max(0, 2000 - body.length)} characters left</span>
@@ -1691,6 +1749,12 @@ function resetActivePostComments(postId = state.detailPostId) {
   Object.keys(state.repliesByCommentId || {}).forEach((commentId) => {
     delete state.repliesByCommentId[commentId]
   })
+  Object.values(state.commentAttachmentDrafts || {}).flat().forEach((item) => {
+    if (item?.previewURL) URL.revokeObjectURL(item.previewURL)
+  })
+  state.commentAttachmentDrafts = {}
+  state.commentAttachmentErrors = {}
+  state.commentAttachmentProgress = {}
   resetCommentPaginationState()
 }
 
@@ -1723,7 +1787,8 @@ function commentCard(comment, replies = []) {
         </a>
         ${renderCommentOptionsMenu(comment, { postId: state.detailPostId })}
       </header>
-      <p class="community-comment-body">${escapeHtml(comment.body)}</p>
+      ${comment.body ? `<p class="community-comment-body">${escapeHtml(comment.body)}</p>` : ''}
+      ${renderCommentAttachments(comment)}
       <footer class="community-comment-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-comment-like="${escapeHtml(comment.commentId)}">${iconSvg('thumbsUp')} <span>${formatCount(comment.likeCount)}</span></button>
         <button type="button" class="${viewer.disliked ? 'is-active' : ''}" data-community-comment-dislike="${escapeHtml(comment.commentId)}">${iconSvg('thumbsDown')} <span>${formatCount(comment.dislikeCount)}</span></button>
@@ -1919,7 +1984,7 @@ function renderActiveCommunityTabContent() {
       description: 'Community account preferences and identity controls will be collected here.'
     })
   }
-  return `${renderFeedToolbar()}${renderFeed()}`
+  return `${renderFeedToolbar()}<div data-community-feed-region>${renderFeed()}</div>`
 }
 
 function renderCommunityCard(community) {
@@ -2063,8 +2128,7 @@ function renderLeftNav() {
     {
       label: 'Public',
       items: [
-        { label: 'Home', icon: 'home', href: ROUTES.community },
-        { label: 'For You', icon: 'star', tab: 'for-you', active: state.activeTab === 'for-you' },
+        { label: 'Home', icon: 'home', href: ROUTES.community, active: state.activeTab === 'for-you' && state.view.type === 'feed' },
         { label: 'Forms', icon: 'fileText', tab: 'forms', active: state.activeTab === 'forms' },
         { label: 'Communities', icon: 'folder', href: ROUTES.communityCommunities, active: state.view.type === 'communities' },
         { label: 'DAW Projects', icon: 'music', tab: 'studio-projects', active: state.activeTab === 'studio-projects' },
@@ -2491,7 +2555,7 @@ async function loadTopCommentPreviews() {
   }))
 }
 
-async function loadFeedEnrichment(requestId = state.feedRequestId) {
+async function loadFeedEnrichment(requestId = state.feedRequestId, { localOnly = false } = {}) {
   const startedAt = performance.now()
   await Promise.allSettled([
     loadViewerState(),
@@ -2500,7 +2564,8 @@ async function loadFeedEnrichment(requestId = state.feedRequestId) {
   ])
   if (requestId !== state.feedRequestId) return
   logCommunityPerf('feed enrichment complete', { durationMs: Math.round(performance.now() - startedAt), posts: state.posts.length })
-  render()
+  if (localOnly) renderFeedRegionOnly()
+  else render()
 }
 
 async function loadStories({ renderAfter = false } = {}) {
@@ -2716,7 +2781,20 @@ function mergeUniquePosts(existing = [], incoming = []) {
   return [...byId.values()]
 }
 
-async function loadFeedPage({ reset = false } = {}) {
+function renderFeedRegionOnly() {
+  const region = app?.querySelector('[data-community-feed-region]')
+  if (!region) {
+    render()
+    return
+  }
+  closePostMenusDom()
+  closeCommentMenusDom()
+  region.innerHTML = renderFeed()
+  bindFeedRegionEvents(region)
+  setupFeedPaginationObserver()
+}
+
+async function loadFeedPage({ reset = false, localOnly = false } = {}) {
   if (reset) resetFeedPagination()
   if (!reset && (!state.feedHasMore || state.feedLoadingMore || state.feedInitialLoading)) return
   const requestId = reset ? state.feedRequestId + 1 : state.feedRequestId
@@ -2732,14 +2810,16 @@ async function loadFeedPage({ reset = false } = {}) {
     state.feedLoadingMore = true
   }
   state.loading = false
-  render()
+  if (localOnly) renderFeedRegionOnly()
+  else render()
 
   let stillLoadingTimer = null
   if (reset) {
     stillLoadingTimer = window.setTimeout(() => {
       if (state.feedRequestId === requestId && state.feedInitialLoading) {
         state.feedStillLoading = true
-        render()
+        if (localOnly) renderFeedRegionOnly()
+        else render()
       }
     }, 5000)
   }
@@ -2784,8 +2864,9 @@ async function loadFeedPage({ reset = false } = {}) {
     state.feedInitialLoading = false
     state.feedLoadingMore = false
     state.feedStillLoading = false
-    render()
-    loadFeedEnrichment(requestId).catch(() => null)
+    if (localOnly) renderFeedRegionOnly()
+    else render()
+    loadFeedEnrichment(requestId, { localOnly }).catch(() => null)
   }
 }
 
@@ -3444,6 +3525,69 @@ function updateDetailCommentCount(delta = 0, absoluteValue = null) {
   updatePostCounts(post.postId, { comments: next })
 }
 
+function addCommentAttachmentFiles(parentCommentId = '', files = []) {
+  const key = commentComposerKey(parentCommentId)
+  const existing = commentAttachmentDrafts(parentCommentId)
+  const next = [...existing]
+  state.commentAttachmentErrors[key] = ''
+  for (const file of Array.from(files || [])) {
+    if (next.length >= 3) {
+      state.commentAttachmentErrors[key] = 'Comments can include up to 3 attachments.'
+      break
+    }
+    try {
+      const { type } = validateCommunityCommentAttachment(file)
+      next.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type,
+        file,
+        previewURL: type === 'image' ? URL.createObjectURL(file) : ''
+      })
+    } catch (error) {
+      state.commentAttachmentErrors[key] = error?.message || 'This attachment is not supported.'
+    }
+  }
+  state.commentAttachmentDrafts[key] = next
+  renderCommentState()
+}
+
+function removeCommentAttachment(parentCommentId = '', attachmentId = '') {
+  const key = commentComposerKey(parentCommentId)
+  const existing = commentAttachmentDrafts(parentCommentId)
+  const removed = existing.find((item) => item.id === attachmentId)
+  if (removed?.previewURL) URL.revokeObjectURL(removed.previewURL)
+  state.commentAttachmentDrafts[key] = existing.filter((item) => item.id !== attachmentId)
+  state.commentAttachmentErrors[key] = ''
+  renderCommentState()
+}
+
+function clearCommentAttachmentDrafts(parentCommentId = '') {
+  const key = commentComposerKey(parentCommentId)
+  commentAttachmentDrafts(parentCommentId).forEach((item) => {
+    if (item.previewURL) URL.revokeObjectURL(item.previewURL)
+  })
+  delete state.commentAttachmentDrafts[key]
+  delete state.commentAttachmentErrors[key]
+  delete state.commentAttachmentProgress[key]
+}
+
+async function uploadCommentDraftAttachments(parentCommentId = '', commentId = '') {
+  const key = commentComposerKey(parentCommentId)
+  const drafts = commentAttachmentDrafts(parentCommentId)
+  if (!drafts.length) return []
+  return uploadCommunityCommentAttachments({
+    uid: state.currentUser?.uid || '',
+    postId: state.detailPostId,
+    commentId,
+    files: drafts.map((item) => item.file),
+    onProgress: (progress) => {
+      state.commentAttachmentProgress[key] = progress
+      const status = app?.querySelector(`[data-community-${parentCommentId ? 'reply' : 'comment'}-form${parentCommentId ? `="${communityCssEscape(parentCommentId)}"` : ''}] .community-comment-upload-state`)
+      if (status) status.textContent = `Uploading attachments ${Math.round(progress)}%`
+    }
+  })
+}
+
 async function handleCommentSubmit(event) {
   event.preventDefault()
   if (state.commentSubmitting) return
@@ -3454,19 +3598,28 @@ async function handleCommentSubmit(event) {
   }
   const formData = new FormData(event.currentTarget)
   const body = String(formData.get('body') || '').trim()
+  const drafts = commentAttachmentDrafts()
   state.commentDraft = body
   state.commentActionError = ''
-  if (!body) {
-    state.commentActionError = 'Comment body is required.'
+  if (!body && !drafts.length) {
+    state.commentActionError = 'Add text or an attachment to this comment.'
     renderCommentState()
     return
   }
   state.commentSubmitting = true
   renderCommentState()
+  let attachments = []
   try {
-    const tempId = `comment:${state.detailPostId}:${Date.now()}`
-    const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, body }))
-    const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
+    const commentId = newCommunityCommentId(state.detailPostId)
+    attachments = await uploadCommentDraftAttachments('', commentId)
+    const actionId = `comment:${state.detailPostId}:${commentId}`
+    const result = await trackCommunityAction(actionId, createCommunityComment({
+      postId: state.detailPostId,
+      commentId,
+      body,
+      attachments: attachments.map(({ type, name, path, size, contentType }) => ({ type, name, path, size, contentType }))
+    }))
+    const comment = normalizeCommunityComment({ ...(result.comment || {}), attachments }, result.commentId)
     const page = commentsPageFor(state.detailPostId)
     page.items = mergeCommentsById((page.items || []).filter((item) => item.commentId !== comment.commentId), [comment])
     page.loaded = true
@@ -3474,12 +3627,15 @@ async function handleCommentSubmit(event) {
     state.commentViewerState[comment.commentId] = { liked: false, disliked: false }
     state.commentDraft = ''
     state.commentSubmitting = false
+    clearCommentAttachmentDrafts()
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
     else updateDetailCommentCount(1)
     renderCommentState()
   } catch (error) {
     console.warn('[community] create comment failed', { code: error?.code, message: error?.message, details: error?.details })
+    await deleteCommunityCommentAttachments(attachments)
     state.commentSubmitting = false
+    state.commentAttachmentProgress.root = 0
     state.commentActionError = error?.message || 'Could not post this comment.'
     renderCommentState()
   }
@@ -3495,20 +3651,30 @@ async function handleReplySubmit(event, parentCommentId = '') {
   }
   const formData = new FormData(event.currentTarget)
   const body = String(formData.get('body') || '').trim()
+  const drafts = commentAttachmentDrafts(parentCommentId)
   state.replyDrafts = { ...state.replyDrafts, [parentCommentId]: body }
   state.replyErrors = { ...state.replyErrors, [parentCommentId]: '' }
   state.commentActionError = ''
-  if (!body) {
-    state.replyErrors = { ...state.replyErrors, [parentCommentId]: 'Reply body is required.' }
+  if (!body && !drafts.length) {
+    state.replyErrors = { ...state.replyErrors, [parentCommentId]: 'Add text or an attachment to this reply.' }
     renderCommentState()
     return
   }
   state.replySubmittingFor = parentCommentId
   renderCommentState()
+  let attachments = []
   try {
-    const tempId = `comment:${state.detailPostId}:${parentCommentId}:${Date.now()}`
-    const result = await trackCommunityAction(tempId, createCommunityComment({ postId: state.detailPostId, parentCommentId, body }))
-    const comment = normalizeCommunityComment(result.comment || {}, result.commentId)
+    const commentId = newCommunityCommentId(state.detailPostId)
+    attachments = await uploadCommentDraftAttachments(parentCommentId, commentId)
+    const actionId = `comment:${state.detailPostId}:${parentCommentId}:${commentId}`
+    const result = await trackCommunityAction(actionId, createCommunityComment({
+      postId: state.detailPostId,
+      commentId,
+      parentCommentId,
+      body,
+      attachments: attachments.map(({ type, name, path, size, contentType }) => ({ type, name, path, size, contentType }))
+    }))
+    const comment = normalizeCommunityComment({ ...(result.comment || {}), attachments }, result.commentId)
     const replyPage = repliesPageFor(parentCommentId)
     replyPage.expanded = true
     replyPage.loaded = true
@@ -3519,13 +3685,16 @@ async function handleReplySubmit(event, parentCommentId = '') {
     state.replyErrors = { ...state.replyErrors, [parentCommentId]: '' }
     state.replyComposerFor = ''
     state.replySubmittingFor = ''
+    clearCommentAttachmentDrafts(parentCommentId)
     updateCommentCount(parentCommentId, { replyCount: (findLoadedComment(parentCommentId)?.replyCount || 0) + 1 })
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
     else updateDetailCommentCount(1)
     renderCommentState()
   } catch (error) {
     console.warn('[community] create reply failed', { code: error?.code, message: error?.message, details: error?.details })
+    await deleteCommunityCommentAttachments(attachments)
     state.replySubmittingFor = ''
+    state.commentAttachmentProgress[commentComposerKey(parentCommentId)] = 0
     state.replyErrors = { ...state.replyErrors, [parentCommentId]: error?.message || 'Could not post this reply.' }
     renderCommentState()
   }
@@ -4068,22 +4237,43 @@ function selectTopicTab(tab = 'for-you') {
   state.activeTab = supportedTabs.has(tab) ? tab : 'for-you'
   state.activeCommunityId = ''
   state.activeCommunitySlug = ''
+  if (state.activeTab === 'for-you' && state.view.type === 'feed') {
+    state.selectedCommunityFilters = []
+    state.activeTopicLabel = 'Home'
+    app?.querySelectorAll('[data-topic-community-id]').forEach((button) => {
+      button.classList.remove('is-active')
+      button.setAttribute('aria-pressed', 'false')
+    })
+    app?.querySelector('[data-community-tab="for-you"]')?.classList.add('is-active')
+    loadFeedPage({ reset: true, localOnly: true })
+    return
+  }
   state.activeTopicLabel = activeFeedTitle()
   loadCommunity()
 }
 
-function selectTopicCommunity({ communityId = '', slug = '', label = '' } = {}) {
-  if (slug) {
-    if (!confirmCommunityNavigation()) return
-    window.location.assign(communityRoute(slug))
+function selectTopicCommunity({ communityId = '' } = {}) {
+  const cleanId = String(communityId || '').trim()
+  if (!cleanId || state.view.type !== 'feed') return
+  const selected = new Set(state.selectedCommunityFilters)
+  if (selected.has(cleanId)) selected.delete(cleanId)
+  else if (selected.size < 10) selected.add(cleanId)
+  else {
+    showCommunityToast('Choose up to 10 community filters at a time.')
     return
   }
-  state.activeTab = 'community'
-  state.activeCommunityId = communityId
-  state.activeCommunitySlug = slug
-  state.activeTopicLabel = label || slug || 'Community'
-  state.composer = { ...state.composer, communityId }
-  loadCommunity()
+  state.activeTab = 'for-you'
+  state.activeCommunityId = ''
+  state.activeCommunitySlug = ''
+  state.selectedCommunityFilters = [...selected]
+  app?.querySelectorAll('[data-topic-community-id]').forEach((button) => {
+    const active = selected.has(button.getAttribute('data-topic-community-id') || '')
+    button.classList.toggle('is-active', active)
+    button.setAttribute('aria-pressed', active ? 'true' : 'false')
+  })
+  const homeButton = app?.querySelector('[data-community-tab="for-you"]')
+  homeButton?.classList.toggle('is-active', selected.size === 0)
+  loadFeedPage({ reset: true, localOnly: true })
 }
 
 function updateTopicArrowState() {
@@ -4205,7 +4395,7 @@ function setupFeedPaginationObserver() {
   if (!sentinel || !state.feedHasMore || state.feedInitialLoading || state.feedLoadingMore) return
   if (!('IntersectionObserver' in window)) return
   feedPaginationObserver = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) loadFeedPage({ reset: false })
+    if (entries.some((entry) => entry.isIntersecting)) loadFeedPage({ reset: false, localOnly: true })
   }, { rootMargin: '640px 0px 640px 0px' })
   feedPaginationObserver.observe(sentinel)
 }
@@ -4585,6 +4775,22 @@ function bindCommentOptionTriggers(root = app) {
 function bindCommentEvents(root = app) {
   if (!root) return
   bindCommentOptionTriggers(root)
+  root.querySelectorAll('[data-add-comment-attachment]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    const type = button.getAttribute('data-add-comment-attachment') || ''
+    const parentCommentId = button.getAttribute('data-comment-parent-id') || ''
+    root.querySelector(`[data-comment-attachment-input="${communityCssEscape(type)}"][data-comment-parent-id="${communityCssEscape(parentCommentId)}"]`)?.click()
+  }))
+  root.querySelectorAll('[data-comment-attachment-input]').forEach((input) => input.addEventListener('change', () => {
+    addCommentAttachmentFiles(input.getAttribute('data-comment-parent-id') || '', input.files || [])
+  }))
+  root.querySelectorAll('[data-remove-comment-attachment]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    removeCommentAttachment(
+      button.getAttribute('data-comment-parent-id') || '',
+      button.getAttribute('data-remove-comment-attachment') || ''
+    )
+  }))
   root.querySelector('[data-community-comment-form]')?.addEventListener('submit', handleCommentSubmit)
   root.querySelector('[data-load-more-comments]')?.addEventListener('click', (event) => {
     event.preventDefault()
@@ -4638,9 +4844,9 @@ function bindCommentEvents(root = app) {
   }))
 }
 
-function bindEvents() {
-  setupCommunityPendingLeaveWarning()
-  app.querySelectorAll('.community-post-card[data-post-id]:not(.is-detail)').forEach((card) => {
+function bindFeedRegionEvents(root = app) {
+  if (!root) return
+  root.querySelectorAll('.community-post-card[data-post-id]:not(.is-detail)').forEach((card) => {
     card.addEventListener('click', (event) => {
       if (isPostCardInteractiveTarget(event.target)) return
       openPostDetail(card.getAttribute('data-post-id') || '')
@@ -4652,22 +4858,69 @@ function bindEvents() {
       openPostDetail(card.getAttribute('data-post-id') || '')
     })
   })
-  app.querySelectorAll('.community-post-card a, .community-post-card button, .community-post-card input, .community-post-card textarea, .community-post-card select, .community-post-card label').forEach((element) => {
+  root.querySelectorAll('.community-post-card a, .community-post-card button, .community-post-card input, .community-post-card textarea, .community-post-card select, .community-post-card label').forEach((element) => {
     element.addEventListener('click', (event) => event.stopPropagation())
   })
-  app.querySelectorAll('[data-toggle-post-menu]').forEach((button) => {
+  root.querySelectorAll('[data-toggle-post-menu]').forEach((button) => {
     button.addEventListener('click', (event) => {
       stopCommunityActionEvent(event)
       togglePostMenuDom(button.getAttribute('data-toggle-post-menu') || '')
     })
   })
-  bindHistoryWidgetEvents(app)
-  app.querySelectorAll('[data-copy-post-link]').forEach((button) => {
+  root.querySelectorAll('[data-copy-post-link]').forEach((button) => {
     button.addEventListener('click', (event) => {
       stopCommunityActionEvent(event)
       copyPostLink(button.getAttribute('data-copy-post-link') || '')
     })
   })
+  root.querySelectorAll('[data-community-tag]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      selectTagFilter(button.getAttribute('data-community-tag') || '')
+    })
+  })
+  root.querySelector('[data-load-more-posts]')?.addEventListener('click', () => loadFeedPage({ reset: false, localOnly: true }))
+  root.querySelectorAll('[data-open-community-composer]').forEach((button) => button.addEventListener('click', openCommunityComposer))
+  root.querySelector('[data-reload-community]')?.addEventListener('click', () => loadFeedPage({ reset: true, localOnly: true }))
+  root.querySelectorAll('[data-community-like]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleLike(button.getAttribute('data-community-like'))
+  }))
+  root.querySelectorAll('[data-community-dislike]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleDislike(button.getAttribute('data-community-dislike'))
+  }))
+  root.querySelectorAll('[data-community-save]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleSave(button.getAttribute('data-community-save'))
+  }))
+  root.querySelectorAll('[data-community-share]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleShare(button.getAttribute('data-community-share'))
+  }))
+  root.querySelectorAll('[data-scroll-comments]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    app.querySelector('#comments')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+  }))
+  root.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    openReport(button.getAttribute('data-community-report'))
+  }))
+  root.querySelectorAll('[data-community-delete-post]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleDeleteOwnPost(button.getAttribute('data-community-delete-post') || '')
+  }))
+  root.querySelectorAll('[data-community-edit-post]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    openEditPost(button.getAttribute('data-community-edit-post') || '')
+  }))
+  bindCommentEvents(root)
+}
+
+function bindEvents() {
+  setupCommunityPendingLeaveWarning()
+  bindFeedRegionEvents(app)
+  bindHistoryWidgetEvents(app)
   setupCommunityOutsideClick()
   app.querySelectorAll('[data-community-tab]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -4690,18 +4943,10 @@ function bindEvents() {
     updateFeedUrlParams()
     loadCommunity()
   })
-  app.querySelectorAll('[data-community-tag]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      stopCommunityActionEvent(event)
-      selectTagFilter(button.getAttribute('data-community-tag') || '')
-    })
-  })
   app.querySelectorAll('[data-topic-community-id]').forEach((button) => {
     button.addEventListener('click', () => {
       selectTopicCommunity({
-        communityId: button.getAttribute('data-topic-community-id') || '',
-        slug: button.getAttribute('data-topic-community-slug') || '',
-        label: button.getAttribute('data-topic-community-label') || ''
+        communityId: button.getAttribute('data-topic-community-id') || ''
       })
     })
   })
@@ -4719,15 +4964,10 @@ function bindEvents() {
   setupCommunityRailResize()
   updateTopicArrowState()
   updateCommunityRailFadeState()
-  app.querySelector('[data-load-more-posts]')?.addEventListener('click', () => loadFeedPage({ reset: false }))
   setupCommunityScrollChrome()
   setupCommunityKeyboardShortcuts()
   setupFeedPaginationObserver()
-  app.querySelectorAll('[data-open-community-composer]').forEach((button) => button.addEventListener('click', openCommunityComposer))
   app.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
-  app.querySelectorAll('[data-story-coming-soon]').forEach((button) => {
-    button.addEventListener('click', () => showCommunityToast('Story placeholders will be replaced as creators publish.'))
-  })
   app.querySelectorAll('[data-open-story-composer]').forEach((button) => button.addEventListener('click', openStoryComposer))
   app.querySelectorAll('[data-community-nav-stub]').forEach((button) => {
     button.addEventListener('click', () => showCommunityToast(`${button.getAttribute('data-community-nav-stub')} is coming in a later community pass.`))
@@ -4857,7 +5097,6 @@ function bindEvents() {
   app.querySelector('[data-mention-search]')?.addEventListener('input', (event) => queueMentionSearch(event.target.value))
   app.querySelectorAll('[data-select-mentioned-user]').forEach((button) => button.addEventListener('click', () => selectMentionedUser(button.getAttribute('data-select-mentioned-user') || '')))
   app.querySelectorAll('[data-remove-mentioned-user]').forEach((button) => button.addEventListener('click', () => removeMentionedUser(button.getAttribute('data-remove-mentioned-user') || '')))
-  app.querySelector('[data-reload-community]')?.addEventListener('click', loadCommunity)
   app.querySelector('[data-community-search]')?.addEventListener('input', (event) => {
     state.communityFilters.search = event.target.value
     window.clearTimeout(state.communitySearchTimer)
@@ -4871,42 +5110,8 @@ function bindEvents() {
     stopCommunityActionEvent(event)
     handleToggleFocus(button.getAttribute('data-toggle-community-focus'))
   }))
-  app.querySelectorAll('[data-community-like]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleLike(button.getAttribute('data-community-like'))
-  }))
-  app.querySelectorAll('[data-community-dislike]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleDislike(button.getAttribute('data-community-dislike'))
-  }))
-  app.querySelectorAll('[data-community-save]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleSave(button.getAttribute('data-community-save'))
-  }))
-  app.querySelectorAll('[data-community-share]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleShare(button.getAttribute('data-community-share'))
-  }))
-  app.querySelectorAll('[data-scroll-comments]').forEach((button) => button.addEventListener('click', (event) => {
-    event.preventDefault()
-    event.stopPropagation()
-    app.querySelector('#comments')?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
-  }))
-  app.querySelectorAll('[data-community-report]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    openReport(button.getAttribute('data-community-report'))
-  }))
-  app.querySelectorAll('[data-community-delete-post]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleDeleteOwnPost(button.getAttribute('data-community-delete-post') || '')
-  }))
-  app.querySelectorAll('[data-community-edit-post]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    openEditPost(button.getAttribute('data-community-edit-post') || '')
-  }))
   app.querySelector('[data-community-edit-post-form]')?.addEventListener('submit', handleEditPostSubmit)
   app.querySelectorAll('[data-close-edit-post]').forEach((button) => button.addEventListener('click', closeEditPostModal))
-  bindCommentEvents(app)
   app.querySelectorAll('[data-close-community-report]').forEach((button) => {
     button.addEventListener('click', () => {
       state.report = { ...state.report, open: false, submitting: false, error: '' }

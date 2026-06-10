@@ -72,6 +72,13 @@ function serializeComment(comment = {}, id = '') {
     replyCount: Math.max(0, Number(comment.replyCount || 0)),
     likeCount: Math.max(0, Number(comment.likeCount || 0)),
     dislikeCount: Math.max(0, Number(comment.dislikeCount || 0)),
+    attachments: Array.isArray(comment.attachments) ? comment.attachments.slice(0, 3).map((attachment) => ({
+      type: cleanString(attachment?.type || 'file', 20),
+      name: cleanString(attachment?.name || 'Attachment', 180),
+      path: cleanString(attachment?.path || '', 700),
+      size: Math.max(0, Number(attachment?.size || 0)),
+      contentType: cleanString(attachment?.contentType || '', 120)
+    })) : [],
     status: comment.status || 'visible',
     createdAt: serializeDate(comment.createdAt),
     updatedAt: serializeDate(comment.updatedAt)

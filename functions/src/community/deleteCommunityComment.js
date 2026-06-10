@@ -48,6 +48,7 @@ const deleteCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
     tx.set(commentRef, {
       status: comment.authorUid === uid ? 'deleted_by_author' : 'hidden_by_moderator',
       body: '',
+      attachments: [],
       deletedAt: now,
       deletedBy: uid,
       updatedAt: now
