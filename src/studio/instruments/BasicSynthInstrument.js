@@ -63,6 +63,10 @@ export class BasicSynthInstrument {
       unisonBlend: clamp(params.unisonBlend ?? 1, 0, 1),
       phase: clamp(params.phase ?? 0, 0, 1),
       phaseRandom: clamp(params.phaseRandom ?? 0.15, 0, 1),
+      pitchBend: clamp(params.pitchBend ?? 0, -1, 1),
+      pitchFine: clamp(params.pitchFine ?? 0, 0, 10),
+      modulation: clamp(params.modulation ?? 0, -1, 1),
+      modFine: clamp(params.modFine ?? 0, 0, 10),
       oscLevel: clamp(params.oscLevel ?? 0.85, 0, 1),
       oscPan: clamp(params.oscPan ?? 0, -1, 1),
       filterEnabled: params.filterEnabled === true || params.filterEnabled === 'true',
@@ -139,7 +143,7 @@ export class BasicSynthInstrument {
     const lfo = this.createLfo()
     const oscillators = []
     const unison = this.params.unisonVoices
-    const baseFrequency = midiToFrequency(midi + (this.params.octave * 12) + this.params.coarsePitch)
+    const baseFrequency = midiToFrequency(midi + (this.params.octave * 12) + this.params.coarsePitch + (this.params.pitchBend * 2))
     envelope.gain.setValueAtTime(0.0001, now)
     envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, velocityGain), now + this.params.attack)
     envelope.gain.linearRampToValueAtTime(Math.max(0.0001, this.params.sustain * velocityGain), now + this.params.attack + this.params.decay)
@@ -154,7 +158,7 @@ export class BasicSynthInstrument {
       const spread = unison === 1 ? 0 : index - ((unison - 1) / 2)
       oscillator.melogicSpread = spread
       oscillator.frequency.setValueAtTime(baseFrequency, now)
-      oscillator.detune.setValueAtTime(this.params.finePitch + (spread * this.params.detune * 28), now)
+      oscillator.detune.setValueAtTime(this.params.finePitch + this.params.pitchFine + (spread * this.params.detune * 28), now)
       if (lfo && lfo.target === 'pitch') lfo.gain.connect(oscillator.detune)
       oscillator.connect(voiceGain)
       oscillator.start(now)
@@ -225,11 +229,11 @@ export class BasicSynthInstrument {
       if (['wavetableId', 'wavetablePosition'].includes(name)) {
         voice.oscillators.forEach((oscillator) => oscillator.setPeriodicWave(this.getPeriodicWave()))
       }
-      if (['octave', 'coarsePitch', 'finePitch', 'detune'].includes(name)) {
-        const baseFrequency = midiToFrequency((voice.midi ?? 60) + (this.params.octave * 12) + this.params.coarsePitch)
+      if (['octave', 'coarsePitch', 'finePitch', 'detune', 'pitchBend', 'pitchFine'].includes(name)) {
+        const baseFrequency = midiToFrequency((voice.midi ?? 60) + (this.params.octave * 12) + this.params.coarsePitch + (this.params.pitchBend * 2))
         voice.oscillators.forEach((oscillator) => {
           oscillator.frequency.setTargetAtTime(baseFrequency, now, 0.02)
-          oscillator.detune.setTargetAtTime(this.params.finePitch + ((oscillator.melogicSpread || 0) * this.params.detune * 28), now, 0.02)
+          oscillator.detune.setTargetAtTime(this.params.finePitch + this.params.pitchFine + ((oscillator.melogicSpread || 0) * this.params.detune * 28), now, 0.02)
         })
       }
       if (name === 'oscLevel') voice.voiceGain.gain.setTargetAtTime(this.params.oscLevel / Math.max(1, this.params.unisonVoices), now, 0.015)

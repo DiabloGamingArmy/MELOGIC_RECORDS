@@ -888,3 +888,22 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 }
 @media (max-width:1100px){.studio-stage-template-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:720px){.studio-stage-template-grid{grid-template-columns:1fr}.studio-type-heading{display:grid}.studio-hub-cta{width:100%}.studio-demo-type .studio-card-grid{grid-template-columns:1fr}}
+
+/* DAW instrument ownership and precision controls */
+.studio-right-rail-subtools:empty,
+.studio-right-rail-divider:has(+ .studio-right-rail-subtools:empty){display:none}
+.studio-instrument-toolbar{grid-template-columns:minmax(0,1fr) auto}
+.studio-instrument-left{align-items:center}
+.studio-typing-expression{display:grid;grid-template-columns:auto auto;align-items:center;gap:2px 8px;min-width:210px;padding:6px 9px;border-left:1px solid rgba(130,150,210,.25);color:#aebbd8}
+.studio-typing-expression span{font-size:10px;text-transform:uppercase}
+.studio-typing-expression strong{color:#8ee3ff;font-variant-numeric:tabular-nums}
+.studio-typing-expression small{grid-column:1/-1;font-size:9px;color:#7987a8;white-space:nowrap}
+.studio-inline-number-editor{position:fixed;z-index:1400;width:150px;padding:8px;border:1px solid rgba(111,202,255,.5);border-radius:6px;background:#121a2a;box-shadow:0 14px 32px rgba(0,0,0,.48)}
+.studio-inline-number-editor label{display:grid;gap:4px;color:#b8c6e6;font-size:10px;text-transform:uppercase}
+.studio-inline-number-editor input{width:100%;box-sizing:border-box;border:1px solid #445270;border-radius:4px;background:#0c1220;color:#fff;padding:7px 8px;font:700 13px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.studio-midi-effect-panel .studio-bottom-panel-body{min-height:0;overflow:auto;padding:10px 12px}
+.studio-midi-effect-panel .studio-instrument-content{height:100%;margin:0}
+@media (max-width:900px){
+  .studio-instrument-toolbar{grid-template-columns:1fr}
+  .studio-typing-expression{min-width:0}
+}
