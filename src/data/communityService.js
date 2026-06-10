@@ -71,13 +71,24 @@ export function normalizeCommunityPost(docSnapOrData = {}, explicitId = '') {
     ? raw.attachments
       .filter((attachment) => attachment && typeof attachment === 'object')
       .map((attachment) => ({
+        id: attachment.id || '',
         type: attachment.type || '',
         targetId: attachment.targetId || attachment.productId || attachment.projectId || attachment.storagePath || '',
         productId: attachment.productId || '',
         projectId: attachment.projectId || '',
         sourceType: attachment.sourceType || '',
         sourceId: attachment.sourceId || '',
-        storagePath: attachment.storagePath || '',
+        storagePath: attachment.storagePath || attachment.path || '',
+        path: attachment.path || attachment.storagePath || '',
+        url: attachment.url || '',
+        name: attachment.name || '',
+        size: Math.max(0, Number(attachment.size || 0)),
+        contentType: attachment.contentType || '',
+        width: Number.isFinite(Number(attachment.width)) ? Math.max(0, Number(attachment.width)) : null,
+        height: Number.isFinite(Number(attachment.height)) ? Math.max(0, Number(attachment.height)) : null,
+        duration: Number.isFinite(Number(attachment.duration)) ? Math.max(0, Number(attachment.duration)) : null,
+        uploadedBy: attachment.uploadedBy || '',
+        createdAt: serializeDate(attachment.createdAt),
         snapshot: attachment.snapshot && typeof attachment.snapshot === 'object' ? attachment.snapshot : {}
       }))
       .filter((attachment) => attachment.type && (attachment.type !== 'product' || attachment.productId || attachment.targetId))
@@ -838,6 +849,9 @@ export async function resolveCommunityAttachmentMediaUrls(posts = []) {
     ;(post.attachments || []).forEach((attachment) => {
       if (attachment.type === 'music' && attachment.storagePath) paths.add(attachment.storagePath)
       if (attachment.type === 'studio_project' && attachment.snapshot?.previewAudioPath) paths.add(attachment.snapshot.previewAudioPath)
+      if (['image', 'video', 'audio', 'file'].includes(attachment.type) && (attachment.path || attachment.storagePath)) {
+        paths.add(attachment.path || attachment.storagePath)
+      }
     })
   })
   const entries = await Promise.all([...paths].map(async (path) => [path, await safeStorageUrl(path)]))
@@ -938,6 +952,148 @@ export async function createCommunityPost(payload = {}) {
   const callable = httpsCallable(functions, 'createCommunityPost')
   const result = await callable(payload)
   return result?.data || { ok: false }
+}
+
+export function newCommunityPostId() {
+  return doc(collection(db, POST_COLLECTION)).id
+}
+
+const COMMUNITY_POST_ATTACHMENT_LIMITS = {
+  image: 10 * 1024 * 1024,
+  video: 150 * 1024 * 1024,
+  audio: 50 * 1024 * 1024,
+  file: 50 * 1024 * 1024
+}
+
+const COMMUNITY_POST_ATTACHMENT_CONTENT_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/webm',
+  'audio/mp4',
+  'audio/aac',
+  'audio/ogg',
+  'application/pdf',
+  'text/plain',
+  'application/zip',
+  'application/x-zip-compressed',
+  'application/json'
+])
+
+function communityPostAttachmentType(file = null) {
+  const contentType = String(file?.type || '').toLowerCase()
+  if (contentType.startsWith('image/')) return 'image'
+  if (contentType.startsWith('video/')) return 'video'
+  if (contentType.startsWith('audio/')) return 'audio'
+  if (COMMUNITY_POST_ATTACHMENT_CONTENT_TYPES.has(contentType)) return 'file'
+  return ''
+}
+
+export function validateCommunityPostAttachment(file = null) {
+  if (!file) throw new Error('Choose a file to attach.')
+  const contentType = String(file.type || '').toLowerCase()
+  const type = communityPostAttachmentType(file)
+  const size = Math.max(0, Number(file.size || 0))
+  if (!type || !COMMUNITY_POST_ATTACHMENT_CONTENT_TYPES.has(contentType)) {
+    throw new Error('Posts support common images, videos, audio, PDF, text, ZIP, and JSON files.')
+  }
+  if (!size) throw new Error('Choose a non-empty file to attach.')
+  const maxBytes = COMMUNITY_POST_ATTACHMENT_LIMITS[type]
+  if (size > maxBytes) {
+    throw new Error(`${type === 'image' ? 'Images' : type === 'video' ? 'Videos' : type === 'audio' ? 'Audio files' : 'Files'} must be ${Math.round(maxBytes / 1024 / 1024)} MB or smaller.`)
+  }
+  return { type, contentType, size, maxBytes }
+}
+
+function safeCommunityPostAttachmentName(value = '') {
+  const clean = String(value || 'attachment')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return clean.slice(-140) || 'attachment'
+}
+
+export async function uploadCommunityPostAttachments({
+  uid = '',
+  postId = '',
+  files = [],
+  metadataById = {},
+  onProgress = null
+} = {}) {
+  const cleanUid = String(uid || '').trim()
+  const cleanPostId = String(postId || '').trim()
+  const requestedFiles = Array.from(files || [])
+  const selectedFiles = requestedFiles.slice(0, 8)
+  if (!storage) throw new Error('Storage is not available.')
+  if (!cleanUid || cleanUid.includes('/') || !cleanPostId || cleanPostId.includes('/')) {
+    throw new Error('Sign in before attaching files.')
+  }
+  if (requestedFiles.length > 8) throw new Error('Posts can include up to 8 files.')
+
+  const uploads = []
+  try {
+    for (let index = 0; index < selectedFiles.length; index += 1) {
+      const entry = selectedFiles[index]
+      const file = entry?.file || entry
+      const id = String(entry?.id || `${Date.now()}-${index}`).replace(/[^a-zA-Z0-9_-]+/g, '').slice(0, 80)
+      const { type, contentType, size } = validateCommunityPostAttachment(file)
+      const name = safeCommunityPostAttachmentName(file.name)
+      const path = `community/posts/${cleanUid}/${cleanPostId}/attachments/${id}-${name}`
+      const fileRef = ref(storage, path)
+      await new Promise((resolve, reject) => {
+        const task = uploadBytesResumable(fileRef, file, {
+          contentType,
+          customMetadata: {
+            authorUid: cleanUid,
+            postId: cleanPostId,
+            attachmentId: id,
+            attachmentType: type
+          }
+        })
+        task.on('state_changed', (snapshot) => {
+          const current = snapshot.totalBytes ? snapshot.bytesTransferred / snapshot.totalBytes : 0
+          onProgress?.(((index + current) / selectedFiles.length) * 100)
+        }, reject, resolve)
+      })
+      const url = await getDownloadURL(fileRef).catch(() => '')
+      const mediaMetadata = metadataById[id] || entry?.metadata || {}
+      uploads.push({
+        id,
+        type,
+        name: file.name || name,
+        path,
+        storagePath: path,
+        url,
+        size,
+        contentType,
+        width: Number.isFinite(Number(mediaMetadata.width)) ? Math.max(0, Math.round(Number(mediaMetadata.width))) : null,
+        height: Number.isFinite(Number(mediaMetadata.height)) ? Math.max(0, Math.round(Number(mediaMetadata.height))) : null,
+        duration: Number.isFinite(Number(mediaMetadata.duration)) ? Math.max(0, Number(mediaMetadata.duration)) : null,
+        uploadedBy: cleanUid
+      })
+    }
+  } catch (error) {
+    await deleteCommunityPostAttachments(uploads)
+    throw error
+  }
+  onProgress?.(100)
+  return uploads
+}
+
+export async function deleteCommunityPostAttachments(attachments = []) {
+  if (!storage) return
+  await Promise.allSettled((Array.isArray(attachments) ? attachments : [])
+    .map((attachment) => String(attachment?.path || attachment?.storagePath || '').trim())
+    .filter((path) => path.startsWith('community/posts/'))
+    .map((path) => deleteObject(ref(storage, path))))
 }
 
 export function newCommunityCommentId(postId = '') {

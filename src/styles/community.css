@@ -1616,6 +1616,14 @@ body.community-chrome-hidden .community-right-rail {
   font-weight: 700;
 }
 
+.community-hidden-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .community-composer-modal .community-mention-control {
   display: inline-flex;
   grid-template-columns: auto auto minmax(92px, 130px);
@@ -1733,10 +1741,13 @@ body.community-chrome-hidden .community-right-rail {
 }
 
 .community-composer-attachment img,
+.community-composer-attachment video,
 .community-composer-attachment .community-product-fallback,
 .community-composer-attachment .community-attachment-fallback {
   width: 52px;
   height: 52px;
+  border-radius: 8px;
+  object-fit: cover;
 }
 
 .community-composer-attachment a {
@@ -1770,6 +1781,12 @@ body.community-chrome-hidden .community-right-rail {
 
 .community-composer-attachment > button {
   width: 34px;
+  height: 34px;
+}
+
+.community-composer-audio-preview {
+  grid-column: 1 / -1;
+  width: 100%;
   height: 34px;
 }
 
@@ -1874,6 +1891,105 @@ body.community-chrome-hidden .community-right-rail {
   display: grid;
   gap: .65rem;
   margin-top: .85rem;
+}
+
+.community-post-file-attachment {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  background: rgba(5, 8, 12, .46);
+  color: inherit;
+  overflow: hidden;
+  text-decoration: none;
+}
+
+.community-post-file-attachment.is-image {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  background: rgba(0, 0, 0, .28);
+}
+
+.community-post-file-attachment.is-image img,
+.community-post-file-attachment.is-video video {
+  display: block;
+  width: min(680px, 100%);
+  height: auto;
+  max-height: 560px;
+  object-fit: contain;
+}
+
+.community-post-file-attachment.is-video {
+  display: grid;
+  width: min(680px, 100%);
+}
+
+.community-post-file-attachment.is-video small {
+  padding: .5rem .65rem;
+}
+
+.community-post-file-attachment.is-audio {
+  display: grid;
+  gap: .55rem;
+  width: min(560px, 100%);
+  padding: .7rem;
+}
+
+.community-post-file-attachment.is-audio > span {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-width: 0;
+}
+
+.community-post-file-attachment.is-audio svg {
+  width: 20px;
+  height: 20px;
+}
+
+.community-post-file-attachment audio {
+  width: 100%;
+}
+
+.community-post-file-attachment.is-file {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: .65rem;
+  align-items: center;
+  width: min(560px, 100%);
+  padding: .65rem;
+}
+
+.community-post-file-attachment.is-file .community-attachment-fallback {
+  width: 44px;
+  height: 44px;
+}
+
+.community-post-file-attachment strong,
+.community-post-file-attachment small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.community-post-file-attachment small,
+.community-attachment-load-state {
+  color: #8f9db1;
+  font-size: .78rem;
+}
+
+.community-attachment-load-state {
+  display: block;
+  padding: 1rem;
+}
+
+.community-post-upload-progress {
+  border: 1px solid rgba(83, 197, 255, .24);
+  border-radius: 8px;
+  background: rgba(83, 197, 255, .08);
+  color: #bfeaff;
+  padding: .6rem .75rem;
+  font-size: .84rem;
+  font-weight: 800;
 }
 
 .community-attachment-card audio {
