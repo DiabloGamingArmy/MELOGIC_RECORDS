@@ -80,17 +80,20 @@ import {
 } from './data/operationsService'
 import {
   STUDIO_LIBRARY_ENGINE_TYPES,
+  STUDIO_SAMPLE_STRATEGIES,
   STUDIO_LIBRARY_SOURCE_ROOTS,
   STUDIO_LIBRARY_STORAGE_ROOT,
   addDefaultInstrumentToLibrary,
   buildSamplesFromFiles,
   getDefaultLibraryContent,
+  getSampleStrategyWarnings,
   initializeDefaultLibraryContent,
   parseDefaultInstrumentArchive,
   studioLibraryFolderPath,
   studioLibrarySlug,
   updateDefaultInstrument,
   uploadDefaultInstrumentArtwork,
+  uploadDefaultInstrumentHtmlSource,
   uploadDefaultInstrumentSample
 } from './data/studioLibraryService'
 
@@ -357,6 +360,7 @@ const state = {
       progress: 0,
       parsedSamples: [],
       zipFile: null,
+      htmlSourceFile: null,
       artworkFile: null,
       editingId: '',
       form: {},
@@ -3397,6 +3401,8 @@ function defaultStudioInstrumentForm() {
     commercialAllowed: true,
     enabled: true,
     visibility: 'public',
+    runtime: '',
+    htmlSourcePath: '',
     overwrite: false
   }
 }
@@ -3425,7 +3431,7 @@ function renderAdminStudioLibraryTree(library = {}) {
         return `<article>
           <div><strong>${escapeHtml(child.label)}</strong><small>${escapeHtml(child.path)}</small></div>
           <span>${rows.length ? `${rows.length} instrument${rows.length === 1 ? '' : 's'}` : 'Empty'}</span>
-          ${rows.length ? `<ul>${rows.map((instrument) => `<li><button type="button" data-studio-library-edit="${escapeHtml(instrument.id)}">${escapeHtml(instrument.name)}</button><small>${escapeHtml(instrument.engineType)} · v${instrument.version || 1} · ${instrument.samples?.length || 0} samples</small></li>`).join('')}</ul>` : ''}
+          ${rows.length ? `<ul>${rows.map((instrument) => `<li><button type="button" data-studio-library-edit="${escapeHtml(instrument.id)}">${escapeHtml(instrument.name)}</button><small>${escapeHtml(instrument.engineType)} · v${instrument.version || 1}${instrument.engineType === 'sample-based' ? ` · ${instrument.samples?.length || 0} samples` : instrument.runtime ? ` · ${escapeHtml(instrument.runtime)}` : ''}</small></li>`).join('')}</ul>` : ''}
         </article>`
       }).join('')}</div>
     </section>
@@ -3441,6 +3447,9 @@ function operationsStudioPanel() {
   const version = Math.max(1, Math.round(Number(form.version) || 1))
   const basePath = `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${instrumentId || '{instrumentId}'}/v${version}`
   const editing = Boolean(studio.editingId)
+  const isSampleBased = form.engineType === 'sample-based'
+  const isVst = form.engineType === 'vst'
+  const strategyWarnings = isSampleBased ? getSampleStrategyWarnings(form.sampleStrategy, studio.parsedSamples) : []
   return `
     ${studioOperationsSubnav()}
     ${studio.error ? `<p class="admin-status is-error">${escapeHtml(studio.error)}</p>` : ''}
@@ -3459,7 +3468,7 @@ function operationsStudioPanel() {
       <div class="admin-slab-heading">
         <div>
           <h2>${editing ? `Edit ${escapeHtml(form.name || studio.editingId)}` : 'Add Default Instrument'}</h2>
-          <p class="admin-muted">${editing ? 'Update metadata or upload a replacement sample set.' : 'Create a manifest entry and upload mapped samples from a ZIP archive.'}</p>
+          <p class="admin-muted">${editing ? 'Update instrument metadata or replace its engine source.' : 'Create a versioned instrument manifest and upload only the source required by its engine.'}</p>
         </div>
         ${editing ? '<button type="button" class="admin-secondary-button" data-studio-library-edit-cancel>Cancel edit</button>' : ''}
       </div>
@@ -3469,7 +3478,7 @@ function operationsStudioPanel() {
           <label><span>Instrument ID / slug</span><input name="id" value="${escapeHtml(form.id)}" required ${editing ? 'readonly' : ''}><small>${editing ? 'Instrument IDs stay stable after creation.' : 'Lowercase letters, numbers, and hyphens.'}</small></label>
           <label><span>Source root</span><select name="sourceRoot">${STUDIO_LIBRARY_SOURCE_ROOTS.map((item) => `<option value="${item.id}" ${form.sourceRoot === item.id ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
           <label><span>Engine type</span><select name="engineType">${STUDIO_LIBRARY_ENGINE_TYPES.map((item) => `<option value="${item.id}" ${form.engineType === item.id ? 'selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}</select></label>
-          <label><span>Sample strategy</span><select name="sampleStrategy">${['octave-roots', 'thirds', 'chromatic', 'custom', 'drum-map'].map((value) => `<option value="${value}" ${form.sampleStrategy === value ? 'selected' : ''}>${escapeHtml(humanLabel(value))}</option>`).join('')}</select></label>
+          ${isSampleBased ? `<label><span>Sample strategy</span><select name="sampleStrategy">${STUDIO_SAMPLE_STRATEGIES.map((strategy) => `<option value="${strategy.id}" ${form.sampleStrategy === strategy.id ? 'selected' : ''}>${escapeHtml(strategy.label)}</option>`).join('')}</select><small>${escapeHtml(STUDIO_SAMPLE_STRATEGIES.find((strategy) => strategy.id === form.sampleStrategy)?.description || 'Arbitrary valid note + octave WAV roots')}</small></label>` : ''}
           ${operationTextInput({ name: 'version', label: 'Version', type: 'number', value: version, required: true })}
           ${operationTextarea({ name: 'description', label: 'Description', value: form.description, rows: 4, wide: true })}
           <div class="admin-studio-path-preview is-wide"><span>Folder path</span><strong data-studio-folder-preview>${escapeHtml(folderPath)}</strong><small data-studio-storage-preview>${escapeHtml(basePath)}</small></div>
@@ -3481,14 +3490,17 @@ function operationsStudioPanel() {
           ${operationCheckbox({ name: 'commercialAllowed', label: 'Commercial use allowed', checked: form.commercialAllowed !== false })}
           ${operationCheckbox({ name: 'enabled', label: 'Instrument enabled', checked: form.enabled !== false })}
           <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility !== 'private' ? 'selected' : ''}>Public</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
-          <label class="is-wide"><span>Audio ZIP</span><input type="file" name="audioZip" accept=".zip,application/zip,application/x-zip-compressed" ${studio.parsing || studio.saving ? 'disabled' : ''}><small>Valid pitched WAV files use note+octave names such as C3.wav, Ds3.wav, Fs3.wav, or Bb4.wav. Unsupported files are ignored.</small></label>
+          ${isSampleBased ? `<label class="is-wide"><span>Audio ZIP</span><input type="file" name="audioZip" accept=".zip,application/zip,application/x-zip-compressed" ${studio.parsing || studio.saving ? 'disabled' : ''}><small>WAV roots use note + octave names such as C-1.wav, F#3.wav, Fs3.wav, or Bb4.wav. Strategy mismatches warn but do not block valid mappings.</small></label>` : ''}
+          ${isVst ? `<label class="is-wide"><span>HTML-based VST source</span><input type="file" name="htmlSource" accept=".html,text/html" ${studio.saving ? 'disabled' : ''}><small>Upload the HTML entry point for a future sandboxed web instrument that accepts MIDI and outputs audio. Source is stored only; runtime execution is coming soon.</small>${form.htmlSourcePath ? `<strong class="admin-studio-existing-source">${escapeHtml(form.htmlSourcePath)}</strong>` : ''}</label>` : ''}
+          ${form.engineType === 'wavetable' ? '<div class="admin-studio-runtime-note is-wide"><strong>Wavetable runtime coming soon</strong><p>Save metadata now. Wavetable source and playback fields will be added with the dedicated runtime.</p></div>' : ''}
           <label class="is-wide"><span>Artwork (optional WebP)</span><input type="file" name="artwork" accept="image/webp" ${studio.saving ? 'disabled' : ''}><small>Stored as artwork/cover.webp.</small></label>
           ${operationCheckbox({ name: 'overwrite', label: 'Replace an existing instrument with this ID', checked: editing || form.overwrite })}
         </div>
-        <section class="admin-studio-sample-preview">
+        ${isSampleBased ? `<section class="admin-studio-sample-preview">
           <header><div><strong>Parsed samples</strong><span>${studio.parsing ? 'Reading ZIP...' : `${studio.parsedSamples.length} valid WAV file${studio.parsedSamples.length === 1 ? '' : 's'}`}</span></div>${studio.zipFile ? `<small>${escapeHtml(studio.zipFile.name)}</small>` : ''}</header>
+          ${strategyWarnings.length ? `<div class="admin-studio-strategy-warnings">${strategyWarnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join('')}</div>` : ''}
           ${studio.parsedSamples.length ? `<div>${studio.parsedSamples.slice(0, 36).map((sample) => `<span><strong>${escapeHtml(sample.note)}</strong><small>${escapeHtml(sample.fileName)} · MIDI ${sample.rootMidi}</small></span>`).join('')}</div>${studio.parsedSamples.length > 36 ? `<p class="admin-muted">Showing 36 of ${studio.parsedSamples.length} samples.</p>` : ''}` : '<p class="admin-muted">Choose a ZIP to validate its sample map before saving.</p>'}
-        </section>
+        </section>` : isVst ? `<section class="admin-studio-runtime-note"><strong>HTML audio/MIDI runtime</strong><p>${studio.htmlSourceFile ? `${escapeHtml(studio.htmlSourceFile.name)} is ready to upload as plugin.html.` : 'No new HTML source selected.'} The DAW will show this instrument as coming soon and will not execute its source.</p></section>` : ''}
         ${studio.saving ? `<div class="admin-studio-upload-progress"><span style="width:${Math.round(studio.progress * 100)}%"></span><strong>${Math.round(studio.progress * 100)}%</strong></div>` : ''}
         <div class="admin-modal-actions">
           <button type="submit" class="admin-primary-button" ${studio.saving || studio.parsing ? 'disabled' : ''}>${studio.saving ? 'Uploading...' : editing ? 'Update Instrument' : 'Add Instrument'}</button>
@@ -5399,6 +5411,8 @@ function setAdminStudioEditInstrument(instrumentId = '') {
     engineType: instrument.engineType,
     description: instrument.description,
     sampleStrategy: instrument.sampleStrategy,
+    runtime: instrument.runtime || '',
+    htmlSourcePath: instrument.htmlSourcePath || '',
     version: instrument.version,
     licenseType: instrument.license?.type || 'owned',
     sourceName: instrument.license?.sourceName || '',
@@ -5412,6 +5426,7 @@ function setAdminStudioEditInstrument(instrumentId = '') {
   }
   studio.parsedSamples = []
   studio.zipFile = null
+  studio.htmlSourceFile = null
   studio.artworkFile = null
   studio.error = ''
   studio.message = ''
@@ -5425,6 +5440,7 @@ function resetAdminStudioInstrumentForm() {
   studio.form = defaultStudioInstrumentForm()
   studio.parsedSamples = []
   studio.zipFile = null
+  studio.htmlSourceFile = null
   studio.artworkFile = null
   studio.progress = 0
   studio.error = ''
@@ -5461,14 +5477,27 @@ async function submitAdminStudioInstrument(form) {
     if (!values.name || !id || !folderPath) throw new Error('Instrument name, ID, source root, and engine type are required.')
     if (!studio.library) throw new Error('Initialize the default DAW library before adding instruments.')
     if (!existing && engineType === 'sample-based' && !studio.parsedSamples.length) throw new Error('A new sample-based instrument requires a ZIP with at least one valid WAV sample.')
-    const sampleRows = studio.parsedSamples.length
+    const sampleRows = engineType === 'sample-based' && studio.parsedSamples.length
       ? buildSamplesFromFiles(studio.parsedSamples, samplesPath)
       : []
-    const totalUploads = sampleRows.length + (studio.artworkFile ? 1 : 0)
+    if (engineType === 'vst' && !studio.htmlSourceFile && !existing?.htmlSourcePath) throw new Error('A VST instrument requires an HTML source file.')
+    if (studio.htmlSourceFile) {
+      const sourceName = String(studio.htmlSourceFile.name || '').toLowerCase()
+      if (!sourceName.endsWith('.html') || (studio.htmlSourceFile.type && studio.htmlSourceFile.type !== 'text/html')) throw new Error('VST source must be an HTML file.')
+      if (studio.htmlSourceFile.size > 5 * 1024 * 1024) throw new Error('HTML instrument source must be 5 MB or smaller.')
+    }
+    const totalUploads = sampleRows.length + (studio.htmlSourceFile ? 1 : 0) + (studio.artworkFile ? 1 : 0)
     for (let index = 0; index < sampleRows.length; index += 1) {
       const row = sampleRows[index]
       await uploadDefaultInstrumentSample(row.file, row.path, (fileProgress) => {
         updateAdminStudioProgress(totalUploads ? (index + fileProgress) / totalUploads : 0)
+      })
+    }
+    let htmlSourcePath = engineType === 'vst' ? (existing?.htmlSourcePath || `${storageBasePath}/plugin.html`) : ''
+    if (engineType === 'vst' && studio.htmlSourceFile) {
+      htmlSourcePath = `${storageBasePath}/plugin.html`
+      await uploadDefaultInstrumentHtmlSource(studio.htmlSourceFile, htmlSourcePath, (fileProgress) => {
+        updateAdminStudioProgress(totalUploads ? (sampleRows.length + fileProgress) / totalUploads : 0)
       })
     }
     let artworkPath = existing?.artworkPath || ''
@@ -5476,7 +5505,7 @@ async function submitAdminStudioInstrument(form) {
       if (studio.artworkFile.type && studio.artworkFile.type !== 'image/webp') throw new Error('Artwork must be a WebP image.')
       artworkPath = `${storageBasePath}/artwork/cover.webp`
       await uploadDefaultInstrumentArtwork(studio.artworkFile, artworkPath, (fileProgress) => {
-        updateAdminStudioProgress(totalUploads ? (sampleRows.length + fileProgress) / totalUploads : 0)
+        updateAdminStudioProgress(totalUploads ? (sampleRows.length + (studio.htmlSourceFile ? 1 : 0) + fileProgress) / totalUploads : 0)
       })
     }
     const payload = {
@@ -5487,16 +5516,21 @@ async function submitAdminStudioInstrument(form) {
       engineType,
       folderPath,
       description: values.description || '',
-      sampleStrategy: values.sampleStrategy || 'custom',
+      sampleStrategy: engineType === 'sample-based' ? values.sampleStrategy || 'custom' : '',
       version,
       enabled: values.enabled === true,
       visibility: values.visibility === 'private' ? 'private' : 'public',
       storageBasePath,
-      samplesPath,
+      samplesPath: engineType === 'sample-based' ? samplesPath : '',
       artworkPath,
-      samples: sampleRows.length
+      samples: engineType === 'sample-based' && sampleRows.length
         ? sampleRows.map(({ file, ...sample }) => sample)
-        : (existing?.samples || []),
+        : engineType === 'sample-based' ? (existing?.samples || []) : [],
+      runtime: engineType === 'vst' ? 'html-audio-midi' : '',
+      htmlSourcePath,
+      acceptsMidi: engineType === 'vst',
+      outputsAudio: engineType === 'vst',
+      sandboxed: engineType === 'vst',
       license: {
         type: values.licenseType || 'owned',
         sourceName: values.sourceName || '',
@@ -5519,6 +5553,7 @@ async function submitAdminStudioInstrument(form) {
     studio.form = defaultStudioInstrumentForm()
     studio.parsedSamples = []
     studio.zipFile = null
+    studio.htmlSourceFile = null
     studio.artworkFile = null
   } catch (error) {
     console.warn('[admin] Studio instrument save failed', { code: error?.code, message: error?.message })
@@ -6662,6 +6697,14 @@ function bindEvents() {
   app.querySelector('[data-studio-library-form] input[name="artwork"]')?.addEventListener('change', (event) => {
     state.operations.studio.artworkFile = event.currentTarget.files?.[0] || null
   })
+  app.querySelector('[data-studio-library-form] input[name="htmlSource"]')?.addEventListener('change', (event) => {
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      ...operationsFormValues(event.currentTarget.form)
+    }
+    state.operations.studio.htmlSourceFile = event.currentTarget.files?.[0] || null
+    render()
+  })
   const studioLibraryForm = app.querySelector('[data-studio-library-form]')
   const studioNameInput = studioLibraryForm?.elements?.name
   const studioIdInput = studioLibraryForm?.elements?.id
@@ -6688,6 +6731,23 @@ function bindEvents() {
   studioLibraryForm?.querySelectorAll('select[name="sourceRoot"],select[name="engineType"],input[name="id"],input[name="name"],input[name="version"]').forEach((input) => {
     input.addEventListener('input', updateStudioPathPreview)
     input.addEventListener('change', updateStudioPathPreview)
+  })
+  studioLibraryForm?.querySelector('select[name="engineType"]')?.addEventListener('change', (event) => {
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      ...operationsFormValues(event.currentTarget.form)
+    }
+    state.operations.studio.zipFile = null
+    state.operations.studio.parsedSamples = []
+    state.operations.studio.htmlSourceFile = null
+    render()
+  })
+  studioLibraryForm?.querySelector('select[name="sampleStrategy"]')?.addEventListener('change', (event) => {
+    state.operations.studio.form = {
+      ...state.operations.studio.form,
+      ...operationsFormValues(event.currentTarget.form)
+    }
+    render()
   })
   app.querySelectorAll('[data-studio-library-edit]').forEach((button) => {
     button.addEventListener('click', () => setAdminStudioEditInstrument(button.getAttribute('data-studio-library-edit') || ''))

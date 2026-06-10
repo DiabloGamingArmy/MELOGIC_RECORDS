@@ -1,5 +1,5 @@
 import { doc, getDoc, onSnapshot, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
-import { ref, uploadBytesResumable } from 'firebase/storage'
+import { getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
 import { db } from '../firebase/firestore.js'
 import { storage } from '../firebase/storage.js'
 import { noteNameToMidi, parseSampleFileName } from '../utils/studioSampleNames.js'
@@ -22,8 +22,18 @@ export const STUDIO_LIBRARY_ENGINE_TYPES = [
 ]
 
 const LIBRARY_REF = ['studioDawDefaults', 'libraryContent']
-const VALID_SAMPLE_STRATEGIES = new Set(['octave-roots', 'thirds', 'chromatic', 'custom', 'drum-map'])
+const VALID_SAMPLE_STRATEGIES = new Set(['octave-roots', 'double', 'thirds', 'chromatic', 'custom', 'drum-map'])
 const VALID_LICENSE_TYPES = new Set(['owned', 'CC0', 'CC BY', 'custom'])
+const assetUrlCache = new Map()
+
+export const STUDIO_SAMPLE_STRATEGIES = [
+  { id: 'octave-roots', label: 'Octave Roots', description: 'C per octave', pitchClasses: [0] },
+  { id: 'double', label: 'Double', description: 'C and F# per octave', pitchClasses: [0, 6] },
+  { id: 'thirds', label: 'Thirds', description: 'C, D#/Eb, F#/Gb, and A per octave', pitchClasses: [0, 3, 6, 9] },
+  { id: 'chromatic', label: 'Chromatic', description: 'One sample per note', pitchClasses: Array.from({ length: 12 }, (_, index) => index) },
+  { id: 'custom', label: 'Custom', description: 'Arbitrary valid note + octave WAV roots', pitchClasses: null },
+  { id: 'drum-map', label: 'Drum Map', description: 'One-shot drum mappings', pitchClasses: null }
+]
 
 function cleanString(value = '', max = 500) {
   return String(value || '').trim().slice(0, max)
@@ -58,6 +68,22 @@ export function sourceRootLabel(sourceRoot = '') {
 
 export function engineTypeLabel(engineType = '') {
   return STUDIO_LIBRARY_ENGINE_TYPES.find((item) => item.id === engineType)?.label || ''
+}
+
+export function sampleStrategyDefinition(strategy = '') {
+  return STUDIO_SAMPLE_STRATEGIES.find((item) => item.id === strategy) || STUDIO_SAMPLE_STRATEGIES.find((item) => item.id === 'custom')
+}
+
+export function getSampleStrategyWarnings(strategy = '', samples = []) {
+  const definition = sampleStrategyDefinition(strategy)
+  if (!definition?.pitchClasses || !Array.isArray(samples) || !samples.length) return []
+  const found = new Set(samples.map((sample) => ((Number(sample.rootMidi) % 12) + 12) % 12))
+  const missing = definition.pitchClasses.filter((pitchClass) => !found.has(pitchClass))
+  const unexpected = [...found].filter((pitchClass) => !definition.pitchClasses.includes(pitchClass))
+  const warnings = []
+  if (missing.length) warnings.push(`${definition.label} usually includes ${definition.description.toLowerCase()}; this upload is missing ${missing.length} expected pitch class${missing.length === 1 ? '' : 'es'}.`)
+  if (unexpected.length) warnings.push(`${unexpected.length} additional pitch class${unexpected.length === 1 ? '' : 'es'} will still be mapped by nearest sample.`)
+  return warnings
 }
 
 export function studioLibraryFolderPath(sourceRoot = '', engineType = '') {
@@ -123,7 +149,7 @@ export function normalizeDefaultInstrument(raw = {}) {
   const version = safeInteger(raw.version, 1)
   const folderPath = studioLibraryFolderPath(sourceRoot, engineType)
   const storageBasePath = cleanPath(raw.storageBasePath || `${STUDIO_LIBRARY_STORAGE_ROOT}/${folderPath}/${id}/v${version}`)
-  const samplesPath = cleanPath(raw.samplesPath || `${storageBasePath}/samples`)
+  const samplesPath = engineType === 'sample-based' ? cleanPath(raw.samplesPath || `${storageBasePath}/samples`) : ''
   const license = raw.license && typeof raw.license === 'object' ? raw.license : {}
   return {
     id,
@@ -131,7 +157,7 @@ export function normalizeDefaultInstrument(raw = {}) {
     folderPath,
     sourceRoot,
     engineType,
-    sampleStrategy: VALID_SAMPLE_STRATEGIES.has(raw.sampleStrategy) ? raw.sampleStrategy : 'custom',
+    sampleStrategy: engineType === 'sample-based' && VALID_SAMPLE_STRATEGIES.has(raw.sampleStrategy) ? raw.sampleStrategy : '',
     description: cleanString(raw.description, 1200),
     enabled: raw.enabled !== false,
     visibility: raw.visibility === 'private' ? 'private' : 'public',
@@ -139,7 +165,12 @@ export function normalizeDefaultInstrument(raw = {}) {
     storageBasePath,
     samplesPath,
     artworkPath: cleanPath(raw.artworkPath),
-    samples: Array.isArray(raw.samples) ? raw.samples.map(normalizeSample).filter(Boolean) : [],
+    samples: engineType === 'sample-based' && Array.isArray(raw.samples) ? raw.samples.map(normalizeSample).filter(Boolean) : [],
+    runtime: engineType === 'vst' ? 'html-audio-midi' : cleanString(raw.runtime, 80),
+    htmlSourcePath: engineType === 'vst' ? cleanPath(raw.htmlSourcePath || `${storageBasePath}/plugin.html`) : '',
+    acceptsMidi: engineType === 'vst' ? raw.acceptsMidi !== false : false,
+    outputsAudio: engineType === 'vst' ? raw.outputsAudio !== false : false,
+    sandboxed: engineType === 'vst' ? raw.sandboxed !== false : false,
     license: {
       type: VALID_LICENSE_TYPES.has(license.type) ? license.type : 'owned',
       attributionRequired: license.attributionRequired === true,
@@ -285,4 +316,20 @@ export function uploadDefaultInstrumentSample(file, storagePath, onProgress) {
 
 export function uploadDefaultInstrumentArtwork(file, storagePath, onProgress) {
   return uploadFile(file, storagePath, { contentType: file?.type || 'image/webp' }, onProgress)
+}
+
+export function uploadDefaultInstrumentHtmlSource(file, storagePath, onProgress) {
+  return uploadFile(file, storagePath, { contentType: 'text/html; charset=utf-8' }, onProgress)
+}
+
+export async function getStudioLibraryAssetUrl(storagePath = '') {
+  const path = storageRefPath(storagePath)
+  if (!path.startsWith(`${storageRefPath(STUDIO_LIBRARY_STORAGE_ROOT)}/`)) throw new Error('Invalid Studio library asset path.')
+  if (!assetUrlCache.has(path)) {
+    assetUrlCache.set(path, getDownloadURL(ref(storage, path)).catch((error) => {
+      assetUrlCache.delete(path)
+      throw error
+    }))
+  }
+  return assetUrlCache.get(path)
 }

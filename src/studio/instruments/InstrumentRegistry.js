@@ -1,21 +1,25 @@
 import { DAW_PLUGIN_TYPES } from '../plugins/pluginCatalog.js'
 import { BasicSynthInstrument } from './BasicSynthInstrument.js'
+import { LibrarySamplerInstrument } from './LibrarySamplerInstrument.js'
 
 export class InstrumentRegistry {
-  constructor({ getAudioContext, getDestination } = {}) {
+  constructor({ getAudioContext, getDestination, resolveLibraryInstrument } = {}) {
     this.getAudioContext = getAudioContext
     this.getDestination = getDestination
+    this.resolveLibraryInstrument = resolveLibraryInstrument
     this.instances = new Map()
     this.factories = new Map([
-      [DAW_PLUGIN_TYPES.melogicWavetable, (options) => new BasicSynthInstrument(options)]
+      [DAW_PLUGIN_TYPES.melogicWavetable, (options) => new BasicSynthInstrument(options)],
+      [DAW_PLUGIN_TYPES.librarySampler, (options) => new LibrarySamplerInstrument(options)]
     ])
   }
 
-  createOrGet({ id, type, trackId, params } = {}) {
+  createOrGet({ id, type, trackId, params, manifest } = {}) {
     if (!id) return null
     const existing = this.instances.get(id)
     if (existing) {
       Object.entries(params || {}).forEach(([name, value]) => existing.setParam(name, value))
+      existing.setManifest?.(manifest)
       return existing
     }
     const factory = this.factories.get(type)
@@ -26,6 +30,8 @@ export class InstrumentRegistry {
       type,
       trackId,
       params,
+      manifest,
+      resolveManifest: this.resolveLibraryInstrument,
       audioContext,
       destination: this.getDestination?.(trackId, id) || audioContext.destination
     })
@@ -39,7 +45,7 @@ export class InstrumentRegistry {
 
   noteOn(id, note, velocity = 0.85) {
     const instrument = this.get(id)
-    instrument?.ensureRunning?.().then(() => instrument.noteOn(note, velocity)).catch((error) => {
+    Promise.resolve(instrument?.ensureRunning?.()).then(() => instrument?.noteOn(note, velocity)).catch((error) => {
       console.warn('[InstrumentRegistry] noteOn failed', { id, message: error?.message })
     })
   }

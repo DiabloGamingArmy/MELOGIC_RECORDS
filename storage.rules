@@ -358,6 +358,7 @@ service firebase.storage {
             && (
               request.resource.contentType.matches('audio/.*')
               || request.resource.contentType.matches('image/.*')
+              || request.resource.contentType.matches('text/html.*')
               || request.resource.contentType.matches('application/json')
               || request.resource.contentType.matches('application/octet-stream')
             )

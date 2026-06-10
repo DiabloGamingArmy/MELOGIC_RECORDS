@@ -312,6 +312,9 @@ body.is-studio-editor main{padding-top:0}
 .studio-daw-library-instrument strong,.studio-daw-library-instrument small{overflow:hidden;text-overflow:ellipsis}
 .studio-daw-library-instrument strong{font-size:12px;white-space:nowrap}
 .studio-daw-library-instrument small{color:#98a6c2;font-size:10px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.studio-daw-library-instrument-meta{display:flex!important;gap:5px!important;padding:0!important}
+.studio-daw-library-instrument-meta b{display:inline-flex;align-items:center;min-height:16px;border-radius:4px;background:rgba(112,137,190,.16);color:#aebbd4;padding:1px 5px;font-size:8px;line-height:1;text-transform:uppercase}
+.studio-daw-library-instrument-meta b.is-error{background:rgba(255,91,110,.14);color:#ffb2bd}
 .studio-daw-library-instrument em{position:absolute;right:7px;top:7px;color:#8fdfff;font-size:8px;font-style:normal;font-weight:900;text-transform:uppercase}
 .studio-daw-library-empty,.studio-daw-library-loading{display:grid;align-content:center;justify-items:center;gap:6px;min-height:150px;padding:18px;color:#8f9bb7;text-align:center}
 .studio-daw-library-empty strong{color:#e3ebfb;font-size:12px}
