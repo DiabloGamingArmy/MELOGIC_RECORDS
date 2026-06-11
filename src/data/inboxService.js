@@ -7,6 +7,7 @@ import {
   blockUser,
   getBlockedUsers,
   getThread,
+  getThreadParticipantUids,
   hydrateThreadFromSourceIfNeeded,
   listThreadsForUser,
   restoreThreadForUser,
@@ -120,15 +121,16 @@ export async function loadProfilesByUids(uids = []) {
 
 function buildFallbackTitle(thread, currentUid) {
   if (thread.type === 'group') return thread.title || 'Untitled group'
-  if (Array.isArray(thread.participantIds) && thread.participantIds.length > 1) {
-    const count = thread.participantIds.filter((id) => id !== currentUid).length
+  const participantUids = getThreadParticipantUids(thread)
+  if (participantUids.length > 1) {
+    const count = participantUids.filter((id) => id !== currentUid).length
     return count > 1 ? `Direct thread (${count} members)` : 'Direct message'
   }
   return 'Direct message'
 }
 
 async function decorateThread(thread, currentUid) {
-  const participantIds = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  const participantIds = getThreadParticipantUids(thread)
   const isGroup = thread.type === 'group'
   const otherByMirror = Array.isArray(thread.otherParticipantIds) ? thread.otherParticipantIds.find((id) => id && id !== currentUid) : ''
   const otherParticipantId = otherByMirror || participantIds.find((id) => id && id !== currentUid) || ''
@@ -182,6 +184,7 @@ export {
   INITIAL_MESSAGE_LIMIT,
   OLDER_MESSAGE_PAGE_SIZE,
   getThread,
+  getThreadParticipantUids,
   hydrateThreadFromSourceIfNeeded,
   listMessages,
   listOlderMessages,

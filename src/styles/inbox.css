@@ -2384,6 +2384,16 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   margin-top: 0.85rem;
 }
 
+.account-call-incoming-list {
+  display: grid;
+  gap: 0.7rem;
+  margin-top: 0.85rem;
+}
+
+.account-call-active-card.is-incoming {
+  border-color: rgba(105, 224, 178, 0.42);
+}
+
 .account-call-history-row {
   padding: 0.7rem;
   display: grid;

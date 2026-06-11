@@ -114,6 +114,11 @@ export function watchAccountCall(callId, callback, onError) {
   }, onError)
 }
 
+export async function getAccountCall(callId) {
+  const snapshot = await getDoc(callRef(callId))
+  return snapshot.exists() ? normalizeCall(snapshot.id, snapshot.data()) : null
+}
+
 export function watchIncomingAccountCalls(uid, callback, onError) {
   const targetUid = String(uid || '').trim()
   if (!targetUid) return () => {}
@@ -136,7 +141,7 @@ export function watchRecentAccountCalls(uid, callback, onError) {
     query(
       collection(db, CALLS_COLLECTION),
       where('participantUids', 'array-contains', participantUid),
-      limit(50)
+      limit(20)
     ),
     (snapshot) => {
       const rows = snapshot.docs

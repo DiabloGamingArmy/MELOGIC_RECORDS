@@ -109,6 +109,7 @@ export class AccountAudioCallManager {
         updateAccountCallStatus(callId, 'active', { connectedAt: new Date() }).catch((error) => debug('active status failed', error))
       } else if (['failed', 'disconnected'].includes(connectionState)) {
         this.setState('failed', { error: 'Call failed to connect. This network may require TURN support.' })
+        failAccountCall(callId, 'peer-connection-failed').catch((error) => debug('failed status update failed', error))
       } else if (connectionState === 'connecting') {
         this.setState('connecting')
       }
