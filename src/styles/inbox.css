@@ -2394,6 +2394,30 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   border-color: rgba(105, 224, 178, 0.42);
 }
 
+.account-call-route-panel .activity-header {
+  align-items: center;
+}
+
+.account-call-active-route-card {
+  min-height: 260px;
+}
+
+.account-call-active-route-card .account-call-avatar {
+  width: 5.5rem;
+  height: 5.5rem;
+}
+
+.account-call-active-meta small {
+  display: block;
+  margin-top: 0.4rem;
+  color: #778caf;
+  text-transform: capitalize;
+}
+
+.inbox-content-tabs {
+  margin-top: 0.2rem;
+}
+
 .account-call-history-row {
   padding: 0.7rem;
   display: grid;
