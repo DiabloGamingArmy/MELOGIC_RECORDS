@@ -1531,6 +1531,170 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /accountCalls/{callId} {
+      function isAccountCallParticipant() {
+        return signedIn()
+          && resource.data.participantUids is list
+          && request.auth.uid in resource.data.participantUids;
+      }
+
+      function isAccountCallParticipantAfter() {
+        return signedIn()
+          && request.resource.data.participantUids is list
+          && request.auth.uid in request.resource.data.participantUids;
+      }
+
+      allow get, list: if isAccountCallParticipant() || isAdminClaim();
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly([
+          'id',
+          'type',
+          'mode',
+          'callerUid',
+          'callerDisplayName',
+          'callerPhotoURL',
+          'calleeUid',
+          'calleeDisplayName',
+          'calleePhotoURL',
+          'participantUids',
+          'status',
+          'startedAt',
+          'acceptedAt',
+          'connectedAt',
+          'endedAt',
+          'updatedAt',
+          'endedBy',
+          'endReason',
+          'threadId',
+          'offer',
+          'answer',
+          'createdBy'
+        ])
+        && request.resource.data.id == callId
+        && request.resource.data.type == 'audio'
+        && request.resource.data.mode == 'account-webrtc'
+        && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.calleeUid is string
+        && request.resource.data.calleeUid != request.auth.uid
+        && request.resource.data.callerDisplayName is string
+        && request.resource.data.callerPhotoURL is string
+        && request.resource.data.calleeDisplayName is string
+        && request.resource.data.calleePhotoURL is string
+        && request.resource.data.participantUids is list
+        && request.resource.data.participantUids.size() == 2
+        && request.auth.uid in request.resource.data.participantUids
+        && request.resource.data.calleeUid in request.resource.data.participantUids
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.offer == null
+        && request.resource.data.answer == null;
+
+      allow update: if isAccountCallParticipant()
+        && isAccountCallParticipantAfter()
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.mode == resource.data.mode
+        && request.resource.data.callerUid == resource.data.callerUid
+        && request.resource.data.calleeUid == resource.data.calleeUid
+        && request.resource.data.participantUids == resource.data.participantUids
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'acceptedAt',
+          'connectedAt',
+          'endedAt',
+          'updatedAt',
+          'endedBy',
+          'endReason',
+          'offer',
+          'answer'
+        ])
+        && request.resource.data.status in [
+          'ringing',
+          'accepted',
+          'connecting',
+          'active',
+          'ended',
+          'declined',
+          'missed',
+          'failed',
+          'cancelled'
+        ]
+        && (
+          request.resource.data.status == resource.data.status
+          || request.resource.data.status in ['active', 'ended', 'failed']
+          || (
+            request.resource.data.status in ['accepted', 'connecting', 'declined']
+            && request.auth.uid == resource.data.calleeUid
+          )
+          || (
+            request.resource.data.status in ['missed', 'cancelled']
+            && request.auth.uid == resource.data.callerUid
+          )
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['endedBy'])
+          || request.resource.data.endedBy == request.auth.uid
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['offer'])
+          || (
+            request.auth.uid == resource.data.callerUid
+            && request.resource.data.offer.type == 'offer'
+            && request.resource.data.offer.sdp is string
+          )
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['answer'])
+          || (
+            request.auth.uid == resource.data.calleeUid
+            && request.resource.data.answer.type == 'answer'
+            && request.resource.data.answer.sdp is string
+          )
+        );
+
+      allow delete: if false;
+
+      match /callerCandidates/{candidateId} {
+        allow read: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/accountCalls/$(callId)).data.participantUids;
+        allow create: if signedIn()
+          && request.auth.uid == get(/databases/$(database)/documents/accountCalls/$(callId)).data.callerUid
+          && request.resource.data.keys().hasOnly([
+            'candidate',
+            'sdpMid',
+            'sdpMLineIndex',
+            'usernameFragment',
+            'createdAt',
+            'createdBy'
+          ])
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.candidate is string
+          && request.resource.data.candidate.size() <= 4096;
+        allow update, delete: if false;
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow read: if signedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/accountCalls/$(callId)).data.participantUids;
+        allow create: if signedIn()
+          && request.auth.uid == get(/databases/$(database)/documents/accountCalls/$(callId)).data.calleeUid
+          && request.resource.data.keys().hasOnly([
+            'candidate',
+            'sdpMid',
+            'sdpMLineIndex',
+            'usernameFragment',
+            'createdAt',
+            'createdBy'
+          ])
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.candidate is string
+          && request.resource.data.candidate.size() <= 4096;
+        allow update, delete: if false;
+      }
+    }
+
     match /threads/{threadId} {
       allow get, list: if isThreadParticipantResource();
 

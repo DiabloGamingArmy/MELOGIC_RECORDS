@@ -48,6 +48,18 @@ import { searchProfilesByUsername } from './data/profileSearchService'
 import { markAccountEventRead, subscribeToAccountEvents } from './services/accountEvents'
 import { markSystemNotificationRead, subscribeToSystemNotifications } from './data/systemNotificationService'
 import { buildInboxPinId, deleteInboxPin, subscribeToInboxPins, upsertInboxPin } from './data/inboxPinService'
+import {
+  acceptAccountCall,
+  cancelAccountCall,
+  createAccountAudioCall,
+  declineAccountCall,
+  endAccountCall,
+  markAccountCallMissed,
+  watchAccountCall,
+  watchIncomingAccountCalls,
+  watchRecentAccountCalls
+} from './data/accountCallService'
+import { AccountAudioCallManager } from './webrtc/accountAudioCallManager'
 
 const app = document.querySelector('#app')
 
@@ -173,6 +185,15 @@ const appState = {
   imagePreviewModal: null,
   reactionUnsubscribe: () => {},
   hiddenMessagesUnsubscribe: () => {},
+  incomingCalls: [],
+  recentCalls: [],
+  activeCall: null,
+  callUiState: 'idle',
+  callError: '',
+  callMuted: false,
+  incomingCallsUnsubscribe: () => {},
+  recentCallsUnsubscribe: () => {},
+  activeCallUnsubscribe: () => {},
   hasWindowFocus: document.hasFocus(),
   threadsRealtimeReady: false,
   threadsFallbackTried: false,
@@ -201,6 +222,7 @@ const DEBUG_TYPING = false
 const INBOX_RENDER_DEBUG = false
 const INBOX_SCROLL_DEBUG = false
 const INBOX_AVATAR_DEBUG = false
+const ACCOUNT_CALL_DEBUG = false
 const imagePreloadCache = new Map()
 const attachmentUrlCache = new Map()
 const attachmentUrlErrorCache = new Map()
@@ -212,6 +234,9 @@ let hasBoundInboxDelegates = false
 let activeThreadSubscriptionUid = ''
 let activeMessageSubscriptionThreadId = ''
 let processedStartUid = ''
+let accountCallManager = null
+let accountCallTimeout = null
+let accountCallTimer = null
 const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1'
 
 function debugTyping(...args) {
@@ -224,6 +249,10 @@ function debugInboxRender(...args) {
 
 function debugInboxAvatar(...args) {
   if (INBOX_AVATAR_DEBUG) console.info('[inbox avatar]', ...args)
+}
+
+function debugAccountCall(...args) {
+  if (ACCOUNT_CALL_DEBUG) console.info('[inbox account-call]', ...args)
 }
 
 app.innerHTML = `
@@ -249,6 +278,12 @@ document.body.append(modalRoot)
 const floatingRoot = document.createElement('div')
 floatingRoot.className = 'inbox-floating-root'
 document.body.append(floatingRoot)
+const remoteCallAudio = document.createElement('audio')
+remoteCallAudio.autoplay = true
+remoteCallAudio.playsInline = true
+remoteCallAudio.hidden = true
+remoteCallAudio.dataset.accountCallRemoteAudio = 'true'
+document.body.append(remoteCallAudio)
 setupFloatingEventDelegates()
 setupInboxDelegates()
 
@@ -937,6 +972,9 @@ function clearRealtimeListeners() {
   appState.inboxPinsUnsubscribe()
   appState.reactionUnsubscribe()
   appState.hiddenMessagesUnsubscribe()
+  appState.incomingCallsUnsubscribe()
+  appState.recentCallsUnsubscribe()
+  appState.activeCallUnsubscribe()
   appState.threadUnsubscribe = () => {}
   appState.messageUnsubscribe = () => {}
   appState.sourceThreadUnsubscribe = () => {}
@@ -948,6 +986,19 @@ function clearRealtimeListeners() {
   appState.inboxPinsUnsubscribe = () => {}
   appState.reactionUnsubscribe = () => {}
   appState.hiddenMessagesUnsubscribe = () => {}
+  appState.incomingCallsUnsubscribe = () => {}
+  appState.recentCallsUnsubscribe = () => {}
+  appState.activeCallUnsubscribe = () => {}
+  appState.incomingCalls = []
+  appState.recentCalls = []
+  appState.activeCall = null
+  appState.callUiState = 'idle'
+  appState.callError = ''
+  appState.callMuted = false
+  clearAccountCallTimers()
+  accountCallManager?.cleanup()
+  accountCallManager = null
+  remoteCallAudio.srcObject = null
   appState.threadsFallbackPending = false
   appState.hasLoadedThreadsOnce = false
   appState.inboxRepairAttempted = false
@@ -2489,7 +2540,109 @@ function openThreadConfirmModal(type, threadId) {
   renderFloatingUi()
 }
 
+function isCallFinal(status) {
+  return ['ended', 'declined', 'missed', 'failed', 'cancelled'].includes(String(status || ''))
+}
+
+function getCallCounterpart(call) {
+  if (!call || !appState.user?.uid) return { uid: '', displayName: 'Melogic member', photoURL: '' }
+  const outgoing = call.callerUid === appState.user.uid
+  return outgoing
+    ? { uid: call.calleeUid, displayName: call.calleeDisplayName, photoURL: call.calleePhotoURL }
+    : { uid: call.callerUid, displayName: call.callerDisplayName, photoURL: call.callerPhotoURL }
+}
+
+function getCallStatusLabel(call) {
+  const status = String(call?.status || '')
+  if (status === 'ringing') return call?.callerUid === appState.user?.uid ? 'Outgoing · No answer yet' : 'Incoming · Missed if unanswered'
+  if (status === 'declined') return call?.callerUid === appState.user?.uid ? 'Declined' : 'Declined by you'
+  if (status === 'cancelled') return 'Cancelled'
+  if (status === 'missed') return 'Missed'
+  if (status === 'failed') return 'Failed'
+  if (status === 'ended') return 'Completed'
+  if (status === 'active') return 'Active now'
+  return 'Connecting'
+}
+
+function getCallDuration(call) {
+  const start = new Date(call?.connectedAt || call?.acceptedAt || call?.startedAt || 0).getTime()
+  if (!start) return ''
+  const end = new Date(call?.endedAt || Date.now()).getTime()
+  const seconds = Math.max(0, Math.round((end - start) / 1000))
+  const minutes = Math.floor(seconds / 60)
+  const remainder = String(seconds % 60).padStart(2, '0')
+  return `${minutes}:${remainder}`
+}
+
+function renderCallAvatar(person, className = 'account-call-avatar') {
+  const image = String(person?.photoURL || '').trim()
+  return `
+    <div class="${className} ${image ? 'has-image' : ''}">
+      ${image ? `<img src="${escapeHtml(image)}" alt="" />` : `<span>${escapeHtml(getInitials(person))}</span>`}
+    </div>
+  `
+}
+
+function getCallsContentMarkup() {
+  const activeCall = appState.activeCall && !isCallFinal(appState.activeCall.status) ? appState.activeCall : null
+  const history = appState.recentCalls.filter((call) => !activeCall || call.id !== activeCall.id)
+  const activeMarkup = activeCall
+    ? (() => {
+        const person = getCallCounterpart(activeCall)
+        return `
+          <section class="account-call-active-card">
+            ${renderCallAvatar(person)}
+            <div class="account-call-active-meta">
+              <p class="account-call-eyebrow">Current audio call</p>
+              <h3>${escapeHtml(person.displayName || 'Melogic member')}</h3>
+              <p>${escapeHtml(appState.callUiState === 'active' ? `Connected · ${getCallDuration(activeCall)}` : getCallStatusLabel(activeCall))}</p>
+            </div>
+            <div class="account-call-actions">
+              <button type="button" class="button button-muted" data-account-call-action="toggle-mute">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
+              <button type="button" class="button account-call-danger" data-account-call-action="end">End call</button>
+            </div>
+          </section>
+        `
+      })()
+    : ''
+
+  return `
+    <section class="activity-panel account-calls-panel">
+      <header class="panel-header activity-header">
+        <h3>Calls</h3>
+        <p>Account-to-account audio calling</p>
+      </header>
+      ${appState.callError ? `<div class="account-call-error" role="alert">${escapeHtml(appState.callError)}</div>` : ''}
+      ${activeMarkup}
+      ${history.length ? `
+        <div class="account-call-history">
+          ${history.map((call) => {
+            const person = getCallCounterpart(call)
+            const outgoing = call.callerUid === appState.user?.uid
+            return `
+              <article class="account-call-history-row">
+                ${renderCallAvatar(person, 'account-call-history-avatar')}
+                <div>
+                  <strong>${escapeHtml(person.displayName || 'Melogic member')}</strong>
+                  <p>${outgoing ? 'Outgoing' : 'Incoming'} · ${escapeHtml(getCallStatusLabel(call))}</p>
+                </div>
+                <time>${escapeHtml(formatThreadTimestamp(call.startedAt || call.updatedAt))}${call.endedAt ? ` · ${escapeHtml(getCallDuration(call))}` : ''}</time>
+              </article>
+            `
+          }).join('')}
+        </div>
+      ` : (!activeCall ? `
+        <section class="inbox-empty-panel activity-empty-panel">
+          <h3>No calls yet.</h3>
+          <p>Start an audio call from a direct message conversation.</p>
+        </section>
+      ` : '')}
+    </section>
+  `
+}
+
 function getFilterContentMarkup(filterName) {
+  if (filterName === 'Calls') return getCallsContentMarkup()
   if (filterName === 'System') {
     const filterOptions = [
       { key: 'all', label: 'All' },
@@ -2613,8 +2766,11 @@ function getConversationHeaderMarkup(thread) {
     title: headerMeta.displayName || thread.title,
     imageURL: headerMeta.avatarURL || thread.imageURL || '',
     subtitle: getConversationSubtitle(thread),
-    messageFindOpen: appState.messageFind.open
+    messageFindOpen: appState.messageFind.open,
+    callUiState: appState.callUiState
   })
+  const hasLiveCall = appState.activeCall && !isCallFinal(appState.activeCall.status)
+  const callDisabled = thread.type !== 'dm' || hasLiveCall
 
   return `
     <header class="conversation-header" data-conversation-header-signature="${escapeHtml(headerSignature)}">
@@ -2624,6 +2780,9 @@ function getConversationHeaderMarkup(thread) {
         <p>${escapeHtml(getConversationSubtitle(thread))}</p>
       </div>
       ${getMessageFindMarkup()}
+      <button type="button" class="conversation-call-trigger" data-start-account-call="${escapeHtml(thread.id)}" aria-label="${thread.type === 'dm' ? 'Start audio call' : 'Group calls coming soon'}" title="${thread.type === 'dm' ? (hasLiveCall ? 'Finish the current call first' : 'Start audio call') : 'Group calls coming soon'}" ${callDisabled ? 'disabled' : ''}>
+        ${iconSvg('phone') || 'Call'}
+      </button>
       <button type="button" class="chat-settings-trigger" data-action="open-chat-settings" aria-label="Open chat settings">⋯</button>
     </header>
   `
@@ -2808,8 +2967,228 @@ function getImagePreviewModalMarkup() {
   `
 }
 
+function getAccountCallOverlayMarkup() {
+  const activeCall = appState.activeCall && !isCallFinal(appState.activeCall.status) ? appState.activeCall : null
+  const incomingCall = !activeCall ? appState.incomingCalls[0] : null
+  const call = activeCall || incomingCall
+  if (!call) return ''
+  const person = getCallCounterpart(call)
+  const incoming = !activeCall && call.calleeUid === appState.user?.uid
+  const outgoing = activeCall && call.callerUid === appState.user?.uid && ['ringing', 'accepted'].includes(call.status)
+  const statusText = incoming
+    ? 'Incoming audio call'
+    : outgoing
+      ? 'Calling...'
+      : appState.callUiState === 'active'
+        ? `Connected · ${getCallDuration(call)}`
+        : appState.callUiState === 'requesting-mic'
+          ? 'Requesting microphone...'
+          : appState.callUiState === 'failed'
+            ? (appState.callError || 'Call failed')
+            : 'Connecting...'
+
+  return `
+    <aside class="account-call-overlay ${incoming ? 'is-incoming' : ''}" role="${incoming ? 'dialog' : 'status'}" aria-label="${escapeHtml(statusText)}">
+      ${renderCallAvatar(person)}
+      <div class="account-call-overlay-meta">
+        <strong>${escapeHtml(person.displayName || 'Melogic member')}</strong>
+        <span data-account-call-status>${escapeHtml(statusText)}</span>
+      </div>
+      <div class="account-call-overlay-actions">
+        ${incoming ? `
+          <button type="button" class="account-call-icon-button is-accept" data-account-call-action="accept" aria-label="Accept call" ${call.offer?.sdp ? '' : 'disabled'}>${iconSvg('phone')}</button>
+          <button type="button" class="account-call-icon-button is-decline" data-account-call-action="decline" aria-label="Decline call">${iconSvg('x')}</button>
+        ` : outgoing ? `
+          <button type="button" class="button account-call-danger" data-account-call-action="cancel">Cancel</button>
+        ` : `
+          <button type="button" class="button button-muted" data-account-call-action="toggle-mute">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
+          <button type="button" class="button account-call-danger" data-account-call-action="end">End</button>
+        `}
+      </div>
+    </aside>
+  `
+}
+
 function renderFloatingUi() {
-  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getImagePreviewModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}`
+  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getImagePreviewModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}${getAccountCallOverlayMarkup()}`
+}
+
+function refreshAccountCallUi({ refreshConversation = false } = {}) {
+  renderFloatingUi()
+  if (appState.activeFilter === 'Calls') {
+    renderSignedInState()
+  } else if (refreshConversation && appState.activeFilter === 'Messages' && appState.selectedThreadId) {
+    renderSelectedConversation({ reason: 'account-call-update' })
+  }
+}
+
+function clearAccountCallTimers() {
+  if (accountCallTimeout) window.clearTimeout(accountCallTimeout)
+  if (accountCallTimer) window.clearInterval(accountCallTimer)
+  accountCallTimeout = null
+  accountCallTimer = null
+}
+
+function startAccountCallTimer() {
+  if (accountCallTimer) return
+  accountCallTimer = window.setInterval(() => {
+    if (!appState.activeCall || isCallFinal(appState.activeCall.status)) {
+      clearAccountCallTimers()
+      return
+    }
+    const statusNode = floatingRoot.querySelector('[data-account-call-status]')
+    if (statusNode && appState.callUiState === 'active') {
+      statusNode.textContent = `Connected · ${getCallDuration(appState.activeCall)}`
+    }
+    if (appState.activeFilter === 'Calls') renderSignedInState()
+  }, 1000)
+}
+
+function ensureAccountCallManager() {
+  if (accountCallManager) return accountCallManager
+  accountCallManager = new AccountAudioCallManager({
+    onStateChange: ({ state, muted, error }) => {
+      appState.callUiState = state
+      appState.callMuted = Boolean(muted)
+      if (error) appState.callError = error
+      if (state === 'active') startAccountCallTimer()
+      refreshAccountCallUi({ refreshConversation: true })
+    },
+    onRemoteStream: (stream) => {
+      remoteCallAudio.srcObject = stream || null
+      if (stream) {
+        remoteCallAudio.play().catch(() => {
+          appState.callError = 'Remote audio is ready. Use the call controls to resume audio if your browser blocked playback.'
+          refreshAccountCallUi()
+        })
+      }
+    },
+    onError: ({ message }) => {
+      appState.callError = message
+      refreshAccountCallUi({ refreshConversation: true })
+    }
+  })
+  return accountCallManager
+}
+
+function watchActiveAccountCall(callId) {
+  appState.activeCallUnsubscribe()
+  appState.activeCallUnsubscribe = watchAccountCall(callId, (call) => {
+    if (!call) return
+    appState.activeCall = call
+    if (isCallFinal(call.status)) {
+      clearAccountCallTimers()
+      accountCallManager?.cleanup({ preserveState: true })
+      appState.callUiState = call.status === 'failed' ? 'failed' : 'ended'
+      window.setTimeout(() => {
+        if (appState.activeCall?.id !== call.id || !isCallFinal(appState.activeCall.status)) return
+        appState.activeCall = null
+        appState.callUiState = 'idle'
+        appState.callMuted = false
+        refreshAccountCallUi({ refreshConversation: true })
+      }, 1800)
+    }
+    refreshAccountCallUi({ refreshConversation: true })
+  }, (error) => {
+    appState.callError = error?.message || 'The call could not be updated.'
+    refreshAccountCallUi()
+  })
+}
+
+async function startAccountCallFromThread(threadId) {
+  const thread = appState.threads.find((entry) => entry.id === threadId)
+  if (!thread) return
+  if (thread.type !== 'dm') {
+    appState.callError = 'Group calls are coming soon.'
+    refreshAccountCallUi()
+    return
+  }
+  if (appState.activeCall && !isCallFinal(appState.activeCall.status)) {
+    appState.callError = 'Finish the current call before starting another.'
+    refreshAccountCallUi()
+    return
+  }
+  const calleeUid = thread.otherParticipantId || (thread.participantIds || []).find((uid) => uid !== appState.user?.uid)
+  if (!calleeUid) {
+    appState.callError = 'The recipient for this direct message could not be identified.'
+    refreshAccountCallUi()
+    return
+  }
+
+  appState.callError = ''
+  appState.callUiState = 'calling'
+  try {
+    const callerProfile = getProfileMeta(appState.user.uid, {
+      displayName: appState.user.displayName,
+      photoURL: appState.user.photoURL
+    })
+    const calleeProfile = getProfileMeta(calleeUid, thread.otherProfile || { title: thread.title, avatarURL: thread.imageURL })
+    const call = await createAccountAudioCall({
+      calleeUid,
+      threadId: thread.id,
+      callerProfile,
+      calleeProfile
+    })
+    appState.activeCall = call
+    watchActiveAccountCall(call.id)
+    refreshAccountCallUi({ refreshConversation: true })
+    await ensureAccountCallManager().startCaller(call)
+    accountCallTimeout = window.setTimeout(async () => {
+      if (appState.activeCall?.id === call.id && appState.activeCall.status === 'ringing') {
+        await markAccountCallMissed(call.id).catch(() => {})
+      }
+    }, 55000)
+  } catch (error) {
+    appState.callError = error?.message || 'The audio call could not be started.'
+    appState.callUiState = 'failed'
+    refreshAccountCallUi({ refreshConversation: true })
+  }
+}
+
+async function acceptIncomingAccountCall(call) {
+  if (!call?.id) return
+  if (appState.activeCall && !isCallFinal(appState.activeCall.status) && appState.activeCall.id !== call.id) {
+    appState.callError = 'Finish the current call before accepting another.'
+    refreshAccountCallUi()
+    return
+  }
+  appState.callError = ''
+  appState.activeCall = call
+  appState.callUiState = 'requesting-mic'
+  watchActiveAccountCall(call.id)
+  refreshAccountCallUi({ refreshConversation: true })
+  try {
+    await acceptAccountCall(call.id)
+    await ensureAccountCallManager().acceptCallee(call)
+  } catch (error) {
+    appState.callError = error?.message || 'The incoming call could not be accepted.'
+    appState.callUiState = 'failed'
+    refreshAccountCallUi({ refreshConversation: true })
+  }
+}
+
+async function handleAccountCallAction(action) {
+  const incomingCall = appState.incomingCalls[0]
+  const activeCall = appState.activeCall
+  if (action === 'accept') return acceptIncomingAccountCall(incomingCall)
+  if (action === 'decline' && incomingCall?.id) {
+    await declineAccountCall(incomingCall.id).catch((error) => {
+      appState.callError = error?.message || 'The call could not be declined.'
+    })
+    refreshAccountCallUi()
+    return
+  }
+  if (!activeCall?.id) return
+  if (action === 'toggle-mute') {
+    ensureAccountCallManager().toggleMuted()
+    return
+  }
+  if (action === 'cancel') await cancelAccountCall(activeCall.id).catch(() => {})
+  if (action === 'end') await endAccountCall(activeCall.id).catch(() => {})
+  if (['cancel', 'end'].includes(action)) {
+    clearAccountCallTimers()
+    accountCallManager?.cleanup({ preserveState: true })
+  }
 }
 
 async function handleFloatingMenuAction(button) {
@@ -2926,6 +3305,14 @@ async function handleFloatingMenuAction(button) {
 
 function setupFloatingEventDelegates() {
   floatingRoot.addEventListener('click', async (event) => {
+    const callActionButton = event.target.closest('[data-account-call-action]')
+    if (callActionButton) {
+      event.preventDefault()
+      event.stopPropagation()
+      await handleAccountCallAction(callActionButton.getAttribute('data-account-call-action') || '')
+      return
+    }
+
     const threadConfirmSubmit = event.target.closest('[data-thread-confirm-submit]')
     if (threadConfirmSubmit) {
       event.preventDefault()
@@ -3854,6 +4241,19 @@ function bindSharedEvents(scope = inboxRoot) {
     openChatSettingsButton.addEventListener('click', () => openChatSettingsModal())
   }
 
+  scope.querySelectorAll('[data-start-account-call]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (button.disabled) return
+      await startAccountCallFromThread(button.getAttribute('data-start-account-call') || '')
+    })
+  })
+
+  scope.querySelectorAll('[data-account-call-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      await handleAccountCallAction(button.getAttribute('data-account-call-action') || '')
+    })
+  })
+
   const messageForm = scope.querySelector('[data-message-form]')
   const textarea = messageForm?.querySelector('textarea[name="message"]')
   const attachmentInput = messageForm?.querySelector('[data-attachment-input]')
@@ -4766,6 +5166,37 @@ function startBlockedUsersSubscription() {
   )
 }
 
+function startAccountCallSubscriptions() {
+  if (!appState.user?.uid) return
+  const uid = appState.user.uid
+  appState.incomingCallsUnsubscribe()
+  appState.recentCallsUnsubscribe()
+
+  appState.incomingCallsUnsubscribe = watchIncomingAccountCalls(uid, (calls) => {
+    appState.incomingCalls = calls.filter((call) => call.id !== appState.activeCall?.id)
+    debugAccountCall('incoming calls', appState.incomingCalls.length)
+    refreshAccountCallUi()
+  }, (error) => {
+    warnRealtimePermission(`incoming-account-calls-${uid}`, error)
+  })
+
+  appState.recentCallsUnsubscribe = watchRecentAccountCalls(uid, (calls) => {
+    appState.recentCalls = calls
+    const recoverable = calls.find((call) => {
+      if (isCallFinal(call.status)) return false
+      return call.status !== 'ringing' || call.callerUid === uid
+    })
+    if (recoverable && !appState.activeCall) {
+      appState.activeCall = recoverable
+      appState.callUiState = recoverable.status === 'ringing' && recoverable.callerUid === uid ? 'calling' : recoverable.status
+      watchActiveAccountCall(recoverable.id)
+    }
+    if (appState.activeFilter === 'Calls') renderSignedInState()
+  }, (error) => {
+    warnRealtimePermission(`recent-account-calls-${uid}`, error)
+  })
+}
+
 function handleGlobalKeydown(event) {
   const inboxHasFocus = inboxRoot.contains(document.activeElement)
   if (
@@ -4841,6 +5272,10 @@ window.addEventListener('blur', () => {
 })
 window.addEventListener('beforeunload', () => {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
+  if (appState.activeCall?.id && !isCallFinal(appState.activeCall.status)) {
+    endAccountCall(appState.activeCall.id, 'page-left').catch(() => {})
+    accountCallManager?.cleanup({ preserveState: true })
+  }
 })
 window.addEventListener('pagehide', () => {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
@@ -4861,6 +5296,7 @@ waitForInitialAuthState().then(async (user) => {
   startAccountEventsSubscription()
   startInboxPinsSubscription()
   startBlockedUsersSubscription()
+  startAccountCallSubscriptions()
   hasInitializedAuthObserver = true
 
   const startUid = String(new URLSearchParams(window.location.search).get('start') || '').trim()
@@ -4911,4 +5347,5 @@ subscribeToAuthState(async (user) => {
   startAccountEventsSubscription()
   startInboxPinsSubscription()
   startBlockedUsersSubscription()
+  startAccountCallSubscriptions()
 })
