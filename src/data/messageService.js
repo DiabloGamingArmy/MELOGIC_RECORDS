@@ -284,18 +284,6 @@ export async function sendMessage(threadId, payload = {}) {
   if (!participantIds.includes(payload.senderId)) {
     throw new Error('You are not a participant in this thread.')
   }
-  if (!participantSnap.exists()) {
-    await setDoc(participantRef, {
-      uid: payload.senderId,
-      role: threadData.createdBy === payload.senderId ? 'owner' : 'member',
-      joinedAt: serverTimestamp(),
-      lastDeliveredAt: null,
-      lastReadAt: null,
-      muted: false,
-      archived: false
-    }, { merge: true })
-  }
-
   const attachments = await uploadMessageAttachments(threadId, messageRef.id, attachmentsInput)
   const summary = summarizeMessage(body, attachments)
   const normalizedType = (() => {
@@ -329,14 +317,29 @@ export async function sendMessage(threadId, payload = {}) {
       lastMessageType: normalizedType,
       lastMessageAttachmentCount: attachments.length
     })
-  batch.set(participantRef, {
+  await batch.commit()
+
+  let receiptUpdated = true
+  try {
+    await setDoc(participantRef, {
       uid: payload.senderId,
+      ...(participantSnap.exists()
+        ? {}
+        : {
+            role: threadData.createdBy === payload.senderId ? 'owner' : 'member',
+            joinedAt: serverTimestamp(),
+            muted: false,
+            archived: false
+          }),
       lastDeliveredAt: serverTimestamp(),
       lastReadAt: serverTimestamp()
     }, { merge: true })
-  await batch.commit()
+  } catch {
+    // Message creation must not fail because an optional participant receipt repair was rejected.
+    receiptUpdated = false
+  }
 
-  return { ok: true, messageId: messageRef.id, clientMessageId }
+  return { ok: true, messageId: messageRef.id, clientMessageId, receiptUpdated }
 }
 
 export async function editMessage({ threadId, messageId, uid, body }) {

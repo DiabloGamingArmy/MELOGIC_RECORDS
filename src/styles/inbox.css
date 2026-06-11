@@ -807,6 +807,20 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   overscroll-behavior: contain;
 }
 
+.message-list-empty {
+  padding: 0;
+}
+
+.message-list-empty .inbox-empty-panel-inline {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 .message-attachment-list {
   margin-top: 0.45rem;
   display: grid;
@@ -1415,6 +1429,12 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   font-size: 0.8rem;
 }
 
+.composer-note {
+  margin: 0;
+  color: #9fb2d8;
+  font-size: 0.8rem;
+}
+
 .message-reaction-row {
   margin-top: 0.4rem;
   display: flex;
@@ -1682,8 +1702,8 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 }
 
 .inbox-empty-panel-inline {
-  min-height: 20vh;
-  margin: 0.2rem 0;
+  min-height: 100%;
+  margin: 0;
 }
 
 .activity-empty-panel {
