@@ -673,6 +673,36 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   outline: none;
 }
 
+.conversation-call-trigger {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  border: 1px solid rgba(113, 211, 171, 0.42);
+  border-radius: 0.62rem;
+  background: rgba(20, 64, 52, 0.72);
+  color: #caffea;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.conversation-call-trigger svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.conversation-call-trigger:hover,
+.conversation-call-trigger:focus-visible {
+  border-color: rgba(135, 239, 196, 0.82);
+  background: rgba(29, 84, 67, 0.86);
+  outline: none;
+}
+
+.conversation-call-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 .conversation-header-meta h3,
 .conversation-header-meta p {
   margin: 0;
@@ -2229,4 +2259,226 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 .system-notification-title {
   font-weight: 600;
   margin-bottom: 0.3rem;
+}
+
+.account-calls-panel {
+  width: min(920px, 100%);
+}
+
+.account-call-active-card,
+.account-call-history-row {
+  border: 1px solid rgba(125, 161, 218, 0.24);
+  border-radius: 8px;
+  background: rgba(10, 16, 28, 0.82);
+}
+
+.account-call-active-card {
+  min-height: 150px;
+  padding: 1rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+}
+
+.account-call-avatar,
+.account-call-history-avatar {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #293c61;
+  color: #eef4ff;
+  font-weight: 700;
+}
+
+.account-call-avatar {
+  width: 4rem;
+  height: 4rem;
+}
+
+.account-call-history-avatar {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+.account-call-avatar img,
+.account-call-history-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account-call-active-meta {
+  min-width: 0;
+}
+
+.account-call-active-meta h3,
+.account-call-active-meta p,
+.account-call-history-row p {
+  margin: 0;
+}
+
+.account-call-active-meta h3 {
+  margin: 0.15rem 0 0.22rem;
+}
+
+.account-call-active-meta p,
+.account-call-history-row p,
+.account-call-history-row time {
+  color: #9fb2d8;
+}
+
+.account-call-eyebrow {
+  color: #7ee2ba !important;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.account-call-actions,
+.account-call-overlay-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.account-call-danger {
+  border: 1px solid rgba(255, 125, 132, 0.5);
+  background: rgba(149, 42, 50, 0.86);
+  color: #fff;
+}
+
+.account-call-error {
+  margin-bottom: 0.8rem;
+  border: 1px solid rgba(255, 130, 136, 0.35);
+  border-radius: 8px;
+  background: rgba(116, 28, 36, 0.32);
+  color: #ffd6d9;
+  padding: 0.72rem 0.8rem;
+}
+
+.account-call-history {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
+.account-call-history-row {
+  padding: 0.7rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.72rem;
+}
+
+.account-call-history-row time {
+  font-size: 0.75rem;
+  text-align: right;
+}
+
+.account-call-overlay {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 1600;
+  width: min(430px, calc(100vw - 2rem));
+  border: 1px solid rgba(128, 169, 232, 0.42);
+  border-radius: 8px;
+  background: rgba(8, 14, 25, 0.97);
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.48);
+  padding: 0.78rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.72rem;
+}
+
+.account-call-overlay.is-incoming {
+  border-color: rgba(105, 224, 178, 0.5);
+}
+
+.account-call-overlay .account-call-avatar {
+  width: 3rem;
+  height: 3rem;
+}
+
+.account-call-overlay-meta {
+  min-width: 0;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.account-call-overlay-meta strong,
+.account-call-overlay-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-call-overlay-meta span {
+  color: #9fb2d8;
+  font-size: 0.78rem;
+}
+
+.account-call-icon-button {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  color: #fff;
+  cursor: pointer;
+}
+
+.account-call-icon-button svg {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.account-call-icon-button:disabled {
+  cursor: wait;
+  opacity: 0.5;
+}
+
+.account-call-icon-button.is-accept {
+  border: 1px solid rgba(112, 240, 187, 0.55);
+  background: #15734e;
+}
+
+.account-call-icon-button.is-decline {
+  border: 1px solid rgba(255, 126, 133, 0.55);
+  background: #9f2f39;
+}
+
+@media (max-width: 680px) {
+  .account-call-active-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .account-call-active-card .account-call-actions {
+    grid-column: 1 / -1;
+  }
+
+  .account-call-history-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .account-call-history-row time {
+    grid-column: 2;
+    text-align: left;
+  }
+
+  .account-call-overlay {
+    left: 0.7rem;
+    right: 0.7rem;
+    bottom: 0.7rem;
+    width: auto;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .account-call-overlay-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
 }
