@@ -20,6 +20,7 @@ import {
   unblockUser,
   deleteThreadForUser,
   hydrateThreadFromSourceIfNeeded,
+  getThread,
   listInboxThreads,
   loadProfilesByUids,
   listOlderMessages,
@@ -131,6 +132,7 @@ const appState = {
   revealBlockedMessageIdsByThreadId: {},
   loadingMessageThreadId: '',
   optimisticMessagesByThreadId: {},
+  preparingThreadIds: {},
   activeFilter: initialSystemFilter ? 'System' : 'Messages',
   threadUnsubscribe: () => {},
   messageUnsubscribe: () => {},
@@ -223,11 +225,13 @@ const INBOX_RENDER_DEBUG = false
 const INBOX_SCROLL_DEBUG = false
 const INBOX_AVATAR_DEBUG = false
 const ACCOUNT_CALL_DEBUG = false
+const INBOX_SEND_DEBUG = false
 const imagePreloadCache = new Map()
 const attachmentUrlCache = new Map()
 const attachmentUrlErrorCache = new Map()
 const hydratedProfileUids = new Set()
 const conversationAutoFillByThreadId = new Map()
+const locallyCreatedThreadIds = new Set()
 let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let hasBoundInboxDelegates = false
@@ -253,6 +257,10 @@ function debugInboxAvatar(...args) {
 
 function debugAccountCall(...args) {
   if (ACCOUNT_CALL_DEBUG) console.info('[inbox account-call]', ...args)
+}
+
+function debugInboxSend(...args) {
+  if (INBOX_SEND_DEBUG) console.info('[inbox send]', ...args)
 }
 
 app.innerHTML = `
@@ -538,6 +546,15 @@ function upsertThreadInState(nextThread) {
   appState.threads = sortInboxThreadsLocal(
     appState.threads.map((thread) => (thread.id === nextThread.id ? { ...thread, ...nextThread } : thread))
   )
+}
+
+function mergeThreadsWithLocalCreates(threads = []) {
+  const incomingIds = new Set(threads.map((thread) => thread.id))
+  locallyCreatedThreadIds.forEach((threadId) => {
+    if (incomingIds.has(threadId)) locallyCreatedThreadIds.delete(threadId)
+  })
+  const pendingLocal = appState.threads.filter((thread) => locallyCreatedThreadIds.has(thread.id) && !incomingIds.has(thread.id))
+  return sortInboxThreadsLocal([...threads, ...pendingLocal])
 }
 
 function mergeSourceThreadState(current = {}, sourceThread = {}) {
@@ -1946,10 +1963,13 @@ function getMessageGroupsMarkup(thread, {
   renderSignature = getMessageRenderSignature(thread, messages)
 } = {}) {
   if (!messages.length) {
+    const isPreparing = Boolean(appState.preparingThreadIds[thread.id])
     return `
-      <section class="inbox-empty-panel inbox-empty-panel-inline">
-        <h3>No messages yet.</h3>
-        <p>Start this conversation with your first message.</p>
+      <section class="message-list message-list-empty" data-message-list data-message-render-signature="${escapeHtml(renderSignature)}">
+        <div class="inbox-empty-panel inbox-empty-panel-inline">
+          <h3>${isPreparing ? 'Preparing conversation...' : 'No messages yet.'}</h3>
+          <p>${isPreparing ? 'Confirming your membership before messages can be sent.' : 'Start this conversation with your first message.'}</p>
+        </div>
       </section>
     `
   }
@@ -2094,7 +2114,8 @@ function getConversationBodyMarkup({
   }
 
   const isLoading = appState.loadingMessageThreadId === thread.id
-  if (isLoading) {
+  const isPreparingInitialThread = Boolean(appState.preparingThreadIds[thread.id])
+  if (isLoading && !isPreparingInitialThread) {
     return `
       <section class="inbox-empty-panel">
         <h3>Loading messages…</h3>
@@ -2110,9 +2131,15 @@ function getConversationBodyMarkup({
   const typingUsers = getTypingUsers(thread.id)
   const blockState = getDmBlockState(thread)
   const isDmComposerBlocked = thread.type === 'dm' && (blockState.currentUserBlockedOther || blockState.otherBlockedCurrentUser)
+  const isPreparingThread = Boolean(appState.preparingThreadIds[thread.id])
+  const localParticipantIds = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  const isKnownParticipant = localParticipantIds.includes(appState.user?.uid)
+  const isComposerUnavailable = isDmComposerBlocked || isPreparingThread || !isKnownParticipant
   const composerRenderSignature = hashRenderSignature({
     threadId: thread.id,
     isDmComposerBlocked,
+    isPreparingThread,
+    isKnownParticipant,
     replyDraft,
     attachments,
     previewUrls,
@@ -2138,7 +2165,7 @@ function getConversationBodyMarkup({
           })}
       <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length ? '' : 'hidden'}>${typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : ''}</p>
       ${blockAlertMarkup}
-      <form class="message-composer ${isDmComposerBlocked ? 'is-blocked' : ''}" data-message-form data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
+      <form class="message-composer ${isComposerUnavailable ? 'is-blocked' : ''}" data-message-form data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
         <label class="sr-only" for="message-input">Message</label>
         ${replyDraft ? `
           <div class="composer-reply-preview">
@@ -2159,13 +2186,19 @@ function getConversationBodyMarkup({
           const ext = escapeHtml((String(file.name || '').split('.').pop() || type).toUpperCase().slice(0, 6))
           return `<article class="composer-attachment-preview is-file" title="${title}"><div class="composer-file-icon">${ext}</div><small>${title}</small><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`
         }).join('')}</div>` : ''}
-        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="Write a message..." ${isDmComposerBlocked ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
-        <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isDmComposerBlocked ? 'disabled' : ''} />
+        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="${isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isComposerUnavailable ? 'disabled' : ''} />
         <div class="message-composer-footer">
-          ${appState.errorMessage ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>` : '<span></span>'}
+          ${appState.errorMessage
+            ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>`
+            : isPreparingThread
+              ? '<p class="composer-note">Preparing conversation...</p>'
+              : !isKnownParticipant
+                ? '<p class="composer-error">You do not have permission to send in this conversation.</p>'
+                : '<span></span>'}
           <div class="composer-actions">
-            <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files" ${isDmComposerBlocked ? 'disabled' : ''}>+</button>
-            <button type="submit" class="button button-accent" ${(isDmComposerBlocked || (!draft.trim() && !attachments.length)) ? 'disabled' : ''}>Send</button>
+            <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files" ${isComposerUnavailable ? 'disabled' : ''}>+</button>
+            <button type="submit" class="button button-accent" ${(isComposerUnavailable || (!draft.trim() && !attachments.length)) ? 'disabled' : ''}>Send</button>
           </div>
         </div>
       </form>
@@ -3534,6 +3567,7 @@ async function handleCreateChatSubmit() {
   appState.isCreatingChat = true
   appState.createChatError = ''
   renderCreateChatModal()
+  let creatingThreadId = ''
 
   try {
     const selectedUsers = [...appState.selectedChatUsers]
@@ -3555,7 +3589,10 @@ async function handleCreateChatSubmit() {
 
     const threadId = thread?.id || thread?.threadId
     if (!threadId) throw new Error('Unable to create chat.')
+    creatingThreadId = threadId
     console.info('[inbox] create/open thread succeeded', threadId)
+    locallyCreatedThreadIds.add(threadId)
+    appState.preparingThreadIds[threadId] = true
     if (createdType === 'dm') {
       await restoreThreadForUser({ uid: appState.user.uid, threadId })
     }
@@ -3566,7 +3603,10 @@ async function handleCreateChatSubmit() {
     }
 
     const hydratedThread = await hydrateThreadFromSourceIfNeeded(thread)
-    if (hydratedThread) upsertThreadInState(hydratedThread)
+    if (!hydratedThread?.participantIds?.includes(appState.user.uid)) {
+      throw new Error('Conversation membership could not be confirmed.')
+    }
+    upsertThreadInState(hydratedThread)
     appState.activeFilter = 'Messages'
     appState.selectedThreadId = threadId
     saveLastSelectedThread(appState.user.uid, threadId)
@@ -3575,7 +3615,7 @@ async function handleCreateChatSubmit() {
     try {
       const durableThreads = await listInboxThreads(appState.user.uid)
       console.info('[inbox] one-time fallback loaded', durableThreads.length, 'threads')
-      appState.threads = durableThreads.length ? sortInboxThreadsLocal(durableThreads) : appState.threads
+      appState.threads = durableThreads.length ? mergeThreadsWithLocalCreates(durableThreads) : appState.threads
       appState.hasLoadedThreadsOnce = true
     } catch (refreshError) {
       warnRealtimePermission(`threads-refresh-after-create-${appState.user.uid}`, refreshError)
@@ -3584,6 +3624,7 @@ async function handleCreateChatSubmit() {
     renderThreadListOnly()
     renderSelectedConversation({ forceBottom: true })
   } catch (error) {
+    if (creatingThreadId) delete appState.preparingThreadIds[creatingThreadId]
     appState.isCreatingChat = false
     appState.createChatError = error?.message || 'Unable to create chat.'
     renderCreateChatModal()
@@ -4686,8 +4727,38 @@ function getSendErrorMessage(error, thread) {
   return error?.message || 'Unable to send message.'
 }
 
+async function ensureThreadReadyForSend(thread) {
+  const threadId = String(thread?.id || '').trim()
+  const uid = String(appState.user?.uid || '').trim()
+  if (!threadId || !uid) throw new Error('Thread or signed-in user is missing.')
+
+  appState.preparingThreadIds[threadId] = true
+  renderSelectedConversation({ reason: 'prepare-send' })
+  try {
+    const sourceThread = await getThread(threadId)
+    if (!sourceThread) throw new Error('Thread not found.')
+    const participantIds = Array.isArray(sourceThread.participantIds) ? sourceThread.participantIds : []
+    const canSend = participantIds.includes(uid) && sourceThread.status !== 'archived'
+    debugInboxSend('thread readiness', {
+      threadId,
+      uid,
+      participantIds,
+      createdBy: sourceThread.createdBy || '',
+      status: sourceThread.status || '',
+      canSend
+    })
+    if (!participantIds.includes(uid)) throw new Error('You are not a participant in this thread.')
+    if (sourceThread.status === 'archived') throw new Error('This conversation is archived.')
+    upsertThreadInState(sourceThread)
+    locallyCreatedThreadIds.delete(threadId)
+    return sourceThread
+  } finally {
+    delete appState.preparingThreadIds[threadId]
+  }
+}
+
 async function handleMessageSubmit(form) {
-  const thread = getSelectedThread()
+  let thread = getSelectedThread()
   if (!thread || !appState.user?.uid) return
   const blockState = getDmBlockState(thread)
   if (thread.type === 'dm' && blockState.isDmBlocked) {
@@ -4709,6 +4780,21 @@ async function handleMessageSubmit(form) {
   }
   if (!body && !attachments.length) return
 
+  try {
+    thread = await ensureThreadReadyForSend(thread)
+  } catch (error) {
+    appState.errorMessage = getSendErrorMessage(error, thread)
+    debugInboxSend('thread readiness failed', {
+      threadId: thread.id,
+      uid: appState.user.uid,
+      participantIds: thread.participantIds || [],
+      code: error?.code || '',
+      message: error?.message || ''
+    })
+    renderSelectedConversation({ reason: 'prepare-send-failed' })
+    return
+  }
+
   const clientMessageId = createClientMessageId()
   const replyTo = appState.replyDraftByThreadId[thread.id] || null
   addOptimisticMessage(thread, { clientMessageId, body, attachments, replyTo })
@@ -4722,6 +4808,18 @@ async function handleMessageSubmit(form) {
 
   let sendFailed = false
   try {
+    debugInboxSend('send start', {
+      threadId: thread.id,
+      uid: appState.user.uid,
+      participantIds: thread.participantIds || [],
+      canSend: (thread.participantIds || []).includes(appState.user.uid),
+      payload: {
+        bodyLength: body.length,
+        attachmentCount: attachments.length,
+        hasReply: Boolean(replyTo),
+        clientMessageId
+      }
+    })
     await sendMessage(thread.id, {
       senderId: appState.user.uid,
       body,
@@ -4738,6 +4836,13 @@ async function handleMessageSubmit(form) {
       })
     }
   } catch (error) {
+    debugInboxSend('send failed', {
+      threadId: thread.id,
+      uid: appState.user.uid,
+      participantIds: thread.participantIds || [],
+      code: error?.code || '',
+      message: error?.message || ''
+    })
     sendFailed = true
     setOptimisticMessageStatus(thread.id, clientMessageId, 'failed', error?.message || 'Unable to send message.')
     appState.errorMessage = getSendErrorMessage(error, thread)
@@ -4872,6 +4977,7 @@ function startMessageSubscription(threadId) {
       loadingOlder: false
     }
     appState.loadingMessageThreadId = ''
+    delete appState.preparingThreadIds[threadId]
     if (appState.selectedThreadId === threadId) {
       renderSelectedConversation({
         forceBottom: shouldAutoScroll,
@@ -4902,6 +5008,11 @@ function startMessageSubscription(threadId) {
       }
     }
   }, (error) => {
+    delete appState.preparingThreadIds[threadId]
+    if (appState.selectedThreadId === threadId) {
+      appState.errorMessage = getSendErrorMessage(error, getSelectedThread())
+      renderSelectedConversation({ reason: 'message-subscription-error' })
+    }
     warnRealtimePermission(`messages-${threadId}`, error)
   })
 
@@ -4938,7 +5049,7 @@ function startThreadSubscription() {
   appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, async (threads) => {
     const previousSelectedThreadId = appState.selectedThreadId
     await preloadThreadImages(threads)
-    appState.threads = sortInboxThreadsLocal(threads)
+    appState.threads = mergeThreadsWithLocalCreates(threads)
     const profilesChanged = await hydrateProfilesForThreads(threads).catch(() => false)
     appState.isLoadingThreads = false
     appState.threadsRealtimeReady = true
@@ -4959,7 +5070,7 @@ function startThreadSubscription() {
           console.info('[inbox] repaired inbox mirrors', repairedCount)
           appState.isRepairingInbox = false
           const repairedThreads = await listInboxThreads(appState.user.uid)
-          appState.threads = sortInboxThreadsLocal(repairedThreads)
+          appState.threads = mergeThreadsWithLocalCreates(repairedThreads)
           preloadThreadImages(repairedThreads)
           appState.hasLoadedThreadsOnce = true
           if (repairedThreads.length && !appState.selectedThreadId) {
@@ -4991,7 +5102,7 @@ function startThreadSubscription() {
             console.info('[inbox] repaired inbox mirrors', repairedCount)
             appState.isRepairingInbox = false
             const repairedThreads = await listInboxThreads(appState.user.uid)
-            appState.threads = sortInboxThreadsLocal(repairedThreads)
+            appState.threads = mergeThreadsWithLocalCreates(repairedThreads)
             preloadThreadImages(repairedThreads)
             appState.hasLoadedThreadsOnce = true
             if (repairedThreads.length && !appState.selectedThreadId) {
@@ -5024,7 +5135,7 @@ function startThreadSubscription() {
             appState.hasLoadedThreadsOnce = true
             console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
             if (!fallbackThreads.length) return
-            appState.threads = sortInboxThreadsLocal(fallbackThreads)
+            appState.threads = mergeThreadsWithLocalCreates(fallbackThreads)
             preloadThreadImages(fallbackThreads)
             const restored = !getStartUidParam() ? loadLastSelectedThread(appState.user?.uid) : ''
             appState.selectedThreadId = fallbackThreads.some((thread) => thread.id === restored) ? restored : fallbackThreads[0].id
@@ -5080,7 +5191,7 @@ function startThreadSubscription() {
       appState.threadsFallbackPending = false
       appState.hasLoadedThreadsOnce = true
       console.info('[inbox] one-time fallback loaded', fallbackThreads.length, 'threads')
-      appState.threads = sortInboxThreadsLocal(fallbackThreads)
+      appState.threads = mergeThreadsWithLocalCreates(fallbackThreads)
       preloadThreadImages(fallbackThreads)
       if (fallbackThreads.length && !appState.selectedThreadId) {
         const restored = !getStartUidParam() ? loadLastSelectedThread(appState.user?.uid) : ''
