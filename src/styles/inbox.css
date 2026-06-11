@@ -331,6 +331,24 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   object-fit: cover;
 }
 
+.thread-avatar .inbox-avatar-fallback,
+.cluster-avatar .inbox-avatar-fallback {
+  display: none;
+}
+
+.thread-avatar.is-avatar-failed img,
+.cluster-avatar.is-avatar-failed img {
+  display: none;
+}
+
+.thread-avatar.is-avatar-failed .inbox-avatar-fallback,
+.cluster-avatar.is-avatar-failed .inbox-avatar-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
 .thread-avatar.inbox-avatar-stack {
   position: relative;
   display: block;
@@ -338,7 +356,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   background: transparent;
 }
 
-.inbox-avatar-stack img,
+.inbox-avatar-stack-item,
 .inbox-avatar-stack-initials {
   position: absolute;
   top: calc(var(--avatar-index, 0) * 3px);
@@ -353,7 +371,36 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   background: #293c61;
   color: #eef4ff;
   font-size: .62rem;
+  overflow: hidden;
+  font-style: normal;
+}
+
+.inbox-avatar-stack-item img,
+.inbox-avatar-stack-item em {
+  width: 100%;
+  height: 100%;
+}
+
+.inbox-avatar-stack-item img {
+  display: block;
   object-fit: cover;
+}
+
+.inbox-avatar-stack-item em {
+  display: none;
+  place-items: center;
+  color: #eef4ff;
+  font-size: .62rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.inbox-avatar-stack-item.is-avatar-failed img {
+  display: none;
+}
+
+.inbox-avatar-stack-item.is-avatar-failed em {
+  display: grid;
 }
 
 .inbox-avatar-stack small {
@@ -578,15 +625,18 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   outline: none;
 }
 
-.inbox-main-panel {
+.inbox-layout-messages .inbox-main-panel {
   padding: 0;
-  grid-template-rows: auto minmax(0, 1fr);
-  align-content: stretch;
+  display: flex;
+  flex-direction: column;
   gap: 0;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
 .conversation-header {
+  flex: 0 0 auto;
   border-bottom: 1px solid rgba(132, 155, 203, 0.2);
   padding: 0.88rem 1rem;
   display: flex;
@@ -694,18 +744,25 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 }
 
 .conversation-stack {
-  height: 100%;
+  flex: 1 1 auto;
+  height: auto;
   min-height: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .message-list {
+  flex: 1 1 0;
+  height: 0;
   width: 100%;
   box-sizing: border-box;
   min-height: 0;
+  max-height: 100%;
   overflow-y: auto;
+  overflow-x: hidden;
+  pointer-events: auto;
+  touch-action: pan-y;
   padding: 1rem clamp(0.85rem, 2vw, 1.25rem) 0.5rem;
   display: flex;
   flex-direction: column;
@@ -1107,6 +1164,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 }
 
 .typing-indicator {
+  flex: 0 0 auto;
   margin: 0;
   padding: 0 1rem 0.36rem;
   font-size: 0.78rem;
@@ -1118,6 +1176,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 }
 
 .message-composer {
+  flex: 0 0 auto;
   border-top: 1px solid rgba(126, 147, 191, 0.24);
   background: rgba(8, 12, 21, 0.92);
   padding: 0.72rem 1rem 0.9rem;
@@ -1925,7 +1984,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   height: 3.5rem;
 }
 
-.chat-details-avatar.inbox-avatar-stack img,
+.chat-details-avatar.inbox-avatar-stack .inbox-avatar-stack-item,
 .chat-details-avatar.inbox-avatar-stack .inbox-avatar-stack-initials {
   width: 2.55rem;
   height: 2.55rem;
