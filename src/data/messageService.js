@@ -23,8 +23,8 @@ import { storage } from '../firebase/storage'
 
 const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
 const MAX_ATTACHMENT_LABEL = '256 MB'
-const INITIAL_MESSAGE_LIMIT = 8
-const OLDER_MESSAGE_PAGE_SIZE = 24
+export const INITIAL_MESSAGE_LIMIT = 40
+export const OLDER_MESSAGE_PAGE_SIZE = 25
 
 function toIsoDate(value) {
   if (!value) return null

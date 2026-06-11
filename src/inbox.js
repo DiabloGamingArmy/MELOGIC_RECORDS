@@ -9,6 +9,8 @@ import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
 import {
+  INITIAL_MESSAGE_LIMIT,
+  OLDER_MESSAGE_PAGE_SIZE,
   addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
@@ -202,6 +204,7 @@ const imagePreloadCache = new Map()
 const attachmentUrlCache = new Map()
 const attachmentUrlErrorCache = new Map()
 const hydratedProfileUids = new Set()
+const conversationAutoFillByThreadId = new Map()
 let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let hasBoundInboxDelegates = false
@@ -1028,19 +1031,26 @@ function updateTypingHeartbeat(threadId, value) {
 
 const BOTTOM_THRESHOLD_PX = 96
 const OLDER_MESSAGES_TRIGGER_PX = 160
+const MAX_CONVERSATION_AUTO_FILL_ATTEMPTS = 3
+
+function debugMessageScroller(stage, scroller = getMessageScroller()) {
+  if (!INBOX_SCROLL_DEBUG || !scroller) return
+  const styles = getComputedStyle(scroller)
+  console.info(`[inbox scroll] ${stage}`)
+  console.table({
+    scrollTop: scroller.scrollTop,
+    scrollHeight: scroller.scrollHeight,
+    clientHeight: scroller.clientHeight,
+    canScroll: scroller.scrollHeight > scroller.clientHeight,
+    overflowY: styles.overflowY,
+    display: styles.display,
+    pointerEvents: styles.pointerEvents
+  })
+}
 
 function getMessageScroller() {
-  const scroller = inboxRoot.querySelector('.conversation-stack > [data-message-list]')
+  return inboxRoot.querySelector('.conversation-stack > [data-message-list]')
     || inboxRoot.querySelector('[data-message-list]')
-  if (INBOX_SCROLL_DEBUG) {
-    console.info('[inbox scroll] selected scroller', scroller && {
-      className: scroller.className,
-      clientHeight: scroller.clientHeight,
-      scrollHeight: scroller.scrollHeight,
-      scrollTop: scroller.scrollTop
-    })
-  }
-  return scroller
 }
 
 function isMessageListNearBottom(list = getMessageScroller(), threshold = BOTTOM_THRESHOLD_PX) {
@@ -1077,6 +1087,7 @@ const messageScrollController = {
     if (resetMode || isNewThread) this.mode = 'bottom'
     this.lastScrollHeight = scroller.scrollHeight
     this.lastScrollTop = scroller.scrollTop
+    debugMessageScroller('attach', scroller)
     if (!isNewScroller) return
 
     this.onScroll = () => {
@@ -1225,28 +1236,33 @@ function updateMessageHistoryState(threadId = '') {
   stateRoot.hidden = !stateRoot.textContent
 }
 
-async function loadOlderMessagesForThread(threadId = '') {
-  if (!threadId || appState.messagePaginationByThreadId[threadId]?.loadingOlder) return
+async function loadOlderMessagesForThread(threadId = '', {
+  preservePrepend = true,
+  reason = 'older-messages',
+  detachFromBottom = true
+} = {}) {
+  if (!threadId || appState.messagePaginationByThreadId[threadId]?.loadingOlder) return false
   const current = appState.messagesByThreadId[threadId] || []
   const earliest = current[0]?.createdAt || ''
-  if (!earliest) return
-  messageScrollController.mode = 'detached'
+  if (!earliest) return false
+  if (detachFromBottom) messageScrollController.mode = 'detached'
   appState.messagePaginationByThreadId[threadId] = {
     ...(appState.messagePaginationByThreadId[threadId] || {}),
     loadingOlder: true
   }
   updateMessageHistoryState(threadId)
   try {
-    const older = await listOlderMessages(threadId, earliest)
+    const older = await listOlderMessages(threadId, earliest, OLDER_MESSAGE_PAGE_SIZE)
     appState.messagesByThreadId[threadId] = mergeMessages(older, appState.messagesByThreadId[threadId] || [])
     appState.messagePaginationByThreadId[threadId] = {
       loadingOlder: false,
-      hasOlder: older.length >= 24
+      hasOlder: older.length >= OLDER_MESSAGE_PAGE_SIZE
     }
     await hydrateProfilesForMessages(threadId, older, { render: false })
     if (appState.selectedThreadId === threadId) {
-      renderSelectedConversation({ preservePrepend: true, reason: 'older-messages' })
+      renderSelectedConversation({ preservePrepend, reason })
     }
+    return older.length > 0
   } catch (error) {
     appState.messagePaginationByThreadId[threadId] = {
       ...(appState.messagePaginationByThreadId[threadId] || {}),
@@ -1254,7 +1270,47 @@ async function loadOlderMessagesForThread(threadId = '') {
     }
     warnRealtimePermission(`older-messages-${threadId}`, error)
     updateMessageHistoryState(threadId)
+    return false
   }
+}
+
+function afterInboxLayout() {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+}
+
+async function ensureConversationCanScrollIfPossible(threadId = appState.selectedThreadId) {
+  if (!threadId || appState.selectedThreadId !== threadId) return
+  if (conversationAutoFillByThreadId.has(threadId)) return conversationAutoFillByThreadId.get(threadId)
+
+  const task = (async () => {
+    let attempts = 0
+    while (attempts < MAX_CONVERSATION_AUTO_FILL_ATTEMPTS && appState.selectedThreadId === threadId) {
+      await afterInboxLayout()
+      const scroller = getMessageScroller()
+      const pagination = appState.messagePaginationByThreadId[threadId] || {}
+      debugMessageScroller(`auto-fill check ${attempts + 1}`, scroller)
+      if (!scroller || scroller.scrollHeight > scroller.clientHeight || pagination.hasOlder === false) break
+      if (pagination.loadingOlder) {
+        await afterInboxLayout()
+        continue
+      }
+      attempts += 1
+      const loaded = await loadOlderMessagesForThread(threadId, {
+        preservePrepend: false,
+        reason: 'conversation-auto-fill',
+        detachFromBottom: false
+      })
+      if (!loaded) break
+    }
+    if (appState.selectedThreadId === threadId && messageScrollController.mode === 'bottom') {
+      messageScrollController.scheduleBottom({ force: true, reason: 'conversation-auto-fill-complete' })
+    }
+  })().finally(() => {
+    conversationAutoFillByThreadId.delete(threadId)
+  })
+
+  conversationAutoFillByThreadId.set(threadId, task)
+  return task
 }
 
 function revokeAttachmentPreviews(threadId) {
@@ -4117,6 +4173,7 @@ function renderSelectedConversation({
     forceBottom,
     preservePrepend
   })
+  debugMessageScroller(`after render: ${reason}`, nextList)
 }
 
 function renderThreadListOnly() {
@@ -4343,7 +4400,9 @@ function startMessageSubscription(threadId) {
     reconcileOptimisticMessages(threadId, messages)
     appState.messagePaginationByThreadId[threadId] = {
       ...(appState.messagePaginationByThreadId[threadId] || {}),
-      hasOlder: appState.messagePaginationByThreadId[threadId]?.hasOlder === false ? false : messages.length >= 8,
+      hasOlder: appState.messagePaginationByThreadId[threadId]?.hasOlder === false
+        ? false
+        : messages.length >= INITIAL_MESSAGE_LIMIT,
       loadingOlder: false
     }
     appState.loadingMessageThreadId = ''
@@ -4352,6 +4411,7 @@ function startMessageSubscription(threadId) {
         forceBottom: shouldAutoScroll,
         reason: isInitialMessageBatch ? 'initial-messages' : 'realtime-messages'
       })
+      if (isInitialMessageBatch) ensureConversationCanScrollIfPossible(threadId)
     }
 
     const reactionMessageIds = messages.map((message) => message.id).filter(Boolean).sort()

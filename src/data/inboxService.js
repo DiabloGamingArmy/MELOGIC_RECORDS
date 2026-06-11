@@ -21,6 +21,8 @@ import {
   subscribeToThreadsForUser
 } from './threadService'
 import {
+  INITIAL_MESSAGE_LIMIT,
+  OLDER_MESSAGE_PAGE_SIZE,
   addMessageReaction,
   deleteMessageForEveryone,
   editMessage,
@@ -177,6 +179,8 @@ export function subscribeToInboxThreads(uid, callback, onError) {
 }
 
 export {
+  INITIAL_MESSAGE_LIMIT,
+  OLDER_MESSAGE_PAGE_SIZE,
   getThread,
   hydrateThreadFromSourceIfNeeded,
   listMessages,
