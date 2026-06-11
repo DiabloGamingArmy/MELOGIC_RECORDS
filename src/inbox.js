@@ -5,6 +5,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute, publicProfileRoute } from './utils/routes'
+import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
 import {
@@ -163,6 +164,7 @@ const appState = {
   editingMessageByThreadId: {},
   editDraftByMessageId: {},
   reactionsByThreadId: {},
+  reactionMessageIdsByThreadId: {},
   hiddenMessageIdsByThreadId: {},
   reactionDetailModal: null,
   imagePreviewModal: null,
@@ -201,6 +203,7 @@ let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let hasBoundInboxDelegates = false
 let activeThreadSubscriptionUid = ''
+let activeMessageSubscriptionThreadId = ''
 let processedStartUid = ''
 const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1'
 
@@ -301,14 +304,6 @@ function setupInboxDelegates() {
       return
     }
 
-    const loadOlderButton = event.target.closest('[data-load-older-messages]')
-    if (loadOlderButton) {
-      event.preventDefault()
-      const threadId = loadOlderButton.getAttribute('data-load-older-messages') || appState.selectedThreadId
-      loadOlderMessagesForThread(threadId)
-      return
-    }
-
     const imageButton = event.target.closest('[data-preview-message-image]')
     if (imageButton) {
       event.preventDefault()
@@ -381,11 +376,11 @@ function preloadImage(url) {
 }
 
 function preloadThreadImages(threads = []) {
-  threads.forEach((thread) => {
-    if (thread?.imageURL) preloadImage(thread.imageURL)
-    if (thread?.otherProfile?.avatarURL) preloadImage(thread.otherProfile.avatarURL)
-    if (thread?.otherProfile?.photoURL) preloadImage(thread.otherProfile.photoURL)
-  })
+  return Promise.all(threads.flatMap((thread) => [
+    thread?.imageURL,
+    thread?.otherProfile?.avatarURL,
+    thread?.otherProfile?.photoURL
+  ].filter(Boolean).map(preloadImage)))
 }
 
 function preloadProfileImagesByUid(uids = []) {
@@ -397,13 +392,13 @@ function preloadProfileImagesByUid(uids = []) {
 }
 
 function preloadMessageImages(messages = []) {
-  messages.forEach((message) => {
+  return Promise.all(messages.flatMap((message) => {
     if (!Array.isArray(message?.attachments)) return
-    message.attachments.forEach((attachment) => {
+    return message.attachments.map((attachment) => {
       const mime = String(attachment?.mimeType || '')
-      if (mime.startsWith('image/') && attachment?.url) preloadImage(attachment.url)
-    })
-  })
+      return mime.startsWith('image/') && attachment?.url ? preloadImage(attachment.url) : null
+    }).filter(Boolean)
+  }).filter(Boolean))
 }
 
 async function hydrateProfilesForThread(thread) {
@@ -446,11 +441,12 @@ async function hydrateProfilesForThreads(threads = []) {
     ]).filter(Boolean)
   ))
   const missing = ids.filter((uid) => !appState.profileByUid[uid])
-  if (!missing.length) return
+  if (!missing.length) return false
   const loaded = await loadProfilesByUids(missing)
-  if (!Object.keys(loaded).length) return
+  if (!Object.keys(loaded).length) return false
   appState.profileByUid = { ...appState.profileByUid, ...loaded }
   preloadProfileImagesByUid(Object.keys(loaded))
+  return true
 }
 
 function upsertThreadInState(nextThread) {
@@ -704,6 +700,57 @@ function getThreadParticipants(threadId) {
   return appState.participantsByThreadId[threadId] || []
 }
 
+function getGroupAvatarProfiles(thread, limit = 3) {
+  if (!thread || thread.type !== 'group') return []
+  const participantRows = getThreadParticipants(thread.id)
+  const ids = Array.from(new Set([
+    ...participantRows.map((entry) => entry.uid),
+    ...(Array.isArray(thread.participantIds) ? thread.participantIds : [])
+  ].filter(Boolean)))
+  return ids.slice(0, limit).map((uid) => {
+    const participant = participantRows.find((entry) => entry.uid === uid) || {}
+    return getProfileMeta(uid, participant)
+  })
+}
+
+function renderThreadAvatar(thread, { className = 'thread-avatar', stableKey = '' } = {}) {
+  const imageURL = String(thread?.imageURL || '').trim()
+  const key = stableKey || `thread:${thread?.id || 'unknown'}`
+  if (imageURL) {
+    return `
+      <div class="${className} has-image">
+        <img decoding="async" src="${escapeHtml(imageURL)}" alt="" data-stable-image-key="${escapeHtml(`${key}:custom`)}" />
+      </div>
+    `
+  }
+  if (thread?.type === 'group') {
+    const profiles = getGroupAvatarProfiles(thread)
+    const total = Math.max(Number(thread.participantCount || 0), (thread.participantIds || []).length, profiles.length)
+    if (profiles.length) {
+      return `
+        <div class="${className} inbox-avatar-stack" aria-label="Group members">
+          ${profiles.map((profile, index) => profile.avatarURL
+            ? `<img decoding="async" src="${escapeHtml(profile.avatarURL)}" alt="" style="--avatar-index:${index}" data-stable-image-key="${escapeHtml(`${key}:${profile.uid}`)}" />`
+            : `<span class="inbox-avatar-stack-initials" style="--avatar-index:${index}">${escapeHtml(getInitials(profile))}</span>`
+          ).join('')}
+          ${total > 3 ? `<small>+${total - 3}</small>` : ''}
+        </div>
+      `
+    }
+  }
+  const initials = getInitials({ title: thread?.title, uid: thread?.id })
+  return `<div class="${className}"><span>${escapeHtml(initials)}</span></div>`
+}
+
+function generatedGroupTitle(thread) {
+  const profiles = getGroupAvatarProfiles(thread, 20)
+    .filter((profile) => profile.uid !== appState.user?.uid)
+  const labels = profiles.map((profile) => profile.displayName || profile.username).filter(Boolean)
+  if (!labels.length) return 'Group chat'
+  if (labels.length <= 2) return labels.join(', ')
+  return `${labels[0]}, ${labels[1]} + ${labels.length - 2}`
+}
+
 function isUserBlocked(uid) {
   if (!uid) return false
   return Boolean(appState.blockedUsersByUid[uid])
@@ -844,6 +891,7 @@ function clearRealtimeListeners() {
   appState.inboxRepairAttempted = false
   appState.isRepairingInbox = false
   activeThreadSubscriptionUid = ''
+  activeMessageSubscriptionThreadId = ''
   activeTypingThreadId = ''
   closeThreadActionUi()
   if (typingStopTimer) clearTimeout(typingStopTimer)
@@ -921,6 +969,7 @@ function updateTypingHeartbeat(threadId, value) {
 }
 
 const BOTTOM_THRESHOLD_PX = 96
+const OLDER_MESSAGES_TRIGGER_PX = 160
 const MESSAGE_SCROLL_DEBUG = false
 
 function getMessageScroller() {
@@ -974,6 +1023,12 @@ const messageScrollController = {
       this.mode = nextMode
       this.lastScrollTop = scroller.scrollTop
       this.lastScrollHeight = scroller.scrollHeight
+      if (scroller.scrollTop < OLDER_MESSAGES_TRIGGER_PX) {
+        const pagination = appState.messagePaginationByThreadId[this.threadId] || {}
+        if (pagination.hasOlder !== false && !pagination.loadingOlder) {
+          loadOlderMessagesForThread(this.threadId)
+        }
+      }
     }
     this.onMediaSettled = (event) => {
       const media = event.target
@@ -1089,6 +1144,20 @@ function mergeMessages(existing = [], incoming = []) {
     .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
 }
 
+function updateMessageHistoryState(threadId = '') {
+  if (!threadId || appState.selectedThreadId !== threadId) return
+  const stateRoot = inboxRoot.querySelector('[data-message-history-state]')
+  if (!stateRoot) return
+  const pagination = appState.messagePaginationByThreadId[threadId] || {}
+  stateRoot.classList.toggle('is-loading', Boolean(pagination.loadingOlder))
+  stateRoot.textContent = pagination.loadingOlder
+    ? 'Loading earlier messages...'
+    : pagination.hasOlder === false
+      ? 'Beginning of conversation'
+      : ''
+  stateRoot.hidden = !stateRoot.textContent
+}
+
 async function loadOlderMessagesForThread(threadId = '') {
   if (!threadId || appState.messagePaginationByThreadId[threadId]?.loadingOlder) return
   const current = appState.messagesByThreadId[threadId] || []
@@ -1099,13 +1168,13 @@ async function loadOlderMessagesForThread(threadId = '') {
     ...(appState.messagePaginationByThreadId[threadId] || {}),
     loadingOlder: true
   }
-  renderSelectedConversation({ reason: 'state-update' })
+  updateMessageHistoryState(threadId)
   try {
     const older = await listOlderMessages(threadId, earliest)
     appState.messagesByThreadId[threadId] = mergeMessages(older, appState.messagesByThreadId[threadId] || [])
     appState.messagePaginationByThreadId[threadId] = {
       loadingOlder: false,
-      hasOlder: older.length > 0
+      hasOlder: older.length >= 24
     }
     await hydrateProfilesForMessages(threadId, older, { render: false })
     if (appState.selectedThreadId === threadId) {
@@ -1117,7 +1186,7 @@ async function loadOlderMessagesForThread(threadId = '') {
       loadingOlder: false
     }
     warnRealtimePermission(`older-messages-${threadId}`, error)
-    if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
+    updateMessageHistoryState(threadId)
   }
 }
 
@@ -1230,10 +1299,19 @@ function reconcileOptimisticMessages(threadId, serverMessages = []) {
   if (!current.length) return
   const confirmedIds = new Set(serverMessages.map((message) => message.clientMessageId).filter(Boolean))
   if (!confirmedIds.size) return
+  const reconciledIds = current
+    .filter((message) => confirmedIds.has(message.clientMessageId))
+    .map((message) => message.clientMessageId)
   current.forEach((message) => {
     if (confirmedIds.has(message.clientMessageId)) revokeOptimisticMessagePreviews(message)
   })
   appState.optimisticMessagesByThreadId[threadId] = current.filter((message) => !confirmedIds.has(message.clientMessageId))
+  if (reconciledIds.length) {
+    debugInboxRender('optimistic messages reconciled', {
+      threadId,
+      clientMessageIds: reconciledIds
+    })
+  }
 }
 
 function resetCreateChatState() {
@@ -1635,12 +1713,13 @@ function getMessageRenderSignature(thread, messages = getRenderableMessages(thre
   })
 }
 
-function getAttachmentCacheKey(messageId, attachment = {}, index = 0) {
-  return `${messageId}:${attachment.storagePath || attachment.path || attachment.name || index}`
+function getAttachmentCacheKey(message = {}, attachment = {}, index = 0) {
+  const messageKey = message.clientMessageId || message.id || 'message'
+  return `${messageKey}:${attachment.storagePath || attachment.path || attachment.name || index}`
 }
 
-function getStableAttachmentUrl(messageId, attachment = {}, index = 0) {
-  const cacheKey = getAttachmentCacheKey(messageId, attachment, index)
+function getStableAttachmentUrl(message = {}, attachment = {}, index = 0) {
+  const cacheKey = getAttachmentCacheKey(message, attachment, index)
   const incomingUrl = String(attachment.url || '')
   const cachedUrl = attachmentUrlCache.get(cacheKey) || ''
   if (incomingUrl && incomingUrl !== cachedUrl) {
@@ -1667,9 +1746,12 @@ function getMessageGroupsMarkup(thread, {
 
   const grouped = groupMessages(messages)
   const pagination = appState.messagePaginationByThreadId[thread.id] || {}
-  const olderControl = pagination.hasOlder === false
-    ? '<p class="message-history-boundary">Beginning of this conversation.</p>'
-    : `<button type="button" class="message-history-button" data-load-older-messages="${escapeHtml(thread.id)}" ${pagination.loadingOlder ? 'disabled' : ''}>${pagination.loadingOlder ? 'Loading earlier...' : 'Load earlier messages'}</button>`
+  const olderControlText = pagination.loadingOlder
+    ? 'Loading earlier messages...'
+    : pagination.hasOlder === false
+      ? 'Beginning of conversation'
+      : ''
+  const olderControl = `<p class="message-history-boundary ${pagination.loadingOlder ? 'is-loading' : ''}" data-message-history-state ${olderControlText ? '' : 'hidden'}>${escapeHtml(olderControlText)}</p>`
   const messageGroups = grouped
     .map((entry, index) => {
       if (entry.kind === 'separator') {
@@ -1682,7 +1764,7 @@ function getMessageGroupsMarkup(thread, {
       const isLatestOutgoingGroup = isSelf && [...grouped].reverse().find((item) => item.kind === 'messages' && item.senderId === appState.user?.uid)?.id === entry.id
       const statusLine = isLatestOutgoingGroup ? `<p class="message-status-line">${escapeHtml(getOutgoingStatusLabel(thread, lastMessage))}</p>` : `<p class="message-status-line is-muted">${escapeHtml(formatTime(lastMessage.createdAt))}</p>`
       const avatarMarkup = !isSelf
-        ? `<div class="cluster-avatar ${sender.avatarURL || sender.photoURL ? 'has-image' : ''}">${sender.avatarURL || sender.photoURL ? `<img decoding="async" src="${escapeHtml(sender.avatarURL || sender.photoURL)}" alt="" />` : `<span>${getInitials(sender)}</span>`}</div>`
+        ? `<div class="cluster-avatar ${sender.avatarURL || sender.photoURL ? 'has-image' : ''}">${sender.avatarURL || sender.photoURL ? `<img decoding="async" src="${escapeHtml(sender.avatarURL || sender.photoURL)}" alt="" data-stable-image-key="${escapeHtml(`message-avatar:${sender.uid}`)}" />` : `<span>${getInitials(sender)}</span>`}</div>`
         : ''
 
       const bubbles = entry.messages
@@ -1705,8 +1787,8 @@ function getMessageGroupsMarkup(thread, {
               const width = Math.max(0, Number(attachment.width || 0))
               const height = Math.max(0, Number(attachment.height || 0))
               const dimensions = width && height ? ` width="${Math.round(width)}" height="${Math.round(height)}"` : ''
-              const attachmentKey = getAttachmentCacheKey(message.id, attachment, attachmentIndex)
-              const attachmentUrl = getStableAttachmentUrl(message.id, attachment, attachmentIndex)
+              const attachmentKey = getAttachmentCacheKey(message, attachment, attachmentIndex)
+              const attachmentUrl = getStableAttachmentUrl(message, attachment, attachmentIndex)
               const aspectRatio = width && height ? ` style="aspect-ratio: ${Math.round(width)} / ${Math.round(height)}"` : ''
               const hasFailed = attachmentUrlErrorCache.get(attachmentKey) === attachmentUrl
               if (mime.startsWith('image/')) return `<button type="button" class="message-image-preview-button ${hasFailed ? 'is-image-load-failed' : ''}" data-message-media-key="${escapeHtml(attachmentKey)}" data-preview-message-image="${escapeHtml(attachmentUrl)}" data-preview-message-image-name="${escapeHtml(attachment.name || 'Image attachment')}"${aspectRatio}><img decoding="async" src="${escapeHtml(attachmentUrl)}" alt="${escapeHtml(attachment.name || 'Image attachment')}" loading="lazy" data-message-attachment-key="${escapeHtml(attachmentKey)}"${dimensions} /></button>`
@@ -1818,6 +1900,14 @@ function getConversationBodyMarkup({
   const typingUsers = getTypingUsers(thread.id)
   const blockState = getDmBlockState(thread)
   const isDmComposerBlocked = thread.type === 'dm' && (blockState.currentUserBlockedOther || blockState.otherBlockedCurrentUser)
+  const composerRenderSignature = hashRenderSignature({
+    threadId: thread.id,
+    isDmComposerBlocked,
+    replyDraft,
+    attachments,
+    previewUrls,
+    errorMessage: appState.errorMessage
+  })
   const blockAlertMarkup = thread.type === 'dm' && isDmComposerBlocked
     ? `
       <div class="blocked-chat-alert" role="status">
@@ -1838,7 +1928,7 @@ function getConversationBodyMarkup({
           })}
       <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length ? '' : 'hidden'}>${typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : ''}</p>
       ${blockAlertMarkup}
-      <form class="message-composer ${isDmComposerBlocked ? 'is-blocked' : ''}" data-message-form>
+      <form class="message-composer ${isDmComposerBlocked ? 'is-blocked' : ''}" data-message-form data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
         <label class="sr-only" for="message-input">Message</label>
         ${replyDraft ? `
           <div class="composer-reply-preview">
@@ -1903,10 +1993,19 @@ function getMessagesThreadListMarkup() {
 
   const rows = appState.threads
     .map((thread) => {
-      const initials = getInitials({ title: thread.title })
       const isActive = thread.id === appState.selectedThreadId
       const unread = Number(thread.unreadCount || 0)
       const subtitle = summarizeThreadPreview(thread)
+      const avatarProfiles = thread.type === 'group'
+        ? getGroupAvatarProfiles(thread).map((profile) => [profile.uid, profile.avatarURL, profile.displayName])
+        : []
+      const rowSignature = hashRenderSignature({
+        thread,
+        isActive,
+        unread,
+        subtitle,
+        avatarProfiles
+      })
       const pinIndicator = thread.pinned
         ? `
           <div class="thread-pin-indicator" title="Pinned chat" aria-label="Pinned chat">
@@ -1920,11 +2019,9 @@ function getMessagesThreadListMarkup() {
         : ''
 
       return `
-        <article class="thread-row ${isActive ? 'is-active' : ''}" data-thread-row-id="${thread.id}">
+        <article class="thread-row ${isActive ? 'is-active' : ''}" data-thread-row-id="${thread.id}" data-thread-render-signature="${escapeHtml(rowSignature)}">
           <button class="thread-row-main" type="button" data-select-thread-id="${thread.id}">
-            <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
-              ${thread.imageURL ? `<img decoding="async" src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${initials || getInitials({ uid: thread.id })}</span>`}
-            </div>
+            ${renderThreadAvatar(thread, { stableKey: `thread-list:${thread.id}` })}
             <div class="thread-meta">
               <div class="thread-title-row">
                 <strong>${escapeHtml(thread.title)}</strong>
@@ -1957,26 +2054,29 @@ function getThreadActionMenuMarkup() {
   if (!menu) return ''
   const thread = appState.threads.find((entry) => entry.id === menu.threadId)
   if (!thread) return ''
-  const position = clampMenuPosition(menu.x, menu.y, 180, 120)
+  const position = clampMenuPosition(menu.x, menu.y, 220, 280)
   const dmOtherUid = getDmOtherParticipant(thread)
   const isDm = thread.type === 'dm' && Boolean(dmOtherUid)
   const sidebarPinned = isInboxPinned('thread', thread.id)
   const blockAction = isDm
     ? `<button type="button" data-thread-action="${isUserBlocked(dmOtherUid) ? 'unblock-contact' : 'block-contact'}" data-thread-action-id="${thread.id}">
-        ${isUserBlocked(dmOtherUid) ? 'Unblock contact' : 'Block contact'}
+        ${iconSvg('user')}<span>${isUserBlocked(dmOtherUid) ? 'Unblock contact' : 'Block contact'}</span>
       </button>`
     : ''
   return `
     <div class="message-context-backdrop" data-thread-menu-close>
-      <div class="thread-actions-menu" style="left:${position.x}px;top:${position.y}px;">
+      <div class="thread-actions-menu" role="menu" aria-label="Chat actions" style="left:${position.x}px;top:${position.y}px;">
+        <button type="button" data-thread-action="details" data-thread-action-id="${thread.id}">
+          ${iconSvg('messageCircle')}<span>Chat details</span>
+        </button>
         <button type="button" data-thread-action="${thread.pinned ? 'unpin' : 'pin'}" data-thread-action-id="${thread.id}">
-          ${thread.pinned ? 'Unpin chat' : 'Pin chat'}
+          ${iconSvg('bookmark')}<span>${thread.pinned ? 'Unpin chat' : 'Pin chat'}</span>
         </button>
         <button type="button" data-thread-action="${sidebarPinned ? 'unpin-sidebar' : 'pin-sidebar'}" data-thread-action-id="${thread.id}">
-          ${sidebarPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}
+          ${iconSvg('bookmark')}<span>${sidebarPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}</span>
         </button>
-        <button type="button" data-thread-action="delete" data-thread-action-id="${thread.id}">
-          Delete chat
+        <button type="button" class="is-danger" data-thread-action="delete" data-thread-action-id="${thread.id}">
+          ${iconSvg('trash')}<span>Delete chat</span>
         </button>
         ${blockAction}
       </div>
@@ -2346,12 +2446,20 @@ function getConversationHeaderMarkup(thread) {
   const headerMeta = thread.type === 'dm' && otherParticipant
     ? getProfileMeta(otherParticipant, { title: thread.title, avatarURL: thread.imageURL })
     : { displayName: thread.title, avatarURL: thread.imageURL }
+  const avatarThread = thread.type === 'dm'
+    ? { ...thread, imageURL: headerMeta.avatarURL, title: headerMeta.displayName }
+    : thread
+  const headerSignature = hashRenderSignature({
+    threadId: thread.id,
+    title: headerMeta.displayName || thread.title,
+    imageURL: headerMeta.avatarURL || thread.imageURL || '',
+    subtitle: getConversationSubtitle(thread),
+    messageFindOpen: appState.messageFind.open
+  })
 
   return `
-    <header class="conversation-header">
-      <div class="thread-avatar ${headerMeta.avatarURL ? 'has-image' : ''}">
-        ${headerMeta.avatarURL ? `<img decoding="async" src="${escapeHtml(headerMeta.avatarURL)}" alt="" />` : `<span>${getInitials({ title: headerMeta.displayName })}</span>`}
-      </div>
+    <header class="conversation-header" data-conversation-header-signature="${escapeHtml(headerSignature)}">
+      ${renderThreadAvatar(avatarThread, { stableKey: `thread-header:${thread.id}` })}
       <div class="conversation-header-meta">
         <h3>${escapeHtml(headerMeta.displayName || thread.title)}</h3>
         <p>${escapeHtml(getConversationSubtitle(thread))}</p>
@@ -2686,6 +2794,19 @@ function setupFloatingEventDelegates() {
         appState.threadActionMenu = null
         if (action === 'pin-sidebar') await saveInboxPin(pin)
         else await removeInboxPin(pin.pinId)
+        renderFloatingUi()
+        return
+      }
+      if (action === 'details') {
+        appState.threadActionMenu = null
+        if (appState.selectedThreadId !== threadId) {
+          appState.selectedThreadId = threadId
+          saveLastSelectedThread(appState.user?.uid, threadId)
+          startMessageSubscription(threadId)
+          renderThreadListOnly()
+          renderSelectedConversation({ forceBottom: true })
+        }
+        openChatSettingsModal()
         renderFloatingUi()
         return
       }
@@ -3156,8 +3277,17 @@ async function handleChatSettingsSearch(value) {
     appState.chatSettingsSearchResults = []
   } finally {
     appState.isSearchingChatSettingsUsers = false
-    renderChatSettingsModal()
+    renderChatSettingsModal({ keepSearchFocus: true })
   }
+}
+
+function updateChatSettingsSaveButton() {
+  const thread = getSelectedThread()
+  const button = modalRoot.querySelector('[data-chat-details-save]')
+  if (!thread || !button) return
+  const hasChanges = String(appState.chatSettingsDraftTitle || '').trim() !== String(thread.title || '').trim()
+    || Boolean(appState.chatSettingsImageFile)
+  button.disabled = appState.isSavingChatSettings || !hasChanges
 }
 
 async function handleSaveChatSettings() {
@@ -3183,12 +3313,53 @@ async function handleSaveChatSettings() {
       imageURL,
       imagePath
     })
+    appState.threads = appState.threads.map((entry) => (
+      entry.id === thread.id
+        ? { ...entry, title: trimmedTitle, imageURL, imagePath }
+        : entry
+    ))
     appState.chatSettingsError = ''
     appState.isSavingChatSettings = false
+    renderThreadListOnly()
+    renderSelectedConversation({ reason: 'chat-identity-update' })
     closeChatSettingsModal()
   } catch (error) {
     appState.isSavingChatSettings = false
     appState.chatSettingsError = error?.message || 'Unable to save chat settings.'
+    renderChatSettingsModal()
+  }
+}
+
+async function handleResetChatIdentity() {
+  const thread = getSelectedThread()
+  if (!thread || thread.type !== 'group' || thread.createdBy !== appState.user?.uid || appState.isSavingChatSettings) return
+  if (!window.confirm('Reset this group name and image to the generated member identity? Messages and members will stay unchanged.')) return
+  try {
+    appState.isSavingChatSettings = true
+    renderChatSettingsModal()
+    const title = generatedGroupTitle(thread)
+    await updateThreadDetails({
+      threadId: thread.id,
+      actorUid: appState.user?.uid,
+      title,
+      imageURL: '',
+      imagePath: ''
+    })
+    appState.threads = appState.threads.map((entry) => (
+      entry.id === thread.id
+        ? { ...entry, title, imageURL: '', imagePath: '' }
+        : entry
+    ))
+    appState.chatSettingsDraftTitle = title
+    appState.chatSettingsImageFile = null
+    appState.chatSettingsError = ''
+    appState.isSavingChatSettings = false
+    renderThreadListOnly()
+    renderSelectedConversation({ reason: 'chat-identity-reset' })
+    renderChatSettingsModal()
+  } catch (error) {
+    appState.isSavingChatSettings = false
+    appState.chatSettingsError = error?.message || 'Unable to reset chat identity.'
     renderChatSettingsModal()
   }
 }
@@ -3294,41 +3465,48 @@ function renderChatSettingsModal(options = {}) {
         <header class="chat-details-header">
           <h2 id="chat-details-title">Chat details</h2>
           <div class="chat-details-header-actions">
-            ${hasPendingChanges ? `<button type="button" class="button button-accent" data-chat-details-save ${appState.isSavingChatSettings ? 'disabled' : ''}>${appState.isSavingChatSettings ? 'Saving…' : 'Save'}</button>` : ''}
+            ${canEditGroup ? `<button type="button" class="button button-accent" data-chat-details-save ${(appState.isSavingChatSettings || !hasPendingChanges) ? 'disabled' : ''}>${appState.isSavingChatSettings ? 'Saving…' : 'Save changes'}</button>` : ''}
             <button type="button" class="create-chat-close" data-chat-details-close aria-label="Close chat settings">×</button>
           </div>
         </header>
 
         <section class="chat-details-section">
-          <h3>Chat identity</h3>
-          <div class="chat-details-identity-row">
-            <div class="thread-avatar ${thread.imageURL ? 'has-image' : ''}">
-              ${thread.imageURL ? `<img decoding="async" src="${escapeHtml(thread.imageURL)}" alt="" />` : `<span>${escapeHtml(getInitials({ title: thread.title }))}</span>`}
+          <div class="chat-details-section-heading">
+            <div>
+              <p class="chat-details-eyebrow">Appearance</p>
+              <h3>Chat identity</h3>
             </div>
+            ${canEditGroup ? `<button type="button" class="button button-muted" data-chat-details-reset ${appState.isSavingChatSettings ? 'disabled' : ''}>${iconSvg('image')} Reset identity</button>` : ''}
+          </div>
+          <div class="chat-details-identity-row">
+            ${renderThreadAvatar(thread, { className: 'thread-avatar chat-details-avatar', stableKey: `chat-details:${thread.id}` })}
             <div class="chat-details-identity-fields">
-              <label>Chat name</label>
-              <input type="text" data-chat-settings-title value="${escapeHtml(appState.chatSettingsDraftTitle || '')}" ${canEditGroup ? '' : 'disabled'} />
-              <input type="file" data-chat-settings-image accept="image/*" ${canEditGroup ? '' : 'disabled'} />
-              <small>${canEditGroup ? 'Group owner can rename this chat.' : 'Direct messages cannot be renamed here.'}</small>
-              <small>${canEditGroup ? 'Group owner can change this chat image.' : 'Only owner can change image.'}</small>
+              <label for="chat-settings-title">Chat name</label>
+              <input id="chat-settings-title" type="text" data-chat-settings-title value="${escapeHtml(appState.chatSettingsDraftTitle || '')}" ${canEditGroup ? '' : 'disabled'} />
+              <label class="chat-details-file-picker ${canEditGroup ? '' : 'is-disabled'}">
+                ${iconSvg('upload')}
+                <span>${appState.chatSettingsImageFile ? escapeHtml(appState.chatSettingsImageFile.name) : 'Choose group image'}</span>
+                <input type="file" data-chat-settings-image accept="image/*" ${canEditGroup ? '' : 'disabled'} />
+              </label>
+              <small>${canEditGroup ? 'Rename the group or choose a custom image. Reset restores the generated member identity.' : 'Direct messages cannot be renamed or assigned a custom image.'}</small>
             </div>
           </div>
         </section>
 
         <section class="chat-details-section">
-          <h3>Members</h3>
+          <div class="chat-details-section-heading"><div><p class="chat-details-eyebrow">People</p><h3>Members</h3></div><span>${participants.length}</span></div>
           <div class="chat-details-member-list">${memberMarkup || '<p class="modal-hint">No members found.</p>'}</div>
         </section>
 
         <section class="chat-details-section">
-          <h3>Add people</h3>
+          <div class="chat-details-section-heading"><div><p class="chat-details-eyebrow">Invite</p><h3>Add people</h3></div></div>
           <input class="create-chat-search" type="search" placeholder="Search username…" value="${escapeHtml(appState.chatSettingsSearchQuery)}" data-chat-settings-search ${canEditGroup ? '' : 'disabled'} />
           ${canEditGroup ? `<div class="create-chat-results">${addMarkup}</div>` : '<p class="modal-hint">Only the chat owner can add people.</p>'}
         </section>
 
         ${thread.type === 'dm' ? `
           <section class="chat-details-section">
-            <h3>Contact controls</h3>
+            <div class="chat-details-section-heading"><div><p class="chat-details-eyebrow">Safety</p><h3>Contact controls</h3></div></div>
             <button type="button" class="button button-muted" data-chat-settings-block-toggle>${escapeHtml(dmBlockActionLabel)}</button>
           </section>
         ` : ''}
@@ -3345,11 +3523,13 @@ function renderChatSettingsModal(options = {}) {
   modalRoot.querySelector('[data-chat-details-save]')?.addEventListener('click', handleSaveChatSettings)
   modalRoot.querySelector('[data-chat-settings-title]')?.addEventListener('input', (event) => {
     appState.chatSettingsDraftTitle = event.target.value
-    renderChatSettingsModal()
+    updateChatSettingsSaveButton()
   })
   modalRoot.querySelector('[data-chat-settings-image]')?.addEventListener('change', (event) => {
     appState.chatSettingsImageFile = event.target.files?.[0] || null
+    renderChatSettingsModal()
   })
+  modalRoot.querySelector('[data-chat-details-reset]')?.addEventListener('click', handleResetChatIdentity)
   modalRoot.querySelector('[data-chat-settings-search]')?.addEventListener('input', (event) => {
     chatSettingsSearchSelection = {
       start: event.target.selectionStart,
@@ -3756,8 +3936,24 @@ function renderSignedInState() {
   renderFloatingUi()
 }
 
+function preserveStableImages(previousRoot, generatedRoot) {
+  if (!previousRoot || !generatedRoot) return
+  const existingByKey = new Map()
+  previousRoot.querySelectorAll('img[data-stable-image-key]').forEach((image) => {
+    const key = image.getAttribute('data-stable-image-key') || ''
+    if (key) existingByKey.set(key, image)
+  })
+  generatedRoot.querySelectorAll('img[data-stable-image-key]').forEach((nextImage) => {
+    const key = nextImage.getAttribute('data-stable-image-key') || ''
+    const existingImage = existingByKey.get(key)
+    if (!existingImage || existingImage.getAttribute('src') !== nextImage.getAttribute('src')) return
+    nextImage.replaceWith(existingImage)
+  })
+}
+
 function preserveRenderedMessageMedia(previousList, generatedList) {
   if (!previousList || !generatedList) return
+  preserveStableImages(previousList, generatedList)
   const existingMediaByKey = new Map()
   previousList.querySelectorAll('[data-message-media-key]').forEach((media) => {
     const key = media.getAttribute('data-message-media-key') || ''
@@ -3787,6 +3983,8 @@ function renderSelectedConversation({
   }
   const scrollSnapshot = messageScrollController.snapshot()
   const previousList = getMessageScroller()
+  const previousHeader = panel.querySelector('.conversation-header')
+  const previousComposer = panel.querySelector('[data-message-form]')
   const thread = getSelectedThread()
   const messages = thread ? getRenderableMessages(thread) : []
   const nextRenderSignature = thread ? getMessageRenderSignature(thread, messages) : ''
@@ -3799,17 +3997,43 @@ function renderSelectedConversation({
     renderSignature: nextRenderSignature
   })}`
   const generatedList = nextContent.querySelector('[data-message-list]')
+  const generatedHeader = nextContent.querySelector('.conversation-header')
+  const generatedComposer = nextContent.querySelector('[data-message-form]')
+  const reuseHeader = Boolean(
+    previousHeader
+    && generatedHeader
+    && previousHeader.getAttribute('data-conversation-header-signature') === generatedHeader.getAttribute('data-conversation-header-signature')
+  )
+  const reuseComposer = Boolean(
+    previousComposer
+    && generatedComposer
+    && previousComposer.getAttribute('data-composer-render-signature') === generatedComposer.getAttribute('data-composer-render-signature')
+  )
+  if (reuseHeader) {
+    const headerSlot = document.createElement('div')
+    headerSlot.dataset.conversationHeaderSlot = ''
+    generatedHeader.replaceWith(headerSlot)
+  }
+  if (reuseComposer) {
+    const composerSlot = document.createElement('div')
+    composerSlot.dataset.messageComposerSlot = ''
+    generatedComposer.replaceWith(composerSlot)
+  }
+  preserveStableImages(panel, nextContent)
   if (!reuseMessageList && previousList && generatedList) {
     preserveRenderedMessageMedia(previousList, generatedList)
   }
   panel.replaceChildren(...nextContent.childNodes)
+  const headerSlot = panel.querySelector('[data-conversation-header-slot]')
+  const composerSlot = panel.querySelector('[data-message-composer-slot]')
+  bindSharedEvents(panel)
+  if (reuseHeader) headerSlot?.replaceWith(previousHeader)
+  if (reuseComposer) composerSlot?.replaceWith(previousComposer)
   if (reuseMessageList) {
     const messageListSlot = panel.querySelector('[data-message-list-slot]')
-    bindSharedEvents(panel)
     messageListSlot?.replaceWith(previousList)
     debugInboxRender('message list reused', { reason, signature: nextRenderSignature })
   } else {
-    bindSharedEvents(panel)
     debugInboxRender('message list rendered', {
       reason,
       previousSignature: previousRenderSignature,
@@ -3836,8 +4060,21 @@ function renderThreadListOnly() {
     renderSignedInState()
     return
   }
-  currentList.outerHTML = getMessagesThreadListMarkup()
-  const nextList = inboxRoot.querySelector('.inbox-thread-list')
+  const container = document.createElement('div')
+  container.innerHTML = getMessagesThreadListMarkup()
+  const nextList = container.querySelector('.inbox-thread-list')
+  if (!nextList) return
+  const existingRows = new Map()
+  currentList.querySelectorAll('[data-thread-row-id]').forEach((row) => {
+    existingRows.set(row.getAttribute('data-thread-row-id') || '', row)
+  })
+  nextList.querySelectorAll('[data-thread-row-id]').forEach((nextRow) => {
+    const id = nextRow.getAttribute('data-thread-row-id') || ''
+    const existingRow = existingRows.get(id)
+    if (!existingRow) return
+    preserveStableImages(existingRow, nextRow)
+  })
+  currentList.replaceWith(nextList)
   if (nextList) bindSharedEvents(nextList)
 }
 
@@ -3982,8 +4219,9 @@ function startSelectedSourceThreadSubscription(threadId) {
       if (thread.id !== sourceThread.id) return thread
       return {
         ...mergeSourceThreadState(thread, sourceThread),
-        title: thread.title || sourceThread.title,
-        imageURL: thread.imageURL || sourceThread.imageURL,
+        title: sourceThread.title || thread.title,
+        imageURL: Object.prototype.hasOwnProperty.call(sourceThread, 'imageURL') ? sourceThread.imageURL : thread.imageURL,
+        imagePath: Object.prototype.hasOwnProperty.call(sourceThread, 'imagePath') ? sourceThread.imagePath : thread.imagePath,
         otherProfile: thread.otherProfile || sourceThread.otherProfile,
         otherParticipantId: thread.otherParticipantId || sourceThread.otherParticipantId,
         dmBlockState: sourceThread.dmBlockState || null
@@ -3991,7 +4229,9 @@ function startSelectedSourceThreadSubscription(threadId) {
     })
     if (appState.selectedThreadId === sourceThread.id) {
       if (getDmBlockState(sourceThread).isDmBlocked) clearTypingForThread(sourceThread.id)
+      renderThreadListOnly()
       renderSelectedConversation({ reason: 'state-update' })
+      if (appState.isChatSettingsOpen) renderChatSettingsModal()
     }
   }, (error) => {
     warnRealtimePermission(`thread-source-${threadId}`, error)
@@ -4010,39 +4250,51 @@ function startMessageSubscription(threadId) {
   appState.messageUnsubscribe()
   appState.reactionUnsubscribe()
   appState.hiddenMessagesUnsubscribe()
+  activeMessageSubscriptionThreadId = threadId
   appState.loadingMessageThreadId = threadId
   startThreadDetailSubscriptions(threadId)
   startSelectedSourceThreadSubscription(threadId)
 
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
-    reconcileOptimisticMessages(threadId, messages)
     const existing = appState.messagesByThreadId[threadId] || []
     const isInitialMessageBatch = appState.loadingMessageThreadId === threadId || !existing.length
     const shouldAutoScroll = isInitialMessageBatch
       || (appState.selectedThreadId === threadId && messageScrollController.mode === 'bottom')
+    await Promise.all([
+      preloadMessageImages(messages),
+      hydrateProfilesForMessages(threadId, messages, { render: false })
+    ])
+    if (activeMessageSubscriptionThreadId !== threadId) return
     appState.messagesByThreadId[threadId] = mergeMessages(existing, messages)
+    reconcileOptimisticMessages(threadId, messages)
     appState.messagePaginationByThreadId[threadId] = {
       ...(appState.messagePaginationByThreadId[threadId] || {}),
       hasOlder: appState.messagePaginationByThreadId[threadId]?.hasOlder === false ? false : messages.length >= 8,
       loadingOlder: false
     }
-    preloadMessageImages(messages)
     appState.loadingMessageThreadId = ''
-    await hydrateProfilesForMessages(threadId, messages, { render: false })
-    appState.reactionUnsubscribe()
-    appState.reactionUnsubscribe = subscribeToMessageReactions(threadId, messages.map((message) => message.id), (reactionsByMessageId) => {
-      appState.reactionsByThreadId[threadId] = reactionsByMessageId
-      if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
-    }, (error) => warnRealtimePermission(`reactions-${threadId}`, error))
-
-    await markThreadDelivered({ threadId, uid: appState.user.uid }).catch((error) => {
-      warnRealtimePermission(`participants-delivered-${threadId}`, error)
-    })
     if (appState.selectedThreadId === threadId) {
       renderSelectedConversation({
         forceBottom: shouldAutoScroll,
         reason: isInitialMessageBatch ? 'initial-messages' : 'realtime-messages'
       })
+    }
+
+    const reactionMessageIds = messages.map((message) => message.id).filter(Boolean).sort()
+    const reactionSignature = reactionMessageIds.join('|')
+    if (appState.reactionMessageIdsByThreadId[threadId] !== reactionSignature) {
+      appState.reactionMessageIdsByThreadId[threadId] = reactionSignature
+      appState.reactionUnsubscribe()
+      appState.reactionUnsubscribe = subscribeToMessageReactions(threadId, reactionMessageIds, (reactionsByMessageId) => {
+        appState.reactionsByThreadId[threadId] = reactionsByMessageId
+        if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'reactions-update' })
+      }, (error) => warnRealtimePermission(`reactions-${threadId}`, error))
+    }
+
+    await markThreadDelivered({ threadId, uid: appState.user.uid }).catch((error) => {
+      warnRealtimePermission(`participants-delivered-${threadId}`, error)
+    })
+    if (appState.selectedThreadId === threadId) {
       if (canMarkThreadRead(threadId)) {
         await markThreadRead({ threadId, uid: appState.user.uid }).catch((error) => {
           warnRealtimePermission(`participants-read-${threadId}`, error)
@@ -4083,11 +4335,11 @@ function startThreadSubscription() {
   renderSignedInState()
 
   appState.threadUnsubscribe()
-  appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, (threads) => {
+  appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, async (threads) => {
     const previousSelectedThreadId = appState.selectedThreadId
+    await preloadThreadImages(threads)
     appState.threads = sortInboxThreadsLocal(threads)
-    preloadThreadImages(threads)
-    hydrateProfilesForThreads(threads).catch(() => {})
+    const profilesChanged = await hydrateProfilesForThreads(threads).catch(() => false)
     appState.isLoadingThreads = false
     appState.threadsRealtimeReady = true
     appState.hasLoadedThreadsOnce = true
@@ -4213,6 +4465,7 @@ function startThreadSubscription() {
       && inboxRoot.querySelector('.inbox-layout-messages')
     ) {
       renderThreadListOnly()
+      if (profilesChanged) renderSelectedConversation({ reason: 'profiles-loaded' })
     } else {
       renderSignedInState()
     }

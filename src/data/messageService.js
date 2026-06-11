@@ -121,6 +121,20 @@ function timestampToMillis(value) {
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
+async function getImageDimensions(file) {
+  if (!(file instanceof File) || !String(file.type || '').startsWith('image/') || typeof createImageBitmap !== 'function') {
+    return { width: 0, height: 0 }
+  }
+  try {
+    const bitmap = await createImageBitmap(file)
+    const dimensions = { width: bitmap.width || 0, height: bitmap.height || 0 }
+    bitmap.close?.()
+    return dimensions
+  } catch {
+    return { width: 0, height: 0 }
+  }
+}
+
 async function uploadMessageAttachments(threadId, messageId, attachments = []) {
   if (!storage || !attachments.length) return []
   const uploads = await Promise.all(attachments.map(async (file, index) => {
@@ -129,6 +143,7 @@ async function uploadMessageAttachments(threadId, messageId, attachments = []) {
     const safeName = `${Date.now()}-${index}-${String(file.name || 'attachment').replace(/[^a-zA-Z0-9._-]/g, '-')}`
     const storagePath = `threads/${threadId}/messages/${messageId}/attachments/${safeName}`
     const storageRef = ref(storage, storagePath)
+    const dimensions = await getImageDimensions(file)
     await uploadBytes(storageRef, file, { contentType: file.type || 'application/octet-stream' })
     const url = await getDownloadURL(storageRef)
     return {
@@ -137,7 +152,8 @@ async function uploadMessageAttachments(threadId, messageId, attachments = []) {
       mimeType: file.type || 'application/octet-stream',
       size: Number(file.size || 0),
       storagePath,
-      url
+      url,
+      ...(dimensions.width && dimensions.height ? dimensions : {})
     }
   }))
 
