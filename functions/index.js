@@ -6,6 +6,7 @@ if (!admin.apps.length) {
 
 const { createOrGetDm } = require('./src/messages/createOrGetDm')
 const { createGroupThread } = require('./src/messages/createGroupThread')
+const { sendInboxMessage } = require('./src/messages/sendInboxMessage')
 const { repairMyInboxThreads, syncInboxMirrorsOnThreadWrite } = require('./src/messages/inboxMirrors')
 const { requestProductReview, processProductReviewJob } = require('./src/products/requestProductReview')
 const { setProductEngagement, setProductReaction, setProductSaved } = require('./src/products/productEngagement')
@@ -70,6 +71,7 @@ const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
+exports.sendInboxMessage = sendInboxMessage
 exports.repairMyInboxThreads = repairMyInboxThreads
 exports.syncInboxMirrorsOnThreadWrite = syncInboxMirrorsOnThreadWrite
 exports.requestProductReview = requestProductReview

@@ -21,6 +21,7 @@ import {
   deleteThreadForUser,
   hydrateThreadFromSourceIfNeeded,
   getThread,
+  getThreadParticipantUids,
   listInboxThreads,
   loadProfilesByUids,
   listOlderMessages,
@@ -55,6 +56,7 @@ import {
   createAccountAudioCall,
   declineAccountCall,
   endAccountCall,
+  getAccountCall,
   markAccountCallMissed,
   watchAccountCall,
   watchIncomingAccountCalls,
@@ -193,6 +195,7 @@ const appState = {
   callUiState: 'idle',
   callError: '',
   callMuted: false,
+  callActionPending: '',
   incomingCallsUnsubscribe: () => {},
   recentCallsUnsubscribe: () => {},
   activeCallUnsubscribe: () => {},
@@ -225,7 +228,7 @@ const INBOX_RENDER_DEBUG = false
 const INBOX_SCROLL_DEBUG = false
 const INBOX_AVATAR_DEBUG = false
 const ACCOUNT_CALL_DEBUG = false
-const INBOX_SEND_DEBUG = false
+const INBOX_NEW_THREAD_DEBUG = false
 const imagePreloadCache = new Map()
 const attachmentUrlCache = new Map()
 const attachmentUrlErrorCache = new Map()
@@ -260,7 +263,7 @@ function debugAccountCall(...args) {
 }
 
 function debugInboxSend(...args) {
-  if (INBOX_SEND_DEBUG) console.info('[inbox send]', ...args)
+  if (INBOX_NEW_THREAD_DEBUG) console.info('[inbox new thread]', ...args)
 }
 
 app.innerHTML = `
@@ -497,7 +500,7 @@ function preloadMessageImages(messages = []) {
 async function hydrateProfilesForThread(thread) {
   if (!thread) return
   const ids = Array.from(new Set([
-    ...(Array.isArray(thread.participantIds) ? thread.participantIds : []),
+    ...getThreadParticipantUids(thread),
     ...(Array.isArray(thread.otherParticipantIds) ? thread.otherParticipantIds : []),
     thread.otherParticipantId || ''
   ].filter(Boolean)))
@@ -525,7 +528,7 @@ async function hydrateProfilesForMessages(threadId, messages = [], { render = tr
 async function hydrateProfilesForThreads(threads = []) {
   const ids = Array.from(new Set(
     threads.flatMap((thread) => [
-      ...(Array.isArray(thread?.participantIds) ? thread.participantIds : []),
+      ...getThreadParticipantUids(thread),
       ...(Array.isArray(thread?.otherParticipantIds) ? thread.otherParticipantIds : []),
       thread?.otherParticipantId || ''
     ]).filter(Boolean)
@@ -583,7 +586,7 @@ function sortInboxThreadsLocal(threads = []) {
 }
 
 function threadHasParticipantIds(thread) {
-  return Array.isArray(thread?.participantIds) && thread.participantIds.length > 0
+  return getThreadParticipantUids(thread).length > 0
 }
 
 function hasThinMirrorThreads(threads = []) {
@@ -801,7 +804,7 @@ function getGroupAvatarProfiles(thread, limit = 3) {
   const participantRows = getThreadParticipants(thread.id)
   const ids = Array.from(new Set([
     ...participantRows.map((entry) => entry.uid),
-    ...(Array.isArray(thread.participantIds) ? thread.participantIds : [])
+    ...getThreadParticipantUids(thread)
   ].filter(Boolean)))
   return ids.slice(0, limit).map((uid) => {
     const participant = participantRows.find((entry) => entry.uid === uid) || {}
@@ -812,7 +815,7 @@ function getGroupAvatarProfiles(thread, limit = 3) {
 function renderThreadAvatar(thread, { className = 'thread-avatar', stableKey = '' } = {}) {
   const key = stableKey || `thread:${thread?.id || 'unknown'}`
   const otherUid = thread?.otherParticipantId
-    || (thread?.participantIds || []).find((uid) => uid && uid !== appState.user?.uid)
+    || getThreadParticipantUids(thread).find((uid) => uid && uid !== appState.user?.uid)
     || ''
   const dmProfile = thread?.type === 'dm'
     ? getProfileMeta(otherUid, {
@@ -839,7 +842,7 @@ function renderThreadAvatar(thread, { className = 'thread-avatar', stableKey = '
   }
   if (thread?.type === 'group') {
     const profiles = getGroupAvatarProfiles(thread)
-    const total = Math.max(Number(thread.participantCount || 0), (thread.participantIds || []).length, profiles.length)
+    const total = Math.max(Number(thread.participantCount || 0), getThreadParticipantUids(thread).length, profiles.length)
     if (profiles.length) {
       return `
         <div class="${className} inbox-avatar-stack" aria-label="Group members">
@@ -872,7 +875,7 @@ function isUserBlocked(uid) {
 
 function getDmOtherParticipant(thread) {
   if (!thread || thread.type !== 'dm') return ''
-  const participantIds = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  const participantIds = getThreadParticipantUids(thread)
   return thread.otherParticipantId || participantIds.find((uid) => uid && uid !== appState.user?.uid) || ''
 }
 
@@ -1012,6 +1015,7 @@ function clearRealtimeListeners() {
   appState.callUiState = 'idle'
   appState.callError = ''
   appState.callMuted = false
+  appState.callActionPending = ''
   clearAccountCallTimers()
   accountCallManager?.cleanup()
   accountCallManager = null
@@ -1718,7 +1722,7 @@ function getConversationSubtitle(thread) {
   if (typingUsers.length > 1) return 'Several people are typing…'
 
   if (thread.type === 'group') {
-    return `${Math.max(1, Number(thread.participantCount || thread.participantIds?.length || 0))} members`
+    return `${Math.max(1, Number(thread.participantCount || getThreadParticipantUids(thread).length || 0))} members`
   }
 
   const participants = getThreadParticipants(thread.id).filter((entry) => entry.uid !== appState.user?.uid)
@@ -2132,7 +2136,7 @@ function getConversationBodyMarkup({
   const blockState = getDmBlockState(thread)
   const isDmComposerBlocked = thread.type === 'dm' && (blockState.currentUserBlockedOther || blockState.otherBlockedCurrentUser)
   const isPreparingThread = Boolean(appState.preparingThreadIds[thread.id])
-  const localParticipantIds = Array.isArray(thread.participantIds) ? thread.participantIds : []
+  const localParticipantIds = getThreadParticipantUids(thread)
   const isKnownParticipant = localParticipantIds.includes(appState.user?.uid)
   const isComposerUnavailable = isDmComposerBlocked || isPreparingThread || !isKnownParticipant
   const composerRenderSignature = hashRenderSignature({
@@ -2618,10 +2622,14 @@ function renderCallAvatar(person, className = 'account-call-avatar') {
 
 function getCallsContentMarkup() {
   const activeCall = appState.activeCall && !isCallFinal(appState.activeCall.status) ? appState.activeCall : null
-  const history = appState.recentCalls.filter((call) => !activeCall || call.id !== activeCall.id)
+  const incomingCalls = appState.incomingCalls.filter((call) => call.status === 'ringing' && call.id !== activeCall?.id)
+  const history = appState.recentCalls
+    .filter((call) => isCallFinal(call.status) && (!activeCall || call.id !== activeCall.id))
+    .slice(0, 20)
   const activeMarkup = activeCall
     ? (() => {
         const person = getCallCounterpart(activeCall)
+        const outgoingRinging = activeCall.callerUid === appState.user?.uid && activeCall.status === 'ringing'
         return `
           <section class="account-call-active-card">
             ${renderCallAvatar(person)}
@@ -2631,12 +2639,39 @@ function getCallsContentMarkup() {
               <p>${escapeHtml(appState.callUiState === 'active' ? `Connected · ${getCallDuration(activeCall)}` : getCallStatusLabel(activeCall))}</p>
             </div>
             <div class="account-call-actions">
-              <button type="button" class="button button-muted" data-account-call-action="toggle-mute">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
-              <button type="button" class="button account-call-danger" data-account-call-action="end">End call</button>
+              ${outgoingRinging
+                ? `<button type="button" class="button account-call-danger" data-account-call-action="cancel" data-call-id="${escapeHtml(activeCall.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'cancel' ? 'Cancelling...' : 'Cancel'}</button>`
+                : `
+                  <button type="button" class="button button-muted" data-account-call-action="toggle-mute" data-call-id="${escapeHtml(activeCall.id)}">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
+                  <button type="button" class="button account-call-danger" data-account-call-action="end" data-call-id="${escapeHtml(activeCall.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'end' ? 'Ending...' : 'End call'}</button>
+                `}
             </div>
           </section>
         `
       })()
+    : ''
+  const incomingMarkup = incomingCalls.length
+    ? `
+      <div class="account-call-incoming-list">
+        ${incomingCalls.map((call) => {
+          const person = getCallCounterpart(call)
+          return `
+            <section class="account-call-active-card is-incoming">
+              ${renderCallAvatar(person)}
+              <div class="account-call-active-meta">
+                <p class="account-call-eyebrow">Incoming audio call</p>
+                <h3>${escapeHtml(person.displayName || 'Melogic member')}</h3>
+                <p>Ringing now</p>
+              </div>
+              <div class="account-call-actions">
+                <button type="button" class="button button-accent" data-account-call-action="accept" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === `accept:${call.id}` ? 'Accepting...' : 'Accept'}</button>
+                <button type="button" class="button account-call-danger" data-account-call-action="decline" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === `decline:${call.id}` ? 'Declining...' : 'Decline'}</button>
+              </div>
+            </section>
+          `
+        }).join('')}
+      </div>
+    `
     : ''
 
   return `
@@ -2647,6 +2682,7 @@ function getCallsContentMarkup() {
       </header>
       ${appState.callError ? `<div class="account-call-error" role="alert">${escapeHtml(appState.callError)}</div>` : ''}
       ${activeMarkup}
+      ${incomingMarkup}
       ${history.length ? `
         <div class="account-call-history">
           ${history.map((call) => {
@@ -2664,10 +2700,10 @@ function getCallsContentMarkup() {
             `
           }).join('')}
         </div>
-      ` : (!activeCall ? `
+      ` : (!activeCall && !incomingCalls.length ? `
         <section class="inbox-empty-panel activity-empty-panel">
-          <h3>No calls yet.</h3>
-          <p>Start an audio call from a direct message conversation.</p>
+          <h3>No active calls.</h3>
+          <p>Start a call from a direct message.</p>
         </section>
       ` : '')}
     </section>
@@ -3029,13 +3065,13 @@ function getAccountCallOverlayMarkup() {
       </div>
       <div class="account-call-overlay-actions">
         ${incoming ? `
-          <button type="button" class="account-call-icon-button is-accept" data-account-call-action="accept" aria-label="Accept call" ${call.offer?.sdp ? '' : 'disabled'}>${iconSvg('phone')}</button>
-          <button type="button" class="account-call-icon-button is-decline" data-account-call-action="decline" aria-label="Decline call">${iconSvg('x')}</button>
+          <button type="button" class="account-call-icon-button is-accept" data-account-call-action="accept" data-call-id="${escapeHtml(call.id)}" aria-label="Accept call" ${appState.callActionPending ? 'disabled' : ''}>${iconSvg('phone')}</button>
+          <button type="button" class="account-call-icon-button is-decline" data-account-call-action="decline" data-call-id="${escapeHtml(call.id)}" aria-label="Decline call" ${appState.callActionPending ? 'disabled' : ''}>${iconSvg('x')}</button>
         ` : outgoing ? `
-          <button type="button" class="button account-call-danger" data-account-call-action="cancel">Cancel</button>
+          <button type="button" class="button account-call-danger" data-account-call-action="cancel" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'cancel' ? 'Cancelling...' : 'Cancel'}</button>
         ` : `
-          <button type="button" class="button button-muted" data-account-call-action="toggle-mute">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
-          <button type="button" class="button account-call-danger" data-account-call-action="end">End</button>
+          <button type="button" class="button button-muted" data-account-call-action="toggle-mute" data-call-id="${escapeHtml(call.id)}">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
+          <button type="button" class="button account-call-danger" data-account-call-action="end" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'end' ? 'Ending...' : 'End'}</button>
         `}
       </div>
     </aside>
@@ -3185,42 +3221,82 @@ async function acceptIncomingAccountCall(call) {
     refreshAccountCallUi()
     return
   }
-  appState.callError = ''
-  appState.activeCall = call
-  appState.callUiState = 'requesting-mic'
-  watchActiveAccountCall(call.id)
-  refreshAccountCallUi({ refreshConversation: true })
   try {
-    await acceptAccountCall(call.id)
-    await ensureAccountCallManager().acceptCallee(call)
+    const currentCall = await getAccountCall(call.id)
+    if (!currentCall || currentCall.status !== 'ringing') {
+      throw new Error('This incoming call is no longer available.')
+    }
+    if (!currentCall.offer?.sdp) {
+      throw new Error('The caller is still connecting. Try accepting again in a moment.')
+    }
+    appState.callError = ''
+    appState.activeCall = currentCall
+    appState.callUiState = 'requesting-mic'
+    watchActiveAccountCall(currentCall.id)
+    refreshAccountCallUi({ refreshConversation: true })
+    await acceptAccountCall(currentCall.id)
+    await ensureAccountCallManager().acceptCallee(currentCall)
   } catch (error) {
-    appState.callError = error?.message || 'The incoming call could not be accepted.'
+    const message = String(error?.message || '')
+    appState.callError = message.toLowerCase().includes('microphone')
+      ? 'Microphone access is required to accept this call.'
+      : message || 'The incoming call could not be accepted.'
     appState.callUiState = 'failed'
     refreshAccountCallUi({ refreshConversation: true })
   }
 }
 
-async function handleAccountCallAction(action) {
-  const incomingCall = appState.incomingCalls[0]
-  const activeCall = appState.activeCall
-  if (action === 'accept') return acceptIncomingAccountCall(incomingCall)
-  if (action === 'decline' && incomingCall?.id) {
-    await declineAccountCall(incomingCall.id).catch((error) => {
-      appState.callError = error?.message || 'The call could not be declined.'
-    })
-    refreshAccountCallUi()
-    return
+function clearLocalAccountCall(callId) {
+  clearAccountCallTimers()
+  accountCallManager?.cleanup({ preserveState: true })
+  if (appState.activeCall?.id === callId) {
+    appState.activeCallUnsubscribe()
+    appState.activeCallUnsubscribe = () => {}
+    appState.activeCall = null
   }
-  if (!activeCall?.id) return
+  appState.incomingCalls = appState.incomingCalls.filter((call) => call.id !== callId)
+  appState.callUiState = 'idle'
+  appState.callMuted = false
+}
+
+async function handleAccountCallAction(action, callId = '') {
+  if (appState.callActionPending) return
+  const incomingCall = appState.incomingCalls.find((call) => call.id === callId) || appState.incomingCalls[0]
+  const activeCall = appState.activeCall?.id === callId || !callId
+    ? appState.activeCall
+    : appState.recentCalls.find((call) => call.id === callId)
   if (action === 'toggle-mute') {
+    if (!activeCall?.id) return
     ensureAccountCallManager().toggleMuted()
     return
   }
-  if (action === 'cancel') await cancelAccountCall(activeCall.id).catch(() => {})
-  if (action === 'end') await endAccountCall(activeCall.id).catch(() => {})
-  if (['cancel', 'end'].includes(action)) {
-    clearAccountCallTimers()
-    accountCallManager?.cleanup({ preserveState: true })
+  const targetCall = ['accept', 'decline'].includes(action) ? incomingCall : activeCall
+  if (!targetCall?.id) return
+
+  appState.callActionPending = ['accept', 'decline'].includes(action) ? `${action}:${targetCall.id}` : action
+  appState.callError = ''
+  refreshAccountCallUi()
+  try {
+    if (action === 'accept') {
+      await acceptIncomingAccountCall(targetCall)
+      return
+    }
+    if (action === 'decline') await declineAccountCall(targetCall.id)
+    if (action === 'cancel') await cancelAccountCall(targetCall.id)
+    if (action === 'end') await endAccountCall(targetCall.id)
+    if (['decline', 'cancel', 'end'].includes(action)) clearLocalAccountCall(targetCall.id)
+  } catch (error) {
+    const fallback = action === 'accept'
+      ? 'The incoming call could not be accepted.'
+      : action === 'decline'
+        ? 'The call could not be declined.'
+        : action === 'cancel'
+          ? 'The call could not be cancelled.'
+          : 'The call could not be ended.'
+    appState.callError = error?.message || fallback
+  } finally {
+    appState.callActionPending = ''
+    refreshAccountCallUi({ refreshConversation: true })
   }
 }
 
@@ -3342,7 +3418,10 @@ function setupFloatingEventDelegates() {
     if (callActionButton) {
       event.preventDefault()
       event.stopPropagation()
-      await handleAccountCallAction(callActionButton.getAttribute('data-account-call-action') || '')
+      await handleAccountCallAction(
+        callActionButton.getAttribute('data-account-call-action') || '',
+        callActionButton.getAttribute('data-call-id') || ''
+      )
       return
     }
 
@@ -3551,6 +3630,10 @@ function optimisticThreadFromSelection(threadId, selectedUsers, createdType, gro
     formattedTime: 'Now',
     imageURL: createdType === 'dm' ? dmUser?.avatarURL || dmUser?.photoURL || '' : '',
     participantIds,
+    participantUids: participantIds,
+    memberUids: participantIds,
+    ownerUid: appState.user?.uid || '',
+    createdBy: appState.user?.uid || '',
     participantCount: participantIds.length,
     lastMessageText: '',
     lastMessageAt: new Date().toISOString(),
@@ -3603,7 +3686,7 @@ async function handleCreateChatSubmit() {
     }
 
     const hydratedThread = await hydrateThreadFromSourceIfNeeded(thread)
-    if (!hydratedThread?.participantIds?.includes(appState.user.uid)) {
+    if (!getThreadParticipantUids(hydratedThread).includes(appState.user.uid)) {
       throw new Error('Conversation membership could not be confirmed.')
     }
     upsertThreadInState(hydratedThread)
@@ -4291,7 +4374,10 @@ function bindSharedEvents(scope = inboxRoot) {
 
   scope.querySelectorAll('[data-account-call-action]').forEach((button) => {
     button.addEventListener('click', async () => {
-      await handleAccountCallAction(button.getAttribute('data-account-call-action') || '')
+      await handleAccountCallAction(
+        button.getAttribute('data-account-call-action') || '',
+        button.getAttribute('data-call-id') || ''
+      )
     })
   })
 
@@ -4737,17 +4823,22 @@ async function ensureThreadReadyForSend(thread) {
   try {
     const sourceThread = await getThread(threadId)
     if (!sourceThread) throw new Error('Thread not found.')
-    const participantIds = Array.isArray(sourceThread.participantIds) ? sourceThread.participantIds : []
-    const canSend = participantIds.includes(uid) && sourceThread.status !== 'archived'
+    const participantUids = getThreadParticipantUids(sourceThread)
+    const canSend = participantUids.includes(uid) && sourceThread.status !== 'archived'
     debugInboxSend('thread readiness', {
-      threadId,
-      uid,
-      participantIds,
+      activeThreadId: threadId,
+      activeThreadType: sourceThread.type || '',
+      currentUserUid: uid,
+      participantUids,
+      memberUids: Array.isArray(sourceThread.memberUids) ? sourceThread.memberUids : [],
+      ownerUid: sourceThread.ownerUid || '',
       createdBy: sourceThread.createdBy || '',
       status: sourceThread.status || '',
-      canSend
+      canSend,
+      isPersistedThread: true,
+      sendPath: 'callable:sendInboxMessage'
     })
-    if (!participantIds.includes(uid)) throw new Error('You are not a participant in this thread.')
+    if (!participantUids.includes(uid)) throw new Error('You are not a participant in this thread.')
     if (sourceThread.status === 'archived') throw new Error('This conversation is archived.')
     upsertThreadInState(sourceThread)
     locallyCreatedThreadIds.delete(threadId)
@@ -4780,21 +4871,6 @@ async function handleMessageSubmit(form) {
   }
   if (!body && !attachments.length) return
 
-  try {
-    thread = await ensureThreadReadyForSend(thread)
-  } catch (error) {
-    appState.errorMessage = getSendErrorMessage(error, thread)
-    debugInboxSend('thread readiness failed', {
-      threadId: thread.id,
-      uid: appState.user.uid,
-      participantIds: thread.participantIds || [],
-      code: error?.code || '',
-      message: error?.message || ''
-    })
-    renderSelectedConversation({ reason: 'prepare-send-failed' })
-    return
-  }
-
   const clientMessageId = createClientMessageId()
   const replyTo = appState.replyDraftByThreadId[thread.id] || null
   addOptimisticMessage(thread, { clientMessageId, body, attachments, replyTo })
@@ -4806,13 +4882,42 @@ async function handleMessageSubmit(form) {
   form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled')
   renderSelectedConversation({ forceBottom: true })
 
+  try {
+    thread = await ensureThreadReadyForSend(thread)
+  } catch (error) {
+    setOptimisticMessageStatus(thread.id, clientMessageId, 'failed', error?.message || 'Unable to prepare conversation.')
+    appState.errorMessage = getSendErrorMessage(error, thread)
+    debugInboxSend('thread readiness failed', {
+      activeThreadId: thread.id,
+      activeThreadType: thread.type || '',
+      currentUserUid: appState.user.uid,
+      participantUids: getThreadParticipantUids(thread),
+      memberUids: Array.isArray(thread.memberUids) ? thread.memberUids : [],
+      ownerUid: thread.ownerUid || '',
+      createdBy: thread.createdBy || '',
+      canSend: false,
+      isPersistedThread: false,
+      sendPath: 'callable:sendInboxMessage',
+      sendErrorCode: error?.code || '',
+      sendErrorMessage: error?.message || ''
+    })
+    renderSelectedConversation({ reason: 'prepare-send-failed' })
+    return
+  }
+
   let sendFailed = false
   try {
     debugInboxSend('send start', {
-      threadId: thread.id,
-      uid: appState.user.uid,
-      participantIds: thread.participantIds || [],
-      canSend: (thread.participantIds || []).includes(appState.user.uid),
+      activeThreadId: thread.id,
+      activeThreadType: thread.type || '',
+      currentUserUid: appState.user.uid,
+      participantUids: getThreadParticipantUids(thread),
+      memberUids: Array.isArray(thread.memberUids) ? thread.memberUids : [],
+      ownerUid: thread.ownerUid || '',
+      createdBy: thread.createdBy || '',
+      canSend: getThreadParticipantUids(thread).includes(appState.user.uid),
+      isPersistedThread: true,
+      sendPath: 'callable:sendInboxMessage',
       payload: {
         bodyLength: body.length,
         attachmentCount: attachments.length,
@@ -4837,11 +4942,18 @@ async function handleMessageSubmit(form) {
     }
   } catch (error) {
     debugInboxSend('send failed', {
-      threadId: thread.id,
-      uid: appState.user.uid,
-      participantIds: thread.participantIds || [],
-      code: error?.code || '',
-      message: error?.message || ''
+      activeThreadId: thread.id,
+      activeThreadType: thread.type || '',
+      currentUserUid: appState.user.uid,
+      participantUids: getThreadParticipantUids(thread),
+      memberUids: Array.isArray(thread.memberUids) ? thread.memberUids : [],
+      ownerUid: thread.ownerUid || '',
+      createdBy: thread.createdBy || '',
+      canSend: getThreadParticipantUids(thread).includes(appState.user.uid),
+      isPersistedThread: true,
+      sendPath: 'callable:sendInboxMessage',
+      sendErrorCode: error?.code || '',
+      sendErrorMessage: error?.message || ''
     })
     sendFailed = true
     setOptimisticMessageStatus(thread.id, clientMessageId, 'failed', error?.message || 'Unable to send message.')

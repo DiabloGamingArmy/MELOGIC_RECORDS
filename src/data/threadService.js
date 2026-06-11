@@ -30,7 +30,24 @@ function toIsoDate(value) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
 }
 
+export function getThreadParticipantUids(thread = {}) {
+  const objectRows = [
+    ...(Array.isArray(thread.participants) ? thread.participants : []),
+    ...(Array.isArray(thread.members) ? thread.members : [])
+  ]
+  const participantUids = [
+    ...(Array.isArray(thread.participantIds) ? thread.participantIds : []),
+    ...(Array.isArray(thread.participantUids) ? thread.participantUids : []),
+    ...(Array.isArray(thread.memberUids) ? thread.memberUids : []),
+    ...objectRows.map((entry) => typeof entry === 'string' ? entry : entry?.uid),
+    thread.ownerUid,
+    thread.createdBy
+  ]
+  return Array.from(new Set(participantUids.map((uid) => String(uid || '').trim()).filter(Boolean)))
+}
+
 function normalizeThread(threadId, raw = {}) {
+  const participantUids = getThreadParticipantUids(raw)
   return {
     id: threadId,
     type: raw.type === 'group' ? 'group' : 'dm',
@@ -40,8 +57,11 @@ function normalizeThread(threadId, raw = {}) {
     title: raw.title || '',
     imagePath: raw.imagePath || '',
     imageURL: raw.imageURL || '',
-    participantIds: Array.isArray(raw.participantIds) ? raw.participantIds : [],
-    participantCount: Number(raw.participantCount || 0),
+    participantIds: participantUids,
+    participantUids,
+    memberUids: participantUids,
+    ownerUid: raw.ownerUid || raw.createdBy || '',
+    participantCount: Number(raw.participantCount || participantUids.length || 0),
     otherParticipantIds: Array.isArray(raw.otherParticipantIds) ? raw.otherParticipantIds : [],
     lastMessageText: raw.lastMessageText || '',
     lastMessageAt: toIsoDate(raw.lastMessageAt),
@@ -81,7 +101,7 @@ function normalizeDmBlockState(raw = null) {
 }
 
 function needsSourceHydration(thread = {}) {
-  const hasParticipants = Array.isArray(thread.participantIds) && thread.participantIds.length > 0
+  const hasParticipants = getThreadParticipantUids(thread).length > 0
   return !hasParticipants
     || !thread.participantCount
     || !thread.type

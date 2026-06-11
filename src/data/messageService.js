@@ -1,7 +1,6 @@
 import {
   addDoc,
   collection,
-  writeBatch,
   deleteDoc,
   doc,
   getDoc,
@@ -17,9 +16,12 @@ import {
   setDoc,
   updateDoc
 } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
+import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
+import { getThreadParticipantUids } from './threadService'
 
 const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
 const MAX_ATTACHMENT_LABEL = '256 MB'
@@ -274,18 +276,16 @@ export async function sendMessage(threadId, payload = {}) {
   attachmentsInput.forEach((file) => validateAttachmentSize(file))
 
   const threadRef = doc(db, 'threads', threadId)
-  const participantRef = doc(db, 'threads', threadId, 'participants', payload.senderId)
   const messageRef = doc(collection(db, 'threads', threadId, 'messages'))
 
-  const [threadSnap, participantSnap] = await Promise.all([getDoc(threadRef), getDoc(participantRef)])
+  const threadSnap = await getDoc(threadRef)
   if (!threadSnap.exists()) throw new Error('Thread not found.')
   const threadData = threadSnap.data() || {}
-  const participantIds = Array.isArray(threadData.participantIds) ? threadData.participantIds : []
-  if (!participantIds.includes(payload.senderId)) {
+  const participantUids = getThreadParticipantUids(threadData)
+  if (!participantUids.includes(payload.senderId)) {
     throw new Error('You are not a participant in this thread.')
   }
   const attachments = await uploadMessageAttachments(threadId, messageRef.id, attachmentsInput)
-  const summary = summarizeMessage(body, attachments)
   const normalizedType = (() => {
     if (!attachments.length) return payload.type || 'text'
     if (attachments.length === 1 && !body) return getAttachmentKind(attachments[0])
@@ -294,52 +294,18 @@ export async function sendMessage(threadId, payload = {}) {
   const replyTo = payload.replyTo && typeof payload.replyTo === 'object'
     ? normalizeReplyTo(payload.replyTo)
     : null
-  const batch = writeBatch(db)
-  const messagePayload = {
-    senderId: payload.senderId,
+  const clientMessageId = String(payload.clientMessageId || '').trim().slice(0, 80)
+  const callable = httpsCallable(functions, 'sendInboxMessage')
+  const response = await callable({
+    threadId,
+    messageId: messageRef.id,
     body,
     type: normalizedType,
     attachments,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-    deleted: false,
-    edited: false
-  }
-  const clientMessageId = String(payload.clientMessageId || '').trim().slice(0, 80)
-  if (clientMessageId) messagePayload.clientMessageId = clientMessageId
-  if (replyTo) messagePayload.replyTo = replyTo
-  batch.set(messageRef, messagePayload)
-  batch.update(threadRef, {
-      updatedAt: serverTimestamp(),
-      lastMessageAt: serverTimestamp(),
-      lastMessageText: summary,
-      lastMessageSenderId: payload.senderId,
-      lastMessageType: normalizedType,
-      lastMessageAttachmentCount: attachments.length
-    })
-  await batch.commit()
-
-  let receiptUpdated = true
-  try {
-    await setDoc(participantRef, {
-      uid: payload.senderId,
-      ...(participantSnap.exists()
-        ? {}
-        : {
-            role: threadData.createdBy === payload.senderId ? 'owner' : 'member',
-            joinedAt: serverTimestamp(),
-            muted: false,
-            archived: false
-          }),
-      lastDeliveredAt: serverTimestamp(),
-      lastReadAt: serverTimestamp()
-    }, { merge: true })
-  } catch {
-    // Message creation must not fail because an optional participant receipt repair was rejected.
-    receiptUpdated = false
-  }
-
-  return { ok: true, messageId: messageRef.id, clientMessageId, receiptUpdated }
+    replyTo,
+    clientMessageId
+  })
+  return response.data
 }
 
 export async function editMessage({ threadId, messageId, uid, body }) {

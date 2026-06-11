@@ -5,6 +5,7 @@ const {
   buildInboxSummaryPayload,
   buildParticipantPayload,
   buildThreadPayload,
+  getThreadParticipantUids,
   makeDmKey
 } = require('./helpers')
 
@@ -38,17 +39,18 @@ exports.createOrGetDm = onCall(async (request) => {
     if (!existingSnap.empty) {
       const existingDoc = existingSnap.docs[0]
       const existingThread = existingDoc.data() || {}
-      const existingParticipantIds = Array.from(new Set(
-        [
-          ...(Array.isArray(existingThread.participantIds) ? existingThread.participantIds : []),
-          ...participantIds
-        ].filter(Boolean)
-      ))
+      const existingParticipantIds = Array.from(new Set([
+        ...getThreadParticipantUids(existingThread),
+        ...participantIds
+      ].filter(Boolean)))
       const repairedThread = {
         ...existingThread,
         participantIds: existingParticipantIds,
+        participantUids: existingParticipantIds,
+        memberUids: existingParticipantIds,
         participantCount: existingParticipantIds.length,
         createdBy: existingThread.createdBy || callerUid,
+        ownerUid: existingThread.ownerUid || existingThread.createdBy || callerUid,
         type: 'dm',
         dmKey,
         status: existingThread.status || 'active',

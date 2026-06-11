@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentWritten } = require('firebase-functions/v2/firestore')
 const { getFirestore } = require('firebase-admin/firestore')
-const { buildInboxSummaryPayload } = require('./helpers')
+const { buildInboxSummaryPayload, getThreadParticipantUids } = require('./helpers')
 
 const db = getFirestore()
 
@@ -10,7 +10,7 @@ async function syncInboxMirrorsForThread(threadId, threadData, options = {}) {
 
   const participantIds = Array.from(
     new Set(
-      (Array.isArray(options.participantIds) ? options.participantIds : threadData.participantIds || [])
+      (Array.isArray(options.participantIds) ? options.participantIds : getThreadParticipantUids(threadData))
         .filter(Boolean)
     )
   )
