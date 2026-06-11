@@ -111,6 +111,7 @@ const appState = {
   threads: [],
   selectedThreadId: '',
   messagesByThreadId: {},
+  messageSnapshotVersionByThreadId: {},
   messagePaginationByThreadId: {},
   participantsByThreadId: {},
   typingUsersByThreadId: {},
@@ -1420,7 +1421,9 @@ function removeOptimisticMessage(threadId, clientMessageId) {
 function reconcileOptimisticMessages(threadId, serverMessages = []) {
   const current = appState.optimisticMessagesByThreadId[threadId] || []
   if (!current.length) return
-  const confirmedIds = new Set(serverMessages.map((message) => message.clientMessageId).filter(Boolean))
+  const confirmedIds = new Set(serverMessages
+    .filter((message) => message.clientMessageId && message.createdAt && message.pendingWrites !== true)
+    .map((message) => message.clientMessageId))
   if (!confirmedIds.size) return
   const reconciledIds = current
     .filter((message) => confirmedIds.has(message.clientMessageId))
@@ -1693,7 +1696,12 @@ function groupMessages(messages = []) {
       return
     }
 
-    groups.push({ kind: 'messages', id: `group-${message.id}`, senderId: message.senderId, messages: [message] })
+    groups.push({
+      kind: 'messages',
+      id: `group-${message.renderKey || message.clientMessageId || message.id}`,
+      senderId: message.senderId,
+      messages: [message]
+    })
   })
 
   return groups
@@ -1778,8 +1786,37 @@ function getRenderableMessages(thread) {
   const hiddenIds = new Set(appState.hiddenMessageIdsByThreadId[thread.id] || [])
   const confirmedMessages = appState.messagesByThreadId[thread.id] || []
   const optimisticMessages = appState.optimisticMessagesByThreadId[thread.id] || []
-  const confirmedClientIds = new Set(confirmedMessages.map((message) => message.clientMessageId).filter(Boolean))
-  return [...confirmedMessages, ...optimisticMessages.filter((message) => !confirmedClientIds.has(message.clientMessageId))]
+  const optimisticByClientId = new Map(
+    optimisticMessages
+      .filter((message) => message.clientMessageId)
+      .map((message) => [message.clientMessageId, message])
+  )
+  const mergedConfirmed = confirmedMessages.map((confirmed) => {
+    const optimistic = optimisticByClientId.get(confirmed.clientMessageId)
+    if (!optimistic) {
+      return {
+        ...confirmed,
+        renderKey: confirmed.clientMessageId || confirmed.id
+      }
+    }
+    optimisticByClientId.delete(confirmed.clientMessageId)
+    const isCommitted = Boolean(confirmed.createdAt) && confirmed.pendingWrites !== true
+    return {
+      ...optimistic,
+      ...confirmed,
+      id: confirmed.id || optimistic.id,
+      renderKey: confirmed.clientMessageId || optimistic.clientMessageId || confirmed.id,
+      createdAt: confirmed.createdAt || optimistic.createdAt,
+      attachments: confirmed.attachments?.length ? confirmed.attachments : optimistic.attachments,
+      optimistic: !isCommitted,
+      sendStatus: isCommitted ? 'sent' : optimistic.sendStatus || 'sending'
+    }
+  })
+  const pendingOnly = Array.from(optimisticByClientId.values()).map((message) => ({
+    ...message,
+    renderKey: message.clientMessageId || message.id
+  }))
+  return [...mergedConfirmed, ...pendingOnly]
     .filter((message) => !hiddenIds.has(message.id))
     .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
 }
@@ -1962,7 +1999,7 @@ function getMessageGroupsMarkup(thread, {
             `
           }
           return `
-            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''} ${attachmentsMarkup ? 'has-media' : ''} ${message.optimistic ? 'is-optimistic' : ''} ${message.sendStatus === 'failed' ? 'is-send-failed' : ''}" data-message-id="${message.id}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
+            <article class="message-bubble ${isSingle ? 'is-single' : ''} ${isFirst ? 'is-first' : ''} ${isMiddle ? 'is-middle' : ''} ${isLast ? 'is-last' : ''} ${message.deleted ? 'is-deleted' : ''} ${replyTo ? 'has-reply' : ''} ${attachmentsMarkup ? 'has-media' : ''} ${message.optimistic ? 'is-optimistic' : ''} ${message.sendStatus === 'failed' ? 'is-send-failed' : ''}" data-message-id="${message.id}" data-message-render-key="${escapeHtml(message.renderKey || message.clientMessageId || message.id)}" data-message-thread-id="${thread.id}" data-sender-id="${message.senderId}">
               ${replyMarkup}
               ${bodyMarkup}
               ${attachmentsMarkup}
@@ -4092,6 +4129,29 @@ function preserveRenderedMessageMedia(previousList, generatedList) {
   })
 }
 
+function preserveRenderedMessageBubbles(previousList, generatedList) {
+  if (!previousList || !generatedList) return
+  const existingByRenderKey = new Map()
+  previousList.querySelectorAll('[data-message-render-key]').forEach((bubble) => {
+    const key = bubble.getAttribute('data-message-render-key') || ''
+    if (key) existingByRenderKey.set(key, bubble)
+  })
+  generatedList.querySelectorAll('[data-message-render-key]').forEach((nextBubble) => {
+    const key = nextBubble.getAttribute('data-message-render-key') || ''
+    const existingBubble = existingByRenderKey.get(key)
+    if (!existingBubble) return
+    existingBubble.className = nextBubble.className
+    ;['data-message-id', 'data-message-thread-id', 'data-sender-id'].forEach((attribute) => {
+      const value = nextBubble.getAttribute(attribute)
+      if (value == null) existingBubble.removeAttribute(attribute)
+      else existingBubble.setAttribute(attribute, value)
+    })
+    existingBubble.replaceChildren(...nextBubble.childNodes)
+    nextBubble.replaceWith(existingBubble)
+    debugInboxRender('message bubble updated in place', key)
+  })
+}
+
 function renderSelectedConversation({
   forceBottom = false,
   preservePrepend = false,
@@ -4144,6 +4204,7 @@ function renderSelectedConversation({
   preserveStableImages(panel, nextContent)
   if (!reuseMessageList && previousList && generatedList) {
     preserveRenderedMessageMedia(previousList, generatedList)
+    preserveRenderedMessageBubbles(previousList, generatedList)
   }
   panel.replaceChildren(...nextContent.childNodes)
   const headerSlot = panel.querySelector('[data-conversation-header-slot]')
@@ -4387,6 +4448,8 @@ function startMessageSubscription(threadId) {
   startSelectedSourceThreadSubscription(threadId)
 
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
+    const snapshotVersion = Number(appState.messageSnapshotVersionByThreadId[threadId] || 0) + 1
+    appState.messageSnapshotVersionByThreadId[threadId] = snapshotVersion
     const existing = appState.messagesByThreadId[threadId] || []
     const isInitialMessageBatch = appState.loadingMessageThreadId === threadId || !existing.length
     const shouldAutoScroll = isInitialMessageBatch
@@ -4395,7 +4458,10 @@ function startMessageSubscription(threadId) {
       preloadMessageImages(messages),
       hydrateProfilesForMessages(threadId, messages, { render: false })
     ])
-    if (activeMessageSubscriptionThreadId !== threadId) return
+    if (
+      activeMessageSubscriptionThreadId !== threadId
+      || appState.messageSnapshotVersionByThreadId[threadId] !== snapshotVersion
+    ) return
     appState.messagesByThreadId[threadId] = mergeMessages(existing, messages)
     reconcileOptimisticMessages(threadId, messages)
     appState.messagePaginationByThreadId[threadId] = {

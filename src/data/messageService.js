@@ -40,7 +40,7 @@ function validateAttachmentSize(file) {
   }
 }
 
-function normalizeMessage(messageId, raw = {}) {
+function normalizeMessage(messageId, raw = {}, metadata = {}) {
   return {
     id: messageId,
     clientMessageId: String(raw.clientMessageId || '').trim(),
@@ -55,7 +55,8 @@ function normalizeMessage(messageId, raw = {}) {
     deletedBy: raw.deletedBy || '',
     edited: Boolean(raw.edited),
     editedAt: toIsoDate(raw.editedAt),
-    replyTo: raw.replyTo && typeof raw.replyTo === 'object' ? normalizeReplyTo(raw.replyTo) : null
+    replyTo: raw.replyTo && typeof raw.replyTo === 'object' ? normalizeReplyTo(raw.replyTo) : null,
+    pendingWrites: metadata.hasPendingWrites === true
   }
 }
 
@@ -245,12 +246,20 @@ export function subscribeToMessages(threadId, callback, onError) {
 
   try {
     return onSnapshot(getMessagesQuery(threadId), (snapshot) => {
-      const messages = snapshot.docs.map((docSnap) => normalizeMessage(docSnap.id, docSnap.data()))
+      const messages = snapshot.docs.map((docSnap) => normalizeMessage(
+        docSnap.id,
+        docSnap.data({ serverTimestamps: 'estimate' }),
+        docSnap.metadata
+      ))
       callback(messages)
     }, onError)
   } catch {
     return onSnapshot(query(collection(db, 'threads', threadId, 'messages'), limit(300)), (snapshot) => {
-      const messages = snapshot.docs.map((docSnap) => normalizeMessage(docSnap.id, docSnap.data()))
+      const messages = snapshot.docs.map((docSnap) => normalizeMessage(
+        docSnap.id,
+        docSnap.data({ serverTimestamps: 'estimate' }),
+        docSnap.metadata
+      ))
       callback(messages)
     }, onError)
   }
