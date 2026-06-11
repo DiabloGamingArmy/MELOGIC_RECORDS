@@ -42,6 +42,31 @@ import {
 const profileCache = new Map()
 let profileLookupWarningShown = false
 
+function normalizeInboxProfile(uid, raw = {}) {
+  if (!raw || typeof raw !== 'object') return null
+  const avatarURL = String(
+    raw.avatarURL
+    || raw.avatarUrl
+    || raw.photoURL
+    || raw.photoUrl
+    || raw.profileImageURL
+    || raw.profileImageUrl
+    || raw.profilePicture
+    || raw.imageURL
+    || raw.imageUrl
+    || raw.photo
+    || ''
+  ).trim()
+  return {
+    ...raw,
+    uid: String(raw.uid || uid || '').trim(),
+    displayName: String(raw.displayName || raw.name || '').trim(),
+    username: String(raw.username || raw.handle || '').trim(),
+    avatarURL,
+    photoURL: avatarURL
+  }
+}
+
 function formatThreadTime(value) {
   if (!value) return ''
   const date = new Date(value)
@@ -65,15 +90,14 @@ async function getProfile(uid) {
 
   try {
     const profileDoc = await getDoc(doc(db, 'profiles', uid))
-    const profile = profileDoc.exists() ? profileDoc.data() : null
-    profileCache.set(uid, profile)
+    const profile = profileDoc.exists() ? normalizeInboxProfile(uid, profileDoc.data()) : null
+    if (profile) profileCache.set(uid, profile)
     return profile
   } catch (error) {
     if (!profileLookupWarningShown) {
       profileLookupWarningShown = true
       console.warn('Inbox profile lookup failed for /profiles reads.', error)
     }
-    profileCache.set(uid, null)
     return null
   }
 }
@@ -87,7 +111,7 @@ export async function loadProfilesByUids(uids = []) {
   )
 
   return profilePairs.reduce((acc, [uid, profile]) => {
-    acc[uid] = profile
+    if (profile) acc[uid] = profile
     return acc
   }, {})
 }

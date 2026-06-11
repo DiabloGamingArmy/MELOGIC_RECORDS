@@ -161,14 +161,27 @@ async function uploadMessageAttachments(threadId, messageId, attachments = []) {
 }
 
 function normalizeParticipant(participantId, raw = {}) {
+  const avatarURL = String(
+    raw.avatarURL
+    || raw.avatarUrl
+    || raw.photoURL
+    || raw.photoUrl
+    || raw.profileImageURL
+    || raw.profileImageUrl
+    || raw.profilePicture
+    || raw.imageURL
+    || raw.imageUrl
+    || raw.photo
+    || ''
+  ).trim()
   return {
     id: participantId,
     uid: raw.uid || participantId,
     role: raw.role || 'member',
     displayName: String(raw.displayName || '').trim(),
     username: String(raw.username || '').trim(),
-    avatarURL: String(raw.avatarURL || '').trim(),
-    photoURL: String(raw.photoURL || '').trim(),
+    avatarURL,
+    photoURL: avatarURL,
     lastReadAt: toIsoDate(raw.lastReadAt),
     lastDeliveredAt: toIsoDate(raw.lastDeliveredAt),
     joinedAt: toIsoDate(raw.joinedAt)

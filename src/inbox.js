@@ -196,9 +196,12 @@ const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024
 const MAX_ATTACHMENT_LABEL = '256 MB'
 const DEBUG_TYPING = false
 const INBOX_RENDER_DEBUG = false
+const INBOX_SCROLL_DEBUG = false
+const INBOX_AVATAR_DEBUG = false
 const imagePreloadCache = new Map()
 const attachmentUrlCache = new Map()
 const attachmentUrlErrorCache = new Map()
+const hydratedProfileUids = new Set()
 let chatSettingsSearchSelection = { start: null, end: null }
 let hasInitializedAuthObserver = false
 let hasBoundInboxDelegates = false
@@ -213,6 +216,10 @@ function debugTyping(...args) {
 
 function debugInboxRender(...args) {
   if (INBOX_RENDER_DEBUG) console.info('[inbox render]', ...args)
+}
+
+function debugInboxAvatar(...args) {
+  if (INBOX_AVATAR_DEBUG) console.info('[inbox avatar]', ...args)
 }
 
 app.innerHTML = `
@@ -288,6 +295,14 @@ function setupInboxDelegates() {
   inboxRoot.addEventListener('error', (event) => {
     const image = event.target
     if (!(image instanceof HTMLImageElement)) return
+    if (image.matches('[data-inbox-avatar-image]')) {
+      const avatarRoot = image.closest('[data-inbox-avatar-root]')
+      avatarRoot?.classList.add('is-avatar-failed')
+      debugInboxAvatar('image failed; showing initials fallback', {
+        key: image.getAttribute('data-stable-image-key') || '',
+        src: image.currentSrc || image.src || ''
+      })
+    }
     const attachmentKey = image.dataset.messageAttachmentKey || ''
     if (!attachmentKey) return
     const currentUrl = image.currentSrc || image.src || ''
@@ -346,14 +361,45 @@ function getInitials(user = {}) {
     .toUpperCase()
 }
 
+function getAvatarURL(source = {}) {
+  return String(
+    source?.avatarURL
+    || source?.avatarUrl
+    || source?.photoURL
+    || source?.photoUrl
+    || source?.profileImageURL
+    || source?.profileImageUrl
+    || source?.profilePicture
+    || source?.imageURL
+    || source?.imageUrl
+    || source?.photo
+    || ''
+  ).trim()
+}
+
 function getProfileMeta(uid, fallback = {}) {
   const profile = appState.profileByUid[uid] || {}
   const displayName = String(profile.displayName || fallback.displayName || fallback.title || '').trim()
   const username = String(profile.username || fallback.username || '').trim()
-  const avatarURL = String(profile.avatarURL || profile.photoURL || fallback.avatarURL || fallback.photoURL || '').trim()
+  const avatarURL = getAvatarURL(profile) || getAvatarURL(fallback)
   const uidFallback = uid ? `User ${String(uid).slice(0, 2).toUpperCase()}` : 'User'
   const preferred = displayName || username || uidFallback
   return { uid, displayName: preferred, username, avatarURL, photoURL: avatarURL }
+}
+
+function mergeHydratedProfiles(loaded = {}) {
+  const loadedKeys = []
+  Object.entries(loaded).forEach(([uid, profile]) => {
+    if (!uid || !profile) return
+    appState.profileByUid[uid] = {
+      ...(appState.profileByUid[uid] || {}),
+      ...profile
+    }
+    hydratedProfileUids.add(uid)
+    loadedKeys.push(uid)
+  })
+  if (loadedKeys.length) preloadProfileImagesByUid(loadedKeys)
+  return loadedKeys
 }
 
 function preloadImage(url) {
@@ -409,26 +455,23 @@ async function hydrateProfilesForThread(thread) {
     thread.otherParticipantId || ''
   ].filter(Boolean)))
   if (!ids.length) return
-  const missingIds = ids.filter((uid) => !appState.profileByUid[uid])
+  const missingIds = ids.filter((uid) => !hydratedProfileUids.has(uid))
   if (!missingIds.length) return
   const loaded = await loadProfilesByUids(missingIds)
-  const loadedKeys = Object.keys(loaded).filter((uid) => !appState.profileByUid[uid] && loaded[uid])
+  const loadedKeys = mergeHydratedProfiles(loaded)
   if (!loadedKeys.length) return
   console.info(`[inbox] loaded profiles for thread ${thread.id} ${loadedKeys.length}`)
-  appState.profileByUid = { ...appState.profileByUid, ...loaded }
-  preloadProfileImagesByUid(loadedKeys)
   if (appState.selectedThreadId === thread.id) renderSelectedConversation({ reason: 'state-update' })
 }
 
 async function hydrateProfilesForMessages(threadId, messages = [], { render = true } = {}) {
   if (!threadId || !messages.length) return
   const senderIds = Array.from(new Set(messages.map((message) => message?.senderId).filter(Boolean)))
-  const missing = senderIds.filter((uid) => !appState.profileByUid[uid])
+  const missing = senderIds.filter((uid) => !hydratedProfileUids.has(uid))
   if (!missing.length) return
   const loaded = await loadProfilesByUids(missing)
-  if (!Object.keys(loaded).length) return
-  appState.profileByUid = { ...appState.profileByUid, ...loaded }
-  preloadProfileImagesByUid(Object.keys(loaded))
+  const loadedKeys = mergeHydratedProfiles(loaded)
+  if (!loadedKeys.length) return
   if (render && appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'state-update' })
 }
 
@@ -440,13 +483,10 @@ async function hydrateProfilesForThreads(threads = []) {
       thread?.otherParticipantId || ''
     ]).filter(Boolean)
   ))
-  const missing = ids.filter((uid) => !appState.profileByUid[uid])
+  const missing = ids.filter((uid) => !hydratedProfileUids.has(uid))
   if (!missing.length) return false
   const loaded = await loadProfilesByUids(missing)
-  if (!Object.keys(loaded).length) return false
-  appState.profileByUid = { ...appState.profileByUid, ...loaded }
-  preloadProfileImagesByUid(Object.keys(loaded))
-  return true
+  return mergeHydratedProfiles(loaded).length > 0
 }
 
 function upsertThreadInState(nextThread) {
@@ -714,12 +754,30 @@ function getGroupAvatarProfiles(thread, limit = 3) {
 }
 
 function renderThreadAvatar(thread, { className = 'thread-avatar', stableKey = '' } = {}) {
-  const imageURL = String(thread?.imageURL || '').trim()
   const key = stableKey || `thread:${thread?.id || 'unknown'}`
+  const otherUid = thread?.otherParticipantId
+    || (thread?.participantIds || []).find((uid) => uid && uid !== appState.user?.uid)
+    || ''
+  const dmProfile = thread?.type === 'dm'
+    ? getProfileMeta(otherUid, {
+        ...(thread.otherProfile || {}),
+        title: thread.title,
+        avatarURL: getAvatarURL(thread.otherProfile) || getAvatarURL(thread)
+      })
+    : null
+  const imageURL = thread?.type === 'dm' ? getAvatarURL(dmProfile) : getAvatarURL(thread)
+  const fallbackMeta = dmProfile || { title: thread?.title, uid: thread?.id }
+  const fallbackInitials = getInitials(fallbackMeta)
+  debugInboxAvatar('thread avatar source', {
+    threadId: thread?.id || '',
+    type: thread?.type || '',
+    source: imageURL ? (thread?.type === 'dm' ? 'dm-profile' : 'group-image') : 'initials'
+  })
   if (imageURL) {
     return `
-      <div class="${className} has-image">
-        <img decoding="async" src="${escapeHtml(imageURL)}" alt="" data-stable-image-key="${escapeHtml(`${key}:custom`)}" />
+      <div class="${className} has-image" data-inbox-avatar-root>
+        <img decoding="async" src="${escapeHtml(imageURL)}" alt="" data-inbox-avatar-image data-stable-image-key="${escapeHtml(`${key}:custom`)}" />
+        <span class="inbox-avatar-fallback">${escapeHtml(fallbackInitials)}</span>
       </div>
     `
   }
@@ -730,7 +788,7 @@ function renderThreadAvatar(thread, { className = 'thread-avatar', stableKey = '
       return `
         <div class="${className} inbox-avatar-stack" aria-label="Group members">
           ${profiles.map((profile, index) => profile.avatarURL
-            ? `<img decoding="async" src="${escapeHtml(profile.avatarURL)}" alt="" style="--avatar-index:${index}" data-stable-image-key="${escapeHtml(`${key}:${profile.uid}`)}" />`
+            ? `<span class="inbox-avatar-stack-item" style="--avatar-index:${index}" data-inbox-avatar-root><img decoding="async" src="${escapeHtml(profile.avatarURL)}" alt="" data-inbox-avatar-image data-stable-image-key="${escapeHtml(`${key}:${profile.uid}`)}" /><em>${escapeHtml(getInitials(profile))}</em></span>`
             : `<span class="inbox-avatar-stack-initials" style="--avatar-index:${index}">${escapeHtml(getInitials(profile))}</span>`
           ).join('')}
           ${total > 3 ? `<small>+${total - 3}</small>` : ''}
@@ -738,7 +796,7 @@ function renderThreadAvatar(thread, { className = 'thread-avatar', stableKey = '
       `
     }
   }
-  const initials = getInitials({ title: thread?.title, uid: thread?.id })
+  const initials = fallbackInitials
   return `<div class="${className}"><span>${escapeHtml(initials)}</span></div>`
 }
 
@@ -970,10 +1028,19 @@ function updateTypingHeartbeat(threadId, value) {
 
 const BOTTOM_THRESHOLD_PX = 96
 const OLDER_MESSAGES_TRIGGER_PX = 160
-const MESSAGE_SCROLL_DEBUG = false
 
 function getMessageScroller() {
-  return inboxRoot.querySelector('[data-message-list]')
+  const scroller = inboxRoot.querySelector('.conversation-stack > [data-message-list]')
+    || inboxRoot.querySelector('[data-message-list]')
+  if (INBOX_SCROLL_DEBUG) {
+    console.info('[inbox scroll] selected scroller', scroller && {
+      className: scroller.className,
+      clientHeight: scroller.clientHeight,
+      scrollHeight: scroller.scrollHeight,
+      scrollTop: scroller.scrollTop
+    })
+  }
+  return scroller
 }
 
 function isMessageListNearBottom(list = getMessageScroller(), threshold = BOTTOM_THRESHOLD_PX) {
@@ -994,7 +1061,7 @@ const messageScrollController = {
   onMediaSettled: null,
 
   debug(...args) {
-    if (MESSAGE_SCROLL_DEBUG) console.info('[inbox scroll]', ...args)
+    if (INBOX_SCROLL_DEBUG) console.info('[inbox scroll]', ...args)
   },
 
   attach(scroller, { threadId = appState.selectedThreadId, resetMode = false } = {}) {
@@ -1578,10 +1645,9 @@ function groupMessages(messages = []) {
 
 function getParticipantMeta(thread, uid) {
   const profile = uid ? (appState.profileByUid[uid] || null) : null
-  if (profile) return getProfileMeta(uid, profile)
-
   const participants = getThreadParticipants(thread.id)
   const participantDoc = participants.find((entry) => entry.uid === uid)
+  if (profile) return getProfileMeta(uid, participantDoc || profile)
   if (participantDoc) return getProfileMeta(uid, participantDoc)
 
   if (thread.type === 'dm' && uid === thread.otherParticipantId && thread.otherProfile) {
@@ -1764,7 +1830,7 @@ function getMessageGroupsMarkup(thread, {
       const isLatestOutgoingGroup = isSelf && [...grouped].reverse().find((item) => item.kind === 'messages' && item.senderId === appState.user?.uid)?.id === entry.id
       const statusLine = isLatestOutgoingGroup ? `<p class="message-status-line">${escapeHtml(getOutgoingStatusLabel(thread, lastMessage))}</p>` : `<p class="message-status-line is-muted">${escapeHtml(formatTime(lastMessage.createdAt))}</p>`
       const avatarMarkup = !isSelf
-        ? `<div class="cluster-avatar ${sender.avatarURL || sender.photoURL ? 'has-image' : ''}">${sender.avatarURL || sender.photoURL ? `<img decoding="async" src="${escapeHtml(sender.avatarURL || sender.photoURL)}" alt="" data-stable-image-key="${escapeHtml(`message-avatar:${sender.uid}`)}" />` : `<span>${getInitials(sender)}</span>`}</div>`
+        ? `<div class="cluster-avatar ${sender.avatarURL || sender.photoURL ? 'has-image' : ''}" data-inbox-avatar-root>${sender.avatarURL || sender.photoURL ? `<img decoding="async" src="${escapeHtml(sender.avatarURL || sender.photoURL)}" alt="" data-inbox-avatar-image data-stable-image-key="${escapeHtml(`message-avatar:${sender.uid}:${entry.id}`)}" /><span class="inbox-avatar-fallback">${escapeHtml(getInitials(sender))}</span>` : `<span>${escapeHtml(getInitials(sender))}</span>`}</div>`
         : ''
 
       const bubbles = entry.messages
@@ -4173,10 +4239,14 @@ function startThreadDetailSubscriptions(threadId) {
     appState.participantsByThreadId[threadId] = participants
     participants.forEach((participant) => {
       if (!participant?.uid) return
-      appState.profileByUid[participant.uid] = appState.profileByUid[participant.uid] || {
-        displayName: participant.displayName || '',
-        username: participant.username || '',
-        avatarURL: participant.avatarURL || participant.photoURL || ''
+      const existingProfile = appState.profileByUid[participant.uid] || {}
+      const avatarURL = getAvatarURL(participant) || getAvatarURL(existingProfile)
+      appState.profileByUid[participant.uid] = {
+        ...existingProfile,
+        displayName: participant.displayName || existingProfile.displayName || '',
+        username: participant.username || existingProfile.username || '',
+        avatarURL,
+        photoURL: avatarURL
       }
     })
     hydrateProfilesForThread(getSelectedThread())
@@ -4219,8 +4289,12 @@ function startSelectedSourceThreadSubscription(threadId) {
       if (thread.id !== sourceThread.id) return thread
       return {
         ...mergeSourceThreadState(thread, sourceThread),
-        title: sourceThread.title || thread.title,
-        imageURL: Object.prototype.hasOwnProperty.call(sourceThread, 'imageURL') ? sourceThread.imageURL : thread.imageURL,
+        title: sourceThread.type === 'group'
+          ? (sourceThread.title || thread.title)
+          : (thread.title || sourceThread.title),
+        imageURL: sourceThread.type === 'group' && Object.prototype.hasOwnProperty.call(sourceThread, 'imageURL')
+          ? sourceThread.imageURL
+          : (thread.imageURL || sourceThread.imageURL || ''),
         imagePath: Object.prototype.hasOwnProperty.call(sourceThread, 'imagePath') ? sourceThread.imagePath : thread.imagePath,
         otherProfile: thread.otherProfile || sourceThread.otherProfile,
         otherParticipantId: thread.otherParticipantId || sourceThread.otherParticipantId,
