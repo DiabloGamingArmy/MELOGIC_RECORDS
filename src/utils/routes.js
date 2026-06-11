@@ -11,6 +11,14 @@ export const ROUTES = {
   library: '/account/library',
   orders: '/account/orders',
   inbox: '/inbox',
+  inboxMessages: '/inbox/messages',
+  inboxCalls: '/inbox/calls',
+  inboxContent: '/inbox/content',
+  inboxContentLikes: '/inbox/content/likes',
+  inboxContentFollows: '/inbox/content/follows',
+  inboxContentComments: '/inbox/content/comments',
+  inboxContentMentions: '/inbox/content/mentions',
+  inboxSystem: '/inbox/system',
   editProfile: '/profile/edit',
   newProduct: '/products/new',
   editProduct: '/products/edit',
@@ -153,6 +161,11 @@ export function communityPostRoute(postId = '') {
 export function communityRoute(slug = '') {
   const clean = String(slug || '').trim()
   return clean ? `${ROUTES.communitySlug}/${encodeURIComponent(clean)}` : ROUTES.communityCommunities
+}
+
+export function inboxActiveCallRoute(targetId = '') {
+  const id = String(targetId || '').trim()
+  return id ? `${ROUTES.inboxCalls}/active/${encodeURIComponent(id)}` : ROUTES.inboxCalls
 }
 
 export function adminReviewRoute(productId = '') {

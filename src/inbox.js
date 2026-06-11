@@ -4,7 +4,7 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
-import { ROUTES, authRoute, publicProfileRoute } from './utils/routes'
+import { ROUTES, authRoute, inboxActiveCallRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
@@ -66,8 +66,65 @@ import { AccountAudioCallManager } from './webrtc/accountAudioCallManager'
 
 const app = document.querySelector('#app')
 
-const inboxFilters = ['Messages', 'Calls', 'Likes', 'Follows', 'Comments', 'Mentions', 'System']
+const inboxFilters = [
+  { label: 'Messages', path: ROUTES.inboxMessages },
+  { label: 'Calls', path: ROUTES.inboxCalls },
+  { label: 'Content', path: ROUTES.inboxContentLikes },
+  { label: 'System', path: ROUTES.inboxSystem }
+]
+const contentViews = new Set(['likes', 'follows', 'comments', 'mentions'])
 const initialSystemFilter = new URLSearchParams(window.location.search).get('system')
+
+function parseInboxRoute(pathname = window.location.pathname) {
+  const segments = String(pathname || '')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter(Boolean)
+  if (segments[0] !== 'inbox') return { valid: false, section: 'Messages', canonicalPath: ROUTES.inboxMessages }
+  if (segments.length === 1) {
+    return initialSystemFilter
+      ? { valid: true, section: 'System', canonicalPath: ROUTES.inboxSystem }
+      : { valid: true, section: 'Messages', canonicalPath: ROUTES.inboxMessages }
+  }
+  if (segments[1] === 'messages' && segments.length === 2) {
+    return { valid: true, section: 'Messages', canonicalPath: ROUTES.inboxMessages }
+  }
+  if (segments[1] === 'system' && segments.length === 2) {
+    return { valid: true, section: 'System', canonicalPath: ROUTES.inboxSystem }
+  }
+  if (segments[1] === 'content') {
+    const contentView = contentViews.has(segments[2]) ? segments[2] : 'likes'
+    return {
+      valid: segments.length <= 3 && (!segments[2] || contentViews.has(segments[2])),
+      section: 'Content',
+      contentView,
+      canonicalPath: `${ROUTES.inboxContent}/${contentView}`
+    }
+  }
+  if (segments[1] === 'calls') {
+    if (segments.length === 2) {
+      return { valid: true, section: 'Calls', callView: 'overview', targetId: '', canonicalPath: ROUTES.inboxCalls }
+    }
+    if (segments[2] === 'active' && segments[3] && segments.length === 4) {
+      let targetId = ''
+      try {
+        targetId = decodeURIComponent(segments[3])
+      } catch {
+        targetId = ''
+      }
+      return {
+        valid: Boolean(targetId),
+        section: 'Calls',
+        callView: 'active',
+        targetId,
+        canonicalPath: inboxActiveCallRoute(targetId)
+      }
+    }
+  }
+  return { valid: false, section: 'Messages', canonicalPath: ROUTES.inboxMessages }
+}
+
+const initialInboxRoute = parseInboxRoute()
 const securityAccountEventTypes = new Set([
   'password_reset_requested',
   'password_changed',
@@ -135,7 +192,10 @@ const appState = {
   loadingMessageThreadId: '',
   optimisticMessagesByThreadId: {},
   preparingThreadIds: {},
-  activeFilter: initialSystemFilter ? 'System' : 'Messages',
+  activeFilter: initialInboxRoute.section,
+  contentView: initialInboxRoute.contentView || 'likes',
+  callView: initialInboxRoute.callView || 'overview',
+  activeCallTargetId: initialInboxRoute.targetId || '',
   threadUnsubscribe: () => {},
   messageUnsubscribe: () => {},
   participantsUnsubscribe: () => {},
@@ -264,6 +324,41 @@ function debugAccountCall(...args) {
 
 function debugInboxSend(...args) {
   if (INBOX_NEW_THREAD_DEBUG) console.info('[inbox new thread]', ...args)
+}
+
+function inboxRouteWithCurrentSearch(path) {
+  const search = new URLSearchParams(window.location.search)
+  if (!path.startsWith(ROUTES.inboxSystem)) search.delete('system')
+  if (!path.startsWith(ROUTES.inboxMessages)) search.delete('start')
+  const query = search.toString()
+  return `${path}${query ? `?${query}` : ''}`
+}
+
+function applyInboxRoute(route = parseInboxRoute()) {
+  appState.activeFilter = route.section
+  appState.contentView = route.contentView || 'likes'
+  appState.callView = route.callView || 'overview'
+  appState.activeCallTargetId = route.targetId || ''
+}
+
+function navigateInbox(path, { replace = false } = {}) {
+  const nextUrl = inboxRouteWithCurrentSearch(path)
+  const currentUrl = `${window.location.pathname}${window.location.search}`
+  if (nextUrl !== currentUrl) {
+    window.history[replace ? 'replaceState' : 'pushState']({ inbox: true }, '', nextUrl)
+  }
+  applyInboxRoute(parseInboxRoute(path))
+  renderSignedInState()
+}
+
+function normalizeInitialInboxRoute() {
+  const route = parseInboxRoute()
+  applyInboxRoute(route)
+  const currentPath = window.location.pathname.replace(/\/+$/, '') || '/'
+  if (!route.valid || currentPath === ROUTES.inbox || currentPath === ROUTES.inboxContent) {
+    const nextUrl = inboxRouteWithCurrentSearch(route.canonicalPath)
+    window.history.replaceState({ inbox: true }, '', nextUrl)
+  }
 }
 
 app.innerHTML = `
@@ -1553,7 +1648,7 @@ function threadInboxPin(thread = {}) {
     title: thread.title || 'Chat',
     subtitle: thread.type === 'group' ? 'Group chat' : 'Direct message',
     sourceCategory: 'Messages',
-    targetPath: ROUTES.inbox,
+    targetPath: ROUTES.inboxMessages,
     metadata: { threadType: thread.type || 'thread' }
   }
 }
@@ -1572,7 +1667,7 @@ function systemInboxPin(item = {}) {
     title: item.title || 'Notification',
     subtitle: item.body || item.message || '',
     sourceCategory: 'System',
-    targetPath: item.actionHref || item.path || ROUTES.inbox,
+    targetPath: item.actionHref || item.path || ROUTES.inboxSystem,
     metadata: { sourceCollection, systemFilter }
   }
 }
@@ -1589,8 +1684,8 @@ function getMessagesSidebarMarkup() {
   const filterMarkup = inboxFilters
     .map(
       (filter) => `
-        <button type="button" class="inbox-filter ${appState.activeFilter === filter ? 'is-active' : ''}" data-inbox-filter="${filter}">
-          <span>${filter}</span>
+        <button type="button" class="inbox-filter ${appState.activeFilter === filter.label ? 'is-active' : ''}" data-inbox-filter="${filter.label}" data-inbox-path="${filter.path}">
+          <span>${filter.label}</span>
         </button>
       `
     )
@@ -2536,7 +2631,8 @@ async function openInboxPin(pinId) {
   const pin = appState.inboxPins.find((entry) => (entry.pinId || entry.id) === pinId)
   if (!pin) return
   if (pin.type === 'thread') {
-    appState.activeFilter = 'Messages'
+    applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
+    window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxMessages))
     appState.selectedThreadId = pin.targetId
     saveLastSelectedThread(appState.user?.uid, pin.targetId)
     const selectedMirror = appState.threads.find((thread) => thread.id === pin.targetId)
@@ -2549,7 +2645,8 @@ async function openInboxPin(pinId) {
     return
   }
   if (pin.sourceCategory === 'System' || pin.type === 'systemNotification' || pin.type === 'accountEvent') {
-    appState.activeFilter = 'System'
+    applyInboxRoute(parseInboxRoute(ROUTES.inboxSystem))
+    window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxSystem))
     appState.systemFilter = pin.metadata?.systemFilter || (pin.type === 'accountEvent' ? 'account' : 'all')
     renderSignedInState()
     return
@@ -2620,7 +2717,84 @@ function renderCallAvatar(person, className = 'account-call-avatar') {
   `
 }
 
+function getCallRouteTarget(call) {
+  const counterpart = getCallCounterpart(call)
+  return counterpart.uid || call?.threadId || call?.id || ''
+}
+
+function getRouteMatchedCall(targetId = appState.activeCallTargetId) {
+  if (!targetId) return null
+  const calls = [
+    appState.activeCall,
+    ...appState.incomingCalls,
+    ...appState.recentCalls
+  ].filter((call) => call && !isCallFinal(call.status))
+  return calls.find((call) => (
+    getCallRouteTarget(call) === targetId
+    || call.threadId === targetId
+    || call.id === targetId
+  )) || null
+}
+
+function getActiveCallContentMarkup() {
+  const call = getRouteMatchedCall()
+  if (!call) {
+    return `
+      <section class="activity-panel account-calls-panel">
+        <header class="panel-header activity-header">
+          <h3>Active Call</h3>
+          <p>Account-to-account audio calling</p>
+        </header>
+        <section class="inbox-empty-panel activity-empty-panel">
+          <h3>No active call found.</h3>
+          <p>This call may have ended or been cancelled.</p>
+          <button type="button" class="button button-muted" data-inbox-path="${ROUTES.inboxCalls}">Back to Calls</button>
+        </section>
+      </section>
+    `
+  }
+
+  const person = getCallCounterpart(call)
+  const incomingRinging = call.status === 'ringing' && call.calleeUid === appState.user?.uid
+  const outgoingRinging = call.status === 'ringing' && call.callerUid === appState.user?.uid
+  const status = appState.callUiState === 'active'
+    ? `Connected · ${getCallDuration(call)}`
+    : getCallStatusLabel(call)
+  return `
+    <section class="activity-panel account-calls-panel account-call-route-panel">
+      <header class="panel-header activity-header">
+        <div>
+          <p class="account-call-eyebrow">Active call</p>
+          <h3>${escapeHtml(person.displayName || 'Melogic member')}</h3>
+        </div>
+        <button type="button" class="button button-muted" data-inbox-path="${ROUTES.inboxCalls}">All Calls</button>
+      </header>
+      ${appState.callError ? `<div class="account-call-error" role="alert">${escapeHtml(appState.callError)}</div>` : ''}
+      <section class="account-call-active-card account-call-active-route-card ${incomingRinging ? 'is-incoming' : ''}">
+        ${renderCallAvatar(person)}
+        <div class="account-call-active-meta">
+          <h3>${escapeHtml(person.displayName || 'Melogic member')}</h3>
+          <p>${escapeHtml(status)}</p>
+          <small>${escapeHtml(appState.callUiState || call.status || 'connecting')}</small>
+        </div>
+        <div class="account-call-actions">
+          ${incomingRinging ? `
+            <button type="button" class="button button-accent" data-account-call-action="accept" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>Accept</button>
+            <button type="button" class="button account-call-danger" data-account-call-action="decline" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>Decline</button>
+          ` : outgoingRinging ? `
+            <button type="button" class="button account-call-danger" data-account-call-action="cancel" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'cancel' ? 'Cancelling...' : 'Cancel'}</button>
+          ` : `
+            <button type="button" class="button button-muted" data-account-call-action="toggle-mute" data-call-id="${escapeHtml(call.id)}">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
+            <button type="button" class="button account-call-danger" data-account-call-action="end" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'end' ? 'Ending...' : 'End Call'}</button>
+          `}
+        </div>
+      </section>
+    </section>
+  `
+}
+
 function getCallsContentMarkup() {
+  if (appState.callView === 'active') return getActiveCallContentMarkup()
   const activeCall = appState.activeCall && !isCallFinal(appState.activeCall.status) ? appState.activeCall : null
   const incomingCalls = appState.incomingCalls.filter((call) => call.status === 'ringing' && call.id !== activeCall?.id)
   const history = appState.recentCalls
@@ -2640,8 +2814,12 @@ function getCallsContentMarkup() {
             </div>
             <div class="account-call-actions">
               ${outgoingRinging
-                ? `<button type="button" class="button account-call-danger" data-account-call-action="cancel" data-call-id="${escapeHtml(activeCall.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'cancel' ? 'Cancelling...' : 'Cancel'}</button>`
+                ? `
+                  <button type="button" class="button button-muted" data-inbox-path="${inboxActiveCallRoute(getCallRouteTarget(activeCall))}">Open</button>
+                  <button type="button" class="button account-call-danger" data-account-call-action="cancel" data-call-id="${escapeHtml(activeCall.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'cancel' ? 'Cancelling...' : 'Cancel'}</button>
+                `
                 : `
+                  <button type="button" class="button button-muted" data-inbox-path="${inboxActiveCallRoute(getCallRouteTarget(activeCall))}">Open</button>
                   <button type="button" class="button button-muted" data-account-call-action="toggle-mute" data-call-id="${escapeHtml(activeCall.id)}">${appState.callMuted ? 'Unmute' : 'Mute'}</button>
                   <button type="button" class="button account-call-danger" data-account-call-action="end" data-call-id="${escapeHtml(activeCall.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === 'end' ? 'Ending...' : 'End call'}</button>
                 `}
@@ -2664,6 +2842,7 @@ function getCallsContentMarkup() {
                 <p>Ringing now</p>
               </div>
               <div class="account-call-actions">
+                <button type="button" class="button button-muted" data-inbox-path="${inboxActiveCallRoute(getCallRouteTarget(call))}">Open</button>
                 <button type="button" class="button button-accent" data-account-call-action="accept" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === `accept:${call.id}` ? 'Accepting...' : 'Accept'}</button>
                 <button type="button" class="button account-call-danger" data-account-call-action="decline" data-call-id="${escapeHtml(call.id)}" ${appState.callActionPending ? 'disabled' : ''}>${appState.callActionPending === `decline:${call.id}` ? 'Declining...' : 'Decline'}</button>
               </div>
@@ -2710,8 +2889,39 @@ function getCallsContentMarkup() {
   `
 }
 
+function getContentActivityMarkup() {
+  const tabs = [
+    { key: 'likes', label: 'Likes', path: ROUTES.inboxContentLikes },
+    { key: 'follows', label: 'Follows', path: ROUTES.inboxContentFollows },
+    { key: 'comments', label: 'Comments', path: ROUTES.inboxContentComments },
+    { key: 'mentions', label: 'Mentions', path: ROUTES.inboxContentMentions }
+  ]
+  const activeTab = tabs.find((tab) => tab.key === appState.contentView) || tabs[0]
+  const copy = activityCopy[activeTab.label]
+  return `
+    <section class="activity-panel">
+      <header class="panel-header activity-header">
+        <h3>Content</h3>
+        <p>Activity connected to your work and profile</p>
+      </header>
+      <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
+        ${tabs.map((tab) => `
+          <button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">
+            ${tab.label}
+          </button>
+        `).join('')}
+      </nav>
+      <section class="inbox-empty-panel activity-empty-panel">
+        <h3>${escapeHtml(copy.emptyTitle)}</h3>
+        <p>${escapeHtml(copy.emptyBody)}</p>
+      </section>
+    </section>
+  `
+}
+
 function getFilterContentMarkup(filterName) {
   if (filterName === 'Calls') return getCallsContentMarkup()
+  if (filterName === 'Content') return getContentActivityMarkup()
   if (filterName === 'System') {
     const filterOptions = [
       { key: 'all', label: 'All' },
@@ -3037,6 +3247,7 @@ function getImagePreviewModalMarkup() {
 }
 
 function getAccountCallOverlayMarkup() {
+  if (appState.activeFilter === 'Calls' && appState.callView === 'active') return ''
   const activeCall = appState.activeCall && !isCallFinal(appState.activeCall.status) ? appState.activeCall : null
   const incomingCall = !activeCall ? appState.incomingCalls[0] : null
   const call = activeCall || incomingCall
@@ -3143,7 +3354,12 @@ function ensureAccountCallManager() {
 function watchActiveAccountCall(callId) {
   appState.activeCallUnsubscribe()
   appState.activeCallUnsubscribe = watchAccountCall(callId, (call) => {
-    if (!call) return
+    if (!call) {
+      clearLocalAccountCall(callId)
+      if (appState.callView === 'active') navigateInbox(ROUTES.inboxCalls, { replace: true })
+      else refreshAccountCallUi({ refreshConversation: true })
+      return
+    }
     appState.activeCall = call
     if (isCallFinal(call.status)) {
       clearAccountCallTimers()
@@ -3154,7 +3370,8 @@ function watchActiveAccountCall(callId) {
         appState.activeCall = null
         appState.callUiState = 'idle'
         appState.callMuted = false
-        refreshAccountCallUi({ refreshConversation: true })
+        if (appState.callView === 'active') navigateInbox(ROUTES.inboxCalls, { replace: true })
+        else refreshAccountCallUi({ refreshConversation: true })
       }, 1800)
     }
     refreshAccountCallUi({ refreshConversation: true })
@@ -3200,7 +3417,7 @@ async function startAccountCallFromThread(threadId) {
     })
     appState.activeCall = call
     watchActiveAccountCall(call.id)
-    refreshAccountCallUi({ refreshConversation: true })
+    navigateInbox(inboxActiveCallRoute(getCallRouteTarget(call)))
     await ensureAccountCallManager().startCaller(call)
     accountCallTimeout = window.setTimeout(async () => {
       if (appState.activeCall?.id === call.id && appState.activeCall.status === 'ringing') {
@@ -3236,6 +3453,7 @@ async function acceptIncomingAccountCall(call) {
     refreshAccountCallUi({ refreshConversation: true })
     await acceptAccountCall(currentCall.id)
     await ensureAccountCallManager().acceptCallee(currentCall)
+    navigateInbox(inboxActiveCallRoute(getCallRouteTarget(currentCall)))
   } catch (error) {
     const message = String(error?.message || '')
     appState.callError = message.toLowerCase().includes('microphone')
@@ -3281,10 +3499,36 @@ async function handleAccountCallAction(action, callId = '') {
       await acceptIncomingAccountCall(targetCall)
       return
     }
-    if (action === 'decline') await declineAccountCall(targetCall.id)
-    if (action === 'cancel') await cancelAccountCall(targetCall.id)
-    if (action === 'end') await endAccountCall(targetCall.id)
+    let serviceResult = null
+    if (action === 'decline') serviceResult = await declineAccountCall(targetCall.id)
+    if (action === 'cancel') {
+      const currentCall = await getAccountCall(targetCall.id)
+      if (!currentCall || isCallFinal(currentCall.status)) {
+        clearLocalAccountCall(targetCall.id)
+        if (appState.callView === 'active') navigateInbox(ROUTES.inboxCalls, { replace: true })
+        return
+      }
+      if (currentCall.callerUid !== appState.user?.uid) {
+        throw new Error('Only the caller can cancel a ringing call.')
+      }
+      serviceResult = currentCall.status === 'ringing'
+        ? await cancelAccountCall(currentCall.id)
+        : await endAccountCall(currentCall.id)
+      debugAccountCall({
+        action: 'cancel-call',
+        callId: currentCall.id,
+        currentUserUid: appState.user?.uid || '',
+        statusBefore: currentCall.status,
+        serviceResult,
+        firestoreErrorCode: '',
+        firestoreErrorMessage: ''
+      })
+    }
+    if (action === 'end') serviceResult = await endAccountCall(targetCall.id)
     if (['decline', 'cancel', 'end'].includes(action)) clearLocalAccountCall(targetCall.id)
+    if (['cancel', 'end'].includes(action) && appState.callView === 'active') {
+      navigateInbox(ROUTES.inboxCalls, { replace: true })
+    }
   } catch (error) {
     const fallback = action === 'accept'
       ? 'The incoming call could not be accepted.'
@@ -3294,6 +3538,17 @@ async function handleAccountCallAction(action, callId = '') {
           ? 'The call could not be cancelled.'
           : 'The call could not be ended.'
     appState.callError = error?.message || fallback
+    if (action === 'cancel') {
+      debugAccountCall({
+        action: 'cancel-call',
+        callId: targetCall.id,
+        currentUserUid: appState.user?.uid || '',
+        statusBefore: targetCall.status || '',
+        serviceResult: null,
+        firestoreErrorCode: error?.code || '',
+        firestoreErrorMessage: error?.message || ''
+      })
+    }
   } finally {
     appState.callActionPending = ''
     refreshAccountCallUi({ refreshConversation: true })
@@ -3690,7 +3945,8 @@ async function handleCreateChatSubmit() {
       throw new Error('Conversation membership could not be confirmed.')
     }
     upsertThreadInState(hydratedThread)
-    appState.activeFilter = 'Messages'
+    applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
+    window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxMessages))
     appState.selectedThreadId = threadId
     saveLastSelectedThread(appState.user.uid, threadId)
     appState.errorMessage = ''
@@ -4250,15 +4506,21 @@ function bindSharedEvents(scope = inboxRoot) {
       if (nextFilter !== 'Messages' && activeTypingThreadId) {
         clearTypingForThread(activeTypingThreadId)
       }
-      appState.activeFilter = nextFilter
-      renderSignedInState()
+      navigateInbox(button.dataset.inboxPath || ROUTES.inboxMessages)
+    })
+  })
+
+  scope.querySelectorAll('[data-inbox-path]:not([data-inbox-filter])').forEach((button) => {
+    button.addEventListener('click', () => {
+      navigateInbox(button.getAttribute('data-inbox-path') || ROUTES.inboxMessages)
     })
   })
 
   scope.querySelectorAll('[data-select-thread-id]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (appState.activeFilter !== 'Messages') {
-        appState.activeFilter = 'Messages'
+        applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
+        window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxMessages))
       }
 
       const threadId = button.getAttribute('data-select-thread-id') || ''
@@ -5503,12 +5765,17 @@ window.addEventListener('beforeunload', () => {
 window.addEventListener('pagehide', () => {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
 })
+window.addEventListener('popstate', () => {
+  applyInboxRoute(parseInboxRoute())
+  if (appState.user) renderSignedInState()
+})
 
+normalizeInitialInboxRoute()
 waitForInitialAuthState().then(async (user) => {
   if (!user) {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
-    window.location.assign(authRoute({ redirect: ROUTES.inbox }))
+    window.location.assign(authRoute({ redirect: `${window.location.pathname}${window.location.search}` }))
     return
   }
 
@@ -5554,7 +5821,7 @@ subscribeToAuthState(async (user) => {
   if (!user) {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
-    window.location.assign(authRoute({ redirect: ROUTES.inbox }))
+    window.location.assign(authRoute({ redirect: `${window.location.pathname}${window.location.search}` }))
     return
   }
 
@@ -5563,7 +5830,7 @@ subscribeToAuthState(async (user) => {
     clearRealtimeListeners()
   }
   appState.user = user
-  appState.activeFilter = appState.activeFilter || 'Messages'
+  applyInboxRoute(parseInboxRoute())
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()

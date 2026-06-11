@@ -286,6 +286,10 @@
         "destination": "/inbox.html"
       },
       {
+        "source": "/inbox/**",
+        "destination": "/inbox.html"
+      },
+      {
         "source": "/community",
         "destination": "/community.html"
       },

@@ -163,6 +163,7 @@ export async function updateAccountCallStatus(callId, status, patch = {}) {
     status: nextStatus,
     updatedAt: serverTimestamp()
   })
+  return { ok: true, callId, status: nextStatus }
 }
 
 export function acceptAccountCall(callId) {
