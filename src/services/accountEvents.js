@@ -32,7 +32,8 @@ function normalizeEvent(id, raw = {}) {
     emailError: raw.emailError || '',
     metadata: raw.metadataSafe || raw.metadata || {},
     createdAt: toIsoDate(raw.createdAt),
-    readAt: toIsoDate(raw.readAt)
+    readAt: toIsoDate(raw.readAt),
+    hiddenAt: toIsoDate(raw.hiddenAt)
   }
 }
 
@@ -47,20 +48,36 @@ function accountEventsQuery(uid, limitCount = 50) {
 export async function listAccountEvents(uid, { limitCount = 50 } = {}) {
   if (!db || !uid) return []
   const snapshot = await getDocs(accountEventsQuery(uid, limitCount))
-  return snapshot.docs.map((docSnap) => normalizeEvent(docSnap.id, docSnap.data()))
+  return snapshot.docs
+    .map((docSnap) => normalizeEvent(docSnap.id, docSnap.data()))
+    .filter((event) => !event.hiddenAt)
 }
 
 export function subscribeToAccountEvents(uid, callback, onError, { limitCount = 50 } = {}) {
   if (!db || !uid || typeof callback !== 'function') return () => {}
   return onSnapshot(accountEventsQuery(uid, limitCount), (snapshot) => {
-    callback(snapshot.docs.map((docSnap) => normalizeEvent(docSnap.id, docSnap.data())))
+    callback(snapshot.docs
+      .map((docSnap) => normalizeEvent(docSnap.id, docSnap.data()))
+      .filter((event) => !event.hiddenAt))
   }, onError)
 }
 
-export async function markAccountEventRead(uid, eventId) {
+export async function setAccountEventRead(uid, eventId, read = true) {
   if (!db || !uid || !eventId) return false
   await updateDoc(doc(db, 'users', uid, 'accountEvents', eventId), {
-    readAt: serverTimestamp()
+    readAt: read ? serverTimestamp() : null
+  })
+  return true
+}
+
+export async function markAccountEventRead(uid, eventId) {
+  return setAccountEventRead(uid, eventId, true)
+}
+
+export async function hideAccountEvent(uid, eventId) {
+  if (!db || !uid || !eventId) return false
+  await updateDoc(doc(db, 'users', uid, 'accountEvents', eventId), {
+    hiddenAt: serverTimestamp()
   })
   return true
 }

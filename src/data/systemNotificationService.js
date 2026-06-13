@@ -34,7 +34,8 @@ function normalizeNotification(id, raw = {}) {
     actionHref: raw.actionHref || '',
     severity: raw.severity || 'info',
     createdAt: toIsoDate(raw.createdAt),
-    readAt: toIsoDate(raw.readAt)
+    readAt: toIsoDate(raw.readAt),
+    hiddenAt: toIsoDate(raw.hiddenAt)
   }
 }
 
@@ -49,14 +50,28 @@ function notificationsQuery(uid, type = 'all') {
 export function subscribeToSystemNotifications(uid, callback, onError, type = 'all') {
   if (!db || !uid || typeof callback !== 'function') return () => {}
   return onSnapshot(notificationsQuery(uid, type), (snapshot) => {
-    callback(snapshot.docs.map((docSnap) => normalizeNotification(docSnap.id, docSnap.data())))
+    callback(snapshot.docs
+      .map((docSnap) => normalizeNotification(docSnap.id, docSnap.data()))
+      .filter((notification) => !notification.hiddenAt))
   }, onError)
 }
 
-export async function markSystemNotificationRead(uid, notificationId) {
+export async function setSystemNotificationRead(uid, notificationId, read = true) {
   if (!db || !uid || !notificationId) return false
   await updateDoc(doc(db, 'users', uid, 'systemNotifications', notificationId), {
-    readAt: serverTimestamp()
+    readAt: read ? serverTimestamp() : null
+  })
+  return true
+}
+
+export async function markSystemNotificationRead(uid, notificationId) {
+  return setSystemNotificationRead(uid, notificationId, true)
+}
+
+export async function hideSystemNotification(uid, notificationId) {
+  if (!db || !uid || !notificationId) return false
+  await updateDoc(doc(db, 'users', uid, 'systemNotifications', notificationId), {
+    hiddenAt: serverTimestamp()
   })
   return true
 }

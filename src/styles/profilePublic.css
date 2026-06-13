@@ -275,13 +275,32 @@ body {
 }
 
 .public-hero-btn-outline.is-following {
-  border-color: rgba(85, 215, 220, 0.5);
-  color: #071315;
+  border-color: rgba(103, 225, 234, 0.44);
+  background: linear-gradient(135deg, #55d7dc, #6c78ff);
+  color: #081122;
+  box-shadow: 0 0 0 1px rgba(85, 215, 220, 0.12), 0 8px 20px rgba(35, 96, 135, 0.22);
+}
+
+.public-hero-btn-outline.is-following:hover:not(:disabled),
+.public-hero-btn-outline.is-following:focus-visible {
+  border-color: rgba(155, 241, 246, 0.72);
+  background: linear-gradient(135deg, #68e1e5, #7d88ff);
+  color: #06101f;
+}
+
+.public-hero-btn-outline.is-following:focus-visible {
+  outline: 2px solid rgba(137, 230, 237, 0.72);
+  outline-offset: 2px;
 }
 
 .public-hero-btn-outline:disabled {
   cursor: wait;
   opacity: 0.78;
+}
+
+.public-hero-btn-outline.is-following:disabled {
+  background: linear-gradient(135deg, rgba(85, 215, 220, 0.82), rgba(108, 120, 255, 0.82));
+  color: rgba(8, 17, 34, 0.82);
 }
 
 .public-follow-error {
