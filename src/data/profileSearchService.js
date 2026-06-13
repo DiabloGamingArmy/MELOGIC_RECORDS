@@ -9,7 +9,9 @@ function normalizeProfile(profileDoc) {
     username: String(raw.username || '').trim(),
     usernameLower: String(raw.usernameLower || raw.username || '').trim().toLowerCase(),
     avatarURL: String(raw.avatarURL || '').trim(),
-    photoURL: String(raw.photoURL || '').trim()
+    photoURL: String(raw.photoURL || '').trim(),
+    roleLabel: String(raw.roleLabel || 'Melogic member').trim(),
+    location: String(raw.location || '').trim()
   }
 }
 

@@ -79,6 +79,16 @@ import {
   normalizeNotificationPreferences,
   notificationIsEnabled
 } from './data/notificationPreferences'
+import { setProfileFollowState } from './data/profileService'
+import {
+  dismissSuggestion,
+  getMutualUserSuggestions,
+  getPlatformDiscoveryRecommendations,
+  matchContacts,
+  saveClientCapabilities,
+  searchUsersByUsername
+} from './data/mutualUsersService'
+import { detectPlatformCapabilities } from './platform/platformCapabilities'
 
 const app = document.querySelector('#app')
 
@@ -86,6 +96,7 @@ const inboxFilters = [
   { label: 'Messages', path: ROUTES.inboxMessages },
   { label: 'Calls', path: ROUTES.inboxCalls },
   { label: 'Content', path: ROUTES.inboxContentAll },
+  { label: 'Mutual Users', path: ROUTES.inboxMutualUsers },
   { label: 'System', path: ROUTES.inboxSystem }
 ]
 const contentViews = new Set(['all', 'likes', 'follows', 'comments', 'mentions'])
@@ -107,6 +118,9 @@ function parseInboxRoute(pathname = window.location.pathname) {
   }
   if (segments[1] === 'system' && segments.length === 2) {
     return { valid: true, section: 'System', canonicalPath: ROUTES.inboxSystem }
+  }
+  if (segments[1] === 'mutual-users' && segments.length === 2) {
+    return { valid: true, section: 'Mutual Users', canonicalPath: ROUTES.inboxMutualUsers }
   }
   if (segments[1] === 'content') {
     const contentView = contentViews.has(segments[2]) ? segments[2] : 'all'
@@ -259,6 +273,22 @@ const appState = {
   messageContextMenu: null,
   notificationActionMenu: null,
   notificationActionMessage: '',
+  mutualUsers: {
+    capabilities: detectPlatformCapabilities(),
+    capabilitiesSaved: false,
+    suggestions: [],
+    searchQuery: '',
+    searchResults: [],
+    loading: false,
+    loaded: false,
+    searchLoading: false,
+    error: '',
+    searchError: '',
+    actionUid: '',
+    contactIdentifiers: [],
+    contactStatus: '',
+    matching: false
+  },
   threadActionMenu: null,
   threadConfirmModal: null,
   isSavingThreadAction: false,
@@ -299,6 +329,7 @@ const appState = {
 }
 
 let searchDebounceTimer = null
+let mutualUserSearchTimer = null
 let typingStopTimer = null
 let typingExpiryRefreshTimer = null
 let activeTypingThreadId = ''
@@ -373,6 +404,7 @@ function navigateInbox(path, { replace = false } = {}) {
   }
   applyInboxRoute(parseInboxRoute(path))
   renderSignedInState()
+  if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
 }
 
 function normalizeInitialInboxRoute() {
@@ -3129,9 +3161,384 @@ function getContentActivityMarkup() {
   `
 }
 
+function mutualUserAvatarMarkup(user = {}) {
+  const name = user.displayName || user.username || 'Melogic member'
+  const image = user.photoURL || user.avatarURL || ''
+  return image
+    ? `<img src="${escapeHtml(image)}" alt="" />`
+    : `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
+}
+
+function mutualUserCardMarkup(user = {}, { searchResult = false } = {}) {
+  const name = user.displayName || user.username || 'Melogic member'
+  const profileHref = publicProfileRoute({ uid: user.uid })
+  const reasons = Array.isArray(user.reasonLabels) && user.reasonLabels.length
+    ? user.reasonLabels
+    : [searchResult ? 'Username search' : 'Suggested connection']
+  const following = user.alreadyFollowing === true
+  const busy = appState.mutualUsers.actionUid === user.uid
+  return `
+    <article class="mutual-user-card">
+      <a class="mutual-user-avatar" href="${escapeHtml(profileHref)}" aria-label="Open ${escapeHtml(name)} profile">
+        ${mutualUserAvatarMarkup(user)}
+      </a>
+      <div class="mutual-user-meta">
+        <strong>${escapeHtml(name)}</strong>
+        <span>@${escapeHtml(user.username || 'member')} · ${escapeHtml(user.roleLabel || 'Melogic member')}</span>
+        <div class="mutual-reason-row">
+          ${reasons.slice(0, 3).map((reason) => `<small>${escapeHtml(reason)}</small>`).join('')}
+        </div>
+      </div>
+      <div class="mutual-user-actions">
+        <button
+          type="button"
+          class="button ${following ? 'button-muted is-following' : 'button-accent'}"
+          data-mutual-follow="${escapeHtml(user.uid)}"
+          aria-pressed="${following ? 'true' : 'false'}"
+          ${busy ? 'disabled' : ''}
+        >${busy ? 'Saving...' : following ? 'Following' : 'Follow'}</button>
+        <a class="button button-muted" href="${ROUTES.inboxMessages}?start=${encodeURIComponent(user.uid)}">Message</a>
+        <a class="button button-muted" href="${escapeHtml(profileHref)}">Open profile</a>
+        ${searchResult ? '' : `<button type="button" class="mutual-hide-button" data-mutual-dismiss="${escapeHtml(user.uid)}" ${busy ? 'disabled' : ''}>Hide</button>`}
+      </div>
+    </article>
+  `
+}
+
+function discoveryMethodCard({ title, body, status = '', action = '' } = {}) {
+  return `
+    <article class="mutual-method-card">
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(body)}</p>
+      </div>
+      ${status ? `<small>${escapeHtml(status)}</small>` : ''}
+      ${action}
+    </article>
+  `
+}
+
+function getMutualUsersMarkup() {
+  const state = appState.mutualUsers
+  const capabilities = state.capabilities
+  const recommendation = getPlatformDiscoveryRecommendations({ capabilities })
+  const platformLabel = capabilities.platform.replaceAll('-', ' ')
+  const searchRows = state.searchResults.filter((row) => row.uid && row.uid !== appState.user?.uid)
+  const suggestions = state.suggestions.filter((row) => row.uid && row.uid !== appState.user?.uid)
+  const contactPickerStatus = capabilities.supportsContactPicker
+    ? 'Available on this browser'
+    : 'Not supported in this browser'
+
+  return `
+    <section class="activity-panel mutual-users-panel">
+      <header class="panel-header activity-header mutual-users-header">
+        <div>
+          <h3>Mutual Users</h3>
+          <p>Find people you may know across contacts, communities, creators, and collaborators.</p>
+        </div>
+        <button type="button" class="button button-muted" data-mutual-refresh ${state.loading ? 'disabled' : ''}>
+          ${state.loading ? 'Refreshing...' : 'Refresh suggestions'}
+        </button>
+      </header>
+
+      <section class="mutual-privacy-notice">
+        <strong>You control what you share.</strong>
+        <p>Melogic only uses contacts you explicitly select or import to look for matching accounts. We do not message your contacts, sell contact data, or expose your contact list.</p>
+      </section>
+
+      <section class="mutual-platform-card">
+        <div>
+          <span>${escapeHtml(platformLabel)}</span>
+          <h4>${escapeHtml(recommendation.title)}</h4>
+          <p>${escapeHtml(recommendation.body)}</p>
+        </div>
+        <dl>
+          <div><dt>Contact Picker</dt><dd>${capabilities.supportsContactPicker ? 'Supported' : 'Unavailable'}</dd></div>
+          <div><dt>File import</dt><dd>${capabilities.supportsFilePicker ? 'Supported' : 'Unavailable'}</dd></div>
+          <div><dt>Secure context</dt><dd>${capabilities.isSecureContext ? 'Yes' : 'No'}</dd></div>
+        </dl>
+      </section>
+
+      <div class="mutual-discovery-grid">
+        ${discoveryMethodCard({
+          title: 'Username search',
+          body: 'Search public Melogic profiles without sharing contact information.',
+          status: 'Available now',
+          action: `
+            <label class="mutual-search-field">
+              <span class="sr-only">Search by username</span>
+              <input type="search" data-mutual-user-search placeholder="Search username" value="${escapeHtml(state.searchQuery)}" autocomplete="off" />
+            </label>
+          `
+        })}
+        ${discoveryMethodCard({
+          title: 'Choose contacts',
+          body: 'Select individual contacts only when your browser supports the Contact Picker API.',
+          status: contactPickerStatus,
+          action: `<button type="button" class="button button-muted" data-mutual-choose-contacts ${capabilities.supportsContactPicker ? '' : 'disabled'}>Choose contacts</button>`
+        })}
+        ${discoveryMethodCard({
+          title: 'CSV / vCard import',
+          body: 'Choose a .csv or .vcf file. Identifiers are parsed locally and kept in memory for this session.',
+          status: 'No file is uploaded automatically',
+          action: `
+            <label class="button button-muted mutual-file-button">
+              Choose file
+              <input type="file" accept=".csv,.vcf,text/csv,text/vcard" data-mutual-contact-file />
+            </label>
+          `
+        })}
+        ${discoveryMethodCard({
+          title: 'Email lookup',
+          body: 'Enter selected email addresses. Secure matching stays disabled until the private verified-identifier index is provisioned.',
+          status: 'Privacy infrastructure required',
+          action: `
+            <textarea data-mutual-email-input rows="2" placeholder="name@example.com, another@example.com"></textarea>
+            <button type="button" class="button button-muted" data-mutual-match-emails ${state.matching ? 'disabled' : ''}>${state.matching ? 'Checking...' : 'Check selected emails'}</button>
+          `
+        })}
+        ${discoveryMethodCard({
+          title: 'Mutual followers',
+          body: 'People followed by creators you already follow.',
+          status: 'Available now'
+        })}
+        ${discoveryMethodCard({
+          title: 'Same communities',
+          body: 'People who focus the same public communities.',
+          status: 'Available now'
+        })}
+        ${discoveryMethodCard({
+          title: 'Public profile matches',
+          body: 'Public location, role, and future opt-in genre tags.',
+          status: 'Location foundation active'
+        })}
+        ${discoveryMethodCard({
+          title: 'Collaborators and interactions',
+          body: 'Future suggestions from collaborations, marketplace relationships, and public interactions.',
+          status: 'Coming soon'
+        })}
+      </div>
+
+      ${state.contactStatus ? `<div class="mutual-contact-status" role="status">${escapeHtml(state.contactStatus)}</div>` : ''}
+
+      <section class="mutual-results-section" aria-labelledby="mutual-search-results-title">
+        <header>
+          <div>
+            <h4 id="mutual-search-results-title">Search results</h4>
+            <p>Direct public-profile matches from your username search.</p>
+          </div>
+        </header>
+        ${state.searchLoading
+          ? '<p class="mutual-loading-state">Searching profiles...</p>'
+          : state.searchError
+            ? `<p class="mutual-error-state" role="alert">${escapeHtml(state.searchError)}</p>`
+            : searchRows.length
+              ? `<div class="mutual-user-list">${searchRows.map((row) => mutualUserCardMarkup(row, { searchResult: true })).join('')}</div>`
+              : `<p class="mutual-inline-empty">${state.searchQuery.trim().length >= 2 ? 'No matching public profiles found.' : 'Type at least two characters to search.'}</p>`
+        }
+      </section>
+
+      <section class="mutual-results-section" aria-labelledby="mutual-suggestions-title">
+        <header>
+          <div>
+            <h4 id="mutual-suggestions-title">Suggested users</h4>
+            <p>Ranked from mutual follows, shared communities, and public profile context.</p>
+          </div>
+        </header>
+        ${state.loading && !state.loaded
+          ? '<p class="mutual-loading-state">Finding relevant people...</p>'
+          : state.error
+            ? `<div class="mutual-error-state" role="alert"><strong>Suggestions could not be loaded.</strong><span>${escapeHtml(state.error)}</span></div>`
+            : suggestions.length
+              ? `<div class="mutual-user-list">${suggestions.map((row) => mutualUserCardMarkup(row)).join('')}</div>`
+              : `
+                <section class="inbox-empty-panel activity-empty-panel">
+                  <h3>No suggestions yet.</h3>
+                  <p>Import contacts, search usernames, or join communities to find people you may know.</p>
+                </section>
+              `
+        }
+      </section>
+    </section>
+  `
+}
+
+function normalizeContactIdentifiers(values = []) {
+  const unique = new Set()
+  values.forEach((value) => {
+    const clean = String(value || '').trim().toLowerCase()
+    if (!clean) return
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) unique.add(`email:${clean}`)
+    else {
+      const phone = clean.replace(/[^\d+]/g, '')
+      if (/^\+?\d{7,15}$/.test(phone)) unique.add(`phone:${phone}`)
+    }
+  })
+  return [...unique].slice(0, 100)
+}
+
+function extractContactIdentifiers(text = '') {
+  const source = String(text || '')
+  const emails = source.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []
+  const phones = source.match(/\+?[\d][\d\s().-]{6,}\d/g) || []
+  return normalizeContactIdentifiers([...emails, ...phones])
+}
+
+function mutualUsersErrorMessage(error) {
+  const code = String(error?.code || '')
+  if (code.includes('not-found') || code.includes('unimplemented')) {
+    return 'Suggestion service is ready locally but its callable functions have not been deployed.'
+  }
+  if (code.includes('permission-denied')) return 'Suggestions are unavailable for this account right now.'
+  if (code.includes('unauthenticated')) return 'Sign in again to load suggestions.'
+  return 'Suggestions are temporarily unavailable. Username search still works.'
+}
+
+async function loadMutualUsersSuggestions({ force = false } = {}) {
+  const state = appState.mutualUsers
+  if (!appState.user?.uid || state.loading || (state.loaded && !force)) return
+  state.loading = true
+  state.error = ''
+  if (appState.activeFilter === 'Mutual Users') renderSignedInState()
+  try {
+    const result = await getMutualUserSuggestions({ limit: 18 })
+    state.suggestions = Array.isArray(result.suggestions) ? result.suggestions : []
+    state.loaded = true
+  } catch (error) {
+    state.error = mutualUsersErrorMessage(error)
+    state.loaded = true
+  } finally {
+    state.loading = false
+    if (appState.activeFilter === 'Mutual Users') renderSignedInState()
+  }
+}
+
+async function initializeMutualUsers() {
+  if (!appState.user?.uid) return
+  const state = appState.mutualUsers
+  if (!state.capabilitiesSaved) {
+    state.capabilitiesSaved = true
+    saveClientCapabilities({
+      uid: appState.user.uid,
+      capabilities: state.capabilities
+    }).catch((error) => {
+      if (!String(error?.code || '').includes('permission-denied') && import.meta.env.DEV) {
+        console.warn('[inbox] optional client capability save failed', error?.code || error?.message || error)
+      }
+    })
+  }
+  await loadMutualUsersSuggestions()
+}
+
+async function runMutualUsernameSearch(queryValue = '') {
+  const state = appState.mutualUsers
+  const query = String(queryValue || '').trim()
+  state.searchQuery = queryValue
+  state.searchError = ''
+  if (query.length < 2) {
+    state.searchLoading = false
+    state.searchResults = []
+    if (appState.activeFilter === 'Mutual Users') renderSignedInState()
+    return
+  }
+  state.searchLoading = true
+  if (appState.activeFilter === 'Mutual Users') renderSignedInState()
+  try {
+    const rows = await searchUsersByUsername(query)
+    state.searchResults = rows.filter((row) => row.uid !== appState.user?.uid)
+  } catch (error) {
+    state.searchResults = []
+    state.searchError = error?.message || 'Unable to search profiles right now.'
+  } finally {
+    state.searchLoading = false
+    if (appState.activeFilter === 'Mutual Users') renderSignedInState()
+  }
+}
+
+function scheduleMutualUsernameSearch(value = '') {
+  appState.mutualUsers.searchQuery = value
+  if (mutualUserSearchTimer) window.clearTimeout(mutualUserSearchTimer)
+  mutualUserSearchTimer = window.setTimeout(() => {
+    runMutualUsernameSearch(value)
+  }, 320)
+}
+
+async function handleMutualContactsMatch(identifiers = [], source = 'manual') {
+  const state = appState.mutualUsers
+  const clean = normalizeContactIdentifiers(identifiers.map((value) => String(value || '').replace(/^(email|phone):/, '')))
+  if (!clean.length) {
+    state.contactStatus = 'No valid email addresses or phone numbers were found.'
+    renderSignedInState()
+    return
+  }
+  state.contactIdentifiers = clean
+  state.matching = true
+  state.contactStatus = `Prepared ${clean.length} selected identifier${clean.length === 1 ? '' : 's'} in memory.`
+  renderSignedInState()
+  try {
+    const result = await matchContacts({ contacts: clean, source })
+    state.contactStatus = result.message || (
+      result.matches?.length
+        ? `Found ${result.matches.length} matching account${result.matches.length === 1 ? '' : 's'}.`
+        : 'No matching accounts were found.'
+    )
+    if (Array.isArray(result.matches) && result.matches.length) {
+      state.searchResults = result.matches
+    }
+  } catch (error) {
+    state.contactStatus = 'Secure contact matching is not available yet. No contacts were stored.'
+  } finally {
+    state.matching = false
+    renderSignedInState()
+  }
+}
+
+async function handleMutualFollow(uid = '') {
+  const targetUid = String(uid || '').trim()
+  if (!targetUid || appState.mutualUsers.actionUid) return
+  const state = appState.mutualUsers
+  const row = [...state.suggestions, ...state.searchResults].find((entry) => entry.uid === targetUid)
+  if (!row) return
+  state.actionUid = targetUid
+  renderSignedInState()
+  try {
+    const result = await setProfileFollowState(targetUid, !row.alreadyFollowing)
+    const following = result.following === true
+    state.suggestions = state.suggestions.map((entry) => entry.uid === targetUid ? { ...entry, alreadyFollowing: following } : entry)
+    state.searchResults = state.searchResults.map((entry) => entry.uid === targetUid ? { ...entry, alreadyFollowing: following } : entry)
+    state.contactStatus = following ? `You are now following ${row.displayName || row.username || 'this user'}.` : 'User unfollowed.'
+  } catch (error) {
+    state.contactStatus = error?.message || 'Could not update this follow.'
+  } finally {
+    state.actionUid = ''
+    renderSignedInState()
+  }
+}
+
+async function handleMutualDismiss(uid = '') {
+  const targetUid = String(uid || '').trim()
+  if (!targetUid || appState.mutualUsers.actionUid) return
+  const state = appState.mutualUsers
+  const previous = state.suggestions
+  state.actionUid = targetUid
+  state.suggestions = state.suggestions.filter((entry) => entry.uid !== targetUid)
+  renderSignedInState()
+  try {
+    await dismissSuggestion(targetUid)
+    state.contactStatus = 'Suggestion hidden.'
+  } catch (error) {
+    state.suggestions = previous
+    state.contactStatus = mutualUsersErrorMessage(error)
+  } finally {
+    state.actionUid = ''
+    renderSignedInState()
+  }
+}
+
 function getFilterContentMarkup(filterName) {
   if (filterName === 'Calls') return getCallsContentMarkup()
   if (filterName === 'Content') return getContentActivityMarkup()
+  if (filterName === 'Mutual Users') return getMutualUsersMarkup()
   if (filterName === 'System') {
     const filterOptions = [
       { key: 'all', label: 'All' },
@@ -4870,6 +5277,66 @@ function bindSharedEvents(scope = inboxRoot) {
     })
   })
 
+  const mutualSearch = scope.querySelector('[data-mutual-user-search]')
+  mutualSearch?.addEventListener('input', () => {
+    scheduleMutualUsernameSearch(mutualSearch.value)
+  })
+
+  scope.querySelector('[data-mutual-refresh]')?.addEventListener('click', () => {
+    loadMutualUsersSuggestions({ force: true })
+  })
+
+  scope.querySelector('[data-mutual-choose-contacts]')?.addEventListener('click', async () => {
+    const state = appState.mutualUsers
+    if (!state.capabilities.supportsContactPicker || typeof navigator.contacts?.select !== 'function') {
+      state.contactStatus = 'Contact Picker is not supported in this browser. Use username search or a CSV/vCard file.'
+      renderSignedInState()
+      return
+    }
+    try {
+      const selected = await navigator.contacts.select(['name', 'email', 'tel'], { multiple: true })
+      const identifiers = selected.flatMap((contact) => [
+        ...(Array.isArray(contact.email) ? contact.email : []),
+        ...(Array.isArray(contact.tel) ? contact.tel : [])
+      ])
+      await handleMutualContactsMatch(identifiers, 'contact-picker')
+    } catch (error) {
+      if (String(error?.name || '').toLowerCase().includes('abort')) return
+      state.contactStatus = 'Contacts could not be selected. No contact information was stored.'
+      renderSignedInState()
+    }
+  })
+
+  scope.querySelector('[data-mutual-contact-file]')?.addEventListener('change', async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) {
+      appState.mutualUsers.contactStatus = 'Choose a CSV or vCard file smaller than 2 MB.'
+      renderSignedInState()
+      return
+    }
+    try {
+      const identifiers = extractContactIdentifiers(await file.text())
+      await handleMutualContactsMatch(identifiers, file.name.toLowerCase().endsWith('.vcf') ? 'vcard' : 'csv')
+    } catch {
+      appState.mutualUsers.contactStatus = 'This contact file could not be read. No data was uploaded.'
+      renderSignedInState()
+    }
+  })
+
+  scope.querySelector('[data-mutual-match-emails]')?.addEventListener('click', async () => {
+    const input = scope.querySelector('[data-mutual-email-input]')
+    await handleMutualContactsMatch(extractContactIdentifiers(input?.value || ''), 'email-entry')
+  })
+
+  scope.querySelectorAll('[data-mutual-follow]').forEach((button) => {
+    button.addEventListener('click', () => handleMutualFollow(button.getAttribute('data-mutual-follow') || ''))
+  })
+
+  scope.querySelectorAll('[data-mutual-dismiss]').forEach((button) => {
+    button.addEventListener('click', () => handleMutualDismiss(button.getAttribute('data-mutual-dismiss') || ''))
+  })
+
   scope.querySelectorAll('[data-select-thread-id]').forEach((button) => {
     button.addEventListener('click', async () => {
       if (appState.activeFilter !== 'Messages') {
@@ -6159,7 +6626,10 @@ window.addEventListener('pagehide', () => {
 })
 window.addEventListener('popstate', () => {
   applyInboxRoute(parseInboxRoute())
-  if (appState.user) renderSignedInState()
+  if (appState.user) {
+    renderSignedInState()
+    if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
+  }
 })
 
 normalizeInitialInboxRoute()
@@ -6180,6 +6650,7 @@ waitForInitialAuthState().then(async (user) => {
   startInboxPinsSubscription()
   startBlockedUsersSubscription()
   startAccountCallSubscriptions()
+  if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
   hasInitializedAuthObserver = true
 
   const startUid = String(new URLSearchParams(window.location.search).get('start') || '').trim()
@@ -6232,4 +6703,5 @@ subscribeToAuthState(async (user) => {
   startInboxPinsSubscription()
   startBlockedUsersSubscription()
   startAccountCallSubscriptions()
+  if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
 })

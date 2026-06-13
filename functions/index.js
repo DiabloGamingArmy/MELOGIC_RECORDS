@@ -69,6 +69,11 @@ const { requestEmailVerification, requestPasswordResetEmail } = require('./src/e
 const { getEmailAdminStatus, listAdminEmailLogs, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
 const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
 const { getPublicProfileStats, toggleProfileFollow } = require('./src/profiles/profileRelationships')
+const {
+  dismissMutualUserSuggestion,
+  getMutualUserSuggestions,
+  matchContactsToUsers
+} = require('./src/profiles/mutualUsers')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -153,3 +158,6 @@ exports.listAdminEmailLogs = listAdminEmailLogs
 exports.createLiveKitToken = createLiveKitToken
 exports.getPublicProfileStats = getPublicProfileStats
 exports.toggleProfileFollow = toggleProfileFollow
+exports.getMutualUserSuggestions = getMutualUserSuggestions
+exports.dismissMutualUserSuggestion = dismissMutualUserSuggestion
+exports.matchContactsToUsers = matchContactsToUsers

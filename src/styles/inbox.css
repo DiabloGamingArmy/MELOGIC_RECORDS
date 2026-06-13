@@ -2462,6 +2462,312 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   color: #69d4cf;
 }
 
+.mutual-users-panel {
+  width: min(1180px, 100%);
+  padding-bottom: 2rem;
+}
+
+.mutual-users-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mutual-privacy-notice,
+.mutual-platform-card {
+  border: 1px solid rgba(105, 212, 207, 0.28);
+  border-radius: 7px;
+  background: rgba(15, 29, 38, 0.72);
+  padding: 0.85rem;
+}
+
+.mutual-privacy-notice {
+  border-left: 3px solid #22b8b5;
+}
+
+.mutual-privacy-notice strong,
+.mutual-platform-card h4,
+.mutual-results-section h4 {
+  color: #eef7ff;
+}
+
+.mutual-privacy-notice p,
+.mutual-platform-card p,
+.mutual-results-section header p,
+.mutual-method-card p {
+  margin: 0.24rem 0 0;
+  color: #9fb0cf;
+  line-height: 1.45;
+}
+
+.mutual-platform-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  border-color: rgba(126, 147, 191, 0.26);
+  background: rgba(10, 15, 25, 0.8);
+}
+
+.mutual-platform-card > div > span {
+  color: #6ed8d3;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.mutual-platform-card h4,
+.mutual-results-section h4 {
+  margin: 0.2rem 0 0;
+  font-size: 1rem;
+}
+
+.mutual-platform-card dl {
+  min-width: 250px;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(70px, 1fr));
+  gap: 0.4rem;
+}
+
+.mutual-platform-card dl div {
+  border-left: 1px solid rgba(126, 147, 191, 0.24);
+  padding-left: 0.58rem;
+}
+
+.mutual-platform-card dt {
+  color: #7f91b2;
+  font-size: 0.68rem;
+}
+
+.mutual-platform-card dd {
+  margin: 0.2rem 0 0;
+  color: #dce8fb;
+  font-size: 0.78rem;
+}
+
+.mutual-discovery-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.mutual-method-card {
+  min-height: 174px;
+  border: 1px solid rgba(126, 147, 191, 0.2);
+  border-radius: 6px;
+  background: rgba(10, 14, 24, 0.72);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.mutual-method-card > div:first-child {
+  min-height: 74px;
+}
+
+.mutual-method-card strong {
+  color: #e7f1ff;
+  font-size: 0.88rem;
+}
+
+.mutual-method-card p {
+  font-size: 0.76rem;
+}
+
+.mutual-method-card > small {
+  margin-top: auto;
+  color: #6fcac6;
+  font-size: 0.68rem;
+}
+
+.mutual-method-card input,
+.mutual-method-card textarea {
+  width: 100%;
+  border: 1px solid rgba(126, 147, 191, 0.3);
+  border-radius: 5px;
+  background: rgba(5, 9, 17, 0.88);
+  color: #e7f1ff;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.5rem 0.56rem;
+}
+
+.mutual-method-card textarea {
+  resize: vertical;
+}
+
+.mutual-file-button {
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+}
+
+.mutual-file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.mutual-contact-status {
+  border-left: 2px solid rgba(34, 184, 181, 0.72);
+  background: rgba(34, 184, 181, 0.08);
+  padding: 0.55rem 0.7rem;
+  color: #bde9e6;
+  font-size: 0.8rem;
+}
+
+.mutual-results-section {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.mutual-results-section > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(126, 147, 191, 0.2);
+  padding-bottom: 0.5rem;
+}
+
+.mutual-user-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.mutual-user-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid rgba(126, 147, 191, 0.2);
+  border-radius: 6px;
+  background: rgba(10, 14, 24, 0.68);
+  padding: 0.65rem;
+}
+
+.mutual-user-avatar {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(105, 212, 207, 0.28);
+  border-radius: 50%;
+  background: rgba(24, 34, 53, 0.9);
+  color: #e5f5ff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.mutual-user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mutual-user-meta {
+  min-width: 0;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.mutual-user-meta strong,
+.mutual-user-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mutual-user-meta > span {
+  color: #91a6c8;
+  font-size: 0.76rem;
+}
+
+.mutual-reason-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.mutual-reason-row small {
+  border: 1px solid rgba(34, 184, 181, 0.22);
+  border-radius: 4px;
+  background: rgba(34, 184, 181, 0.08);
+  color: #9ee1dd;
+  padding: 0.18rem 0.34rem;
+  font-size: 0.65rem;
+}
+
+.mutual-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.mutual-user-actions .button {
+  min-height: 32px;
+  padding: 0.38rem 0.55rem;
+  font-size: 0.72rem;
+}
+
+.mutual-user-actions .is-following {
+  border-color: rgba(34, 184, 181, 0.42);
+  color: #bcebe8;
+}
+
+.mutual-hide-button {
+  border: 0;
+  background: transparent;
+  color: #8799b9;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.mutual-hide-button:hover,
+.mutual-hide-button:focus-visible {
+  color: #ffadb7;
+  outline: none;
+}
+
+.mutual-loading-state,
+.mutual-inline-empty,
+.mutual-error-state {
+  margin: 0;
+  border: 1px solid rgba(126, 147, 191, 0.18);
+  border-radius: 6px;
+  background: rgba(9, 13, 22, 0.56);
+  padding: 0.75rem;
+  color: #9fb0cf;
+  font-size: 0.8rem;
+}
+
+.mutual-error-state {
+  display: grid;
+  gap: 0.2rem;
+  border-color: rgba(255, 120, 135, 0.28);
+  color: #ffbdc5;
+}
+
+@media (max-width: 1240px) {
+  .mutual-discovery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .mutual-user-card {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .mutual-user-actions {
+    grid-column: 2;
+    flex-wrap: wrap;
+  }
+}
+
 .notification-item-menu-button {
   width: 30px;
   height: 30px;
@@ -2641,6 +2947,28 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 }
 
 @media (max-width: 680px) {
+  .mutual-users-header,
+  .mutual-platform-card,
+  .mutual-user-card {
+    grid-template-columns: 1fr;
+  }
+
+  .mutual-users-header {
+    display: grid;
+  }
+
+  .mutual-platform-card dl {
+    min-width: 0;
+  }
+
+  .mutual-discovery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mutual-user-actions {
+    flex-wrap: wrap;
+  }
+
   .account-call-active-card {
     grid-template-columns: auto minmax(0, 1fr);
   }
