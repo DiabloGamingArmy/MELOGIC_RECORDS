@@ -1241,6 +1241,43 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /dismissedSuggestions/{suggestedUid} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /clientCapabilities/{sessionId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.keys().hasOnly([
+            'uid', 'sessionId', 'platform', 'supportsContactPicker',
+            'supportsFilePicker', 'supportsShare', 'supportsPush',
+            'browserName', 'osName', 'updatedAt'
+          ])
+          && request.resource.data.keys().hasAll([
+            'uid', 'sessionId', 'platform', 'supportsContactPicker',
+            'supportsFilePicker', 'supportsShare', 'supportsPush',
+            'browserName', 'osName', 'updatedAt'
+          ])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.sessionId == sessionId
+          && sessionId.size() >= 1
+          && sessionId.size() <= 80
+          && request.resource.data.platform in [
+            'desktop-web', 'mobile-web', 'pwa', 'native-wrapper', 'unknown'
+          ]
+          && request.resource.data.supportsContactPicker is bool
+          && request.resource.data.supportsFilePicker is bool
+          && request.resource.data.supportsShare is bool
+          && request.resource.data.supportsPush is bool
+          && request.resource.data.browserName is string
+          && request.resource.data.browserName.size() <= 40
+          && request.resource.data.osName is string
+          && request.resource.data.osName.size() <= 40
+          && request.resource.data.updatedAt is timestamp;
+        allow delete: if isOwner(uid);
+      }
+
       match /studioProjectIndex/{projectId} {
         allow read: if isOwner(uid);
 
