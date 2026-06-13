@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/account.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES } from './utils/routes'
 import { accountDateIso, getUserOrder, listUserOrders } from './data/accountCommerceService'

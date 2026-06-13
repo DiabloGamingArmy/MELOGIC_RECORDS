@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { addToCart } from './data/cartService'
 import { getProductById, listRecommendedProducts } from './data/productService'
 import { waitForInitialAuthState } from './firebase/auth'

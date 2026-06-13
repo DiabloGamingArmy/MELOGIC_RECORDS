@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/stage.css'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { navShell } from './components/navShell'
 import { waitForInitialAuthState, subscribeToAuthState, subscribeToIdToken } from './firebase/auth'
 import { authRoute, ROUTES, stageProjectRoute } from './utils/routes'

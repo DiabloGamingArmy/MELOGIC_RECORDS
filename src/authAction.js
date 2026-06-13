@@ -7,7 +7,7 @@ import {
   verifyPasswordResetCode
 } from 'firebase/auth'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { auth, sendEmailVerificationRequest, sendPasswordReset, waitForInitialAuthState } from './firebase/auth'
 import { recordAccountSecurityEvent } from './services/accountEvents'
 import { ROUTES, authRoute } from './utils/routes'

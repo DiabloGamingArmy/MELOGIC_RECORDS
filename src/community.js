@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/community.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { createReport } from './data/productService'

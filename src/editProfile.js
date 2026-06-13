@@ -3,7 +3,7 @@ import './styles/editProfile.css'
 import { collection, getDocs, limit, query, where } from 'firebase/firestore'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome, refreshShellState } from './appBoot'
 import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from './firebase/auth'
 import { db, getEffectiveProfile, savePrivateProfilePreferences, saveProfileChanges } from './firebase/firestore'
 import { storage } from './firebase/storage'
@@ -1167,6 +1167,7 @@ function renderSettingsPage() {
       if (nextPayload.avatarURL !== state.user.photoURL) {
         await updateCurrentUserProfile({ photoURL: nextPayload.avatarURL || null })
       }
+      await refreshShellState()
 
       const mediaMessages = []
       if (state.pendingMedia.avatarFile || state.pendingMedia.avatarRemoved) mediaMessages.push('Profile picture updated successfully.')

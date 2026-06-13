@@ -1,4 +1,5 @@
 import { ROUTES } from '../utils/routes'
+import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
 export function navShell(options = {}) {
   const currentPage = options.currentPage || ''
   const isHome = currentPage === 'home'
@@ -13,7 +14,7 @@ export function navShell(options = {}) {
       <div class="nav-inner">
         <a class="brand" href="${ROUTES.home}" aria-label="Melogic Records home">
           <span class="brand-logo-shell" aria-hidden="true">
-            <img alt="Melogic logo mark" class="brand-logo" data-brand-logo loading="eager" decoding="async" width="38" height="38" />
+            <img alt="Melogic logo mark" class="brand-logo" data-brand-logo data-loaded="true" src="${brandLogoUrl}" loading="eager" decoding="async" width="38" height="38" />
           </span>
           <span class="brand-text">MELOGIC RECORDS</span>
         </a>

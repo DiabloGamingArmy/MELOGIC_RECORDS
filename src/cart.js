@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/cart.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { clearCart, getCartItems, removeFromCart, subscribeToCart } from './data/cartService'
 import { createCheckoutSession } from './data/checkoutService'

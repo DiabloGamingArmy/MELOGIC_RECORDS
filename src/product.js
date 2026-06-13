@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { addToCart } from './data/cartService'
 import { createReport, getProductShellById, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
 import { claimFreeProduct, createProductDownloadUrl, userOwnsProduct } from './data/entitlementService'
