@@ -1,6 +1,6 @@
 import './styles/base.css'
 import { mountStandardPage } from './components/standardPage'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { attachHeroVideo } from './components/heroVideo'
 import { createCriticalAssetPreloader } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'

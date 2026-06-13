@@ -2,7 +2,7 @@ import './styles/base.css'
 import './styles/admin.css'
 import { multiFactor } from 'firebase/auth'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import {
   getAdminSettings,
   getAdminOrder,

@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/profile.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { subscribeToAuthState, signOutUser, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
 import { formatUsername } from './utils/format'

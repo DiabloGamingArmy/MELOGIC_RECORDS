@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/studio.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute } from './utils/routes'
 import { getStudioProject, touchStudioProject, saveStudioProjectEditorState } from './data/studioProjectService'

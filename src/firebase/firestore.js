@@ -554,7 +554,8 @@ export async function getEffectiveProfile(uid, authUser = null) {
     return {
       publicProfile: profileData,
       privateProfile: userData,
-      effectiveProfile: merged
+      effectiveProfile: merged,
+      readError: null
     }
   } catch (error) {
     if (!hasWarnedProfileRead) {
@@ -571,7 +572,8 @@ export async function getEffectiveProfile(uid, authUser = null) {
         bio: '',
         photoURL: authUser?.photoURL || '',
         email: authUser?.email || ''
-      }
+      },
+      readError: error
     }
   }
 }

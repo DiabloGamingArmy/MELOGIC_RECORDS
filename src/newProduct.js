@@ -1,7 +1,7 @@
 import './styles/base.css'
 import './styles/newProduct.css'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState } from './firebase/auth'
 import {
   addProductContributorRequest,

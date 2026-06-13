@@ -11,7 +11,7 @@ import {
   reauthenticateWithPopup
 } from 'firebase/auth'
 import { navShell } from './components/navShell'
-import { initShellChrome } from './components/assetChrome'
+import { initShellChrome } from './appBoot'
 import { auth, sendEmailVerificationRequest, sendPasswordReset, waitForInitialAuthState } from './firebase/auth'
 import { markAccountEventRead, markAllAccountEventsRead, recordAccountSecurityEvent, subscribeToAccountEvents } from './services/accountEvents'
 import { generateRecoveryCodes, getRecoveryCodeStatus } from './services/recoveryCodes'

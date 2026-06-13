@@ -1,14 +1,357 @@
-import { getStorageAssetUrl } from '../firebase/storageAssets'
 import { signOutUser, subscribeToAuthState, waitForInitialAuthState } from '../firebase/auth'
 import { getCartItems, removeFromCart, subscribeToCart } from '../data/cartService'
-import { getAccessGateConfig, getBannerAlertConfig } from '../firebase/firestore'
+import { subscribeToInboxUnreadCount } from '../data/shellBadgeService'
+import { getAccessGateConfig, getBannerAlertConfig, getEffectiveProfile } from '../firebase/firestore'
 import { startPresenceTracking } from '../services/presenceService'
-import { applyCachedPreviewImage, loadCachedPreviewImage } from '../services/imagePreviewCache'
+import { applyCachedPreviewImage } from '../services/imagePreviewCache'
 import { ROUTES, authRoute } from '../utils/routes'
+import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
 const BANNER_ALERT_STORAGE_KEY = 'melogic_banner_alert'
 let navAuthCleanup = null
+let cartDrawerCleanup = null
+let shellBootPromise = null
+let shellAuthUnsubscribe = null
+let shellInboxUnsubscribe = null
+let shellCurrentUser = null
+let shellCoreStarted = false
+let shellResizeBound = false
+let shellGlobalInitPromise = null
+let shellAuthGeneration = 0
+let shellInboxRetryTimer = null
+const shellStateListeners = new Set()
+const APP_BOOT_DEBUG = false
+const shellState = {
+  booted: false,
+  authReady: false,
+  user: null,
+  profile: null,
+  isAdmin: false,
+  cartCount: 0,
+  inboxUnreadCount: 0,
+  logoReady: true,
+  errors: []
+}
+
+function debugBoot(phase, extra = {}) {
+  if (!APP_BOOT_DEBUG) return
+  console.info('[app-boot]', {
+    page: window.location.pathname,
+    phase,
+    userUid: shellState.user?.uid || null,
+    profileLoaded: Boolean(shellState.profile),
+    avatarUrl: shellState.profile?.photoURL || '',
+    logoPath: brandLogoUrl,
+    ...extra
+  })
+}
+
+function notifyShellState() {
+  const snapshot = getCurrentShellState()
+  shellStateListeners.forEach((callback) => {
+    try {
+      callback(snapshot)
+    } catch {
+      // Shell observers must not interrupt global boot.
+    }
+  })
+}
+
+function recordShellError(scope, error) {
+  const code = String(error?.code || 'unknown-error')
+  const message = String(error?.message || error || 'Unknown shell error')
+  shellState.errors = [
+    ...shellState.errors.filter((item) => item.scope !== scope),
+    { scope, code, message }
+  ]
+  if (
+    code.includes('permission-denied')
+    || code.includes('resource-exhausted')
+    || code.includes('quota')
+    || code.includes('unavailable')
+    || code.includes('object-not-found')
+  ) {
+    console.warn(`[app-boot] ${scope} failed`, { code, message })
+  }
+  debugBoot('error', { scope, errorCode: code, errorMessage: message })
+}
+
+function clearShellError(scope) {
+  shellState.errors = shellState.errors.filter((item) => item.scope !== scope)
+}
+
+export function getCurrentShellState() {
+  return {
+    ...shellState,
+    errors: shellState.errors.map((item) => ({ ...item }))
+  }
+}
+
+export function onShellStateChange(callback) {
+  if (typeof callback !== 'function') return () => {}
+  shellStateListeners.add(callback)
+  callback(getCurrentShellState())
+  return () => shellStateListeners.delete(callback)
+}
+
+function getInitials(profile = {}, user = null) {
+  const name = String(profile.displayName || profile.username || user?.displayName || user?.email || '').trim()
+  if (!name) return '?'
+  const parts = name.split(/\s+/).filter(Boolean)
+  if (parts.length > 1) return `${parts[0][0]}${parts.at(-1)[0]}`.toUpperCase()
+  return name.slice(0, 2).toUpperCase()
+}
+
+function normalizeShellProfile(user, result = null) {
+  const profile = result?.effectiveProfile || {}
+  const photoURL = String(
+    profile.avatarURL
+    || profile.photoURL
+    || user?.photoURL
+    || ''
+  ).trim()
+  const displayName = String(profile.displayName || user?.displayName || '').trim()
+  const username = String(profile.username || '').trim()
+  const normalized = {
+    uid: user?.uid || '',
+    displayName,
+    username,
+    photoURL,
+    avatarURL: photoURL,
+    email: String(profile.email || user?.email || '').trim(),
+    role: String(profile.roleLabel || profile.role || '').trim(),
+    labels: Array.isArray(profile.labels || profile.badges)
+      ? (profile.labels || profile.badges).map((label) => String(label || '').trim()).filter(Boolean)
+      : []
+  }
+  return {
+    ...normalized,
+    fallbackInitials: getInitials(normalized, user)
+  }
+}
+
+function clearInboxSubscription() {
+  if (typeof shellInboxUnsubscribe === 'function') shellInboxUnsubscribe()
+  shellInboxUnsubscribe = null
+  if (shellInboxRetryTimer) window.clearTimeout(shellInboxRetryTimer)
+  shellInboxRetryTimer = null
+}
+
+function renderInboxBadges() {
+  const count = Math.max(0, Number(shellState.inboxUnreadCount || 0))
+  document.querySelectorAll('[data-nav-inbox-badge]').forEach((badge) => {
+    badge.textContent = count > 99 ? '99+' : count > 0 ? String(count) : ''
+    badge.dataset.hasUnread = String(count > 0)
+    badge.setAttribute('aria-label', count ? `${count} unread inbox item${count === 1 ? '' : 's'}` : 'No unread inbox items')
+  })
+}
+
+function renderProfileAvatar(profileAvatar, profileTrigger) {
+  if (!profileAvatar) return
+  const user = shellState.user
+  const profile = shellState.profile || {}
+  const photoURL = String(profile.photoURL || user?.photoURL || '').trim()
+  const initials = profile.fallbackInitials || getInitials(profile, user)
+  const avatarKey = `${user?.uid || 'guest'}:${photoURL}`
+  const expectedState = photoURL ? 'photo' : user ? 'initials' : 'guest'
+  if (
+    profileAvatar.dataset.avatarKey === avatarKey
+    && (
+      profileAvatar.dataset.avatarState === expectedState
+      || (expectedState === 'photo' && profileAvatar.dataset.avatarState === 'loading')
+    )
+  ) return
+
+  profileAvatar.dataset.avatarKey = avatarKey
+  profileAvatar.dataset.avatarState = photoURL ? 'loading' : expectedState
+  profileAvatar.classList.remove('has-photo')
+  profileAvatar.classList.toggle('has-initials', Boolean(user))
+  profileAvatar.style.backgroundImage = ''
+  profileAvatar.textContent = user ? initials : ''
+  profileAvatar.setAttribute('aria-hidden', 'true')
+  profileTrigger?.setAttribute('aria-label', user ? `${profile.displayName || profile.username || 'Account'} menu` : 'Account menu')
+  if (!user || !photoURL) return
+
+  const image = new Image()
+  image.decoding = 'async'
+  image.onload = () => {
+    if (!profileAvatar.isConnected || profileAvatar.dataset.avatarKey !== avatarKey) return
+    profileAvatar.textContent = ''
+    profileAvatar.classList.remove('has-initials')
+    profileAvatar.classList.add('has-photo')
+    profileAvatar.dataset.avatarState = 'photo'
+    profileAvatar.style.backgroundImage = `url("${photoURL}")`
+    applyCachedPreviewImage(profileAvatar, {
+      cacheKey: `nav-avatar:${user.uid}`,
+      sourceUrl: photoURL,
+      versionKey: photoURL,
+      maxSize: 64,
+      asBackground: true
+    }).catch(() => {})
+  }
+  image.onerror = () => {
+    if (!profileAvatar.isConnected || profileAvatar.dataset.avatarKey !== avatarKey) return
+    profileAvatar.classList.remove('has-photo')
+    profileAvatar.classList.add('has-initials')
+    profileAvatar.dataset.avatarState = 'initials'
+    profileAvatar.style.backgroundImage = ''
+    profileAvatar.textContent = initials
+  }
+  image.src = photoURL
+}
+
+function renderShellState() {
+  updateCartBadges(shellState.cartCount)
+  renderInboxBadges()
+
+  const profileAvatar = document.querySelector('[data-profile-avatar]')
+  const profileTrigger = document.querySelector('[data-nav-profile-trigger]')
+  const authEntryLink = document.querySelector('[data-nav-menu-auth]')
+  const signOutButton = document.querySelector('[data-nav-menu-signout]')
+  const privateLinks = [
+    document.querySelector('[data-nav-menu-view]'),
+    document.querySelector('[data-nav-menu-edit]'),
+    document.querySelector('[data-nav-menu-library]'),
+    document.querySelector('[data-nav-menu-orders]'),
+    document.querySelector('[data-nav-menu-security]')
+  ].filter(Boolean)
+  const adminLink = document.querySelector('[data-nav-menu-admin]')
+  if (!profileAvatar || !authEntryLink || !signOutButton) return
+
+  const signedIn = shellState.authReady && Boolean(shellState.user)
+  authEntryLink.hidden = signedIn
+  authEntryLink.textContent = shellState.authReady ? 'Sign In / Sign Up' : 'Checking account...'
+  signOutButton.hidden = !signedIn
+  signOutButton.textContent = 'Log Out'
+  privateLinks.forEach((link) => { link.hidden = !signedIn })
+  if (adminLink) adminLink.hidden = !signedIn || !shellState.isAdmin
+  renderProfileAvatar(profileAvatar, profileTrigger)
+}
+
+async function loadShellProfile(user, generation, retryAttempt = 0) {
+  try {
+    const result = await getEffectiveProfile(user.uid, user)
+    if (result?.readError) throw result.readError
+    if (generation !== shellAuthGeneration || shellCurrentUser?.uid !== user.uid) return
+    shellState.profile = normalizeShellProfile(user, result)
+    clearShellError('profile')
+    debugBoot('profile-loaded')
+  } catch (error) {
+    if (generation !== shellAuthGeneration || shellCurrentUser?.uid !== user.uid) return
+    shellState.profile = normalizeShellProfile(user)
+    recordShellError('profile', error)
+    const retryDelay = [500, 1500][retryAttempt]
+    if (retryDelay) {
+      await new Promise((resolve) => window.setTimeout(resolve, retryDelay))
+      if (generation === shellAuthGeneration && shellCurrentUser?.uid === user.uid) {
+        return loadShellProfile(user, generation, retryAttempt + 1)
+      }
+    }
+  }
+  renderShellState()
+  notifyShellState()
+}
+
+function startShellInboxSubscription(user, generation, retryAttempt = 0) {
+  clearInboxSubscription()
+  const handleError = (error) => {
+    if (generation !== shellAuthGeneration || shellCurrentUser?.uid !== user.uid) return
+    recordShellError('inbox', error)
+    shellState.inboxUnreadCount = 0
+    renderInboxBadges()
+    notifyShellState()
+    if (shellInboxRetryTimer) return
+    const retryDelay = [500, 1500][retryAttempt]
+    if (!retryDelay) return
+    shellInboxRetryTimer = window.setTimeout(() => {
+      shellInboxRetryTimer = null
+      startShellInboxSubscription(user, generation, retryAttempt + 1)
+    }, retryDelay)
+  }
+
+  try {
+    shellInboxUnsubscribe = subscribeToInboxUnreadCount(user.uid, (unreadCount) => {
+      if (generation !== shellAuthGeneration || shellCurrentUser?.uid !== user.uid) return
+      shellState.inboxUnreadCount = Math.max(0, Number(unreadCount || 0))
+      clearShellError('inbox')
+      debugBoot('inbox-loaded', { inboxUnreadCount: shellState.inboxUnreadCount })
+      renderInboxBadges()
+      notifyShellState()
+    }, handleError)
+  } catch (error) {
+    handleError(error)
+  }
+}
+
+function handleShellAuthState(user) {
+  const nextUser = user || null
+  if (shellState.authReady && shellCurrentUser?.uid === nextUser?.uid) {
+    shellState.user = nextUser
+    renderShellState()
+    return
+  }
+
+  const generation = ++shellAuthGeneration
+  shellCurrentUser = nextUser
+  shellState.authReady = true
+  shellState.booted = true
+  shellState.user = nextUser
+  shellState.profile = nextUser ? normalizeShellProfile(nextUser) : null
+  shellState.isAdmin = false
+  shellState.inboxUnreadCount = 0
+  clearInboxSubscription()
+  clearShellError('auth')
+  renderShellState()
+  notifyShellState()
+  debugBoot('auth-ready')
+
+  if (!nextUser) return
+  loadShellProfile(nextUser, generation)
+  startShellInboxSubscription(nextUser, generation)
+  nextUser.getIdTokenResult?.().then((tokenResult) => {
+    if (generation !== shellAuthGeneration || shellCurrentUser?.uid !== nextUser.uid) return
+    shellState.isAdmin = tokenResult?.claims?.admin === true
+    renderShellState()
+    notifyShellState()
+  }).catch((error) => {
+    if (generation === shellAuthGeneration) recordShellError('admin-claim', error)
+  })
+}
+
+function ensureShellCore() {
+  if (shellCoreStarted) return shellBootPromise
+  shellCoreStarted = true
+  startPresenceTracking()
+  shellAuthUnsubscribe = subscribeToAuthState(handleShellAuthState)
+  shellBootPromise = waitForInitialAuthState()
+    .then((user) => {
+      handleShellAuthState(user)
+      return getCurrentShellState()
+    })
+    .catch((error) => {
+      shellState.authReady = true
+      shellState.booted = true
+      recordShellError('auth', error)
+      renderShellState()
+      notifyShellState()
+      return getCurrentShellState()
+    })
+  return shellBootPromise
+}
+
+export async function refreshShellState() {
+  ensureShellCore()
+  const user = shellCurrentUser
+  if (!user) {
+    renderShellState()
+    return getCurrentShellState()
+  }
+  const generation = shellAuthGeneration
+  await loadShellProfile(user, generation)
+  if (generation === shellAuthGeneration) startShellInboxSubscription(user, generation)
+  return getCurrentShellState()
+}
 
 function escapeHtml(value) {
   return String(value || '')
@@ -28,58 +371,11 @@ export function syncNavOffset() {
 export async function initNavBrandLogo() {
   const brandLogo = document.querySelector('[data-brand-logo]')
   if (!brandLogo) return false
-
-  const storageLogoPrimaryPath = 'assets/brand/melogic-logo-mark-glow.png'
-  const storageLogoFallbackPath = 'assets/brand/melogic-logo-mark-white-transparent.png'
-  const storageLogoPrimaryUrl = await getStorageAssetUrl(storageLogoPrimaryPath, { warnOnFail: false })
-  const storageLogoFallbackUrl = await getStorageAssetUrl(storageLogoFallbackPath, { warnOnFail: false })
-  const logoCandidates = [
-    storageLogoPrimaryUrl,
-    storageLogoFallbackUrl,
-    '/assets/brand/melogic-logo-mark-glow.png'
-  ].filter(Boolean)
-
-  const tryLoad = async (url) => new Promise(async (resolve) => {
-    let settled = false
-    const finish = (ok) => {
-      if (settled) return
-      settled = true
-      resolve(ok)
-    }
-
-    brandLogo.addEventListener(
-      'load',
-      () => {
-        brandLogo.dataset.loaded = 'true'
-        finish(true)
-      },
-      { once: true }
-    )
-    brandLogo.addEventListener('error', () => finish(false), { once: true })
-    if (/^https?:\/\//i.test(url)) {
-      const cached = await loadCachedPreviewImage({
-        cacheKey: 'nav-brand-logo',
-        sourceUrl: url,
-        versionKey: url,
-        maxSize: 64
-      })
-      brandLogo.src = cached.previewUrl || url
-      cached.refresh.then((freshPreviewUrl) => {
-        if (freshPreviewUrl && brandLogo.isConnected) brandLogo.src = freshPreviewUrl
-      }).catch(() => {})
-    } else {
-      brandLogo.src = url
-    }
-  })
-
-  for (const logoUrl of logoCandidates) {
-    // eslint-disable-next-line no-await-in-loop
-    const loaded = await tryLoad(logoUrl)
-    if (loaded) return true
-  }
-
-  brandLogo.remove()
-  return false
+  if (!brandLogo.getAttribute('src')) brandLogo.src = brandLogoUrl
+  brandLogo.dataset.loaded = 'true'
+  shellState.logoReady = true
+  debugBoot('header-rendered')
+  return true
 }
 
 function readAccessGateGrant() {
@@ -167,14 +463,23 @@ async function initAccessGate() {
 }
 
 export async function initShellChrome() {
-  await initAccessGate()
-  await initBannerAlerts()
+  initNavBrandLogo()
   syncNavOffset()
-  window.addEventListener('resize', syncNavOffset, { passive: true })
+  if (!shellResizeBound) {
+    shellResizeBound = true
+    window.addEventListener('resize', syncNavOffset, { passive: true })
+  }
+  if (!shellGlobalInitPromise) {
+    shellGlobalInitPromise = Promise.allSettled([
+      initAccessGate(),
+      initBannerAlerts()
+    ])
+  }
+  ensureShellCore()
   initNavAuthState()
-  startPresenceTracking()
   initCartDrawer()
-  return initNavBrandLogo()
+  renderShellState()
+  return shellBootPromise
 }
 
 function hexToRgb(hex) {
@@ -297,7 +602,10 @@ function renderCartDrawerItems(drawerRoot, items) {
 function initCartDrawer() {
   const triggers = Array.from(document.querySelectorAll('[data-cart-trigger]'))
   if (!triggers.length) return
-  if (document.querySelector('.cart-drawer-root')) return
+  if (typeof cartDrawerCleanup === 'function') cartDrawerCleanup()
+  document.querySelector('.cart-drawer-root')?.remove()
+  const controller = new AbortController()
+  const { signal } = controller
 
   const root = document.createElement('div')
   root.className = 'cart-drawer-root'
@@ -342,21 +650,31 @@ function initCartDrawer() {
     trigger.addEventListener('click', (event) => {
       event.preventDefault()
       openDrawer()
-    })
+    }, { signal })
   })
-  root.querySelectorAll('[data-cart-drawer-close]').forEach((button) => button.addEventListener('click', closeDrawer))
+  root.querySelectorAll('[data-cart-drawer-close]').forEach((button) => button.addEventListener('click', closeDrawer, { signal }))
   backdrop?.addEventListener('click', (event) => {
     if (event.target === backdrop) closeDrawer()
-  })
+  }, { signal })
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !backdrop?.hidden) closeDrawer()
-  })
+  }, { signal })
 
-  subscribeToCart((items) => {
+  const unsubscribeCart = subscribeToCart((items) => {
+    shellState.cartCount = items.length
+    clearShellError('cart')
+    debugBoot('cart-loaded', { cartCount: items.length })
     updateCartBadges(items.length)
     renderCartDrawerItems(root, items)
+    notifyShellState()
   })
   updateCartBadges(getCartItems().length)
+  cartDrawerCleanup = () => {
+    controller.abort()
+    unsubscribeCart()
+    root.remove()
+    cartDrawerCleanup = null
+  }
 }
 
 function initNavAuthState() {
@@ -367,18 +685,10 @@ function initNavAuthState() {
   const profileMenu = document.querySelector('[data-profile-menu]')
   const profileTrigger = document.querySelector('[data-nav-profile-trigger]')
   const profileDropdown = document.querySelector('[data-nav-profile-dropdown]')
-  const profileAvatar = document.querySelector('[data-profile-avatar]')
-  const viewProfileLink = document.querySelector('[data-nav-menu-view]')
-  const editProfileLink = document.querySelector('[data-nav-menu-edit]')
-  const libraryLink = document.querySelector('[data-nav-menu-library]')
-  const ordersLink = document.querySelector('[data-nav-menu-orders]')
-  const securityLink = document.querySelector('[data-nav-menu-security]')
-  const adminLink = document.querySelector('[data-nav-menu-admin]')
   const signOutButton = document.querySelector('[data-nav-menu-signout]')
   const authEntryLink = document.querySelector('[data-nav-menu-auth]')
   const inboxLink = document.querySelector('[data-nav-inbox]')
-  if (!profileMenu || !profileTrigger || !profileDropdown || !profileAvatar || !authEntryLink || !signOutButton) return
-  let currentUser = null
+  if (!profileMenu || !profileTrigger || !profileDropdown || !authEntryLink || !signOutButton) return
   const controller = new AbortController()
   const { signal } = controller
 
@@ -386,56 +696,6 @@ function initNavAuthState() {
     profileTrigger.setAttribute('aria-expanded', String(open))
     profileDropdown.hidden = !open
     profileMenu.classList.toggle('is-open', open)
-  }
-
-  const setSignedOutView = () => {
-    profileAvatar.classList.remove('has-photo')
-    profileAvatar.style.backgroundImage = ''
-    profileAvatar.setAttribute('aria-label', 'Guest account icon')
-    authEntryLink.hidden = false
-    signOutButton.hidden = true
-    if (viewProfileLink) viewProfileLink.hidden = true
-    if (editProfileLink) editProfileLink.hidden = true
-    if (libraryLink) libraryLink.hidden = true
-    if (ordersLink) ordersLink.hidden = true
-    if (securityLink) securityLink.hidden = true
-    if (adminLink) adminLink.hidden = true
-  }
-
-  const setSignedInView = (user) => {
-    signOutButton.textContent = 'Log Out'
-    authEntryLink.hidden = true
-    signOutButton.hidden = false
-    if (viewProfileLink) viewProfileLink.hidden = false
-    if (editProfileLink) editProfileLink.hidden = false
-    if (libraryLink) libraryLink.hidden = false
-    if (ordersLink) ordersLink.hidden = false
-    if (securityLink) securityLink.hidden = false
-    if (adminLink) {
-      adminLink.hidden = true
-      user.getIdTokenResult?.().then((tokenResult) => {
-        if (currentUser?.uid === user.uid) adminLink.hidden = tokenResult?.claims?.admin !== true
-      }).catch(() => {
-        if (currentUser?.uid === user.uid) adminLink.hidden = true
-      })
-    }
-
-    if (user?.photoURL) {
-      profileAvatar.classList.add('has-photo')
-      profileAvatar.style.backgroundImage = `url(\"${user.photoURL}\")`
-      applyCachedPreviewImage(profileAvatar, {
-        cacheKey: `nav-avatar:${user.uid}`,
-        sourceUrl: user.photoURL,
-        versionKey: user.photoURL,
-        maxSize: 64,
-        asBackground: true
-      }).catch(() => {})
-      profileAvatar.setAttribute('aria-label', `${user.displayName || 'User'} profile image`)
-    } else {
-      profileAvatar.classList.remove('has-photo')
-      profileAvatar.style.backgroundImage = ''
-      profileAvatar.setAttribute('aria-label', 'Default account icon')
-    }
   }
 
   profileTrigger.addEventListener('click', (event) => {
@@ -476,15 +736,9 @@ function initNavAuthState() {
     setMenuOpen(false)
   }, { signal })
 
-  if (viewProfileLink) {
-    viewProfileLink.addEventListener('click', () => setMenuOpen(false), { signal })
-  }
-  if (editProfileLink) {
-    editProfileLink.addEventListener('click', () => setMenuOpen(false), { signal })
-  }
-  if (adminLink) {
-    adminLink.addEventListener('click', () => setMenuOpen(false), { signal })
-  }
+  profileDropdown.querySelectorAll('a').forEach((link) => {
+    link.addEventListener('click', () => setMenuOpen(false), { signal })
+  })
 
   signOutButton.addEventListener('click', async (event) => {
     event.preventDefault()
@@ -504,27 +758,10 @@ function initNavAuthState() {
   }, { signal })
 
   setMenuOpen(false)
-
-  waitForInitialAuthState().then((user) => {
-    currentUser = user || null
-    if (user) {
-      setSignedInView(user)
-    } else {
-      setSignedOutView()
-    }
-  })
-
-  const unsubscribeAuth = subscribeToAuthState((user) => {
-    currentUser = user || null
-    if (user) {
-      setSignedInView(user)
-      return
-    }
-    setSignedOutView()
-  })
+  renderShellState()
 
   inboxLink?.addEventListener('click', async (event) => {
-    if (currentUser) return
+    if (shellCurrentUser) return
     const resolvedUser = await waitForInitialAuthState()
     if (resolvedUser) return
     event.preventDefault()
@@ -533,6 +770,5 @@ function initNavAuthState() {
 
   navAuthCleanup = () => {
     controller.abort()
-    if (typeof unsubscribeAuth === 'function') unsubscribeAuth()
   }
 }
