@@ -5,6 +5,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { addToCart } from './data/cartService'
+import { loadPublicProfileStats, setProfileFollowState } from './data/profileService'
 import { createReport, normalizeProduct, resolveProductMedia } from './data/productService'
 import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
@@ -28,6 +29,7 @@ const logoReadyPromise = initShellChrome()
 createCriticalAssetPreloader({ logoReadyPromise })
 
 const profileRoot = document.querySelector('[data-public-profile-root]')
+const PUBLIC_PROFILE_DEBUG = false
 
 
 const BADGE_CONFIG = {
@@ -67,6 +69,9 @@ const uiState = {
   parallaxBound: false,
   marqueeTicker: null,
   badgeUrls: {},
+  stats: null,
+  failedStatQueries: [],
+  follow: { isFollowing: false, loading: false, error: '' },
   report: { open: false, submitting: false, error: '', message: '' }
 }
 
@@ -88,10 +93,29 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;')
 }
 
+function profileInitials(value = '') {
+  const parts = String(value || '').trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return 'M'
+  if (parts.length > 1) return `${parts[0][0]}${parts.at(-1)[0]}`.toUpperCase()
+  return parts[0].slice(0, 2).toUpperCase()
+}
+
 function isReducedMotion() {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
+function debugPublicProfile(phase, extra = {}) {
+  if (!PUBLIC_PROFILE_DEBUG) return
+  console.info('[public-profile]', {
+    phase,
+    profileUid: uiState.profile?.uid || '',
+    viewerUid: uiState.currentUser?.uid || '',
+    followState: { ...uiState.follow },
+    stats: uiState.stats,
+    failedStatQueries: [...uiState.failedStatQueries],
+    ...extra
+  })
+}
 
 function getProfileRoles(profile = {}) {
   const values = [
@@ -127,17 +151,49 @@ function badgeIconMarkup(key, extraClass = '') {
 }
 
 function getStats(profile = {}) {
-  const stats = profile.stats || {}
+  const loaded = uiState.stats || {}
+  const legacy = profile.stats || {}
   return {
-    followers: stats.followers ?? profile.followersCount ?? profile.followerCount ?? 0,
-    following: stats.following ?? profile.followingCount ?? 0,
-    posts: stats.posts ?? profile.postsCount ?? uiState.postsByUid.get(profile.uid || '')?.length ?? 0,
-    products: stats.products ?? profile.productsCount ?? uiState.productsByUid.get(profile.uid || '')?.length ?? 0,
-    downloads: stats.downloads ?? profile.downloadsCount ?? 0,
-    focusedCommunities: stats.focusedCommunities ?? profile.focusedCommunitiesCount ?? profile.communityFocusCount ?? 0,
-    stagePlans: stats.stagePlans ?? profile.stagePlansCount ?? uiState.stagePlansByUid.get(profile.uid || '')?.length ?? 0,
-    communities: stats.communities ?? profile.communitiesCount ?? uiState.communitiesByUid.get(profile.uid || '')?.length ?? 0,
+    followers: loaded.followers ?? profile.followersCount ?? profile.followerCount ?? 0,
+    following: loaded.following ?? profile.followingCount ?? 0,
+    posts: loaded.posts ?? uiState.postsByUid.get(profile.uid || '')?.length ?? legacy.posts ?? 0,
+    products: loaded.products ?? uiState.productsByUid.get(profile.uid || '')?.length ?? legacy.products ?? 0,
+    downloads: loaded.downloads ?? profile.downloadsCount ?? legacy.downloads ?? 0,
+    focusedCommunities: loaded.focused ?? 0,
+    stagePlans: loaded.stagePlans ?? uiState.stagePlansByUid.get(profile.uid || '')?.length ?? 0,
+    communities: loaded.communities ?? uiState.communitiesByUid.get(profile.uid || '')?.length ?? 0,
     about: profile.bio ? 1 : 0
+  }
+}
+
+function fallbackStats(profile = {}) {
+  const uid = profile.uid || ''
+  const products = uiState.productsByUid.get(uid) || []
+  return {
+    followers: Math.max(0, Number(profile.followersCount ?? profile.followerCount ?? 0)),
+    following: Math.max(0, Number(profile.followingCount ?? 0)),
+    posts: (uiState.postsByUid.get(uid) || []).length,
+    products: products.length,
+    downloads: products.reduce((total, product) => total + Math.max(0, Number(product.downloadCount ?? product.counts?.downloads ?? 0)), 0),
+    focused: 0,
+    communities: (uiState.communitiesByUid.get(uid) || []).length,
+    stagePlans: (uiState.stagePlansByUid.get(uid) || []).length
+  }
+}
+
+async function refreshPublicStats(profile = uiState.profile) {
+  if (!profile?.uid) return
+  try {
+    const result = await loadPublicProfileStats(profile.uid)
+    uiState.stats = { ...fallbackStats(profile), ...(result.stats || {}) }
+    uiState.failedStatQueries = Array.isArray(result.failedStatQueries) ? result.failedStatQueries : []
+    uiState.follow.isFollowing = Boolean(result.isFollowing)
+    debugPublicProfile('stats-loaded')
+  } catch (error) {
+    uiState.stats = fallbackStats(profile)
+    uiState.failedStatQueries = ['stats-service']
+    console.warn('[profilePublic] profile stats unavailable; loaded content counts used', error?.code || error?.message || error)
+    debugPublicProfile('stats-error', { errorCode: error?.code || '', errorMessage: error?.message || '' })
   }
 }
 
@@ -648,8 +704,13 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   ]
 
   const isSignedIn = Boolean(currentUser?.uid)
-  const isSelfPreview = Boolean(previewMode && currentUser?.uid === uid)
+  const isSelfPreview = Boolean(currentUser?.uid === uid)
   const signedInElsewhere = isSignedIn && currentUser.uid !== uid
+  const followLabel = uiState.follow.loading
+    ? (uiState.follow.isFollowing ? 'Following...' : 'Unfollowing...')
+    : uiState.follow.isFollowing
+      ? 'Following'
+      : 'Follow'
   const actionsMarkup = isSelfPreview
     ? `
       <a class="button button-muted public-hero-btn-outline" href="${ROUTES.profile}">Back to Private Profile</a>
@@ -658,11 +719,11 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
     : signedInElsewhere
       ? `
         <a class="button button-accent public-hero-btn-primary" href="${ROUTES.inbox}?start=${encodeURIComponent(uid)}">Message</a>
-        <button class="button button-muted public-hero-btn-outline" type="button" disabled aria-disabled="true" title="Follow is coming soon">Follow</button>
+        <button class="button ${uiState.follow.isFollowing ? 'button-accent is-following' : 'button-muted'} public-hero-btn-outline" type="button" data-follow-profile aria-pressed="${String(uiState.follow.isFollowing)}" ${uiState.follow.loading ? 'disabled aria-busy="true"' : ''}>${followLabel}</button>
         <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
       `
       : `
-        <a class="button button-accent public-hero-btn-primary" href="${authRoute({ redirect: getCurrentPath() })}">Sign in to interact</a>
+        <button class="button button-accent public-hero-btn-primary" type="button" data-follow-profile>Follow</button>
         <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
       `
 
@@ -672,16 +733,17 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
       <div class="public-hero-overlay"></div>
       <div class="public-hero-inner">
         <div class="public-hero-identity">
-          ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" />` : '<div class="public-avatar public-avatar-fallback">MR</div>'}
+          ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" />` : `<div class="public-avatar public-avatar-fallback">${escapeHtml(profileInitials(displayName))}</div>`}
           <div class="public-hero-copy ${isLongName ? 'is-marquee-name' : ''}">
             <div class="public-name-mask"><h1 class="public-name-track">${escapeHtml(displayName)}</h1></div>
             <p class="public-handle"><span>${escapeHtml(username || 'No username')}</span>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</p>
             <p class="public-role">${escapeHtml(roleLabel)}</p>
             <div class="public-badge-row" aria-label="Profile badges">${profileBadgeKeys.map((key) => badgeIconMarkup(key)).join('') || '<span class="public-badge-empty">No badges yet</span>'}</div>
             <div class="public-header-stats" aria-label="Creator stats">
-              ${headerStats.map(([label, value]) => `<span><strong>${Number(value || 0)}</strong><em>${escapeHtml(label)}</em></span>`).join('')}
+              ${headerStats.map(([label, value]) => `<span class="public-header-stat"><strong>${Number(value || 0)}</strong><em>${escapeHtml(label)}</em></span>`).join('')}
             </div>
             <div class="public-actions">${actionsMarkup}</div>
+            ${uiState.follow.error ? `<p class="public-follow-error" role="status">${escapeHtml(uiState.follow.error)}</p>` : ''}
           </div>
         </div>
       </div>
@@ -752,6 +814,48 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
     })
   })
 
+  profileRoot.querySelector('[data-follow-profile]')?.addEventListener('click', async () => {
+    if (!uiState.currentUser?.uid) {
+      window.location.assign(authRoute({ redirect: getCurrentPath() }))
+      return
+    }
+    if (uiState.currentUser.uid === profile.uid || uiState.follow.loading) return
+
+    const previous = uiState.follow.isFollowing
+    const next = !previous
+    uiState.follow = { isFollowing: next, loading: true, error: '' }
+    uiState.stats = {
+      ...fallbackStats(profile),
+      ...(uiState.stats || {}),
+      followers: Math.max(0, Number(getStats(profile).followers || 0) + (next ? 1 : -1))
+    }
+    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+    try {
+      const result = await setProfileFollowState(profile.uid, next)
+      uiState.follow = { isFollowing: Boolean(result.following), loading: false, error: '' }
+      debugPublicProfile('follow-write', {
+        followWriteResult: result,
+        notificationPreferenceResult: result.notificationCreated
+      })
+      await refreshPublicStats(profile)
+    } catch (error) {
+      uiState.follow = {
+        isFollowing: previous,
+        loading: false,
+        error: error?.code === 'functions/unauthenticated'
+          ? 'Sign in again to update this follow.'
+          : 'Could not update this follow. Please try again.'
+      }
+      uiState.stats = {
+        ...(uiState.stats || fallbackStats(profile)),
+        followers: Math.max(0, Number(getStats(profile).followers || 0) + (previous ? 1 : -1))
+      }
+      console.warn('[profilePublic] follow update failed', error?.code || error?.message || error)
+      debugPublicProfile('follow-error', { errorCode: error?.code || '', errorMessage: error?.message || '' })
+    }
+    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+  })
+
   bindParallax()
   bindMarquee()
   bindProfileReport(profile)
@@ -798,19 +902,27 @@ async function initPublicProfile() {
   const profile = await getPublicProfile(uid) || await buildPublicProfileFallback(uid)
   if (!profile) return renderNotFound()
 
-  await Promise.all([
-    loadPublicCommunityPostsForAuthor(uid),
-    loadPublicProductsForArtist(uid),
-    loadPublicStagePlansForOwner(uid),
-    loadPublicCommunitiesForProfile(uid)
-  ])
-  uiState.badgeUrls = await loadBadgeAssetUrls()
-
   uiState.profile = profile
   uiState.currentUser = currentUser
   uiState.previewMode = Boolean(currentUser?.uid === uid && previewMode)
   uiState.activeCategory = 'posts'
   uiState.visibleCount = 8
+  uiState.follow = { isFollowing: false, loading: false, error: '' }
+
+  const contentResults = await Promise.allSettled([
+    loadPublicCommunityPostsForAuthor(uid),
+    loadPublicProductsForArtist(uid),
+    loadPublicStagePlansForOwner(uid),
+    loadPublicCommunitiesForProfile(uid),
+    loadBadgeAssetUrls()
+  ])
+  if (contentResults[4].status === 'fulfilled') uiState.badgeUrls = contentResults[4].value
+  contentResults.slice(0, 4).forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.warn('[profilePublic] public content load failed', { source: ['posts', 'products', 'stagePlans', 'communities'][index], code: result.reason?.code, message: result.reason?.message })
+    }
+  })
+  await refreshPublicStats(profile)
 
   renderPublicProfile(profile, currentUser, uiState.previewMode)
 }

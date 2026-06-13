@@ -68,6 +68,7 @@ const { forcePasswordReset, revokeRecoveryCodes, setTemporaryPassword } = requir
 const { requestEmailVerification, requestPasswordResetEmail } = require('./src/email/authEmails')
 const { getEmailAdminStatus, listAdminEmailLogs, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
 const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
+const { getPublicProfileStats, toggleProfileFollow } = require('./src/profiles/profileRelationships')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -150,3 +151,5 @@ exports.sendAdminAuthEmail = sendAdminAuthEmail
 exports.getEmailAdminStatus = getEmailAdminStatus
 exports.listAdminEmailLogs = listAdminEmailLogs
 exports.createLiveKitToken = createLiveKitToken
+exports.getPublicProfileStats = getPublicProfileStats
+exports.toggleProfileFollow = toggleProfileFollow
