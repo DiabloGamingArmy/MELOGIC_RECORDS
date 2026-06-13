@@ -67,7 +67,13 @@ service cloud.firestore {
     }
 
     function profileServerControlledKeys() {
-      return ['accountStatus', 'suspended'];
+      return [
+        'accountStatus',
+        'suspended',
+        'followerCount',
+        'followersCount',
+        'followingCount'
+      ];
     }
 
     function threadPath(threadId) {
@@ -1221,6 +1227,16 @@ service cloud.firestore {
       }
 
       match /focusedCommunities/{communityId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /followers/{followerUid} {
+        allow read: if isOwner(uid) || (signedIn() && request.auth.uid == followerUid);
+        allow write: if false;
+      }
+
+      match /following/{targetUid} {
         allow read: if isOwner(uid);
         allow write: if false;
       }

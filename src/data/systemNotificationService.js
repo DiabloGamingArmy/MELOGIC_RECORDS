@@ -20,6 +20,7 @@ function normalizeNotification(id, raw = {}) {
     productTitle: raw.productTitle || '',
     actorUid: raw.actorUid || metadata.actorUid || '',
     actorDisplayName: raw.actorDisplayName || raw.senderName || '',
+    actorUsername: raw.actorUsername || '',
     actorPhotoURL: raw.actorPhotoURL || '',
     targetType: raw.targetType || metadata.targetType || '',
     targetId: raw.targetId || metadata.targetId || '',
