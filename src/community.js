@@ -14,6 +14,7 @@ import {
   deleteCommunityStory,
   deleteCommunityComment,
   deleteOwnCommunityPost,
+  getCommunityComment,
   getCommunityCommentViewerState,
   getCommunityBySlug,
   getCommunityFocusState,
@@ -265,7 +266,10 @@ const state = {
   commentAttachmentProgress: {},
   commentSubmitting: false,
   commentActionError: '',
-  detailPostId: parseDetailPostId()
+  detailPostId: parseDetailPostId(),
+  focusedCommentId: parseFeedParam('comment'),
+  focusedReplyId: parseFeedParam('reply'),
+  focusedCommentScrolled: false
 }
 
 let feedPaginationObserver = null
@@ -2071,7 +2075,7 @@ function commentCard(comment, replies = []) {
   const repliesLoading = Boolean(replyPage.loading)
   const repliesLoadingMore = Boolean(replyPage.loadingMore)
   return `
-    <article class="community-comment-card ${comment.parentCommentId ? 'is-reply' : ''}" id="comment-${escapeHtml(comment.commentId)}" data-comment-id="${escapeHtml(comment.commentId)}">
+    <article class="community-comment-card ${comment.parentCommentId ? 'is-reply' : ''} ${[state.focusedCommentId, state.focusedReplyId].includes(comment.commentId) ? 'is-notification-target' : ''}" id="comment-${escapeHtml(comment.commentId)}" data-comment-id="${escapeHtml(comment.commentId)}">
       <header class="community-comment-header">
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar">${postAvatar(comment)}</span>
@@ -2928,6 +2932,49 @@ async function loadCommentViewerStateFor(comments = []) {
   state.commentViewerState = { ...state.commentViewerState, ...Object.fromEntries(entries) }
 }
 
+function scrollFocusedCommentIntoView() {
+  const targetId = state.focusedReplyId || state.focusedCommentId
+  if (!targetId || state.focusedCommentScrolled) return
+  window.requestAnimationFrame(() => {
+    const target = document.getElementById(`comment-${targetId}`)
+    if (!target) return
+    state.focusedCommentScrolled = true
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+
+async function loadFocusedComment({ renderAfter = true } = {}) {
+  const targetId = state.focusedReplyId || state.focusedCommentId
+  if (!state.detailPostId || !targetId) return null
+  try {
+    const target = await getCommunityComment(state.detailPostId, targetId)
+    if (!target) return null
+    const page = commentsPageFor(state.detailPostId)
+    if (target.parentCommentId) {
+      const parent = await getCommunityComment(state.detailPostId, target.parentCommentId)
+      if (parent) page.items = mergeCommentsById(page.items || [], [parent])
+      const replyPage = repliesPageFor(target.parentCommentId)
+      replyPage.items = mergeCommentsById(replyPage.items || [], [target])
+      replyPage.expanded = true
+    } else {
+      page.items = mergeCommentsById(page.items || [], [target])
+    }
+    syncActiveCommentState()
+    await loadCommentViewerStateFor([target])
+    if (renderAfter) renderCommentState()
+    scrollFocusedCommentIntoView()
+    return target
+  } catch (error) {
+    console.warn('[community] focused comment load failed', {
+      postId: state.detailPostId,
+      commentId: targetId,
+      code: error?.code,
+      message: error?.message
+    })
+    return null
+  }
+}
+
 async function loadComments({ renderAfter = true, append = false } = {}) {
   if (!state.detailPostId) return
   const page = commentsPageFor(state.detailPostId)
@@ -2949,7 +2996,7 @@ async function loadComments({ renderAfter = true, append = false } = {}) {
       limitCount: 10,
       cursor: append ? page.cursor : null
     })
-    page.items = append ? mergeCommentsById(page.items || [], result.comments) : result.comments
+    page.items = mergeCommentsById(page.items || [], result.comments)
     page.cursor = result.cursor || null
     page.hasMore = Boolean(result.hasMore)
     page.loaded = true
@@ -2966,6 +3013,7 @@ async function loadComments({ renderAfter = true, append = false } = {}) {
     page.loadingMore = false
     syncActiveCommentState()
     if (renderAfter) renderCommentState()
+    scrollFocusedCommentIntoView()
   }
 }
 
@@ -3019,7 +3067,12 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
   state.feedError = ''
   state.loading = false
 
-  if (replaceUrl) window.history.pushState({}, '', communityPostRoute(id))
+  if (replaceUrl) {
+    state.focusedCommentId = ''
+    state.focusedReplyId = ''
+    state.focusedCommentScrolled = false
+    window.history.pushState({}, '', communityPostRoute(id))
+  }
 
   const cachedPost = seedPost || state.posts.find((post) => post.postId === id) || null
   if (cachedPost) {
@@ -3028,7 +3081,9 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
     if (previousPostId !== id && !state.commentsByPostId[id]?.loaded) resetActivePostComments(id)
     syncActiveCommentState(id)
     render()
-    loadComments({ renderAfter: true }).catch(() => null)
+    loadFocusedComment({ renderAfter: true })
+      .then(() => loadComments({ renderAfter: true }))
+      .catch(() => loadComments({ renderAfter: true }))
     Promise.allSettled([
       loadViewerState(),
       loadAttachmentMediaUrls(),
@@ -3051,7 +3106,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
     render()
     if (post) {
       Promise.allSettled([
-        loadComments({ renderAfter: true }),
+        loadFocusedComment({ renderAfter: true }).then(() => loadComments({ renderAfter: true })),
         loadViewerState().then(render),
         loadAttachmentMediaUrls().then(render),
         !state.communities.length ? loadCommunities({ renderOnStart: false, renderAfter: true }) : Promise.resolve()
@@ -5845,6 +5900,9 @@ subscribeToAuthState((user) => {
 
 window.addEventListener('popstate', () => {
   state.detailPostId = parseDetailPostId()
+  state.focusedCommentId = parseFeedParam('comment')
+  state.focusedReplyId = parseFeedParam('reply')
+  state.focusedCommentScrolled = false
   state.view = parseCommunityView()
   state.activeTag = normalizeTagKey(parseFeedParam('tag'))
   state.feedSearch = parseFeedParam('search').trim()

@@ -4,7 +4,8 @@ import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
-import { ROUTES, authRoute, inboxActiveCallRoute, publicProfileRoute } from './utils/routes'
+import { getEffectiveProfile } from './firebase/firestore'
+import { ROUTES, authRoute, communityPostRoute, inboxActiveCallRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
@@ -63,16 +64,21 @@ import {
   watchRecentAccountCalls
 } from './data/accountCallService'
 import { AccountAudioCallManager } from './webrtc/accountAudioCallManager'
+import {
+  contentViewForNotification,
+  normalizeNotificationPreferences,
+  notificationIsEnabled
+} from './data/notificationPreferences'
 
 const app = document.querySelector('#app')
 
 const inboxFilters = [
   { label: 'Messages', path: ROUTES.inboxMessages },
   { label: 'Calls', path: ROUTES.inboxCalls },
-  { label: 'Content', path: ROUTES.inboxContentLikes },
+  { label: 'Content', path: ROUTES.inboxContentAll },
   { label: 'System', path: ROUTES.inboxSystem }
 ]
-const contentViews = new Set(['likes', 'follows', 'comments', 'mentions'])
+const contentViews = new Set(['all', 'likes', 'follows', 'comments', 'mentions'])
 const initialSystemFilter = new URLSearchParams(window.location.search).get('system')
 
 function parseInboxRoute(pathname = window.location.pathname) {
@@ -93,7 +99,7 @@ function parseInboxRoute(pathname = window.location.pathname) {
     return { valid: true, section: 'System', canonicalPath: ROUTES.inboxSystem }
   }
   if (segments[1] === 'content') {
-    const contentView = contentViews.has(segments[2]) ? segments[2] : 'likes'
+    const contentView = contentViews.has(segments[2]) ? segments[2] : 'all'
     return {
       valid: segments.length <= 3 && (!segments[2] || contentViews.has(segments[2])),
       section: 'Content',
@@ -145,6 +151,11 @@ const securityAccountEventTypes = new Set([
 ])
 
 const activityCopy = {
+  All: {
+    title: 'All',
+    emptyTitle: 'No content activity yet.',
+    emptyBody: 'Likes, follows, comments, and mentions connected to your work will appear here.'
+  },
   Calls: {
     title: 'Calls',
     emptyTitle: 'No calls yet.',
@@ -193,7 +204,7 @@ const appState = {
   optimisticMessagesByThreadId: {},
   preparingThreadIds: {},
   activeFilter: initialInboxRoute.section,
-  contentView: initialInboxRoute.contentView || 'likes',
+  contentView: initialInboxRoute.contentView || 'all',
   callView: initialInboxRoute.callView || 'overview',
   activeCallTargetId: initialInboxRoute.targetId || '',
   threadUnsubscribe: () => {},
@@ -218,6 +229,7 @@ const appState = {
   warnedSystemPermissions: false,
   systemNotifications: [],
   accountEvents: [],
+  notificationPreferences: normalizeNotificationPreferences(),
   inboxPins: [],
   inboxPinsUnsubscribe: () => {},
   isSavingInboxPin: '',
@@ -336,7 +348,7 @@ function inboxRouteWithCurrentSearch(path) {
 
 function applyInboxRoute(route = parseInboxRoute()) {
   appState.activeFilter = route.section
-  appState.contentView = route.contentView || 'likes'
+  appState.contentView = route.contentView || 'all'
   appState.callView = route.callView || 'overview'
   appState.activeCallTargetId = route.targetId || ''
 }
@@ -2889,15 +2901,70 @@ function getCallsContentMarkup() {
   `
 }
 
+function contentNotificationHref(item = {}) {
+  const metadata = item.metadata || {}
+  const postId = item.postId || metadata.postId || ''
+  const commentId = item.commentId || metadata.commentId || ''
+  const replyId = item.replyId || metadata.replyId || ''
+  const productId = item.productId || metadata.productId || ''
+  const actorUid = item.actorUid || metadata.actorUid || ''
+  if (postId) return communityPostRoute(postId, { commentId, replyId })
+  if (productId) return productRoute(productId)
+  if (String(item.type || '').includes('follow') && actorUid) return publicProfileRoute({ uid: actorUid })
+  return item.actionHref || item.path || ROUTES.community
+}
+
+function contentNotificationRows() {
+  const accountRows = appState.accountEvents
+    .filter((item) => contentViewForNotification(item))
+    .map((item) => ({ ...item, sourceCollection: 'accountEvents', body: item.message || item.summary || '' }))
+  const systemRows = appState.systemNotifications
+    .filter((item) => item.category === 'content' || contentViewForNotification(item))
+    .map((item) => ({ ...item, sourceCollection: 'systemNotifications', body: item.body || item.message || '' }))
+  return [...accountRows, ...systemRows]
+    .filter((item) => notificationIsEnabled(item, appState.notificationPreferences))
+    .filter((item) => appState.contentView === 'all' || contentViewForNotification(item) === appState.contentView)
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+}
+
+function contentNotificationCardMarkup(item = {}) {
+  const profile = appState.profileByUid[item.actorUid] || {}
+  const actorName = profile.displayName || profile.username || item.actorDisplayName || item.actorUsername || 'Melogic member'
+  const actorPhotoURL = profile.avatarURL || profile.photoURL || item.actorPhotoURL || ''
+  const profileHref = item.actorUid ? publicProfileRoute({ uid: item.actorUid }) : ''
+  const actionHref = contentNotificationHref(item)
+  return `
+    <article class="content-notification-card ${item.readAt ? '' : 'is-unread'}">
+      ${profileHref ? `
+        <a class="content-notification-actor" href="${escapeHtml(profileHref)}" aria-label="Open ${escapeHtml(actorName)} profile">
+          ${actorPhotoURL ? `<img src="${escapeHtml(actorPhotoURL)}" alt="" />` : `<span>${escapeHtml(actorName.slice(0, 1).toUpperCase())}</span>`}
+        </a>
+      ` : '<span class="content-notification-actor"><span>M</span></span>'}
+      <button
+        type="button"
+        class="content-notification-body"
+        data-open-content-notification="${escapeHtml(item.sourceCollection)}:${escapeHtml(item.id)}"
+        data-content-href="${escapeHtml(actionHref)}"
+      >
+        <strong>${escapeHtml(item.title || 'New activity')}</strong>
+        <span>${escapeHtml(item.body || item.message || '')}</span>
+        <small>${escapeHtml(actorName)} · ${escapeHtml(formatThreadTimestamp(item.createdAt))}</small>
+      </button>
+    </article>
+  `
+}
+
 function getContentActivityMarkup() {
   const tabs = [
+    { key: 'all', label: 'All', path: ROUTES.inboxContentAll },
     { key: 'likes', label: 'Likes', path: ROUTES.inboxContentLikes },
     { key: 'follows', label: 'Follows', path: ROUTES.inboxContentFollows },
     { key: 'comments', label: 'Comments', path: ROUTES.inboxContentComments },
     { key: 'mentions', label: 'Mentions', path: ROUTES.inboxContentMentions }
   ]
   const activeTab = tabs.find((tab) => tab.key === appState.contentView) || tabs[0]
-  const copy = activityCopy[activeTab.label]
+  const copy = activityCopy[activeTab.label] || activityCopy.System
+  const rows = contentNotificationRows()
   return `
     <section class="activity-panel">
       <header class="panel-header activity-header">
@@ -2911,10 +2978,21 @@ function getContentActivityMarkup() {
           </button>
         `).join('')}
       </nav>
-      <section class="inbox-empty-panel activity-empty-panel">
-        <h3>${escapeHtml(copy.emptyTitle)}</h3>
-        <p>${escapeHtml(copy.emptyBody)}</p>
-      </section>
+      ${appState.notificationPreferences.delivery.inApp === false ? `
+        <section class="inbox-empty-panel activity-empty-panel">
+          <h3>In-app notifications are muted.</h3>
+          <p>Turn them back on from Edit Profile → Notifications.</p>
+        </section>
+      ` : rows.length ? `
+        <div class="content-notification-list">
+          ${rows.map(contentNotificationCardMarkup).join('')}
+        </div>
+      ` : `
+        <section class="inbox-empty-panel activity-empty-panel">
+          <h3>${escapeHtml(copy.emptyTitle)}</h3>
+          <p>${escapeHtml(copy.emptyBody)}</p>
+        </section>
+      `}
     </section>
   `
 }
@@ -2931,9 +3009,11 @@ function getFilterContentMarkup(filterName) {
       { key: 'other', label: 'Other' }
     ]
     const notificationRows = appState.systemNotifications
+      .filter((item) => item.category !== 'content' && !contentViewForNotification(item))
       .filter((item) => appState.systemFilter === 'all' || item.type === appState.systemFilter)
       .map((item) => ({ ...item, sourceCollection: 'systemNotifications', body: item.body || item.message || '' }))
     const accountRows = appState.accountEvents
+      .filter((item) => !contentViewForNotification(item))
       .filter((item) => accountEventMatchesSystemFilter(item, appState.systemFilter))
       .map((item) => ({
         ...item,
@@ -4591,6 +4671,21 @@ function bindSharedEvents(scope = inboxRoot) {
     })
   })
 
+  scope.querySelectorAll('[data-open-content-notification]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const [sourceCollection, itemId] = String(button.getAttribute('data-open-content-notification') || '').split(':')
+      const href = button.getAttribute('data-content-href') || ''
+      if (appState.user?.uid && itemId) {
+        if (sourceCollection === 'accountEvents') {
+          markAccountEventRead(appState.user.uid, itemId).catch(() => {})
+        } else {
+          markSystemNotificationRead(appState.user.uid, itemId).catch(() => {})
+        }
+      }
+      if (href) window.location.assign(href)
+    })
+  })
+
   scope.querySelectorAll('[data-account-event-id]').forEach((card) => {
     card.addEventListener('click', async () => {
       if (!appState.user?.uid) return
@@ -5592,7 +5687,8 @@ function startSystemNotificationSubscription() {
     appState.user.uid,
     (items) => {
       appState.systemNotifications = items
-      if (appState.activeFilter === 'System') renderSignedInState()
+      hydrateContentNotificationActors(items).catch(() => null)
+      if (appState.activeFilter === 'System' || appState.activeFilter === 'Content') renderSignedInState()
     },
     (error) => {
       warnSystemPermission(error)
@@ -5607,13 +5703,38 @@ function startAccountEventsSubscription() {
     appState.user.uid,
     (items) => {
       appState.accountEvents = items
-      if (appState.activeFilter === 'System') renderSignedInState()
+      hydrateContentNotificationActors(items).catch(() => null)
+      if (appState.activeFilter === 'System' || appState.activeFilter === 'Content') renderSignedInState()
     },
     (error) => {
       warnSystemPermission(error)
     },
     { limitCount: 100 }
   )
+}
+
+async function loadInboxNotificationPreferences() {
+  if (!appState.user?.uid) return
+  try {
+    const profileResult = await getEffectiveProfile(appState.user.uid, appState.user)
+    const settings = profileResult?.privateProfile?.settings || {}
+    appState.notificationPreferences = normalizeNotificationPreferences(
+      settings.notificationPreferences,
+      settings.notifications
+    )
+  } catch (error) {
+    console.warn('[inbox] notification preferences unavailable; defaults applied', error?.code || error?.message || error)
+    appState.notificationPreferences = normalizeNotificationPreferences()
+  }
+}
+
+async function hydrateContentNotificationActors(items = []) {
+  const actorUids = Array.from(new Set(items.map((item) => item?.actorUid).filter(Boolean)))
+  const missing = actorUids.filter((uid) => !hydratedProfileUids.has(uid))
+  if (!missing.length) return
+  const loaded = await loadProfilesByUids(missing)
+  const changed = mergeHydratedProfiles(loaded)
+  if (changed.length && appState.activeFilter === 'Content') renderSignedInState()
 }
 
 function startInboxPinsSubscription() {
@@ -5780,6 +5901,7 @@ waitForInitialAuthState().then(async (user) => {
   }
 
   appState.user = user
+  await loadInboxNotificationPreferences()
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()
@@ -5830,6 +5952,7 @@ subscribeToAuthState(async (user) => {
     clearRealtimeListeners()
   }
   appState.user = user
+  await loadInboxNotificationPreferences()
   applyInboxRoute(parseInboxRoute())
   renderSignedInState()
   startThreadSubscription()

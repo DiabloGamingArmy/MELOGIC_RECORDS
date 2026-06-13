@@ -649,6 +649,20 @@ export async function listCommunityComments(postId = '', limitCount = 120) {
   }
 }
 
+export async function getCommunityComment(postId = '', commentId = '') {
+  const cleanPostId = String(postId || '').trim()
+  const cleanCommentId = String(commentId || '').trim()
+  if (!cleanPostId || !cleanCommentId) return null
+  const snapshot = await getDoc(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId)).catch((error) => {
+    if (String(error?.code || '').includes('permission-denied')) return null
+    throw error
+  })
+  if (!snapshot?.exists()) return null
+  const comment = normalizeCommunityComment(snapshot)
+  if (comment.status !== 'visible') return null
+  return attachCommunityCommentUrls(comment)
+}
+
 export async function listCommunityCommentsPage({
   postId = '',
   parentCommentId = '',

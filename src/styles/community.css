@@ -2312,6 +2312,24 @@ body.community-chrome-hidden .community-right-rail {
   border-bottom-color: rgba(255, 255, 255, .055);
 }
 
+.community-comment-card.is-notification-target {
+  margin-inline: -0.55rem;
+  padding-inline: 0.55rem;
+  border-left: 2px solid #22b8b5;
+  background: rgba(34, 184, 181, 0.09);
+  animation: community-comment-focus 4s ease-out both;
+}
+
+@keyframes community-comment-focus {
+  0%,
+  55% {
+    background: rgba(34, 184, 181, 0.16);
+  }
+  100% {
+    background: rgba(34, 184, 181, 0.06);
+  }
+}
+
 .community-post-detail-card > .community-post-actions {
   margin-top: 1.25rem;
   padding: .85rem 0;
