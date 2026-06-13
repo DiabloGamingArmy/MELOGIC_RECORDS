@@ -1317,14 +1317,26 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow create, delete: if false;
         allow update: if isOwner(uid)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt', 'hiddenAt'])
+          && (!('readAt' in request.resource.data)
+            || request.resource.data.readAt is timestamp
+            || request.resource.data.readAt == null)
+          && (!('hiddenAt' in request.resource.data)
+            || request.resource.data.hiddenAt is timestamp
+            || request.resource.data.hiddenAt == null);
       }
 
       match /accountEvents/{eventId} {
         allow read: if isOwner(uid);
         allow create, delete: if false;
         allow update: if isOwner(uid)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readAt', 'hiddenAt'])
+          && (!('readAt' in request.resource.data)
+            || request.resource.data.readAt is timestamp
+            || request.resource.data.readAt == null)
+          && (!('hiddenAt' in request.resource.data)
+            || request.resource.data.hiddenAt is timestamp
+            || request.resource.data.hiddenAt == null);
       }
 
       match /securityDevices/{deviceId} {

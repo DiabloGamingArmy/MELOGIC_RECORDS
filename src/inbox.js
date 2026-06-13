@@ -48,8 +48,18 @@ import {
   updateThreadDetails
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
-import { markAccountEventRead, subscribeToAccountEvents } from './services/accountEvents'
-import { markSystemNotificationRead, subscribeToSystemNotifications } from './data/systemNotificationService'
+import {
+  hideAccountEvent,
+  markAccountEventRead,
+  setAccountEventRead,
+  subscribeToAccountEvents
+} from './services/accountEvents'
+import {
+  hideSystemNotification,
+  markSystemNotificationRead,
+  setSystemNotificationRead,
+  subscribeToSystemNotifications
+} from './data/systemNotificationService'
 import { buildInboxPinId, deleteInboxPin, subscribeToInboxPins, upsertInboxPin } from './data/inboxPinService'
 import {
   acceptAccountCall,
@@ -247,6 +257,8 @@ const appState = {
   attachmentDraftByThreadId: {},
   attachmentPreviewByThreadId: {},
   messageContextMenu: null,
+  notificationActionMenu: null,
+  notificationActionMessage: '',
   threadActionMenu: null,
   threadConfirmModal: null,
   isSavingThreadAction: false,
@@ -1156,6 +1168,7 @@ function clearTypingForThread(threadId) {
 
 function clearFloatingOverlays() {
   appState.messageContextMenu = null
+  appState.notificationActionMenu = null
   appState.deleteSubmenuAnchor = null
   appState.reactionPickerAnchor = null
 }
@@ -1668,6 +1681,7 @@ function threadInboxPin(thread = {}) {
 function systemInboxPin(item = {}) {
   const sourceCollection = item.sourceCollection || 'systemNotifications'
   const isAccountEvent = sourceCollection === 'accountEvents'
+  const isContent = item.category === 'content' || Boolean(contentViewForNotification(item))
   const type = isAccountEvent ? 'accountEvent' : 'systemNotification'
   const systemFilter = isAccountEvent
     ? (securityAccountEventTypes.has(String(item.type || '')) ? 'security' : 'account')
@@ -1678,9 +1692,13 @@ function systemInboxPin(item = {}) {
     targetId: item.id,
     title: item.title || 'Notification',
     subtitle: item.body || item.message || '',
-    sourceCategory: 'System',
-    targetPath: item.actionHref || item.path || ROUTES.inboxSystem,
-    metadata: { sourceCollection, systemFilter }
+    sourceCategory: isContent ? 'Inbox' : 'System',
+    targetPath: item.actionHref || item.path || (isContent ? ROUTES.inboxContentAll : ROUTES.inboxSystem),
+    metadata: {
+      sourceCollection,
+      systemFilter,
+      notificationSection: isContent ? 'content' : 'system'
+    }
   }
 }
 
@@ -2614,12 +2632,14 @@ async function handleThreadConfirmAction() {
 }
 
 async function saveInboxPin(pin) {
-  if (!appState.user?.uid || !pin?.pinId || appState.isSavingInboxPin) return
+  if (!appState.user?.uid || !pin?.pinId || appState.isSavingInboxPin) return false
   appState.isSavingInboxPin = pin.pinId
   try {
     await upsertInboxPin(appState.user.uid, pin)
+    return true
   } catch (error) {
     appState.errorMessage = error?.message || 'Unable to pin item.'
+    return false
   } finally {
     appState.isSavingInboxPin = ''
     renderSidebarOnly()
@@ -2627,12 +2647,14 @@ async function saveInboxPin(pin) {
 }
 
 async function removeInboxPin(pinId) {
-  if (!appState.user?.uid || !pinId || appState.isSavingInboxPin) return
+  if (!appState.user?.uid || !pinId || appState.isSavingInboxPin) return false
   appState.isSavingInboxPin = pinId
   try {
     await deleteInboxPin(appState.user.uid, pinId)
+    return true
   } catch (error) {
     appState.errorMessage = error?.message || 'Unable to remove pinned item.'
+    return false
   } finally {
     appState.isSavingInboxPin = ''
     renderSidebarOnly()
@@ -2657,6 +2679,15 @@ async function openInboxPin(pinId) {
     return
   }
   if (pin.sourceCategory === 'System' || pin.type === 'systemNotification' || pin.type === 'accountEvent') {
+    if (pin.metadata?.notificationSection === 'content') {
+      if (pin.targetPath?.startsWith('/')) window.location.assign(pin.targetPath)
+      else {
+        applyInboxRoute(parseInboxRoute(ROUTES.inboxContentAll))
+        window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxContentAll))
+        renderSignedInState()
+      }
+      return
+    }
     applyInboxRoute(parseInboxRoute(ROUTES.inboxSystem))
     window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxSystem))
     appState.systemFilter = pin.metadata?.systemFilter || (pin.type === 'accountEvent' ? 'account' : 'all')
@@ -2914,6 +2945,106 @@ function contentNotificationHref(item = {}) {
   return item.actionHref || item.path || ROUTES.community
 }
 
+function notificationTargetHref(item = {}) {
+  const type = String(item.type || '').toLowerCase()
+  const metadata = item.metadata || {}
+  const postId = item.postId || metadata.postId || ''
+  const commentId = item.commentId || metadata.commentId || ''
+  const replyId = item.replyId || metadata.replyId || ''
+  const productId = item.productId || metadata.productId || ''
+  const actorUid = item.actorUid || metadata.actorUid || ''
+  const isContent = item.category === 'content' || Boolean(contentViewForNotification(item))
+
+  if (isContent) return contentNotificationHref(item)
+  if (item.actionHref || item.path) return item.actionHref || item.path
+  if (securityAccountEventTypes.has(type) || item.category === 'security' || item.category === 'account') {
+    return ROUTES.accountSecurity
+  }
+  if (postId) return communityPostRoute(postId, { commentId, replyId })
+  if (productId) return productRoute(productId)
+  if (item.communityId || metadata.communityId) return ROUTES.communityCommunities
+  if (type.includes('follow') && actorUid) return publicProfileRoute({ uid: actorUid })
+  return ''
+}
+
+function notificationRowById(sourceCollection = '', itemId = '') {
+  const rows = sourceCollection === 'accountEvents' ? appState.accountEvents : appState.systemNotifications
+  const item = rows.find((entry) => entry.id === itemId)
+  if (!item) return null
+  return sourceCollection === 'accountEvents'
+    ? {
+        ...item,
+        sourceCollection,
+        body: item.message || item.summary || '',
+        actionHref: item.path || (securityAccountEventTypes.has(String(item.type || '')) ? ROUTES.accountSecurity : '')
+      }
+    : {
+        ...item,
+        sourceCollection,
+        body: item.body || item.message || ''
+      }
+}
+
+function notificationOpenLabel(item = {}) {
+  const type = String(item.type || '').toLowerCase()
+  if (type.includes('reply')) return 'View reply'
+  if (type.includes('comment')) return 'View comment'
+  if (type.includes('mention')) return 'View mention'
+  if (type.includes('like')) return 'View content'
+  if (type.includes('follow')) return 'Show profile'
+  if (item.productId || type.includes('product') || type.includes('order')) return 'View product'
+  if (item.communityId || type.includes('community')) return 'View community'
+  if (securityAccountEventTypes.has(type) || item.category === 'security') return 'View security settings'
+  if (item.category === 'account') return 'View account settings'
+  return item.actionHref || item.path ? 'Open details' : ''
+}
+
+function getNotificationMenuActions(item = {}) {
+  const actions = []
+  const type = String(item.type || '').toLowerCase()
+  const href = notificationTargetHref(item)
+  const openLabel = notificationOpenLabel(item)
+  const actorUid = item.actorUid || item.metadata?.actorUid || ''
+  const isContent = item.category === 'content' || Boolean(contentViewForNotification(item))
+  const profileHref = actorUid ? publicProfileRoute({ uid: actorUid }) : ''
+  const postId = item.postId || item.metadata?.postId || ''
+
+  if (openLabel && href) actions.push({ id: 'open', label: openLabel, href })
+  if ((type.includes('comment') || type.includes('reply')) && postId) {
+    actions.push({ id: 'open-post', label: type.includes('reply') ? 'View thread / post' : 'View post', href: communityPostRoute(postId) })
+  }
+  if (isContent && profileHref && !(type.includes('follow') && openLabel === 'Show profile')) {
+    actions.push({ id: 'profile', label: item.productId ? 'Show creator profile' : 'Show profile', href: profileHref })
+  }
+  if (isContent && actorUid && actorUid !== appState.user?.uid) {
+    actions.push({ id: 'message-user', label: 'Send message', href: `${ROUTES.inboxMessages}?start=${encodeURIComponent(actorUid)}` })
+  }
+
+  const pin = systemInboxPin({ ...item, actionHref: href })
+  actions.push(
+    { id: item.readAt ? 'mark-unread' : 'mark-read', label: item.readAt ? 'Mark as unread' : 'Mark as read' },
+    { id: isInboxPinned(pin.type, pin.targetId) ? 'unpin' : 'pin', label: isInboxPinned(pin.type, pin.targetId) ? 'Unpin' : 'Pin' }
+  )
+  if (href) actions.push({ id: 'copy-link', label: 'Copy link', href })
+  actions.push({ id: 'hide', label: 'Hide notification', danger: true })
+  return actions
+}
+
+function notificationMenuButtonMarkup(item = {}) {
+  const menu = appState.notificationActionMenu
+  const expanded = menu?.sourceCollection === item.sourceCollection && menu?.itemId === item.id
+  return `
+    <button
+      type="button"
+      class="notification-item-menu-button"
+      data-notification-menu-trigger="${escapeHtml(item.sourceCollection)}:${escapeHtml(item.id)}"
+      aria-label="Notification actions"
+      aria-haspopup="menu"
+      aria-expanded="${expanded ? 'true' : 'false'}"
+    >⋮</button>
+  `
+}
+
 function contentNotificationRows() {
   const accountRows = appState.accountEvents
     .filter((item) => contentViewForNotification(item))
@@ -2950,6 +3081,7 @@ function contentNotificationCardMarkup(item = {}) {
         <span>${escapeHtml(item.body || item.message || '')}</span>
         <small>${escapeHtml(actorName)} · ${escapeHtml(formatThreadTimestamp(item.createdAt))}</small>
       </button>
+      ${notificationMenuButtonMarkup(item)}
     </article>
   `
 }
@@ -3036,13 +3168,11 @@ function getFilterContentMarkup(filterName) {
         ${rows.length ? `
           <div class="system-notification-list">
             ${rows.map((item) => {
-              const pin = systemInboxPin(item)
-              const pinned = isInboxPinned(pin.type, pin.targetId)
               return `
                 <article class="system-notification-card ${item.readAt ? '' : 'is-unread'}" ${item.sourceCollection === 'accountEvents' ? `data-account-event-id="${escapeHtml(item.id)}"` : `data-system-id="${escapeHtml(item.id)}"`}>
                   <div class="system-notification-topline">
                     <p class="system-notification-title">${escapeHtml(item.title)}</p>
-                    <button type="button" class="system-pin-button ${pinned ? 'is-pinned' : ''}" data-pin-system-item="${escapeHtml(item.sourceCollection)}:${escapeHtml(item.id)}">${pinned ? 'Pinned' : 'Pin'}</button>
+                    ${notificationMenuButtonMarkup(item)}
                   </div>
                   ${item.senderName || item.sourceLabel ? `<small class="system-notification-sender">${escapeHtml(item.senderName || item.sourceLabel)}${item.senderVerified || item.supportVerified ? ' ✓' : ''}</small>` : ''}
                   <p>${escapeHtml(item.body)}</p>
@@ -3253,6 +3383,37 @@ function clampMenuPosition(x, y, width = 180, height = 220) {
   }
 }
 
+function getNotificationActionMenuMarkup() {
+  const menu = appState.notificationActionMenu
+  if (!menu) return ''
+  const item = notificationRowById(menu.sourceCollection, menu.itemId)
+  if (!item) return ''
+  const actions = getNotificationMenuActions(item)
+  const menuHeight = Math.min(420, Math.max(90, actions.length * 38 + 12))
+  const pos = clampMenuPosition(menu.x, menu.y, 220, menuHeight)
+  return `
+    <div class="notification-action-backdrop" data-notification-menu-close>
+      <div
+        class="notification-action-menu"
+        role="menu"
+        aria-label="Notification actions"
+        style="left:${pos.x}px;top:${pos.y}px;"
+      >
+        ${actions.map((action) => `
+          <button
+            type="button"
+            role="menuitem"
+            class="${action.danger ? 'is-danger' : ''}"
+            data-notification-menu-action="${escapeHtml(action.id)}"
+            ${action.href ? `data-notification-menu-href="${escapeHtml(action.href)}"` : ''}
+            ${action.disabled ? 'disabled' : ''}
+          >${escapeHtml(action.label)}</button>
+        `).join('')}
+      </div>
+    </div>
+  `
+}
+
 function getContextMenuMarkup() {
   const menu = appState.messageContextMenu
   if (!menu) return ''
@@ -3370,7 +3531,105 @@ function getAccountCallOverlayMarkup() {
 }
 
 function renderFloatingUi() {
-  floatingRoot.innerHTML = `${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getImagePreviewModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}${getAccountCallOverlayMarkup()}`
+  floatingRoot.innerHTML = `${getNotificationActionMenuMarkup()}${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getImagePreviewModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}${getAccountCallOverlayMarkup()}`
+}
+
+function closeNotificationActionMenu({ restoreFocus = false } = {}) {
+  const menu = appState.notificationActionMenu
+  const trigger = menu
+    ? Array.from(inboxRoot.querySelectorAll('[data-notification-menu-trigger]'))
+        .find((button) => button.getAttribute('data-notification-menu-trigger') === `${menu.sourceCollection}:${menu.itemId}`)
+    : null
+  inboxRoot.querySelectorAll('[data-notification-menu-trigger]').forEach((button) => {
+    button.setAttribute('aria-expanded', 'false')
+  })
+  appState.notificationActionMenu = null
+  renderFloatingUi()
+  if (restoreFocus) trigger?.focus()
+}
+
+function openNotificationActionMenu(button) {
+  const [sourceCollection, itemId] = String(button.getAttribute('data-notification-menu-trigger') || '').split(':')
+  if (!sourceCollection || !itemId) return
+  inboxRoot.querySelectorAll('[data-notification-menu-trigger]').forEach((trigger) => {
+    trigger.setAttribute('aria-expanded', 'false')
+  })
+  clearFloatingOverlays()
+  closeThreadActionUi()
+  const rect = button.getBoundingClientRect()
+  appState.notificationActionMenu = {
+    sourceCollection,
+    itemId,
+    x: rect.right - 220,
+    y: rect.bottom + 4
+  }
+  button.setAttribute('aria-expanded', 'true')
+  renderFloatingUi()
+  requestAnimationFrame(() => floatingRoot.querySelector('.notification-action-menu [role="menuitem"]')?.focus())
+}
+
+function updateNotificationInLocalState(sourceCollection, itemId, updates = {}) {
+  const key = sourceCollection === 'accountEvents' ? 'accountEvents' : 'systemNotifications'
+  appState[key] = appState[key]
+    .map((item) => item.id === itemId ? { ...item, ...updates } : item)
+    .filter((item) => !item.hiddenAt)
+}
+
+async function handleNotificationMenuAction(button) {
+  const menu = appState.notificationActionMenu
+  const item = menu ? notificationRowById(menu.sourceCollection, menu.itemId) : null
+  if (!menu || !item || !appState.user?.uid) return
+  const action = button.getAttribute('data-notification-menu-action') || ''
+  const href = button.getAttribute('data-notification-menu-href') || ''
+  const uid = appState.user.uid
+  appState.notificationActionMenu = null
+
+  if (['open', 'open-post', 'profile', 'message-user'].includes(action)) {
+    renderFloatingUi()
+    if (href) window.location.assign(href)
+    return
+  }
+
+  try {
+    if (action === 'mark-read' || action === 'mark-unread') {
+      const read = action === 'mark-read'
+      if (menu.sourceCollection === 'accountEvents') await setAccountEventRead(uid, menu.itemId, read)
+      else await setSystemNotificationRead(uid, menu.itemId, read)
+      updateNotificationInLocalState(menu.sourceCollection, menu.itemId, {
+        readAt: read ? new Date().toISOString() : null
+      })
+      appState.notificationActionMessage = read ? 'Notification marked as read.' : 'Notification marked as unread.'
+    } else if (action === 'pin' || action === 'unpin') {
+      const pin = systemInboxPin({ ...item, actionHref: notificationTargetHref(item) })
+      const saved = action === 'pin'
+        ? await saveInboxPin(pin)
+        : await removeInboxPin(pin.pinId)
+      appState.notificationActionMessage = saved
+        ? (action === 'pin' ? 'Notification pinned.' : 'Notification unpinned.')
+        : 'The notification pin could not be updated.'
+    } else if (action === 'copy-link') {
+      if (!href) throw new Error('This notification does not have a link.')
+      await navigator.clipboard.writeText(new URL(href, window.location.origin).toString())
+      appState.notificationActionMessage = 'Link copied.'
+    } else if (action === 'hide') {
+      if (menu.sourceCollection === 'accountEvents') await hideAccountEvent(uid, menu.itemId)
+      else await hideSystemNotification(uid, menu.itemId)
+      updateNotificationInLocalState(menu.sourceCollection, menu.itemId, {
+        hiddenAt: new Date().toISOString()
+      })
+      appState.notificationActionMessage = 'Notification hidden.'
+    }
+  } catch (error) {
+    console.warn('[inbox] notification action failed', {
+      action,
+      sourceCollection: menu.sourceCollection,
+      notificationId: menu.itemId,
+      code: error?.code || '',
+      message: error?.message || String(error)
+    })
+    appState.notificationActionMessage = 'That notification action could not be completed.'
+  }
+  renderSignedInState()
 }
 
 function refreshAccountCallUi({ refreshConversation = false } = {}) {
@@ -3749,6 +4008,20 @@ async function handleFloatingMenuAction(button) {
 
 function setupFloatingEventDelegates() {
   floatingRoot.addEventListener('click', async (event) => {
+    const notificationAction = event.target.closest('[data-notification-menu-action]')
+    if (notificationAction) {
+      event.preventDefault()
+      event.stopPropagation()
+      await handleNotificationMenuAction(notificationAction)
+      return
+    }
+
+    const notificationClose = event.target.closest('[data-notification-menu-close]')
+    if (notificationClose && event.target.hasAttribute('data-notification-menu-close')) {
+      closeNotificationActionMenu({ restoreFocus: true })
+      return
+    }
+
     const callActionButton = event.target.closest('[data-account-call-action]')
     if (callActionButton) {
       event.preventDefault()
@@ -3867,7 +4140,7 @@ function setupFloatingEventDelegates() {
   })
 
   floatingRoot.addEventListener('contextmenu', (event) => {
-    if (event.target.closest('[data-message-context-menu]')) return
+    if (event.target.closest('[data-message-context-menu], [data-notification-menu-action]')) return
     clearFloatingOverlays()
     appState.threadActionMenu = null
     renderFloatingUi()
@@ -3941,6 +4214,7 @@ function renderActivityLayout(filterName) {
     <div class="inbox-layout inbox-layout-activity">
       <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
       <section class="inbox-main-panel inbox-main-panel-full">
+        ${appState.notificationActionMessage ? `<div class="notification-action-feedback" role="status">${escapeHtml(appState.notificationActionMessage)}</div>` : ''}
         ${getFilterContentMarkup(filterName)}
       </section>
     </div>
@@ -4660,7 +4934,16 @@ function bindSharedEvents(scope = inboxRoot) {
   scope.querySelectorAll('[data-system-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       appState.systemFilter = button.getAttribute('data-system-filter') || 'all'
+      appState.notificationActionMessage = ''
       renderSignedInState()
+    })
+  })
+
+  scope.querySelectorAll('[data-notification-menu-trigger]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openNotificationActionMenu(button)
     })
   })
 
@@ -4690,23 +4973,6 @@ function bindSharedEvents(scope = inboxRoot) {
     card.addEventListener('click', async () => {
       if (!appState.user?.uid) return
       await markAccountEventRead(appState.user.uid, card.getAttribute('data-account-event-id')).catch(() => {})
-    })
-  })
-
-  scope.querySelectorAll('[data-pin-system-item]').forEach((button) => {
-    button.addEventListener('click', async (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-      const [sourceCollection, itemId] = String(button.getAttribute('data-pin-system-item') || '').split(':')
-      const rows = sourceCollection === 'accountEvents' ? appState.accountEvents : appState.systemNotifications
-      const item = rows.find((entry) => entry.id === itemId)
-      if (!item) return
-      const row = sourceCollection === 'accountEvents'
-        ? { ...item, sourceCollection: 'accountEvents', body: item.message || '', actionHref: item.path || '' }
-        : { ...item, sourceCollection: 'systemNotifications', body: item.body || item.message || '' }
-      const pin = systemInboxPin(row)
-      if (isInboxPinned(pin.type, pin.targetId)) await removeInboxPin(pin.pinId)
-      else await saveInboxPin(pin)
     })
   })
 
@@ -5830,6 +6096,11 @@ function handleGlobalKeydown(event) {
   if (event.key === 'Escape' && appState.imagePreviewModal) {
     appState.imagePreviewModal = null
     renderFloatingUi()
+    return
+  }
+  if (event.key === 'Escape' && appState.notificationActionMenu) {
+    event.preventDefault()
+    closeNotificationActionMenu({ restoreFocus: true })
     return
   }
   if (event.key === 'Escape' && appState.messageContextMenu) {
