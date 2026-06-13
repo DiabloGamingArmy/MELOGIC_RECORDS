@@ -47,6 +47,43 @@ function followNotificationsEnabled(user = {}) {
   return preferences.delivery?.inApp !== false && preferences.content?.follows !== false
 }
 
+function isCallableError(error) {
+  return error instanceof HttpsError || [
+    'unauthenticated',
+    'invalid-argument',
+    'not-found',
+    'failed-precondition',
+    'permission-denied'
+  ].includes(String(error?.code || ''))
+}
+
+function safeErrorDetails(error) {
+  return {
+    code: cleanString(error?.code || 'unknown', 80),
+    message: cleanString(error?.message || 'Unknown error', 300)
+  }
+}
+
+function calculateFollowTransition({
+  followerExists = false,
+  followingExists = false,
+  requestedState = null,
+  followersCount = 0,
+  followingCount = 0
+} = {}) {
+  const wasFollowing = Boolean(followerExists || followingExists)
+  const following = typeof requestedState === 'boolean' ? requestedState : !wasFollowing
+  const targetDelta = following ? (followerExists ? 0 : 1) : (followerExists ? -1 : 0)
+  const viewerDelta = following ? (followingExists ? 0 : 1) : (followingExists ? -1 : 0)
+  return {
+    wasFollowing,
+    following,
+    mirrorsMatch: Boolean(followerExists) === Boolean(followingExists),
+    followersCount: Math.max(0, Number(followersCount || 0) + targetDelta),
+    followingCount: Math.max(0, Number(followingCount || 0) + viewerDelta)
+  }
+}
+
 async function aggregateCount(query) {
   const snapshot = await query.count().get()
   return Math.max(0, Number(snapshot.data().count || 0))
@@ -81,133 +118,148 @@ async function countPublicCommunities(uid) {
   return new Set([...owned.docs, ...moderated.docs].map((entry) => entry.id)).size
 }
 
-const toggleProfileFollow = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
+async function toggleProfileFollowHandler(request) {
   const viewerUid = requireAuth(request)
   const targetUid = validUid(request.data?.targetUid)
   if (viewerUid === targetUid) throw new HttpsError('failed-precondition', 'You cannot follow your own profile.')
   const requestedState = typeof request.data?.follow === 'boolean' ? request.data.follow : null
 
-  const viewerProfileRef = firestore.collection('profiles').doc(viewerUid)
-  const viewerUserRef = firestore.collection('users').doc(viewerUid)
-  const targetProfileRef = firestore.collection('profiles').doc(targetUid)
-  const targetUserRef = firestore.collection('users').doc(targetUid)
-  const followerRef = targetUserRef.collection('followers').doc(viewerUid)
-  const followingRef = viewerUserRef.collection('following').doc(targetUid)
-  const notificationRef = targetUserRef.collection('systemNotifications').doc()
+  try {
+    const viewerProfileRef = firestore.collection('profiles').doc(viewerUid)
+    const viewerUserRef = firestore.collection('users').doc(viewerUid)
+    const targetProfileRef = firestore.collection('profiles').doc(targetUid)
+    const targetUserRef = firestore.collection('users').doc(targetUid)
+    const followerRef = targetUserRef.collection('followers').doc(viewerUid)
+    const followingRef = viewerUserRef.collection('following').doc(targetUid)
+    const notificationRef = targetUserRef.collection('systemNotifications').doc()
 
-  const transactionResult = await firestore.runTransaction(async (transaction) => {
-    const [viewerProfileSnap, viewerUserSnap, targetProfileSnap, targetUserSnap, followerSnap, followingSnap] = await Promise.all([
-      transaction.get(viewerProfileRef),
-      transaction.get(viewerUserRef),
-      transaction.get(targetProfileRef),
-      transaction.get(targetUserRef),
-      transaction.get(followerRef),
-      transaction.get(followingRef)
-    ])
-    if (!targetProfileSnap.exists && !targetUserSnap.exists) {
-      throw new HttpsError('not-found', 'Profile not found.')
-    }
+    const transactionResult = await firestore.runTransaction(async (transaction) => {
+      const [viewerProfileSnap, viewerUserSnap, targetProfileSnap, targetUserSnap, followerSnap, followingSnap] = await Promise.all([
+        transaction.get(viewerProfileRef),
+        transaction.get(viewerUserRef),
+        transaction.get(targetProfileRef),
+        transaction.get(targetUserRef),
+        transaction.get(followerRef),
+        transaction.get(followingRef)
+      ])
+      if (!targetProfileSnap.exists && !targetUserSnap.exists) {
+        throw new HttpsError('not-found', 'Profile not found.')
+      }
 
-    const wasFollowing = followerSnap.exists || followingSnap.exists
-    const following = requestedState == null ? !wasFollowing : requestedState
-    if (following === wasFollowing && followerSnap.exists === followingSnap.exists) {
-      return { ok: true, targetUid, following, changed: false, notificationCreated: false }
-    }
+      const targetProfile = targetProfileSnap.exists ? targetProfileSnap.data() || {} : {}
+      const viewerProfile = viewerProfileSnap.exists ? viewerProfileSnap.data() || {} : {}
+      const targetUser = targetUserSnap.exists ? targetUserSnap.data() || {} : {}
+      const viewerUser = viewerUserSnap.exists ? viewerUserSnap.data() || {} : {}
+      const targetCounterSource = targetProfileSnap.exists ? targetProfile : targetUser
+      const viewerCounterSource = viewerProfileSnap.exists ? viewerProfile : viewerUser
+      const transition = calculateFollowTransition({
+        followerExists: followerSnap.exists,
+        followingExists: followingSnap.exists,
+        requestedState,
+        followersCount: targetCounterSource.followerCount ?? targetCounterSource.followersCount ?? 0,
+        followingCount: viewerCounterSource.followingCount || 0
+      })
+      const { wasFollowing, following, followersCount, followingCount, mirrorsMatch } = transition
 
-    const now = admin.firestore.FieldValue.serverTimestamp()
-    const viewer = profileSummary(
-      viewerUid,
-      viewerProfileSnap.exists ? viewerProfileSnap.data() || {} : {},
-      viewerUserSnap.exists ? viewerUserSnap.data() || {} : {}
-    )
-    const target = profileSummary(
-      targetUid,
-      targetProfileSnap.exists ? targetProfileSnap.data() || {} : {},
-      targetUserSnap.exists ? targetUserSnap.data() || {} : {}
-    )
+      if (following === wasFollowing && mirrorsMatch) {
+        return {
+          ok: true,
+          targetUid,
+          following,
+          followersCount,
+          followingCount,
+          changed: false,
+          shouldNotify: false
+        }
+      }
 
-    if (following) {
-      transaction.set(followerRef, { ...viewer, followedAt: now, updatedAt: now })
-      transaction.set(followingRef, { ...target, followedAt: now, updatedAt: now })
-    } else {
-      transaction.delete(followerRef)
-      transaction.delete(followingRef)
-    }
+      const now = admin.firestore.FieldValue.serverTimestamp()
+      const viewer = profileSummary(viewerUid, viewerProfile, viewerUser)
+      const target = profileSummary(targetUid, targetProfile, targetUser)
 
-    const targetProfile = targetProfileSnap.exists ? targetProfileSnap.data() || {} : {}
-    const viewerProfile = viewerProfileSnap.exists ? viewerProfileSnap.data() || {} : {}
-    const targetCounterSource = targetProfileSnap.exists ? targetProfile : targetUserSnap.data() || {}
-    const viewerCounterSource = viewerProfileSnap.exists ? viewerProfile : viewerUserSnap.data() || {}
-    const targetDelta = following ? (followerSnap.exists ? 0 : 1) : (followerSnap.exists ? -1 : 0)
-    const viewerDelta = following ? (followingSnap.exists ? 0 : 1) : (followingSnap.exists ? -1 : 0)
-    const nextFollowerCount = Math.max(0, Number(targetCounterSource.followerCount ?? targetCounterSource.followersCount ?? 0) + targetDelta)
-    const nextFollowingCount = Math.max(0, Number(viewerCounterSource.followingCount || 0) + viewerDelta)
-    transaction.set(targetProfileSnap.exists ? targetProfileRef : targetUserRef, {
-      followerCount: nextFollowerCount,
-      followersCount: nextFollowerCount,
-      updatedAt: now
-    }, { merge: true })
-    transaction.set(viewerProfileSnap.exists ? viewerProfileRef : viewerUserRef, {
-      followingCount: nextFollowingCount,
-      updatedAt: now
-    }, { merge: true })
+      if (following) {
+        transaction.set(followerRef, { ...viewer, followedAt: now, updatedAt: now })
+        transaction.set(followingRef, { ...target, followedAt: now, updatedAt: now })
+      } else {
+        transaction.delete(followerRef)
+        transaction.delete(followingRef)
+      }
 
-    const notificationCreated = following
-      && !wasFollowing
-      && followNotificationsEnabled(targetUserSnap.exists ? targetUserSnap.data() || {} : {})
-    if (notificationCreated) {
+      transaction.set(targetProfileSnap.exists ? targetProfileRef : targetUserRef, {
+        followerCount: followersCount,
+        followersCount,
+        updatedAt: now
+      }, { merge: true })
+      transaction.set(viewerProfileSnap.exists ? viewerProfileRef : viewerUserRef, {
+        followingCount,
+        updatedAt: now
+      }, { merge: true })
+
       return {
         ok: true,
         targetUid,
         following,
+        followersCount,
+        followingCount,
         changed: true,
-        notificationCreated: false,
-        notificationPayload: {
-        type: 'follow',
-        category: 'content',
-        recipientUid: targetUid,
-        actorUid: viewerUid,
-        actorDisplayName: viewer.displayName,
-        actorUsername: viewer.username,
-        actorPhotoURL: viewer.photoURL,
-        title: 'New follower',
-        body: `${viewer.displayName || 'A Melogic creator'} followed your profile.`,
-        targetType: 'profile',
-        targetId: viewerUid,
-        actionHref: `/profiles/${encodeURIComponent(viewerUid)}`,
-        severity: 'info',
-        readAt: null,
-        createdAt: now,
-        metadata: {
+        shouldNotify: following && !wasFollowing && followNotificationsEnabled(targetUser),
+        notificationActor: viewer
+      }
+    })
+
+    let notificationCreated = false
+    if (transactionResult.shouldNotify && transactionResult.notificationActor) {
+      const viewer = transactionResult.notificationActor
+      try {
+        await notificationRef.set({
+          type: 'follow',
+          category: 'content',
+          recipientUid: targetUid,
           actorUid: viewerUid,
+          actorDisplayName: viewer.displayName,
+          actorUsername: viewer.username,
+          actorPhotoURL: viewer.photoURL,
+          title: 'New follower',
+          body: `${viewer.displayName || 'A Melogic creator'} followed your profile.`,
           targetType: 'profile',
-          targetId: viewerUid
-        }
-        }
+          targetId: viewerUid,
+          actionHref: `/profiles/${encodeURIComponent(viewerUid)}`,
+          severity: 'info',
+          readAt: null,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          metadata: {
+            actorUid: viewerUid,
+            targetType: 'profile',
+            targetId: viewerUid
+          }
+        })
+        notificationCreated = true
+      } catch (error) {
+        console.warn('[profile-follow] notification write failed', {
+          targetUid,
+          viewerUid,
+          ...safeErrorDetails(error)
+        })
       }
     }
 
-    return { ok: true, targetUid, following, changed: true, notificationCreated }
-  })
-
-  const notificationPayload = transactionResult.notificationPayload
-  let notificationCreated = false
-  if (notificationPayload) {
-    try {
-      await notificationRef.set(notificationPayload)
-      notificationCreated = true
-    } catch (error) {
-      console.warn('[profile-follow] notification write failed', {
-        targetUid,
-        viewerUid,
-        code: error?.code || '',
-        message: error?.message || ''
-      })
-    }
+    const { shouldNotify, notificationActor, ...publicResult } = transactionResult
+    return { ...publicResult, notificationCreated }
+  } catch (error) {
+    if (isCallableError(error)) throw error
+    console.error('[profile-follow] toggle failed', {
+      targetUid,
+      viewerUid,
+      requestedState,
+      ...safeErrorDetails(error)
+    })
+    throw new HttpsError('internal', 'Could not update this follow.', {
+      reason: 'follow-write-failed'
+    })
   }
-  const { notificationPayload: ignored, ...publicResult } = transactionResult
-  return { ...publicResult, notificationCreated }
-})
+}
+
+const toggleProfileFollow = onCall({ timeoutSeconds: 60, memory: '256MiB' }, toggleProfileFollowHandler)
 
 const getPublicProfileStats = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const profileUid = validUid(request.data?.uid)
@@ -265,7 +317,11 @@ const getPublicProfileStats = onCall({ timeoutSeconds: 60, memory: '256MiB' }, a
 })
 
 module.exports = {
+  calculateFollowTransition,
   followNotificationsEnabled,
   getPublicProfileStats,
+  isCallableError,
+  safeErrorDetails,
+  toggleProfileFollowHandler,
   toggleProfileFollow
 }

@@ -30,6 +30,7 @@ createCriticalAssetPreloader({ logoReadyPromise })
 
 const profileRoot = document.querySelector('[data-public-profile-root]')
 const PUBLIC_PROFILE_DEBUG = false
+const profileMediaCache = new Map()
 
 
 const BADGE_CONFIG = {
@@ -98,6 +99,37 @@ function profileInitials(value = '') {
   if (!parts.length) return 'M'
   if (parts.length > 1) return `${parts[0][0]}${parts.at(-1)[0]}`.toUpperCase()
   return parts[0].slice(0, 2).toUpperCase()
+}
+
+function getCachedProfileMedia(profile = {}) {
+  const uid = String(profile.uid || '').trim()
+  const avatarSource = String(profile.avatarURL || profile.photoURL || '').trim()
+  const bannerSource = String(profile.bannerURL || '').trim()
+  const cached = profileMediaCache.get(uid)
+  if (cached?.avatarSource === avatarSource && cached?.bannerSource === bannerSource) return cached
+
+  const next = {
+    avatarSource,
+    bannerSource,
+    avatarUrl: avatarSource,
+    bannerUrl: bannerSource,
+    avatarFailed: false,
+    bannerFailed: false,
+    resolvedAt: Date.now()
+  }
+  profileMediaCache.set(uid, next)
+  return next
+}
+
+function markProfileMediaFailed(profile = {}, type = 'avatar') {
+  const media = getCachedProfileMedia(profile)
+  const next = {
+    ...media,
+    [`${type}Failed`]: true,
+    [`${type}Url`]: ''
+  }
+  profileMediaCache.set(String(profile.uid || '').trim(), next)
+  return next
 }
 
 function isReducedMotion() {
@@ -190,7 +222,7 @@ async function refreshPublicStats(profile = uiState.profile) {
     uiState.follow.isFollowing = Boolean(result.isFollowing)
     debugPublicProfile('stats-loaded')
   } catch (error) {
-    uiState.stats = fallbackStats(profile)
+    uiState.stats = { ...fallbackStats(profile), ...(uiState.stats || {}) }
     uiState.failedStatQueries = ['stats-service']
     console.warn('[profilePublic] profile stats unavailable; loaded content counts used', error?.code || error?.message || error)
     debugPublicProfile('stats-error', { errorCode: error?.code || '', errorMessage: error?.message || '' })
@@ -393,39 +425,34 @@ function profileReportDialog(profile = {}) {
   `
 }
 
-function bindProfileReport(profile = {}) {
-  profileRoot.querySelector('[data-report-profile]')?.addEventListener('click', () => {
-    if (!uiState.currentUser?.uid) {
-      window.location.assign(authRoute({ redirect: getCurrentPath() }))
-      return
-    }
-    if (uiState.currentUser.uid === profile.uid) return
-    uiState.report = { open: true, submitting: false, error: '', message: '' }
-    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
-  })
-  profileRoot.querySelectorAll('[data-close-profile-report]').forEach((button) => {
+function renderProfileReportDialog(profile = {}) {
+  const host = profileRoot.querySelector('[data-profile-report-host]')
+  if (!host) return
+  host.innerHTML = profileReportDialog(profile)
+
+  host.querySelectorAll('[data-close-profile-report]').forEach((button) => {
     button.addEventListener('click', () => {
       uiState.report = { ...uiState.report, open: false, submitting: false, error: '' }
-      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      renderProfileReportDialog(profile)
     })
   })
-  profileRoot.querySelector('[data-profile-report-form]')?.addEventListener('submit', async (event) => {
+  host.querySelector('[data-profile-report-form]')?.addEventListener('submit', async (event) => {
     event.preventDefault()
     const formData = new FormData(event.currentTarget)
     const reason = String(formData.get('reason') || '').trim()
     const description = String(formData.get('description') || '').trim()
     if (!reason) {
       uiState.report.error = 'Choose a reason before submitting.'
-      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      renderProfileReportDialog(profile)
       return
     }
     if (reason === 'Other' && !description) {
       uiState.report.error = 'Description is required when reason is Other.'
-      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      renderProfileReportDialog(profile)
       return
     }
     uiState.report = { ...uiState.report, submitting: true, error: '' }
-    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+    renderProfileReportDialog(profile)
     try {
       await createReport({
         targetType: 'profile',
@@ -440,18 +467,30 @@ function bindProfileReport(profile = {}) {
         }
       })
       uiState.report = { open: true, submitting: false, error: '', message: 'Thank you. Your report has been submitted.' }
-      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      renderProfileReportDialog(profile)
       window.setTimeout(() => {
         if (uiState.report.message) {
           uiState.report = { ...uiState.report, open: false }
-          renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+          renderProfileReportDialog(profile)
         }
       }, 1200)
     } catch (error) {
       console.warn('[profilePublic] report failed', { code: error?.code, message: error?.message, details: error?.details })
       uiState.report = { ...uiState.report, submitting: false, error: error?.message || 'Could not submit this report.' }
-      renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
+      renderProfileReportDialog(profile)
     }
+  })
+}
+
+function bindProfileReport(profile = {}) {
+  profileRoot.querySelector('[data-report-profile]')?.addEventListener('click', () => {
+    if (!uiState.currentUser?.uid) {
+      window.location.assign(authRoute({ redirect: getCurrentPath() }))
+      return
+    }
+    if (uiState.currentUser.uid === profile.uid) return
+    uiState.report = { open: true, submitting: false, error: '', message: '' }
+    renderProfileReportDialog(profile)
   })
 }
 
@@ -680,13 +719,218 @@ function bindMarquee() {
   }, 80)
 }
 
+function profileActionMarkup(profile, currentUser) {
+  const uid = profile.uid || ''
+  const isSignedIn = Boolean(currentUser?.uid)
+  const isSelfPreview = Boolean(currentUser?.uid === uid)
+  if (isSelfPreview) {
+    return `
+      <a class="button button-muted public-hero-btn-outline" href="${ROUTES.profile}">Back to Private Profile</a>
+      <a class="button button-accent public-hero-btn-primary" href="${ROUTES.editProfile}">Edit Profile</a>
+    `
+  }
+  if (isSignedIn) {
+    return `
+      <a class="button button-accent public-hero-btn-primary" href="${ROUTES.inbox}?start=${encodeURIComponent(uid)}">Message</a>
+      <button class="button button-muted public-hero-btn-outline" type="button" data-follow-profile aria-pressed="false">Follow</button>
+      <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
+    `
+  }
+  return `
+    <button class="button button-accent public-hero-btn-primary" type="button" data-follow-profile>Follow</button>
+    <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
+  `
+}
+
+function updateProfileStats(profile = uiState.profile) {
+  if (!profile) return
+  const stats = getStats(profile)
+  const values = {
+    followers: stats.followers,
+    following: stats.following,
+    posts: stats.posts,
+    products: stats.products,
+    downloads: stats.downloads,
+    focusedCommunities: stats.focusedCommunities,
+    stagePlans: stats.stagePlans,
+    communities: stats.communities
+  }
+  profileRoot.querySelectorAll('[data-profile-stat]').forEach((node) => {
+    const key = node.getAttribute('data-profile-stat')
+    if (key in values) node.textContent = String(Math.max(0, Number(values[key] || 0)))
+  })
+  profileRoot.querySelectorAll('[data-category-count]').forEach((node) => {
+    const key = node.getAttribute('data-category-count')
+    if (key in values) node.textContent = String(Math.max(0, Number(values[key] || 0)))
+  })
+}
+
+function updateFollowControls() {
+  const button = profileRoot.querySelector('[data-follow-profile]')
+  const errorNode = profileRoot.querySelector('[data-follow-error]')
+  if (button && uiState.currentUser?.uid) {
+    const label = uiState.follow.loading
+      ? (uiState.follow.isFollowing ? 'Following...' : 'Unfollowing...')
+      : uiState.follow.isFollowing
+        ? 'Following'
+        : 'Follow'
+    button.textContent = label
+    button.disabled = uiState.follow.loading
+    button.setAttribute('aria-pressed', String(uiState.follow.isFollowing))
+    if (uiState.follow.loading) button.setAttribute('aria-busy', 'true')
+    else button.removeAttribute('aria-busy')
+    button.classList.toggle('button-accent', uiState.follow.isFollowing)
+    button.classList.toggle('button-muted', !uiState.follow.isFollowing)
+    button.classList.toggle('is-following', uiState.follow.isFollowing)
+  }
+  if (errorNode) {
+    errorNode.textContent = uiState.follow.error || ''
+    errorNode.hidden = !uiState.follow.error
+  }
+}
+
+function bindProfileContentInteractions(profile = uiState.profile) {
+  const contentHost = profileRoot.querySelector('[data-profile-content]')
+  if (!contentHost || !profile) return
+  contentHost.querySelector('[data-load-more]')?.addEventListener('click', () => {
+    uiState.visibleCount += 8
+    renderProfileContent(profile)
+  })
+  contentHost.querySelectorAll('[data-add-public-cart]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const productId = button.getAttribute('data-add-public-cart')
+      const products = uiState.productsByUid.get(profile.uid || '') || []
+      const match = products.find((item) => String(item.id) === String(productId))
+      if (!match) return
+      addToCart(match)
+      button.textContent = 'Added'
+      window.setTimeout(() => {
+        if (button.isConnected) button.textContent = 'Add to Cart'
+      }, 900)
+    })
+  })
+}
+
+function renderProfileContent(profile = uiState.profile) {
+  if (!profile) return
+  profileRoot.querySelectorAll('[data-category]').forEach((button) => {
+    const active = button.getAttribute('data-category') === uiState.activeCategory
+    button.classList.toggle('is-active', active)
+    button.setAttribute('aria-pressed', String(active))
+  })
+  const contentHost = profileRoot.querySelector('[data-profile-content]')
+  if (!contentHost) return
+  contentHost.innerHTML = renderCategorySection(profile)
+  bindProfileContentInteractions(profile)
+}
+
+async function loadProfileCategory(profile, category) {
+  if (category === 'products') {
+    await loadPublicProductsForArtist(profile.uid || '')
+  } else if (category === 'posts') {
+    await loadPublicCommunityPostsForAuthor(profile.uid || '')
+  } else if (category === 'stagePlans') {
+    await loadPublicStagePlansForOwner(profile.uid || '')
+  } else if (category === 'communities') {
+    await loadPublicCommunitiesForProfile(profile.uid || '')
+  }
+}
+
+async function handleFollowToggle(profile = uiState.profile) {
+  if (!uiState.currentUser?.uid) {
+    window.location.assign(authRoute({ redirect: getCurrentPath() }))
+    return
+  }
+  if (!profile?.uid || uiState.currentUser.uid === profile.uid || uiState.follow.loading) return
+
+  const previousFollowing = uiState.follow.isFollowing
+  const previousFollowers = Math.max(0, Number(getStats(profile).followers || 0))
+  const nextFollowing = !previousFollowing
+  const payload = { targetUid: profile.uid, follow: nextFollowing }
+  uiState.follow = { isFollowing: nextFollowing, loading: true, error: '' }
+  uiState.stats = {
+    ...fallbackStats(profile),
+    ...(uiState.stats || {}),
+    followers: Math.max(0, previousFollowers + (nextFollowing ? 1 : -1))
+  }
+  updateFollowControls()
+  updateProfileStats(profile)
+
+  try {
+    const result = await setProfileFollowState(profile.uid, nextFollowing)
+    uiState.follow = { isFollowing: Boolean(result.following), loading: false, error: '' }
+    if (Number.isFinite(Number(result.followersCount))) {
+      uiState.stats = { ...(uiState.stats || fallbackStats(profile)), followers: Math.max(0, Number(result.followersCount)) }
+    }
+    debugPublicProfile('follow-write', {
+      action: 'follow-toggle',
+      payload,
+      currentlyFollowing: previousFollowing,
+      followWriteResult: result,
+      notificationPreferenceResult: result.notificationCreated
+    })
+    await refreshPublicStats(profile)
+  } catch (error) {
+    uiState.follow = {
+      isFollowing: previousFollowing,
+      loading: false,
+      error: error?.code === 'functions/unauthenticated'
+        ? 'Sign in again to update this follow.'
+        : 'Could not update this follow. Please try again.'
+    }
+    uiState.stats = { ...(uiState.stats || fallbackStats(profile)), followers: previousFollowers }
+    console.warn('[profilePublic] follow update failed', error?.code || error?.message || error)
+    debugPublicProfile('follow-error', {
+      action: 'follow-toggle',
+      viewerUid: uiState.currentUser?.uid || '',
+      targetUid: profile.uid,
+      currentlyFollowing: previousFollowing,
+      payload,
+      errorCode: error?.code || '',
+      errorMessage: error?.message || '',
+      errorDetails: error?.details || null
+    })
+  }
+  updateFollowControls()
+  updateProfileStats(profile)
+}
+
+function bindProfileMediaFallbacks(profile = uiState.profile) {
+  const avatar = profileRoot.querySelector('[data-profile-avatar]')
+  avatar?.addEventListener('error', () => {
+    markProfileMediaFailed(profile, 'avatar')
+    const fallback = document.createElement('div')
+    fallback.className = 'public-avatar public-avatar-fallback'
+    fallback.setAttribute('data-profile-avatar-fallback', '')
+    fallback.textContent = profileInitials(profile.displayName || '')
+    avatar.replaceWith(fallback)
+  }, { once: true })
+}
+
+function bindStableProfileInteractions(profile = uiState.profile) {
+  profileRoot.querySelectorAll('[data-category]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const nextCategory = button.getAttribute('data-category')
+      if (!nextCategory || nextCategory === uiState.activeCategory) return
+      uiState.activeCategory = nextCategory
+      uiState.visibleCount = 8
+      await loadProfileCategory(profile, nextCategory)
+      renderProfileContent(profile)
+    })
+  })
+  profileRoot.querySelector('[data-follow-profile]')?.addEventListener('click', () => handleFollowToggle(profile))
+  bindProfileReport(profile)
+  bindProfileMediaFallbacks(profile)
+}
+
 function renderPublicProfile(profile, currentUser, previewMode = false) {
   const uid = profile.uid || ''
   const displayName = profile.displayName || 'Melogic Creator'
   const username = formatUsername(profile.username || profile.usernameLower)
   const bio = profile.bio || 'No bio has been added yet.'
-  const avatarURL = profile.avatarURL || profile.photoURL || ''
-  const bannerURL = profile.bannerURL || ''
+  const media = getCachedProfileMedia(profile)
+  const avatarURL = media.avatarFailed ? '' : media.avatarUrl
+  const bannerURL = media.bannerFailed ? '' : media.bannerUrl
   const roleLabel = profile.roleLabel || 'User'
   const stats = getStats(profile)
   const isLongName = displayName.length > 16
@@ -695,55 +939,31 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   const hasVerified = roles.includes('verified')
   const profileBadgeKeys = ['founder', 'moderator', 'beta', 'pro'].filter((key) => roles.includes(key))
   const headerStats = [
-    ['Followers', stats.followers],
-    ['Following', stats.following],
-    ['Posts', stats.posts],
-    ['Products', stats.products],
-    ['Downloads', stats.downloads],
-    ['Focused', stats.focusedCommunities]
+    ['followers', 'Followers', stats.followers],
+    ['following', 'Following', stats.following],
+    ['posts', 'Posts', stats.posts],
+    ['products', 'Products', stats.products],
+    ['downloads', 'Downloads', stats.downloads],
+    ['focusedCommunities', 'Focused', stats.focusedCommunities]
   ]
-
-  const isSignedIn = Boolean(currentUser?.uid)
-  const isSelfPreview = Boolean(currentUser?.uid === uid)
-  const signedInElsewhere = isSignedIn && currentUser.uid !== uid
-  const followLabel = uiState.follow.loading
-    ? (uiState.follow.isFollowing ? 'Following...' : 'Unfollowing...')
-    : uiState.follow.isFollowing
-      ? 'Following'
-      : 'Follow'
-  const actionsMarkup = isSelfPreview
-    ? `
-      <a class="button button-muted public-hero-btn-outline" href="${ROUTES.profile}">Back to Private Profile</a>
-      <a class="button button-accent public-hero-btn-primary" href="${ROUTES.editProfile}">Edit Profile</a>
-    `
-    : signedInElsewhere
-      ? `
-        <a class="button button-accent public-hero-btn-primary" href="${ROUTES.inbox}?start=${encodeURIComponent(uid)}">Message</a>
-        <button class="button ${uiState.follow.isFollowing ? 'button-accent is-following' : 'button-muted'} public-hero-btn-outline" type="button" data-follow-profile aria-pressed="${String(uiState.follow.isFollowing)}" ${uiState.follow.loading ? 'disabled aria-busy="true"' : ''}>${followLabel}</button>
-        <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
-      `
-      : `
-        <button class="button button-accent public-hero-btn-primary" type="button" data-follow-profile>Follow</button>
-        <button class="button button-muted public-hero-btn-outline" type="button" data-report-profile>Report This Profile</button>
-      `
 
   profileRoot.innerHTML = `
     <section class="public-hero">
-      <div class="public-hero-bg" style="${bannerURL ? `background-image:url('${escapeHtml(bannerURL)}')` : ''}"></div>
+      <div class="public-hero-bg ${bannerURL ? 'has-profile-banner' : 'is-fallback'}" data-initials="${escapeHtml(profileInitials(displayName))}" style="${bannerURL ? `background-image:url('${escapeHtml(bannerURL)}')` : ''}"></div>
       <div class="public-hero-overlay"></div>
       <div class="public-hero-inner">
         <div class="public-hero-identity">
-          ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" />` : `<div class="public-avatar public-avatar-fallback">${escapeHtml(profileInitials(displayName))}</div>`}
+          ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" data-profile-avatar />` : `<div class="public-avatar public-avatar-fallback" data-profile-avatar-fallback>${escapeHtml(profileInitials(displayName))}</div>`}
           <div class="public-hero-copy ${isLongName ? 'is-marquee-name' : ''}">
             <div class="public-name-mask"><h1 class="public-name-track">${escapeHtml(displayName)}</h1></div>
             <p class="public-handle"><span>${escapeHtml(username || 'No username')}</span>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</p>
             <p class="public-role">${escapeHtml(roleLabel)}</p>
             <div class="public-badge-row" aria-label="Profile badges">${profileBadgeKeys.map((key) => badgeIconMarkup(key)).join('') || '<span class="public-badge-empty">No badges yet</span>'}</div>
             <div class="public-header-stats" aria-label="Creator stats">
-              ${headerStats.map(([label, value]) => `<span class="public-header-stat"><strong>${Number(value || 0)}</strong><em>${escapeHtml(label)}</em></span>`).join('')}
+              ${headerStats.map(([key, label, value]) => `<span class="public-header-stat"><strong data-profile-stat="${key}">${Number(value || 0)}</strong><em>${escapeHtml(label)}</em></span>`).join('')}
             </div>
-            <div class="public-actions">${actionsMarkup}</div>
-            ${uiState.follow.error ? `<p class="public-follow-error" role="status">${escapeHtml(uiState.follow.error)}</p>` : ''}
+            <div class="public-actions">${profileActionMarkup(profile, currentUser)}</div>
+            <p class="public-follow-error" role="status" data-follow-error hidden></p>
           </div>
         </div>
       </div>
@@ -766,99 +986,21 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
         ${CATEGORY_CONFIG.map((item) => `
           <button type="button" class="public-stat-card ${uiState.activeCategory === item.key ? 'is-active' : ''}" data-category="${item.key}" aria-pressed="${uiState.activeCategory === item.key ? 'true' : 'false'}">
             <span class="public-stat-label">${item.label.toUpperCase()}</span>
-            <strong>${item.key === 'about' ? '' : (stats[item.key] ?? item.defaultCount)}</strong>
+            <strong ${item.key === 'about' ? '' : `data-category-count="${item.key}"`}>${item.key === 'about' ? '' : (stats[item.key] ?? item.defaultCount)}</strong>
           </button>
         `).join('')}
       </section>
 
-      ${renderCategorySection(profile)}
+      <div data-profile-content>${renderCategorySection(profile)}</div>
     </section>
-    ${profileReportDialog(profile)}
+    <div data-profile-report-host></div>
   `
 
-  profileRoot.querySelectorAll('[data-category]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const nextCategory = button.getAttribute('data-category')
-      if (!nextCategory || nextCategory === uiState.activeCategory) return
-      uiState.activeCategory = nextCategory
-      uiState.visibleCount = 8
-      if (nextCategory === 'products') {
-        await loadPublicProductsForArtist(profile.uid || '')
-      } else if (nextCategory === 'posts') {
-        await loadPublicCommunityPostsForAuthor(profile.uid || '')
-      } else if (nextCategory === 'stagePlans') {
-        await loadPublicStagePlansForOwner(profile.uid || '')
-      } else if (nextCategory === 'communities') {
-        await loadPublicCommunitiesForProfile(profile.uid || '')
-      }
-      renderPublicProfile(uiState.profile, uiState.currentUser, uiState.previewMode)
-    })
-  })
-
-  profileRoot.querySelector('[data-load-more]')?.addEventListener('click', () => {
-    uiState.visibleCount += 8
-    renderPublicProfile(uiState.profile, uiState.currentUser, uiState.previewMode)
-  })
-
-  profileRoot.querySelectorAll('[data-add-public-cart]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const productId = button.getAttribute('data-add-public-cart')
-      const products = uiState.productsByUid.get(profile.uid || '') || []
-      const match = products.find((item) => String(item.id) === String(productId))
-      if (!match) return
-      addToCart(match)
-      button.textContent = 'Added'
-      window.setTimeout(() => {
-        button.textContent = 'Add to Cart'
-      }, 900)
-    })
-  })
-
-  profileRoot.querySelector('[data-follow-profile]')?.addEventListener('click', async () => {
-    if (!uiState.currentUser?.uid) {
-      window.location.assign(authRoute({ redirect: getCurrentPath() }))
-      return
-    }
-    if (uiState.currentUser.uid === profile.uid || uiState.follow.loading) return
-
-    const previous = uiState.follow.isFollowing
-    const next = !previous
-    uiState.follow = { isFollowing: next, loading: true, error: '' }
-    uiState.stats = {
-      ...fallbackStats(profile),
-      ...(uiState.stats || {}),
-      followers: Math.max(0, Number(getStats(profile).followers || 0) + (next ? 1 : -1))
-    }
-    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
-    try {
-      const result = await setProfileFollowState(profile.uid, next)
-      uiState.follow = { isFollowing: Boolean(result.following), loading: false, error: '' }
-      debugPublicProfile('follow-write', {
-        followWriteResult: result,
-        notificationPreferenceResult: result.notificationCreated
-      })
-      await refreshPublicStats(profile)
-    } catch (error) {
-      uiState.follow = {
-        isFollowing: previous,
-        loading: false,
-        error: error?.code === 'functions/unauthenticated'
-          ? 'Sign in again to update this follow.'
-          : 'Could not update this follow. Please try again.'
-      }
-      uiState.stats = {
-        ...(uiState.stats || fallbackStats(profile)),
-        followers: Math.max(0, Number(getStats(profile).followers || 0) + (previous ? 1 : -1))
-      }
-      console.warn('[profilePublic] follow update failed', error?.code || error?.message || error)
-      debugPublicProfile('follow-error', { errorCode: error?.code || '', errorMessage: error?.message || '' })
-    }
-    renderPublicProfile(profile, uiState.currentUser, uiState.previewMode)
-  })
-
+  bindStableProfileInteractions(profile)
+  bindProfileContentInteractions(profile)
+  updateFollowControls()
   bindParallax()
   bindMarquee()
-  bindProfileReport(profile)
 }
 
 async function resolveUid(params) {
