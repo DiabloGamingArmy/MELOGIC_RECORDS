@@ -14,6 +14,7 @@ export const ROUTES = {
   inboxMessages: '/inbox/messages',
   inboxCalls: '/inbox/calls',
   inboxContent: '/inbox/content',
+  inboxContentAll: '/inbox/content/all',
   inboxContentLikes: '/inbox/content/likes',
   inboxContentFollows: '/inbox/content/follows',
   inboxContentComments: '/inbox/content/comments',
@@ -153,9 +154,14 @@ export function productRoute(productOrId = '') {
   return `/products/${encodeURIComponent(String(productOrId || '').trim())}`
 }
 
-export function communityPostRoute(postId = '') {
+export function communityPostRoute(postId = '', { commentId = '', replyId = '' } = {}) {
   const id = String(postId || '').trim()
-  return id ? `${ROUTES.communityPost}/${encodeURIComponent(id)}` : ROUTES.community
+  if (!id) return ROUTES.community
+  const params = new URLSearchParams()
+  if (commentId) params.set('comment', String(commentId))
+  if (replyId) params.set('reply', String(replyId))
+  const query = params.toString()
+  return `${ROUTES.communityPost}/${encodeURIComponent(id)}${query ? `?${query}` : ''}`
 }
 
 export function communityRoute(slug = '') {

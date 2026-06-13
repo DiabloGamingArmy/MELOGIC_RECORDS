@@ -10,6 +10,7 @@ function toIsoDate(value) {
 }
 
 function normalizeNotification(id, raw = {}) {
+  const metadata = raw.metadataSafe || raw.metadata || {}
   return {
     id,
     type: raw.type || 'other',
@@ -17,6 +18,17 @@ function normalizeNotification(id, raw = {}) {
     body: raw.body || '',
     productId: raw.productId || '',
     productTitle: raw.productTitle || '',
+    actorUid: raw.actorUid || metadata.actorUid || '',
+    actorDisplayName: raw.actorDisplayName || raw.senderName || '',
+    actorPhotoURL: raw.actorPhotoURL || '',
+    targetType: raw.targetType || metadata.targetType || '',
+    targetId: raw.targetId || metadata.targetId || '',
+    postId: raw.postId || metadata.postId || '',
+    commentId: raw.commentId || metadata.commentId || '',
+    replyId: raw.replyId || metadata.replyId || '',
+    communityId: raw.communityId || metadata.communityId || '',
+    category: raw.category || 'system',
+    metadata,
     status: raw.status || '',
     actionHref: raw.actionHref || '',
     severity: raw.severity || 'info',

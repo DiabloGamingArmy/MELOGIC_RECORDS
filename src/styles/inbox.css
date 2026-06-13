@@ -2418,6 +2418,69 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   margin-top: 0.2rem;
 }
 
+.content-notification-list {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.content-notification-card {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: start;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  padding: 0.68rem;
+  background: rgba(12, 16, 28, 0.62);
+}
+
+.content-notification-card.is-unread {
+  border-color: rgba(34, 184, 181, 0.48);
+  background: rgba(34, 184, 181, 0.08);
+}
+
+.content-notification-actor {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(126, 147, 191, 0.3);
+  border-radius: 50%;
+  background: rgba(24, 34, 53, 0.9);
+  color: #dfeaff;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.content-notification-actor img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.content-notification-body {
+  width: 100%;
+  display: grid;
+  gap: 0.25rem;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #dce7fb;
+  text-align: left;
+  cursor: pointer;
+}
+
+.content-notification-body span,
+.content-notification-body small {
+  color: #9fb0cf;
+}
+
+.content-notification-body:hover strong,
+.content-notification-body:focus-visible strong {
+  color: #69d4cf;
+}
+
 .account-call-history-row {
   padding: 0.7rem;
   display: grid;

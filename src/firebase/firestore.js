@@ -1,5 +1,6 @@
 import { doc, getDoc, getFirestore, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
 import { app } from './firebaseConfig.js'
+import { normalizeNotificationPreferences } from '../data/notificationPreferences'
 
 let hasWarnedProfileRead = false
 
@@ -121,6 +122,7 @@ function defaultSettings() {
       releaseAlerts: false,
       marketing: false
     },
+    notificationPreferences: normalizeNotificationPreferences(),
     privacy: {
       profileVisibility: 'public'
     }
@@ -742,4 +744,17 @@ export async function saveProfileChanges(user, payload = {}) {
     }
     throw error
   }
+}
+
+export async function savePrivateProfilePreferences(user, payload = {}) {
+  if (!db || !user?.uid) throw new Error('Missing authenticated user for preference save.')
+  const cleanPayload = sanitizeFirestorePayload({
+    uid: user.uid,
+    email: user.email || '',
+    ...(payload.settings ? { settings: payload.settings } : {}),
+    ...(payload.creatorSettings ? { creatorSettings: payload.creatorSettings } : {}),
+    updatedAt: serverTimestamp()
+  })
+  await setDoc(doc(db, 'users', user.uid), cleanPayload, { merge: true })
+  return cleanPayload
 }

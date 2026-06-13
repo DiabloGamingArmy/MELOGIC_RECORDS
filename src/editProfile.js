@@ -5,9 +5,10 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './components/assetChrome'
 import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from './firebase/auth'
-import { db, getEffectiveProfile, saveProfileChanges } from './firebase/firestore'
+import { db, getEffectiveProfile, savePrivateProfilePreferences, saveProfileChanges } from './firebase/firestore'
 import { storage } from './firebase/storage'
 import { ROUTES } from './utils/routes'
+import { normalizeNotificationPreferences } from './data/notificationPreferences'
 
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
@@ -201,10 +202,15 @@ function getMergedState(user, profileResult) {
     location: profileData.location || userData.location || '',
     website: profileData.website || userData.website || '',
     socials: profileData.socials || userData.socials || {},
-    settings: userData.settings || {
-      appearance: {},
-      notifications: {},
-      privacy: {}
+    settings: {
+      ...(userData.settings || {}),
+      appearance: userData.settings?.appearance || {},
+      notifications: userData.settings?.notifications || {},
+      notificationPreferences: normalizeNotificationPreferences(
+        userData.settings?.notificationPreferences,
+        userData.settings?.notifications
+      ),
+      privacy: userData.settings?.privacy || {}
     },
     creatorSettings: userData.creatorSettings || {},
     featuredItems: {
@@ -227,8 +233,46 @@ function getMergedState(user, profileResult) {
     validation: {
       displayName: '',
       username: ''
-    }
+    },
+    dirtySections: {},
+    sectionSaveStates: {}
   }
+}
+
+function notificationToggleMarkup(group, key, label, preferences, { detail = '', disabled = false } = {}) {
+  return `
+    <label class="toggle-row ${disabled ? 'is-coming-soon' : ''}">
+      <span>${label}${detail ? `<small>${detail}</small>` : ''}</span>
+      <input type="checkbox" name="notification.${group}.${key}" form="profile-form" ${preferences?.[group]?.[key] ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+    </label>
+  `
+}
+
+function sectionSaveMarkup(section, label = 'Save Settings') {
+  const saveState = pageState?.sectionSaveStates?.[section] || 'idle'
+  const buttonLabel = saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Retry Save' : label
+  return `
+    <div class="actions-row section-save-row">
+      <span class="section-save-state" data-section-save-state="${section}">${saveState === 'saved' ? 'Changes saved' : saveState === 'error' ? 'Save failed' : ''}</span>
+      <button type="submit" form="profile-form" class="button button-accent" data-save-profile data-save-section="${section}">${buttonLabel}</button>
+    </div>
+  `
+}
+
+function sectionSaveButtonLabel(section, label = 'Save Changes') {
+  const saveState = pageState?.sectionSaveStates?.[section] || 'idle'
+  if (saveState === 'saved') return 'Saved'
+  if (saveState === 'error') return 'Retry Save'
+  return label
+}
+
+function activateSettingsSection(section = readHashSection()) {
+  editRoot.querySelectorAll('[data-section-btn]').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.sectionBtn === section)
+  })
+  editRoot.querySelectorAll('[data-panel]').forEach((panel) => {
+    panel.classList.toggle('is-active', panel.dataset.panel === section)
+  })
 }
 
 async function uploadProfileMedia(uid, files) {
@@ -592,6 +636,7 @@ function renderSettingsPage() {
   const providerIds = state.user.providerData.map((provider) => provider.providerId)
   const appearance = state.settings.appearance || {}
   const notifications = state.settings.notifications || {}
+  const notificationPreferences = normalizeNotificationPreferences(state.settings.notificationPreferences, notifications)
   const creatorSettings = state.creatorSettings || {}
   const avatarPreview = state.pendingMedia.avatarPreview || state.photoURL
   const bannerPreview = state.pendingMedia.bannerPreview || state.bannerURL
@@ -676,7 +721,7 @@ function renderSettingsPage() {
               <label><span>TikTok</span><input name="tiktok" value="${state.socials.tiktok || ''}" /></label>
             </div>
             <div class="actions-row">
-              <button type="submit" class="button button-accent" data-save-profile>Save Changes</button>
+              <button type="submit" class="button button-accent" data-save-profile data-save-section="public-profile">${sectionSaveButtonLabel('public-profile')}</button>
               <button type="reset" class="button button-muted">Reset</button>
             </div>
           </form>
@@ -724,25 +769,28 @@ function renderSettingsPage() {
               <p class="muted">Up to 3 products can be featured at once.</p>
             `
             : '<article class="empty-featured-items-note">Publish products to feature them on your public profile.</article>'}
+          ${sectionSaveMarkup('featured-items', 'Save Featured Items')}
         </div>
 
         <div class="settings-panel ${activeSection === 'appearance' ? 'is-active' : ''}" data-panel="appearance">
           <h2>Appearance</h2>
           <div class="toggle-list">
-            <label><span>Theme</span><select name="theme"><option ${appearance.theme === 'dark' ? 'selected' : ''}>dark</option><option ${appearance.theme === 'system' ? 'selected' : ''}>system</option></select></label>
-            <label class="toggle-row"><span>Compact mode</span><input type="checkbox" name="compactMode" ${appearance.compactMode ? 'checked' : ''} /></label>
-            <label class="toggle-row"><span>Reduced motion</span><input type="checkbox" name="reducedMotion" ${appearance.reducedMotion ? 'checked' : ''} /></label>
+            <label><span>Theme</span><select name="theme" form="profile-form"><option ${appearance.theme === 'dark' ? 'selected' : ''}>dark</option><option ${appearance.theme === 'system' ? 'selected' : ''}>system</option></select></label>
+            <label class="toggle-row"><span>Compact mode</span><input type="checkbox" name="compactMode" form="profile-form" ${appearance.compactMode ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Reduced motion</span><input type="checkbox" name="reducedMotion" form="profile-form" ${appearance.reducedMotion ? 'checked' : ''} /></label>
           </div>
+          ${sectionSaveMarkup('appearance', 'Save Appearance')}
         </div>
 
         <div class="settings-panel ${activeSection === 'creator-settings' ? 'is-active' : ''}" data-panel="creator-settings">
           <h2>Creator Settings</h2>
           <div class="toggle-list">
-            <label class="toggle-row"><span>Creator mode <small>Enables creator workspace features.</small></span><input type="checkbox" name="creatorMode" ${creatorSettings.creatorMode ? 'checked' : ''} /></label>
-            <label class="toggle-row"><span>Public creator profile <small>Allow creator profile visibility to visitors.</small></span><input type="checkbox" name="publicCreatorProfile" ${creatorSettings.publicCreatorProfile ?? true ? 'checked' : ''} /></label>
-            <label class="toggle-row"><span>Storefront visibility <small>Controls whether your storefront appears publicly.</small></span><input type="checkbox" name="storefrontVisible" ${creatorSettings.storefrontVisible ?? false ? 'checked' : ''} /></label>
-            <label><span>Submission preferences</span><input name="submissionPreferences" value="${creatorSettings.submissionPreferences || ''}" /><small class="helper-text">Optional note about your release/submission expectations.</small></label>
+            <label class="toggle-row"><span>Creator mode <small>Enables creator workspace features.</small></span><input type="checkbox" name="creatorMode" form="profile-form" ${creatorSettings.creatorMode ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Public creator profile <small>Allow creator profile visibility to visitors.</small></span><input type="checkbox" name="publicCreatorProfile" form="profile-form" ${creatorSettings.publicCreatorProfile ?? true ? 'checked' : ''} /></label>
+            <label class="toggle-row"><span>Storefront visibility <small>Controls whether your storefront appears publicly.</small></span><input type="checkbox" name="storefrontVisible" form="profile-form" ${creatorSettings.storefrontVisible ?? false ? 'checked' : ''} /></label>
+            <label><span>Submission preferences</span><input name="submissionPreferences" form="profile-form" value="${creatorSettings.submissionPreferences || ''}" /><small class="helper-text">Optional note about your release/submission expectations.</small></label>
           </div>
+          ${sectionSaveMarkup('creator-settings', 'Save Creator Settings')}
         </div>
 
         <div class="settings-panel ${activeSection === 'security' ? 'is-active' : ''}" data-panel="security">
@@ -757,13 +805,74 @@ function renderSettingsPage() {
 
         <div class="settings-panel ${activeSection === 'notifications' ? 'is-active' : ''}" data-panel="notifications">
           <h2>Notifications</h2>
-          <div class="toggle-list">
-            <label class="toggle-row"><span>Product updates</span><input type="checkbox" name="productUpdates" ${notifications.productUpdates ?? true ? 'checked' : ''} /></label>
-            <label class="toggle-row"><span>Replies</span><input type="checkbox" name="replies" ${notifications.replies ?? true ? 'checked' : ''} /></label>
-            <label class="toggle-row"><span>Creator news</span><input type="checkbox" name="creatorNews" ${notifications.creatorNews ?? true ? 'checked' : ''} /></label>
-            <label class="toggle-row"><span>Release alerts</span><input type="checkbox" name="releaseAlerts" ${notifications.releaseAlerts ?? true ? 'checked' : ''} /></label>
-            <label class="toggle-row"><span>Marketing</span><input type="checkbox" name="marketing" ${notifications.marketing ?? false ? 'checked' : ''} /></label>
+          <p class="section-copy">Choose which activity appears in Melogic and how supported notifications are delivered.</p>
+          <div class="notification-settings-groups">
+            <section class="notification-settings-group">
+              <h3>Content Activity</h3>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('content', 'likes', 'Likes on my posts and comments', notificationPreferences)}
+                ${notificationToggleMarkup('content', 'comments', 'Comments on my posts', notificationPreferences)}
+                ${notificationToggleMarkup('content', 'replies', 'Replies to my comments', notificationPreferences)}
+                ${notificationToggleMarkup('content', 'mentions', 'Mentions of me', notificationPreferences)}
+                ${notificationToggleMarkup('content', 'reposts', 'Reposts and shares', notificationPreferences)}
+                ${notificationToggleMarkup('content', 'follows', 'New followers', notificationPreferences)}
+              </div>
+            </section>
+            <section class="notification-settings-group">
+              <h3>Community Activity</h3>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('community', 'followedCommunityPosts', 'Posts in communities I follow', notificationPreferences)}
+                ${notificationToggleMarkup('community', 'moderatorAlerts', 'Moderator and admin alerts', notificationPreferences)}
+                ${notificationToggleMarkup('community', 'pinnedPosts', 'Pinned posts in joined communities', notificationPreferences)}
+              </div>
+            </section>
+            <section class="notification-settings-group">
+              <h3>Marketplace / Products</h3>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('marketplace', 'purchases', 'Product purchases', notificationPreferences)}
+                ${notificationToggleMarkup('marketplace', 'reviews', 'Product reviews', notificationPreferences)}
+                ${notificationToggleMarkup('marketplace', 'questions', 'Product questions and comments', notificationPreferences)}
+                ${notificationToggleMarkup('marketplace', 'productUpdates', 'Product updates', notificationPreferences)}
+              </div>
+            </section>
+            <section class="notification-settings-group">
+              <h3>Creator / Artist</h3>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('creator', 'releaseAlerts', 'New releases from followed creators', notificationPreferences)}
+                ${notificationToggleMarkup('creator', 'creatorNews', 'Creator news', notificationPreferences)}
+                ${notificationToggleMarkup('creator', 'collaborationInvites', 'Collaboration invites', notificationPreferences)}
+                ${notificationToggleMarkup('creator', 'projectInvites', 'Project and team invites', notificationPreferences)}
+              </div>
+            </section>
+            <section class="notification-settings-group">
+              <h3>Inbox / Calls</h3>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('inbox', 'directMessages', 'New direct messages', notificationPreferences)}
+                ${notificationToggleMarkup('inbox', 'groupMessages', 'Group messages', notificationPreferences)}
+                ${notificationToggleMarkup('inbox', 'missedCalls', 'Missed calls', notificationPreferences)}
+                ${notificationToggleMarkup('inbox', 'incomingCalls', 'Incoming call alerts', notificationPreferences)}
+              </div>
+            </section>
+            <section class="notification-settings-group">
+              <h3>System / Security</h3>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('system', 'securityAlerts', 'Login and security alerts', notificationPreferences)}
+                ${notificationToggleMarkup('system', 'accountChanges', 'Account changes', notificationPreferences)}
+                ${notificationToggleMarkup('system', 'moderationNotices', 'Policy and moderation notices', notificationPreferences)}
+                ${notificationToggleMarkup('system', 'announcements', 'Important system announcements', notificationPreferences)}
+              </div>
+            </section>
+            <section class="notification-settings-group">
+              <h3>Delivery Preferences</h3>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('delivery', 'inApp', 'In-app notifications', notificationPreferences)}
+                ${notificationToggleMarkup('delivery', 'email', 'Email notifications', notificationPreferences, { detail: 'Coming soon', disabled: true })}
+                ${notificationToggleMarkup('delivery', 'push', 'Push notifications', notificationPreferences, { detail: 'Coming soon', disabled: true })}
+                ${notificationToggleMarkup('delivery', 'marketing', 'Marketing emails', notificationPreferences)}
+              </div>
+            </section>
           </div>
+          ${sectionSaveMarkup('notifications', 'Save Notifications')}
         </div>
 
         <div class="settings-panel ${activeSection === 'connections' ? 'is-active' : ''}" data-panel="connections">
@@ -789,7 +898,7 @@ function renderSettingsPage() {
   `
 
   const feedback = editRoot.querySelector('[data-edit-feedback]')
-  const saveButton = editRoot.querySelector('[data-save-profile]')
+  const saveButtons = editRoot.querySelectorAll('[data-save-profile]')
   const profileForm = editRoot.querySelector('[data-profile-form]')
   const navButtons = editRoot.querySelectorAll('[data-section-btn]')
   const signOutButton = editRoot.querySelector('[data-signout]')
@@ -810,7 +919,7 @@ function renderSettingsPage() {
   navButtons.forEach((button) => {
     button.addEventListener('click', () => {
       window.location.hash = button.dataset.sectionBtn
-      renderSettingsPage()
+      activateSettingsSection(button.dataset.sectionBtn)
     })
   })
 
@@ -918,14 +1027,20 @@ function renderSettingsPage() {
 
   profileForm?.addEventListener('submit', async (event) => {
     event.preventDefault()
+    const submittedSection = event.submitter?.dataset?.saveSection || readHashSection()
+    const submittedButton = event.submitter?.matches?.('[data-save-profile]') ? event.submitter : null
     const formData = new FormData(profileForm)
+    const requiresUnifiedProfileSave = ['public-profile', 'featured-items'].includes(submittedSection)
     const displayNameValidation = validateDisplayName(formData.get('displayName'))
     const usernameValidation = validateUsername(formData.get('username'))
 
-    updateDisplayNameValidationUI(displayNameValidation.valid ? '' : displayNameValidation.message)
-    updateUsernameValidationUI(usernameValidation.valid ? '' : usernameValidation.message)
+    if (requiresUnifiedProfileSave) {
+      updateDisplayNameValidationUI(displayNameValidation.valid ? '' : displayNameValidation.message)
+      updateUsernameValidationUI(usernameValidation.valid ? '' : usernameValidation.message)
+    }
 
-    if (!displayNameValidation.valid || !usernameValidation.valid) {
+    if (requiresUnifiedProfileSave && (!displayNameValidation.valid || !usernameValidation.valid)) {
+      pageState.sectionSaveStates = { ...(pageState.sectionSaveStates || {}), [submittedSection]: 'error' }
       setGlobalEditStatus('Please fix the highlighted fields before saving.', 'error')
       renderSettingsPage()
       if (!hasWarnedEditProfile) {
@@ -935,12 +1050,23 @@ function renderSettingsPage() {
       return
     }
 
+    pageState.sectionSaveStates = { ...(pageState.sectionSaveStates || {}), [submittedSection]: 'saving' }
+
     const allowedFeaturedIds = new Set((state.selectableFeaturedProducts || []).map((product) => String(product.id)))
     const selectedFeaturedProductIds = formData
       .getAll('featuredProductIds')
       .map((id) => String(id || '').trim())
       .filter((id) => allowedFeaturedIds.has(id))
       .slice(0, 3)
+
+    const nextNotificationPreferences = normalizeNotificationPreferences(state.settings.notificationPreferences, state.settings.notifications)
+    Object.keys(nextNotificationPreferences).forEach((group) => {
+      Object.keys(nextNotificationPreferences[group]).forEach((key) => {
+        const field = profileForm.elements.namedItem(`notification.${group}.${key}`)
+        if (!field || field.disabled) return
+        nextNotificationPreferences[group][key] = formData.get(`notification.${group}.${key}`) === 'on'
+      })
+    })
 
     const nextPayload = {
       displayName: displayNameValidation.value,
@@ -958,20 +1084,23 @@ function renderSettingsPage() {
         tiktok: String(formData.get('tiktok') || '').trim()
       },
       settings: {
+        ...(state.settings || {}),
         appearance: {
           theme: String(formData.get('theme') || 'dark'),
           compactMode: formData.get('compactMode') === 'on',
           reducedMotion: formData.get('reducedMotion') === 'on'
         },
         notifications: {
-          productUpdates: formData.get('productUpdates') === 'on',
-          replies: formData.get('replies') === 'on',
-          creatorNews: formData.get('creatorNews') === 'on',
-          releaseAlerts: formData.get('releaseAlerts') === 'on',
-          marketing: formData.get('marketing') === 'on'
+          productUpdates: nextNotificationPreferences.marketplace.productUpdates,
+          replies: nextNotificationPreferences.content.replies,
+          creatorNews: nextNotificationPreferences.creator.creatorNews,
+          releaseAlerts: nextNotificationPreferences.creator.releaseAlerts,
+          marketing: nextNotificationPreferences.delivery.marketing
         },
+        notificationPreferences: nextNotificationPreferences,
         privacy: {
-          profileVisibility: 'public'
+          ...(state.settings?.privacy || {}),
+          profileVisibility: state.settings?.privacy?.profileVisibility || 'public'
         }
       },
       creatorSettings: {
@@ -986,12 +1115,34 @@ function renderSettingsPage() {
       }
     }
 
-    if (saveButton) {
-      saveButton.disabled = true
-      saveButton.textContent = 'Saving...'
-    }
+    saveButtons.forEach((button) => { button.disabled = true })
+    if (submittedButton) submittedButton.textContent = 'Saving...'
 
     try {
+      if (!requiresUnifiedProfileSave) {
+        await savePrivateProfilePreferences(state.user, {
+          settings: nextPayload.settings,
+          creatorSettings: nextPayload.creatorSettings
+        })
+        const sectionLabel = SETTINGS_SECTIONS.find((section) => section.key === submittedSection)?.label || 'Settings'
+        setGlobalEditStatus(`${sectionLabel} saved.`, 'success')
+        pageState = {
+          ...state,
+          settings: nextPayload.settings,
+          creatorSettings: nextPayload.creatorSettings,
+          dirtySections: {
+            ...(state.dirtySections || {}),
+            [submittedSection]: false
+          },
+          sectionSaveStates: {
+            ...(state.sectionSaveStates || {}),
+            [submittedSection]: 'saved'
+          }
+        }
+        renderSettingsPage()
+        return
+      }
+
       const mediaResult = await uploadProfileMedia(state.user.uid, {
         avatar: state.pendingMedia.avatarFile,
         banner: state.pendingMedia.bannerFile
@@ -1020,7 +1171,8 @@ function renderSettingsPage() {
       const mediaMessages = []
       if (state.pendingMedia.avatarFile || state.pendingMedia.avatarRemoved) mediaMessages.push('Profile picture updated successfully.')
       if (state.pendingMedia.bannerFile || state.pendingMedia.bannerRemoved) mediaMessages.push('Banner updated successfully.')
-      setGlobalEditStatus(mediaMessages.length ? `${mediaMessages.join(' ')} Profile changes saved.` : 'Profile changes saved.', 'success')
+      const sectionLabel = SETTINGS_SECTIONS.find((section) => section.key === submittedSection)?.label || 'Profile'
+      setGlobalEditStatus(mediaMessages.length ? `${mediaMessages.join(' ')} ${sectionLabel} saved.` : `${sectionLabel} saved.`, 'success')
 
       pageState = {
         ...state,
@@ -1038,6 +1190,14 @@ function renderSettingsPage() {
         validation: {
           displayName: '',
           username: ''
+        },
+        dirtySections: {
+          ...(state.dirtySections || {}),
+          [submittedSection]: false
+        },
+        sectionSaveStates: {
+          ...(state.sectionSaveStates || {}),
+          [submittedSection]: 'saved'
         }
       }
       renderSettingsPage()
@@ -1050,6 +1210,10 @@ function renderSettingsPage() {
       }
 
       setGlobalEditStatus(toHumanProfileError(error), 'error')
+      pageState.sectionSaveStates = {
+        ...(pageState.sectionSaveStates || {}),
+        [submittedSection]: 'error'
+      }
       renderSettingsPage()
       if (!hasWarnedEditProfile) {
         hasWarnedEditProfile = true
@@ -1065,11 +1229,20 @@ function renderSettingsPage() {
         }
       }
     } finally {
-      if (saveButton) {
-        saveButton.disabled = false
-        saveButton.textContent = 'Save Changes'
-      }
+      saveButtons.forEach((button) => { button.disabled = false })
+      if (submittedButton) submittedButton.textContent = submittedSection === 'public-profile' ? 'Save Changes' : 'Save Settings'
     }
+  })
+
+  editRoot.querySelectorAll('[data-panel] input, [data-panel] textarea, [data-panel] select').forEach((control) => {
+    control.addEventListener('input', () => {
+      const section = control.closest('[data-panel]')?.dataset?.panel || ''
+      if (!section || section === 'account' || section === 'security' || section === 'connections' || section === 'danger-zone') return
+      pageState.dirtySections = { ...(pageState.dirtySections || {}), [section]: true }
+      pageState.sectionSaveStates = { ...(pageState.sectionSaveStates || {}), [section]: 'idle' }
+      const status = editRoot.querySelector(`[data-section-save-state="${section}"]`)
+      if (status) status.textContent = 'Unsaved changes'
+    })
   })
 }
 
@@ -1088,7 +1261,7 @@ async function initEditProfile() {
 
 window.addEventListener('hashchange', () => {
   if (!pageState) return
-  renderSettingsPage()
+  activateSettingsSection()
 })
 
 initEditProfile()
