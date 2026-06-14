@@ -580,3 +580,71 @@ select.is-invalid {
   border-color: rgba(238, 127, 149, 0.8);
   box-shadow: 0 0 0 1px rgba(238, 127, 149, 0.35);
 }
+
+/* Settings visual-system alignment */
+.edit-card,
+.settings-content,
+.media-modal {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: linear-gradient(180deg, var(--ml-bg-panel-strong), var(--ml-bg-panel));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.settings-sidebar {
+  border-color: var(--ml-border);
+}
+
+.settings-nav-btn {
+  color: var(--ml-text-muted);
+}
+
+.settings-nav-btn:hover,
+.settings-nav-btn:focus-visible,
+.settings-nav-btn.is-active {
+  border-color: var(--ml-border-strong);
+}
+
+.settings-nav-btn.is-active {
+  border-left-color: var(--ml-accent);
+  background: rgba(110, 231, 255, 0.08);
+  color: var(--ml-text);
+}
+
+.edit-global-status,
+.media-card,
+.media-preview-wrap,
+.toggle-row,
+.featured-product-option,
+.empty-featured-items-note,
+.settings-card-list > div,
+.connection-row,
+.crop-preview-wrap {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+input,
+textarea,
+select {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  background: rgba(5, 9, 17, 0.82);
+  color: var(--ml-text);
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--ml-border-strong);
+  box-shadow: var(--ml-focus-ring);
+}
+
+.section-copy,
+.helper-text,
+.section-save-state,
+.account-id-value {
+  color: var(--ml-text-muted);
+}

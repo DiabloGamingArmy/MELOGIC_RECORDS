@@ -2218,6 +2218,44 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   }
 }
 
+/* Inbox sections share the Mutual Users surface and control language. */
+.inbox-auth-card,
+.system-notification-card,
+.content-notification-card,
+.inbox-empty-panel,
+.inbox-empty-panel-inline {
+  border-color: var(--ml-border, rgba(130, 160, 220, 0.18));
+  border-radius: var(--ml-radius-md, 8px);
+  background: linear-gradient(
+    180deg,
+    var(--ml-bg-panel-strong, rgba(13, 19, 34, 0.94)),
+    var(--ml-bg-panel, rgba(10, 15, 28, 0.82))
+  );
+}
+
+.inbox-filter {
+  border-color: var(--ml-border, rgba(130, 160, 220, 0.18));
+  border-radius: var(--ml-radius-sm, 6px);
+  background: transparent;
+  color: var(--ml-text-muted, #aebbd4);
+}
+
+.inbox-filter:hover,
+.inbox-filter:focus-visible,
+.inbox-filter.is-active {
+  border-color: var(--ml-border-strong, rgba(130, 190, 255, 0.34));
+  background: rgba(110, 231, 255, 0.08);
+  color: var(--ml-text, #eef4ff);
+}
+
+.notification-action-menu,
+.message-context-menu {
+  border-color: var(--ml-border-strong, rgba(130, 190, 255, 0.34));
+  border-radius: var(--ml-radius-md, 8px);
+  background: rgba(10, 15, 28, 0.98);
+  box-shadow: var(--ml-shadow-float, 0 24px 70px rgba(0, 0, 0, 0.45));
+}
+
 .system-filter-row {
   display: flex;
   flex-wrap: wrap;

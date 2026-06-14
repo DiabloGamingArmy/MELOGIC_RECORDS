@@ -4,6 +4,7 @@ export function escapeHtml(value) {
 
 const ALLOWED_TAGS = new Set(['p', 'br', 'strong', 'b', 'em', 'i', 'u', 'a', 'ul', 'ol', 'li', 'blockquote', 'hr', 'div', 'span'])
 const ALLOWED_STYLES = new Set(['text-align', 'color', 'font-size', 'font-family'])
+const STYLE_CAPABLE_TAGS = new Set(['p', 'strong', 'b', 'em', 'i', 'u', 'li', 'blockquote', 'div', 'span'])
 
 function cleanStyle(value = '') {
   return value
@@ -52,7 +53,7 @@ function sanitizeNode(node, doc) {
     }
   }
   const style = cleanStyle(String(node.getAttribute('style') || ''))
-  if (style && (tag === 'div' || tag === 'span' || tag === 'p')) el.setAttribute('style', style)
+  if (style && STYLE_CAPABLE_TAGS.has(tag)) el.setAttribute('style', style)
   node.childNodes.forEach((child) => {
     const cleaned = sanitizeNode(child, doc)
     if (cleaned) el.appendChild(cleaned)

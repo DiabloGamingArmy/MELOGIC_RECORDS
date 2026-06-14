@@ -1297,7 +1297,7 @@ function renderProductInfoPanel() {
       <div class="product-info-field"><label>Release Date</label><div class="product-info-readonly">${escapeHtml(releaseDisplay)}</div></div>
       <div class="product-info-field"><label>Usage License</label><select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
 
-      <div class="product-info-field is-wide"><label>Long Description</label><div class="rich-editor-toolbar" data-rich-toolbar><button type="button" data-rich-cmd="bold">B</button><button type="button" data-rich-cmd="italic">I</button><button type="button" data-rich-cmd="underline">U</button><button type="button" data-rich-cmd="insertUnorderedList">• List</button><button type="button" data-rich-cmd="insertOrderedList">1. List</button><button type="button" data-rich-align="justifyLeft">Left</button><button type="button" data-rich-align="justifyCenter">Center</button><button type="button" data-rich-align="justifyRight">Right</button><button type="button" data-rich-link>Link</button><button type="button" data-rich-cmd="insertHorizontalRule">HR</button><select data-rich-font><option value="">Font</option><option>Arial</option><option>Georgia</option><option>Verdana</option></select><select data-rich-size><option value="">Size</option><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option></select><input type="color" data-rich-color aria-label="Text color" /></div><div class="rich-description-editor" contenteditable="true" data-description-editor>${sanitizeRichDescription(draft.description || '')}</div><input type="hidden" name="description" value="${escapeHtml(draft.description)}" data-description-hidden /></div>
+      <div class="product-info-field is-wide"><label>Long Description</label><div class="rich-editor-toolbar" data-rich-toolbar><button type="button" data-rich-cmd="bold">B</button><button type="button" data-rich-cmd="italic">I</button><button type="button" data-rich-cmd="underline">U</button><button type="button" data-rich-cmd="insertUnorderedList">• List</button><button type="button" data-rich-cmd="insertOrderedList">1. List</button><button type="button" data-rich-align="justifyLeft">Left</button><button type="button" data-rich-align="justifyCenter">Center</button><button type="button" data-rich-align="justifyRight">Right</button><button type="button" data-rich-link>Link</button><button type="button" data-rich-cmd="insertHorizontalRule">HR</button><select data-rich-font><option value="">Font</option><option>Arial</option><option>Georgia</option><option>Verdana</option></select><select data-rich-size><option value="">Size</option><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option></select><input type="color" value="#e8efff" data-rich-color aria-label="Text color" /></div><div class="rich-description-editor" contenteditable="true" data-description-editor>${sanitizeRichDescription(draft.description || '')}</div><input type="hidden" name="description" value="${escapeHtml(draft.description)}" data-description-hidden /></div>
       <div class="product-info-side-stack">
         <div class="product-info-field"><label>Visibility</label><div class="product-info-readonly">${escapeHtml(isEditMode ? (draft.visibility || 'private') : 'Private until approved/published')}</div></div>
         <div class="product-info-field"><label>Status</label><div class="product-info-readonly">${escapeHtml(isEditMode ? (draft.status || 'draft') : 'Draft')}</div></div>
@@ -1578,54 +1578,74 @@ function renderEditor() {
 
   const descriptionEditor = form?.querySelector('[data-description-editor]')
   const descriptionHidden = form?.querySelector('[data-description-hidden]')
+  let savedDescriptionRange = null
+
+  const captureDescriptionRange = () => {
+    const selection = window.getSelection()
+    if (!descriptionEditor || !selection?.rangeCount) return
+    const range = selection.getRangeAt(0)
+    if (!descriptionEditor.contains(range.commonAncestorContainer)) return
+    savedDescriptionRange = range.cloneRange()
+  }
+
+  const restoreDescriptionRange = () => {
+    if (!descriptionEditor || !savedDescriptionRange) return
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(savedDescriptionRange)
+  }
+
+  const runRichCommand = (command, value = null) => {
+    restoreDescriptionRange()
+    descriptionEditor?.focus()
+    document.execCommand(command, false, value)
+    captureDescriptionRange()
+    descriptionEditor?.dispatchEvent(new Event('input'))
+  }
+
   descriptionEditor?.addEventListener('input', () => {
     const safe = sanitizeRichDescription(descriptionEditor.innerHTML || '')
     if (descriptionHidden) descriptionHidden.value = safe
     updateDraftField('description', safe)
+    captureDescriptionRange()
   })
+  ;['keyup', 'mouseup', 'focus'].forEach((eventName) => descriptionEditor?.addEventListener(eventName, captureDescriptionRange))
+  form?.querySelector('[data-rich-toolbar]')?.addEventListener('pointerdown', captureDescriptionRange)
 
   form?.querySelectorAll('[data-rich-cmd]').forEach((button) => button.addEventListener('click', () => {
     const cmd = button.getAttribute('data-rich-cmd')
     if (!cmd) return
-    descriptionEditor?.focus()
-    document.execCommand(cmd, false)
-    descriptionEditor?.dispatchEvent(new Event('input'))
+    runRichCommand(cmd)
   }))
   form?.querySelectorAll('[data-rich-align]').forEach((button) => button.addEventListener('click', () => {
     const cmd = button.getAttribute('data-rich-align')
     if (!cmd) return
-    descriptionEditor?.focus()
-    document.execCommand(cmd, false)
-    descriptionEditor?.dispatchEvent(new Event('input'))
+    runRichCommand(cmd)
   }))
   form?.querySelector('[data-rich-link]')?.addEventListener('click', () => {
     const href = window.prompt('Enter link URL (http, https, or mailto):', 'https://') || ''
     if (!/^(https?:|mailto:)/i.test(href.trim())) return
-    descriptionEditor?.focus()
-    document.execCommand('createLink', false, href.trim())
-    descriptionEditor?.dispatchEvent(new Event('input'))
+    runRichCommand('createLink', href.trim())
   })
   form?.querySelector('[data-rich-font]')?.addEventListener('change', (event) => {
     const value = String(event.target.value || '').trim()
     if (!value) return
-    descriptionEditor?.focus()
-    document.execCommand('fontName', false, value)
-    descriptionEditor?.dispatchEvent(new Event('input'))
+    runRichCommand('fontName', value)
   })
   form?.querySelector('[data-rich-size]')?.addEventListener('change', (event) => {
     const value = String(event.target.value || '').trim()
     if (!value) return
     document.execCommand('styleWithCSS', false, true)
+    restoreDescriptionRange()
     descriptionEditor?.focus()
     document.execCommand('fontSize', false, '4')
     descriptionEditor?.querySelectorAll('font[size="4"]').forEach((node) => { node.removeAttribute('size'); node.style.fontSize = value })
+    captureDescriptionRange()
     descriptionEditor?.dispatchEvent(new Event('input'))
   })
   form?.querySelector('[data-rich-color]')?.addEventListener('input', (event) => {
     document.execCommand('styleWithCSS', false, true)
-    descriptionEditor?.focus()
-    document.execCommand('foreColor', false, String(event.target.value || '#dbe9ff'))
-    descriptionEditor?.dispatchEvent(new Event('input'))
+    runRichCommand('foreColor', String(event.target.value || '#dbe9ff'))
   })
 
   form?.addEventListener('input', (event) => {

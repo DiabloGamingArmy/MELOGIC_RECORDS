@@ -1,7 +1,7 @@
 :root {
-  --public-border: rgba(126, 157, 189, 0.24);
-  --public-glass: rgba(8, 13, 24, 0.76);
-  --public-muted: #7f98bb;
+  --public-border: var(--ml-border, rgba(130, 160, 220, 0.18));
+  --public-glass: var(--ml-bg-panel, rgba(10, 15, 28, 0.82));
+  --public-muted: var(--ml-text-muted, #aebbd4);
   --public-parallax-y: 0px;
 }
 
@@ -11,7 +11,7 @@ body {
 }
 
 body {
-  background: #04070f;
+  background: var(--ml-bg, #05070d);
 }
 
 .public-profile-page {
@@ -331,7 +331,7 @@ body {
 }
 
 .public-glass-panel {
-  border-radius: 7px;
+  border-radius: var(--ml-radius-md, 8px);
   border: 1px solid var(--public-border);
   background: linear-gradient(180deg, rgba(7, 12, 23, 0.88), rgba(7, 12, 23, 0.72));
   box-shadow: inset 3px 0 rgba(85, 215, 220, 0.22), inset 0 1px rgba(255, 255, 255, 0.035);
@@ -402,8 +402,8 @@ body {
 .public-stat-card {
   appearance: none;
   border: 1px solid rgba(128, 161, 197, 0.24);
-  border-radius: 6px;
-  background: rgba(8, 12, 23, 0.93);
+  border-radius: var(--ml-radius-sm, 6px);
+  background: var(--ml-bg-panel-strong, rgba(13, 19, 34, 0.94));
   text-align: left;
   padding: 0.82rem 0.86rem;
   cursor: pointer;
@@ -444,7 +444,7 @@ body {
   min-height: 160px;
   display: grid;
   place-items: center;
-  border-radius: 7px;
+  border-radius: var(--ml-radius-md, 8px);
   border: 1px solid rgba(122, 154, 187, 0.24);
   background:
     linear-gradient(135deg, rgba(52, 130, 146, 0.08), transparent 48%),

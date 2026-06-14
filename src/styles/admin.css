@@ -1,16 +1,16 @@
 :root,
 [data-admin-theme="dark"] {
-  --admin-bg: #101319;
-  --admin-card: #171b23;
-  --admin-card-subtle: #202633;
-  --admin-text: #f3f6fb;
-  --admin-muted: #aab3c2;
-  --admin-border: #2a313d;
-  --admin-border-strong: #3a4555;
-  --admin-primary: #5da6dc;
-  --admin-primary-strong: #2f6f9f;
-  --admin-input: #111722;
-  --admin-code-bg: #111722;
+  --admin-bg: var(--ml-bg, #05070d);
+  --admin-card: var(--ml-bg-panel-strong, #0d1322);
+  --admin-card-subtle: var(--ml-bg-interactive, #141d2f);
+  --admin-text: var(--ml-text, #eef4ff);
+  --admin-muted: var(--ml-text-muted, #aebbd4);
+  --admin-border: var(--ml-border, rgba(130, 160, 220, 0.18));
+  --admin-border-strong: var(--ml-border-strong, rgba(130, 190, 255, 0.34));
+  --admin-primary: var(--ml-accent, #6ee7ff);
+  --admin-primary-strong: #276b8a;
+  --admin-input: rgba(5, 9, 17, 0.86);
+  --admin-code-bg: rgba(5, 9, 17, 0.9);
   --admin-shadow: rgba(0, 0, 0, 0.38);
 }
 
@@ -129,8 +129,9 @@
 }
 
 .admin-sidebar-nav a.is-active {
-  background: #12284a;
-  color: #ffffff;
+  border-color: var(--admin-border-strong);
+  background: rgba(110, 231, 255, 0.09);
+  color: var(--admin-text);
 }
 
 .admin-sidebar-nav a.is-locked {
@@ -174,9 +175,9 @@
 .admin-primary-link,
 .admin-primary-button,
 .admin-icon-button {
-  border: 1px solid #1b4e7a;
-  background: #1b4e7a;
-  color: #ffffff;
+  border: 1px solid rgba(110, 231, 255, 0.45);
+  background: linear-gradient(120deg, rgba(110, 231, 255, 0.9), rgba(143, 124, 255, 0.9));
+  color: #061019;
   cursor: pointer;
 }
 
@@ -3497,4 +3498,36 @@
   .admin-data-row.is-header {
     display: none;
   }
+}
+
+/* Dark admin surfaces follow the same dashboard system without changing density. */
+[data-admin-theme="dark"] .admin-status.is-success {
+  border-color: rgba(84, 230, 165, 0.42);
+  background: rgba(26, 93, 67, 0.24);
+  color: #bfffe0;
+}
+
+[data-admin-theme="dark"] .admin-status.is-error {
+  border-color: rgba(255, 107, 138, 0.44);
+  background: rgba(105, 24, 44, 0.25);
+  color: #ffd1dc;
+}
+
+[data-admin-theme="dark"] .admin-status.is-info {
+  border-color: var(--admin-border-strong);
+  background: rgba(110, 231, 255, 0.08);
+  color: var(--admin-text);
+}
+
+[data-admin-theme="dark"] .admin-secondary-link,
+[data-admin-theme="dark"] .admin-secondary-button {
+  border-color: var(--admin-border);
+  background: var(--admin-card-subtle);
+  color: var(--admin-text);
+}
+
+[data-admin-theme="dark"] .admin-sidebar-nav a:hover,
+[data-admin-theme="dark"] .admin-sidebar-nav a:focus-visible {
+  border-color: var(--admin-border-strong);
+  background: rgba(110, 231, 255, 0.07);
 }
