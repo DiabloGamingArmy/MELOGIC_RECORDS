@@ -13,6 +13,7 @@ import { createMarketplaceReviewReport, createProductReview, createProductReview
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
+import { getProductGiftSendUiState } from './utils/productGiftState'
 import { renderSafeRichDescription } from './utils/richDescription'
 import { iconSvg } from './utils/icons'
 
@@ -43,7 +44,18 @@ const state = {
   ,openReplyMenuKey: ''
   ,productReport: { open: false, submitting: false, error: '', message: '' }
   ,downloadDialog: { open: false, loading: false, error: '', productId: '', title: '', sizeBytes: 0 }
-  ,giftFlow: { query: '', results: [], selected: [], searching: false, sending: false, error: '', message: '' }
+  ,giftFlow: {
+    query: '',
+    results: [],
+    selected: [],
+    searching: false,
+    sending: false,
+    error: '',
+    success: '',
+    draftMessage: '',
+    sentCount: 0,
+    status: 'idle'
+  }
   ,pageData: { product: null, recommendations: [], productFiles: [], ownsProduct: false, ownerPreview: false, recommendationsLoading: false, reviewsLoading: false }
 }
 
@@ -69,6 +81,35 @@ function giftUserMarkup(user = {}, selected = false) {
       <em>${selected ? 'Selected' : 'Select'}</em>
     </button>
   `
+}
+
+function giftErrorMessage(error = {}) {
+  const code = String(error?.code || '').replace(/^functions\//, '')
+  if (code === 'unauthenticated') return 'Sign in again before sending this gift.'
+  if (code === 'permission-denied') return 'Only the product owner can send this gift.'
+  if (code === 'invalid-argument') return error?.message || 'Choose between 1 and 10 valid recipients.'
+  if (code === 'not-found') return 'The product or one of the selected recipients is no longer available.'
+  if (code === 'already-exists') return error?.message || 'A pending or accepted gift already exists for this user.'
+  if (['unavailable', 'deadline-exceeded', 'internal'].includes(code)) return 'The gift service is temporarily unavailable. Try again.'
+  return error?.message || 'Could not send this gift. Try again.'
+}
+
+function updateGiftSendState() {
+  const button = app.querySelector('[data-send-product-gift]')
+  const status = app.querySelector('[data-gift-send-status]')
+  const uiState = getProductGiftSendUiState({
+    recipientCount: state.giftFlow.selected.length,
+    sending: state.giftFlow.sending,
+    error: state.giftFlow.error,
+    success: state.giftFlow.success
+  })
+  if (button) {
+    button.disabled = uiState.disabled
+    button.textContent = uiState.label
+  }
+  if (!status) return
+  status.className = `product-gift-send-status ${uiState.tone}`.trim()
+  status.innerHTML = `<strong>${escapeHtml(uiState.title)}</strong><span>${escapeHtml(uiState.detail)}</span>`
 }
 
 function updateGiftResults() {
@@ -99,8 +140,12 @@ function updateGiftSelections() {
     button.addEventListener('click', () => {
       const uid = button.getAttribute('data-remove-gift-user') || ''
       state.giftFlow.selected = state.giftFlow.selected.filter((user) => user.uid !== uid)
+      state.giftFlow.error = ''
+      state.giftFlow.success = ''
+      state.giftFlow.status = 'idle'
       updateGiftSelections()
       updateGiftResults()
+      updateGiftSendState()
     })
   })
 }
@@ -115,10 +160,35 @@ function bindGiftResultButtons() {
       state.giftFlow.selected = selected
         ? state.giftFlow.selected.filter((row) => row.uid !== uid)
         : [...state.giftFlow.selected, user].slice(0, 10)
+      state.giftFlow.error = ''
+      state.giftFlow.success = ''
+      state.giftFlow.status = 'idle'
       updateGiftSelections()
       updateGiftResults()
+      updateGiftSendState()
     })
   })
+}
+
+function renderGiftAccessDenied(product = {}) {
+  app.innerHTML = `
+    ${navShell({ currentPage: 'products' })}
+    <main class="product-gift-page">
+      <section class="section">
+        <div class="section-inner product-gift-shell">
+          <header class="product-gift-header">
+            <div>
+              <p class="eyebrow">Product Gifting</p>
+              <h1>Gift unavailable</h1>
+              <p>Only the product owner can send this product as a gift.</p>
+            </div>
+            <a class="button button-muted" href="${productRoute(product)}">Back to Product</a>
+          </header>
+        </div>
+      </section>
+    </main>
+  `
+  initShellChrome()
 }
 
 function renderGiftFlow(product = {}) {
@@ -152,10 +222,10 @@ function renderGiftFlow(product = {}) {
             </div>
             <label class="product-gift-message">
               <span>Message (optional)</span>
-              <textarea data-gift-message maxlength="1000" rows="4" placeholder="Add an optional message..."></textarea>
+              <textarea data-gift-message maxlength="1000" rows="4" placeholder="Add an optional message...">${escapeHtml(state.giftFlow.draftMessage)}</textarea>
             </label>
-            ${state.giftFlow.error ? `<p class="product-gift-error">${escapeHtml(state.giftFlow.error)}</p>` : ''}
-            ${state.giftFlow.message ? `<p class="product-gift-success">${escapeHtml(state.giftFlow.message)}</p>` : ''}
+            <div class="product-gift-send-status" data-gift-send-status aria-live="polite"></div>
+            ${state.giftFlow.success ? `<a class="button button-muted product-gift-back-action" href="${productRoute(product)}">Back to Product</a>` : ''}
             <button type="button" class="button button-accent" data-send-product-gift ${!state.giftFlow.selected.length || state.giftFlow.sending ? 'disabled' : ''}>${state.giftFlow.sending ? 'Sending...' : 'Send Gift'}</button>
           </section>
         </div>
@@ -165,6 +235,7 @@ function renderGiftFlow(product = {}) {
   initShellChrome()
   updateGiftSelections()
   updateGiftResults()
+  updateGiftSendState()
   const input = app.querySelector('[data-gift-search]')
   input?.addEventListener('input', () => {
     state.giftFlow.query = input.value || ''
@@ -185,26 +256,83 @@ function renderGiftFlow(product = {}) {
       updateGiftResults()
     }, 280)
   })
-  app.querySelector('[data-send-product-gift]')?.addEventListener('click', async () => {
+  app.querySelector('[data-gift-message]')?.addEventListener('input', (event) => {
+    state.giftFlow.draftMessage = event.currentTarget?.value || ''
+  })
+  app.querySelector('[data-send-product-gift]')?.addEventListener('click', async (event) => {
+    event.preventDefault()
     if (!state.giftFlow.selected.length || state.giftFlow.sending) return
+    const recipientUids = state.giftFlow.selected.map((user) => String(user.uid || '').trim()).filter(Boolean)
+    if (!recipientUids.length) {
+      state.giftFlow.error = 'Select at least one valid recipient.'
+      updateGiftSendState()
+      return
+    }
     state.giftFlow.sending = true
+    state.giftFlow.status = 'sending'
     state.giftFlow.error = ''
-    state.giftFlow.message = ''
-    const button = app.querySelector('[data-send-product-gift]')
-    if (button) { button.disabled = true; button.textContent = 'Sending...' }
-    try {
-      const result = await sendProductGift({
+    state.giftFlow.success = ''
+    updateGiftSendState()
+    const payload = {
+      productId: product.id,
+      recipientUids,
+      message: state.giftFlow.draftMessage
+    }
+    if (PRODUCT_GIFT_DEBUG) {
+      console.info('[product-gift] send requested', {
+        action: 'send-gift',
+        functionName: 'sendProductGift',
         productId: product.id,
-        recipientUids: state.giftFlow.selected.map((user) => user.uid),
-        message: app.querySelector('[data-gift-message]')?.value || ''
+        productTitle: product.title || '',
+        currentUserUid: state.currentUser?.uid || '',
+        selectedRecipients: state.giftFlow.selected.map((user) => ({
+          uid: user.uid,
+          username: user.username || '',
+          displayName: user.displayName || ''
+        })),
+        selectedRecipientUids: recipientUids,
+        recipientUids,
+        recipientCount: recipientUids.length,
+        messageLength: state.giftFlow.draftMessage.length,
+        payload: {
+          productId: payload.productId,
+          recipientUids: payload.recipientUids,
+          messageLength: payload.message.length
+        }
       })
-      state.giftFlow.message = `Gift sent to ${result.recipientCount || state.giftFlow.selected.length} recipient${state.giftFlow.selected.length === 1 ? '' : 's'}.`
+    }
+    try {
+      const result = await sendProductGift(payload)
+      const sentCount = Number(result.sentCount ?? result.recipientCount ?? recipientUids.length)
+      state.giftFlow.sentCount = sentCount
+      state.giftFlow.status = 'success'
+      state.giftFlow.success = `Sent to ${sentCount} recipient${sentCount === 1 ? '' : 's'}.${result.notificationFailureCount ? ' The gift is available in Inbox, but one or more notifications may be delayed.' : ''}`
       state.giftFlow.selected = []
-      updateGiftSelections()
-      if (PRODUCT_GIFT_DEBUG) console.info('[product-gift] sent', { productId: product.id, recipientCount: result.recipientCount })
+      state.giftFlow.draftMessage = ''
+      if (PRODUCT_GIFT_DEBUG) {
+        console.info('[product-gift] send confirmed', {
+          productId: product.id,
+          giftIds: result.giftIds,
+          sentCount,
+          notificationFailureCount: Number(result.notificationFailureCount || 0)
+        })
+      }
     } catch (error) {
-      state.giftFlow.error = error?.message || 'Could not send this gift.'
-      if (PRODUCT_GIFT_DEBUG) console.warn('[product-gift] failed', { productId: product.id, code: error?.code, message: error?.message })
+      state.giftFlow.status = 'error'
+      state.giftFlow.error = giftErrorMessage(error)
+      if (PRODUCT_GIFT_DEBUG) {
+        console.warn('[product-gift] send failed', {
+          action: 'send-gift',
+          functionName: 'sendProductGift',
+          productId: product.id,
+          productTitle: product.title || '',
+          currentUserUid: state.currentUser?.uid || '',
+          selectedRecipientUids: recipientUids,
+          errorCode: error?.code || '',
+          errorMessage: error?.message || '',
+          errorDetails: error?.details || null
+        })
+      }
     } finally {
       state.giftFlow.sending = false
       renderGiftFlow(product)
@@ -1012,8 +1140,9 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
   const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
   const giftRequested = ['1', 'true'].includes(String(new URLSearchParams(window.location.search).get('sendgift') || new URLSearchParams(window.location.search).get('sendGift') || '').toLowerCase())
-  if (giftRequested && isOwner) {
-    renderGiftFlow(product)
+  if (giftRequested) {
+    if (isOwner) renderGiftFlow(product)
+    else renderGiftAccessDenied(product)
     return
   }
   const ratedReviews = (state.reviews || []).map((review) => Number(review.rating)).filter((rating) => Number.isFinite(rating) && rating >= 1 && rating <= 5)
@@ -1544,7 +1673,7 @@ async function init() {
       error: ''
     }
     renderProduct(initialProduct, [], !isPublic && isOwner, [], Boolean(initialOwnership))
-    if (giftRequested && isOwner) return
+    if (giftRequested) return
 
     const safe = async (label, fallback, task) => {
       try {

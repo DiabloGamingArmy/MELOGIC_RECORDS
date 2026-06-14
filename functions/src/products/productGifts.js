@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
+const { logger } = require('firebase-functions')
 const admin = require('firebase-admin')
 
 const db = admin.firestore()
@@ -9,6 +10,28 @@ function clean(value = '', max = 500) {
 
 function giftIdFor(productId = '', senderUid = '', recipientUid = '') {
   return `${productId}_${senderUid}_${recipientUid}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 900)
+}
+
+function productOwnerUid(product = {}) {
+  return clean(
+    product.artistId
+      || product.ownerUid
+      || product.creatorUid
+      || product.sellerUid
+      || product.createdBy
+      || product.userId
+      || product.authorUid
+      || '',
+    180
+  )
+}
+
+function normalizeRecipientUids(value = []) {
+  return [...new Set(
+    (Array.isArray(value) ? value : [])
+      .map((uid) => clean(uid, 180))
+      .filter(Boolean)
+  )]
 }
 
 async function profileFor(uid = '') {
@@ -22,11 +45,29 @@ async function profileFor(uid = '') {
   }
 }
 
+async function recipientsFor(uids = []) {
+  const [profileSnapshots, authResult] = await Promise.all([
+    db.getAll(...uids.map((uid) => db.doc(`profiles/${uid}`))),
+    admin.auth().getUsers(uids.map((uid) => ({ uid })))
+  ])
+  const authByUid = new Map(authResult.users.map((user) => [user.uid, user]))
+  return uids.map((uid, index) => {
+    const authUser = authByUid.get(uid)
+    if (!authUser) return null
+    const profile = profileSnapshots[index]?.exists ? (profileSnapshots[index].data() || {}) : {}
+    return {
+      uid,
+      displayName: clean(profile.displayName || profile.username || authUser.displayName || 'Melogic member', 180),
+      photoURL: clean(profile.avatarURL || profile.photoURL || authUser.photoURL || '', 1200)
+    }
+  })
+}
+
 const sendProductGift = onCall({ timeoutSeconds: 60, memory: '256MiB', cors: true }, async (request) => {
   const senderUid = request.auth?.uid
   if (!senderUid) throw new HttpsError('unauthenticated', 'Sign in before sending a gift.')
   const productId = clean(request.data?.productId || '', 180)
-  const recipientUids = [...new Set((Array.isArray(request.data?.recipientUids) ? request.data.recipientUids : []).map((uid) => clean(uid, 180)).filter(Boolean))]
+  const recipientUids = normalizeRecipientUids(request.data?.recipientUids)
   const message = clean(request.data?.message || '', 1000)
   if (!productId || !recipientUids.length || recipientUids.length > 10) {
     throw new HttpsError('invalid-argument', 'Choose between 1 and 10 gift recipients.')
@@ -36,7 +77,7 @@ const sendProductGift = onCall({ timeoutSeconds: 60, memory: '256MiB', cors: tru
   const productSnap = await db.doc(`products/${productId}`).get()
   if (!productSnap.exists) throw new HttpsError('not-found', 'Product not found.')
   const product = productSnap.data() || {}
-  if (clean(product.artistId || product.ownerUid || '', 180) !== senderUid) {
+  if (productOwnerUid(product) !== senderUid) {
     throw new HttpsError('permission-denied', 'Only the product owner can send this gift.')
   }
   if (['removed', 'deleted'].includes(product.status) || product.removedAt) {
@@ -45,7 +86,7 @@ const sendProductGift = onCall({ timeoutSeconds: 60, memory: '256MiB', cors: tru
 
   const [senderProfile, recipientProfiles] = await Promise.all([
     profileFor(senderUid),
-    Promise.all(recipientUids.map(profileFor))
+    recipientsFor(recipientUids)
   ])
   if (recipientProfiles.some((profile) => !profile)) throw new HttpsError('not-found', 'One or more recipients no longer exist.')
 
@@ -81,8 +122,12 @@ const sendProductGift = onCall({ timeoutSeconds: 60, memory: '256MiB', cors: tru
         acceptedAt: null,
         deniedAt: null
       })
-      const notificationRef = db.collection('users').doc(recipientUid).collection('systemNotifications').doc(giftId)
-      transaction.set(notificationRef, {
+    })
+  })
+
+  const notificationResult = await Promise.allSettled(gifts.map(async ({ recipientUid, giftId }) => {
+    const notificationRef = db.collection('users').doc(recipientUid).collection('systemNotifications').doc(giftId)
+    await notificationRef.set({
         id: giftId,
         type: 'product_gift',
         category: 'content',
@@ -95,11 +140,28 @@ const sendProductGift = onCall({ timeoutSeconds: 60, memory: '256MiB', cors: tru
         giftId,
         actionHref: '/inbox/content/gifts',
         readAt: null,
-        createdAt: now
+        createdAt: admin.firestore.FieldValue.serverTimestamp()
       })
+  }))
+  const notificationFailures = notificationResult.filter((result) => result.status === 'rejected')
+  if (notificationFailures.length) {
+    logger.warn('[product-gift] gift saved but notification delivery failed', {
+      productId,
+      senderUid,
+      recipientCount: gifts.length,
+      failureCount: notificationFailures.length,
+      errorCodes: notificationFailures.map((result) => result.reason?.code || 'unknown')
     })
-  })
-  return { ok: true, productId, giftIds: gifts.map(({ giftId }) => giftId), recipientCount: gifts.length }
+  }
+
+  return {
+    ok: true,
+    productId,
+    giftIds: gifts.map(({ giftId }) => giftId),
+    sentCount: gifts.length,
+    recipientCount: gifts.length,
+    notificationFailureCount: notificationFailures.length
+  }
 })
 
 async function respondToGift(request, decision) {
@@ -165,5 +227,5 @@ module.exports = {
   sendProductGift,
   acceptProductGift,
   denyProductGift,
-  __test: { giftIdFor }
+  __test: { giftIdFor, normalizeRecipientUids, productOwnerUid }
 }

@@ -267,6 +267,9 @@ const appState = {
   productGiftsLoading: false,
   productGiftsError: '',
   productGiftActionId: '',
+  productGiftAction: '',
+  productGiftActionMessage: '',
+  productGiftActionError: '',
   accountEvents: [],
   notificationPreferences: normalizeNotificationPreferences(),
   inboxPins: [],
@@ -3164,6 +3167,8 @@ function getContentActivityMarkup() {
         <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
           ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
         </nav>
+        ${appState.productGiftActionMessage ? `<p class="product-gift-inbox-feedback is-success" role="status">${escapeHtml(appState.productGiftActionMessage)}</p>` : ''}
+        ${appState.productGiftActionError ? `<p class="product-gift-inbox-feedback is-error" role="alert">${escapeHtml(appState.productGiftActionError)}</p>` : ''}
         ${appState.productGiftsLoading ? '<section class="inbox-empty-panel activity-empty-panel"><h3>Loading gifts...</h3></section>' : appState.productGiftsError ? `<section class="inbox-empty-panel activity-empty-panel"><h3>Gifts could not be loaded.</h3><p>${escapeHtml(appState.productGiftsError)}</p></section>` : appState.productGifts.length ? `
           <div class="product-gift-inbox-list">
             ${appState.productGifts.map((gift) => `
@@ -3177,8 +3182,8 @@ function getContentActivityMarkup() {
                 </div>
                 <div class="product-gift-inbox-actions">
                   ${gift.status === 'pending' ? `
-                    <button type="button" class="button button-accent" data-product-gift-action="accept:${escapeHtml(gift.id)}" ${appState.productGiftActionId === gift.id ? 'disabled' : ''}>Accept Gift</button>
-                    <button type="button" class="button button-muted" data-product-gift-action="deny:${escapeHtml(gift.id)}" ${appState.productGiftActionId === gift.id ? 'disabled' : ''}>Deny Gift</button>
+                    <button type="button" class="button button-accent" data-product-gift-action="accept:${escapeHtml(gift.id)}" ${appState.productGiftActionId === gift.id ? 'disabled' : ''}>${appState.productGiftActionId === gift.id && appState.productGiftAction === 'accept' ? 'Accepting...' : 'Accept Gift'}</button>
+                    <button type="button" class="button button-muted" data-product-gift-action="deny:${escapeHtml(gift.id)}" ${appState.productGiftActionId === gift.id ? 'disabled' : ''}>${appState.productGiftActionId === gift.id && appState.productGiftAction === 'deny' ? 'Denying...' : 'Deny Gift'}</button>
                   ` : `<span class="product-gift-status-badge is-${escapeHtml(gift.status)}">${escapeHtml(gift.status === 'accepted' ? 'Accepted' : 'Denied')}</span>`}
                   <a class="button button-muted" href="${productRoute(gift.productId)}">View Product</a>
                 </div>
@@ -5341,15 +5346,27 @@ function bindSharedEvents(scope = inboxRoot) {
       const [action, giftId] = String(button.getAttribute('data-product-gift-action') || '').split(':')
       if (!giftId || appState.productGiftActionId) return
       appState.productGiftActionId = giftId
+      appState.productGiftAction = action
+      appState.productGiftActionMessage = ''
+      appState.productGiftActionError = ''
       renderSignedInState()
       try {
         if (action === 'accept') await acceptProductGift(giftId)
         else await denyProductGift(giftId)
         await loadProductGifts()
+        appState.productGiftActionMessage = action === 'accept'
+          ? 'Gift accepted and added to your Library.'
+          : 'Gift denied.'
       } catch (error) {
-        appState.productGiftsError = error?.message || 'Could not update this gift.'
+        const code = String(error?.code || '').replace(/^functions\//, '')
+        appState.productGiftActionError = code === 'permission-denied'
+          ? 'You do not have permission to respond to this gift.'
+          : code === 'failed-precondition'
+            ? 'This gift has already been resolved.'
+            : (error?.message || 'Could not update this gift.')
       } finally {
         appState.productGiftActionId = ''
+        appState.productGiftAction = ''
         renderSignedInState()
       }
     })

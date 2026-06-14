@@ -54,3 +54,10 @@ test('product gift ids are deterministic and path-safe', () => {
   assert.equal(productGifts.giftIdFor('product/1', 'sender', 'recipient'), 'product_1_sender_recipient')
   assert.equal(productGifts.giftIdFor('p1', 'sender', 'recipient'), productGifts.giftIdFor('p1', 'sender', 'recipient'))
 })
+
+test('product gifts normalize recipients and preserve the authoritative product owner', () => {
+  assert.deepEqual(productGifts.normalizeRecipientUids([' user-1 ', 'user-2', 'user-1', '', null]), ['user-1', 'user-2'])
+  assert.equal(productGifts.productOwnerUid({ artistId: 'artist-1', ownerUid: 'legacy-owner' }), 'artist-1')
+  assert.equal(productGifts.productOwnerUid({ creatorUid: 'legacy-creator' }), 'legacy-creator')
+  assert.equal(productGifts.productOwnerUid({}), '')
+})
