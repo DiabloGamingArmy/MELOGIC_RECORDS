@@ -28,3 +28,10 @@ export async function createProductDownloadUrl(productId = '', file = '') {
   const response = await callable(payload)
   return response?.data || null
 }
+
+export async function createProductDownloadLink(productId = '', { source = 'product-detail' } = {}) {
+  if (!functions || !productId) throw new Error('Sign in before downloading this product.')
+  const callable = httpsCallable(functions, 'createProductDownloadLink')
+  const response = await callable({ productId, source })
+  return response?.data || null
+}

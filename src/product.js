@@ -4,7 +4,10 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { addToCart } from './data/cartService'
 import { createReport, getProductShellById, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
-import { claimFreeProduct, createProductDownloadUrl, userOwnsProduct } from './data/entitlementService'
+import { claimFreeProduct, createProductDownloadLink, createProductDownloadUrl, userOwnsProduct } from './data/entitlementService'
+import { sendProductGift } from './data/productGiftService'
+import { searchProfilesByUsername } from './data/profileSearchService'
+import { beginProductDownloads, productDownloadDialogMarkup } from './components/productDownloadDialog'
 import { getProductEngagementState, setProductEngagement } from './data/productEngagementService'
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
@@ -17,6 +20,8 @@ const app = document.querySelector('#app')
 
 const PRODUCT_FILE_VIEWER_DEBUG = false
 const PRODUCT_REVIEW_DEBUG = false
+const PRODUCT_DOWNLOAD_DEBUG = false
+const PRODUCT_GIFT_DEBUG = false
 
 const state = {
   mediaItems: [],
@@ -37,7 +42,174 @@ const state = {
   ,openReviewMenuId: ''
   ,openReplyMenuKey: ''
   ,productReport: { open: false, submitting: false, error: '', message: '' }
+  ,downloadDialog: { open: false, loading: false, error: '', productId: '', title: '', sizeBytes: 0 }
+  ,giftFlow: { query: '', results: [], selected: [], searching: false, sending: false, error: '', message: '' }
   ,pageData: { product: null, recommendations: [], productFiles: [], ownsProduct: false, ownerPreview: false, recommendationsLoading: false, reviewsLoading: false }
+}
+
+let giftSearchTimer = null
+
+function productDownloadBytes(product = {}, productFiles = []) {
+  const explicit = Number(product.assetSummary?.totalBytes || product.assetSummary?.downloadBytes || product.primaryDownloadBytes || 0)
+  if (explicit > 0) return explicit
+  return (Array.isArray(productFiles) ? productFiles : []).reduce((total, file) => {
+    const role = [file.role, file.category, file.type, file.kind].join(' ').toLowerCase()
+    return /\b(deliverable|download|package)\b/.test(role) || file.isDeliverable === true
+      ? total + Number(file.sizeBytes || file.size || 0)
+      : total
+  }, 0)
+}
+
+function giftUserMarkup(user = {}, selected = false) {
+  const name = user.displayName || user.username || 'Melogic member'
+  return `
+    <button type="button" class="product-gift-user ${selected ? 'is-selected' : ''}" data-gift-user="${escapeHtml(user.uid)}">
+      ${user.avatarURL || user.photoURL ? `<img src="${escapeHtml(user.avatarURL || user.photoURL)}" alt="" />` : `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`}
+      <span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(formatUsername(user.username) || 'Melogic member')}</small></span>
+      <em>${selected ? 'Selected' : 'Select'}</em>
+    </button>
+  `
+}
+
+function updateGiftResults() {
+  const root = app.querySelector('[data-gift-results]')
+  if (!root) return
+  if (state.giftFlow.searching) {
+    root.innerHTML = '<p class="product-gift-status">Searching...</p>'
+    return
+  }
+  if (state.giftFlow.query.trim().length < 2) {
+    root.innerHTML = '<p class="product-gift-status">Type at least two characters to search usernames.</p>'
+    return
+  }
+  const rows = state.giftFlow.results.filter((user) => user.uid !== state.currentUser?.uid)
+  root.innerHTML = rows.length
+    ? rows.map((user) => giftUserMarkup(user, state.giftFlow.selected.some((selected) => selected.uid === user.uid))).join('')
+    : '<p class="product-gift-status">No matching users found.</p>'
+  bindGiftResultButtons()
+}
+
+function updateGiftSelections() {
+  const root = app.querySelector('[data-gift-selected]')
+  if (!root) return
+  root.innerHTML = state.giftFlow.selected.length
+    ? state.giftFlow.selected.map((user) => `<button type="button" class="product-gift-chip" data-remove-gift-user="${escapeHtml(user.uid)}">${escapeHtml(user.displayName || user.username || 'User')} <span aria-hidden="true">×</span></button>`).join('')
+    : '<span class="product-gift-status">No recipients selected.</span>'
+  root.querySelectorAll('[data-remove-gift-user]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const uid = button.getAttribute('data-remove-gift-user') || ''
+      state.giftFlow.selected = state.giftFlow.selected.filter((user) => user.uid !== uid)
+      updateGiftSelections()
+      updateGiftResults()
+    })
+  })
+}
+
+function bindGiftResultButtons() {
+  app.querySelectorAll('[data-gift-user]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const uid = button.getAttribute('data-gift-user') || ''
+      const user = state.giftFlow.results.find((row) => row.uid === uid)
+      if (!user) return
+      const selected = state.giftFlow.selected.some((row) => row.uid === uid)
+      state.giftFlow.selected = selected
+        ? state.giftFlow.selected.filter((row) => row.uid !== uid)
+        : [...state.giftFlow.selected, user].slice(0, 10)
+      updateGiftSelections()
+      updateGiftResults()
+    })
+  })
+}
+
+function renderGiftFlow(product = {}) {
+  const cover = product.thumbnailURL || product.coverURL || product.galleryURLs?.[0] || ''
+  app.innerHTML = `
+    ${navShell({ currentPage: 'products' })}
+    <main class="product-gift-page">
+      <section class="section">
+        <div class="section-inner product-gift-shell">
+          <header class="product-gift-header">
+            <div>
+              <p class="eyebrow">Product Gifting</p>
+              <h1>Send as Gift</h1>
+              <p>Choose up to 10 Melogic users. They will receive the product after accepting the gift.</p>
+            </div>
+            <a class="button button-muted" href="${productRoute(product)}">Back to Product</a>
+          </header>
+          <article class="product-gift-summary">
+            ${cover ? `<img src="${escapeHtml(cover)}" alt="" />` : '<span class="product-gift-cover-fallback"></span>'}
+            <div><strong>${escapeHtml(product.title)}</strong><span>By ${escapeHtml(product.artistName || product.artistDisplayName || 'Creator')}</span></div>
+          </article>
+          <section class="product-gift-workspace">
+            <label class="product-gift-search">
+              <span>Search users</span>
+              <input data-gift-search value="${escapeHtml(state.giftFlow.query)}" placeholder="Search users to gift this product to..." autocomplete="off" />
+            </label>
+            <div class="product-gift-results" data-gift-results></div>
+            <div>
+              <h2>Recipients</h2>
+              <div class="product-gift-selected" data-gift-selected></div>
+            </div>
+            <label class="product-gift-message">
+              <span>Message (optional)</span>
+              <textarea data-gift-message maxlength="1000" rows="4" placeholder="Add an optional message..."></textarea>
+            </label>
+            ${state.giftFlow.error ? `<p class="product-gift-error">${escapeHtml(state.giftFlow.error)}</p>` : ''}
+            ${state.giftFlow.message ? `<p class="product-gift-success">${escapeHtml(state.giftFlow.message)}</p>` : ''}
+            <button type="button" class="button button-accent" data-send-product-gift ${!state.giftFlow.selected.length || state.giftFlow.sending ? 'disabled' : ''}>${state.giftFlow.sending ? 'Sending...' : 'Send Gift'}</button>
+          </section>
+        </div>
+      </section>
+    </main>
+  `
+  initShellChrome()
+  updateGiftSelections()
+  updateGiftResults()
+  const input = app.querySelector('[data-gift-search]')
+  input?.addEventListener('input', () => {
+    state.giftFlow.query = input.value || ''
+    state.giftFlow.error = ''
+    if (giftSearchTimer) window.clearTimeout(giftSearchTimer)
+    state.giftFlow.searching = state.giftFlow.query.trim().length >= 2
+    updateGiftResults()
+    giftSearchTimer = window.setTimeout(async () => {
+      const requestedQuery = state.giftFlow.query
+      try {
+        state.giftFlow.results = await searchProfilesByUsername(requestedQuery)
+      } catch (error) {
+        state.giftFlow.results = []
+        state.giftFlow.error = error?.message || 'User search is unavailable.'
+      }
+      if (requestedQuery !== state.giftFlow.query) return
+      state.giftFlow.searching = false
+      updateGiftResults()
+    }, 280)
+  })
+  app.querySelector('[data-send-product-gift]')?.addEventListener('click', async () => {
+    if (!state.giftFlow.selected.length || state.giftFlow.sending) return
+    state.giftFlow.sending = true
+    state.giftFlow.error = ''
+    state.giftFlow.message = ''
+    const button = app.querySelector('[data-send-product-gift]')
+    if (button) { button.disabled = true; button.textContent = 'Sending...' }
+    try {
+      const result = await sendProductGift({
+        productId: product.id,
+        recipientUids: state.giftFlow.selected.map((user) => user.uid),
+        message: app.querySelector('[data-gift-message]')?.value || ''
+      })
+      state.giftFlow.message = `Gift sent to ${result.recipientCount || state.giftFlow.selected.length} recipient${state.giftFlow.selected.length === 1 ? '' : 's'}.`
+      state.giftFlow.selected = []
+      updateGiftSelections()
+      if (PRODUCT_GIFT_DEBUG) console.info('[product-gift] sent', { productId: product.id, recipientCount: result.recipientCount })
+    } catch (error) {
+      state.giftFlow.error = error?.message || 'Could not send this gift.'
+      if (PRODUCT_GIFT_DEBUG) console.warn('[product-gift] failed', { productId: product.id, code: error?.code, message: error?.message })
+    } finally {
+      state.giftFlow.sending = false
+      renderGiftFlow(product)
+    }
+  })
 }
 
 const PRODUCT_REPORT_REASONS = [
@@ -839,6 +1011,11 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const artistHandle = formatUsername(handleRaw)
   const creatorAvatar = product.artistAvatarURL || product.artistPhotoURL || ''
   const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
+  const giftRequested = ['1', 'true'].includes(String(new URLSearchParams(window.location.search).get('sendgift') || new URLSearchParams(window.location.search).get('sendGift') || '').toLowerCase())
+  if (giftRequested && isOwner) {
+    renderGiftFlow(product)
+    return
+  }
   const ratedReviews = (state.reviews || []).map((review) => Number(review.rating)).filter((rating) => Number.isFinite(rating) && rating >= 1 && rating <= 5)
   const fallbackAvg = ratedReviews.length ? (ratedReviews.reduce((sum, value) => sum + value, 0) / ratedReviews.length) : 0
   const aggregateAvg = Number(product.averageRating ?? product.ratingAverage ?? 0)
@@ -992,6 +1169,11 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-product-primary-action ${state.isDraftPreview || userHasAccess ? 'disabled' : ''} ${state.isDraftPreview ? 'title="Disabled in marketplace preview."' : ''}>${escapeHtml(primaryActionLabel)}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
                 <button type="button" class="button button-muted" data-report-product ${state.isDraftPreview || isOwner ? 'disabled' : ''} title="${isOwner ? 'You cannot report your own product.' : 'Report this product'}">Report Product</button>
+                ${userHasAccess && !state.isDraftPreview ? `
+                  <div class="dashboard-download-divider"></div>
+                  <button type="button" class="button dashboard-download-button" data-product-download>Download Content</button>
+                  ${isOwner ? `<a class="button button-muted" href="${productRoute(product)}?sendgift=1">Send as Gift</a>` : ''}
+                ` : ''}
                 <div class="dashboard-action-icons-row">
                   <button type="button" class="dashboard-icon-action ${state.productEngagement.reaction === 'like' ? 'is-active' : ''}" data-product-reaction="like" aria-label="Like this product" title="Like" aria-pressed="${state.productEngagement.reaction === 'like'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsUp')}</span><em data-product-like-count>${Math.max(0, likeCount)}</em></button>
                   <button type="button" class="dashboard-icon-action ${state.productEngagement.reaction === 'dislike' ? 'is-active' : ''}" data-product-reaction="dislike" aria-label="Dislike this product" title="Dislike" aria-pressed="${state.productEngagement.reaction === 'dislike'}" ${state.isDraftPreview ? 'disabled title="Disabled in marketplace preview."' : ''}><span class="icon">${iconSvg('thumbsDown')}</span><em data-product-dislike-count>${Math.max(0, dislikeCount)}</em></button>
@@ -1037,6 +1219,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
       </section>
     </main>
     ${productReportDialog(product)}
+    ${productDownloadDialogMarkup(state.downloadDialog)}
   `
 
   document.title = `Melogic | ${product.title}`
@@ -1044,6 +1227,45 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   bindAudioPreviewControls()
   bindProductFileBrowser(product, productFiles, ownsProduct)
   initShellChrome()
+
+  app.querySelector('[data-product-download]')?.addEventListener('click', () => {
+    state.downloadDialog = {
+      open: true,
+      loading: false,
+      error: '',
+      productId: product.id,
+      title: product.title,
+      sizeBytes: productDownloadBytes(product, productFiles)
+    }
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+  })
+  app.querySelectorAll('[data-close-product-download]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      if (event.target !== element && !element.matches('button')) return
+      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    })
+  })
+  app.querySelector('[data-confirm-product-download]')?.addEventListener('click', async () => {
+    if (state.downloadDialog.loading) return
+    state.downloadDialog = { ...state.downloadDialog, loading: true, error: '' }
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    try {
+      const result = await createProductDownloadLink(product.id, { source: 'product-detail' })
+      if (!result?.downloadUrl) throw new Error('No product download is available.')
+      beginProductDownloads(result)
+      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
+      if (PRODUCT_DOWNLOAD_DEBUG) console.info('[product-download] prepared', { productId: product.id, fileCount: result.files?.length || 1 })
+    } catch (error) {
+      state.downloadDialog = {
+        ...state.downloadDialog,
+        loading: false,
+        error: error?.code === 'functions/permission-denied' ? 'You do not have access to download this product.' : (error?.message || 'Could not prepare this download.')
+      }
+      if (PRODUCT_DOWNLOAD_DEBUG) console.warn('[product-download] failed', { productId: product.id, code: error?.code, message: error?.message })
+    }
+    renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+  })
 
   app.querySelector('[data-product-primary-action]')?.addEventListener('click', async (event) => {
     if (state.isDraftPreview) return
@@ -1287,8 +1509,9 @@ async function init() {
     }
 
     const isOwner = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
+    const initialOwnership = isOwner ? true : await userOwnsProduct(state.currentUser?.uid || '', product.id).catch(() => false)
     const isPublic = product.status === 'published' && product.visibility === 'public'
-    if (!isPublic && !isOwner && !state.isDraftPreview) {
+    if (!isPublic && !isOwner && !initialOwnership && !state.isDraftPreview) {
       renderState('Product not available.', 'This product is not currently available to the public.')
       return
     }
@@ -1297,11 +1520,15 @@ async function init() {
       return
     }
 
+    const giftRequested = ['1', 'true'].includes(String(new URLSearchParams(window.location.search).get('sendgift') || new URLSearchParams(window.location.search).get('sendGift') || '').toLowerCase())
+    const initialProduct = giftRequested && isOwner
+      ? normalizeProduct(product.id, product, await resolveProductMedia(product).catch(() => ({})))
+      : product
     state.pageData = {
-      product,
+      product: initialProduct,
       recommendations: [],
       productFiles: [],
-      ownsProduct: Boolean(isOwner),
+      ownsProduct: Boolean(initialOwnership),
       ownerPreview: !isPublic && isOwner,
       recommendationsLoading: true,
       reviewsLoading: true
@@ -1316,7 +1543,8 @@ async function init() {
       loading: true,
       error: ''
     }
-    renderProduct(product, [], !isPublic && isOwner, [], Boolean(isOwner))
+    renderProduct(initialProduct, [], !isPublic && isOwner, [], Boolean(initialOwnership))
+    if (giftRequested && isOwner) return
 
     const safe = async (label, fallback, task) => {
       try {

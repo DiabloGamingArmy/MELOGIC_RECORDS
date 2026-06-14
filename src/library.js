@@ -5,16 +5,29 @@ import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES } from './utils/routes'
 import { accountDateIso, listUserLibraryItems } from './data/accountCommerceService'
+import { createProductDownloadLink } from './data/entitlementService'
+import { beginProductDownloads, productDownloadDialogMarkup } from './components/productDownloadDialog'
 
 const app = document.querySelector('#app')
 const params = new URLSearchParams(window.location.search)
 const initialPurchaseSuccess = params.get('purchase') === 'success' || params.get('checkout') === 'success'
-const state = { user: null, loading: true, error: '', items: [], filter: 'all', search: '', purchaseSuccess: initialPurchaseSuccess, showPurchaseBanner: initialPurchaseSuccess }
+const state = {
+  user: null,
+  loading: true,
+  error: '',
+  items: [],
+  filter: 'all',
+  search: '',
+  purchaseSuccess: initialPurchaseSuccess,
+  showPurchaseBanner: initialPurchaseSuccess,
+  downloadDialog: { open: false, loading: false, error: '', productId: '', title: '', sizeBytes: 0 }
+}
 
 const filters = [
   { key: 'all', label: 'All' },
   { key: 'purchased', label: 'Purchased' },
   { key: 'free', label: 'Free Adds' },
+  { key: 'gift', label: 'Gifts' },
   { key: 'active', label: 'Active' },
   { key: 'inactive', label: 'Refunded/Revoked' },
   { key: 'saved', label: 'Saved' }
@@ -37,6 +50,7 @@ function formatDate(value) {
 
 function itemKind(item) {
   if (item.source === 'saved') return 'saved'
+  if (item.source === 'gift' || item.acquisitionType === 'gift') return 'gift'
   if (['free-claim', 'free_claim'].includes(item.source) || item.product?.isFree) return 'free'
   return 'purchased'
 }
@@ -97,12 +111,19 @@ function renderRows() {
             <span class="account-cover">${cover ? `<img src="${escapeHtml(cover)}" alt="" loading="lazy" decoding="async" />` : ''}</span>
             <div>
               <strong>${escapeHtml(title)}</strong>
-              <span>${escapeHtml(creator)} - ${escapeHtml(kind === 'free' ? 'Free add' : kind === 'saved' ? 'Saved' : 'Purchased')} - ${escapeHtml(item.status || 'active')}</span>
+              <span>${escapeHtml(creator)} - ${escapeHtml(kind === 'free' ? 'Free add' : kind === 'gift' ? 'Gift' : kind === 'saved' ? 'Saved' : 'Purchased')} - ${escapeHtml(item.status || 'active')}</span>
             </div>
             <div><span class="account-label">License</span><span>${escapeHtml(item.license || product.usageLicense || 'Available after purchase')}</span></div>
             <div><span class="account-label">Acquired</span><span>${escapeHtml(formatDate(item.acquiredAt || item.createdAt || item.updatedAt))}</span></div>
             <div><span class="account-label">Order / Source</span><span>${escapeHtml(item.orderId || item.source || 'Library')}</span></div>
-            <button type="button" class="account-row-action" ${item.source === 'saved' ? 'disabled' : ''}>${item.source === 'saved' ? 'Saved' : 'Download'}</button>
+            <button
+              type="button"
+              class="account-row-action account-download-action"
+              data-library-download="${escapeHtml(item.productId)}"
+              data-library-download-title="${escapeHtml(title)}"
+              data-library-download-size="${Number(product.primaryDownloadBytes || product.assetSummary?.totalBytes || snapshot.sizeBytes || 0)}"
+              ${item.source === 'saved' || (item.status || 'active') !== 'active' ? 'disabled' : ''}
+            >${item.source === 'saved' ? 'Saved' : 'Download Content'}</button>
           </article>
         `
       }).join('')}
@@ -133,7 +154,7 @@ function renderLibrary() {
 
 function render() {
   document.title = 'Melogic | Library'
-  app.innerHTML = `${navShell({ currentPage: 'profile' })}<main class="account-page"><div class="account-shell">${state.user ? renderLibrary() : renderSignedOut()}</div></main>`
+  app.innerHTML = `${navShell({ currentPage: 'profile' })}<main class="account-page"><div class="account-shell">${state.user ? renderLibrary() : renderSignedOut()}</div></main>${productDownloadDialogMarkup(state.downloadDialog)}`
   initShellChrome()
   app.querySelectorAll('[data-library-filter]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -145,6 +166,44 @@ function render() {
     state.search = event.target.value || ''
     render()
     app.querySelector('[data-library-search]')?.focus()
+  })
+  app.querySelectorAll('[data-library-download]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.downloadDialog = {
+        open: true,
+        loading: false,
+        error: '',
+        productId: button.getAttribute('data-library-download') || '',
+        title: button.getAttribute('data-library-download-title') || 'this product',
+        sizeBytes: Number(button.getAttribute('data-library-download-size') || 0)
+      }
+      render()
+    })
+  })
+  app.querySelectorAll('[data-close-product-download]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      if (event.target !== element && !element.matches('button')) return
+      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
+      render()
+    })
+  })
+  app.querySelector('[data-confirm-product-download]')?.addEventListener('click', async () => {
+    if (state.downloadDialog.loading) return
+    state.downloadDialog = { ...state.downloadDialog, loading: true, error: '' }
+    render()
+    try {
+      const result = await createProductDownloadLink(state.downloadDialog.productId, { source: 'library' })
+      if (!result?.downloadUrl) throw new Error('No product download is available.')
+      beginProductDownloads(result)
+      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
+    } catch (error) {
+      state.downloadDialog = {
+        ...state.downloadDialog,
+        loading: false,
+        error: error?.code === 'functions/permission-denied' ? 'You do not have access to download this product.' : (error?.message || 'Could not prepare this download.')
+      }
+    }
+    render()
   })
 }
 

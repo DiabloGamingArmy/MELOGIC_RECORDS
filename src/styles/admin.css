@@ -921,6 +921,27 @@
   background: rgba(15, 24, 34, 0.52);
 }
 
+.admin-danger-button {
+  min-height: 38px;
+  border: 1px solid rgba(255, 105, 115, 0.62);
+  border-radius: 4px;
+  padding: 0.55rem 0.8rem;
+  background: rgba(151, 36, 49, 0.2);
+  color: #ffb8be;
+  cursor: pointer;
+}
+
+.admin-danger-button:hover,
+.admin-danger-button:focus-visible {
+  background: #a62e3d;
+  color: #fff;
+}
+
+.admin-danger-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 .admin-decision-modal {
   width: min(620px, 100%);
   border: 1px solid #c7d2df;

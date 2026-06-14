@@ -33,8 +33,11 @@ function normalizeEntitlement(docSnap) {
     id: docSnap.id,
     productId: String(data.productId || docSnap.id || ''),
     source: String(data.source || ''),
+    acquisitionType: String(data.acquisitionType || ''),
     status: String(data.status || 'active'),
     orderId: String(data.orderId || ''),
+    giftedBy: String(data.giftedBy || ''),
+    giftId: String(data.giftId || ''),
     license: String(data.license || data.licenseType || 'Standard License'),
     acquiredAt: data.acquiredAt || data.claimedAt || data.createdAt || null,
     createdAt: data.createdAt || null,
@@ -46,7 +49,8 @@ function normalizeEntitlement(docSnap) {
       coverPath: String(snapshot.coverPath || data.coverPath || ''),
       coverURL: String(snapshot.coverURL || data.coverURL || ''),
       productType: String(snapshot.productType || data.productType || ''),
-      usageLicense: String(snapshot.usageLicense || data.license || '')
+      usageLicense: String(snapshot.usageLicense || data.license || ''),
+      sizeBytes: Number(snapshot.sizeBytes || data.sizeBytes || data.primaryDownloadBytes || 0)
     }
   }
 }

@@ -1513,6 +1513,14 @@ service cloud.firestore {
     allow delete: if signedIn() && resource.data.uid == request.auth.uid;
   }
 
+  match /downloads/{downloadId} {
+    allow read: if signedIn() && (
+      resource.data.userUid == request.auth.uid
+      || get(/databases/$(database)/documents/products/$(productId)).data.artistId == request.auth.uid
+    );
+    allow write: if false;
+  }
+
   match /comments/{commentId} {
     allow read: if get(/databases/$(database)/documents/products/$(productId)).data.status == 'published'
       && get(/databases/$(database)/documents/products/$(productId)).data.visibility == 'public';
@@ -1557,6 +1565,12 @@ service cloud.firestore {
 
   }
 }
+
+    match /productGifts/{giftId} {
+      allow read: if signedIn()
+        && (resource.data.senderUid == request.auth.uid || resource.data.recipientUid == request.auth.uid);
+      allow write: if false;
+    }
 
     match /pendingReview/{reviewArea}/items/{productId} {
   allow read: if signedIn()
