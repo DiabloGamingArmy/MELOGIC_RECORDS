@@ -956,3 +956,208 @@
 
 .dashboard-report-success { color: #a7fff3; }
 .dashboard-report-error { color: #ffd3de; }
+
+/* Creator product dashboard alignment */
+.panel-surface,
+.product-dashboard-empty,
+.dashboard-review-composer,
+.dashboard-review-card,
+.dashboard-audio-card,
+.dashboard-report-modal {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: linear-gradient(180deg, var(--ml-bg-panel-strong), var(--ml-bg-panel));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.dashboard-main-media,
+.dashboard-thumb,
+.dashboard-nav-btn,
+.dashboard-icon-action,
+.dashboard-review-menu,
+.dashboard-review-reply,
+.dashboard-review-reply-card,
+.dashboard-review-composer textarea,
+.dashboard-review-composer input,
+.dashboard-review-empty,
+.dashboard-file-item,
+.dashboard-report-close,
+.dashboard-report-modal select,
+.dashboard-report-modal textarea {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+}
+
+.dashboard-nav-btn,
+.dashboard-icon-action,
+.dashboard-report-close {
+  background: var(--ml-bg-interactive);
+  color: var(--ml-text);
+}
+
+.dashboard-review-menu {
+  background: rgba(10, 15, 28, 0.98);
+  box-shadow: var(--ml-shadow-float);
+}
+
+.dashboard-review-composer textarea,
+.dashboard-review-composer input,
+.dashboard-report-modal select,
+.dashboard-report-modal textarea {
+  background: rgba(5, 9, 17, 0.82);
+  color: var(--ml-text);
+}
+
+/* Product detail refinement: flatter hierarchy and stable working regions. */
+.dashboard-main-sections.panel-surface {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dashboard-content-parent {
+  gap: 0.85rem;
+}
+
+.dashboard-about-section {
+  padding: 0 0 0.85rem;
+  border: 0;
+  border-bottom: 1px solid var(--ml-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.dashboard-rich-description {
+  color: var(--ml-text);
+  line-height: 1.65;
+}
+
+.dashboard-rich-description > :first-child {
+  margin-top: 0;
+}
+
+.dashboard-rich-description > :last-child {
+  margin-bottom: 0;
+}
+
+.dashboard-details-split {
+  height: clamp(500px, 56vh, 620px);
+  gap: 0.85rem;
+}
+
+.dashboard-file-tree-viewer {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--ml-radius-sm);
+  background: rgba(6, 10, 18, 0.56);
+}
+
+.dashboard-file-tree-viewer .product-file-browser {
+  min-height: 0;
+  height: 100%;
+}
+
+.product-file-browser-body,
+.product-file-list-wrap {
+  min-height: 0;
+}
+
+.product-file-list-wrap {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.product-file-list {
+  align-content: start;
+  border-radius: 3px;
+}
+
+.product-file-row {
+  border-radius: 0;
+  background: rgba(10, 15, 26, 0.7);
+}
+
+.product-file-row:hover,
+.product-file-row:focus-visible {
+  background: rgba(27, 39, 61, 0.82);
+}
+
+.dashboard-metadata-panel {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border-top: 1px solid var(--ml-border);
+  border-bottom: 1px solid var(--ml-border);
+}
+
+.dashboard-metadata-stack {
+  height: auto;
+  min-height: 100%;
+  gap: 0;
+}
+
+.dashboard-metadata-card {
+  padding: 0.72rem 0.18rem;
+  border: 0;
+  border-bottom: 1px solid var(--ml-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.dashboard-metadata-card:last-child {
+  border-bottom: 0;
+}
+
+.dashboard-lower-sidebar > .panel-surface {
+  border-radius: var(--ml-radius-sm);
+  box-shadow: none;
+}
+
+.dashboard-lower-sidebar > .dashboard-side-card:nth-of-type(2) {
+  border-top-color: rgba(110, 231, 255, 0.58);
+  background: linear-gradient(180deg, rgba(13, 22, 34, 0.96), rgba(7, 12, 21, 0.96));
+}
+
+.dashboard-action-stack .button {
+  min-height: 42px;
+}
+
+.dashboard-audio-card,
+.dashboard-review-composer,
+.dashboard-review-card,
+.dashboard-review-reply-card {
+  border-radius: var(--ml-radius-sm);
+  box-shadow: none;
+}
+
+.dashboard-review-card {
+  background: rgba(7, 12, 21, 0.72);
+}
+
+.dashboard-rating-interactive {
+  padding: 0.2rem 0;
+  touch-action: none;
+}
+
+.dashboard-rating-interactive:active .dashboard-rating-stars {
+  transform: translateY(1px);
+}
+
+@media (max-width: 860px) {
+  .dashboard-details-split {
+    height: auto;
+  }
+
+  .dashboard-file-tree-viewer {
+    height: min(70vh, 560px);
+    min-height: 440px;
+  }
+
+  .dashboard-metadata-panel {
+    overflow: visible;
+  }
+}

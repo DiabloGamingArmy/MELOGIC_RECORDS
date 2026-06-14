@@ -434,7 +434,9 @@
 @media (max-width: 1320px) { .publish-grid { grid-template-columns: 1fr; } }
 .rich-editor-toolbar{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.45rem}
 .rich-editor-toolbar button,.rich-editor-toolbar select,.rich-editor-toolbar input[type='color']{min-height:34px;border-radius:8px;border:1px solid rgba(102,129,201,.35);background:rgba(13,18,33,.95);color:#e8efff;padding:.2rem .45rem}
-.rich-description-editor{min-height:240px;border:1px solid rgba(102,129,201,.35);border-radius:12px;background:rgba(13,18,33,.95);padding:.65rem .75rem;color:#e8efff;overflow:auto}
+.rich-description-editor{min-height:240px;border:1px solid rgba(102,129,201,.35);border-radius:12px;background:rgba(13,18,33,.95);padding:.65rem .75rem;color:#e8efff;caret-color:#e8efff;overflow:auto}
+.rich-description-editor:empty::before{content:'Describe the product, included files, compatibility, and intended use.';color:#7184ad;pointer-events:none}
+.rich-description-editor p,.rich-description-editor div,.rich-description-editor span,.rich-description-editor li{color:inherit}
 .rich-description-editor:focus{outline:none;border-color:#6bcaf9;box-shadow:0 0 0 2px rgba(54,181,240,.2)}
 .upload-progress { height: 7px; border-radius:999px; background:rgba(44,58,96,.9); overflow:hidden; margin-top:.28rem; min-width:72px; }
 .upload-progress span { display:block; height:100%; background:linear-gradient(90deg,#2bc6e8,#6e6df7,#aa2de4); }
@@ -544,4 +546,39 @@
 .pricing-free-toggle,
 .pricing-currency-action {
   border-radius: 4px;
+}
+
+.marketplace-editor-header,
+.marketplace-editor-tabs-wrap,
+.marketplace-editor-workspace,
+.listing-preview-panel,
+.file-viewer-panel,
+.media-upload-actions,
+.contributors-main-panel,
+.contributors-notice,
+.pricing-input-column,
+.pricing-calculator-column,
+.pricing-notice,
+.agreement-viewer-panel,
+.agreement-notice,
+.publish-summary-card,
+.publish-checklist-panel,
+.publish-submit-panel {
+  border-color: var(--ml-border);
+  background: linear-gradient(180deg, var(--ml-bg-panel-strong), var(--ml-bg-panel));
+}
+
+.marketplace-editor-tab,
+.file-viewer-add-btn,
+.media-upload-action-btn,
+.publish-checklist-row button {
+  border-color: var(--ml-border);
+  background: var(--ml-bg-interactive);
+  color: var(--ml-text);
+}
+
+.marketplace-editor-tab.is-active {
+  border-color: var(--ml-border-strong);
+  background: rgba(110, 231, 255, 0.08);
+  color: var(--ml-text);
 }

@@ -15,7 +15,8 @@ import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
 
-
+const PRODUCT_FILE_VIEWER_DEBUG = false
+const PRODUCT_REVIEW_DEBUG = false
 
 const state = {
   mediaItems: [],
@@ -124,14 +125,16 @@ function renderMainMedia() {
     `
     return
   }
-  console.info('[product] main media selected', {
-    selectedMediaIndex: state.selectedMediaIndex,
-    type: selected.type,
-    source: selected.source || 'unknown',
-    url: selected.url,
-    label: selected.label,
-    mediaItems: state.mediaItems
-  })
+  if (PRODUCT_FILE_VIEWER_DEBUG) {
+    console.info('[product] main media selected', {
+      selectedMediaIndex: state.selectedMediaIndex,
+      type: selected.type,
+      source: selected.source || 'unknown',
+      url: selected.url,
+      label: selected.label,
+      mediaItems: state.mediaItems
+    })
+  }
 
   mainMediaRoot.innerHTML = selected.type === 'video'
     ? `
@@ -166,21 +169,23 @@ function renderMainMedia() {
     const viewport = mainMediaRoot.querySelector('[data-dashboard-main-media-viewport]')
     const frame = mainMediaRoot.querySelector('[data-dashboard-main-media-fit-frame]')
     const item = mainMediaRoot.querySelector('[data-dashboard-main-media-item]')
-    console.info('[product] main media layout debug', {
-      source: selected.source || 'unknown',
-      url: selected.url,
-      rootRect: mainMediaRoot.getBoundingClientRect?.(),
-      viewportRect: viewport?.getBoundingClientRect?.(),
-      frameRect: frame?.getBoundingClientRect?.(),
-      itemRect: item?.getBoundingClientRect?.(),
-      objectFit: item ? window.getComputedStyle(item).objectFit : '',
-      width: item ? window.getComputedStyle(item).width : '',
-      height: item ? window.getComputedStyle(item).height : '',
-      maxWidth: item ? window.getComputedStyle(item).maxWidth : '',
-      maxHeight: item ? window.getComputedStyle(item).maxHeight : '',
-      naturalWidth: item instanceof HTMLImageElement ? item.naturalWidth : null,
-      naturalHeight: item instanceof HTMLImageElement ? item.naturalHeight : null
-    })
+    if (PRODUCT_FILE_VIEWER_DEBUG) {
+      console.info('[product] main media layout debug', {
+        source: selected.source || 'unknown',
+        url: selected.url,
+        rootRect: mainMediaRoot.getBoundingClientRect?.(),
+        viewportRect: viewport?.getBoundingClientRect?.(),
+        frameRect: frame?.getBoundingClientRect?.(),
+        itemRect: item?.getBoundingClientRect?.(),
+        objectFit: item ? window.getComputedStyle(item).objectFit : '',
+        width: item ? window.getComputedStyle(item).width : '',
+        height: item ? window.getComputedStyle(item).height : '',
+        maxWidth: item ? window.getComputedStyle(item).maxWidth : '',
+        maxHeight: item ? window.getComputedStyle(item).maxHeight : '',
+        naturalWidth: item instanceof HTMLImageElement ? item.naturalWidth : null,
+        naturalHeight: item instanceof HTMLImageElement ? item.naturalHeight : null
+      })
+    }
   })
 
 
@@ -525,7 +530,7 @@ function renderProductFileBrowser(product, productFiles, ownsProduct) {
 
 
 function bindInteractiveRatingControl() {
-  const root = app.querySelector('[data-rating-stars-control]')
+  const root = app.querySelector('[data-rating-interactive]')
   if (!root) return
   if (root.dataset.ratingBound === 'true') return
   root.dataset.ratingBound = 'true'
@@ -539,18 +544,22 @@ function bindInteractiveRatingControl() {
     if (input) input.value = String(safeRating)
     if (fill) fill.style.width = `${(safeRating / 5) * 100}%`
     if (valueLabel) valueLabel.textContent = `${safeRating % 1 ? safeRating.toFixed(1) : safeRating.toFixed(0)} / 5`
+    root.setAttribute('aria-valuenow', String(safeRating))
+    root.setAttribute('aria-valuetext', `${safeRating} out of 5 stars`)
+    if (PRODUCT_REVIEW_DEBUG) console.debug('[product-review] rating changed', { rating: safeRating })
   }
 
   const ratingFromPointer = (event) => {
     const rect = root.getBoundingClientRect()
-    if (!rect.width) return 0
+    if (!rect.width) return 0.5
     const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left))
-    return (x / rect.width) * 5
+    return Math.max(0.5, Math.min(5, Math.ceil((x / rect.width) * 5 * 2) / 2))
   }
 
   let dragging = false
 
   root.addEventListener('pointerdown', (event) => {
+    event.preventDefault()
     dragging = true
     root.setPointerCapture?.(event.pointerId)
     setRating(ratingFromPointer(event))
@@ -562,16 +571,28 @@ function bindInteractiveRatingControl() {
   })
 
   root.addEventListener('pointerup', (event) => {
+    if (!dragging) return
+    setRating(ratingFromPointer(event))
     dragging = false
     root.releasePointerCapture?.(event.pointerId)
   })
 
-  root.addEventListener('pointercancel', () => {
+  root.addEventListener('pointercancel', (event) => {
     dragging = false
+    root.releasePointerCapture?.(event.pointerId)
   })
 
   root.addEventListener('click', (event) => {
     setRating(ratingFromPointer(event))
+  })
+
+  root.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowDown', 'ArrowRight', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const current = Number(input?.value || 0)
+    if (event.key === 'Home') setRating(0.5)
+    else if (event.key === 'End') setRating(5)
+    else setRating(current + (event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? -0.5 : 0.5))
   })
 
   setRating(input?.value || 0)
@@ -925,7 +946,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   <div><h2>Reviews</h2><p class="dashboard-mini-note">${product.averageRating ? `${Number(product.averageRating).toFixed(1)} average · ${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews` : 'No ratings yet'}</p></div>
                   <span class="dashboard-review-count-badge">${product.reviewCount ?? product.commentCount ?? state.reviews.length} reviews</span>
                 </div>
-                ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><button type="button" class="dashboard-rating-stars-wrap dashboard-rating-interactive" data-rating-interactive aria-label="Set rating out of 5 stars"><span class="dashboard-rating-stars" aria-hidden="true"><span class="dashboard-rating-stars-empty">★★★★★</span><span class="dashboard-rating-stars-fill" data-rating-fill style="width:0%">★★★★★</span></span></button><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider is-visually-hidden" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><div class="dashboard-review-submit-row"><button class="button button-accent" type="submit">Submit review</button></div></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
+                ${state.currentUser?.uid ? `<form class="dashboard-review-composer" data-review-form><label for="review-body">Write a review</label><div class="dashboard-rating-control" data-rating-control><button type="button" class="dashboard-rating-stars-wrap dashboard-rating-interactive" data-rating-interactive role="slider" aria-label="Set rating out of 5 stars" aria-valuemin="0.5" aria-valuemax="5" aria-valuenow="0"><span class="dashboard-rating-stars" aria-hidden="true"><span class="dashboard-rating-stars-empty">★★★★★</span><span class="dashboard-rating-stars-fill" data-rating-fill style="width:0%">★★★★★</span></span></button><input type="range" name="rating" min="0" max="5" step="0.5" value="0" class="dashboard-rating-slider is-visually-hidden" data-rating-slider aria-label="Rating out of 5 stars" /><span class="dashboard-rating-value" data-rating-value>0 / 5</span></div><textarea id="review-body" name="body" maxlength="5000" placeholder="Share your thoughts about this product..."></textarea><div class="dashboard-review-submit-row"><button class="button button-accent" type="submit">Submit review</button></div></form>` : '<p class="dashboard-mini-note">Sign in to review this product.</p>'}
                 <div class="dashboard-review-list">${state.reviews.length ? state.reviews.map((review) => `<article class="dashboard-review-card"><div class="dashboard-review-header"><div class="dashboard-review-author">${review.avatarURL ? `<img class="dashboard-creator-avatar" src="${escapeHtml(review.avatarURL)}" alt="${escapeHtml(review.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(review.displayName || 'User'))}</span>`}<div class="dashboard-review-author-meta"><p class="dashboard-creator-name">${escapeHtml(review.displayName || 'User')}</p><p class="dashboard-mini-note">${escapeHtml(formatReviewTime(review.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Review options" class="dashboard-review-menu-button" data-toggle-review-menu="${escapeHtml(review.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReviewMenuId === review.id ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${review.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-review-menu-action="${escapeHtml(review.id)}:${review.uid === state.currentUser?.uid ? 'delete' : 'report'}">${review.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-rating">${review.rating ? `${renderRatingStars(review.rating)} <span>${Number(review.rating).toFixed(review.rating % 1 ? 1 : 0)} / 5</span>` : 'No star rating'}</p><p>${escapeHtml(review.body || '')}</p><div class="dashboard-review-actions"><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'like' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:like"><span class="icon">${iconSvg('thumbsUp')}</span> <em>${Math.max(0, Number(review.likeCount || 0))}</em></button><button type="button" class="dashboard-review-action ${state.reviewReactions[review.id] === 'dislike' ? 'is-active' : ''}" data-review-react="${escapeHtml(review.id)}:dislike"><span class="icon">${iconSvg('thumbsDown')}</span> <em>${Math.max(0, Number(review.dislikeCount || 0))}</em></button><button type="button" class="dashboard-review-action" data-toggle-replies="${escapeHtml(review.id)}"><span class="icon">${iconSvg('messageCircleReply')}</span> <em>${Number(review.replyCount || 0)}</em></button></div>${state.reviewActionErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.reviewActionErrors[review.id])}</p>` : ''}${state.openReplyComposerFor === review.id ? `<form class="dashboard-review-reply-composer" data-review-reply-form="${escapeHtml(review.id)}"><textarea class="dashboard-review-reply-textarea" maxlength="1200" placeholder="Write a reply...">${escapeHtml(state.replyDrafts[review.id] || '')}</textarea><div class="dashboard-review-reply-submit-row"><button type="submit" class="button button-muted">Post reply</button></div></form>` : ''}${state.replyLoadErrors[review.id] ? `<p class="dashboard-review-inline-error">${escapeHtml(state.replyLoadErrors[review.id])}</p>` : ''}<div class="dashboard-review-replies">${(state.reviewReplies[review.id] || []).map((reply) => `<article class="dashboard-review-reply-card"><div class="dashboard-review-reply-header"><div class="dashboard-review-reply-author">${reply.avatarURL ? `<img class="dashboard-review-reply-avatar" src="${escapeHtml(reply.avatarURL)}" alt="${escapeHtml(reply.displayName || 'User')} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback">${escapeHtml(reviewInitials(reply.displayName || 'User'))}</span>`}<div><p class="dashboard-review-reply-name">${escapeHtml(reply.displayName || 'User')}</p><p class="dashboard-review-reply-time">${escapeHtml(formatReviewTime(reply.createdAt))}</p></div></div><div class="dashboard-review-menu-wrap"><button type="button" aria-label="Reply options" class="dashboard-review-menu-button" data-toggle-reply-menu="${escapeHtml(review.id)}:${escapeHtml(reply.id)}"><span class="icon">${iconSvg('moreVertical')}</span></button>${state.openReplyMenuKey === `${review.id}:${reply.id}` ? `<div class="dashboard-review-menu"><button type="button" class="dashboard-review-menu-item ${reply.uid === state.currentUser?.uid ? 'danger' : 'warning'}" data-reply-menu-action="${escapeHtml(review.id)}:${escapeHtml(reply.id)}:${reply.uid === state.currentUser?.uid ? 'delete' : 'report'}">${reply.uid === state.currentUser?.uid ? `${iconSvg('trash')} Delete` : `${iconSvg('alertCircle')} Report`}</button></div>` : ''}</div></div><p class="dashboard-review-reply-body">${escapeHtml(reply.body || '')}</p></article>`).join('')}</div></article>`).join('') : `<p class="dashboard-review-empty">${state.pageData.reviewsLoading ? 'Loading reviews...' : 'No reviews yet. Be the first to review this product.'}</p>`}</div>
               </article>
 

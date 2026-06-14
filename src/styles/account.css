@@ -351,3 +351,90 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Library and Orders share the private-profile dashboard language. */
+.account-page {
+  background:
+    radial-gradient(circle at 100% 0, rgba(88, 148, 255, 0.09), transparent 34%),
+    var(--ml-bg);
+  color: var(--ml-text);
+}
+
+.account-heading {
+  border-color: var(--ml-border);
+}
+
+.account-heading p,
+.account-empty p,
+.account-row span,
+.account-row small,
+.account-label,
+.account-summary-grid span,
+.account-table-row small,
+.account-search span,
+.account-modal label span {
+  color: var(--ml-text-muted);
+}
+
+.account-filter-row button,
+.account-row-action,
+.account-support-panel a,
+.account-action-links a {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  background: var(--ml-bg-interactive);
+  color: var(--ml-text);
+}
+
+.account-filter-row button:hover,
+.account-row-action:hover,
+.account-support-panel a:hover,
+.account-action-links a:hover {
+  border-color: var(--ml-border-strong);
+}
+
+.account-filter-row button.is-active {
+  border-color: rgba(110, 231, 255, 0.55);
+  background: rgba(110, 231, 255, 0.1);
+  color: var(--ml-text);
+}
+
+.account-empty-inline,
+.account-row,
+.account-summary-grid article,
+.account-detail-grid article {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.account-table,
+.account-modal {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: var(--ml-bg-panel-strong);
+}
+
+.account-table-head {
+  background: rgba(20, 29, 47, 0.94);
+}
+
+.account-table-row {
+  border-color: var(--ml-border);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.account-search input,
+.account-modal textarea {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-sm);
+  background: rgba(5, 9, 17, 0.82);
+  color: var(--ml-text);
+}
+
+.account-search input:focus,
+.account-modal textarea:focus {
+  outline: none;
+  border-color: var(--ml-border-strong);
+  box-shadow: var(--ml-focus-ring);
+}

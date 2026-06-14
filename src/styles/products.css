@@ -394,3 +394,75 @@
 .product-card.is-preview-playing .product-cover img { opacity: 0; }
 .product-preview-overlay { position: absolute; inset: auto 0 0 0; padding: .35rem .5rem; font-size: .72rem; background: linear-gradient(transparent, rgba(0,0,0,.65)); color: #fff; z-index: 3; opacity: 0; transition: opacity .2s ease; pointer-events: none; }
 .product-card.preview-arming .product-preview-overlay { opacity: 1; }
+
+/* Marketplace visual-system alignment */
+.products-hero {
+  background:
+    radial-gradient(760px 300px at 82% -20%, rgba(88, 148, 255, 0.11), transparent 70%),
+    var(--ml-bg);
+}
+
+.new-product-btn,
+.advanced-toggle,
+.filter-control input,
+.filter-control select,
+.product-actions button {
+  border-radius: var(--ml-radius-md);
+}
+
+.new-product-btn {
+  border-color: rgba(110, 231, 255, 0.42);
+  background: linear-gradient(120deg, rgba(110, 231, 255, 0.88), rgba(143, 124, 255, 0.88));
+  color: #061019;
+  box-shadow: 0 8px 22px rgba(70, 110, 210, 0.2);
+}
+
+.filter-control input,
+.filter-control select {
+  border-color: var(--ml-border);
+  background: rgba(5, 9, 17, 0.82);
+  color: var(--ml-text);
+}
+
+.filter-control input:focus-visible,
+.filter-control select:focus-visible {
+  outline: none;
+  border-color: var(--ml-border-strong);
+  box-shadow: var(--ml-focus-ring);
+}
+
+.advanced-toggle {
+  border-color: var(--ml-border);
+  background: var(--ml-bg-interactive);
+}
+
+.products-advanced-panel,
+.product-card {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: linear-gradient(180deg, var(--ml-bg-panel-strong), var(--ml-bg-panel));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.product-card-link:hover,
+.product-card-link:focus-visible {
+  border-color: var(--ml-border-strong);
+  box-shadow: var(--ml-glow-cyan);
+}
+
+.product-actions button {
+  border-color: var(--ml-border);
+  background: var(--ml-bg-interactive);
+}
+
+.product-actions .add-btn {
+  border-color: rgba(110, 231, 255, 0.42);
+  background: rgba(110, 231, 255, 0.1);
+}
+
+.product-empty-state {
+  border-color: var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: rgba(255, 255, 255, 0.018);
+  color: var(--ml-text-muted);
+}

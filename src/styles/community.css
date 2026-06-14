@@ -3640,3 +3640,40 @@ body.community-modal-open {
     transform: none;
   }
 }
+
+/* Community keeps its established layout while sharing global surface tokens. */
+.community-page {
+  background-color: var(--ml-bg, #05070d);
+  color: var(--ml-text, #eef4ff);
+}
+
+.community-panel,
+.community-post-card,
+.community-community-card {
+  border-color: var(--ml-border, rgba(130, 160, 220, 0.18));
+  background: linear-gradient(
+    180deg,
+    var(--ml-bg-panel-strong, rgba(13, 19, 34, 0.94)),
+    var(--ml-bg-panel, rgba(10, 15, 28, 0.82))
+  );
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.community-left-nav a,
+.community-left-nav button {
+  border-radius: var(--ml-radius-sm, 6px);
+}
+
+.community-left-nav a:hover,
+.community-left-nav button:hover,
+.community-left-nav .is-active {
+  border-color: var(--ml-border-strong, rgba(130, 190, 255, 0.34));
+  background: rgba(110, 231, 255, 0.08);
+}
+
+.community-post-options-menu {
+  border-color: var(--ml-border-strong, rgba(130, 190, 255, 0.34));
+  border-radius: var(--ml-radius-md, 8px);
+  background: rgba(10, 15, 28, 0.98);
+  box-shadow: var(--ml-shadow-float, 0 24px 70px rgba(0, 0, 0, 0.45));
+}
