@@ -2280,6 +2280,16 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   color: #85e7b5;
 }
 
+.product-gift-inbox-feedback {
+  margin: 0;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid rgba(132, 154, 198, 0.2);
+  color: var(--ml-text-muted);
+}
+
+.product-gift-inbox-feedback.is-success { color: #85e7b5; }
+.product-gift-inbox-feedback.is-error { color: #ff9b9b; }
+
 @media (max-width: 720px) {
   .product-gift-inbox-card {
     grid-template-columns: 48px minmax(0, 1fr);

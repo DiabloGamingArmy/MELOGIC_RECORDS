@@ -1289,8 +1289,23 @@
   color: #dffefd;
 }
 
-.product-gift-error { color: #ff9b9b; }
-.product-gift-success { color: #7ce5b1; }
+.product-gift-send-status {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid rgba(132, 154, 198, 0.2);
+  border-bottom: 1px solid rgba(132, 154, 198, 0.2);
+  color: #b9c8df;
+}
+
+.product-gift-send-status strong {
+  color: #e6eefb;
+}
+
+.product-gift-send-status.is-sending strong { color: #8ecbff; }
+.product-gift-send-status.is-error strong { color: #ff9b9b; }
+.product-gift-send-status.is-success strong { color: #7ce5b1; }
+.product-gift-back-action { justify-self: start; }
 
 .dashboard-audio-card,
 .dashboard-review-composer,

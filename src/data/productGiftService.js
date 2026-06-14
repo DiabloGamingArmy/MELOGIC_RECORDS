@@ -34,7 +34,26 @@ function timestampMillis(value) {
 }
 
 export function sendProductGift(payload = {}) {
-  return callable('sendProductGift', payload)
+  const productId = String(payload.productId || '').trim()
+  const recipientUids = [...new Set(
+    (Array.isArray(payload.recipientUids) ? payload.recipientUids : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  )]
+  if (!productId) return Promise.reject(new Error('A product is required before sending a gift.'))
+  if (!recipientUids.length || recipientUids.length > 10) {
+    return Promise.reject(new Error('Choose between 1 and 10 gift recipients.'))
+  }
+  return callable('sendProductGift', {
+    productId,
+    recipientUids,
+    message: String(payload.message || '').trim().slice(0, 1000)
+  }).then((result) => {
+    if (result?.ok !== true || !Array.isArray(result.giftIds)) {
+      throw new Error('The gift service returned an invalid confirmation.')
+    }
+    return result
+  })
 }
 
 export function acceptProductGift(giftId = '') {
