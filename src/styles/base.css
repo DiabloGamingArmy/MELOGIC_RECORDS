@@ -2072,3 +2072,44 @@ body.has-cart-drawer-open .nav-shell {
 .banner-alert-modal{position:relative;z-index:1;max-width:min(560px,92vw);padding:18px;border-width:1.5px}
 @keyframes bannerSlideUp{from{transform:translateY(120%);opacity:0}to{transform:translateY(0);opacity:1}}
 @media (prefers-reduced-motion:reduce){.banner-alert--bottom{animation:none}}
+
+.product-download-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(3, 7, 13, 0.78);
+  backdrop-filter: blur(7px);
+}
+
+.product-download-modal {
+  width: min(480px, 100%);
+  border: 1px solid rgba(119, 162, 205, 0.34);
+  border-radius: 6px;
+  padding: 1.25rem;
+  background: #0b111b;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+}
+
+.product-download-modal h2,
+.product-download-modal p {
+  margin-top: 0;
+}
+
+.product-download-modal p {
+  color: var(--ml-text-muted, #aab8ca);
+  line-height: 1.55;
+}
+
+.product-download-error {
+  color: #ff9b9b !important;
+}
+
+.product-download-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  margin-top: 1.2rem;
+}

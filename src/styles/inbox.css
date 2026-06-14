@@ -2218,6 +2218,79 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   }
 }
 
+.product-gift-inbox-list {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--ml-border);
+}
+
+.product-gift-inbox-card {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid var(--ml-border);
+}
+
+.product-gift-inbox-cover {
+  width: 58px;
+  height: 58px;
+  border: 1px solid var(--ml-border);
+  border-radius: 4px;
+  background: #101927;
+  overflow: hidden;
+}
+
+.product-gift-inbox-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.product-gift-inbox-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.product-gift-inbox-copy span,
+.product-gift-inbox-copy small,
+.product-gift-inbox-copy p {
+  margin: 0;
+  color: var(--ml-text-muted);
+}
+
+.product-gift-inbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.product-gift-status-badge {
+  border: 1px solid var(--ml-border);
+  border-radius: 4px;
+  padding: 0.38rem 0.55rem;
+  color: var(--ml-text-muted);
+}
+
+.product-gift-status-badge.is-accepted {
+  border-color: rgba(70, 210, 144, 0.45);
+  color: #85e7b5;
+}
+
+@media (max-width: 720px) {
+  .product-gift-inbox-card {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .product-gift-inbox-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+
 /* Inbox sections share the Mutual Users surface and control language. */
 .inbox-auth-card,
 .system-notification-card,

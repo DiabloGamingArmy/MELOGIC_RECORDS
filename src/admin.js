@@ -32,6 +32,9 @@ import {
   updateReportDecision,
   updateAdminSettings,
   uploadSellerAgreementMarkdown
+  ,adminHideProduct
+  ,adminUnhideProduct
+  ,adminRemoveProduct
 } from './data/productService'
 import {
   createCommunity,
@@ -467,6 +470,13 @@ call: {
     open: false,
     decision: '',
     productId: ''
+  },
+  productModerationDialog: {
+    open: false,
+    action: '',
+    productId: '',
+    submitting: false,
+    error: ''
   },
   userActionDialog: {
     open: false,
@@ -2025,6 +2035,12 @@ function reviewDetailView(productId) {
       <div class="admin-detail-actions">
         <a class="admin-secondary-link" href="${ROUTES.adminReviews}">${iconSvg('arrowLeft')}<span>Back</span></a>
         ${isPublic ? `<a class="admin-secondary-link" href="${productRoute(product)}" target="_blank" rel="noreferrer">${iconSvg('eye')}<span>Public Route</span></a>` : ''}
+        ${product.status === 'hidden'
+          ? `<button type="button" class="admin-secondary-button" data-admin-product-moderation="unhide:${escapeHtml(product.id)}">Unhide Product</button>`
+          : product.status !== 'removed'
+            ? `<button type="button" class="admin-secondary-button" data-admin-product-moderation="hide:${escapeHtml(product.id)}">Hide Product</button>`
+            : ''}
+        ${product.status !== 'removed' ? `<button type="button" class="admin-danger-button" data-admin-product-moderation="remove:${escapeHtml(product.id)}">Remove Product</button>` : ''}
       </div>
     </header>
     ${isReturnedForChanges ? `
@@ -2042,6 +2058,31 @@ function reviewDetailView(productId) {
     ${contentTextSection(product)}
     ${detailDecisionBar(product)}
     ${decisionDialog(product)}
+    ${productModerationDialog(product)}
+  `
+}
+
+function productModerationDialog(product = {}) {
+  const dialog = state.productModerationDialog
+  if (!dialog.open || dialog.productId !== product.id) return ''
+  const isRemove = dialog.action === 'remove'
+  const label = dialog.action === 'hide' ? 'Hide Product' : dialog.action === 'unhide' ? 'Unhide Product' : 'Remove Product'
+  return `
+    <div class="admin-modal-backdrop" data-close-product-moderation>
+      <section class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-product-moderation-title">
+        <h2 id="admin-product-moderation-title">${label}</h2>
+        <p>${isRemove ? 'This immediately quarantines the product and disables marketplace access. Storage files are retained for audit.' : `${label} changes marketplace visibility without deleting product data.`}</p>
+        <form data-product-moderation-form>
+          <label><span>Reason</span><textarea data-product-moderation-reason maxlength="1200" rows="4" ${isRemove ? 'required' : ''}></textarea></label>
+          ${isRemove ? '<label><span>Type REMOVE to confirm</span><input data-product-moderation-confirmation autocomplete="off" required /></label>' : ''}
+          ${dialog.error ? `<p class="admin-form-error">${escapeHtml(dialog.error)}</p>` : ''}
+          <div class="admin-modal-actions">
+            <button type="button" class="admin-secondary-button" data-close-product-moderation ${dialog.submitting ? 'disabled' : ''}>Cancel</button>
+            <button type="submit" class="${isRemove ? 'admin-danger-button' : 'admin-primary-button'}" ${dialog.submitting ? 'disabled' : ''}>${dialog.submitting ? 'Working...' : label}</button>
+          </div>
+        </form>
+      </section>
+    </div>
   `
 }
 
@@ -5344,6 +5385,48 @@ async function submitDecision(productId, decision, { reason = '', notes = '' } =
   }
 }
 
+function openProductModerationDialog(productId = '', action = '') {
+  state.productModerationDialog = { open: true, productId, action, submitting: false, error: '' }
+  render()
+  app.querySelector('[data-product-moderation-reason]')?.focus()
+}
+
+function closeProductModerationDialog() {
+  if (state.productModerationDialog.submitting) return
+  state.productModerationDialog = { open: false, productId: '', action: '', submitting: false, error: '' }
+  render()
+}
+
+async function submitProductModeration(form) {
+  const dialog = state.productModerationDialog
+  const reason = form.querySelector('[data-product-moderation-reason]')?.value || ''
+  const confirmation = form.querySelector('[data-product-moderation-confirmation]')?.value || ''
+  if (dialog.action === 'remove' && confirmation !== 'REMOVE') {
+    state.productModerationDialog.error = 'Type REMOVE exactly to confirm.'
+    render()
+    return
+  }
+  state.productModerationDialog.submitting = true
+  state.productModerationDialog.error = ''
+  render()
+  try {
+    const input = { productId: dialog.productId, reason, confirmation }
+    const result = dialog.action === 'hide'
+      ? await adminHideProduct(input)
+      : dialog.action === 'unhide'
+        ? await adminUnhideProduct(input)
+        : await adminRemoveProduct(input)
+    state.products = state.products.map((product) => product.id === dialog.productId ? { ...product, ...result } : product)
+    if (state.reviewedProduct?.id === dialog.productId) state.reviewedProduct = { ...state.reviewedProduct, ...result }
+    state.message = `${humanLabel(dialog.action)} product action completed.`
+    state.productModerationDialog = { open: false, productId: '', action: '', submitting: false, error: '' }
+  } catch (error) {
+    state.productModerationDialog.submitting = false
+    state.productModerationDialog.error = error?.message || 'Could not update this product.'
+  }
+  render()
+}
+
 async function submitRoleForm(form) {
   const uid = form.querySelector('[data-role-uid]')?.value || ''
   const role = form.querySelector('[data-role-select]')?.value || ''
@@ -7549,6 +7632,22 @@ app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
       }
       openDecisionDialog(product.id, decision)
     })
+  })
+  app.querySelectorAll('[data-admin-product-moderation]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const [action, productId] = String(button.getAttribute('data-admin-product-moderation') || '').split(':')
+      if (action && productId) openProductModerationDialog(productId, action)
+    })
+  })
+  app.querySelectorAll('[data-close-product-moderation]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      if (event.target !== element && !element.matches('button')) return
+      closeProductModerationDialog()
+    })
+  })
+  app.querySelector('[data-product-moderation-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitProductModeration(event.currentTarget)
   })
   app.querySelectorAll('[data-close-decision-dialog]').forEach((button) => {
     button.addEventListener('click', closeDecisionDialog)

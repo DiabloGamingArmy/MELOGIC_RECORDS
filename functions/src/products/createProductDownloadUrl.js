@@ -146,5 +146,8 @@ exports.__test = {
   normalizeStoragePath,
   isAllowedProductDownloadPath,
   rowIsDownloadable,
-  selectAllowedDownload
+  selectAllowedDownload,
+  collectAllowedDownloadRows,
+  userCanDownloadProduct,
+  fileNameFromPath
 }

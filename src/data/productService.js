@@ -1747,6 +1747,25 @@ export async function reviewProductDecision({ productId = '', decision = '', rea
   return result?.data || { ok: false }
 }
 
+async function callAdminProductModeration(name = '', payload = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, name)
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export function adminHideProduct({ productId = '', reason = '' } = {}) {
+  return callAdminProductModeration('adminHideProduct', { productId, reason })
+}
+
+export function adminUnhideProduct({ productId = '', reason = '' } = {}) {
+  return callAdminProductModeration('adminUnhideProduct', { productId, reason })
+}
+
+export function adminRemoveProduct({ productId = '', reason = '', confirmation = '' } = {}) {
+  return callAdminProductModeration('adminRemoveProduct', { productId, reason, confirmation })
+}
+
 export async function setAdminUserRole({ uid = '', role = '', active = true, reason = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'setAdminUserRole')

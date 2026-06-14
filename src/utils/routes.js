@@ -19,6 +19,8 @@ export const ROUTES = {
   inboxContentFollows: '/inbox/content/follows',
   inboxContentComments: '/inbox/content/comments',
   inboxContentMentions: '/inbox/content/mentions',
+  inboxContentGifts: '/inbox/content/gifts',
+  inboxContentCollaborations: '/inbox/content/collaborations',
   inboxMutualUsers: '/inbox/mutual-users',
   inboxSystem: '/inbox/system',
   editProfile: '/profile/edit',

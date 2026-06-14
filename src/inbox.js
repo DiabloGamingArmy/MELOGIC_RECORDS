@@ -89,6 +89,7 @@ import {
   searchUsersByUsername
 } from './data/mutualUsersService'
 import { detectPlatformCapabilities } from './platform/platformCapabilities'
+import { acceptProductGift, denyProductGift, listIncomingProductGifts } from './data/productGiftService'
 
 const app = document.querySelector('#app')
 
@@ -99,7 +100,7 @@ const inboxFilters = [
   { label: 'Mutual Users', path: ROUTES.inboxMutualUsers },
   { label: 'System', path: ROUTES.inboxSystem }
 ]
-const contentViews = new Set(['all', 'likes', 'follows', 'comments', 'mentions'])
+const contentViews = new Set(['all', 'likes', 'follows', 'comments', 'mentions', 'gifts', 'collaborations'])
 const initialSystemFilter = new URLSearchParams(window.location.search).get('system')
 
 function parseInboxRoute(pathname = window.location.pathname) {
@@ -205,6 +206,16 @@ const activityCopy = {
     emptyTitle: 'No mentions yet.',
     emptyBody: 'Mentions from group threads and community spaces will appear here.'
   },
+  Gifts: {
+    title: 'Gifts',
+    emptyTitle: 'No product gifts yet.',
+    emptyBody: 'Products sent to you by creators will appear here.'
+  },
+  Collaborations: {
+    title: 'Collaborations',
+    emptyTitle: 'No collaboration invites yet.',
+    emptyBody: 'Collaboration invites will appear here.'
+  },
   System: {
     title: 'System',
     emptyTitle: 'No notifications yet.',
@@ -252,6 +263,10 @@ const appState = {
   warnedRealtimePermissions: {},
   warnedSystemPermissions: false,
   systemNotifications: [],
+  productGifts: [],
+  productGiftsLoading: false,
+  productGiftsError: '',
+  productGiftActionId: '',
   accountEvents: [],
   notificationPreferences: normalizeNotificationPreferences(),
   inboxPins: [],
@@ -3124,11 +3139,56 @@ function getContentActivityMarkup() {
     { key: 'likes', label: 'Likes', path: ROUTES.inboxContentLikes },
     { key: 'follows', label: 'Follows', path: ROUTES.inboxContentFollows },
     { key: 'comments', label: 'Comments', path: ROUTES.inboxContentComments },
-    { key: 'mentions', label: 'Mentions', path: ROUTES.inboxContentMentions }
+    { key: 'mentions', label: 'Mentions', path: ROUTES.inboxContentMentions },
+    { key: 'gifts', label: 'Gifts', path: ROUTES.inboxContentGifts },
+    { key: 'collaborations', label: 'Collaborations', path: ROUTES.inboxContentCollaborations }
   ]
   const activeTab = tabs.find((tab) => tab.key === appState.contentView) || tabs[0]
   const copy = activityCopy[activeTab.label] || activityCopy.System
   const rows = contentNotificationRows()
+  if (activeTab.key === 'collaborations') {
+    return `
+      <section class="activity-panel">
+        <header class="panel-header activity-header"><h3>Content</h3><p>Activity connected to your work and profile</p></header>
+        <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
+          ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
+        </nav>
+        <section class="inbox-empty-panel activity-empty-panel"><h3>No collaboration invites yet.</h3><p>Collaboration invites will appear here.</p></section>
+      </section>
+    `
+  }
+  if (activeTab.key === 'gifts') {
+    return `
+      <section class="activity-panel">
+        <header class="panel-header activity-header"><h3>Content</h3><p>Activity connected to your work and profile</p></header>
+        <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
+          ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
+        </nav>
+        ${appState.productGiftsLoading ? '<section class="inbox-empty-panel activity-empty-panel"><h3>Loading gifts...</h3></section>' : appState.productGiftsError ? `<section class="inbox-empty-panel activity-empty-panel"><h3>Gifts could not be loaded.</h3><p>${escapeHtml(appState.productGiftsError)}</p></section>` : appState.productGifts.length ? `
+          <div class="product-gift-inbox-list">
+            ${appState.productGifts.map((gift) => `
+              <article class="product-gift-inbox-card">
+                <span class="product-gift-inbox-cover">${gift.productImage ? `<img src="${escapeHtml(gift.productImage)}" alt="" />` : ''}</span>
+                <div class="product-gift-inbox-copy">
+                  <strong>${escapeHtml(gift.productTitle)}</strong>
+                  <span>From ${escapeHtml(gift.senderDisplayName)}</span>
+                  ${gift.message ? `<p>${escapeHtml(gift.message)}</p>` : ''}
+                  <small>${escapeHtml(formatThreadTimestamp(gift.createdAt))}</small>
+                </div>
+                <div class="product-gift-inbox-actions">
+                  ${gift.status === 'pending' ? `
+                    <button type="button" class="button button-accent" data-product-gift-action="accept:${escapeHtml(gift.id)}" ${appState.productGiftActionId === gift.id ? 'disabled' : ''}>Accept Gift</button>
+                    <button type="button" class="button button-muted" data-product-gift-action="deny:${escapeHtml(gift.id)}" ${appState.productGiftActionId === gift.id ? 'disabled' : ''}>Deny Gift</button>
+                  ` : `<span class="product-gift-status-badge is-${escapeHtml(gift.status)}">${escapeHtml(gift.status === 'accepted' ? 'Accepted' : 'Denied')}</span>`}
+                  <a class="button button-muted" href="${productRoute(gift.productId)}">View Product</a>
+                </div>
+              </article>
+            `).join('')}
+          </div>
+        ` : `<section class="inbox-empty-panel activity-empty-panel"><h3>${escapeHtml(copy.emptyTitle)}</h3><p>${escapeHtml(copy.emptyBody)}</p></section>`}
+      </section>
+    `
+  }
   return `
     <section class="activity-panel">
       <header class="panel-header activity-header">
@@ -5276,6 +5336,24 @@ function bindSharedEvents(scope = inboxRoot) {
       navigateInbox(button.getAttribute('data-inbox-path') || ROUTES.inboxMessages)
     })
   })
+  scope.querySelectorAll('[data-product-gift-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const [action, giftId] = String(button.getAttribute('data-product-gift-action') || '').split(':')
+      if (!giftId || appState.productGiftActionId) return
+      appState.productGiftActionId = giftId
+      renderSignedInState()
+      try {
+        if (action === 'accept') await acceptProductGift(giftId)
+        else await denyProductGift(giftId)
+        await loadProductGifts()
+      } catch (error) {
+        appState.productGiftsError = error?.message || 'Could not update this gift.'
+      } finally {
+        appState.productGiftActionId = ''
+        renderSignedInState()
+      }
+    })
+  })
 
   const mutualSearch = scope.querySelector('[data-mutual-user-search]')
   mutualSearch?.addEventListener('input', () => {
@@ -6461,6 +6539,23 @@ async function loadInboxNotificationPreferences() {
   }
 }
 
+async function loadProductGifts() {
+  if (!appState.user?.uid) {
+    appState.productGifts = []
+    return
+  }
+  appState.productGiftsLoading = true
+  appState.productGiftsError = ''
+  try {
+    appState.productGifts = await listIncomingProductGifts(appState.user.uid)
+  } catch (error) {
+    appState.productGifts = []
+    appState.productGiftsError = error?.message || 'Product gifts are unavailable right now.'
+  } finally {
+    appState.productGiftsLoading = false
+  }
+}
+
 async function hydrateContentNotificationActors(items = []) {
   const actorUids = Array.from(new Set(items.map((item) => item?.actorUid).filter(Boolean)))
   const missing = actorUids.filter((uid) => !hydratedProfileUids.has(uid))
@@ -6643,6 +6738,7 @@ waitForInitialAuthState().then(async (user) => {
 
   appState.user = user
   await loadInboxNotificationPreferences()
+  await loadProductGifts()
   renderSignedInState()
   startThreadSubscription()
   startSystemNotificationSubscription()
@@ -6695,6 +6791,7 @@ subscribeToAuthState(async (user) => {
   }
   appState.user = user
   await loadInboxNotificationPreferences()
+  await loadProductGifts()
   applyInboxRoute(parseInboxRoute())
   renderSignedInState()
   startThreadSubscription()
