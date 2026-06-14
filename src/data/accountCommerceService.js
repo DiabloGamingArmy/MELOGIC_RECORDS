@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 import { getProductById } from './productService'
 
@@ -102,14 +102,16 @@ export function accountDateIso(value) {
   return toIso(value)
 }
 
-export async function listUserLibraryItems(uid = '') {
+export async function listUserLibraryItems(uid = '', { limitCount = 0 } = {}) {
   const userId = String(uid || '').trim()
   if (!db || !userId) return []
+  const rowLimit = Math.min(Math.max(Number(limitCount) || 0, 0), 50)
+  const rowsQuery = (reference) => rowLimit ? query(reference, limit(rowLimit)) : reference
 
   const [entitlementResult, savedResult, libraryResult] = await Promise.allSettled([
-    getDocs(collection(db, 'users', userId, 'entitlements')),
-    getDocs(collection(db, 'users', userId, 'savedProducts')),
-    getDocs(collection(db, 'users', userId, 'libraryItems'))
+    getDocs(rowsQuery(collection(db, 'users', userId, 'entitlements'))),
+    getDocs(rowsQuery(collection(db, 'users', userId, 'savedProducts'))),
+    getDocs(rowsQuery(collection(db, 'users', userId, 'libraryItems')))
   ])
 
   const rows = []
@@ -137,13 +139,17 @@ export async function listUserLibraryItems(uid = '') {
   return sortAccountRowsByDate(withProducts)
 }
 
-export async function listUserOrders(uid = '') {
+export async function listUserOrders(uid = '', { limitCount = 0 } = {}) {
   const userId = String(uid || '').trim()
   if (!db || !userId) return []
+  const rowLimit = Math.min(Math.max(Number(limitCount) || 0, 0), 50)
+  const topLevelConstraints = [where('uid', '==', userId)]
+  if (rowLimit) topLevelConstraints.push(limit(rowLimit))
+  const nestedReference = collection(db, 'users', userId, 'orders')
 
   const [topLevelResult, nestedResult] = await Promise.allSettled([
-    getDocs(query(collection(db, 'orders'), where('uid', '==', userId))),
-    getDocs(collection(db, 'users', userId, 'orders'))
+    getDocs(query(collection(db, 'orders'), ...topLevelConstraints)),
+    getDocs(rowLimit ? query(nestedReference, limit(rowLimit)) : nestedReference)
   ])
 
   const map = new Map()
