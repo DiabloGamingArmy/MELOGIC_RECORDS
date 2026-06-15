@@ -27,6 +27,32 @@ function stripeLivemode(secret = '') {
   return !cleanString(secret, 180).startsWith('sk_test_')
 }
 
+function stripeSecretMode(secret = '') {
+  const value = cleanString(secret, 80)
+  if (value.startsWith('sk_test_')) return 'test'
+  if (value.startsWith('sk_live_')) return 'live'
+  return value ? 'unknown' : 'missing'
+}
+
+function assertStripeSecret(secret = '') {
+  const mode = stripeSecretMode(secret)
+  if (!['test', 'live'].includes(mode)) {
+    throw new HttpsError('failed-precondition', 'Stripe payouts are not configured.')
+  }
+  return mode
+}
+
+function stripeErrorSummary(error = {}) {
+  return {
+    type: cleanString(error.type || error.raw?.type || '', 120),
+    code: cleanString(error.code || error.raw?.code || '', 120),
+    declineCode: cleanString(error.decline_code || error.raw?.decline_code || '', 120),
+    message: cleanString(error.message || error.raw?.message || '', 500),
+    statusCode: Number(error.statusCode || error.raw?.statusCode || 0) || null,
+    requestId: cleanString(error.requestId || error.raw?.requestId || '', 120)
+  }
+}
+
 function safeConnectStatus(account = {}, { livemode = false } = {}) {
   const dashboardType = cleanString(account.controller?.stripe_dashboard?.type || '', 40)
   return {
@@ -70,18 +96,15 @@ function privateConnectRef(database, uid) {
 
 function connectAccountParams({ uid = '', email = '' } = {}) {
   return {
+    type: 'express',
+    country: 'US',
     email: cleanString(email, 320) || undefined,
-    controller: {
-      fees: { payer: 'application' },
-      losses: { payments: 'application' },
-      requirement_collection: 'stripe',
-      stripe_dashboard: { type: 'express' }
-    },
     capabilities: {
       transfers: { requested: true }
     },
     metadata: {
-      melogicUid: cleanString(uid, 180)
+      firebaseUid: cleanString(uid, 180),
+      platform: 'melogic_records'
     }
   }
 }
@@ -100,8 +123,14 @@ async function ensureStripeConnectAccount({
   const safeStatusRef = billingRef(database, userId)
   const snapshot = await privateRef.get()
   const existing = snapshot.exists ? snapshot.data() || {} : {}
-  const livemode = stripeLivemode(secret)
+  const secretMode = assertStripeSecret(secret)
+  const livemode = secretMode === 'live'
   const existingAccountId = cleanString(existing.stripeConnectAccountId || '', 180)
+  logger.info('[stripe-connect] account lookup complete', {
+    uid: userId,
+    stripeSecretMode: secretMode,
+    existingAccount: Boolean(existingAccountId)
+  })
 
   if (existingAccountId) {
     if (existing.livemode !== undefined && existing.livemode !== livemode) {
@@ -110,12 +139,29 @@ async function ensureStripeConnectAccount({
     return { accountId: existingAccountId, created: false, livemode }
   }
 
-  const account = await stripe.accounts.create(connectAccountParams({
-    uid: userId,
-    email
-  }), {
-    idempotencyKey: `melogic_connect_account_${livemode ? 'live' : 'test'}_${userId}`
-  })
+  let account
+  try {
+    account = await stripe.accounts.create(connectAccountParams({
+      uid: userId,
+      email
+    }), {
+      idempotencyKey: `melogic_connect_account_${secretMode}_${userId}`
+    })
+    logger.info('[stripe-connect] account created', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      accountIdPrefix: cleanString(account.id || '', 8),
+      accountType: cleanString(account.type || 'express', 40),
+      livemode: account.livemode === true
+    })
+  } catch (error) {
+    logger.error('[stripe-connect] account creation failed', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      stripe: stripeErrorSummary(error)
+    })
+    throw error
+  }
 
   const now = admin.firestore.FieldValue.serverTimestamp()
   const batch = database.batch()
@@ -144,6 +190,7 @@ async function createAccountForRequest(request) {
   if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in to set up payouts.')
 
   const secret = STRIPE_SECRET_KEY.value()
+  assertStripeSecret(secret)
   const stripe = new Stripe(secret)
   const authUser = await admin.auth().getUser(uid).catch(() => null)
   return ensureStripeConnectAccount({
@@ -163,7 +210,8 @@ const createStripeConnectAccount = onCall(
   async (request) => {
     try {
       const result = await createAccountForRequest(request)
-      const account = result.account || await new Stripe(STRIPE_SECRET_KEY.value()).accounts.retrieve(result.accountId)
+      const secret = STRIPE_SECRET_KEY.value()
+      const account = result.account || await new Stripe(secret).accounts.retrieve(result.accountId)
       return {
         ok: true,
         created: result.created,
@@ -173,8 +221,7 @@ const createStripeConnectAccount = onCall(
       if (error instanceof HttpsError) throw error
       logger.error('[stripe-connect] account creation failed', {
         uid: request.auth?.uid || '',
-        code: error?.code || '',
-        message: error?.message || ''
+        stripe: stripeErrorSummary(error)
       })
       throw new HttpsError('internal', 'Stripe payout setup could not be started.')
     }
@@ -193,21 +240,37 @@ const createStripeConnectOnboardingLink = onCall(
 
     try {
       const result = await createAccountForRequest(request)
-      const stripe = new Stripe(STRIPE_SECRET_KEY.value())
+      const secret = STRIPE_SECRET_KEY.value()
+      const secretMode = assertStripeSecret(secret)
+      const stripe = new Stripe(secret)
       const siteUrl = PUBLIC_SITE_URL.value().replace(/\/+$/, '')
+      const returnUrl = `${siteUrl}/account/billing-payouts?stripeConnect=return`
+      const refreshUrl = `${siteUrl}/account/billing-payouts?stripeConnect=refresh`
+      logger.info('[stripe-connect] creating onboarding link', {
+        uid,
+        stripeSecretMode: secretMode,
+        existingAccount: result.created !== true,
+        accountIdPrefix: cleanString(result.accountId || '', 8),
+        returnUrl,
+        refreshUrl
+      })
       const link = await stripe.accountLinks.create({
         account: result.accountId,
         type: 'account_onboarding',
-        return_url: `${siteUrl}/account/billing-payouts?stripeConnect=return`,
-        refresh_url: `${siteUrl}/account/billing-payouts?stripeConnect=refresh`
+        return_url: returnUrl,
+        refresh_url: refreshUrl
+      })
+      logger.info('[stripe-connect] onboarding link created', {
+        uid,
+        stripeSecretMode: secretMode,
+        accountIdPrefix: cleanString(result.accountId || '', 8)
       })
       return { ok: true, url: link.url }
     } catch (error) {
       if (error instanceof HttpsError) throw error
       logger.error('[stripe-connect] onboarding link creation failed', {
         uid,
-        code: error?.code || '',
-        message: error?.message || ''
+        stripe: stripeErrorSummary(error)
       })
       throw new HttpsError('internal', 'Stripe onboarding could not be opened.')
     }
@@ -236,6 +299,7 @@ const refreshStripeConnectStatus = onCall(
 
     try {
       const secret = STRIPE_SECRET_KEY.value()
+      assertStripeSecret(secret)
       const account = await new Stripe(secret).accounts.retrieve(accountId)
       const status = safeConnectStatus(account, { livemode: stripeLivemode(secret) })
       await safeStatusRef.set({
@@ -247,8 +311,7 @@ const refreshStripeConnectStatus = onCall(
     } catch (error) {
       logger.error('[stripe-connect] status refresh failed', {
         uid,
-        code: error?.code || '',
-        message: error?.message || ''
+        stripe: stripeErrorSummary(error)
       })
       throw new HttpsError('internal', 'Stripe payout status could not be refreshed.')
     }
@@ -265,6 +328,8 @@ module.exports = {
     publicConnectStatus,
     safeConnectStatus,
     safeRequirementList,
+    stripeErrorSummary,
+    stripeSecretMode,
     stripeLivemode
   }
 }

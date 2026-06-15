@@ -224,7 +224,14 @@ async function startOnboarding() {
     window.location.assign(result.url)
   } catch (error) {
     console.error('[billing-payouts] onboarding failed', error)
-    state.error = error?.message || 'Stripe onboarding could not be opened.'
+    const code = String(error?.code || '')
+    if (code.includes('unauthenticated')) {
+      state.error = 'Please sign in again to set up payouts.'
+    } else if (code.includes('failed-precondition')) {
+      state.error = 'Payout setup is temporarily unavailable.'
+    } else {
+      state.error = 'Stripe onboarding could not be opened. Please try again.'
+    }
     state.actioning = false
     render()
   }
