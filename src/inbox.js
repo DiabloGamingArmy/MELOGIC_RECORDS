@@ -2,7 +2,7 @@ import './styles/base.css'
 import './styles/inbox.css'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
-import { openChatDock } from './components/chatDock'
+import { closeChatDock, getChatDockState, openChatDock } from './components/chatDock'
 import { initShellChrome } from './appBoot'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
@@ -2463,9 +2463,6 @@ function getMessagesThreadListMarkup() {
               ${pinIndicator}
             </div>
           </button>
-          <button type="button" class="thread-row-dock-trigger" data-open-chat-dock-thread="${escapeHtml(thread.id)}" aria-label="Open ${escapeHtml(thread.title)} in chat dock">
-            Dock
-          </button>
           <button type="button" class="thread-row-menu-trigger" data-thread-menu-id="${thread.id}" aria-label="Open chat actions">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="5" r="1.8" fill="currentColor"/>
@@ -2490,6 +2487,10 @@ function getThreadActionMenuMarkup() {
   const dmOtherUid = getDmOtherParticipant(thread)
   const isDm = thread.type === 'dm' && Boolean(dmOtherUid)
   const sidebarPinned = isInboxPinned('thread', thread.id)
+  const dock = getChatDockState()
+  const isOpenInDock = dock.open && dock.mode === 'thread' && dock.activeThreadId === thread.id
+  const dockAction = isOpenInDock && !dock.minimized ? 'close-dock' : 'open-dock'
+  const dockLabel = isOpenInDock ? (dock.minimized ? 'Open dock' : 'Unpin from dock') : 'Open in dock'
   const blockAction = isDm
     ? `<button type="button" data-thread-action="${isUserBlocked(dmOtherUid) ? 'unblock-contact' : 'block-contact'}" data-thread-action-id="${thread.id}">
         ${iconSvg('user')}<span>${isUserBlocked(dmOtherUid) ? 'Unblock contact' : 'Block contact'}</span>
@@ -2507,8 +2508,8 @@ function getThreadActionMenuMarkup() {
         <button type="button" data-thread-action="${sidebarPinned ? 'unpin-sidebar' : 'pin-sidebar'}" data-thread-action-id="${thread.id}">
           ${iconSvg('bookmark')}<span>${sidebarPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}</span>
         </button>
-        <button type="button" data-thread-action="open-dock" data-thread-action-id="${thread.id}">
-          ${iconSvg('messageCircle')}<span>Open in dock</span>
+        <button type="button" data-thread-action="${dockAction}" data-thread-action-id="${thread.id}">
+          ${iconSvg('messageCircle')}<span>${dockLabel}</span>
         </button>
         <button type="button" class="is-danger" data-thread-action="delete" data-thread-action-id="${thread.id}">
           ${iconSvg('trash')}<span>Delete chat</span>
@@ -4554,6 +4555,12 @@ function setupFloatingEventDelegates() {
         renderFloatingUi()
         return
       }
+      if (action === 'close-dock') {
+        appState.threadActionMenu = null
+        closeChatDock()
+        renderFloatingUi()
+        return
+      }
       if (action === 'pin-sidebar' || action === 'unpin-sidebar') {
         const thread = appState.threads.find((entry) => entry.id === threadId)
         const pin = threadInboxPin(thread)
@@ -5495,14 +5502,6 @@ function bindSharedEvents(scope = inboxRoot) {
           warnRealtimePermission(`participants-read-${threadId}`, error)
         })
       }
-    })
-  })
-
-  scope.querySelectorAll('[data-open-chat-dock-thread]').forEach((button) => {
-    button.addEventListener('click', (event) => {
-      event.preventDefault()
-      event.stopPropagation()
-      openThreadInChatDock(button.getAttribute('data-open-chat-dock-thread') || '')
     })
   })
 
