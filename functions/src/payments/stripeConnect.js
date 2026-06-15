@@ -45,13 +45,16 @@ function assertStripeSecret(secret = '') {
   }
   const expectedMode = cleanString(process.env.STRIPE_MODE || '', 20).toLowerCase()
   if (expectedMode && ['test', 'live'].includes(expectedMode) && expectedMode !== mode) {
-    logger.error('[stripe-connect] Stripe mode mismatch', {
+    stripeConnectLog('error', 'config', 'Stripe mode mismatch', {
       stripeSecretMode: mode,
       expectedStripeMode: expectedMode
     })
-    throw new HttpsError('failed-precondition', 'Stripe payouts are configured for the wrong mode.')
+    throw new HttpsError('failed-precondition', 'Stripe payouts are configured for the wrong mode.', {
+      stage: 'config',
+      safeMessage: 'Stripe payouts are configured for the wrong mode.'
+    })
   }
-  logger.info(`[stripe-connect] using ${mode} Stripe key`, {
+  stripeConnectLog('info', 'config', `using ${mode} Stripe key`, {
     stripeSecretMode: mode
   })
   return mode
@@ -61,11 +64,36 @@ function stripeErrorSummary(error = {}) {
   return {
     type: cleanString(error.type || error.raw?.type || '', 120),
     code: cleanString(error.code || error.raw?.code || '', 120),
+    param: cleanString(error.param || error.raw?.param || '', 120),
     declineCode: cleanString(error.decline_code || error.raw?.decline_code || '', 120),
     message: cleanString(error.message || error.raw?.message || '', 500),
     statusCode: Number(error.statusCode || error.raw?.statusCode || 0) || null,
     requestId: cleanString(error.requestId || error.raw?.requestId || '', 120)
   }
+}
+
+function stripeConnectLog(level = 'info', stage = '', message = '', data = {}) {
+  const payload = {
+    stage: cleanString(stage, 80),
+    ...data
+  }
+  logger[level](`[stripe-connect] ${message}`, payload)
+}
+
+function safeErrorDetails(stage = 'unknown', error = {}) {
+  const stripe = stripeErrorSummary(error)
+  return {
+    stage: cleanString(stage, 80),
+    stripeType: stripe.type,
+    stripeCode: stripe.code,
+    stripeParam: stripe.param,
+    stripeRequestId: stripe.requestId,
+    safeMessage: stripe.message || cleanString(error.message || 'Stripe request failed.', 500)
+  }
+}
+
+function stripeHttpsError(stage = 'unknown', error = {}, message = 'Stripe onboarding could not be opened.') {
+  return new HttpsError('internal', message, safeErrorDetails(stage, error))
 }
 
 function safeConnectStatus(account = {}, { livemode = false } = {}) {
@@ -154,12 +182,19 @@ async function bindStripeConnectAccount({
   uid = '',
   account = {},
   livemode = false,
-  source = 'created'
+  source = 'created',
+  stage = 'firestore_write'
 } = {}) {
   const now = admin.firestore.FieldValue.serverTimestamp()
   const privateRef = privateConnectRef(database, uid)
   const safeStatusRef = billingRef(database, uid)
   const batch = database.batch()
+  stripeConnectLog('info', stage, 'writing connected account binding', {
+    uid,
+    stripeSecretMode: livemode ? 'live' : 'test',
+    bindingSource: source,
+    accountIdPreview: accountIdPreview(account.id)
+  })
   batch.set(privateRef, {
     uid,
     stripeConnectAccountId: account.id,
@@ -180,7 +215,27 @@ async function bindStripeConnectAccount({
     updatedAt: now,
     ...safeConnectStatus(account, { livemode })
   }, { merge: true })
-  await batch.commit()
+  try {
+    await batch.commit()
+    stripeConnectLog('info', stage, 'connected account binding written', {
+      uid,
+      stripeSecretMode: livemode ? 'live' : 'test',
+      bindingSource: source,
+      accountIdPreview: accountIdPreview(account.id)
+    })
+  } catch (error) {
+    stripeConnectLog('error', stage, 'connected account binding failed', {
+      uid,
+      stripeSecretMode: livemode ? 'live' : 'test',
+      bindingSource: source,
+      accountIdPreview: accountIdPreview(account.id),
+      safeMessage: cleanString(error.message || '', 500)
+    })
+    throw new HttpsError('internal', 'Stripe payout account could not be saved.', {
+      stage,
+      safeMessage: 'Stripe payout account could not be saved.'
+    })
+  }
 }
 
 function accountIdPreview(accountId = '') {
@@ -197,6 +252,14 @@ function timestampMillis(value) {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+function isHttpsUrl(value = '') {
+  try {
+    return new URL(value).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 async function acquireAccountCreationLock({ database, uid = '', livemode = false } = {}) {
   const privateRef = privateConnectRef(database, uid)
   return database.runTransaction(async (transaction) => {
@@ -209,7 +272,10 @@ async function acquireAccountCreationLock({ database, uid = '', livemode = false
     const status = cleanString(data.accountCreationStatus || '', 40)
     const lockAge = Date.now() - timestampMillis(data.accountCreationStartedAt || data.updatedAt)
     if (status === 'creating' && lockAge >= 0 && lockAge < ACCOUNT_CREATION_LOCK_MS) {
-      throw new HttpsError('failed-precondition', 'Stripe payout setup is already starting. Try again in a moment.')
+      throw new HttpsError('failed-precondition', 'Stripe payout setup is already starting. Try again in a moment.', {
+        stage: 'account_creation_lock',
+        safeMessage: 'Stripe payout setup is already starting. Try again in a moment.'
+      })
     }
     const now = admin.firestore.FieldValue.serverTimestamp()
     transaction.set(privateRef, {
@@ -235,34 +301,56 @@ async function ensureStripeConnectAccount({
   if (!userId || userId.includes('/')) throw new HttpsError('unauthenticated', 'You must be signed in.')
 
   const privateRef = privateConnectRef(database, userId)
-  const snapshot = await privateRef.get()
-  const existing = snapshot.exists ? snapshot.data() || {} : {}
   const secretMode = assertStripeSecret(secret)
   const livemode = secretMode === 'live'
+  stripeConnectLog('info', 'account_lookup', 'reading connected account binding', {
+    uid: userId,
+    stripeSecretMode: secretMode
+  })
+  const snapshot = await privateRef.get()
+  const existing = snapshot.exists ? snapshot.data() || {} : {}
   const existingAccountId = cleanString(existing.stripeConnectAccountId || '', 180)
-  logger.info('[stripe-connect] account lookup complete', {
+  stripeConnectLog('info', 'account_lookup', 'account lookup complete', {
     uid: userId,
     stripeSecretMode: secretMode,
-    existingAccount: Boolean(existingAccountId)
+    existingAccount: Boolean(existingAccountId),
+    accountIdPreview: accountIdPreview(existingAccountId)
   })
 
   if (existingAccountId) {
     if (existing.livemode !== undefined && existing.livemode !== livemode) {
-      throw new HttpsError('failed-precondition', 'The saved Stripe account belongs to a different Stripe mode.')
+      throw new HttpsError('failed-precondition', 'The saved Stripe account belongs to a different Stripe mode.', {
+        stage: 'account_lookup',
+        safeMessage: 'The saved Stripe account belongs to a different Stripe mode.'
+      })
     }
+    stripeConnectLog('info', 'account_lookup', 'reusing existing connected account', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      accountIdPreview: accountIdPreview(existingAccountId)
+    })
     return { accountId: existingAccountId, created: false, livemode }
   }
 
   let recoveredAccounts = []
   try {
+    stripeConnectLog('info', 'account_recovery', 'searching Stripe connected accounts by metadata', {
+      uid: userId,
+      stripeSecretMode: secretMode
+    })
     recoveredAccounts = await findExistingStripeConnectAccount({ stripe, uid: userId })
+    stripeConnectLog('info', 'account_recovery', 'Stripe metadata recovery search complete', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      matchCount: recoveredAccounts.length
+    })
   } catch (error) {
-    logger.error('[stripe-connect] account recovery search failed', {
+    stripeConnectLog('error', 'account_recovery', 'account recovery search failed', {
       uid: userId,
       stripeSecretMode: secretMode,
       stripe: stripeErrorSummary(error)
     })
-    throw error
+    throw stripeHttpsError('account_recovery', error)
   }
   if (recoveredAccounts.length === 1) {
     const recovered = recoveredAccounts[0]
@@ -271,9 +359,10 @@ async function ensureStripeConnectAccount({
       uid: userId,
       account: recovered,
       livemode,
-      source: 'stripe_metadata_recovery'
+      source: 'stripe_metadata_recovery',
+      stage: 'firestore_write'
     })
-    logger.info('[stripe-connect] recovered existing account from Stripe metadata', {
+    stripeConnectLog('info', 'account_recovery', 'recovered existing account from Stripe metadata', {
       uid: userId,
       stripeSecretMode: secretMode,
       accountIdPreview: accountIdPreview(recovered.id)
@@ -281,30 +370,53 @@ async function ensureStripeConnectAccount({
     return { accountId: recovered.id, account: recovered, created: false, recovered: true, livemode }
   }
   if (recoveredAccounts.length > 1) {
-    logger.error('[stripe-connect] multiple matching Stripe accounts require admin review', {
+    stripeConnectLog('error', 'account_recovery', 'multiple matching Stripe accounts require admin review', {
       uid: userId,
       stripeSecretMode: secretMode,
       matchCount: recoveredAccounts.length,
       accountIdPreviews: recoveredAccounts.map((account) => accountIdPreview(account.id)).slice(0, 10)
     })
-    throw new HttpsError('failed-precondition', 'Multiple Stripe payout accounts were found for this user. Admin review is required.')
+    throw new HttpsError('failed-precondition', 'Multiple Stripe payout accounts were found for this user. Admin review is required.', {
+      stage: 'account_recovery',
+      safeMessage: 'Multiple Stripe connected accounts found for this user; admin review required.'
+    })
   }
 
+  stripeConnectLog('info', 'account_creation_lock', 'acquiring account creation lock', {
+    uid: userId,
+    stripeSecretMode: secretMode
+  })
   const lock = await acquireAccountCreationLock({ database, uid: userId, livemode })
   if (!lock.locked && lock.accountId) {
     if (lock.existing?.livemode !== undefined && lock.existing.livemode !== livemode) {
-      throw new HttpsError('failed-precondition', 'The saved Stripe account belongs to a different Stripe mode.')
+      throw new HttpsError('failed-precondition', 'The saved Stripe account belongs to a different Stripe mode.', {
+        stage: 'account_creation_lock',
+        safeMessage: 'The saved Stripe account belongs to a different Stripe mode.'
+      })
     }
+    stripeConnectLog('info', 'account_creation_lock', 'lock found existing connected account', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      accountIdPreview: accountIdPreview(lock.accountId)
+    })
     return { accountId: lock.accountId, created: false, livemode }
   }
+  stripeConnectLog('info', 'account_creation_lock', 'account creation lock acquired', {
+    uid: userId,
+    stripeSecretMode: secretMode
+  })
 
   let account
   try {
+    stripeConnectLog('info', 'account_creation', 'creating Stripe connected account', {
+      uid: userId,
+      stripeSecretMode: secretMode
+    })
     account = await stripe.accounts.create(connectAccountParams({
       uid: userId,
       email
     }))
-    logger.info('[stripe-connect] account created', {
+    stripeConnectLog('info', 'account_creation', 'Stripe connected account created', {
       uid: userId,
       stripeSecretMode: secretMode,
       accountIdPreview: accountIdPreview(account.id),
@@ -317,12 +429,12 @@ async function ensureStripeConnectAccount({
       accountCreationErrorCode: cleanString(error.code || error.raw?.code || error.type || '', 120),
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true }).catch(() => {})
-    logger.error('[stripe-connect] account creation failed', {
+    stripeConnectLog('error', 'account_creation', 'account creation failed', {
       uid: userId,
       stripeSecretMode: secretMode,
       stripe: stripeErrorSummary(error)
     })
-    throw error
+    throw stripeHttpsError('account_creation', error)
   }
 
   await bindStripeConnectAccount({
@@ -330,7 +442,8 @@ async function ensureStripeConnectAccount({
     uid: userId,
     account,
     livemode,
-    source: 'stripe_account_create'
+    source: 'stripe_account_create',
+    stage: 'firestore_write'
   })
 
   return { accountId: account.id, account, created: true, livemode }
@@ -338,10 +451,25 @@ async function ensureStripeConnectAccount({
 
 async function createAccountForRequest(request) {
   const uid = request.auth?.uid
-  if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in to set up payouts.')
+  if (!uid) {
+    stripeConnectLog('error', 'auth', 'auth check failed', {
+      auth: 'missing'
+    })
+    throw new HttpsError('unauthenticated', 'You must be signed in to set up payouts.', {
+      stage: 'auth',
+      safeMessage: 'You must be signed in to set up payouts.'
+    })
+  }
+  stripeConnectLog('info', 'auth', 'auth check passed', {
+    uid
+  })
 
   const secret = STRIPE_SECRET_KEY.value()
-  assertStripeSecret(secret)
+  const secretMode = assertStripeSecret(secret)
+  stripeConnectLog('info', 'config', 'Stripe key mode detected', {
+    uid,
+    stripeSecretMode: secretMode
+  })
   const stripe = new Stripe(secret)
   const authUser = await admin.auth().getUser(uid).catch(() => null)
   return ensureStripeConnectAccount({
@@ -370,11 +498,11 @@ const createStripeConnectAccount = onCall(
       }
     } catch (error) {
       if (error instanceof HttpsError) throw error
-      logger.error('[stripe-connect] account creation failed', {
+      stripeConnectLog('error', 'account_creation', 'account callable failed', {
         uid: request.auth?.uid || '',
         stripe: stripeErrorSummary(error)
       })
-      throw new HttpsError('internal', 'Stripe payout setup could not be started.')
+      throw stripeHttpsError('account_creation', error, 'Stripe payout setup could not be started.')
     }
   }
 )
@@ -387,7 +515,18 @@ const createStripeConnectOnboardingLink = onCall(
   },
   async (request) => {
     const uid = request.auth?.uid
-    if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in to set up payouts.')
+    if (!uid) {
+      stripeConnectLog('error', 'auth', 'auth check failed', {
+        auth: 'missing'
+      })
+      throw new HttpsError('unauthenticated', 'You must be signed in to set up payouts.', {
+        stage: 'auth',
+        safeMessage: 'You must be signed in to set up payouts.'
+      })
+    }
+    stripeConnectLog('info', 'auth', 'onboarding callable auth check passed', {
+      uid
+    })
 
     try {
       const result = await createAccountForRequest(request)
@@ -397,33 +536,68 @@ const createStripeConnectOnboardingLink = onCall(
       const siteUrl = PUBLIC_SITE_URL.value().replace(/\/+$/, '')
       const returnUrl = `${siteUrl}/account/billing-payouts?stripeConnect=return`
       const refreshUrl = `${siteUrl}/account/billing-payouts?stripeConnect=refresh`
-      logger.info('[stripe-connect] creating onboarding link', {
+      if (!isHttpsUrl(returnUrl) || !isHttpsUrl(refreshUrl)) {
+        stripeConnectLog('error', 'config', 'invalid Stripe Connect return or refresh URL', {
+          uid,
+          stripeSecretMode: secretMode,
+          returnUrl,
+          refreshUrl
+        })
+        throw new HttpsError('failed-precondition', 'Stripe onboarding URLs are not configured correctly.', {
+          stage: 'config',
+          safeMessage: 'Stripe onboarding URLs are not configured correctly.'
+        })
+      }
+      stripeConnectLog('info', 'account_link_creation', 'creating onboarding link', {
         uid,
         stripeSecretMode: secretMode,
         existingAccount: result.created !== true,
-        accountIdPrefix: cleanString(result.accountId || '', 8),
+        accountIdPreview: accountIdPreview(result.accountId),
         returnUrl,
         refreshUrl
       })
-      const link = await stripe.accountLinks.create({
-        account: result.accountId,
-        type: 'account_onboarding',
-        return_url: returnUrl,
-        refresh_url: refreshUrl
-      })
-      logger.info('[stripe-connect] onboarding link created', {
+      let link
+      try {
+        link = await stripe.accountLinks.create({
+          account: result.accountId,
+          type: 'account_onboarding',
+          return_url: returnUrl,
+          refresh_url: refreshUrl
+        })
+      } catch (error) {
+        stripeConnectLog('error', 'account_link_creation', 'onboarding link creation failed', {
+          uid,
+          stripeSecretMode: secretMode,
+          accountIdPreview: accountIdPreview(result.accountId),
+          stripe: stripeErrorSummary(error)
+        })
+        throw stripeHttpsError('account_link_creation', error)
+      }
+      stripeConnectLog('info', 'account_link_creation', 'onboarding link created', {
         uid,
         stripeSecretMode: secretMode,
-        accountIdPrefix: cleanString(result.accountId || '', 8)
+        accountIdPreview: accountIdPreview(result.accountId)
       })
-      return { ok: true, url: link.url }
+      stripeConnectLog('info', 'function_return', 'returning onboarding link payload', {
+        uid,
+        stripeSecretMode: secretMode,
+        shape: ['url']
+      })
+      return { url: link.url }
     } catch (error) {
-      if (error instanceof HttpsError) throw error
-      logger.error('[stripe-connect] onboarding link creation failed', {
+      if (error instanceof HttpsError) {
+        stripeConnectLog('error', error.details?.stage || 'unknown', 'onboarding callable failed', {
+          uid,
+          safeMessage: cleanString(error.details?.safeMessage || error.message || '', 500),
+          stripeRequestId: cleanString(error.details?.stripeRequestId || '', 120)
+        })
+        throw error
+      }
+      stripeConnectLog('error', 'unknown', 'onboarding callable failed', {
         uid,
         stripe: stripeErrorSummary(error)
       })
-      throw new HttpsError('internal', 'Stripe onboarding could not be opened.')
+      throw stripeHttpsError('unknown', error)
     }
   }
 )
@@ -484,6 +658,8 @@ module.exports = {
     stripeLivemode,
     accountMatchesUid,
     accountIdPreview,
-    findExistingStripeConnectAccount
+    findExistingStripeConnectAccount,
+    safeErrorDetails,
+    isHttpsUrl
   }
 }

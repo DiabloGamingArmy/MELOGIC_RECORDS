@@ -358,6 +358,32 @@ test('Stripe Connect account ID previews avoid exposing full account IDs', () =>
   assert.equal(stripeConnect.accountIdPreview(''), '')
 })
 
+test('Stripe Connect error details expose safe diagnostic fields', () => {
+  const details = stripeConnect.safeErrorDetails('account_creation', {
+    type: 'StripeInvalidRequestError',
+    code: 'account_invalid',
+    param: 'account',
+    requestId: 'req_123',
+    message: 'You can only create new accounts if you have signed up for Connect.',
+    stack: 'secret stack'
+  })
+  assert.deepEqual(details, {
+    stage: 'account_creation',
+    stripeType: 'StripeInvalidRequestError',
+    stripeCode: 'account_invalid',
+    stripeParam: 'account',
+    stripeRequestId: 'req_123',
+    safeMessage: 'You can only create new accounts if you have signed up for Connect.'
+  })
+  assert.equal(Object.hasOwn(details, 'stack'), false)
+})
+
+test('Stripe Connect return URLs must be absolute HTTPS URLs', () => {
+  assert.equal(stripeConnect.isHttpsUrl('https://melogicrecords.studio/account/billing-payouts'), true)
+  assert.equal(stripeConnect.isHttpsUrl('http://melogicrecords.studio/account/billing-payouts'), false)
+  assert.equal(stripeConnect.isHttpsUrl('/account/billing-payouts'), false)
+})
+
 test('public Stripe Connect status does not infer or expose the private account ID', () => {
   const status = stripeConnect.publicConnectStatus({
     hasAccount: true,
