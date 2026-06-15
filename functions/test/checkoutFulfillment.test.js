@@ -309,6 +309,55 @@ test('Stripe Connect account configuration uses hosted Express onboarding and tr
   assert.equal(params.metadata.platform, 'melogic_records')
 })
 
+test('Stripe Connect account recovery matches current and legacy user metadata', () => {
+  assert.equal(stripeConnect.accountMatchesUid({
+    metadata: { firebaseUid: 'creator-1' }
+  }, 'creator-1'), true)
+  assert.equal(stripeConnect.accountMatchesUid({
+    metadata: { melogicUid: 'creator-1' }
+  }, 'creator-1'), true)
+  assert.equal(stripeConnect.accountMatchesUid({
+    metadata: { firebaseUid: 'other-creator' }
+  }, 'creator-1'), false)
+})
+
+test('Stripe Connect account recovery scans paginated accounts safely', async () => {
+  const calls = []
+  const stripe = {
+    accounts: {
+      async list(params) {
+        calls.push(params)
+        if (!params.starting_after) {
+          return {
+            data: [
+              { id: 'acct_unrelated', metadata: { firebaseUid: 'someone-else' } },
+              { id: 'acct_page_one_tail', metadata: {} }
+            ],
+            has_more: true
+          }
+        }
+        return {
+          data: [
+            { id: 'acct_recovered', metadata: { firebaseUid: 'creator-1' } }
+          ],
+          has_more: false
+        }
+      }
+    }
+  }
+
+  const matches = await stripeConnect.findExistingStripeConnectAccount({ stripe, uid: 'creator-1' })
+  assert.equal(matches.length, 1)
+  assert.equal(matches[0].id, 'acct_recovered')
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].starting_after, 'acct_page_one_tail')
+})
+
+test('Stripe Connect account ID previews avoid exposing full account IDs', () => {
+  assert.equal(stripeConnect.accountIdPreview('acct_123456789abcdef'), 'acct_123...cdef')
+  assert.equal(stripeConnect.accountIdPreview(''), '')
+})
+
 test('public Stripe Connect status does not infer or expose the private account ID', () => {
   const status = stripeConnect.publicConnectStatus({
     hasAccount: true,

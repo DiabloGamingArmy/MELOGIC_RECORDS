@@ -9,6 +9,10 @@ const PUBLIC_SITE_URL = defineString('PUBLIC_SITE_URL', {
   default: 'https://melogic-records.web.app'
 })
 
+const ACCOUNT_CREATION_LOCK_MS = 60 * 1000
+const ACCOUNT_RECOVERY_PAGE_LIMIT = 100
+const ACCOUNT_RECOVERY_MAX_PAGES = 5
+
 function cleanString(value = '', max = 500) {
   return String(value ?? '')
     .replace(/[\u0000-\u001F\u007F]/g, '')
@@ -39,6 +43,17 @@ function assertStripeSecret(secret = '') {
   if (!['test', 'live'].includes(mode)) {
     throw new HttpsError('failed-precondition', 'Stripe payouts are not configured.')
   }
+  const expectedMode = cleanString(process.env.STRIPE_MODE || '', 20).toLowerCase()
+  if (expectedMode && ['test', 'live'].includes(expectedMode) && expectedMode !== mode) {
+    logger.error('[stripe-connect] Stripe mode mismatch', {
+      stripeSecretMode: mode,
+      expectedStripeMode: expectedMode
+    })
+    throw new HttpsError('failed-precondition', 'Stripe payouts are configured for the wrong mode.')
+  }
+  logger.info(`[stripe-connect] using ${mode} Stripe key`, {
+    stripeSecretMode: mode
+  })
   return mode
 }
 
@@ -66,6 +81,7 @@ function safeConnectStatus(account = {}, { livemode = false } = {}) {
     eventuallyDue: safeRequirementList(account.requirements?.eventually_due),
     pastDue: safeRequirementList(account.requirements?.past_due),
     pendingVerification: safeRequirementList(account.requirements?.pending_verification),
+    mode: livemode ? 'live' : 'test',
     livemode
   }
 }
@@ -82,6 +98,7 @@ function publicConnectStatus(data = {}) {
     eventuallyDue: safeRequirementList(data.eventuallyDue),
     pastDue: safeRequirementList(data.pastDue),
     pendingVerification: safeRequirementList(data.pendingVerification),
+    mode: cleanString(data.mode || (data.livemode === true ? 'live' : 'test'), 20),
     livemode: data.livemode === true
   }
 }
@@ -109,6 +126,104 @@ function connectAccountParams({ uid = '', email = '' } = {}) {
   }
 }
 
+function accountMatchesUid(account = {}, uid = '') {
+  const metadata = account.metadata && typeof account.metadata === 'object' ? account.metadata : {}
+  return cleanString(metadata.firebaseUid || '', 180) === uid
+    || cleanString(metadata.melogicUid || '', 180) === uid
+}
+
+async function findExistingStripeConnectAccount({ stripe, uid = '' } = {}) {
+  const matches = []
+  let startingAfter = ''
+  for (let page = 0; page < ACCOUNT_RECOVERY_MAX_PAGES; page += 1) {
+    const response = await stripe.accounts.list({
+      limit: ACCOUNT_RECOVERY_PAGE_LIMIT,
+      ...(startingAfter ? { starting_after: startingAfter } : {})
+    })
+    for (const account of response.data || []) {
+      if (accountMatchesUid(account, uid)) matches.push(account)
+    }
+    if (!response.has_more || !response.data?.length) break
+    startingAfter = response.data[response.data.length - 1].id
+  }
+  return matches
+}
+
+async function bindStripeConnectAccount({
+  database,
+  uid = '',
+  account = {},
+  livemode = false,
+  source = 'created'
+} = {}) {
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  const privateRef = privateConnectRef(database, uid)
+  const safeStatusRef = billingRef(database, uid)
+  const batch = database.batch()
+  batch.set(privateRef, {
+    uid,
+    stripeConnectAccountId: account.id,
+    accountIdPreview: accountIdPreview(account.id),
+    createdBy: uid,
+    accountType: cleanString(account.type || 'express', 40),
+    mode: livemode ? 'live' : 'test',
+    livemode,
+    bindingSource: source,
+    accountCreationStatus: 'ready',
+    createdAt: now,
+    updatedAt: now
+  }, { merge: true })
+  batch.set(safeStatusRef, {
+    uid,
+    hasAccount: true,
+    createdAt: now,
+    updatedAt: now,
+    ...safeConnectStatus(account, { livemode })
+  }, { merge: true })
+  await batch.commit()
+}
+
+function accountIdPreview(accountId = '') {
+  const id = cleanString(accountId, 180)
+  if (!id) return ''
+  return `${id.slice(0, 8)}...${id.slice(-4)}`
+}
+
+function timestampMillis(value) {
+  if (!value) return 0
+  if (typeof value.toMillis === 'function') return value.toMillis()
+  if (typeof value.toDate === 'function') return value.toDate().getTime()
+  const parsed = new Date(value).getTime()
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+async function acquireAccountCreationLock({ database, uid = '', livemode = false } = {}) {
+  const privateRef = privateConnectRef(database, uid)
+  return database.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(privateRef)
+    const data = snapshot.exists ? snapshot.data() || {} : {}
+    const existingAccountId = cleanString(data.stripeConnectAccountId || '', 180)
+    if (existingAccountId) {
+      return { locked: false, accountId: existingAccountId, existing: data }
+    }
+    const status = cleanString(data.accountCreationStatus || '', 40)
+    const lockAge = Date.now() - timestampMillis(data.accountCreationStartedAt || data.updatedAt)
+    if (status === 'creating' && lockAge >= 0 && lockAge < ACCOUNT_CREATION_LOCK_MS) {
+      throw new HttpsError('failed-precondition', 'Stripe payout setup is already starting. Try again in a moment.')
+    }
+    const now = admin.firestore.FieldValue.serverTimestamp()
+    transaction.set(privateRef, {
+      uid,
+      mode: livemode ? 'live' : 'test',
+      livemode,
+      accountCreationStatus: 'creating',
+      accountCreationStartedAt: now,
+      updatedAt: now
+    }, { merge: true })
+    return { locked: true }
+  })
+}
+
 async function ensureStripeConnectAccount({
   database = admin.firestore(),
   stripe,
@@ -120,7 +235,6 @@ async function ensureStripeConnectAccount({
   if (!userId || userId.includes('/')) throw new HttpsError('unauthenticated', 'You must be signed in.')
 
   const privateRef = privateConnectRef(database, userId)
-  const safeStatusRef = billingRef(database, userId)
   const snapshot = await privateRef.get()
   const existing = snapshot.exists ? snapshot.data() || {} : {}
   const secretMode = assertStripeSecret(secret)
@@ -139,22 +253,70 @@ async function ensureStripeConnectAccount({
     return { accountId: existingAccountId, created: false, livemode }
   }
 
+  let recoveredAccounts = []
+  try {
+    recoveredAccounts = await findExistingStripeConnectAccount({ stripe, uid: userId })
+  } catch (error) {
+    logger.error('[stripe-connect] account recovery search failed', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      stripe: stripeErrorSummary(error)
+    })
+    throw error
+  }
+  if (recoveredAccounts.length === 1) {
+    const recovered = recoveredAccounts[0]
+    await bindStripeConnectAccount({
+      database,
+      uid: userId,
+      account: recovered,
+      livemode,
+      source: 'stripe_metadata_recovery'
+    })
+    logger.info('[stripe-connect] recovered existing account from Stripe metadata', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      accountIdPreview: accountIdPreview(recovered.id)
+    })
+    return { accountId: recovered.id, account: recovered, created: false, recovered: true, livemode }
+  }
+  if (recoveredAccounts.length > 1) {
+    logger.error('[stripe-connect] multiple matching Stripe accounts require admin review', {
+      uid: userId,
+      stripeSecretMode: secretMode,
+      matchCount: recoveredAccounts.length,
+      accountIdPreviews: recoveredAccounts.map((account) => accountIdPreview(account.id)).slice(0, 10)
+    })
+    throw new HttpsError('failed-precondition', 'Multiple Stripe payout accounts were found for this user. Admin review is required.')
+  }
+
+  const lock = await acquireAccountCreationLock({ database, uid: userId, livemode })
+  if (!lock.locked && lock.accountId) {
+    if (lock.existing?.livemode !== undefined && lock.existing.livemode !== livemode) {
+      throw new HttpsError('failed-precondition', 'The saved Stripe account belongs to a different Stripe mode.')
+    }
+    return { accountId: lock.accountId, created: false, livemode }
+  }
+
   let account
   try {
     account = await stripe.accounts.create(connectAccountParams({
       uid: userId,
       email
-    }), {
-      idempotencyKey: `melogic_connect_account_${secretMode}_${userId}`
-    })
+    }))
     logger.info('[stripe-connect] account created', {
       uid: userId,
       stripeSecretMode: secretMode,
-      accountIdPrefix: cleanString(account.id || '', 8),
+      accountIdPreview: accountIdPreview(account.id),
       accountType: cleanString(account.type || 'express', 40),
       livemode: account.livemode === true
     })
   } catch (error) {
+    await privateRef.set({
+      accountCreationStatus: 'failed',
+      accountCreationErrorCode: cleanString(error.code || error.raw?.code || error.type || '', 120),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => {})
     logger.error('[stripe-connect] account creation failed', {
       uid: userId,
       stripeSecretMode: secretMode,
@@ -163,24 +325,13 @@ async function ensureStripeConnectAccount({
     throw error
   }
 
-  const now = admin.firestore.FieldValue.serverTimestamp()
-  const batch = database.batch()
-  batch.set(privateRef, {
+  await bindStripeConnectAccount({
+    database,
     uid: userId,
-    stripeConnectAccountId: account.id,
-    createdBy: userId,
-    createdAt: now,
-    updatedAt: now,
-    livemode
-  }, { merge: true })
-  batch.set(safeStatusRef, {
-    uid: userId,
-    hasAccount: true,
-    createdAt: now,
-    updatedAt: now,
-    ...safeConnectStatus(account, { livemode })
-  }, { merge: true })
-  await batch.commit()
+    account,
+    livemode,
+    source: 'stripe_account_create'
+  })
 
   return { accountId: account.id, account, created: true, livemode }
 }
@@ -330,6 +481,9 @@ module.exports = {
     safeRequirementList,
     stripeErrorSummary,
     stripeSecretMode,
-    stripeLivemode
+    stripeLivemode,
+    accountMatchesUid,
+    accountIdPreview,
+    findExistingStripeConnectAccount
   }
 }
