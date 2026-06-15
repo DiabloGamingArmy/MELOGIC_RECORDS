@@ -2,6 +2,7 @@ import './styles/base.css'
 import './styles/inbox.css'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
+import { openChatDock } from './components/chatDock'
 import { initShellChrome } from './appBoot'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
@@ -1777,6 +1778,12 @@ function getMessagesSidebarMarkup() {
       <p>Messages and activity</p>
     </div>
     <div class="inbox-filters" data-inbox-filters>${filterMarkup}</div>
+    <section class="sidebar-support-block">
+      <button type="button" class="sidebar-support-button" data-open-support-dock>
+        <strong>Contact Support</strong>
+        <small>Support chat is coming soon</small>
+      </button>
+    </section>
     ${getPinnedInboxSidebarMarkup()}
     ${getRecentThreadsSidebarMarkup()}
   `
@@ -2456,6 +2463,9 @@ function getMessagesThreadListMarkup() {
               ${pinIndicator}
             </div>
           </button>
+          <button type="button" class="thread-row-dock-trigger" data-open-chat-dock-thread="${escapeHtml(thread.id)}" aria-label="Open ${escapeHtml(thread.title)} in chat dock">
+            Dock
+          </button>
           <button type="button" class="thread-row-menu-trigger" data-thread-menu-id="${thread.id}" aria-label="Open chat actions">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="12" cy="5" r="1.8" fill="currentColor"/>
@@ -2497,6 +2507,9 @@ function getThreadActionMenuMarkup() {
         <button type="button" data-thread-action="${sidebarPinned ? 'unpin-sidebar' : 'pin-sidebar'}" data-thread-action-id="${thread.id}">
           ${iconSvg('bookmark')}<span>${sidebarPinned ? 'Unpin from sidebar' : 'Pin to sidebar'}</span>
         </button>
+        <button type="button" data-thread-action="open-dock" data-thread-action-id="${thread.id}">
+          ${iconSvg('messageCircle')}<span>Open in dock</span>
+        </button>
         <button type="button" class="is-danger" data-thread-action="delete" data-thread-action-id="${thread.id}">
           ${iconSvg('trash')}<span>Delete chat</span>
         </button>
@@ -2504,6 +2517,15 @@ function getThreadActionMenuMarkup() {
       </div>
     </div>
   `
+}
+
+function openThreadInChatDock(threadId = '') {
+  const thread = appState.threads.find((entry) => entry.id === threadId)
+  if (!thread) return
+  openChatDock({
+    threadId,
+    title: thread.title || 'Conversation'
+  })
 }
 
 function getThreadConfirmModalMarkup() {
@@ -4526,6 +4548,12 @@ function setupFloatingEventDelegates() {
     if (threadMenuAction) {
       const threadId = threadMenuAction.getAttribute('data-thread-action-id') || ''
       const action = threadMenuAction.getAttribute('data-thread-action') || ''
+      if (action === 'open-dock') {
+        appState.threadActionMenu = null
+        openThreadInChatDock(threadId)
+        renderFloatingUi()
+        return
+      }
       if (action === 'pin-sidebar' || action === 'unpin-sidebar') {
         const thread = appState.threads.find((entry) => entry.id === threadId)
         const pin = threadInboxPin(thread)
@@ -5467,6 +5495,25 @@ function bindSharedEvents(scope = inboxRoot) {
           warnRealtimePermission(`participants-read-${threadId}`, error)
         })
       }
+    })
+  })
+
+  scope.querySelectorAll('[data-open-chat-dock-thread]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openThreadInChatDock(button.getAttribute('data-open-chat-dock-thread') || '')
+    })
+  })
+
+  scope.querySelectorAll('[data-open-support-dock]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      openChatDock({
+        mode: 'support',
+        support: true,
+        title: 'Contact Support'
+      })
     })
   })
 

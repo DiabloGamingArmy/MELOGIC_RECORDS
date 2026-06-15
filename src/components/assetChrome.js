@@ -6,6 +6,8 @@ import { startPresenceTracking } from '../services/presenceService'
 import { applyCachedPreviewImage } from '../services/imagePreviewCache'
 import { ROUTES, authRoute } from '../utils/routes'
 import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
+import { initChatDock } from './chatDock'
+import '../styles/chatDock.css'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
 const BANNER_ALERT_STORAGE_KEY = 'melogic_banner_alert'
@@ -478,6 +480,10 @@ export async function initShellChrome() {
   ensureShellCore()
   initNavAuthState()
   initCartDrawer()
+  initChatDock({
+    getShellState: getCurrentShellState,
+    onShellStateChange
+  })
   renderShellState()
   return shellBootPromise
 }

@@ -157,6 +157,52 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   outline: none;
 }
 
+.sidebar-support-block {
+  padding: 0.78rem;
+  border: 1px solid rgba(32, 216, 255, 0.18);
+  border-radius: 0.85rem;
+  background: linear-gradient(135deg, rgba(32, 216, 255, 0.08), rgba(127, 91, 255, 0.08));
+}
+
+.sidebar-support-button {
+  width: 100%;
+  display: grid;
+  gap: 0.18rem;
+  border: 0;
+  padding: 0;
+  color: #effbff;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-support-button strong,
+.sidebar-support-button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-support-button strong {
+  font-size: 0.9rem;
+}
+
+.sidebar-support-button small {
+  color: #9fb0d4;
+  font-size: 0.78rem;
+}
+
+.sidebar-support-button:hover strong,
+.sidebar-support-button:focus-visible strong {
+  color: #92f4ff;
+}
+
+.sidebar-support-button:focus-visible {
+  outline: 2px solid rgba(32, 216, 255, 0.42);
+  outline-offset: 4px;
+  border-radius: 0.4rem;
+}
+
 .sidebar-recent-block {
   margin-top: 0.3rem;
   padding-top: 0.85rem;
@@ -264,7 +310,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   background: rgba(9, 14, 23, 0.74);
   color: #d5dff7;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.5rem;
   padding: 0.5rem 0.55rem;
 }
@@ -292,6 +338,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   outline: none;
 }
 
+.thread-row-dock-trigger,
 .thread-row-menu-trigger {
   width: 1.9rem;
   height: 1.9rem;
@@ -305,11 +352,22 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   cursor: pointer;
 }
 
+.thread-row-dock-trigger {
+  width: auto;
+  min-width: 3rem;
+  padding: 0 0.55rem;
+  color: #c5f8ff;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .thread-row-menu-trigger svg {
   width: 0.94rem;
   height: 0.94rem;
 }
 
+.thread-row-dock-trigger:hover,
+.thread-row-dock-trigger:focus-visible,
 .thread-row-menu-trigger:hover,
 .thread-row-menu-trigger:focus-visible {
   border-color: rgba(137, 175, 240, 0.7);
