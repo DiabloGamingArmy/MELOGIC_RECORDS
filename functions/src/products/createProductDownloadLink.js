@@ -5,6 +5,10 @@ const archiver = require('archiver')
 const crypto = require('node:crypto')
 const { __test: downloadHelpers } = require('./createProductDownloadUrl')
 
+if (typeof archiver !== 'function') {
+  throw new Error('archiver package did not load as a function')
+}
+
 const db = admin.firestore()
 const DOWNLOAD_URL_TTL_MS = 15 * 60 * 1000
 const MAX_PACKAGE_SOURCE_BYTES = 1024 * 1024 * 1024
@@ -180,7 +184,7 @@ async function createZipPackage({
         }
       }
     })
-    const archive = archiver('zip', { zlib: { level: 6 } })
+    const archive = archiver('zip', { zlib: { level: 9 } })
     let settled = false
     const finish = (error) => {
       if (settled) return
