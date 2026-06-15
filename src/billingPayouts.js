@@ -223,7 +223,11 @@ async function startOnboarding() {
     if (!isStripeOnboardingUrl(result.url)) throw new Error('Stripe returned an invalid onboarding URL.')
     window.location.assign(result.url)
   } catch (error) {
-    console.error('[billing-payouts] onboarding failed', error)
+    console.error('[billing-payouts] onboarding failed', {
+      code: error?.code || '',
+      message: error?.message || '',
+      details: error?.details || null
+    })
     const code = String(error?.code || '')
     if (code.includes('unauthenticated')) {
       state.error = 'Please sign in again to set up payouts.'
