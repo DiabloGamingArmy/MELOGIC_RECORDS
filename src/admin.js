@@ -10,6 +10,7 @@ import {
   getAdminLog,
   getAdminReport,
   getAdminUserProfile,
+  grantAdminProducts,
   listActiveStaffPresence,
   listAdminEmailLogs,
   listAdminLogs,
@@ -20,6 +21,7 @@ import {
   listAdminUsers,
   listMarketplaceReviewQueue,
   reviewProductDecision,
+  searchAdminGrantProducts,
   addAdminUserNote,
   forcePasswordReset,
   revokeRecoveryCodes,
@@ -482,6 +484,16 @@ call: {
     open: false,
     type: '',
     uid: ''
+  },
+  productGrantDialog: {
+    open: false,
+    uid: '',
+    search: '',
+    products: [],
+    selectedProductIds: [],
+    searching: false,
+    submitting: false,
+    error: ''
   }
 }
 
@@ -2364,6 +2376,7 @@ function usersTable(users = []) {
           <span>${escapeHtml(formatDate(user.createdAt || user.updatedAt))}${user.lastActiveAt ? `<small>${escapeHtml(formatDate(user.lastActiveAt))}</small>` : ''}</span>
           <span class="admin-row-actions">
             <a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">View</a>
+            <button type="button" class="admin-secondary-button" data-admin-give-product="${escapeHtml(user.uid)}" ${can('orderSupport') || can('listingEdit') ? '' : 'disabled title="Order support or listing edit permission is required."'}>Give Product</button>
           </span>
         </article>
       `).join('')}
@@ -2382,6 +2395,7 @@ function selectedUserPanel() {
   const isSelf = state.currentUser?.uid === uid
   const canNote = can('userModerate') || can('orderSupport')
   const canSuspend = can('userModerate')
+  const canGrantProduct = can('orderSupport') || can('listingEdit')
   const actioning = data.actioning || ''
   return `
     <header class="admin-page-header admin-hub-header">
@@ -2395,6 +2409,7 @@ function selectedUserPanel() {
         </div>
       </div>
       <div class="admin-header-actions">
+        <button type="button" class="admin-secondary-button" data-admin-give-product="${escapeHtml(uid)}" ${canGrantProduct ? '' : 'disabled title="Order support or listing edit permission is required."'}>Give Product</button>
         <button type="button" class="admin-secondary-button" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled title="You cannot open a direct message with yourself."' : ''}>Message</button>
         <button type="button" class="admin-secondary-button" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Email User</button>
         <button type="button" class="admin-secondary-button" data-admin-auth-email="password_reset" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Send Reset</button>
@@ -2478,7 +2493,8 @@ function selectedUserPanel() {
         <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Timeline / Logs</h2><a href="${ROUTES.adminLogs}" class="admin-secondary-link">Open Logs</a></div><div class="admin-panel-scroll"><article class="admin-empty-state">Role changes and admin actions are available in Logs.</article></div></article>
       </section>
       ${userActionDialog()}
-    ` : `<article class="admin-empty-state">No profile found for ${escapeHtml(uid)}.</article>${userActionDialog()}`}
+      ${productGrantDialog()}
+    ` : `<article class="admin-empty-state">No profile found for ${escapeHtml(uid)}.</article>${userActionDialog()}${productGrantDialog()}`}
   `
 }
 
@@ -2498,6 +2514,7 @@ function usersView() {
       ${adminFilterControls('users', USER_ADMIN_FILTERS)}
     </section>
     ${loading || `${usersTable(users)}${loadMoreControls('users')}`}
+    ${productGrantDialog()}
   `
 }
 
@@ -3203,6 +3220,73 @@ function userActionDialog() {
     `
   }
   return ''
+}
+
+function productGrantDialog() {
+  const dialog = state.productGrantDialog || {}
+  if (!dialog.open || !dialog.uid) return ''
+  const selectedIds = new Set(dialog.selectedProductIds || [])
+  const products = dialog.products || []
+  return `
+    <div class="admin-modal-backdrop" role="presentation">
+      <section class="admin-decision-modal admin-product-grant-modal" role="dialog" aria-modal="true" aria-labelledby="admin-product-grant-title">
+        <header>
+          <div>
+            <h2 id="admin-product-grant-title">Give Product</h2>
+            <p class="admin-muted">Grant one or more Marketplace products to <span class="admin-code-value">${escapeHtml(dialog.uid)}</span>.</p>
+          </div>
+          <button type="button" class="admin-icon-button" data-close-product-grant title="Close">${iconSvg('x')}</button>
+        </header>
+        <form class="admin-product-grant-search" data-product-grant-search-form>
+          <label>
+            <span>Search products</span>
+            <div class="admin-product-grant-search-row">
+              <input name="search" value="${escapeHtml(dialog.search || '')}" maxlength="180" placeholder="Title, product ID, creator, or slug" autocomplete="off" />
+              <button type="submit" class="admin-secondary-button" ${dialog.searching || dialog.submitting ? 'disabled' : ''}>${dialog.searching ? 'Searching...' : 'Search'}</button>
+            </div>
+          </label>
+        </form>
+        ${dialog.error ? `<p class="admin-error">${escapeHtml(dialog.error)}</p>` : ''}
+        <form data-product-grant-form>
+          <div class="admin-grant-product-results" aria-live="polite">
+            ${dialog.searching
+              ? '<article class="admin-empty-state">Searching Marketplace products...</article>'
+              : products.length
+                ? products.map((product) => {
+                    const productId = String(product.id || product.productId || '')
+                    const checked = selectedIds.has(productId)
+                    return `
+                      <label class="admin-grant-product-row ${product.alreadyOwned ? 'is-owned' : ''}">
+                        <input
+                          type="checkbox"
+                          data-grant-product-id="${escapeHtml(productId)}"
+                          ${checked ? 'checked' : ''}
+                          ${product.alreadyOwned || dialog.submitting ? 'disabled' : ''}
+                        />
+                        <span class="admin-grant-product-copy">
+                          <strong>${escapeHtml(product.title || productId || 'Untitled product')}</strong>
+                          <small>${escapeHtml(product.artistName || product.artistDisplayName || 'Creator')} · ${escapeHtml(formatMoney(product.priceCents, product.currency))}</small>
+                          <code>${escapeHtml(productId)}</code>
+                        </span>
+                        ${product.alreadyOwned ? '<span class="review-badge is-published">Already owned</span>' : ''}
+                      </label>
+                    `
+                  }).join('')
+                : dialog.search
+                  ? '<article class="admin-empty-state">No matching products found.</article>'
+                  : '<article class="admin-empty-state">Search for a product to begin.</article>'}
+          </div>
+          <div class="admin-modal-actions">
+            <span class="admin-muted">${selectedIds.size} selected</span>
+            <div class="admin-product-grant-actions">
+              <button type="button" class="admin-secondary-button" data-close-product-grant ${dialog.submitting ? 'disabled' : ''}>Cancel</button>
+              <button type="submit" class="admin-primary-link" ${!selectedIds.size || dialog.searching || dialog.submitting ? 'disabled' : ''}>${dialog.submitting ? 'Granting...' : 'Grant Selected'}</button>
+            </div>
+          </div>
+        </form>
+      </section>
+    </div>
+  `
 }
 
 function operationsMode() {
@@ -6472,6 +6556,125 @@ function closeUserActionDialog() {
   render()
 }
 
+function openProductGrantDialog(uid = '') {
+  if (!uid || (!can('orderSupport') && !can('listingEdit'))) return
+  state.productGrantDialog = {
+    open: true,
+    uid,
+    search: '',
+    products: [],
+    selectedProductIds: [],
+    searching: false,
+    submitting: false,
+    error: ''
+  }
+  state.error = ''
+  state.message = ''
+  render()
+  app.querySelector('[data-product-grant-search-form] input[name="search"]')?.focus()
+}
+
+function closeProductGrantDialog() {
+  if (state.productGrantDialog?.submitting) return
+  state.productGrantDialog = {
+    open: false,
+    uid: '',
+    search: '',
+    products: [],
+    selectedProductIds: [],
+    searching: false,
+    submitting: false,
+    error: ''
+  }
+  render()
+}
+
+async function searchProductsForGrant(form) {
+  const dialog = state.productGrantDialog
+  if (!dialog?.open || dialog.searching || dialog.submitting) return
+  const search = form.querySelector('input[name="search"]')?.value?.trim() || ''
+  if (!search) {
+    dialog.error = 'Enter a title, product ID, creator, or slug.'
+    render()
+    return
+  }
+  dialog.search = search
+  dialog.searching = true
+  dialog.error = ''
+  render()
+  try {
+    const result = await searchAdminGrantProducts({ uid: dialog.uid, search })
+    const selected = new Set(dialog.selectedProductIds || [])
+    const retained = (dialog.products || []).filter((product) => selected.has(String(product.id || product.productId || '')))
+    const merged = new Map(retained.map((product) => [String(product.id || product.productId || ''), product]))
+    ;(result.products || []).forEach((product) => {
+      const productId = String(product.id || product.productId || '')
+      if (productId) merged.set(productId, product)
+    })
+    dialog.products = [...merged.values()]
+  } catch (error) {
+    console.warn('[admin] product grant search failed', {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details
+    })
+    dialog.error = error?.message || 'Products could not be searched.'
+  } finally {
+    dialog.searching = false
+    render()
+  }
+}
+
+function toggleProductGrantSelection(productId = '', checked = false) {
+  const dialog = state.productGrantDialog
+  if (!dialog?.open || dialog.submitting || !productId) return
+  const selected = new Set(dialog.selectedProductIds || [])
+  if (checked) selected.add(productId)
+  else selected.delete(productId)
+  dialog.selectedProductIds = [...selected]
+  render()
+}
+
+async function submitProductGrant() {
+  const dialog = state.productGrantDialog
+  if (!dialog?.open || dialog.submitting || !dialog.selectedProductIds?.length) return
+  dialog.submitting = true
+  dialog.error = ''
+  render()
+  try {
+    const result = await grantAdminProducts({
+      uid: dialog.uid,
+      productIds: dialog.selectedProductIds
+    })
+    const counts = [
+      `${result.grantedProductIds?.length || 0} granted`,
+      `${result.repairedProductIds?.length || 0} repaired`,
+      `${result.skippedProductIds?.length || 0} already owned`
+    ]
+    state.productGrantDialog = {
+      open: false,
+      uid: '',
+      search: '',
+      products: [],
+      selectedProductIds: [],
+      searching: false,
+      submitting: false,
+      error: ''
+    }
+    state.message = `Product access updated: ${counts.join(', ')}.`
+    if (adminUserDetailUid()) await loadAdminSectionData('users', { silent: true })
+  } catch (error) {
+    console.warn('[admin] product grant failed', {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details
+    })
+    dialog.error = adminActionBlockedMessage(error)
+    dialog.submitting = false
+  }
+  render()
+}
+
 function prefillContactRecipient(uid = '') {
   const cleanUid = String(uid || '').trim()
   if (!cleanUid) return
@@ -7117,6 +7320,25 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-admin-message-user]').forEach((button) => {
     button.addEventListener('click', () => openAdminMessage(button.getAttribute('data-admin-message-user') || ''))
+  })
+  app.querySelectorAll('[data-admin-give-product]').forEach((button) => {
+    button.addEventListener('click', () => openProductGrantDialog(button.getAttribute('data-admin-give-product') || ''))
+  })
+  app.querySelectorAll('[data-close-product-grant]').forEach((button) => {
+    button.addEventListener('click', closeProductGrantDialog)
+  })
+  app.querySelector('[data-product-grant-search-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    searchProductsForGrant(event.currentTarget)
+  })
+  app.querySelectorAll('[data-grant-product-id]').forEach((input) => {
+    input.addEventListener('change', () => {
+      toggleProductGrantSelection(input.getAttribute('data-grant-product-id') || '', input.checked)
+    })
+  })
+  app.querySelector('[data-product-grant-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitProductGrant()
   })
   app.querySelectorAll('[data-admin-email-user]').forEach((button) => {
     button.addEventListener('click', () => openAdminEmailComposerForUser(button.getAttribute('data-admin-email-user') || ''))

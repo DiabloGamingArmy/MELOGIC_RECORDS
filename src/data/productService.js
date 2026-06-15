@@ -1794,6 +1794,25 @@ export async function getAdminUserProfile({ uid = '' } = {}) {
   return result?.data || { ok: false, user: null, recentProducts: [], adminNotes: [] }
 }
 
+export async function searchAdminGrantProducts({ uid = '', search = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'searchAdminGrantProducts')
+  const result = await callable({ uid, search })
+  return result?.data || { ok: false, products: [] }
+}
+
+export async function grantAdminProducts({ uid = '', productIds = [] } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'grantAdminProducts')
+  const result = await callable({ uid, productIds })
+  return result?.data || {
+    ok: false,
+    grantedProductIds: [],
+    repairedProductIds: [],
+    skippedProductIds: []
+  }
+}
+
 export async function addAdminUserNote({ uid = '', note = '', severity = 'info', category = 'account' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'addAdminUserNote')

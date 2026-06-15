@@ -993,6 +993,101 @@
   resize: vertical;
 }
 
+.admin-product-grant-modal {
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 2rem));
+  overflow: auto;
+}
+
+.admin-product-grant-modal header > div {
+  min-width: 0;
+}
+
+.admin-product-grant-modal header p {
+  margin: 0.3rem 0 0;
+}
+
+.admin-product-grant-search {
+  margin-bottom: 0.8rem;
+}
+
+.admin-product-grant-search-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+}
+
+.admin-product-grant-search input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--admin-border-strong);
+  border-radius: 7px;
+  background: var(--admin-input);
+  color: var(--admin-text);
+  padding: 0 0.7rem;
+  font: inherit;
+}
+
+.admin-grant-product-results {
+  display: grid;
+  gap: 0.5rem;
+  max-height: 390px;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.admin-grant-product-row {
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem !important;
+  border: 1px solid var(--admin-border);
+  border-radius: 8px;
+  background: var(--admin-card-subtle);
+  padding: 0.7rem;
+  cursor: pointer;
+}
+
+.admin-grant-product-row.is-owned {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.admin-grant-product-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-grant-product-copy {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  text-transform: none;
+}
+
+.admin-grant-product-copy strong,
+.admin-grant-product-copy small,
+.admin-grant-product-copy code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-grant-product-copy small {
+  color: var(--admin-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.admin-grant-product-copy code {
+  color: var(--admin-muted);
+  font-size: 0.72rem;
+}
+
+.admin-product-grant-actions {
+  display: flex;
+  gap: 0.55rem;
+}
+
 .admin-community-audit-page {
   display: grid;
   gap: 1rem;
@@ -3483,6 +3578,16 @@
   .admin-community-audit-card dl,
   .admin-form-grid.two {
     grid-template-columns: 1fr;
+  }
+
+  .admin-product-grant-search-row,
+  .admin-grant-product-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-product-grant-actions {
+    display: grid;
+    width: 100%;
   }
 
   .review-action {

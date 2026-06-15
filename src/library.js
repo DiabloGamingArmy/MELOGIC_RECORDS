@@ -6,11 +6,13 @@ import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES } from './utils/routes'
 import { accountDateIso, listUserLibraryItems } from './data/accountCommerceService'
 import { createProductDownloadLink } from './data/entitlementService'
+import { reconcileCheckoutSession } from './data/checkoutService'
 import { beginProductDownloads, productDownloadDialogMarkup } from './components/productDownloadDialog'
 
 const app = document.querySelector('#app')
 const params = new URLSearchParams(window.location.search)
 const initialPurchaseSuccess = params.get('purchase') === 'success' || params.get('checkout') === 'success'
+const initialCheckoutSessionId = params.get('session_id') || ''
 const state = {
   user: null,
   loading: true,
@@ -20,6 +22,7 @@ const state = {
   search: '',
   purchaseSuccess: initialPurchaseSuccess,
   showPurchaseBanner: initialPurchaseSuccess,
+  reconciliationAttempted: false,
   downloadDialog: { open: false, loading: false, ready: false, error: '', productId: '', title: '', sizeBytes: 0, fileCount: 0 }
 }
 
@@ -260,6 +263,17 @@ async function loadLibrary(user) {
   state.loading = true
   render()
   try {
+    if (initialPurchaseSuccess && initialCheckoutSessionId && !state.reconciliationAttempted) {
+      state.reconciliationAttempted = true
+      try {
+        await reconcileCheckoutSession(initialCheckoutSessionId)
+      } catch (error) {
+        console.error('[library] checkout reconciliation failed', {
+          code: error?.code,
+          message: error?.message
+        })
+      }
+    }
     state.items = await listUserLibraryItems(user.uid)
   } catch (error) {
     console.error('[library] load failed', error)

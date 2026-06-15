@@ -94,9 +94,17 @@ exports.createCheckoutSession = onCall(
     const paidProductIds = paidProducts.map((item) => item.productId)
 
     const orderRef = db.collection('orders').doc()
+    const serializedProductIds = JSON.stringify(paidProductIds)
+    const checkoutMetadata = {
+      uid,
+      buyerUid: uid,
+      orderId: orderRef.id,
+      ...(serializedProductIds.length <= 450 ? { productIds: serializedProductIds } : {})
+    }
 
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
+      client_reference_id: uid,
       success_url: `${PUBLIC_SITE_URL.value()}/account/library?purchase=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${PUBLIC_SITE_URL.value()}/cart?checkout=cancelled`,
       line_items: paidProducts.map(({ productId, product, priceCents }) => ({
@@ -112,11 +120,9 @@ exports.createCheckoutSession = onCall(
           }
         }
       })),
-      metadata: {
-        uid,
-        buyerUid: uid,
-        productIds: JSON.stringify(paidProductIds),
-        orderId: orderRef.id
+      metadata: checkoutMetadata,
+      payment_intent_data: {
+        metadata: checkoutMetadata
       }
       // TODO: Stripe Connect marketplace payouts (seller stripeAccountId, application_fee_amount, transfer_data.destination).
     })
@@ -131,7 +137,19 @@ exports.createCheckoutSession = onCall(
         title: String(product.title || productId),
         creatorUid: String(product.artistId || ''),
         amountCents: priceCents,
-        entitlementStatus: 'pending'
+        currency: String(product.currency || currency).toUpperCase(),
+        entitlementStatus: 'pending',
+        productSnapshot: {
+          title: String(product.title || productId),
+          slug: String(product.slug || ''),
+          creatorName: String(product.artistName || product.artistDisplayName || 'Creator'),
+          creatorUid: String(product.artistId || ''),
+          coverPath: String(product.coverPath || product.thumbnailPath || ''),
+          coverURL: String(product.coverURL || product.thumbnailURL || ''),
+          productType: String(product.productType || product.productKind || 'Product'),
+          usageLicense: String(product.usageLicense || 'Standard License'),
+          sizeBytes: Math.max(0, Math.round(Number(product.primaryDownloadBytes || product.assetSummary?.totalBytes || 0)))
+        }
       })),
       status: 'checkout_created',
       paymentStatus: 'checkout_created',
