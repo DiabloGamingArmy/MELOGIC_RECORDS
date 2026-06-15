@@ -2107,6 +2107,39 @@ body.has-cart-drawer-open .nav-shell {
   color: #ff9b9b !important;
 }
 
+.product-download-note {
+  margin-bottom: 0;
+  font-size: 0.85rem;
+}
+
+.product-download-progress {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: rgba(119, 162, 205, 0.16);
+}
+
+.product-download-progress span {
+  position: absolute;
+  inset-block: 0;
+  width: 38%;
+  background: var(--ml-accent, #22b8b5);
+  animation: product-download-progress 1.15s ease-in-out infinite;
+}
+
+@keyframes product-download-progress {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(365%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .product-download-progress span {
+    width: 100%;
+    animation: none;
+  }
+}
+
 .product-download-modal-actions {
   display: flex;
   justify-content: flex-end;

@@ -43,7 +43,7 @@ const state = {
   ,openReviewMenuId: ''
   ,openReplyMenuKey: ''
   ,productReport: { open: false, submitting: false, error: '', message: '' }
-  ,downloadDialog: { open: false, loading: false, error: '', productId: '', title: '', sizeBytes: 0 }
+  ,downloadDialog: { open: false, loading: false, ready: false, error: '', productId: '', title: '', sizeBytes: 0, fileCount: 0 }
   ,giftFlow: {
     query: '',
     results: [],
@@ -1361,23 +1361,25 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     state.downloadDialog = {
       open: true,
       loading: false,
+      ready: false,
       error: '',
       productId: product.id,
       title: product.title,
-      sizeBytes: productDownloadBytes(product, productFiles)
+      sizeBytes: productDownloadBytes(product, productFiles),
+      fileCount: getProductViewerDeliverableFiles(product, productFiles).length
     }
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
   })
   app.querySelectorAll('[data-close-product-download]').forEach((element) => {
     element.addEventListener('click', (event) => {
       if (event.target !== element && !element.matches('button')) return
-      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
+      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, ready: false, error: '' }
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     })
   })
   app.querySelector('[data-confirm-product-download]')?.addEventListener('click', async () => {
     if (state.downloadDialog.loading) return
-    state.downloadDialog = { ...state.downloadDialog, loading: true, error: '' }
+    state.downloadDialog = { ...state.downloadDialog, loading: true, ready: false, error: '' }
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     const downloadPayload = { productId: product.id, source: 'product-detail' }
     if (PRODUCT_DOWNLOAD_DEBUG) {
@@ -1395,15 +1397,27 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
       const result = await createProductDownloadLink(downloadPayload.productId, { source: downloadPayload.source })
       if (!result?.downloadUrl) throw new Error('No product download is available.')
       beginProductDownloads(result)
-      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
+      state.downloadDialog = {
+        ...state.downloadDialog,
+        loading: false,
+        ready: true,
+        error: '',
+        fileCount: Number(result.fileCount || state.downloadDialog.fileCount || 0),
+        sizeBytes: Number(result.sizeBytes || state.downloadDialog.sizeBytes || 0)
+      }
       if (PRODUCT_DOWNLOAD_DEBUG) {
         console.info('[product-download] prepared', {
           action: 'create-download-link',
           productId: product.id,
-          fileCount: result.files?.length || 1,
+          fileCount: Number(result.fileCount || 0),
           sizeBytes: Number(result.sizeBytes || 0)
         })
       }
+      window.setTimeout(() => {
+        if (!state.downloadDialog.ready || state.downloadDialog.productId !== product.id) return
+        state.downloadDialog = { ...state.downloadDialog, open: false, ready: false }
+        renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+      }, 1400)
     } catch (error) {
       const errorCode = String(error?.code || '').replace(/^functions\//, '')
       const errorMessage = errorCode === 'permission-denied'
@@ -1414,12 +1428,15 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               : 'This product does not have downloadable content configured yet.')
           : errorCode === 'not-found'
             ? 'The product download files could not be found.'
+            : errorCode === 'resource-exhausted'
+              ? 'This product is too large to package automatically. Please contact support.'
             : ['unavailable', 'deadline-exceeded'].includes(errorCode)
-              ? 'Could not create a download link. Please try again.'
+              ? 'Could not prepare the download package. Please try again.'
               : (error?.message || 'Could not prepare this download.')
       state.downloadDialog = {
         ...state.downloadDialog,
         loading: false,
+        ready: false,
         error: errorMessage
       }
       if (PRODUCT_DOWNLOAD_DEBUG) {

@@ -9,15 +9,34 @@ export function formatDownloadSize(bytes = 0) {
 
 export function productDownloadDialogMarkup(dialog = {}) {
   if (!dialog.open) return ''
+  const packageSummary = dialog.fileCount
+    ? `Packaging ${Number(dialog.fileCount)} ${Number(dialog.fileCount) === 1 ? 'file' : 'files'} · ${formatDownloadSize(dialog.sizeBytes)}`
+    : `Package size: ${formatDownloadSize(dialog.sizeBytes)}`
+  const contentsSummary = dialog.fileCount
+    ? `${Number(dialog.fileCount)} ${Number(dialog.fileCount) === 1 ? 'file' : 'files'} · ${formatDownloadSize(dialog.sizeBytes)}`
+    : formatDownloadSize(dialog.sizeBytes)
+  const heading = dialog.loading
+    ? 'Preparing secure ZIP...'
+    : dialog.ready
+      ? 'Download ready.'
+      : 'Download Content'
   return `
     <div class="product-download-modal-backdrop" data-close-product-download role="presentation">
       <section class="product-download-modal" role="dialog" aria-modal="true" aria-labelledby="product-download-title">
-        <h2 id="product-download-title">Download Content</h2>
-        <p>Are you sure you want to download <strong>${escapeHtml(dialog.title || 'this product')}</strong>? The file size is ${escapeHtml(formatDownloadSize(dialog.sizeBytes))}.</p>
+        <h2 id="product-download-title">${heading}</h2>
+        ${dialog.loading ? `
+          <p>${escapeHtml(packageSummary)}</p>
+          <div class="product-download-progress" role="progressbar" aria-label="Preparing secure ZIP"><span></span></div>
+          <p class="product-download-note">This may take a moment for larger products.</p>
+        ` : dialog.ready ? `
+          <p><strong>${escapeHtml(dialog.title || 'Your product')}</strong> is downloading as one secure ZIP.</p>
+        ` : `
+          <p>Download <strong>${escapeHtml(dialog.title || 'this product')}</strong> as one secure ZIP containing ${escapeHtml(contentsSummary)} and the Melogic license overview.</p>
+        `}
         ${dialog.error ? `<p class="product-download-error">${escapeHtml(dialog.error)}</p>` : ''}
         <div class="product-download-modal-actions">
-          <button type="button" class="button button-muted" data-close-product-download ${dialog.loading ? 'disabled' : ''}>Cancel</button>
-          <button type="button" class="button button-accent" data-confirm-product-download ${dialog.loading ? 'disabled' : ''}>${dialog.loading ? 'Preparing...' : 'Download'}</button>
+          <button type="button" class="button button-muted" data-close-product-download ${dialog.loading ? 'disabled' : ''}>${dialog.ready ? 'Close' : 'Cancel'}</button>
+          ${dialog.ready ? '' : `<button type="button" class="button button-accent" data-confirm-product-download ${dialog.loading ? 'disabled' : ''}>${dialog.loading ? 'Preparing ZIP...' : 'Download ZIP'}</button>`}
         </div>
       </section>
     </div>
@@ -45,19 +64,8 @@ function clickDownload(url = '', fileName = '') {
 }
 
 export function beginProductDownloads(result = {}) {
-  const license = result.licenseFile || {}
-  if (license.content) {
-    const blob = new Blob([license.content], { type: license.contentType || 'text/markdown;charset=utf-8' })
-    const objectUrl = URL.createObjectURL(blob)
-    clickDownload(objectUrl, license.fileName || 'MELOGIC_LICENSE_AND_OVERVIEW.md')
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30000)
-  }
-  const files = Array.isArray(result.files) && result.files.length
-    ? result.files
-    : result.downloadUrl
-      ? [{ downloadUrl: result.downloadUrl, fileName: result.fileName || '' }]
-      : []
-  files.forEach((file, index) => {
-    window.setTimeout(() => clickDownload(file.downloadUrl, file.fileName), index * 180)
-  })
+  const downloadUrl = String(result.downloadUrl || result.packageUrl || '')
+  if (!downloadUrl) return false
+  clickDownload(downloadUrl, result.fileName || 'melogic-product-download.zip')
+  return true
 }

@@ -24,6 +24,16 @@ function fileNameFromPath(storagePath = '') {
   return normalizeStoragePath(storagePath).split('/').pop() || 'download'
 }
 
+function archivePathFromRow(row = {}, storagePath = '') {
+  const candidate = String(
+    row.displayPath
+      || [row.parentPath, row.name].filter(Boolean).join('/')
+      || row.name
+      || fileNameFromPath(storagePath)
+  ).trim()
+  return candidate.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/')
+}
+
 function productOwnerUid(product = {}) {
   return String(
     product.artistId
@@ -69,6 +79,7 @@ function addAllowedRow(rows, row = {}) {
     id: String(row.id || ''),
     storagePath,
     fileName: String(row.name || row.displayPath || fileNameFromPath(storagePath)),
+    archivePath: archivePathFromRow(row, storagePath),
     role: String(row.role || ''),
     isPackage: row.isPackage === true || /\b(package|archive|bundle)\b/i.test([row.role, row.category, row.type, row.kind].join(' '))
   })
@@ -188,6 +199,7 @@ exports.__test = {
   collectAllowedDownloadRows,
   userCanDownloadProduct,
   fileNameFromPath,
+  archivePathFromRow,
   productOwnerUid,
   classifyDownloadStorageError
 }
