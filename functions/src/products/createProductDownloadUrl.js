@@ -24,6 +24,34 @@ function fileNameFromPath(storagePath = '') {
   return normalizeStoragePath(storagePath).split('/').pop() || 'download'
 }
 
+function productOwnerUid(product = {}) {
+  return String(
+    product.artistId
+      || product.ownerUid
+      || product.creatorUid
+      || product.sellerUid
+      || product.createdBy
+      || product.userId
+      || product.authorUid
+      || product.creator?.id
+      || ''
+  ).trim()
+}
+
+function classifyDownloadStorageError(error = {}) {
+  const code = String(error?.code || '').toLowerCase()
+  const message = String(error?.message || '').toLowerCase()
+  if (code === '404' || code.includes('not-found') || message.includes('no such object')) return 'not-found'
+  if (
+    code === '403'
+    || code.includes('permission')
+    || message.includes('signblob')
+    || message.includes('service account token creator')
+    || message.includes('permission denied')
+  ) return 'signing-permission'
+  return 'storage-error'
+}
+
 function rowIsDownloadable(row = {}) {
   const roleText = [row.role, row.category, row.type, row.kind, row.purpose].join(' ').toLowerCase()
   return row.isDownloadable !== false
@@ -40,7 +68,9 @@ function addAllowedRow(rows, row = {}) {
   rows.push({
     id: String(row.id || ''),
     storagePath,
-    fileName: String(row.name || row.displayPath || fileNameFromPath(storagePath))
+    fileName: String(row.name || row.displayPath || fileNameFromPath(storagePath)),
+    role: String(row.role || ''),
+    isPackage: row.isPackage === true || /\b(package|archive|bundle)\b/i.test([row.role, row.category, row.type, row.kind].join(' '))
   })
 }
 
@@ -85,7 +115,7 @@ function selectAllowedDownload(rows = [], input = {}) {
 
 async function userCanDownloadProduct(uid = '', productId = '', product = {}) {
   if (!uid || !productId) return false
-  if (product.artistId === uid) return true
+  if (productOwnerUid(product) === uid) return true
   if (product.status !== 'published' || product.visibility !== 'public') return false
   const [entitlementSnap, librarySnap] = await Promise.all([
     db.doc(`users/${uid}/entitlements/${productId}`).get(),
@@ -128,7 +158,11 @@ exports.createProductDownloadUrl = onCall(
     const file = admin.storage().bucket().file(selected.storagePath)
     try {
       await file.getMetadata()
-      const [url] = await file.getSignedUrl({ action: 'read', expires: expiresAt })
+      const [url] = await file.getSignedUrl({
+        action: 'read',
+        expires: expiresAt,
+        responseDisposition: `attachment; filename="${fileNameFromPath(selected.storagePath).replaceAll('"', '')}"`
+      })
       return {
         url,
         expiresAt: expiresAt.toISOString(),
@@ -136,8 +170,12 @@ exports.createProductDownloadUrl = onCall(
         storagePath: selected.storagePath
       }
     } catch (error) {
-      const code = error?.code === 404 || error?.code === 'storage/object-not-found' ? 'not-found' : 'internal'
-      throw new HttpsError(code, code === 'not-found' ? 'Download file was not found.' : 'Could not create download link.')
+      const failure = classifyDownloadStorageError(error)
+      if (failure === 'not-found') throw new HttpsError('not-found', 'Download file was not found.')
+      if (failure === 'signing-permission') {
+        throw new HttpsError('failed-precondition', 'Secure download signing is not configured for this service.')
+      }
+      throw new HttpsError('unavailable', 'Secure download links are temporarily unavailable.')
     }
   }
 )
@@ -149,5 +187,7 @@ exports.__test = {
   selectAllowedDownload,
   collectAllowedDownloadRows,
   userCanDownloadProduct,
-  fileNameFromPath
+  fileNameFromPath,
+  productOwnerUid,
+  classifyDownloadStorageError
 }

@@ -1379,19 +1379,63 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     if (state.downloadDialog.loading) return
     state.downloadDialog = { ...state.downloadDialog, loading: true, error: '' }
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    const downloadPayload = { productId: product.id, source: 'product-detail' }
+    if (PRODUCT_DOWNLOAD_DEBUG) {
+      console.info('[product-download] create link requested', {
+        action: 'create-download-link',
+        productId: product.id,
+        productTitle: product.title || '',
+        currentUserUid: state.currentUser?.uid || '',
+        isOwner,
+        isInLibrary: Boolean(ownsProduct && !isOwner),
+        payload: downloadPayload
+      })
+    }
     try {
-      const result = await createProductDownloadLink(product.id, { source: 'product-detail' })
+      const result = await createProductDownloadLink(downloadPayload.productId, { source: downloadPayload.source })
       if (!result?.downloadUrl) throw new Error('No product download is available.')
       beginProductDownloads(result)
       state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
-      if (PRODUCT_DOWNLOAD_DEBUG) console.info('[product-download] prepared', { productId: product.id, fileCount: result.files?.length || 1 })
+      if (PRODUCT_DOWNLOAD_DEBUG) {
+        console.info('[product-download] prepared', {
+          action: 'create-download-link',
+          productId: product.id,
+          fileCount: result.files?.length || 1,
+          sizeBytes: Number(result.sizeBytes || 0)
+        })
+      }
     } catch (error) {
+      const errorCode = String(error?.code || '').replace(/^functions\//, '')
+      const errorMessage = errorCode === 'permission-denied'
+        ? 'You do not have access to download this product.'
+        : errorCode === 'failed-precondition'
+          ? (String(error?.message || '').includes('signing')
+              ? 'Secure downloads are temporarily unavailable. The server signing permission needs configuration.'
+              : 'This product does not have downloadable content configured yet.')
+          : errorCode === 'not-found'
+            ? 'The product download files could not be found.'
+            : ['unavailable', 'deadline-exceeded'].includes(errorCode)
+              ? 'Could not create a download link. Please try again.'
+              : (error?.message || 'Could not prepare this download.')
       state.downloadDialog = {
         ...state.downloadDialog,
         loading: false,
-        error: error?.code === 'functions/permission-denied' ? 'You do not have access to download this product.' : (error?.message || 'Could not prepare this download.')
+        error: errorMessage
       }
-      if (PRODUCT_DOWNLOAD_DEBUG) console.warn('[product-download] failed', { productId: product.id, code: error?.code, message: error?.message })
+      if (PRODUCT_DOWNLOAD_DEBUG) {
+        console.warn('[product-download] failed', {
+          action: 'create-download-link',
+          productId: product.id,
+          productTitle: product.title || '',
+          currentUserUid: state.currentUser?.uid || '',
+          isOwner,
+          isInLibrary: Boolean(ownsProduct && !isOwner),
+          payload: downloadPayload,
+          errorCode: error?.code || '',
+          errorMessage: error?.message || '',
+          errorDetails: error?.details || null
+        })
+      }
     }
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
   })

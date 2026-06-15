@@ -3659,6 +3659,15 @@ body.community-modal-open {
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
 }
 
+.community-post-card.community-post-detail-card,
+.community-post-card.community-post-detail-card:hover {
+  cursor: default;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
 .community-left-nav a,
 .community-left-nav button {
   border-radius: var(--ml-radius-sm, 6px);
