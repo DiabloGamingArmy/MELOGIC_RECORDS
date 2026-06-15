@@ -20,7 +20,7 @@ const state = {
   search: '',
   purchaseSuccess: initialPurchaseSuccess,
   showPurchaseBanner: initialPurchaseSuccess,
-  downloadDialog: { open: false, loading: false, error: '', productId: '', title: '', sizeBytes: 0 }
+  downloadDialog: { open: false, loading: false, ready: false, error: '', productId: '', title: '', sizeBytes: 0, fileCount: 0 }
 }
 
 const filters = [
@@ -122,6 +122,7 @@ function renderRows() {
               data-library-download="${escapeHtml(item.productId)}"
               data-library-download-title="${escapeHtml(title)}"
               data-library-download-size="${Number(product.primaryDownloadBytes || product.assetSummary?.totalBytes || snapshot.sizeBytes || 0)}"
+              data-library-download-file-count="${Number(product.assetSummary?.downloadableCount || product.assetSummary?.fileCount || snapshot.fileCount || 0)}"
               ${item.source === 'saved' || (item.status || 'active') !== 'active' ? 'disabled' : ''}
             >${item.source === 'saved' ? 'Saved' : 'Download Content'}</button>
           </article>
@@ -172,10 +173,12 @@ function render() {
       state.downloadDialog = {
         open: true,
         loading: false,
+        ready: false,
         error: '',
         productId: button.getAttribute('data-library-download') || '',
         title: button.getAttribute('data-library-download-title') || 'this product',
-        sizeBytes: Number(button.getAttribute('data-library-download-size') || 0)
+        sizeBytes: Number(button.getAttribute('data-library-download-size') || 0),
+        fileCount: Number(button.getAttribute('data-library-download-file-count') || 0)
       }
       render()
     })
@@ -183,24 +186,51 @@ function render() {
   app.querySelectorAll('[data-close-product-download]').forEach((element) => {
     element.addEventListener('click', (event) => {
       if (event.target !== element && !element.matches('button')) return
-      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
+      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, ready: false, error: '' }
       render()
     })
   })
   app.querySelector('[data-confirm-product-download]')?.addEventListener('click', async () => {
     if (state.downloadDialog.loading) return
-    state.downloadDialog = { ...state.downloadDialog, loading: true, error: '' }
+    state.downloadDialog = { ...state.downloadDialog, loading: true, ready: false, error: '' }
     render()
     try {
       const result = await createProductDownloadLink(state.downloadDialog.productId, { source: 'library' })
       if (!result?.downloadUrl) throw new Error('No product download is available.')
       beginProductDownloads(result)
-      state.downloadDialog = { ...state.downloadDialog, open: false, loading: false, error: '' }
-    } catch (error) {
       state.downloadDialog = {
         ...state.downloadDialog,
         loading: false,
-        error: error?.code === 'functions/permission-denied' ? 'You do not have access to download this product.' : (error?.message || 'Could not prepare this download.')
+        ready: true,
+        error: '',
+        fileCount: Number(result.fileCount || state.downloadDialog.fileCount || 0),
+        sizeBytes: Number(result.sizeBytes || state.downloadDialog.sizeBytes || 0)
+      }
+      window.setTimeout(() => {
+        if (!state.downloadDialog.ready) return
+        state.downloadDialog = { ...state.downloadDialog, open: false, ready: false }
+        render()
+      }, 1400)
+    } catch (error) {
+      const errorCode = String(error?.code || '').replace(/^functions\//, '')
+      const errorMessage = errorCode === 'permission-denied'
+        ? 'You do not have access to download this product.'
+        : errorCode === 'failed-precondition'
+          ? (String(error?.message || '').includes('signing')
+              ? 'Secure downloads are temporarily unavailable. Server signing permission needs configuration.'
+              : 'This product does not have downloadable content configured yet.')
+          : errorCode === 'resource-exhausted'
+            ? 'This product is too large to package automatically. Please contact support.'
+            : errorCode === 'not-found'
+              ? 'The product download files could not be found.'
+              : ['unavailable', 'deadline-exceeded'].includes(errorCode)
+                ? 'Could not prepare the download package. Please try again.'
+                : (error?.message || 'Could not prepare this download.')
+      state.downloadDialog = {
+        ...state.downloadDialog,
+        loading: false,
+        ready: false,
+        error: errorMessage
       }
     }
     render()

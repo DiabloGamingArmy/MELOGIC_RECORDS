@@ -39,21 +39,31 @@ test('download Storage failures distinguish missing files from signing configura
   assert.equal(downloadUrl.classifyDownloadStorageError({ code: 503 }), 'storage-error')
 })
 
-test('product download uses a packaged archive when present and otherwise preserves multi-file content', () => {
+test('product download packages every manifest deliverable up to the file limit', () => {
   const wavRows = [
     { storagePath: 'products/p1/downloads/one.wav', fileName: 'one.wav' },
     { storagePath: 'products/p1/downloads/two.wav', fileName: 'two.wav' }
   ]
   assert.deepEqual(downloadLink.selectDownloadRows(wavRows, { primaryDownloadPath: wavRows[0].storagePath }), wavRows)
   const zipRow = { storagePath: 'products/p1/downloads/pack.zip', fileName: 'pack.zip' }
-  assert.deepEqual(
-    downloadLink.selectDownloadRows([...wavRows, zipRow], { downloadPath: zipRow.storagePath }),
-    [zipRow]
-  )
-  assert.deepEqual(downloadLink.selectDownloadRows(Array.from({ length: 51 }, (_, index) => ({
+  assert.deepEqual(downloadLink.selectDownloadRows([...wavRows, zipRow], { downloadPath: zipRow.storagePath }), [...wavRows, zipRow])
+  assert.equal(downloadLink.selectDownloadRows(Array.from({ length: 500 }, (_, index) => ({
+    storagePath: `products/p1/downloads/${index}.wav`,
+    fileName: `${index}.wav`
+  })), {}).length, 500)
+  assert.deepEqual(downloadLink.selectDownloadRows(Array.from({ length: 501 }, (_, index) => ({
     storagePath: `products/p1/downloads/${index}.wav`,
     fileName: `${index}.wav`
   })), {}), [])
+})
+
+test('generated ZIP paths preserve safe manifest folders and reject traversal syntax', () => {
+  assert.equal(downloadUrl.archivePathFromRow({
+    displayPath: 'One Shots/Body Armor_1.wav'
+  }, 'products/p1/downloads/random.wav'), 'One Shots/Body Armor_1.wav')
+  assert.equal(downloadLink.safeArchivePath('One Shots/Body Armor_1.wav'), 'One Shots/Body Armor_1.wav')
+  assert.equal(downloadLink.safeArchivePath('../../private/secret.wav'), 'private/secret.wav')
+  assert.equal(downloadLink.safePathSegment('RAMPAGE: Pack / Vol 1'), 'RAMPAGE- Pack - Vol 1')
 })
 
 test('download row selection requires matching file id or exact storage path', () => {
@@ -71,11 +81,14 @@ test('generated marketplace license identifies the product, buyer and acquisitio
     productId: 'p1',
     product: { title: 'Drum Kit', artistName: 'Creator', usageLicense: 'Commercial use allowed.' },
     user: { uid: 'buyer-1', displayName: 'Buyer' },
-    acquisition: { source: 'gift', giftedBy: 'creator-1' }
+    acquisition: { source: 'gift', giftedBy: 'creator-1' },
+    packageFolder: 'Drum Kit',
+    rows: [{ archivePath: 'One Shots/Kick.wav', fileName: 'Kick.wav' }]
   })
   assert.match(markdown, /Product: Drum Kit/)
   assert.match(markdown, /Buyer UID: buyer-1/)
   assert.match(markdown, /Acquisition source: gift/)
+  assert.match(markdown, /Drum Kit\/One Shots\/Kick\.wav/)
   assert.doesNotMatch(markdown, /Buyer Email/)
 })
 
