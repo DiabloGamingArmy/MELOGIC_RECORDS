@@ -301,12 +301,12 @@ test('Stripe Connect account configuration uses hosted Express onboarding and tr
     uid: 'creator-1',
     email: 'creator@example.com'
   })
-  assert.equal(params.controller.stripe_dashboard.type, 'express')
-  assert.equal(params.controller.requirement_collection, 'stripe')
-  assert.equal(params.controller.losses.payments, 'application')
+  assert.equal(params.type, 'express')
+  assert.equal(params.country, 'US')
   assert.equal(params.capabilities.transfers.requested, true)
   assert.equal(Object.hasOwn(params.capabilities, 'card_payments'), false)
-  assert.equal(params.metadata.melogicUid, 'creator-1')
+  assert.equal(params.metadata.firebaseUid, 'creator-1')
+  assert.equal(params.metadata.platform, 'melogic_records')
 })
 
 test('public Stripe Connect status does not infer or expose the private account ID', () => {
@@ -318,4 +318,11 @@ test('public Stripe Connect status does not infer or expose the private account 
   assert.equal(status.hasAccount, true)
   assert.equal(status.payoutsEnabled, true)
   assert.equal(Object.hasOwn(status, 'stripeConnectAccountId'), false)
+})
+
+test('Stripe Connect secret mode is detected without exposing the secret', () => {
+  assert.equal(stripeConnect.stripeSecretMode('sk_test_123'), 'test')
+  assert.equal(stripeConnect.stripeSecretMode('sk_live_123'), 'live')
+  assert.equal(stripeConnect.stripeSecretMode(''), 'missing')
+  assert.equal(stripeConnect.stripeSecretMode('not-a-key'), 'unknown')
 })
