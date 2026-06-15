@@ -10,6 +10,12 @@
   color: #f5f7fb;
 }
 
+body:has(.community-page),
+body:has(.community-page) #app {
+  overflow-x: clip;
+  overflow-y: visible;
+}
+
 .community-page * {
   box-sizing: border-box;
 }
