@@ -1,0 +1,136 @@
+import {
+  collection,
+  doc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query
+} from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
+import { db } from '../firebase/firestore'
+import { functions } from '../firebase/functions'
+
+function callable(name, payload = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  return httpsCallable(functions, name)(payload).then((response) => response?.data || {})
+}
+
+function toIsoDate(value) {
+  if (!value) return null
+  if (typeof value?.toDate === 'function') return value.toDate().toISOString()
+  if (value instanceof Date) return value.toISOString()
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+export function normalizeSupportThread(threadId, raw = {}) {
+  return {
+    id: String(raw.id || threadId || '').trim(),
+    type: 'support',
+    requesterUid: String(raw.requesterUid || '').trim(),
+    participantUids: Array.isArray(raw.participantUids) ? raw.participantUids.map((uid) => String(uid || '').trim()).filter(Boolean) : [],
+    assignedAgentUid: String(raw.assignedAgentUid || '').trim(),
+    status: String(raw.status || 'open').trim() || 'open',
+    source: String(raw.source || 'support').trim(),
+    subject: String(raw.subject || 'Support request').trim(),
+    priority: String(raw.priority || 'normal').trim(),
+    createdAt: toIsoDate(raw.createdAt),
+    updatedAt: toIsoDate(raw.updatedAt),
+    lastMessageAt: toIsoDate(raw.lastMessageAt),
+    lastMessagePreview: String(raw.lastMessagePreview || '').trim(),
+    resolvedAt: toIsoDate(raw.resolvedAt),
+    resolvedBy: String(raw.resolvedBy || '').trim(),
+    requester: raw.requester && typeof raw.requester === 'object' ? raw.requester : null,
+    assignedAgent: raw.assignedAgent && typeof raw.assignedAgent === 'object' ? raw.assignedAgent : null
+  }
+}
+
+export function normalizeSupportMessage(messageId, raw = {}, metadata = {}) {
+  return {
+    id: String(raw.id || messageId || '').trim(),
+    senderUid: String(raw.senderUid || '').trim(),
+    senderType: ['user', 'agent', 'system'].includes(raw.senderType) ? raw.senderType : 'system',
+    body: String(raw.body || '').trim(),
+    createdAt: toIsoDate(raw.createdAt),
+    metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
+    pendingWrites: metadata.hasPendingWrites === true
+  }
+}
+
+export async function createSupportThread(payload = {}) {
+  const result = await callable('createSupportThread', {
+    source: String(payload.source || 'support').trim(),
+    subject: String(payload.subject || 'Support request').trim(),
+    priority: String(payload.priority || 'normal').trim(),
+    initialMessage: String(payload.initialMessage || '').trim()
+  })
+  return {
+    ...result,
+    thread: result.thread ? normalizeSupportThread(result.thread.id || result.threadId, result.thread) : null
+  }
+}
+
+export function sendSupportMessage({ threadId = '', body = '' } = {}) {
+  return callable('sendSupportMessage', {
+    threadId: String(threadId || '').trim(),
+    body: String(body || '').trim()
+  })
+}
+
+export function requestSupportAgent({ threadId = '' } = {}) {
+  return callable('requestSupportAgent', { threadId: String(threadId || '').trim() })
+}
+
+export function claimSupportThread({ threadId = '' } = {}) {
+  return callable('claimSupportThread', { threadId: String(threadId || '').trim() })
+}
+
+export function resolveSupportThread({ threadId = '' } = {}) {
+  return callable('resolveSupportThread', { threadId: String(threadId || '').trim() })
+}
+
+export async function listSupportThreads(payload = {}) {
+  const result = await callable('listSupportThreads', {
+    status: String(payload.status || 'active').trim(),
+    limitCount: Number(payload.limitCount || 50)
+  })
+  return {
+    ...result,
+    threads: (result.threads || []).map((thread) => normalizeSupportThread(thread.id, thread))
+  }
+}
+
+export async function listSupportMessages({ threadId = '' } = {}) {
+  const result = await callable('listSupportMessages', { threadId: String(threadId || '').trim() })
+  return (result.messages || []).map((message) => normalizeSupportMessage(message.id, message))
+}
+
+export function subscribeToSupportThread(threadId = '', callback, onError) {
+  if (!db || !threadId) return () => {}
+  return onSnapshot(doc(db, 'supportThreads', threadId), (snap) => {
+    callback(snap.exists() ? normalizeSupportThread(snap.id, snap.data()) : null)
+  }, onError)
+}
+
+export function subscribeToSupportMessages(threadId = '', callback, onError) {
+  if (!db || !threadId) return () => {}
+  const messagesQuery = query(
+    collection(db, 'supportThreads', threadId, 'messages'),
+    orderBy('createdAt', 'asc'),
+    limit(100)
+  )
+  return onSnapshot(messagesQuery, (snapshot) => {
+    callback(snapshot.docs.map((docSnap) => normalizeSupportMessage(docSnap.id, docSnap.data(), docSnap.metadata)))
+  }, onError)
+}
+
+export async function getSupportMessages(threadId = '') {
+  if (!db || !threadId) return []
+  const snapshot = await getDocs(query(
+    collection(db, 'supportThreads', threadId, 'messages'),
+    orderBy('createdAt', 'asc'),
+    limit(100)
+  ))
+  return snapshot.docs.map((docSnap) => normalizeSupportMessage(docSnap.id, docSnap.data(), docSnap.metadata))
+}

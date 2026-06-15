@@ -86,6 +86,15 @@ const {
   getMutualUserSuggestions,
   matchContactsToUsers
 } = require('./src/profiles/mutualUsers')
+const {
+  createSupportThread,
+  sendSupportMessage,
+  claimSupportThread,
+  resolveSupportThread,
+  requestSupportAgent,
+  listSupportThreads,
+  listSupportMessages
+} = require('./src/support/supportThreads')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -187,3 +196,10 @@ exports.toggleProfileFollow = toggleProfileFollow
 exports.getMutualUserSuggestions = getMutualUserSuggestions
 exports.dismissMutualUserSuggestion = dismissMutualUserSuggestion
 exports.matchContactsToUsers = matchContactsToUsers
+exports.createSupportThread = createSupportThread
+exports.sendSupportMessage = sendSupportMessage
+exports.claimSupportThread = claimSupportThread
+exports.resolveSupportThread = resolveSupportThread
+exports.requestSupportAgent = requestSupportAgent
+exports.listSupportThreads = listSupportThreads
+exports.listSupportMessages = listSupportMessages
