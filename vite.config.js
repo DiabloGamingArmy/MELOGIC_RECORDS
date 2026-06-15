@@ -27,6 +27,7 @@ export default defineConfig({
         product: resolve(__dirname, 'product.html'),
         inbox: resolve(__dirname, 'inbox.html'),
         accountSecurity: resolve(__dirname, 'account-security.html'),
+        billingPayouts: resolve(__dirname, 'billing-payouts.html'),
         profile: resolve(__dirname, 'profile.html'),
         profilePublic: resolve(__dirname, 'profile-public.html'),
         library: resolve(__dirname, 'library.html'),

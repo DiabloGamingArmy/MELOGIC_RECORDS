@@ -1218,6 +1218,16 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /billing/{billingId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /earningsSummary/{summaryId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /adminNotes/{noteId} {
         allow read, write: if false;
       }
@@ -2325,6 +2335,16 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow read: if signedIn() && resource.data.uid == request.auth.uid;
       allow write: if false;
+    }
+
+    match /creatorLedger/{ledgerEntryId} {
+      allow read: if signedIn()
+        && (resource.data.creatorUid == request.auth.uid || hasAuditReadClaim() || hasOrderSupportClaim());
+      allow write: if false;
+    }
+
+    match /stripeConnectAccounts/{uid} {
+      allow read, write: if false;
     }
 
     match /{document=**} {

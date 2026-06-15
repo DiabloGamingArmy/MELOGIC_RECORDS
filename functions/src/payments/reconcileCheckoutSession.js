@@ -24,7 +24,9 @@ const reconcileCheckoutSession = onCall({
   const stripe = new Stripe(STRIPE_SECRET_KEY.value())
   let session
   try {
-    session = await stripe.checkout.sessions.retrieve(sessionId)
+    session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ['payment_intent.latest_charge.balance_transaction']
+    })
   } catch (error) {
     logger.error('[checkout-reconcile] Stripe session lookup failed', {
       sessionId,
@@ -61,7 +63,7 @@ const reconcileCheckoutSession = onCall({
       eventType: 'checkout.session.reconciled',
       source: 'buyer_checkout_reconcile'
     })
-    if (result.changed) {
+    if (result.customerLifecycleChanged) {
       await writeAccountEvent(admin.firestore(), uid, {
         type: 'order_placed',
         severity: 'success',

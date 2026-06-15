@@ -140,6 +140,7 @@ function quickLinksMarkup(user) {
       <a href="${publicProfileRoute({ uid: user.uid, preview: true })}">View Public Profile</a>
       <a href="${ROUTES.orders}">Orders</a>
       <a href="${ROUTES.library}">Library</a>
+      <a href="${ROUTES.billingPayouts}">Billing &amp; Payouts</a>
       <a href="${ROUTES.accountSecurity}">Security</a>
     </div>
   `
@@ -384,6 +385,7 @@ function renderSignedInState(user, storedProfile = null, dashboard = null) {
           <a class="button button-muted" href="${publicProfileRoute({ uid: user.uid, preview: true })}">View Public Profile</a>
           <a class="button button-muted" href="${ROUTES.library}">Library</a>
           <a class="button button-muted" href="${ROUTES.orders}">Orders</a>
+          <a class="button button-muted" href="${ROUTES.billingPayouts}">Billing &amp; Payouts</a>
           <button type="button" class="button button-accent" data-signout-profile>Sign Out</button>
         </div>
       </article>

@@ -324,7 +324,7 @@ const state = {
   },
   adminData: {
     products: { items: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 },
-    users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
+    users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, payoutConnect: null, earningsSummary: null, creatorLedgerEntries: [], accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loadingMore: false, loaded: false, error: '', filter: 'open', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     community: {
       posts: [],
@@ -2439,6 +2439,36 @@ function adminUserOrdersTable(orders = []) {
   })
 }
 
+function adminCurrencyMap(value = {}) {
+  const entries = Object.entries(value && typeof value === 'object' ? value : {})
+  if (!entries.length) return formatMoney(0, 'USD')
+  return entries.map(([currency, amount]) => formatMoney(amount, currency)).join(' + ')
+}
+
+function adminCreatorLedgerTable(entries = []) {
+  return adminSimpleTable('Creator earnings ledger', [
+    'Product / Order',
+    'Gross',
+    'Platform fee',
+    'Stripe fee',
+    'Creator net',
+    'Status',
+    'Available'
+  ], entries.map((entry) => [
+    htmlCell(`<strong>${escapeHtml(entry.productId || 'Product unavailable')}</strong><small class="admin-code-value">${escapeHtml(entry.orderId || '')}</small>`),
+    entry.grossAmount === null ? 'Amount unavailable' : formatMoney(entry.grossAmount, entry.currency),
+    entry.platformFeeAmount === null ? 'Amount unavailable' : formatMoney(entry.platformFeeAmount, entry.currency),
+    entry.stripeFeeAmount === null ? 'Pending lookup' : formatMoney(entry.stripeFeeAmount, entry.currency),
+    entry.creatorNetAmount === null ? 'Amount unavailable' : formatMoney(entry.creatorNetAmount, entry.currency),
+    humanLabel(entry.status || 'pending'),
+    formatDate(entry.availableAt)
+  ]), {
+    className: 'is-user-orders',
+    emptyTitle: 'No creator earnings found.',
+    emptyBody: 'No paid marketplace ledger entries were found for this creator.'
+  })
+}
+
 function selectedUserPanel() {
   const uid = adminUserDetailUid()
   const data = adminData('users')
@@ -2549,6 +2579,27 @@ function selectedUserPanel() {
       <section class="admin-section-slab admin-fixed-panel is-products-panel">
         <div class="admin-slab-heading"><h2>Orders / Payments</h2><span class="admin-muted">${data.orders?.length || 0} source order(s)</span></div>
         <div class="admin-table-scroll">${adminUserOrdersTable(data.orders || [])}</div>
+      </section>
+      <section class="admin-section-slab admin-fixed-panel is-products-panel">
+        <div class="admin-slab-heading"><h2>Billing &amp; Payouts</h2><span class="admin-muted">Safe Stripe Connect status</span></div>
+        <div class="admin-panel-scroll">
+          ${renderKeyValueGrid([
+            renderBooleanField('Connected account', data.payoutConnect?.hasAccount),
+            renderField('Account type', data.payoutConnect?.hasAccount ? humanLabel(data.payoutConnect?.accountType || 'express') : 'Not connected'),
+            renderBooleanField('Details submitted', data.payoutConnect?.detailsSubmitted),
+            renderBooleanField('Charges enabled', data.payoutConnect?.chargesEnabled),
+            renderBooleanField('Payouts enabled', data.payoutConnect?.payoutsEnabled),
+            renderField('Stripe mode', data.payoutConnect?.hasAccount ? (data.payoutConnect?.livemode ? 'Live' : 'Test') : 'Not connected'),
+            renderField('Disabled reason', humanLabel(data.payoutConnect?.disabledReason || ''), { wide: true }),
+            renderField('Currently due', (data.payoutConnect?.currentlyDue || []).map(humanLabel).join(', ') || 'None', { wide: true }),
+            renderField('Pending earnings', adminCurrencyMap(data.earningsSummary?.pendingByCurrency), { wide: true }),
+            renderField('Available earnings', adminCurrencyMap(data.earningsSummary?.availableByCurrency), { wide: true }),
+            renderField('Lifetime creator net', adminCurrencyMap(data.earningsSummary?.lifetimeNetByCurrency), { wide: true }),
+            renderField('Transferred earnings', adminCurrencyMap(data.earningsSummary?.withdrawnByCurrency), { wide: true }),
+            renderField('Awaiting Stripe fee data', String(Number(data.earningsSummary?.unfinalizedEntryCount || 0)))
+          ])}
+        </div>
+        <div class="admin-table-scroll">${adminCreatorLedgerTable(data.creatorLedgerEntries || [])}</div>
       </section>
       <section class="admin-hub-grid">
         <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Reports</h2></div><div class="admin-panel-scroll"><article class="admin-empty-state">No report detail data is loaded for this account yet.</article></div></article>
@@ -5221,6 +5272,9 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.libraryItems = result.libraryItems || []
         state.adminData.users.orders = result.orders || []
         state.adminData.users.commerceSummary = result.commerceSummary || null
+        state.adminData.users.payoutConnect = result.payoutConnect || null
+        state.adminData.users.earningsSummary = result.earningsSummary || null
+        state.adminData.users.creatorLedgerEntries = result.creatorLedgerEntries || []
         state.adminData.users.accountEvents = result.accountEvents || []
         state.adminData.users.adminNotes = result.adminNotes || []
         await hydrateReviewMedia(state.adminData.users.recentProducts)
@@ -5231,6 +5285,9 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.libraryItems = []
         state.adminData.users.orders = []
         state.adminData.users.commerceSummary = null
+        state.adminData.users.payoutConnect = null
+        state.adminData.users.earningsSummary = null
+        state.adminData.users.creatorLedgerEntries = []
         state.adminData.users.accountEvents = []
         state.adminData.users.adminNotes = []
       }
