@@ -16,6 +16,7 @@ const SETTINGS_SECTIONS = [
   { key: 'account', label: 'Account' },
   { key: 'appearance', label: 'Appearance' },
   { key: 'creator-settings', label: 'Creator Settings' },
+  { key: 'billing-payouts', label: 'Billing & Payouts' },
   { key: 'security', label: 'Security' },
   { key: 'notifications', label: 'Notifications' },
   { key: 'connections', label: 'Connections' },
@@ -801,6 +802,17 @@ function renderSettingsPage() {
             <li>Account recovery and security activity live in the dedicated Security page.</li>
           </ul>
           <a class="button button-muted" href="${ROUTES.accountSecurity}">Open Security</a>
+        </div>
+
+        <div class="settings-panel ${activeSection === 'billing-payouts' ? 'is-active' : ''}" data-panel="billing-payouts">
+          <h2>Billing &amp; Payouts</h2>
+          <p class="section-copy">Connect Stripe securely, review payout readiness, and see creator earnings recorded by Melogic.</p>
+          <ul class="settings-bullet-list">
+            <li>Stripe collects identity, tax, and bank details directly.</li>
+            <li>Melogic does not let the browser edit earnings or payout eligibility.</li>
+            <li>Creator withdrawals are not enabled yet.</li>
+          </ul>
+          <a class="button button-muted" href="${ROUTES.billingPayouts}">Open Billing &amp; Payouts</a>
         </div>
 
         <div class="settings-panel ${activeSection === 'notifications' ? 'is-active' : ''}" data-panel="notifications">

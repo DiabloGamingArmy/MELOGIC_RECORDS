@@ -1,6 +1,15 @@
 const admin = require('firebase-admin')
 const { logger } = require('firebase-functions')
 const { rebuildCommerceSummary } = require('../account/commerceSummary')
+const {
+  allocateAmountByWeights,
+  allocateGrossAmounts,
+  creatorLedgerPayload,
+  earningsHoldDays,
+  ledgerEntryId,
+  loadCreatorEarningsConfig,
+  rebuildCreatorEarningsSummaries
+} = require('./creatorEarnings')
 
 function cleanString(value = '', max = 900) {
   return String(value ?? '')
@@ -55,6 +64,13 @@ function stripeOrderFields(session = {}, order = {}) {
       amountTax: stripeAmount(session.total_details?.amount_tax, 0)
     }
   }
+}
+
+function stripeProcessingFee(session = {}) {
+  const paymentIntent = typeof session.payment_intent === 'object' ? session.payment_intent : {}
+  const latestCharge = typeof paymentIntent.latest_charge === 'object' ? paymentIntent.latest_charge : {}
+  const balanceTransaction = typeof latestCharge.balance_transaction === 'object' ? latestCharge.balance_transaction : {}
+  return stripeAmount(balanceTransaction.fee, null)
 }
 
 function productSnapshot(productId = '', product = {}, orderItem = {}) {
@@ -238,12 +254,19 @@ async function fulfillPaidCheckout({
   const context = await resolveCheckoutContext(database, session)
   const safeEventId = cleanString(eventId || `session_${context.stripeSessionId}`, 180).replaceAll('/', '_')
   const eventRef = database.collection('stripeWebhookEvents').doc(safeEventId)
+  const earningsConfig = await loadCreatorEarningsConfig(database)
+  const availableAt = admin.firestore.Timestamp.fromMillis(
+    Date.now() + (earningsHoldDays() * 24 * 60 * 60 * 1000)
+  )
 
   const result = await database.runTransaction(async (transaction) => {
     const productRefs = context.productIds.map((productId) => database.collection('products').doc(productId))
     const entitlementRefs = context.productIds.map((productId) => database.doc(`users/${context.uid}/entitlements/${productId}`))
     const libraryRefs = context.productIds.map((productId) => database.doc(`users/${context.uid}/libraryItems/${productId}`))
-    const refs = [context.orderRef, eventRef, ...productRefs, ...entitlementRefs, ...libraryRefs]
+    const ledgerRefs = context.productIds.map((productId) => (
+      database.collection('creatorLedger').doc(ledgerEntryId(context.orderId, productId))
+    ))
+    const refs = [context.orderRef, eventRef, ...productRefs, ...entitlementRefs, ...libraryRefs, ...ledgerRefs]
     const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)))
     const orderSnap = snapshots[0]
     if (!orderSnap.exists) throw new Error('Checkout order disappeared during fulfillment.')
@@ -251,8 +274,15 @@ async function fulfillPaidCheckout({
     const productOffset = 2
     const entitlementOffset = productOffset + productRefs.length
     const libraryOffset = entitlementOffset + entitlementRefs.length
+    const ledgerOffset = libraryOffset + libraryRefs.length
     const order = orderSnap.data() || {}
     const orderFields = stripeOrderFields(session, order)
+    const grossAmounts = allocateGrossAmounts({
+      order,
+      productIds: context.productIds,
+      amountTotalCents: orderFields.amountTotalCents
+    })
+    const stripeFeeAmounts = allocateAmountByWeights(stripeProcessingFee(session), grossAmounts)
     const orderChanged = cleanString(order.paymentStatus || '', 80).toLowerCase() !== 'paid'
       || cleanString(order.orderState || '', 80).toLowerCase() !== 'order_placed'
       || Number(order.amountTotalCents ?? order.amountCents ?? -1) !== orderFields.amountTotalCents
@@ -261,11 +291,17 @@ async function fulfillPaidCheckout({
     const grantedProductIds = []
     const repairedProductIds = []
     const duplicateProductIds = []
+    const ledgerEntryIds = []
+    const duplicateLedgerEntryIds = []
+    const repairedLedgerEntryIds = []
+    const missingCreatorProductIds = []
+    const creatorUids = new Set()
 
     context.productIds.forEach((productId, index) => {
       const productSnap = snapshots[productOffset + index]
       const entitlementSnap = snapshots[entitlementOffset + index]
       const librarySnap = snapshots[libraryOffset + index]
+      const ledgerSnap = snapshots[ledgerOffset + index]
       const entitlementActive = isActiveAccess(entitlementSnap)
       const libraryActive = isActiveAccess(librarySnap)
       const entitlementNeedsWrite = accessWriteNeeded(entitlementSnap, context)
@@ -305,6 +341,49 @@ async function fulfillPaidCheckout({
           createdAt: existing.createdAt || now
         }, { merge: true })
       }
+
+      const creatorUid = snapshot.creatorUid
+      if (!creatorUid || creatorUid === context.uid) {
+        missingCreatorProductIds.push(productId)
+      } else {
+        const ledgerPayload = creatorLedgerPayload({
+          creatorUid,
+          buyerUid: context.uid,
+          productId,
+          orderId: context.orderId,
+          stripeCheckoutSessionId: context.stripeSessionId,
+          grossAmount: grossAmounts[index] || 0,
+          currency: orderFields.currency,
+          feeBps: earningsConfig.platformFeeBps,
+          feeConfigSource: earningsConfig.source,
+          feeConfigVersion: earningsConfig.version,
+          feeMode: earningsConfig.feeMode,
+          stripeFeeAmount: stripeFeeAmounts[index],
+          availableAt,
+          now
+        })
+        if (ledgerSnap.exists) {
+          duplicateLedgerEntryIds.push(ledgerRefs[index].id)
+          const existing = ledgerSnap.data() || {}
+          const existingCreatorUid = cleanString(existing.creatorUid || '', 180)
+          if (existingCreatorUid) creatorUids.add(existingCreatorUid)
+          if (existing.stripeFeeAmount == null
+            && Number.isInteger(ledgerPayload.stripeFeeAmount)) {
+            repairedLedgerEntryIds.push(ledgerRefs[index].id)
+            transaction.set(ledgerRefs[index], {
+              stripeFeeAmount: ledgerPayload.stripeFeeAmount,
+              stripeFeeStatus: ledgerPayload.stripeFeeStatus,
+              creatorNetAmount: ledgerPayload.creatorNetAmount,
+              creatorNetStatus: ledgerPayload.creatorNetStatus,
+              updatedAt: now
+            }, { merge: true })
+          }
+        } else {
+          creatorUids.add(creatorUid)
+          ledgerEntryIds.push(ledgerRefs[index].id)
+          transaction.set(ledgerRefs[index], ledgerPayload)
+        }
+      }
     })
 
     const items = (Array.isArray(order.items) ? order.items : []).map((item) => ({
@@ -341,10 +420,18 @@ async function fulfillPaidCheckout({
       grantedProductIds,
       repairedProductIds,
       duplicateProductIds,
+      ledgerEntryIds,
+      duplicateLedgerEntryIds,
+      repairedLedgerEntryIds,
+      missingCreatorProductIds,
       processedAt: now,
       updatedAt: now
     }, { merge: true })
 
+    const customerLifecycleChanged = orderChanged
+      || grantedProductIds.length > 0
+      || repairedProductIds.length > 0
+    const ledgerChanged = ledgerEntryIds.length > 0 || repairedLedgerEntryIds.length > 0
     return {
       uid: context.uid,
       orderId: context.orderId,
@@ -353,16 +440,32 @@ async function fulfillPaidCheckout({
       grantedProductIds,
       repairedProductIds,
       duplicateProductIds,
-      changed: orderChanged || grantedProductIds.length > 0 || repairedProductIds.length > 0
+      ledgerEntryIds,
+      duplicateLedgerEntryIds,
+      repairedLedgerEntryIds,
+      missingCreatorProductIds,
+      creatorUids: [...creatorUids],
+      customerLifecycleChanged,
+      ledgerChanged,
+      changed: customerLifecycleChanged || ledgerChanged
     }
   })
-  await rebuildCommerceSummary(database, context.uid).catch((error) => {
-    logger.error('[checkout-fulfillment] commerce summary rebuild failed', {
-      uid: context.uid,
+  await Promise.all([
+    rebuildCommerceSummary(database, context.uid).catch((error) => {
+      logger.error('[checkout-fulfillment] commerce summary rebuild failed', {
+        uid: context.uid,
+        orderId: context.orderId,
+        message: error?.message || ''
+      })
+    }),
+    rebuildCreatorEarningsSummaries(database, result.creatorUids)
+  ])
+  if (result.missingCreatorProductIds.length) {
+    logger.error('[checkout-fulfillment] creator earnings skipped because product ownership is missing', {
       orderId: context.orderId,
-      message: error?.message || ''
+      productIds: result.missingCreatorProductIds
     })
-  })
+  }
   return result
 }
 
@@ -377,6 +480,7 @@ module.exports = {
     productSnapshot,
     purchaseAccessPayload,
     stripeAmount,
-    stripeOrderFields
+    stripeOrderFields,
+    stripeProcessingFee
   }
 }

@@ -52,7 +52,9 @@ async function repairCheckoutOrder({
     error.code = 'session-id-missing'
     throw error
   }
-  const session = await stripe.checkout.sessions.retrieve(sessionId)
+  const session = await stripe.checkout.sessions.retrieve(sessionId, {
+    expand: ['payment_intent.latest_charge.balance_transaction']
+  })
   const context = await resolveCheckoutContext(database, session)
   if (context.orderId !== safeOrderId) {
     const error = new Error('Stripe session resolves to a different order.')
@@ -69,7 +71,7 @@ async function repairCheckoutOrder({
       eventType: 'checkout.session.admin_repaired',
       source: 'admin_order_repair'
     })
-    if (fulfillment.changed) {
+    if (fulfillment.customerLifecycleChanged) {
       await writeAccountEvent(database, context.uid, {
         type: 'order_placed',
         severity: 'success',

@@ -16,6 +16,11 @@ const { createCheckoutSession } = require('./src/payments/createCheckoutSession'
 const { stripeWebhook } = require('./src/payments/stripeWebhook')
 const { reconcileCheckoutSession } = require('./src/payments/reconcileCheckoutSession')
 const { repairAdminCheckoutOrder } = require('./src/payments/repairCheckoutOrder')
+const {
+  createStripeConnectAccount,
+  createStripeConnectOnboardingLink,
+  refreshStripeConnectStatus
+} = require('./src/payments/stripeConnect')
 const { claimFreeProduct } = require('./src/products/claimFreeProduct')
 const { createProductDownloadUrl } = require('./src/products/createProductDownloadUrl')
 const { createProductDownloadLink } = require('./src/products/createProductDownloadLink')
@@ -101,6 +106,9 @@ exports.createCheckoutSession = createCheckoutSession
 exports.stripeWebhook = stripeWebhook
 exports.reconcileCheckoutSession = reconcileCheckoutSession
 exports.repairAdminCheckoutOrder = repairAdminCheckoutOrder
+exports.createStripeConnectAccount = createStripeConnectAccount
+exports.createStripeConnectOnboardingLink = createStripeConnectOnboardingLink
+exports.refreshStripeConnectStatus = refreshStripeConnectStatus
 exports.claimFreeProduct = claimFreeProduct
 exports.createProductDownloadUrl = createProductDownloadUrl
 exports.createProductDownloadLink = createProductDownloadLink

@@ -93,6 +93,11 @@
         "type": 301
       },
       {
+        "source": "/billing-payouts.html",
+        "destination": "/account/billing-payouts",
+        "type": 301
+      },
+      {
         "source": "/edit-profile.html",
         "destination": "/profile/edit",
         "type": 301
@@ -248,6 +253,10 @@
       {
         "source": "/account/security",
         "destination": "/account-security.html"
+      },
+      {
+        "source": "/account/billing-payouts",
+        "destination": "/billing-payouts.html"
       },
       {
         "source": "/account/library",

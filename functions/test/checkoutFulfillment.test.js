@@ -7,6 +7,8 @@ const webhook = require('../src/payments/stripeWebhook').__test
 const commerceSummary = require('../src/account/commerceSummary').__test
 const userCommerceAudit = require('../src/admin/userCommerceAudit').__test
 const orderRepair = require('../src/payments/repairCheckoutOrder').__test
+const creatorEarnings = require('../src/payments/creatorEarnings').__test
+const stripeConnect = require('../src/payments/stripeConnect').__test
 
 function snapshot(data = null) {
   return {
@@ -185,4 +187,135 @@ test('unpaid Stripe repair never marks an open checkout as paid', () => {
   assert.equal(fields.orderState, 'checkout_created')
   assert.equal(fields.amountTotalCents, 600)
   assert.equal(fields.amountSource, 'stripe_checkout_session')
+})
+
+test('creator ledger allocates trusted Stripe total across product lines', () => {
+  const amounts = creatorEarnings.allocateGrossAmounts({
+    order: {
+      items: [
+        { productId: 'product-1', amountCents: 600 },
+        { productId: 'product-2', amountCents: 400 }
+      ]
+    },
+    productIds: ['product-1', 'product-2'],
+    amountTotalCents: 900
+  })
+  assert.deepEqual(amounts, [540, 360])
+  assert.equal(amounts.reduce((sum, amount) => sum + amount, 0), 900)
+})
+
+test('creator ledger payload records pending net earnings without inventing Stripe fees', () => {
+  const payload = creatorEarnings.creatorLedgerPayload({
+    creatorUid: 'creator-1',
+    buyerUid: 'buyer-1',
+    productId: 'product-1',
+    orderId: 'order-1',
+    stripeCheckoutSessionId: 'cs_test_123',
+    grossAmount: 1000,
+    currency: 'usd',
+    feeBps: 1500,
+    availableAt: 'later',
+    now: 'now'
+  })
+  assert.equal(payload.grossAmount, 1000)
+  assert.equal(payload.platformFeeAmount, 150)
+  assert.equal(payload.creatorNetAmount, 850)
+  assert.equal(payload.stripeFeeAmount, null)
+  assert.equal(payload.creatorNetStatus, 'before_stripe_fee')
+  assert.equal(payload.status, 'pending')
+  assert.equal(payload.availableAt, 'later')
+})
+
+test('creator ledger subtracts trusted Stripe fees when the seller absorbs processing', () => {
+  const payload = creatorEarnings.creatorLedgerPayload({
+    grossAmount: 1000,
+    feeBps: 1500,
+    feeMode: 'seller_absorbs',
+    stripeFeeAmount: 59
+  })
+  assert.equal(payload.platformFeeAmount, 150)
+  assert.equal(payload.stripeFeeAmount, 59)
+  assert.equal(payload.creatorNetAmount, 791)
+  assert.equal(payload.creatorNetStatus, 'finalized_for_ledger')
+})
+
+test('Stripe processing fee is allocated across creator lines without losing cents', () => {
+  const allocated = creatorEarnings.allocateAmountByWeights(59, [600, 400])
+  assert.deepEqual(allocated, [35, 24])
+  assert.equal(allocated.reduce((sum, amount) => sum + amount, 0), 59)
+})
+
+test('checkout reads Stripe processing fee only from an expanded balance transaction', () => {
+  assert.equal(checkout.stripeProcessingFee({
+    payment_intent: {
+      latest_charge: {
+        balance_transaction: { fee: 59 }
+      }
+    }
+  }), 59)
+  assert.equal(checkout.stripeProcessingFee({ payment_intent: 'pi_123' }), null)
+})
+
+test('earnings summary is rebuildable from ledger status and currency', () => {
+  const summary = creatorEarnings.buildEarningsSummary([
+    { status: 'pending', grossAmount: 1000, creatorNetAmount: 800, currency: 'usd' },
+    { status: 'available', grossAmount: 500, creatorNetAmount: 400, currency: 'usd' },
+    { status: 'withdrawn', grossAmount: 250, creatorNetAmount: 200, currency: 'usd' },
+    { status: 'pending', grossAmount: 100, creatorNetAmount: 85, creatorNetStatus: 'before_stripe_fee', currency: 'usd' },
+    { status: 'refunded', grossAmount: 100, creatorNetAmount: 80, currency: 'usd' }
+  ])
+  assert.deepEqual(summary.pendingByCurrency, { USD: 885 })
+  assert.deepEqual(summary.availableByCurrency, { USD: 400 })
+  assert.deepEqual(summary.withdrawnByCurrency, { USD: 200 })
+  assert.equal(summary.lifetimeGrossAmount, 1850)
+  assert.equal(summary.lifetimeNetAmount, 1485)
+  assert.equal(summary.unfinalizedEntryCount, 1)
+})
+
+test('Stripe Connect status exposes only safe onboarding fields', () => {
+  const status = stripeConnect.safeConnectStatus({
+    id: 'acct_123',
+    type: 'none',
+    controller: { stripe_dashboard: { type: 'express' } },
+    details_submitted: true,
+    charges_enabled: false,
+    payouts_enabled: true,
+    requirements: {
+      disabled_reason: '',
+      currently_due: ['individual.verification.document'],
+      eventually_due: ['external_account'],
+      past_due: [],
+      pending_verification: ['individual.id_number']
+    }
+  }, { livemode: false })
+  assert.equal(status.hasAccount, true)
+  assert.equal(status.accountType, 'express')
+  assert.equal(status.detailsSubmitted, true)
+  assert.equal(status.payoutsEnabled, true)
+  assert.deepEqual(status.currentlyDue, ['individual.verification.document'])
+  assert.equal(Object.hasOwn(status, 'external_accounts'), false)
+})
+
+test('Stripe Connect account configuration uses hosted Express onboarding and transfers only', () => {
+  const params = stripeConnect.connectAccountParams({
+    uid: 'creator-1',
+    email: 'creator@example.com'
+  })
+  assert.equal(params.controller.stripe_dashboard.type, 'express')
+  assert.equal(params.controller.requirement_collection, 'stripe')
+  assert.equal(params.controller.losses.payments, 'application')
+  assert.equal(params.capabilities.transfers.requested, true)
+  assert.equal(Object.hasOwn(params.capabilities, 'card_payments'), false)
+  assert.equal(params.metadata.melogicUid, 'creator-1')
+})
+
+test('public Stripe Connect status does not infer or expose the private account ID', () => {
+  const status = stripeConnect.publicConnectStatus({
+    hasAccount: true,
+    stripeConnectAccountId: 'acct_private',
+    payoutsEnabled: true
+  })
+  assert.equal(status.hasAccount, true)
+  assert.equal(status.payoutsEnabled, true)
+  assert.equal(Object.hasOwn(status, 'stripeConnectAccountId'), false)
 })

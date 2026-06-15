@@ -53,7 +53,7 @@ exports.stripeWebhook = onRequest(
       return
     }
 
-    const session = event.data.object
+    let session = event.data.object
     logger.info('[stripe-webhook] checkout event received', {
       eventId: event.id || '',
       eventType: event.type || '',
@@ -73,6 +73,17 @@ exports.stripeWebhook = onRequest(
     }
 
     try {
+      session = await stripe.checkout.sessions.retrieve(session.id, {
+        expand: ['payment_intent.latest_charge.balance_transaction']
+      }).catch((error) => {
+        logger.warn('[stripe-webhook] expanded payment fee lookup failed', {
+          eventId: event.id || '',
+          stripeSessionId: session?.id || '',
+          code: error?.code || '',
+          message: error?.message || ''
+        })
+        return session
+      })
       const result = await fulfillPaidCheckout({
         session,
         eventId: event.id,
@@ -81,8 +92,34 @@ exports.stripeWebhook = onRequest(
       })
 
       if (result.changed) {
-        await Promise.all([
-          writeAccountEvent(admin.firestore(), result.uid, {
+        const auditWrites = [
+          writeAdminAuditLog({
+            actorUid: 'stripe',
+            actorEmail: '',
+            actorRole: 'system',
+            action: result.customerLifecycleChanged
+              ? (result.repairedProductIds.length ? 'order_entitlements_repaired' : 'order_paid')
+              : 'creator_ledger_recorded',
+            targetType: 'order',
+            targetId: result.orderId,
+            targetPath: `orders/${result.orderId}`,
+            reason: event.type,
+            after: {
+              buyerUid: result.uid,
+              stripeSessionId: result.stripeSessionId,
+              productIds: result.productIds,
+              grantedProductIds: result.grantedProductIds,
+              repairedProductIds: result.repairedProductIds,
+              ledgerEntryIds: result.ledgerEntryIds,
+              repairedLedgerEntryIds: result.repairedLedgerEntryIds,
+              livemode: session.livemode === true,
+              amountTotal: session.amount_total || 0,
+              currency: session.currency || ''
+            }
+          })
+        ]
+        if (result.customerLifecycleChanged) {
+          auditWrites.push(writeAccountEvent(admin.firestore(), result.uid, {
             type: 'order_placed',
             severity: 'success',
             title: 'Order Placed',
@@ -98,28 +135,9 @@ exports.stripeWebhook = onRequest(
               amountTotalCents: session.amount_total ?? null,
               currency: session.currency || ''
             }
-          }),
-          writeAdminAuditLog({
-            actorUid: 'stripe',
-            actorEmail: '',
-            actorRole: 'system',
-            action: result.repairedProductIds.length ? 'order_entitlements_repaired' : 'order_paid',
-            targetType: 'order',
-            targetId: result.orderId,
-            targetPath: `orders/${result.orderId}`,
-            reason: event.type,
-            after: {
-              buyerUid: result.uid,
-              stripeSessionId: result.stripeSessionId,
-              productIds: result.productIds,
-              grantedProductIds: result.grantedProductIds,
-              repairedProductIds: result.repairedProductIds,
-              livemode: session.livemode === true,
-              amountTotal: session.amount_total || 0,
-              currency: session.currency || ''
-            }
-          })
-        ])
+          }))
+        }
+        await Promise.all(auditWrites)
       }
 
       logger.info(result.changed
