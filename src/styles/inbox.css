@@ -310,7 +310,7 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   background: rgba(9, 14, 23, 0.74);
   color: #d5dff7;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.5rem;
   padding: 0.5rem 0.55rem;
 }
@@ -338,7 +338,6 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   outline: none;
 }
 
-.thread-row-dock-trigger,
 .thread-row-menu-trigger {
   width: 1.9rem;
   height: 1.9rem;
@@ -352,22 +351,11 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   cursor: pointer;
 }
 
-.thread-row-dock-trigger {
-  width: auto;
-  min-width: 3rem;
-  padding: 0 0.55rem;
-  color: #c5f8ff;
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
 .thread-row-menu-trigger svg {
   width: 0.94rem;
   height: 0.94rem;
 }
 
-.thread-row-dock-trigger:hover,
-.thread-row-dock-trigger:focus-visible,
 .thread-row-menu-trigger:hover,
 .thread-row-menu-trigger:focus-visible {
   border-color: rgba(137, 175, 240, 0.7);

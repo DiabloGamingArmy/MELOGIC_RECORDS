@@ -454,6 +454,16 @@ export function openChatDock(options = {}) {
   focusComposer()
 }
 
+export function closeChatDock() {
+  if (!initialized) initChatDock()
+  setDockState({ open: false, minimized: false, activeThreadId: '', title: '', mode: 'thread' })
+}
+
+export function getChatDockState() {
+  if (!initialized) dockState = readStoredState()
+  return { ...dockState }
+}
+
 async function handleSubmit(form) {
   const uid = currentUid()
   const threadId = dockState.activeThreadId
