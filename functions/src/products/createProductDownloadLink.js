@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
+const { logger } = require('firebase-functions')
 const admin = require('firebase-admin')
 const { __test: downloadHelpers } = require('./createProductDownloadUrl')
 
@@ -59,15 +60,25 @@ This file is generated automatically by Melogic Records and should remain with t
 `
 }
 
-async function signedRows(productId = '', product = {}) {
-  const rows = await downloadHelpers.collectAllowedDownloadRows(productId, product)
-  if (!rows.length) throw new HttpsError('failed-precondition', 'This product does not have a downloadable package.')
-  const preferredPaths = [product.downloadPath]
+function selectDownloadRows(rows = [], product = {}, maxRows = 50) {
+  const preferredPaths = [product.primaryDownloadPath, product.downloadPath]
     .map(downloadHelpers.normalizeStoragePath)
     .filter(Boolean)
   const preferredRows = rows.filter((row) => preferredPaths.includes(row.storagePath))
-  const selectedRows = preferredRows.length ? preferredRows : rows.slice(0, 50)
-  if (!preferredRows.length && rows.length > 50) {
+  const packagedRow = preferredRows.find((row) => (
+    row.isPackage
+    || /\.(zip|7z|rar|tar|tgz|tar\.gz)$/i.test(row.fileName || row.storagePath)
+  ))
+  if (packagedRow) return [packagedRow]
+  if (rows.length > maxRows) return []
+  return rows.slice(0, maxRows)
+}
+
+async function signedRows(productId = '', product = {}) {
+  const rows = await downloadHelpers.collectAllowedDownloadRows(productId, product)
+  if (!rows.length) throw new HttpsError('failed-precondition', 'This product does not have a downloadable package.')
+  const selectedRows = selectDownloadRows(rows, product)
+  if (!selectedRows.length) {
     throw new HttpsError('failed-precondition', 'This product needs a packaged download before it can be downloaded.')
   }
   const expiresAt = new Date(Date.now() + DOWNLOAD_URL_TTL_MS)
@@ -75,15 +86,34 @@ async function signedRows(productId = '', product = {}) {
     const file = admin.storage().bucket().file(row.storagePath)
     try {
       const [metadata] = await file.getMetadata()
-      const [downloadUrl] = await file.getSignedUrl({ action: 'read', expires: expiresAt })
+      const fileName = row.fileName || downloadHelpers.fileNameFromPath(row.storagePath)
+      const [downloadUrl] = await file.getSignedUrl({
+        action: 'read',
+        expires: expiresAt,
+        responseDisposition: `attachment; filename="${fileName.replaceAll('"', '')}"`
+      })
       return {
         downloadUrl,
-        fileName: row.fileName || downloadHelpers.fileNameFromPath(row.storagePath),
+        fileName,
         sizeBytes: Number(metadata?.size || 0)
       }
     } catch (error) {
-      if (error?.code === 404) return null
-      throw new HttpsError('internal', 'Could not create the secure product download.')
+      const failure = downloadHelpers.classifyDownloadStorageError(error)
+      logger.error('[product-download] secure link preparation failed', {
+        productId,
+        storagePath: row.storagePath,
+        failure,
+        errorCode: String(error?.code || ''),
+        errorMessage: String(error?.message || '').slice(0, 500)
+      })
+      if (failure === 'not-found') return null
+      if (failure === 'signing-permission') {
+        throw new HttpsError(
+          'failed-precondition',
+          'Secure download signing is not configured. Contact support and try again later.'
+        )
+      }
+      throw new HttpsError('unavailable', 'Secure download links are temporarily unavailable.')
     }
   }))
   const files = resolved.filter(Boolean)
@@ -94,6 +124,7 @@ async function signedRows(productId = '', product = {}) {
 const createProductDownloadLink = onCall(
   { timeoutSeconds: 60, memory: '512MiB', cors: true },
   async (request) => {
+    try {
     const uid = request.auth?.uid
     if (!uid) throw new HttpsError('unauthenticated', 'You must be signed in to download this product.')
     const productId = cleanText(request.data?.productId || '', 180)
@@ -108,7 +139,7 @@ const createProductDownloadLink = onCall(
       throw new HttpsError('failed-precondition', 'This product is no longer available for download.')
     }
 
-    const ownerUid = cleanText(product.artistId || product.ownerUid || product.creatorUid || product.sellerUid || '', 180)
+    const ownerUid = cleanText(downloadHelpers.productOwnerUid(product), 180)
     const acquisition = ownerUid === uid
       ? { allowed: true, source: 'owner', giftedBy: '', giftId: '' }
       : await acquisitionDetails(uid, productId)
@@ -146,7 +177,16 @@ const createProductDownloadLink = onCall(
     batch.set(productRef, {
       downloadCount: admin.firestore.FieldValue.increment(1)
     }, { merge: true })
-    await batch.commit()
+    try {
+      await batch.commit()
+    } catch (error) {
+      logger.warn('[product-download] download prepared but analytics write failed', {
+        productId,
+        uid,
+        errorCode: String(error?.code || ''),
+        errorMessage: String(error?.message || '').slice(0, 500)
+      })
+    }
 
     return {
       downloadUrl: files[0].downloadUrl,
@@ -162,10 +202,20 @@ const createProductDownloadLink = onCall(
         contentType: 'text/markdown;charset=utf-8'
       }
     }
+    } catch (error) {
+      if (error instanceof HttpsError) throw error
+      logger.error('[product-download] unexpected download preparation failure', {
+        productId: cleanText(request.data?.productId || '', 180),
+        uid: request.auth?.uid || '',
+        errorCode: String(error?.code || ''),
+        errorMessage: String(error?.message || '').slice(0, 500)
+      })
+      throw new HttpsError('unavailable', 'Could not create a secure download link. Please try again.')
+    }
   }
 )
 
 module.exports = {
   createProductDownloadLink,
-  __test: { licenseMarkdown }
+  __test: { licenseMarkdown, selectDownloadRows }
 }

@@ -27,6 +27,35 @@ test('download signing only accepts product-scoped deliverable paths', () => {
   assert.equal(downloadUrl.normalizeStoragePath('/products/abc/downloads/file.zip'), 'products/abc/downloads/file.zip')
 })
 
+test('download ownership supports current and legacy marketplace owner fields', () => {
+  assert.equal(downloadUrl.productOwnerUid({ artistId: 'artist-1', ownerUid: 'legacy-owner' }), 'artist-1')
+  assert.equal(downloadUrl.productOwnerUid({ creatorUid: 'creator-1' }), 'creator-1')
+  assert.equal(downloadUrl.productOwnerUid({ creator: { id: 'nested-creator' } }), 'nested-creator')
+})
+
+test('download Storage failures distinguish missing files from signing configuration', () => {
+  assert.equal(downloadUrl.classifyDownloadStorageError({ code: 404 }), 'not-found')
+  assert.equal(downloadUrl.classifyDownloadStorageError({ message: 'Permission iam.serviceAccounts.signBlob denied' }), 'signing-permission')
+  assert.equal(downloadUrl.classifyDownloadStorageError({ code: 503 }), 'storage-error')
+})
+
+test('product download uses a packaged archive when present and otherwise preserves multi-file content', () => {
+  const wavRows = [
+    { storagePath: 'products/p1/downloads/one.wav', fileName: 'one.wav' },
+    { storagePath: 'products/p1/downloads/two.wav', fileName: 'two.wav' }
+  ]
+  assert.deepEqual(downloadLink.selectDownloadRows(wavRows, { primaryDownloadPath: wavRows[0].storagePath }), wavRows)
+  const zipRow = { storagePath: 'products/p1/downloads/pack.zip', fileName: 'pack.zip' }
+  assert.deepEqual(
+    downloadLink.selectDownloadRows([...wavRows, zipRow], { downloadPath: zipRow.storagePath }),
+    [zipRow]
+  )
+  assert.deepEqual(downloadLink.selectDownloadRows(Array.from({ length: 51 }, (_, index) => ({
+    storagePath: `products/p1/downloads/${index}.wav`,
+    fileName: `${index}.wav`
+  })), {}), [])
+})
+
 test('download row selection requires matching file id or exact storage path', () => {
   const rows = [
     { id: 'one', storagePath: 'products/p1/downloads/one.zip' },
