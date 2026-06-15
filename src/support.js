@@ -6,7 +6,10 @@ import { attachHeroVideo } from './components/heroVideo'
 import { createCriticalAssetPreloader } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { submitSupportForm } from './data/supportFormService'
-import { ROUTES } from './utils/routes'
+import { createSupportThread } from './data/supportThreadService'
+import { waitForInitialAuthState } from './firebase/auth'
+import { openChatDock } from './components/chatDock'
+import { ROUTES, authRoute } from './utils/routes'
 
 function supportCard({ eyebrow, title, body, actions = [] }) {
   return `
@@ -59,6 +62,7 @@ function mountSupportPage() {
               downloads, creator tools, and Melogic platform questions.
             </p>
             <div class="hero-actions">
+              <button type="button" class="button button-accent" data-open-support-chat>Start Live Chat</button>
               <a class="button button-accent" href="#support-form">Use Native Form</a>
               <a class="button button-muted" href="mailto:support@melogicrecords.studio">Email Us</a>
             </div>
@@ -256,6 +260,45 @@ supportForm?.addEventListener('submit', async (event) => {
       supportSubmitButton.textContent = 'Send Support Request'
     }
   }
+})
+
+document.querySelectorAll('[data-open-support-chat]').forEach((button) => {
+  button.addEventListener('click', async (event) => {
+    event.preventDefault()
+    if (button.disabled) return
+
+    button.disabled = true
+    const originalLabel = button.textContent
+    button.textContent = 'Opening chat...'
+    try {
+      const user = await waitForInitialAuthState()
+      if (!user?.uid) {
+        window.location.href = authRoute({ redirect: ROUTES.support })
+        return
+      }
+      const result = await createSupportThread({
+        source: 'support_page',
+        subject: 'Melogic Support'
+      })
+      if (result.threadId) {
+        openChatDock({
+          mode: 'support',
+          support: true,
+          threadId: result.threadId,
+          title: result.thread?.subject || 'Melogic Support'
+        })
+      }
+    } catch (error) {
+      console.warn('[support] live support chat failed', error)
+      if (supportFormStatus) {
+        supportFormStatus.textContent = error?.message || 'Could not open live support. Please use the support form.'
+        supportFormStatus.dataset.status = 'error'
+      }
+    } finally {
+      button.disabled = false
+      button.textContent = originalLabel || 'Start Live Chat'
+    }
+  })
 })
 
 const logoReadyPromise = initShellChrome()

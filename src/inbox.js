@@ -91,6 +91,7 @@ import {
 } from './data/mutualUsersService'
 import { detectPlatformCapabilities } from './platform/platformCapabilities'
 import { acceptProductGift, denyProductGift, listIncomingProductGifts } from './data/productGiftService'
+import { createSupportThread } from './data/supportThreadService'
 
 const app = document.querySelector('#app')
 
@@ -1781,7 +1782,7 @@ function getMessagesSidebarMarkup() {
     <section class="sidebar-support-block">
       <button type="button" class="sidebar-support-button" data-open-support-dock>
         <strong>Contact Support</strong>
-        <small>Support chat is coming soon</small>
+        <small>Open a live support thread</small>
       </button>
     </section>
     ${getPinnedInboxSidebarMarkup()}
@@ -5506,13 +5507,29 @@ function bindSharedEvents(scope = inboxRoot) {
   })
 
   scope.querySelectorAll('[data-open-support-dock]').forEach((button) => {
-    button.addEventListener('click', (event) => {
+    button.addEventListener('click', async (event) => {
       event.preventDefault()
-      openChatDock({
-        mode: 'support',
-        support: true,
-        title: 'Contact Support'
-      })
+      if (button.disabled) return
+      button.disabled = true
+      try {
+        const result = await createSupportThread({
+          source: 'inbox',
+          subject: 'Melogic Support'
+        })
+        if (result.threadId) {
+          openChatDock({
+            mode: 'support',
+            support: true,
+            threadId: result.threadId,
+            title: result.thread?.subject || 'Melogic Support'
+          })
+        }
+      } catch (error) {
+        appState.errorMessage = error?.message || 'Could not open support chat.'
+        render()
+      } finally {
+        button.disabled = false
+      }
     })
   })
 

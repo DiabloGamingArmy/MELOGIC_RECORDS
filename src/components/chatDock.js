@@ -7,6 +7,12 @@ import {
   subscribeToInboxThreads,
   subscribeToMessages
 } from '../data/inboxService'
+import {
+  requestSupportAgent,
+  sendSupportMessage,
+  subscribeToSupportMessages,
+  subscribeToSupportThread
+} from '../data/supportThreadService'
 
 const STORAGE_KEY = 'melogic_chat_dock_state_v1'
 const OPEN_EVENT = 'melogic:chat-dock-open'
@@ -22,14 +28,19 @@ let unsubscribeThreads = () => {}
 let unsubscribeMessages = () => {}
 let unsubscribeHiddenMessages = () => {}
 let activeThread = null
+let supportThread = null
 let inboxThreads = []
 let messages = []
+let supportMessages = []
 let hiddenMessageIds = new Set()
 let profileByUid = {}
 let loadingThreads = false
 let loadingMessages = false
+let loadingSupportThread = false
+let loadingSupportMessages = false
 let errorMessage = ''
 let sending = false
+let requestingAgent = false
 let draft = ''
 let lastMarkedReadKey = ''
 
@@ -99,10 +110,14 @@ function stopThreadSubscriptions() {
   unsubscribeHiddenMessages = () => {}
   inboxThreads = []
   activeThread = null
+  supportThread = null
   messages = []
+  supportMessages = []
   hiddenMessageIds = new Set()
   loadingThreads = false
   loadingMessages = false
+  loadingSupportThread = false
+  loadingSupportMessages = false
   lastMarkedReadKey = ''
 }
 
@@ -166,14 +181,104 @@ function getThreadSubtitle() {
   return 'Direct message'
 }
 
+function supportStatusLabel(status = '') {
+  const labels = {
+    open: 'Open',
+    waiting_for_agent: 'Waiting for agent',
+    assigned: 'Live agent assigned',
+    resolved: 'Resolved'
+  }
+  return labels[status] || 'Open'
+}
+
+function getSupportTitle() {
+  return supportThread?.subject || dockState.title || 'Melogic Support'
+}
+
+function getSupportSubtitle() {
+  if (!currentUid()) return 'Sign in to continue'
+  if (loadingSupportThread) return 'Loading support...'
+  if (!supportThread && dockState.activeThreadId) return 'Support thread unavailable'
+  if (!supportThread) return 'Open a support chat'
+  return supportStatusLabel(supportThread.status)
+}
+
 function renderSupportPanel() {
+  if (!currentUid()) {
+    return `
+      <section class="chat-dock-placeholder">
+        <h3>Sign in required</h3>
+        <p>Support chat stays attached to your Melogic account.</p>
+      </section>
+    `
+  }
+  if (errorMessage) {
+    return `
+      <section class="chat-dock-placeholder is-error">
+        <h3>Could not load support</h3>
+        <p>${escapeHtml(errorMessage)}</p>
+      </section>
+    `
+  }
+  if (loadingSupportThread || loadingSupportMessages) {
+    return `
+      <section class="chat-dock-placeholder">
+        <div class="chat-dock-loader" aria-hidden="true"></div>
+        <h3>Loading support...</h3>
+      </section>
+    `
+  }
+  if (!supportThread) {
+    return `
+      <section class="chat-dock-placeholder">
+        <h3>Support thread unavailable</h3>
+        <p>Start a support chat from Support or Inbox.</p>
+      </section>
+    `
+  }
+
+  const visibleMessages = supportMessages.slice(-MAX_DOCK_MESSAGES)
+  if (!visibleMessages.length) {
+    return `
+      <section class="chat-dock-placeholder">
+        <h3>Support chat is ready.</h3>
+        <p>Send a message and Melogic Support will pick it up from the admin queue.</p>
+        ${supportThread.status === 'open' ? `<button type="button" class="chat-dock-support-link" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>` : ''}
+      </section>
+    `
+  }
+
   return `
-    <section class="chat-dock-placeholder">
-      <span class="chat-dock-placeholder-icon" aria-hidden="true">?</span>
-      <h3>Support chat is coming soon.</h3>
-      <p>For Phase 1, this dock is ready for conversations, but live support routing is intentionally not enabled yet.</p>
-      <a class="chat-dock-support-link" href="/support">Go to Support</a>
-    </section>
+    ${supportThread.status !== 'resolved' && supportThread.status !== 'assigned' ? `
+      <div class="chat-dock-support-banner">
+        <span>${escapeHtml(supportStatusLabel(supportThread.status))}</span>
+        <button type="button" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>
+      </div>
+    ` : ''}
+    ${visibleMessages.map((message) => {
+      if (message.senderType === 'system') {
+        return `
+          <article class="chat-dock-message is-system">
+            <div class="chat-dock-bubble">${renderMessageBody(message)}</div>
+            <time>${escapeHtml(getMessageTime(message.createdAt))}</time>
+          </article>
+        `
+      }
+      const isMine = message.senderUid === currentUid()
+      const sender = message.senderType === 'agent'
+        ? { displayName: 'Melogic Support', username: '', avatarURL: '' }
+        : senderMeta(message.senderUid)
+      return `
+        <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${message.pendingWrites ? 'is-pending' : ''}">
+          ${isMine ? '' : renderAvatar(sender, sender.displayName)}
+          <div class="chat-dock-message-stack">
+            ${isMine ? '' : `<strong>${escapeHtml(sender.displayName)}</strong>`}
+            <div class="chat-dock-bubble">${renderMessageBody(message)}</div>
+            <time>${escapeHtml(getMessageTime(message.createdAt))}</time>
+          </div>
+        </article>
+      `
+    }).join('')}
   `
 }
 
@@ -265,12 +370,17 @@ function renderMessageList() {
 }
 
 function renderComposer() {
-  if (dockState.mode === 'support') return ''
-  const disabled = !currentUid() || !activeThread || loadingThreads || sending || Boolean(errorMessage)
+  const isSupport = dockState.mode === 'support'
+  const disabled = isSupport
+    ? (!currentUid() || !supportThread || supportThread.status === 'resolved' || loadingSupportThread || sending || Boolean(errorMessage))
+    : (!currentUid() || !activeThread || loadingThreads || sending || Boolean(errorMessage))
+  const placeholder = isSupport
+    ? supportThread?.status === 'resolved' ? 'Support thread resolved' : 'Message Melogic Support...'
+    : 'Write a message...'
   return `
     <form class="chat-dock-composer" data-chat-dock-form>
       <label class="sr-only" for="chat-dock-input">Message</label>
-      <textarea id="chat-dock-input" data-chat-dock-input rows="1" maxlength="1200" placeholder="${disabled ? 'Chat unavailable' : 'Write a message...'}" ${disabled ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+      <textarea id="chat-dock-input" data-chat-dock-input rows="1" maxlength="1200" placeholder="${disabled ? 'Chat unavailable' : placeholder}" ${disabled ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
       <button type="submit" aria-label="Send message" ${disabled || !draft.trim() ? 'disabled' : ''}>Send</button>
     </form>
   `
@@ -279,8 +389,8 @@ function renderComposer() {
 function renderMinimized() {
   return `
     <button type="button" class="chat-dock-minimized" data-chat-dock-restore aria-label="Restore ${escapeHtml(getThreadTitle())}">
-      <span>${escapeHtml(dockState.mode === 'support' ? 'Support' : getThreadTitle())}</span>
-      <small>${dockState.mode === 'support' ? 'Coming soon' : 'Open chat'}</small>
+      <span>${escapeHtml(dockState.mode === 'support' ? getSupportTitle() : getThreadTitle())}</span>
+      <small>${escapeHtml(dockState.mode === 'support' ? getSupportSubtitle() : 'Open chat')}</small>
     </button>
   `
 }
@@ -299,10 +409,10 @@ function renderDock() {
     return
   }
 
-  const title = dockState.mode === 'support' ? 'Contact Support' : getThreadTitle()
-  const subtitle = dockState.mode === 'support' ? 'Phase 1 placeholder' : getThreadSubtitle()
+  const title = dockState.mode === 'support' ? getSupportTitle() : getThreadTitle()
+  const subtitle = dockState.mode === 'support' ? getSupportSubtitle() : getThreadSubtitle()
   const headerAvatar = dockState.mode === 'support'
-    ? '<span class="chat-dock-avatar is-support" aria-hidden="true">?</span>'
+    ? '<span class="chat-dock-avatar is-support" aria-hidden="true">MS</span>'
     : renderAvatar(activeThread || { title }, title)
 
   root.innerHTML = `
@@ -342,7 +452,11 @@ function focusComposer() {
 function hydrateProfilesForDock() {
   const ids = Array.from(new Set([
     ...getThreadParticipantUids(activeThread || {}),
-    ...messages.map((message) => message.senderId)
+    ...(Array.isArray(supportThread?.participantUids) ? supportThread.participantUids : []),
+    supportThread?.requesterUid,
+    supportThread?.assignedAgentUid,
+    ...messages.map((message) => message.senderId),
+    ...supportMessages.map((message) => message.senderUid)
   ].filter(Boolean)))
   const missing = ids.filter((uid) => !profileByUid[uid])
   if (!missing.length) return
@@ -355,17 +469,74 @@ function hydrateProfilesForDock() {
 }
 
 function markActiveThreadRead() {
-  const uid = currentUid()
-  const threadId = dockState.activeThreadId
-  if (!uid || !threadId || dockState.minimized || dockState.mode !== 'thread') return
+      const uid = currentUid()
+      const threadId = dockState.activeThreadId
+      if (!uid || !threadId || dockState.minimized || dockState.mode !== 'thread') return
   const markerKey = `${uid}:${threadId}:${messages.at(-1)?.id || 'empty'}`
   if (markerKey === lastMarkedReadKey) return
   lastMarkedReadKey = markerKey
   markThreadRead({ threadId, uid }).catch(() => {})
 }
 
+function syncSupportSubscriptions() {
+  const uid = currentUid()
+  if (!dockState.open || dockState.mode !== 'support' || !dockState.activeThreadId || !uid) {
+    stopThreadSubscriptions()
+    renderDock()
+    return
+  }
+
+  loadingSupportThread = true
+  loadingSupportMessages = true
+  errorMessage = ''
+  renderDock()
+
+  unsubscribeThreads()
+  unsubscribeMessages()
+  unsubscribeHiddenMessages()
+  unsubscribeThreads = () => {}
+  unsubscribeMessages = () => {}
+  unsubscribeHiddenMessages = () => {}
+  inboxThreads = []
+  activeThread = null
+  messages = []
+  hiddenMessageIds = new Set()
+
+  unsubscribeThreads = subscribeToSupportThread(dockState.activeThreadId, (thread) => {
+    supportThread = thread
+    loadingSupportThread = false
+    if (supportThread) {
+      errorMessage = ''
+      dockState.title = supportThread.subject || dockState.title
+      persistState()
+    } else {
+      errorMessage = 'You do not have access to this support thread.'
+    }
+    renderDock()
+  }, (error) => {
+    loadingSupportThread = false
+    errorMessage = error?.message || 'Support thread could not be loaded.'
+    renderDock()
+  })
+
+  unsubscribeMessages = subscribeToSupportMessages(dockState.activeThreadId, (nextMessages) => {
+    supportMessages = nextMessages
+    loadingSupportMessages = false
+    hydrateProfilesForDock()
+    renderDock()
+  }, (error) => {
+    loadingSupportMessages = false
+    errorMessage = error?.message || 'Support messages could not be loaded.'
+    renderDock()
+  })
+}
+
 function syncThreadSubscriptions() {
   const uid = currentUid()
+  if (dockState.mode === 'support') {
+    syncSupportSubscriptions()
+    return
+  }
   if (!dockState.open || dockState.mode !== 'thread' || !dockState.activeThreadId || !uid) {
     stopThreadSubscriptions()
     renderDock()
@@ -427,10 +598,17 @@ function syncThreadSubscriptions() {
 }
 
 function setDockState(next = {}) {
+  const previousMode = dockState.mode
+  const previousThreadId = dockState.activeThreadId
   dockState = {
     ...dockState,
     ...next,
     ownerUid: currentUid() || dockState.ownerUid || ''
+  }
+  if (previousMode !== dockState.mode || previousThreadId !== dockState.activeThreadId) {
+    draft = ''
+    sending = false
+    requestingAgent = false
   }
   persistState()
   syncThreadSubscriptions()
@@ -448,8 +626,8 @@ export function openChatDock(options = {}) {
     open: true,
     minimized: false,
     mode: support ? 'support' : 'thread',
-    activeThreadId: support ? '' : threadId,
-    title: String(detail.title || detail.threadTitle || '').trim().slice(0, 160)
+    activeThreadId: threadId,
+    title: String(detail.title || detail.threadTitle || (support ? 'Melogic Support' : '')).trim().slice(0, 160)
   })
   focusComposer()
 }
@@ -473,17 +651,21 @@ async function handleSubmit(form) {
   errorMessage = ''
   renderDock()
   try {
-    await sendMessage(threadId, {
-      senderId: uid,
-      body,
-      type: 'text',
-      attachments: [],
-      clientMessageId: createClientMessageId()
-    })
+    if (dockState.mode === 'support') {
+      await sendSupportMessage({ threadId, body })
+    } else {
+      await sendMessage(threadId, {
+        senderId: uid,
+        body,
+        type: 'text',
+        attachments: [],
+        clientMessageId: createClientMessageId()
+      })
+      await markThreadRead({ threadId, uid }).catch(() => {})
+    }
     draft = ''
     const input = form?.querySelector('[data-chat-dock-input]')
     if (input) input.value = ''
-    await markThreadRead({ threadId, uid }).catch(() => {})
   } catch (error) {
     errorMessage = error?.message || 'Unable to send message.'
   }
@@ -511,6 +693,24 @@ function bindRootEvents() {
     if (close) {
       event.preventDefault()
       setDockState({ open: false, minimized: false, activeThreadId: '', title: '', mode: 'thread' })
+      return
+    }
+    const requestAgent = event.target.closest('[data-chat-dock-request-agent]')
+    if (requestAgent) {
+      event.preventDefault()
+      const threadId = dockState.activeThreadId
+      if (!threadId || requestingAgent) return
+      requestingAgent = true
+      errorMessage = ''
+      renderDock()
+      requestSupportAgent({ threadId })
+        .catch((error) => {
+          errorMessage = error?.message || 'Could not request a live agent.'
+        })
+        .finally(() => {
+          requestingAgent = false
+          renderDock()
+        })
     }
   })
 

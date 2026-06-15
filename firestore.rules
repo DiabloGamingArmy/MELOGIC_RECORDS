@@ -119,6 +119,46 @@ service cloud.firestore {
         && request.auth.uid in request.resource.data.participantIds;
     }
 
+    function supportThreadPath(threadId) {
+      return /databases/$(database)/documents/supportThreads/$(threadId);
+    }
+
+    function supportThreadExists(threadId) {
+      return exists(supportThreadPath(threadId));
+    }
+
+    function supportThreadData(threadId) {
+      return get(supportThreadPath(threadId)).data;
+    }
+
+    function canReadSupportThreadResource() {
+      return signedIn()
+        && (
+          hasOrderSupportClaim()
+          || hasEmailSendClaim()
+          || resource.data.requesterUid == request.auth.uid
+          || (
+            resource.data.participantUids is list
+            && request.auth.uid in resource.data.participantUids
+          )
+        );
+    }
+
+    function canReadSupportThreadById(threadId) {
+      let thread = supportThreadData(threadId);
+      return signedIn()
+        && supportThreadExists(threadId)
+        && (
+          hasOrderSupportClaim()
+          || hasEmailSendClaim()
+          || thread.requesterUid == request.auth.uid
+          || (
+            thread.participantUids is list
+            && request.auth.uid in thread.participantUids
+          )
+        );
+    }
+
     function participantSelfUpdateIsSafe(uid) {
       return signedIn()
         && request.auth.uid == uid
@@ -1944,6 +1984,16 @@ service cloud.firestore {
           allow delete: if isThreadParticipant(threadId)
             && request.auth.uid == uid;
         }
+      }
+    }
+
+    match /supportThreads/{threadId} {
+      allow get, list: if canReadSupportThreadResource();
+      allow create, update, delete: if false;
+
+      match /messages/{messageId} {
+        allow get, list: if canReadSupportThreadById(threadId);
+        allow create, update, delete: if false;
       }
     }
 
