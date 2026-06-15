@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { assertAnyPermission, cleanString } = require('./adminAuth')
 const { adminUserSummary, db, productSummary, profileSummary, safeSummaryValue, serializeDate } = require('./adminListShared')
+const { loadUserCommerceAudit } = require('./userCommerceAudit')
 
 function accountEventSummary(docSnap) {
   const raw = docSnap.data() || {}
@@ -50,7 +51,7 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   const uid = cleanString(request.data?.uid || '', 180)
   if (!uid || uid.includes('/')) throw new HttpsError('invalid-argument', 'A valid uid is required.')
 
-  const [profileSnap, userSnap, adminSnap, productsSnap, eventsSnap, notesSnap, recoverySnap, authUser] = await Promise.all([
+  const [profileSnap, userSnap, adminSnap, productsSnap, eventsSnap, notesSnap, recoverySnap, authUser, commerce] = await Promise.all([
     db().collection('profiles').doc(uid).get(),
     db().collection('users').doc(uid).get(),
     db().collection('adminUsers').doc(uid).get(),
@@ -58,7 +59,8 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     db().collection('users').doc(uid).collection('accountEvents').orderBy('createdAt', 'desc').limit(12).get(),
     db().collection('users').doc(uid).collection('adminNotes').orderBy('createdAt', 'desc').limit(25).get().catch(() => ({ docs: [] })),
     db().collection('users').doc(uid).collection('security').doc('recoveryCodes').get().catch(() => ({ exists: false, data: () => ({}) })),
-    admin.auth().getUser(uid).catch(() => null)
+    admin.auth().getUser(uid).catch(() => null),
+    loadUserCommerceAudit(uid)
   ])
 
   const source = profileSnap.exists ? profileSnap : userSnap
@@ -94,6 +96,9 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
       : null,
     adminUser: adminSnap.exists ? adminUserSummary(adminSnap) : null,
     recentProducts: productsSnap.docs.map(productSummary),
+    libraryItems: commerce.libraryItems,
+    orders: commerce.orders,
+    commerceSummary: commerce.commerceSummary,
     accountEvents: eventsSnap.docs.map(accountEventSummary),
     adminNotes: notesSnap.docs.map(adminNoteSummary),
     requester: { uid: claims.uid, role: claims.adminRole }

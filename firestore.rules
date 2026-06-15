@@ -1213,6 +1213,11 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /commerceSummary/{summaryId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /adminNotes/{noteId} {
         allow read, write: if false;
       }

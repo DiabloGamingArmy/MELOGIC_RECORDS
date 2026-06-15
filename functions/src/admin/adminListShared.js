@@ -159,13 +159,19 @@ function orderSummary(docSnap) {
   const raw = docSnap.data() || {}
   const lineItems = Array.isArray(raw.items) ? raw.items : Array.isArray(raw.products) ? raw.products : []
   const rawProductIds = cleanStringList(raw.productIds || raw.productIDs || [], 25)
+  const amountValue = raw.amountTotalCents ?? raw.amountCents ?? raw.totalCents ?? raw.total ?? raw.amount_total
+  const amountNumber = Number(amountValue)
   const cleanItems = lineItems.slice(0, 25).map((item) => ({
     productId: cleanString(item?.productId || item?.id || '', 180),
     title: cleanString(item?.title || item?.productTitle || item?.productId || '', 180),
     creatorUid: cleanString(item?.creatorUid || item?.artistId || item?.sellerUid || '', 180),
+    creatorName: cleanString(item?.artistName || item?.creatorName || item?.productSnapshot?.creatorName || '', 180),
     entitlementId: cleanString(item?.entitlementId || '', 180),
     entitlementStatus: cleanString(item?.entitlementStatus || item?.status || '', 80),
-    amountCents: Math.max(0, Math.round(toNumber(item?.amountCents || item?.priceCents || item?.amount)))
+    quantity: Math.max(1, Math.round(toNumber(item?.quantity || 1))),
+    amountCents: Math.max(0, Math.round(toNumber(item?.amountCents ?? item?.priceCents ?? item?.amount))),
+    currency: cleanString(item?.currency || raw.currency || 'USD', 12).toUpperCase(),
+    productSnapshot: safeSummaryValue(item?.productSnapshot || {})
   }))
   return {
     id: docSnap.id,
@@ -176,13 +182,21 @@ function orderSummary(docSnap) {
     productIds: Array.from(new Set([...cleanItems.map((item) => item.productId), ...rawProductIds].filter(Boolean))).slice(0, 25),
     productTitles: cleanItems.map((item) => item.title).filter(Boolean).slice(0, 5),
     items: cleanItems,
-    amountCents: Math.max(0, Math.round(toNumber(raw.amountCents || raw.amountTotalCents || raw.totalCents || raw.total || raw.amount_total))),
-    currency: cleanString(raw.currency || 'USD', 12),
+    amountCents: Number.isFinite(amountNumber) ? Math.max(0, Math.round(amountNumber)) : null,
+    amountSubtotalCents: Number.isFinite(Number(raw.amountSubtotalCents ?? raw.amount_subtotal))
+      ? Math.max(0, Math.round(Number(raw.amountSubtotalCents ?? raw.amount_subtotal)))
+      : null,
+    amountAvailable: Number.isFinite(amountNumber),
+    amountSource: cleanString(raw.amountSource || '', 120),
+    currency: cleanString(raw.currency || 'USD', 12).toUpperCase(),
     paymentStatus: cleanString(raw.paymentStatus || raw.status || '', 80),
     status: cleanString(raw.status || raw.paymentStatus || '', 80),
+    orderState: cleanString(raw.orderState || raw.paymentStatus || raw.status || '', 80),
+    checkoutStatus: cleanString(raw.checkoutStatus || '', 80),
     refundStatus: cleanString(raw.refundStatus || '', 80),
     refundReason: cleanString(raw.refundReason || raw.refundNote || '', 600),
     checkoutSessionId: cleanString(raw.checkoutSessionId || raw.stripeSessionId || raw.sessionId || '', 180),
+    stripeSessionId: cleanString(raw.stripeSessionId || raw.checkoutSessionId || raw.sessionId || '', 180),
     paymentIntentId: cleanString(raw.paymentIntentId || raw.stripePaymentIntentId || '', 180),
     stripeCustomerId: cleanString(raw.stripeCustomerId || raw.customerId || '', 180),
     livemode: raw.livemode === true,

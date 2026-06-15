@@ -20,6 +20,7 @@ import {
   listAdminTeam,
   listAdminUsers,
   listMarketplaceReviewQueue,
+  repairAdminCheckoutOrder,
   reviewProductDecision,
   searchAdminGrantProducts,
   addAdminUserNote,
@@ -55,6 +56,7 @@ import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 import { formatUsername } from './utils/format'
 import { formatActionLabel as sharedActionLabel } from './utils/displayFormat'
+import { isPaidMoneyOrder, orderAmountAvailable, orderLifecycleLabel } from './utils/commerce'
 import { ROUTES, adminReviewRoute, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 import './styles/base.css'
@@ -322,7 +324,7 @@ const state = {
   },
   adminData: {
     products: { items: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 },
-    users: { items: [], profile: null, adminUser: null, recentProducts: [], accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
+    users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loadingMore: false, loaded: false, error: '', filter: 'open', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     community: {
       posts: [],
@@ -345,7 +347,7 @@ const state = {
       createError: '',
       createMessage: ''
     },
-    orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', cursor: '', hasMore: false, pageSize: 15 },
+    orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', cursor: '', hasMore: false, pageSize: 15, repairing: '' },
     team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
     logs: { items: [], detail: null, detailId: '', loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 }
   },
@@ -1025,8 +1027,8 @@ function dashboardView() {
       ${overviewSnapshotTable('Orders Snapshot', ROUTES.adminOrders, ['Order', 'Buyer', 'Amount', 'Status', 'Action'], overviewOrders.slice(0, 5).map((order) => [
         htmlCell(`<span class="admin-code-value">${escapeHtml(order.id || '')}</span>`),
         order.buyerEmail || order.buyerUid || order.uid,
-        formatMoney(order.amountCents, order.currency),
-        humanLabel(order.paymentStatus),
+        adminOrderAmount(order),
+        orderLifecycleLabel(order),
         htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
       ]), 'No recent orders loaded.')}
       ${overviewSnapshotTable('Support Forms Snapshot', `${ROUTES.adminContact}?mode=support`, ['Subject', 'Sender', 'Status', 'Created', 'Action'], overviewSupportForms.slice(0, 5).map((form) => [
@@ -2375,13 +2377,66 @@ function usersTable(users = []) {
           <span>${Number(user.reportCount || 0)}</span>
           <span>${escapeHtml(formatDate(user.createdAt || user.updatedAt))}${user.lastActiveAt ? `<small>${escapeHtml(formatDate(user.lastActiveAt))}</small>` : ''}</span>
           <span class="admin-row-actions">
-            <a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">View</a>
-            <button type="button" class="admin-secondary-button" data-admin-give-product="${escapeHtml(user.uid)}" ${can('orderSupport') || can('listingEdit') ? '' : 'disabled title="Order support or listing edit permission is required."'}>Give Product</button>
+            <a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminUsers}/${encodeURIComponent(user.uid)}">Audit/View</a>
           </span>
         </article>
       `).join('')}
     </div>
   `
+}
+
+function adminOrderAmount(order = {}) {
+  return orderAmountAvailable(order)
+    ? formatMoney(order.amountCents, order.currency)
+    : 'Amount unavailable'
+}
+
+function adminUserLibraryTable(items = []) {
+  return adminSimpleTable('Owned products and acquisitions', [
+    'Product',
+    'Acquisition',
+    'Status',
+    'Creator',
+    'Amount',
+    'Acquired',
+    'Order / Stripe'
+  ], items.map((item) => [
+    htmlCell(`<strong>${escapeHtml(item.productTitle || 'Product metadata unavailable')}</strong><small class="admin-code-value">${escapeHtml(item.productId || '')}</small>${item.metadataAvailable === false ? '<small>Product metadata unavailable</small>' : ''}`),
+    htmlCell(`<strong>${escapeHtml(humanLabel(item.acquisitionType || 'unknown'))}</strong><small>${escapeHtml((item.recordSources || []).join(' + ') || item.source || '')}</small>`),
+    humanLabel(item.status || 'active'),
+    htmlCell(`<strong>${escapeHtml(item.creatorName || 'Creator unavailable')}</strong>${item.creatorUid ? `<small class="admin-code-value">${escapeHtml(item.creatorUid)}</small>` : ''}`),
+    item.pricePaid === null || item.pricePaid === undefined ? 'Amount unavailable' : formatMoney(item.pricePaid, item.currency),
+    formatDate(item.acquiredAt || item.updatedAt || item.createdAt),
+    htmlCell(`<strong>${escapeHtml(item.orderId || 'No order')}</strong>${item.stripeCheckoutSessionId ? `<small class="admin-code-value">${escapeHtml(item.stripeCheckoutSessionId)}</small>` : ''}`)
+  ]), {
+    className: 'is-user-commerce',
+    emptyTitle: 'No owned products found.',
+    emptyBody: 'No entitlement or library access records were found for this account.'
+  })
+}
+
+function adminUserOrdersTable(orders = []) {
+  return adminSimpleTable('User order history', [
+    'Order',
+    'State',
+    'Amount',
+    'Products',
+    'Created / Paid',
+    'Stripe',
+    'Actions'
+  ], orders.map((order) => [
+    htmlCell(`<strong>${escapeHtml(order.id || 'Order')}</strong><small>${escapeHtml(order.paymentSource || '')}</small>`),
+    orderLifecycleLabel(order),
+    adminOrderAmount(order),
+    htmlCell(`<strong>${Number(order.productCount || order.productIds?.length || 0)}</strong><small>${escapeHtml((order.productTitles || []).join(', ') || 'Product IDs available in order detail')}</small>`),
+    htmlCell(`<strong>${escapeHtml(formatDate(order.paidAt || order.createdAt))}</strong>${order.paidAt ? `<small>Created ${escapeHtml(formatDate(order.createdAt))}</small>` : ''}`),
+    htmlCell(order.checkoutSessionId ? `<span class="admin-code-value">${escapeHtml(order.checkoutSessionId)}</span>` : '<span>No Stripe session</span>'),
+    htmlCell(`<a class="admin-secondary-link" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
+  ]), {
+    className: 'is-user-orders',
+    emptyTitle: 'No orders found.',
+    emptyBody: 'No top-level order records were found for this account.'
+  })
 }
 
 function selectedUserPanel() {
@@ -2428,8 +2483,9 @@ function selectedUserPanel() {
     ${user ? `
       <section class="admin-metric-grid is-compact">
         <article class="admin-metric"><span>Products</span><strong>${Number(user.productCount || data.recentProducts?.length || 0)}</strong></article>
+        <article class="admin-metric"><span>Owned</span><strong>${Number(data.libraryItems?.length || 0)}</strong></article>
         <article class="admin-metric"><span>Reports</span><strong>${Number(user.reportCount || 0)}</strong></article>
-        <article class="admin-metric"><span>Orders</span><strong>${Number(user.orderCount || 0)}</strong></article>
+        <article class="admin-metric"><span>Orders</span><strong>${Number(data.orders?.length || 0)}</strong></article>
         <article class="admin-metric"><span>Role</span><strong>${escapeHtml(humanLabel(user.adminRole || user.role || 'user'))}</strong></article>
         <article class="admin-metric"><span>Status</span><strong>${escapeHtml(user.suspended ? 'Suspended' : user.adminActive ? 'Admin Active' : 'Active')}</strong></article>
         <article class="admin-metric"><span>Email</span><strong>${escapeHtml(user.emailVerified ? 'Verified' : 'Unverified')}</strong></article>
@@ -2486,9 +2542,16 @@ function selectedUserPanel() {
         <div class="admin-slab-heading"><h2>Products</h2><span class="admin-muted">${data.recentProducts?.length || 0} loaded</span></div>
         <div class="admin-table-scroll">${data.recentProducts?.length ? productAdminTable(data.recentProducts) : '<article class="admin-empty-state">No recent products loaded for this creator.</article>'}</div>
       </section>
+      <section class="admin-section-slab admin-fixed-panel is-products-panel">
+        <div class="admin-slab-heading"><h2>Library / Acquisitions</h2><span class="admin-muted">${data.libraryItems?.length || 0} source-of-truth product(s)</span></div>
+        <div class="admin-table-scroll">${adminUserLibraryTable(data.libraryItems || [])}</div>
+      </section>
+      <section class="admin-section-slab admin-fixed-panel is-products-panel">
+        <div class="admin-slab-heading"><h2>Orders / Payments</h2><span class="admin-muted">${data.orders?.length || 0} source order(s)</span></div>
+        <div class="admin-table-scroll">${adminUserOrdersTable(data.orders || [])}</div>
+      </section>
       <section class="admin-hub-grid">
         <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Reports</h2></div><div class="admin-panel-scroll"><article class="admin-empty-state">No report detail data is loaded for this account yet.</article></div></article>
-        <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Orders / Library</h2></div><div class="admin-panel-scroll"><article class="admin-empty-state">No order or entitlement detail data is loaded for this account yet.</article></div></article>
         <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Admin Notes</h2><button type="button" class="admin-secondary-button" data-admin-note-user="${escapeHtml(uid)}" ${!canNote ? 'disabled title="User moderation or order support permission is required."' : ''}>Add Note</button></div><div class="admin-panel-scroll">${adminNotesList(data.adminNotes || [])}</div></article>
         <article class="admin-section-slab admin-fixed-panel is-short"><div class="admin-slab-heading"><h2>Timeline / Logs</h2><a href="${ROUTES.adminLogs}" class="admin-secondary-link">Open Logs</a></div><div class="admin-panel-scroll"><article class="admin-empty-state">Role changes and admin actions are available in Logs.</article></div></article>
       </section>
@@ -2717,7 +2780,7 @@ function orderDetailView(orderId = '') {
       <div>
         <p class="eyebrow">Commerce</p>
         <h1>Order Hub</h1>
-        <p>${escapeHtml(order.buyerEmail || order.buyerUid || order.uid || 'Unknown buyer')} · ${escapeHtml(formatMoney(order.amountCents, order.currency))} · ${escapeHtml(humanLabel(order.paymentStatus) || 'Unknown payment')}</p>
+        <p>${escapeHtml(order.buyerEmail || order.buyerUid || order.uid || 'Unknown buyer')} · ${escapeHtml(adminOrderAmount(order))} · ${escapeHtml(orderLifecycleLabel(order))}</p>
         <p class="admin-code-value">${escapeHtml(order.id)} · ${escapeHtml(humanLabel(order.refundStatus) || 'No refund')} · ${escapeHtml(formatDate(order.createdAt))}</p>
         <div class="admin-heading-badges">
           ${renderBadge(order.livemode ? 'Stripe Live Mode' : 'Stripe Test Mode', order.livemode ? 'pending' : 'published')}
@@ -2725,6 +2788,7 @@ function orderDetailView(orderId = '') {
         </div>
       </div>
       <div class="admin-header-actions">
+        <button type="button" class="admin-secondary-button" data-repair-admin-order="${escapeHtml(order.id)}" ${data.repairing ? 'disabled' : ''}>${data.repairing === order.id ? 'Checking Stripe...' : 'Repair from Stripe'}</button>
         <button type="button" class="admin-secondary-button" disabled title="Stripe dashboard links are not wired yet.">Open Stripe</button>
         <button type="button" class="admin-secondary-button" disabled title="Refund callable is not implemented yet.">Refund</button>
         <button type="button" class="admin-secondary-button" disabled title="Manual entitlement grant is not implemented yet.">Grant Entitlement</button>
@@ -2735,8 +2799,8 @@ function orderDetailView(orderId = '') {
     </header>
     <a class="admin-secondary-link admin-back-link" href="${ROUTES.adminOrders}">${iconSvg('arrowLeft')}<span>Back to Orders</span></a>
     <section class="admin-metric-grid is-compact">
-      <article class="admin-metric"><span>Amount</span><strong>${escapeHtml(formatMoney(order.amountCents, order.currency))}</strong></article>
-      <article class="admin-metric"><span>Payment</span><strong>${escapeHtml(humanLabel(order.paymentStatus) || 'Unknown')}</strong></article>
+      <article class="admin-metric"><span>Amount</span><strong>${escapeHtml(adminOrderAmount(order))}</strong></article>
+      <article class="admin-metric"><span>Payment</span><strong>${escapeHtml(orderLifecycleLabel(order))}</strong></article>
       <article class="admin-metric"><span>Refund</span><strong>${escapeHtml(humanLabel(order.refundStatus) || 'None')}</strong></article>
       <article class="admin-metric"><span>Items</span><strong>${Number(order.productCount || items.length || 0)}</strong></article>
       <article class="admin-metric"><span>Created</span><strong>${escapeHtml(formatDate(order.createdAt))}</strong></article>
@@ -2744,14 +2808,14 @@ function orderDetailView(orderId = '') {
     ${mismatchWarnings.length ? `<section class="admin-section-slab"><div class="admin-slab-heading"><h2>Order Warnings</h2>${renderBadge('Needs Review', 'pending')}</div><ul class="admin-warning-list">${mismatchWarnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul></section>` : ''}
     <section class="admin-hub-grid">
       <article class="admin-section-slab">
-        <div class="admin-slab-heading"><h2>Overview</h2>${renderBadge(humanLabel(order.paymentStatus) || 'Unknown')}</div>
+        <div class="admin-slab-heading"><h2>Overview</h2>${renderBadge(orderLifecycleLabel(order))}</div>
         ${renderKeyValueGrid([
           renderField('Order ID', order.id, { code: true }),
           renderField('Buyer UID', order.buyerUid || order.uid, { code: true }),
           renderField('Buyer email', order.buyerEmail),
-          renderMoneyField('Amount', order.amountCents, order.currency),
+          renderField('Amount', adminOrderAmount(order)),
           renderField('Currency', order.currency),
-          renderField('Payment status', humanLabel(order.paymentStatus)),
+          renderField('Payment status', orderLifecycleLabel(order)),
           renderField('Payment source', order.livemode ? 'Stripe Live Mode' : 'Stripe Test Mode'),
           renderField('Order status', humanLabel(order.status)),
           renderField('Refund status', humanLabel(order.refundStatus)),
@@ -2766,9 +2830,9 @@ function orderDetailView(orderId = '') {
           renderField('Checkout session', order.checkoutSessionId, { code: true }),
           renderField('Payment intent', order.paymentIntentId, { code: true }),
           renderField('Stripe customer', order.stripeCustomerId, { code: true }),
-          renderField('Payment status', humanLabel(order.paymentStatus)),
+          renderField('Payment status', orderLifecycleLabel(order)),
           renderField('Livemode', order.livemode ? 'Live' : 'Test'),
-          renderMoneyField('Amount', order.amountCents, order.currency)
+          renderField('Amount', adminOrderAmount(order))
         ])}
       </article>
     </section>
@@ -2777,7 +2841,7 @@ function orderDetailView(orderId = '') {
       ${items.length ? adminSimpleTable('Order Items', ['Product', 'Creator', 'Amount', 'Entitlement', 'Actions'], items.map((item) => [
         htmlCell(`<strong>${escapeHtml(item.title || item.productId || 'Product')}</strong><small class="admin-code-value">${escapeHtml(item.productId || '')}</small>`),
         item.creatorUid,
-        formatMoney(item.amountCents, order.currency),
+        Number.isFinite(Number(item.amountCents)) ? formatMoney(item.amountCents, item.currency || order.currency) : 'Amount unavailable',
         humanLabel(item.entitlementStatus) || item.entitlementId || 'Not set',
         htmlCell(item.productId ? `<a class="admin-secondary-link" href="${adminReviewRoute(item.productId)}">Audit/View</a>` : '<button type="button" class="admin-secondary-button" disabled>Audit/View</button>')
       ]), { className: 'is-order-items', emptyTitle: 'No item details.', emptyBody: 'Order item metadata is not available.' }) : '<article class="admin-empty-state">No order item metadata is available.</article>'}
@@ -2835,21 +2899,21 @@ function ordersView() {
   if (orderId) return orderDetailView(orderId)
   const loading = adminBusyState(data)
   const orders = data.items.filter((order) => {
-    if (data.filter === 'paid') return order.paymentStatus === 'paid' || Number(order.amountCents || 0) > 0
-    if (data.filter === 'free') return Number(order.amountCents || 0) === 0
+    if (data.filter === 'paid') return isPaidMoneyOrder(order)
+    if (data.filter === 'free') return orderAmountAvailable(order) && Number(order.amountCents || 0) === 0
     if (data.filter === 'refund_requested') return order.refundStatus === 'requested'
     if (data.filter === 'refunded') return order.refundStatus === 'refunded'
     if (data.filter === 'failed') return ['failed', 'canceled'].includes(order.paymentStatus)
     if (data.filter === 'recent') return (Date.now() - new Date(order.createdAt || 0).getTime()) <= 30 * 24 * 60 * 60 * 1000
     return true
   })
-  const revenue = orders.reduce((sum, order) => sum + Number(order.amountCents || 0), 0)
+  const revenue = orders.filter(isPaidMoneyOrder).reduce((sum, order) => sum + Number(order.amountCents || 0), 0)
   const ordersTable = adminSimpleTable('Orders', ['Order ID', 'Buyer', 'Products', 'Amount', 'Payment', 'Refund', 'Created', 'Actions'], orders.map((order) => [
     order.id,
     order.buyerUid || order.uid,
     order.productTitles?.join(', ') || `${order.productCount || 0} product(s)`,
-    formatMoney(order.amountCents, order.currency),
-    humanLabel(order.paymentStatus),
+    adminOrderAmount(order),
+    orderLifecycleLabel(order),
     humanLabel(order.refundStatus),
     formatDate(order.createdAt),
     htmlCell(`<a class="admin-row-action-button admin-table-action-main" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
@@ -5154,6 +5218,9 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.profile = result.user || null
         state.adminData.users.adminUser = result.adminUser || null
         state.adminData.users.recentProducts = result.recentProducts || []
+        state.adminData.users.libraryItems = result.libraryItems || []
+        state.adminData.users.orders = result.orders || []
+        state.adminData.users.commerceSummary = result.commerceSummary || null
         state.adminData.users.accountEvents = result.accountEvents || []
         state.adminData.users.adminNotes = result.adminNotes || []
         await hydrateReviewMedia(state.adminData.users.recentProducts)
@@ -5161,6 +5228,9 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.profile = null
         state.adminData.users.adminUser = null
         state.adminData.users.recentProducts = []
+        state.adminData.users.libraryItems = []
+        state.adminData.users.orders = []
+        state.adminData.users.commerceSummary = null
         state.adminData.users.accountEvents = []
         state.adminData.users.adminNotes = []
       }
@@ -6355,6 +6425,37 @@ async function submitRevokeRecoveryCodes(uid = '') {
   }
 }
 
+async function submitAdminOrderRepair(orderId = '') {
+  const data = adminData('orders')
+  if (!orderId || data.repairing) return
+  if (!window.confirm('Verify this order directly with Stripe and repair its trusted status, amount, entitlement, and account summary?')) return
+  data.repairing = orderId
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    const result = await repairAdminCheckoutOrder({ orderId })
+    state.message = result.paymentStatus === 'paid'
+      ? `Order repaired from Stripe: ${formatMoney(result.amountTotalCents, result.currency)} paid.`
+      : `Order synced from Stripe: ${orderLifecycleLabel({
+          orderState: result.checkoutStatus === 'expired' ? 'checkout_expired' : 'checkout_created',
+          paymentStatus: result.paymentStatus
+        })}.`
+    await loadAdminSectionData('orders', { silent: true })
+  } catch (error) {
+    console.warn('[admin] Stripe order repair failed', {
+      orderId,
+      code: error?.code,
+      message: error?.message,
+      details: error?.details
+    })
+    state.error = adminActionBlockedMessage(error)
+  } finally {
+    data.repairing = ''
+    render()
+  }
+}
+
 async function handleReportAction(action = '') {
   const reportId = adminReportDetailId()
   if (!reportId || !action) return
@@ -7323,6 +7424,9 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-admin-give-product]').forEach((button) => {
     button.addEventListener('click', () => openProductGrantDialog(button.getAttribute('data-admin-give-product') || ''))
+  })
+  app.querySelectorAll('[data-repair-admin-order]').forEach((button) => {
+    button.addEventListener('click', () => submitAdminOrderRepair(button.getAttribute('data-repair-admin-order') || ''))
   })
   app.querySelectorAll('[data-close-product-grant]').forEach((button) => {
     button.addEventListener('click', closeProductGrantDialog)

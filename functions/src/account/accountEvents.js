@@ -30,6 +30,8 @@ const ACCOUNT_EVENT_TYPES = new Set([
   'community_follow',
   'community_report',
   'order_created',
+  'order_placed',
+  'entitlement_granted',
   'refund_requested',
   'admin_role_changed',
   'account_suspended',

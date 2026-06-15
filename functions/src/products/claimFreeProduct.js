@@ -1,6 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { writeAccountEvent } = require('../account/accountEvents')
+const { rebuildCommerceSummary } = require('../account/commerceSummary')
 
 const db = admin.firestore()
 
@@ -124,9 +125,11 @@ exports.claimFreeProduct = onCall(
         source: 'free_claim',
         status: 'paid',
         paymentStatus: 'free_claim',
+        orderState: 'library_added',
         refundStatus: '',
         amountTotalCents: 0,
         amountCents: 0,
+        amountSource: 'free_claim',
         currency: String(product.currency || 'USD'),
         livemode: false,
         paymentSource: 'free_claim',
@@ -148,6 +151,7 @@ exports.claimFreeProduct = onCall(
         path: '/account/library',
         metadata: { orderId: orderRef.id, productId }
       })
+      await rebuildCommerceSummary(db, uid).catch(() => {})
     }
 
     return {
