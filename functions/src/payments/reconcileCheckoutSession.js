@@ -4,6 +4,7 @@ const { logger } = require('firebase-functions')
 const admin = require('firebase-admin')
 const Stripe = require('stripe')
 const { fulfillPaidCheckout, resolveCheckoutContext } = require('./checkoutFulfillment')
+const { writeAccountEvent } = require('../account/accountEvents')
 
 const STRIPE_SECRET_KEY = defineSecret('STRIPE_SECRET_KEY')
 
@@ -60,6 +61,24 @@ const reconcileCheckoutSession = onCall({
       eventType: 'checkout.session.reconciled',
       source: 'buyer_checkout_reconcile'
     })
+    if (result.changed) {
+      await writeAccountEvent(admin.firestore(), uid, {
+        type: 'order_placed',
+        severity: 'success',
+        title: 'Order Placed',
+        message: 'Your purchase is complete and available in your library.',
+        actorType: 'system',
+        source: 'buyer_checkout_reconcile',
+        path: `/account/orders/${encodeURIComponent(result.orderId)}`,
+        metadata: {
+          orderId: result.orderId,
+          stripeSessionId: result.stripeSessionId,
+          productIds: result.productIds,
+          amountTotalCents: session.amount_total ?? null,
+          currency: session.currency || ''
+        }
+      })
+    }
     logger.info('[checkout-reconcile] access verified', {
       sessionId,
       uid,

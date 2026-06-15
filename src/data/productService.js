@@ -1862,6 +1862,13 @@ export async function getAdminOrder({ orderId = '' } = {}) {
   return result?.data || { ok: false, order: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [] }
 }
 
+export async function repairAdminCheckoutOrder({ orderId = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'repairAdminCheckoutOrder')
+  const result = await callable({ orderId })
+  return result?.data || { ok: false }
+}
+
 export async function listAdminLogs({ limitCount = 50, cursor = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'listAdminLogs')

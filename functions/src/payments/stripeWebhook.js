@@ -83,9 +83,9 @@ exports.stripeWebhook = onRequest(
       if (result.changed) {
         await Promise.all([
           writeAccountEvent(admin.firestore(), result.uid, {
-            type: 'order_created',
+            type: 'order_placed',
             severity: 'success',
-            title: 'Order completed',
+            title: 'Order Placed',
             message: 'Your purchase is complete and available in your library.',
             actorType: 'system',
             source: 'stripe_webhook',
@@ -94,7 +94,9 @@ exports.stripeWebhook = onRequest(
               orderId: result.orderId,
               stripeSessionId: result.stripeSessionId,
               productIds: result.productIds,
-              repairedProductIds: result.repairedProductIds
+              repairedProductIds: result.repairedProductIds,
+              amountTotalCents: session.amount_total ?? null,
+              currency: session.currency || ''
             }
           }),
           writeAdminAuditLog({

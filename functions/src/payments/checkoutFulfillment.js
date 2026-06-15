@@ -1,4 +1,6 @@
 const admin = require('firebase-admin')
+const { logger } = require('firebase-functions')
+const { rebuildCommerceSummary } = require('../account/commerceSummary')
 
 function cleanString(value = '', max = 900) {
   return String(value ?? '')
@@ -22,6 +24,37 @@ function normalizeProductIds(value = []) {
 
 function paymentIntentId(session = {}) {
   return cleanString(typeof session.payment_intent === 'object' ? session.payment_intent?.id : session.payment_intent, 180)
+}
+
+function stripeCustomerId(session = {}) {
+  return cleanString(typeof session.customer === 'object' ? session.customer?.id : session.customer, 180)
+}
+
+function stripeAmount(value, fallback = null) {
+  const amount = Number(value)
+  return Number.isInteger(amount) && amount >= 0 ? amount : fallback
+}
+
+function stripeOrderFields(session = {}, order = {}) {
+  const amountTotalCents = stripeAmount(session.amount_total, stripeAmount(order.amountTotalCents ?? order.amountCents, null))
+  const amountSubtotalCents = stripeAmount(session.amount_subtotal, stripeAmount(order.amountSubtotalCents, amountTotalCents))
+  return {
+    orderState: 'order_placed',
+    checkoutStatus: cleanString(session.status || 'complete', 80),
+    amountSubtotalCents,
+    amountTotalCents,
+    amountCents: amountTotalCents,
+    amountSource: 'stripe_checkout_session',
+    currency: cleanString(session.currency || order.currency || 'usd', 12).toUpperCase(),
+    paymentIntentId: paymentIntentId(session) || cleanString(order.paymentIntentId || '', 180),
+    stripePaymentIntentId: paymentIntentId(session) || cleanString(order.stripePaymentIntentId || order.paymentIntentId || '', 180),
+    stripeCustomerId: stripeCustomerId(session) || cleanString(order.stripeCustomerId || '', 180),
+    totalDetails: {
+      amountDiscount: stripeAmount(session.total_details?.amount_discount, 0),
+      amountShipping: stripeAmount(session.total_details?.amount_shipping, 0),
+      amountTax: stripeAmount(session.total_details?.amount_tax, 0)
+    }
+  }
 }
 
 function productSnapshot(productId = '', product = {}, orderItem = {}) {
@@ -206,7 +239,7 @@ async function fulfillPaidCheckout({
   const safeEventId = cleanString(eventId || `session_${context.stripeSessionId}`, 180).replaceAll('/', '_')
   const eventRef = database.collection('stripeWebhookEvents').doc(safeEventId)
 
-  return database.runTransaction(async (transaction) => {
+  const result = await database.runTransaction(async (transaction) => {
     const productRefs = context.productIds.map((productId) => database.collection('products').doc(productId))
     const entitlementRefs = context.productIds.map((productId) => database.doc(`users/${context.uid}/entitlements/${productId}`))
     const libraryRefs = context.productIds.map((productId) => database.doc(`users/${context.uid}/libraryItems/${productId}`))
@@ -219,6 +252,11 @@ async function fulfillPaidCheckout({
     const entitlementOffset = productOffset + productRefs.length
     const libraryOffset = entitlementOffset + entitlementRefs.length
     const order = orderSnap.data() || {}
+    const orderFields = stripeOrderFields(session, order)
+    const orderChanged = cleanString(order.paymentStatus || '', 80).toLowerCase() !== 'paid'
+      || cleanString(order.orderState || '', 80).toLowerCase() !== 'order_placed'
+      || Number(order.amountTotalCents ?? order.amountCents ?? -1) !== orderFields.amountTotalCents
+      || cleanString(order.paymentIntentId || order.stripePaymentIntentId || '', 180) !== orderFields.paymentIntentId
     const now = admin.firestore.FieldValue.serverTimestamp()
     const grantedProductIds = []
     const repairedProductIds = []
@@ -285,10 +323,7 @@ async function fulfillPaidCheckout({
       paidAt: order.paidAt || now,
       stripeSessionId: context.stripeSessionId,
       checkoutSessionId: context.stripeSessionId,
-      paymentIntentId: paymentIntentId(session) || cleanString(order.paymentIntentId || '', 180),
-      amountCents: Number(session.amount_total || order.amountCents || order.amountTotalCents || 0),
-      amountTotalCents: Number(session.amount_total || order.amountTotalCents || order.amountCents || 0),
-      currency: cleanString(session.currency || order.currency || 'usd', 12).toUpperCase(),
+      ...orderFields,
       livemode: session.livemode === true,
       paymentSource: session.livemode === true ? 'stripe_live' : 'stripe_test',
       fulfillmentSource: source,
@@ -318,9 +353,17 @@ async function fulfillPaidCheckout({
       grantedProductIds,
       repairedProductIds,
       duplicateProductIds,
-      changed: grantedProductIds.length > 0 || repairedProductIds.length > 0
+      changed: orderChanged || grantedProductIds.length > 0 || repairedProductIds.length > 0
     }
   })
+  await rebuildCommerceSummary(database, context.uid).catch((error) => {
+    logger.error('[checkout-fulfillment] commerce summary rebuild failed', {
+      uid: context.uid,
+      orderId: context.orderId,
+      message: error?.message || ''
+    })
+  })
+  return result
 }
 
 module.exports = {
@@ -332,6 +375,8 @@ module.exports = {
     normalizeProductIds,
     paymentIntentId,
     productSnapshot,
-    purchaseAccessPayload
+    purchaseAccessPayload,
+    stripeAmount,
+    stripeOrderFields
   }
 }

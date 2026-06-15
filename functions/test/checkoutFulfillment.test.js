@@ -4,6 +4,9 @@ const assert = require('node:assert/strict')
 const checkout = require('../src/payments/checkoutFulfillment').__test
 const adminGrant = require('../src/admin/grantAdminProducts').__test
 const webhook = require('../src/payments/stripeWebhook').__test
+const commerceSummary = require('../src/account/commerceSummary').__test
+const userCommerceAudit = require('../src/admin/userCommerceAudit').__test
+const orderRepair = require('../src/payments/repairCheckoutOrder').__test
 
 function snapshot(data = null) {
   return {
@@ -104,4 +107,82 @@ test('webhook accepts immediate and delayed successful checkout events', () => {
   assert.equal(webhook.FULFILLMENT_EVENTS.has('checkout.session.completed'), true)
   assert.equal(webhook.FULFILLMENT_EVENTS.has('checkout.session.async_payment_succeeded'), true)
   assert.equal(webhook.FULFILLMENT_EVENTS.has('payment_intent.created'), false)
+})
+
+test('trusted Stripe order fields preserve paid totals including zero values', () => {
+  const fields = checkout.stripeOrderFields({
+    status: 'complete',
+    amount_subtotal: 600,
+    amount_total: 600,
+    currency: 'usd',
+    payment_intent: 'pi_123',
+    customer: 'cus_123',
+    total_details: { amount_discount: 0, amount_shipping: 0, amount_tax: 0 }
+  })
+  assert.equal(fields.orderState, 'order_placed')
+  assert.equal(fields.amountSubtotalCents, 600)
+  assert.equal(fields.amountTotalCents, 600)
+  assert.equal(fields.amountSource, 'stripe_checkout_session')
+  assert.equal(fields.paymentIntentId, 'pi_123')
+  assert.equal(fields.stripeCustomerId, 'cus_123')
+})
+
+test('commerce summary counts only paid money orders and deduplicates owned products', () => {
+  const summary = commerceSummary.buildCommerceSummary({
+    orders: [
+      { paymentStatus: 'paid', amountTotalCents: 600, currency: 'usd', paidAt: '2026-06-15T13:08:00Z' },
+      { paymentStatus: 'unpaid', amountTotalCents: 600, currency: 'usd', createdAt: '2026-06-15T13:09:00Z' },
+      { paymentStatus: 'system_given', amountTotalCents: 0, currency: 'usd', createdAt: '2026-06-15T17:40:00Z' }
+    ],
+    accessRows: [
+      { productId: 'product-1', status: 'active' },
+      { productId: 'product-1', status: 'active' }
+    ]
+  })
+  assert.deepEqual(summary.spendByCurrency, { USD: 600 })
+  assert.equal(summary.paidOrderCount, 1)
+  assert.equal(summary.ownedProductCount, 1)
+  assert.equal(summary.totalSpentAmount, 600)
+  assert.equal(summary.totalSpentCurrency, 'USD')
+})
+
+test('admin commerce audit merges entitlement and library records into one product row', () => {
+  const entitlement = {
+    productId: 'product-1',
+    recordSources: ['entitlements'],
+    acquisitionType: 'Purchase',
+    source: 'stripe_checkout',
+    orderId: 'order-1',
+    productSnapshot: { title: 'Body Armor', creatorName: 'Creator' }
+  }
+  const library = {
+    productId: 'product-1',
+    recordSources: ['libraryItems'],
+    acquisitionType: 'Purchase',
+    source: 'stripe_checkout',
+    orderId: 'order-1',
+    acquiredAt: '2026-06-15T13:08:00Z',
+    productSnapshot: { title: 'Body Armor', creatorName: 'Creator' }
+  }
+  const merged = userCommerceAudit.mergeAccessRows(entitlement, library)
+  assert.deepEqual(merged.recordSources, ['entitlements', 'libraryItems'])
+  assert.equal(merged.productId, 'product-1')
+  assert.equal(merged.orderId, 'order-1')
+  assert.equal(merged.acquiredAt, '2026-06-15T13:08:00Z')
+})
+
+test('unpaid Stripe repair never marks an open checkout as paid', () => {
+  const fields = orderRepair.unpaidOrderFields({
+    status: 'open',
+    payment_status: 'unpaid',
+    amount_subtotal: 600,
+    amount_total: 600,
+    currency: 'usd',
+    livemode: true
+  })
+  assert.equal(fields.status, 'checkout_created')
+  assert.equal(fields.paymentStatus, 'unpaid')
+  assert.equal(fields.orderState, 'checkout_created')
+  assert.equal(fields.amountTotalCents, 600)
+  assert.equal(fields.amountSource, 'stripe_checkout_session')
 })

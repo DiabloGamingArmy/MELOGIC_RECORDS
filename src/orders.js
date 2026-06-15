@@ -4,10 +4,11 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES } from './utils/routes'
-import { accountDateIso, getUserOrder, listUserOrders } from './data/accountCommerceService'
+import { accountDateIso, getUserCommerceSummary, getUserOrder, listUserOrders } from './data/accountCommerceService'
+import { isPaidMoneyOrder, orderAmountAvailable, orderLifecycleLabel } from './utils/commerce'
 
 const app = document.querySelector('#app')
-const state = { user: null, loading: true, error: '', orders: [], detail: null, supportModal: '', filter: 'lifetime' }
+const state = { user: null, loading: true, error: '', orders: [], summary: null, detail: null, supportModal: '', filter: 'lifetime' }
 
 const filters = [
   { key: '7', label: '7 days', days: 7 },
@@ -45,6 +46,12 @@ function money(cents = 0, currency = 'USD') {
   }
 }
 
+function orderAmount(order = {}) {
+  return orderAmountAvailable(order)
+    ? money(order.amountTotalCents, order.currency)
+    : 'Amount unavailable'
+}
+
 function withinDays(order, days) {
   if (!days) return true
   const stamp = orderStamp(order)
@@ -63,10 +70,23 @@ function currentOrderId() {
   return decodeURIComponent(path.slice(`${ROUTES.orders}/`.length).split('/')[0] || '').trim()
 }
 
-function spentInDays(days) {
+function spendByCurrency(days) {
   return state.orders
-    .filter((order) => order.status === 'paid' && withinDays(order, days))
-    .reduce((sum, order) => sum + Number(order.amountTotalCents || 0), 0)
+    .filter((order) => isPaidMoneyOrder(order) && withinDays(order, days))
+    .reduce((totals, order) => {
+      const currency = String(order.currency || 'USD').toUpperCase()
+      totals[currency] = (totals[currency] || 0) + Number(order.amountTotalCents || 0)
+      return totals
+    }, {})
+}
+
+function formattedSpend(days) {
+  const totals = !days && state.summary?.spendByCurrency
+    ? state.summary.spendByCurrency
+    : spendByCurrency(days)
+  const entries = Object.entries(totals)
+  if (!entries.length) return money(0, 'USD')
+  return entries.map(([currency, cents]) => money(cents, currency)).join(' + ')
 }
 
 function renderSignedOut() {
@@ -81,16 +101,12 @@ function renderSignedOut() {
 }
 
 function renderSummary() {
-  const lifetime = spentInDays(0)
-  const last30 = spentInDays(30)
-  const last365 = spentInDays(365)
-  const currency = state.orders.find((order) => order.currency)?.currency || 'USD'
   return `
     <div class="account-summary-grid">
-      <article><span>Total spent</span><strong>${money(lifetime, currency)}</strong></article>
-      <article><span>Last 30 days</span><strong>${money(last30, currency)}</strong></article>
-      <article><span>Last 12 months</span><strong>${money(last365, currency)}</strong></article>
-      <article><span>Lifetime orders</span><strong>${state.orders.length}</strong></article>
+      <article><span>Total spent</span><strong>${formattedSpend(0)}</strong></article>
+      <article><span>Last 30 days</span><strong>${formattedSpend(30)}</strong></article>
+      <article><span>Last 12 months</span><strong>${formattedSpend(365)}</strong></article>
+      <article><span>Paid orders</span><strong>${Number(state.summary?.paidOrderCount ?? state.orders.filter(isPaidMoneyOrder).length)}</strong></article>
     </div>
   `
 }
@@ -109,15 +125,16 @@ function renderOrdersTable() {
       ${orders.map((order) => {
         const productNames = order.products.length
           ? order.products.map((product) => product.title).join(', ')
-          : order.productIds.join(', ') || 'Products unavailable'
+          : order.items.map((item) => item.title).filter(Boolean).join(', ') || order.productIds.join(', ') || 'Products unavailable'
         const creatorNames = order.products.map((product) => product.artistName).filter(Boolean).join(', ')
+          || order.items.map((item) => item.creatorName).filter(Boolean).join(', ')
         return `
           <div class="account-table-row" role="row">
             <span title="${escapeHtml(order.id)}">${escapeHtml(order.id.slice(0, 10) || 'Order')}</span>
             <span>${escapeHtml(formatDate(order.paidAt || order.createdAt))}</span>
             <span><strong>${escapeHtml(productNames)}</strong><small>${escapeHtml(creatorNames || 'Seller details on product pages')}</small></span>
-            <span>${money(order.amountTotalCents, order.currency)}</span>
-            <span>${escapeHtml(order.paymentStatus || order.status)}${order.livemode === false ? '<small>Stripe Test Mode</small>' : ''}</span>
+            <span>${escapeHtml(orderAmount(order))}</span>
+            <span>${escapeHtml(orderLifecycleLabel(order))}${order.livemode === false && order.stripeSessionId ? '<small>Stripe Test Mode</small>' : ''}</span>
             <span class="account-action-links">
               <a href="${ROUTES.orders}/${encodeURIComponent(order.id)}">View Order</a>
             </span>
@@ -133,20 +150,24 @@ function renderOrderDetail() {
   if (state.loading) return '<section class="account-panel"><div class="account-empty-inline">Loading order...</div></section>'
   if (state.error) return `<section class="account-panel account-empty"><h1>Order unavailable</h1><p>${escapeHtml(state.error)}</p><a class="button button-muted" href="${ROUTES.orders}">Back to Orders</a></section>`
   if (!order) return `<section class="account-panel account-empty"><h1>Order not found</h1><p>This order was not found for your account.</p><a class="button button-muted" href="${ROUTES.orders}">Back to Orders</a></section>`
-  const items = order.products.length ? order.products : order.productIds.map((productId) => ({ id: productId, title: productId }))
+  const items = order.items.length
+    ? order.items.map((item) => ({ ...item, ...(order.productById?.[item.productId] || {}) }))
+    : order.products.length
+      ? order.products
+      : order.productIds.map((productId) => ({ id: productId, productId, title: 'Product metadata unavailable' }))
   return `
     <section class="account-panel">
       <div class="account-heading">
         <div>
           <p class="eyebrow">Order Detail</p>
           <h1>${escapeHtml(order.id)}</h1>
-          <p>${escapeHtml(formatDate(order.paidAt || order.createdAt))} - ${escapeHtml(order.paymentStatus || order.status)} - ${money(order.amountTotalCents, order.currency)}</p>
+          <p>${escapeHtml(formatDate(order.paidAt || order.createdAt))} - ${escapeHtml(orderLifecycleLabel(order))} - ${escapeHtml(orderAmount(order))}</p>
           ${order.livemode === false ? '<span class="account-mode-badge">Stripe Test Mode</span>' : ''}
         </div>
         <a class="button button-muted" href="${ROUTES.orders}">Back to Orders</a>
       </div>
       <div class="account-summary-grid">
-        <article><span>Payment</span><strong>${escapeHtml(order.paymentStatus || order.status)}</strong></article>
+        <article><span>Payment</span><strong>${escapeHtml(orderLifecycleLabel(order))}</strong></article>
         <article><span>Refund</span><strong>${escapeHtml(order.refundStatus || 'None')}</strong></article>
         <article><span>Products</span><strong>${order.productIds.length || items.length}</strong></article>
         <article><span>Source</span><strong>${escapeHtml(order.paymentSource || 'Stripe checkout')}</strong></article>
@@ -154,7 +175,7 @@ function renderOrderDetail() {
       <div class="account-detail-grid">
         <article>
           <h2>Line Items</h2>
-          ${items.map((product) => `<p><strong>${escapeHtml(product.title || product.id)}</strong><span>${escapeHtml(product.artistName || product.artistDisplayName || '')}</span></p>`).join('') || '<p>No product lines were stored on this order.</p>'}
+          ${items.map((product) => `<p><strong>${escapeHtml(product.title || product.productId || product.id)}</strong><span>${escapeHtml(product.artistName || product.artistDisplayName || product.creatorName || '')}${Number.isFinite(Number(product.amountCents)) ? ` - ${escapeHtml(money(product.amountCents, product.currency || order.currency))}` : ''}</span></p>`).join('') || '<p>No product lines were stored on this order.</p>'}
         </article>
         <article>
           <h2>Entitlement / Library</h2>
@@ -250,6 +271,7 @@ async function loadOrders(user) {
   if (!user?.uid) {
     state.loading = false
     state.orders = []
+    state.summary = null
     render()
     return
   }
@@ -260,14 +282,21 @@ async function loadOrders(user) {
     if (orderId) {
       state.detail = await getUserOrder(user.uid, orderId)
       state.orders = []
+      state.summary = null
     } else {
-      state.orders = await listUserOrders(user.uid)
+      const [orders, summary] = await Promise.all([
+        listUserOrders(user.uid),
+        getUserCommerceSummary(user.uid)
+      ])
+      state.orders = orders
+      state.summary = summary
       state.detail = null
     }
   } catch (error) {
     console.error('[orders] load failed', error)
     state.error = 'Orders could not be loaded right now.'
     state.orders = []
+    state.summary = null
   }
   state.loading = false
   render()

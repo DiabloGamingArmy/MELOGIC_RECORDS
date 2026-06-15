@@ -4,6 +4,7 @@ const { logger } = require('firebase-functions')
 const { cleanString, requireAdminActionSecurity } = require('./adminAuth')
 const { buildAdminAuditLogEntry } = require('./auditLog')
 const { writeAccountEvent } = require('../account/accountEvents')
+const { rebuildCommerceSummary } = require('../account/commerceSummary')
 const { productSnapshot } = require('../payments/checkoutFulfillment')
 
 function db() {
@@ -160,9 +161,11 @@ const grantAdminProducts = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asyn
         acquisitionType: 'System Given',
         status: 'paid',
         paymentStatus: 'system_given',
+        orderState: 'system_given',
         refundStatus: '',
         amountTotalCents: 0,
         amountCents: 0,
+        amountSource: 'system_given',
         currency: grantedItems[0]?.currency || 'USD',
         livemode: false,
         paymentSource: 'admin_give_product',
@@ -228,6 +231,12 @@ const grantAdminProducts = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asyn
       })
     })
   }
+  await rebuildCommerceSummary(db(), uid).catch((error) => {
+    logger.error('[admin-give-product] commerce summary rebuild failed', {
+      uid,
+      message: error?.message || ''
+    })
+  })
 
   logger.info('[admin-give-product] grant completed', {
     actorUid: claims.uid,

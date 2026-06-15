@@ -72,19 +72,39 @@ function normalizeSavedProduct(docSnap) {
 function normalizeOrder(docSnap) {
   const data = docSnap.data() || {}
   const productIds = Array.isArray(data.productIds) ? data.productIds.map(String).filter(Boolean) : []
-  const items = Array.isArray(data.items) ? data.items : []
+  const amountValue = data.amountTotalCents ?? data.amountCents ?? data.totalCents
+  const amountNumber = Number(amountValue)
+  const items = (Array.isArray(data.items) ? data.items : []).map((item = {}) => ({
+    ...item,
+    productId: String(item.productId || item.id || ''),
+    title: String(item.title || item.productTitle || item.productSnapshot?.title || item.productId || 'Product metadata unavailable'),
+    creatorUid: String(item.creatorUid || item.artistId || item.productSnapshot?.creatorUid || ''),
+    creatorName: String(item.creatorName || item.artistName || item.productSnapshot?.creatorName || ''),
+    quantity: Math.max(1, Number(item.quantity || 1)),
+    amountCents: Number.isFinite(Number(item.amountCents ?? item.amountTotalCents ?? item.priceCents))
+      ? Math.max(0, Math.round(Number(item.amountCents ?? item.amountTotalCents ?? item.priceCents)))
+      : null,
+    currency: String(item.currency || data.currency || 'USD').toUpperCase()
+  }))
   return {
     id: docSnap.id,
-    uid: String(data.uid || data.buyerId || ''),
+    uid: String(data.uid || data.buyerUid || data.buyerId || ''),
     productIds,
     items,
     status: String(data.status || data.paymentStatus || 'unknown'),
     paymentStatus: String(data.paymentStatus || data.status || 'unknown'),
+    orderState: String(data.orderState || data.paymentStatus || data.status || 'unknown'),
+    checkoutStatus: String(data.checkoutStatus || ''),
     refundStatus: String(data.refundStatus || ''),
     stripeSessionId: String(data.stripeSessionId || ''),
     checkoutSessionId: String(data.checkoutSessionId || data.stripeSessionId || ''),
     paymentIntentId: String(data.paymentIntentId || ''),
-    amountTotalCents: Number(data.amountTotalCents || data.amountCents || data.totalCents || 0),
+    amountSubtotalCents: Number.isFinite(Number(data.amountSubtotalCents ?? data.amount_subtotal))
+      ? Math.max(0, Math.round(Number(data.amountSubtotalCents ?? data.amount_subtotal)))
+      : null,
+    amountTotalCents: Number.isFinite(amountNumber) ? Math.max(0, Math.round(amountNumber)) : null,
+    amountAvailable: Number.isFinite(amountNumber),
+    amountSource: String(data.amountSource || ''),
     currency: String(data.currency || 'usd').toUpperCase(),
     livemode: data.livemode === true,
     paymentSource: String(data.paymentSource || (data.stripeSessionId ? 'stripe_test' : '')),
@@ -171,10 +191,36 @@ export async function listUserOrders(uid = '', { limitCount = 0 } = {}) {
 
   const orders = await Promise.all([...map.values()].map(async (order) => {
     const products = await Promise.all(order.productIds.slice(0, 8).map(productPreview))
-    return { ...order, products: products.filter(Boolean) }
+    return {
+      ...order,
+      products: products.filter(Boolean),
+      productById: Object.fromEntries(products.filter(Boolean).map((product) => [product.id, product]))
+    }
   }))
 
   return sortAccountRowsByDate(orders)
+}
+
+export async function getUserCommerceSummary(uid = '') {
+  const userId = String(uid || '').trim()
+  if (!db || !userId) return null
+  const snapshot = await getDoc(doc(db, 'users', userId, 'commerceSummary', 'current')).catch(() => null)
+  if (!snapshot?.exists()) return null
+  const data = snapshot.data() || {}
+  const spendByCurrency = data.spendByCurrency && typeof data.spendByCurrency === 'object'
+    ? Object.fromEntries(Object.entries(data.spendByCurrency).map(([currency, amount]) => [
+        String(currency || '').toUpperCase(),
+        Math.max(0, Math.round(Number(amount || 0)))
+      ]).filter(([currency]) => Boolean(currency)))
+    : {}
+  return {
+    spendByCurrency,
+    paidOrderCount: Math.max(0, Number(data.paidOrderCount || 0)),
+    ownedProductCount: Math.max(0, Number(data.ownedProductCount || 0)),
+    lastOrderAt: data.lastOrderAt || null,
+    lastPurchaseAt: data.lastPurchaseAt || null,
+    updatedAt: data.updatedAt || null
+  }
 }
 
 export async function getUserOrder(uid = '', orderId = '') {
@@ -191,11 +237,13 @@ export async function getUserOrder(uid = '', orderId = '') {
   const order = normalizeOrder(sourceSnap)
   if (order.uid && order.uid !== userId) return null
   const products = await Promise.all(order.productIds.slice(0, 12).map(productPreview))
+  const availableProducts = products.filter(Boolean)
   const libraryRows = await listUserLibraryItems(userId)
   const libraryByProduct = new Map(libraryRows.map((row) => [row.productId, row]))
   return {
     ...order,
-    products: products.filter(Boolean),
+    products: availableProducts,
+    productById: Object.fromEntries(availableProducts.map((product) => [product.id, product])),
     libraryItems: order.productIds.map((productId) => libraryByProduct.get(productId)).filter(Boolean)
   }
 }
