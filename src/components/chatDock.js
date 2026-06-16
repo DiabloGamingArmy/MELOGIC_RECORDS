@@ -23,6 +23,7 @@ const MAX_DOCK_MESSAGES = 80
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 const RESONA_BACKGROUND_PATH = 'assets/profilePictures/aiSupport/resonaBackground.png'
 const DOCK_SCROLL_BOTTOM_THRESHOLD = 80
+const DOCK_BOTTOM_LOCK_SETTLE_MS = 1100
 const DOCK_SIZE_LIMITS = {
   minWidth: 320,
   maxWidth: 720,
@@ -273,6 +274,17 @@ function isResonaDockThread(thread = activeThread) {
   return /^resona_[A-Za-z0-9_-]+$/.test(String(dockState.activeThreadId || ''))
 }
 
+function filterMessagesAfterClear(thread = activeThread, rows = []) {
+  if (!isResonaDockThread(thread) || !thread?.clearedAt) return rows
+  const clearedAt = new Date(thread.clearedAt).getTime()
+  if (!clearedAt || Number.isNaN(clearedAt)) return rows
+  return rows.filter((message) => {
+    if (message.pendingWrites) return true
+    const created = new Date(message.createdAt || message.updatedAt || 0).getTime()
+    return created > clearedAt
+  })
+}
+
 function getThreadTitle() {
   if (!activeThread && isResonaDockThread()) return 'Resona'
   return activeThread?.title || dockState.title || 'Conversation'
@@ -503,7 +515,7 @@ function renderMessageList() {
     `
   }
 
-  const visibleMessages = messages
+  const visibleMessages = filterMessagesAfterClear(activeThread, messages)
     .filter((message) => !hiddenMessageIds.has(message.id))
     .slice(-MAX_DOCK_MESSAGES)
 
@@ -623,16 +635,22 @@ function isDockNearBottom(scroller = getDockScroller()) {
 const dockScrollController = {
   scroller: null,
   threadKey: '',
-  mode: 'bottom',
+  bottomLocked: true,
   lastScrollHeight: 0,
   lastScrollTop: 0,
   isProgrammaticScroll: false,
   rafId: 0,
   releaseRafId: 0,
   settleTimer: 0,
+  lockUntil: 0,
   resizeObserver: null,
+  mutationObserver: null,
   onScroll: null,
+  onWheel: null,
+  onTouchStart: null,
+  onTouchMove: null,
   onMediaSettled: null,
+  touchStartY: 0,
 
   attach(scroller, { threadKey = `${dockState.mode}:${dockState.activeThreadId}`, resetMode = false } = {}) {
     if (!scroller) {
@@ -644,16 +662,31 @@ const dockScrollController = {
     if (isNewScroller) this.detach()
     this.scroller = scroller
     this.threadKey = threadKey || ''
-    if (resetMode || isNewThread) this.mode = 'bottom'
+    if (resetMode || isNewThread) this.bottomLocked = true
     this.lastScrollHeight = scroller.scrollHeight
     this.lastScrollTop = scroller.scrollTop
     if (!isNewScroller) return
 
     this.onScroll = () => {
       if (this.isProgrammaticScroll || this.scroller !== scroller) return
-      this.mode = isDockNearBottom(scroller) ? 'bottom' : 'detached'
+      if (isDockNearBottom(scroller)) this.bottomLocked = true
+      else if (scroller.scrollTop < this.lastScrollTop) this.bottomLocked = false
       this.lastScrollTop = scroller.scrollTop
       this.lastScrollHeight = scroller.scrollHeight
+    }
+    this.onWheel = (event) => {
+      if (event.deltaY < 0 && this.scroller === scroller && !isDockNearBottom(scroller)) this.bottomLocked = false
+      if (event.deltaY > 0 && this.scroller === scroller && isDockNearBottom(scroller)) this.bottomLocked = true
+    }
+    this.onTouchStart = (event) => {
+      this.touchStartY = Number(event.touches?.[0]?.clientY || 0)
+    }
+    this.onTouchMove = (event) => {
+      if (this.scroller !== scroller) return
+      const nextY = Number(event.touches?.[0]?.clientY || 0)
+      if (nextY > this.touchStartY + 2 && !isDockNearBottom(scroller)) this.bottomLocked = false
+      if (nextY < this.touchStartY - 2 && isDockNearBottom(scroller)) this.bottomLocked = true
+      this.touchStartY = nextY
     }
     this.onMediaSettled = (event) => {
       const media = event.target
@@ -661,14 +694,27 @@ const dockScrollController = {
       this.stabilizeMedia(media)
     }
     scroller.addEventListener('scroll', this.onScroll, { passive: true })
+    scroller.addEventListener('wheel', this.onWheel, { passive: true })
+    scroller.addEventListener('touchstart', this.onTouchStart, { passive: true })
+    scroller.addEventListener('touchmove', this.onTouchMove, { passive: true })
     scroller.addEventListener('load', this.onMediaSettled, true)
     scroller.addEventListener('loadedmetadata', this.onMediaSettled, true)
     scroller.addEventListener('error', this.onMediaSettled, true)
     if ('ResizeObserver' in window) {
       this.resizeObserver = new ResizeObserver(() => {
-        if (this.mode === 'bottom') this.scheduleBottom({ force: true, reason: 'dock-resize' })
+        if (this.bottomLocked) this.forceBottomFor(DOCK_BOTTOM_LOCK_SETTLE_MS, 'dock-resize')
       })
       this.resizeObserver.observe(scroller)
+      const panel = root?.querySelector('.chat-dock-panel')
+      const composer = root?.querySelector('[data-chat-dock-form]')
+      if (panel) this.resizeObserver.observe(panel)
+      if (composer) this.resizeObserver.observe(composer)
+    }
+    if ('MutationObserver' in window) {
+      this.mutationObserver = new MutationObserver(() => {
+        if (this.bottomLocked) this.forceBottomFor(420, 'dock-mutation')
+      })
+      this.mutationObserver.observe(scroller, { childList: true, subtree: true, attributes: true })
     }
   },
 
@@ -677,7 +723,11 @@ const dockScrollController = {
     if (this.releaseRafId) cancelAnimationFrame(this.releaseRafId)
     if (this.settleTimer) window.clearTimeout(this.settleTimer)
     if (this.resizeObserver) this.resizeObserver.disconnect()
+    if (this.mutationObserver) this.mutationObserver.disconnect()
     if (this.scroller && this.onScroll) this.scroller.removeEventListener('scroll', this.onScroll)
+    if (this.scroller && this.onWheel) this.scroller.removeEventListener('wheel', this.onWheel)
+    if (this.scroller && this.onTouchStart) this.scroller.removeEventListener('touchstart', this.onTouchStart)
+    if (this.scroller && this.onTouchMove) this.scroller.removeEventListener('touchmove', this.onTouchMove)
     if (this.scroller && this.onMediaSettled) {
       this.scroller.removeEventListener('load', this.onMediaSettled, true)
       this.scroller.removeEventListener('loadedmetadata', this.onMediaSettled, true)
@@ -686,11 +736,16 @@ const dockScrollController = {
     this.scroller = null
     this.threadKey = ''
     this.isProgrammaticScroll = false
+    this.lockUntil = 0
     this.rafId = 0
     this.releaseRafId = 0
     this.settleTimer = 0
     this.resizeObserver = null
+    this.mutationObserver = null
     this.onScroll = null
+    this.onWheel = null
+    this.onTouchStart = null
+    this.onTouchMove = null
     this.onMediaSettled = null
   },
 
@@ -709,31 +764,39 @@ const dockScrollController = {
   },
 
   scheduleBottom({ force = false, reason = 'dock-bottom' } = {}) {
-    if (!this.scroller || (!force && this.mode !== 'bottom')) return
-    if (force) this.mode = 'bottom'
-    if (this.rafId) cancelAnimationFrame(this.rafId)
-    if (this.settleTimer) window.clearTimeout(this.settleTimer)
-    const apply = () => {
-      if (!this.scroller || (!force && this.mode !== 'bottom')) return
-      this.setScrollTop(Math.max(0, this.scroller.scrollHeight - this.scroller.clientHeight + 4))
-      this.mode = 'bottom'
-    }
-    apply()
-    this.rafId = requestAnimationFrame(() => {
+    this.forceBottomFor(force ? DOCK_BOTTOM_LOCK_SETTLE_MS : 180, reason, { force })
+  },
+
+  forceBottom(reason = 'dock-bottom') {
+    const scroller = this.scroller
+    if (!scroller) return
+    this.setScrollTop(Math.max(0, scroller.scrollHeight - scroller.clientHeight + 4))
+    this.bottomLocked = true
+    this.lastScrollHeight = scroller.scrollHeight
+  },
+
+  forceBottomFor(durationMs = DOCK_BOTTOM_LOCK_SETTLE_MS, reason = 'dock-bottom', { force = false } = {}) {
+    if (!this.scroller || (!force && !this.bottomLocked)) return
+    if (force) this.bottomLocked = true
+    this.lockUntil = Math.max(this.lockUntil || 0, Date.now() + Math.max(80, Number(durationMs || 0)))
+    if (this.rafId) return
+    const tick = () => {
       this.rafId = 0
-      apply()
-      requestAnimationFrame(apply)
-    })
-    this.settleTimer = window.setTimeout(() => {
-      this.settleTimer = 0
-      apply()
-    }, 120)
+      if (!this.scroller || (!force && !this.bottomLocked)) return
+      this.forceBottom(reason)
+      if (Date.now() < this.lockUntil) {
+        this.rafId = requestAnimationFrame(tick)
+        return
+      }
+      this.lockUntil = 0
+    }
+    tick()
   },
 
   snapshot() {
     const scroller = this.scroller || getDockScroller()
     return {
-      mode: this.mode,
+      bottomLocked: this.bottomLocked || isDockNearBottom(scroller),
       threadKey: `${dockState.mode}:${dockState.activeThreadId}`,
       scrollTop: scroller?.scrollTop || 0,
       scrollHeight: scroller?.scrollHeight || 0
@@ -743,12 +806,12 @@ const dockScrollController = {
   stabilizeAfterRender(snapshot = {}, { forceBottom = false, reason = 'dock-render' } = {}) {
     const scroller = this.scroller
     if (!scroller) return
-    if (forceBottom || snapshot.mode === 'bottom') {
-      this.mode = 'bottom'
-      this.scheduleBottom({ force: true, reason })
+    if (forceBottom || snapshot.bottomLocked) {
+      this.bottomLocked = true
+      this.forceBottomFor(DOCK_BOTTOM_LOCK_SETTLE_MS, reason, { force: true })
       return
     }
-    this.mode = 'detached'
+    this.bottomLocked = false
     this.setScrollTop(Math.min(Number(snapshot.scrollTop || 0), scroller.scrollHeight))
   },
 
@@ -756,8 +819,8 @@ const dockScrollController = {
     const scroller = this.scroller
     if (!scroller) return
     const heightDelta = scroller.scrollHeight - this.lastScrollHeight
-    if (this.mode === 'bottom') {
-      this.scheduleBottom({ force: true, reason: 'dock-media-settled' })
+    if (this.bottomLocked) {
+      this.forceBottomFor(600, 'dock-media-settled', { force: true })
     } else if (heightDelta && media.getBoundingClientRect().top < scroller.getBoundingClientRect().top) {
       this.setScrollTop(scroller.scrollTop + heightDelta)
     }
@@ -934,7 +997,7 @@ function syncSupportSubscriptions() {
     const hadMessages = supportMessages.length > 0
     const previousLastId = supportMessages.at(-1)?.id || ''
     const nextLastId = nextMessages.at(-1)?.id || ''
-    const shouldAutoScroll = !hadMessages || (nextLastId && nextLastId !== previousLastId && dockScrollController.mode === 'bottom')
+    const shouldAutoScroll = !hadMessages || (nextLastId && nextLastId !== previousLastId && dockScrollController.bottomLocked)
     supportMessages = nextMessages
     if (shouldAutoScroll) forceDockBottom = true
     loadingSupportMessages = false
@@ -991,7 +1054,7 @@ function syncThreadSubscriptions() {
     const hadMessages = messages.length > 0
     const previousLastId = messages.at(-1)?.id || ''
     const nextLastId = nextMessages.at(-1)?.id || ''
-    const shouldAutoScroll = !hadMessages || (nextLastId && nextLastId !== previousLastId && dockScrollController.mode === 'bottom')
+    const shouldAutoScroll = !hadMessages || (nextLastId && nextLastId !== previousLastId && dockScrollController.bottomLocked)
     messages = nextMessages
     if (shouldAutoScroll) forceDockBottom = true
     loadingMessages = false
@@ -1090,7 +1153,8 @@ async function handleSubmit(form) {
         body,
         type: 'text',
         attachments: [],
-        clientMessageId: createClientMessageId()
+        clientMessageId: createClientMessageId(),
+        safePageContext
       })
       await markThreadRead({ threadId, uid }).catch(() => {})
     }
@@ -1233,7 +1297,7 @@ function finishDockResize() {
   document.body.classList.remove('chat-dock-is-resizing')
   window.removeEventListener('pointermove', handleDockResizeMove)
   persistState()
-  dockScrollController.scheduleBottom({ force: dockScrollController.mode === 'bottom', reason: 'dock-resize-finish' })
+  dockScrollController.scheduleBottom({ force: dockScrollController.bottomLocked, reason: 'dock-resize-finish' })
 }
 
 function handleShellUpdate(nextShellState = {}) {

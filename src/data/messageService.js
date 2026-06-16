@@ -299,6 +299,7 @@ export async function sendMessage(threadId, payload = {}) {
     ? normalizeReplyTo(payload.replyTo)
     : null
   const clientMessageId = String(payload.clientMessageId || '').trim().slice(0, 80)
+  const safePageContext = payload.safePageContext && typeof payload.safePageContext === 'object' ? payload.safePageContext : null
   const callable = httpsCallable(functions, 'sendInboxMessage')
   const response = await callable({
     threadId,
@@ -307,7 +308,8 @@ export async function sendMessage(threadId, payload = {}) {
     type: normalizedType,
     attachments,
     replyTo,
-    clientMessageId
+    clientMessageId,
+    ...(safePageContext ? { safePageContext } : {})
   })
   return response.data
 }

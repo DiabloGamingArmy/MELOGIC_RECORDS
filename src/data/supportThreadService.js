@@ -117,6 +117,15 @@ export function sendSupportMessage({ threadId = '', body = '', safePageContext =
       scroll: safePageContext.scroll && typeof safePageContext.scroll === 'object' ? safePageContext.scroll : {},
       visibleGuideTargets: Array.isArray(safePageContext.visibleGuideTargets) ? safePageContext.visibleGuideTargets.slice(0, 120) : [],
       landmarks: Array.isArray(safePageContext.landmarks) ? safePageContext.landmarks.slice(0, 24) : [],
+      pageSnapshot: safePageContext.pageSnapshot && typeof safePageContext.pageSnapshot === 'object' ? {
+        type: String(safePageContext.pageSnapshot.type || '').trim().slice(0, 80),
+        captureKind: String(safePageContext.pageSnapshot.captureKind || '').trim().slice(0, 80),
+        screenshotAvailable: safePageContext.pageSnapshot.screenshotAvailable === true,
+        captureTarget: String(safePageContext.pageSnapshot.captureTarget || '').trim().slice(0, 80),
+        excluded: Array.isArray(safePageContext.pageSnapshot.excluded) ? safePageContext.pageSnapshot.excluded.slice(0, 12).map((item) => String(item || '').slice(0, 80)) : [],
+        viewport: safePageContext.pageSnapshot.viewport && typeof safePageContext.pageSnapshot.viewport === 'object' ? safePageContext.pageSnapshot.viewport : {},
+        regions: Array.isArray(safePageContext.pageSnapshot.regions) ? safePageContext.pageSnapshot.regions.slice(0, 50) : []
+      } : null,
       productId: String(safePageContext.productId || '').trim().slice(0, 180),
       productTitle: String(safePageContext.productTitle || '').trim().slice(0, 200)
     } : {}

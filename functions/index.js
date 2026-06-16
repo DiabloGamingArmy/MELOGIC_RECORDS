@@ -100,6 +100,7 @@ const {
 const {
   createOrGetResonaThread,
   refreshResonaThread,
+  clearResonaChatHistory,
   setThreadResonaAgent,
   setResonaMessageFeedback,
   reportResonaMessage,
@@ -225,6 +226,7 @@ exports.listSupportMessages = listSupportMessages
 exports.handleSupportAiReply = handleSupportAiReply
 exports.createOrGetResonaThread = createOrGetResonaThread
 exports.refreshResonaThread = refreshResonaThread
+exports.clearResonaChatHistory = clearResonaChatHistory
 exports.setThreadResonaAgent = setThreadResonaAgent
 exports.setResonaMessageFeedback = setResonaMessageFeedback
 exports.reportResonaMessage = reportResonaMessage
