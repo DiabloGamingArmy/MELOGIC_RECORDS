@@ -59,6 +59,7 @@ function normalizeSession(sessionId = '', raw = {}) {
 function normalizeOverlay(overlayId = '', raw = {}) {
   return {
     id: String(raw.id || overlayId || '').trim(),
+    actionId: String(raw.actionId || overlayId || '').trim(),
     type: raw.type === 'box' ? 'box' : 'box',
     source: raw.source === 'agent' ? 'agent' : 'resona',
     targetGuideId: String(raw.targetGuideId || raw.guideId || '').trim(),
@@ -70,6 +71,8 @@ function normalizeOverlay(overlayId = '', raw = {}) {
     height: Number(raw.height || 0),
     label: String(raw.label || '').trim(),
     durationMs: Number(raw.durationMs || 5000),
+    sourceMessageId: String(raw.sourceMessageId || '').trim(),
+    sourceUserMessageId: String(raw.sourceUserMessageId || '').trim(),
     createdAt: toIsoDate(raw.createdAt),
     expiresAt: toIsoDate(raw.expiresAt)
   }

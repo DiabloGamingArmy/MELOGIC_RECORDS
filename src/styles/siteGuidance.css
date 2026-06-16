@@ -166,7 +166,7 @@
   border: 2px solid rgba(111, 240, 255, 0.95);
   border-radius: 14px;
   box-shadow: 0 0 0 9999px rgba(5, 12, 24, 0.08), 0 0 28px rgba(111, 240, 255, 0.35);
-  animation: site-guidance-box-draw-fade 5s ease forwards;
+  animation: site-guidance-box-draw-fade var(--site-guidance-overlay-duration, 5s) ease forwards;
 }
 
 .site-guidance-box span {

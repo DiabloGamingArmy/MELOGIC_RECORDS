@@ -688,7 +688,10 @@ const handleResonaInboxReply = onDocumentCreated({
       await createGuidanceOverlayFromIntent({
         sessionId: safePageContext.sessionId,
         intent: aiResult.highlightIntent,
-        landmarks: safePageContext.visibleGuideTargets || safePageContext.landmarks || []
+        landmarks: safePageContext.visibleGuideTargets || safePageContext.landmarks || [],
+        threadId,
+        sourceUserMessageId: messageId,
+        actionIndex: 0
       }).catch((error) => {
         console.warn('[resona-guidance] highlight failed', {
           threadId,
