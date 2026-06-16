@@ -182,10 +182,98 @@ function collectVisibleGuideTargets() {
     .slice(0, 120)
 }
 
+function isSensitiveCaptureElement(element) {
+  if (!element) return true
+  return Boolean(element.closest([
+    '[data-private]',
+    '[data-no-guidance]',
+    '[data-payment-field]',
+    '[data-secret]',
+    '[data-token]',
+    '[data-chat-dock-root]',
+    '[data-site-guidance-root]',
+    'input[type="password"]',
+    'input[type="hidden"]',
+    'iframe[src*="stripe"]'
+  ].join(',')))
+}
+
+function safeSnapshotText(element) {
+  if (!element || isSensitiveCaptureElement(element)) return ''
+  const tag = element.tagName.toLowerCase()
+  const hasExplicitGuideId = element.hasAttribute('data-guide-id')
+  if (!hasExplicitGuideId && ['section', 'article', 'nav', 'aside', 'main'].includes(tag)) return ''
+  return safeGuideText(element)
+}
+
+function safeSnapshotLabel(element) {
+  if (!element || isSensitiveCaptureElement(element)) return ''
+  const metadataLabel = element.getAttribute('data-guide-label')
+    || element.getAttribute('aria-label')
+    || element.getAttribute('title')
+    || ''
+  if (metadataLabel) return String(metadataLabel).replace(/\s+/g, ' ').trim().slice(0, 120)
+  const tag = element.tagName.toLowerCase()
+  if (['section', 'article', 'nav', 'aside', 'main'].includes(tag)) return ''
+  return safeElementLabel(element)
+}
+
+function collectVisiblePageSnapshot() {
+  const appRoot = document.querySelector('#app, main, [data-app-root]') || document.body
+  const viewport = {
+    width: window.innerWidth || 0,
+    height: window.innerHeight || 0
+  }
+  const selectors = [
+    'main h1',
+    'main h2',
+    'main h3',
+    'main [data-guide-id]',
+    'main nav',
+    'main aside',
+    'main section',
+    'main article',
+    'main button',
+    'main a',
+    '[data-page-title]'
+  ].join(',')
+  const regions = Array.from(appRoot.querySelectorAll(selectors))
+    .filter((element) => isVisibleGuideElement(element))
+    .filter((element) => !isSensitiveCaptureElement(element))
+    .map((element, index) => {
+      const rect = element.getBoundingClientRect()
+      return {
+        id: element.getAttribute('data-guide-id') || `page-region-${index + 1}`,
+        label: safeSnapshotLabel(element),
+        role: element.getAttribute('data-guide-role') || element.getAttribute('role') || element.tagName.toLowerCase(),
+        text: safeSnapshotText(element),
+        rect: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        }
+      }
+    })
+    .filter((entry) => entry.label || entry.text || entry.id)
+    .slice(0, 80)
+  return {
+    type: 'safe_dom_page_snapshot',
+    captureKind: 'structured_layout',
+    screenshotAvailable: false,
+    screenshotTodo: 'Add vetted DOM-to-image capture with masking before sending bitmap page snapshots.',
+    captureTarget: appRoot.id ? `#${appRoot.id}` : appRoot.tagName.toLowerCase(),
+    excluded: ['chat dock', 'site guidance controls', 'password inputs', 'hidden fields', 'payment/secret/token fields', 'Stripe iframes'],
+    viewport,
+    regions
+  }
+}
+
 function collectPageContext() {
   const heading = document.querySelector('main h1, main h2, [data-page-title]')
   const activeModal = document.querySelector('[role="dialog"][aria-modal="true"], .modal, .admin-modal-backdrop')
   const visibleGuideTargets = collectVisibleGuideTargets()
+  const pageSnapshot = collectVisiblePageSnapshot()
   return {
     shareMode: 'site_only',
     route: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
@@ -205,7 +293,8 @@ function collectPageContext() {
     },
     timestamp: new Date().toISOString(),
     visibleGuideTargets,
-    landmarks: visibleGuideTargets
+    landmarks: visibleGuideTargets,
+    pageSnapshot
   }
 }
 

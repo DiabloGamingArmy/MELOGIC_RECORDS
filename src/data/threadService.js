@@ -57,6 +57,8 @@ function normalizeThread(threadId, raw = {}) {
     createdBy: raw.createdBy || '',
     createdAt: toIsoDate(raw.createdAt),
     updatedAt: toIsoDate(raw.updatedAt),
+    clearedAt: toIsoDate(raw.clearedAt),
+    clearedBy: String(raw.clearedBy || '').trim(),
     title: raw.title || '',
     imagePath: raw.imagePath || '',
     imageURL: raw.imageURL || '',
@@ -353,6 +355,15 @@ export async function createOrGetResonaThread() {
 
 export async function refreshResonaThread({ threadId = '' } = {}) {
   const callable = httpsCallable(functions, 'refreshResonaThread')
+  const result = await callable({ threadId: String(threadId || '').trim() })
+  return {
+    ok: result?.data?.ok === true,
+    threadId: result?.data?.threadId || threadId
+  }
+}
+
+export async function clearResonaChatHistory({ threadId = '' } = {}) {
+  const callable = httpsCallable(functions, 'clearResonaChatHistory')
   const result = await callable({ threadId: String(threadId || '').trim() })
   return {
     ok: result?.data?.ok === true,

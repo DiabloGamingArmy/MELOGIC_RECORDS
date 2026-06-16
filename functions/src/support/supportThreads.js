@@ -238,6 +238,32 @@ function sanitizeSafeContext(raw = {}) {
     width: Math.max(0, Math.min(10000, Math.round(Number(item?.width || item?.rect?.width || 0) || 0))),
     height: Math.max(0, Math.min(10000, Math.round(Number(item?.height || item?.rect?.height || 0) || 0)))
   })).filter((item) => item.guideId || item.label)
+  const pageSnapshotSource = source.pageSnapshot && typeof source.pageSnapshot === 'object' && !Array.isArray(source.pageSnapshot)
+    ? source.pageSnapshot
+    : null
+  const pageSnapshot = pageSnapshotSource ? {
+    type: cleanString(pageSnapshotSource.type || 'safe_dom_page_snapshot', 80),
+    captureKind: cleanString(pageSnapshotSource.captureKind || 'structured_layout', 80),
+    screenshotAvailable: pageSnapshotSource.screenshotAvailable === true,
+    captureTarget: cleanString(pageSnapshotSource.captureTarget || '', 80),
+    excluded: Array.isArray(pageSnapshotSource.excluded) ? pageSnapshotSource.excluded.map((item) => cleanString(item, 80)).filter(Boolean).slice(0, 12) : [],
+    viewport: pageSnapshotSource.viewport && typeof pageSnapshotSource.viewport === 'object' ? {
+      width: Math.max(0, Math.min(10000, Math.round(Number(pageSnapshotSource.viewport.width || 0) || 0))),
+      height: Math.max(0, Math.min(10000, Math.round(Number(pageSnapshotSource.viewport.height || 0) || 0)))
+    } : null,
+    regions: Array.isArray(pageSnapshotSource.regions) ? pageSnapshotSource.regions.map((item) => ({
+      id: cleanString(item?.id || '', 120),
+      label: cleanString(item?.label || '', 120),
+      role: cleanString(item?.role || '', 60),
+      text: cleanString(item?.text || '', 180),
+      rect: item?.rect && typeof item.rect === 'object' ? {
+        x: Math.max(0, Math.min(10000, Math.round(Number(item.rect.x || 0) || 0))),
+        y: Math.max(0, Math.min(10000, Math.round(Number(item.rect.y || 0) || 0))),
+        width: Math.max(0, Math.min(10000, Math.round(Number(item.rect.width || 0) || 0))),
+        height: Math.max(0, Math.min(10000, Math.round(Number(item.rect.height || 0) || 0)))
+      } : null
+    })).filter((item) => item.id || item.label || item.text).slice(0, 50) : []
+  } : null
   return {
     sessionId: cleanString(source.sessionId || '', 180),
     guidanceSessionActive: source.guidanceSessionActive === true,
@@ -257,6 +283,7 @@ function sanitizeSafeContext(raw = {}) {
     },
     visibleGuideTargets,
     landmarks: visibleGuideTargets,
+    pageSnapshot,
     productId: cleanString(source.productId || '', 180),
     productTitle: cleanString(source.productTitle || '', 200)
   }
@@ -571,7 +598,13 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
     threadId,
     userUid: thread.requesterUid || userMessage.senderUid || ''
   })
-  const safePageContext = sanitizeSafeContext(guidanceContext || inlineSafePageContext)
+  const safePageContext = sanitizeSafeContext({
+    ...(guidanceContext || {}),
+    ...(inlineSafePageContext || {}),
+    visibleGuideTargets: inlineSafePageContext.visibleGuideTargets?.length ? inlineSafePageContext.visibleGuideTargets : (guidanceContext?.visibleGuideTargets || guidanceContext?.landmarks || []),
+    landmarks: inlineSafePageContext.landmarks?.length ? inlineSafePageContext.landmarks : (inlineSafePageContext.visibleGuideTargets || guidanceContext?.landmarks || guidanceContext?.visibleGuideTargets || []),
+    pageSnapshot: inlineSafePageContext.pageSnapshot || guidanceContext?.pageSnapshot || null
+  })
 
   logSupportAi(threadId, 'eligible', {
     status: cleanString(thread.status || '', 40),

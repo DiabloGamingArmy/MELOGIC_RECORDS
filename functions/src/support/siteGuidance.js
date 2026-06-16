@@ -70,6 +70,32 @@ function sanitizePageContext(raw = {}) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const viewport = source.viewport && typeof source.viewport === 'object' ? source.viewport : {}
   const scroll = source.scroll && typeof source.scroll === 'object' ? source.scroll : {}
+  const pageSnapshotSource = source.pageSnapshot && typeof source.pageSnapshot === 'object' && !Array.isArray(source.pageSnapshot)
+    ? source.pageSnapshot
+    : null
+  const pageSnapshot = pageSnapshotSource ? {
+    type: cleanString(pageSnapshotSource.type || 'safe_dom_page_snapshot', 80),
+    captureKind: cleanString(pageSnapshotSource.captureKind || 'structured_layout', 80),
+    screenshotAvailable: pageSnapshotSource.screenshotAvailable === true,
+    captureTarget: cleanString(pageSnapshotSource.captureTarget || '', 80),
+    excluded: Array.isArray(pageSnapshotSource.excluded) ? pageSnapshotSource.excluded.map((item) => cleanString(item, 80)).filter(Boolean).slice(0, 12) : [],
+    viewport: pageSnapshotSource.viewport && typeof pageSnapshotSource.viewport === 'object' ? {
+      width: sanitizeNumber(pageSnapshotSource.viewport.width, 0, 10000),
+      height: sanitizeNumber(pageSnapshotSource.viewport.height, 0, 10000)
+    } : null,
+    regions: Array.isArray(pageSnapshotSource.regions) ? pageSnapshotSource.regions.map((item) => ({
+      id: cleanString(item?.id || '', 120),
+      label: cleanString(item?.label || '', 120),
+      role: cleanString(item?.role || '', 60),
+      text: cleanString(item?.text || '', 180),
+      rect: item?.rect && typeof item.rect === 'object' ? {
+        x: sanitizeNumber(item.rect.x, 0, 10000),
+        y: sanitizeNumber(item.rect.y, 0, 10000),
+        width: sanitizeNumber(item.rect.width, 0, 10000),
+        height: sanitizeNumber(item.rect.height, 0, 10000)
+      } : null
+    })).filter((item) => item.id || item.label || item.text).slice(0, 50) : []
+  } : null
   return {
     shareMode: source.shareMode === 'site_only' ? 'site_only' : 'site_only',
     route: cleanString(source.route || source.currentRoute || '', 240),
@@ -88,7 +114,8 @@ function sanitizePageContext(raw = {}) {
       y: sanitizeNumber(scroll.y, 0, 100000)
     },
     visibleGuideTargets: sanitizeLandmarks(source.visibleGuideTargets || source.landmarks),
-    landmarks: sanitizeLandmarks(source.landmarks || source.visibleGuideTargets)
+    landmarks: sanitizeLandmarks(source.landmarks || source.visibleGuideTargets),
+    pageSnapshot
   }
 }
 
@@ -112,6 +139,7 @@ function serializeSession(docSnap) {
     scroll: data.scroll || { x: 0, y: 0 },
     visibleGuideTargets: Array.isArray(data.visibleGuideTargets) ? data.visibleGuideTargets : (Array.isArray(data.landmarks) ? data.landmarks : []),
     landmarks: Array.isArray(data.landmarks) ? data.landmarks : (Array.isArray(data.visibleGuideTargets) ? data.visibleGuideTargets : []),
+    pageSnapshot: data.pageSnapshot && typeof data.pageSnapshot === 'object' ? data.pageSnapshot : null,
     createdAt: serializeTimestamp(data.createdAt),
     updatedAt: serializeTimestamp(data.updatedAt),
     stoppedAt: serializeTimestamp(data.stoppedAt)
@@ -387,7 +415,8 @@ async function loadActiveGuidanceContext({ threadId = '', userUid = '' } = {}) {
     viewport: session.viewport,
     scroll: session.scroll,
     visibleGuideTargets: session.visibleGuideTargets,
-    landmarks: session.landmarks
+    landmarks: session.landmarks,
+    pageSnapshot: session.pageSnapshot
   }
 }
 

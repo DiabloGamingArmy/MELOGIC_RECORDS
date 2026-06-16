@@ -50,6 +50,7 @@ import {
   subscribeToTypingState,
   setThreadPinnedForUser,
   setThreadResonaAgent,
+  clearResonaChatHistory,
   setResonaMessageFeedback,
   updateThreadDetails
 } from './data/inboxService'
@@ -892,6 +893,10 @@ function describeAttachmentType(fileOrAttachment = {}) {
 
 function summarizeThreadPreview(thread) {
   if (!thread) return 'No messages yet.'
+  if (isResonaThread(thread) && thread.clearedAt) {
+    const visibleCached = getMessagesAfterThreadClear(thread, appState.messagesByThreadId[thread.id] || [])
+    if (!visibleCached.length) return 'Ask Resona anything'
+  }
   if (isResonaThread(thread) && !thread.lastMessageText && !thread.lastMessageAt) {
     return 'Ask me anything'
   }
@@ -906,7 +911,7 @@ function summarizeThreadPreview(thread) {
     return '1 attachment'
   }
 
-  const cached = appState.messagesByThreadId[thread.id] || []
+  const cached = getMessagesAfterThreadClear(thread, appState.messagesByThreadId[thread.id] || [])
   const latest = cached[cached.length - 1]
   if (latest) {
     if (latest.deleted) return 'Message removed'
@@ -919,6 +924,17 @@ function summarizeThreadPreview(thread) {
 
   if (thread.lastMessageAt || thread.updatedAt) return 'Sent a message'
   return 'No messages yet.'
+}
+
+function getMessagesAfterThreadClear(thread = {}, messages = []) {
+  if (!isResonaThread(thread) || !thread.clearedAt) return messages
+  const clearedAt = new Date(thread.clearedAt).getTime()
+  if (!clearedAt || Number.isNaN(clearedAt)) return messages
+  return messages.filter((message) => {
+    if (message.optimistic || message.pendingWrites) return true
+    const created = new Date(message.createdAt || message.updatedAt || 0).getTime()
+    return created > clearedAt
+  })
 }
 
 function truncateThreadPreview(value, max = 20) {
@@ -2233,7 +2249,7 @@ function getOutgoingStatusLabel(thread, message) {
 
 function getRenderableMessages(thread) {
   const hiddenIds = new Set(appState.hiddenMessageIdsByThreadId[thread.id] || [])
-  const confirmedMessages = appState.messagesByThreadId[thread.id] || []
+  const confirmedMessages = getMessagesAfterThreadClear(thread, appState.messagesByThreadId[thread.id] || [])
   const optimisticMessages = appState.optimisticMessagesByThreadId[thread.id] || []
   const optimisticByClientId = new Map(
     optimisticMessages
@@ -2744,8 +2760,11 @@ function getThreadActionMenuMarkup() {
       </button>`
     : ''
   const resetOrDeleteAction = isResona
-    ? `<button type="button" class="is-danger" data-thread-action="refresh-resona" data-thread-action-id="${thread.id}">
+    ? `<button type="button" data-thread-action="refresh-resona" data-thread-action-id="${thread.id}">
         ${iconSvg('refresh')}<span>Refresh chat</span>
+      </button>
+      <button type="button" class="is-danger" data-thread-action="clear-resona-history" data-thread-action-id="${thread.id}">
+        ${iconSvg('trash')}<span>Delete chat history</span>
       </button>`
     : `<button type="button" class="is-danger" data-thread-action="delete" data-thread-action-id="${thread.id}">
         ${iconSvg('trash')}<span>Delete chat</span>
@@ -2965,6 +2984,12 @@ function getThreadConfirmModalMarkup() {
       confirm: 'Delete chat',
       danger: true
     },
+    'clear-resona-history': {
+      title: 'Delete Resona chat history?',
+      body: 'This clears your Resona conversation history from your view. This cannot be undone.',
+      confirm: 'Delete history',
+      danger: true
+    },
     'block-contact': {
       title: 'Block contact?',
       body: 'You will not receive direct messages from this user. You can still view previous messages.',
@@ -3101,6 +3126,26 @@ async function handleThreadConfirmAction() {
           startMessageSubscription(appState.selectedThreadId)
         }
       }
+    }
+    if (modal.type === 'clear-resona-history') {
+      await clearResonaChatHistory({ threadId: modal.threadId })
+      const clearedAt = new Date().toISOString()
+      appState.threads = appState.threads.map((thread) => (thread.id === modal.threadId
+        ? {
+            ...thread,
+            clearedAt,
+            clearedBy: appState.user.uid,
+            lastMessageText: '',
+            lastMessagePreview: 'Ask Resona anything.',
+            status: 'ai_active',
+            mode: 'general',
+            assignedAgentUid: null
+          }
+        : thread))
+      appState.messagesByThreadId[modal.threadId] = getMessagesAfterThreadClear(
+        appState.threads.find((thread) => thread.id === modal.threadId) || { id: modal.threadId, type: 'agent', agentId: RESONA_AGENT_ID, clearedAt },
+        appState.messagesByThreadId[modal.threadId] || []
+      )
     }
     if (modal.type === 'block-contact' || modal.type === 'unblock-contact') {
       const thread = appState.threads.find((entry) => entry.id === modal.threadId)
@@ -5070,7 +5115,7 @@ function setupFloatingEventDelegates() {
         renderFloatingUi()
         return
       }
-      if (action === 'pin' || action === 'unpin' || action === 'delete' || action === 'block-contact' || action === 'unblock-contact') {
+      if (action === 'pin' || action === 'unpin' || action === 'delete' || action === 'clear-resona-history' || action === 'block-contact' || action === 'unblock-contact') {
         openThreadConfirmModal(action, threadId)
       }
       return
@@ -6599,6 +6644,7 @@ async function refreshSiteGuidanceContextForOutgoingMessage() {
   }
   window.dispatchEvent(new CustomEvent(SITE_GUIDANCE_REFRESH_EVENT, { detail }))
   if (detail.promises.length) await Promise.allSettled(detail.promises)
+  return detail.contexts[0] || null
 }
 
 async function handleMessageSubmit(form) {
@@ -6660,7 +6706,7 @@ async function handleMessageSubmit(form) {
 
   let sendFailed = false
   try {
-    await refreshSiteGuidanceContextForOutgoingMessage()
+    const safePageContext = await refreshSiteGuidanceContextForOutgoingMessage()
     debugInboxSend('send start', {
       activeThreadId: thread.id,
       activeThreadType: thread.type || '',
@@ -6685,7 +6731,8 @@ async function handleMessageSubmit(form) {
       type: 'text',
       attachments,
       replyTo,
-      clientMessageId
+      clientMessageId,
+      ...(safePageContext ? { safePageContext } : {})
     })
     appState.errorMessage = ''
     clearTypingForThread(thread.id)

@@ -83,6 +83,8 @@ function serializeThread(docSnap) {
     lastMessageAt: serializeDate(data.lastMessageAt),
     updatedAt: serializeDate(data.updatedAt),
     createdAt: serializeDate(data.createdAt),
+    clearedAt: serializeDate(data.clearedAt),
+    clearedBy: data.clearedBy || '',
     aiEscalationReason: data.aiEscalationReason || '',
     aiSuggestedCategory: data.aiSuggestedCategory || '',
     agentParticipants: data.agentParticipants || {}
@@ -185,9 +187,19 @@ async function loadResonaInstructions() {
   }
 }
 
-async function loadRecentMessages(threadRef) {
-  const snapshot = await threadRef.collection('messages').orderBy('createdAt', 'desc').limit(12).get()
-  return snapshot.docs.map(serializeMessage).reverse()
+async function loadRecentMessages(threadRef, clearedAt = null) {
+  let query = threadRef.collection('messages').orderBy('createdAt', 'desc').limit(24)
+  const snapshot = await query.get()
+  const clearedMillis = clearedAt?.toMillis?.() || (clearedAt ? new Date(clearedAt).getTime() : 0)
+  return snapshot.docs
+    .map(serializeMessage)
+    .filter((message) => {
+      if (!clearedMillis) return true
+      const created = message.createdAt ? new Date(message.createdAt).getTime() : 0
+      return created > clearedMillis
+    })
+    .slice(0, 12)
+    .reverse()
 }
 
 function shouldInvokeResona(thread = {}, message = {}) {
@@ -466,6 +478,37 @@ const refreshResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
   return { ok: true, threadId }
 })
 
+const clearResonaChatHistory = onCall(CALLABLE_OPTIONS, async (request) => {
+  const uid = assertSignedIn(request)
+  const threadId = cleanBody(request.data?.threadId || resonaThreadIdFor(uid), 180)
+  if (threadId !== resonaThreadIdFor(uid)) throw new HttpsError('permission-denied', 'You can only clear your own Resona history.')
+  const threadRef = db.collection('threads').doc(threadId)
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(threadRef)
+    if (!snap.exists) throw new HttpsError('not-found', 'Resona thread not found.')
+    const thread = snap.data() || {}
+    if (thread.type !== 'agent' || thread.agentId !== RESONA_AGENT_ID) throw new HttpsError('failed-precondition', 'Only Resona history can be cleared here.')
+    if (!getThreadParticipantUids(thread).includes(uid)) throw new HttpsError('permission-denied', 'You do not have access to this Resona thread.')
+    transaction.set(threadRef, {
+      clearedAt: FieldValue.serverTimestamp(),
+      clearedBy: uid,
+      mode: 'general',
+      status: 'ai_active',
+      assignedAgentUid: null,
+      aiEscalationReason: '',
+      aiSuggestedCategory: '',
+      lastMessageText: '',
+      lastMessagePreview: 'Ask Resona anything.',
+      lastMessageSenderId: '',
+      lastMessageType: 'text',
+      lastMessageAttachmentCount: 0,
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true })
+  })
+  await setResonaTyping(threadRef, false)
+  return { ok: true, threadId }
+})
+
 const setThreadResonaAgent = onCall(CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
   const threadId = assertString(request.data?.threadId || '')
@@ -641,7 +684,7 @@ const handleResonaInboxReply = onDocumentCreated({
   await setResonaTyping(threadRef, true)
   try {
     const [recentMessages, knowledgeSnippets, resonaInstructions, requester] = await Promise.all([
-      loadRecentMessages(threadRef),
+      loadRecentMessages(threadRef, lock.thread.clearedAt),
       loadSupportKnowledgeSnippets(),
       loadResonaInstructions(),
       loadProfileSummary(lock.thread.requesterUid || message.senderId || message.senderUid || '')
@@ -650,7 +693,14 @@ const handleResonaInboxReply = onDocumentCreated({
       threadId,
       userUid: lock.thread.requesterUid || message.senderId || message.senderUid || ''
     })
-    const safePageContext = guidanceContext || message.metadata?.safePageContext || {}
+    const inlinePageContext = message.metadata?.safePageContext || {}
+    const safePageContext = {
+      ...(guidanceContext || {}),
+      ...(inlinePageContext || {}),
+      visibleGuideTargets: inlinePageContext.visibleGuideTargets || guidanceContext?.visibleGuideTargets || guidanceContext?.landmarks || [],
+      landmarks: inlinePageContext.landmarks || inlinePageContext.visibleGuideTargets || guidanceContext?.landmarks || guidanceContext?.visibleGuideTargets || [],
+      pageSnapshot: inlinePageContext.pageSnapshot || guidanceContext?.pageSnapshot || null
+    }
     const explicitEscalation = detectEscalationNeed(message.body || '')
     const aiResult = explicitEscalation.shouldEscalate
       ? {
@@ -859,6 +909,7 @@ module.exports = {
   RESONA_AGENT_ID,
   createOrGetResonaThread,
   refreshResonaThread,
+  clearResonaChatHistory,
   setThreadResonaAgent,
   setResonaMessageFeedback,
   reportResonaMessage,

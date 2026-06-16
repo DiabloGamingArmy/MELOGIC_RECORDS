@@ -6,6 +6,10 @@ const db = getFirestore()
 const MAX_BODY_LENGTH = 1200
 const MAX_ATTACHMENTS = 10
 
+function cleanString(value = '', max = 200) {
+  return assertString(value).replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
 function sanitizeAttachment(raw = {}) {
   const storagePath = assertString(raw.storagePath)
   if (!storagePath.startsWith('threads/') || storagePath.includes('../')) {
@@ -39,6 +43,79 @@ function sanitizeReplyTo(raw) {
   }
 }
 
+function sanitizeRect(raw = {}) {
+  return {
+    x: Math.round(Number(raw.x || 0)),
+    y: Math.round(Number(raw.y || 0)),
+    width: Math.max(0, Math.round(Number(raw.width || 0))),
+    height: Math.max(0, Math.round(Number(raw.height || 0)))
+  }
+}
+
+function sanitizePageSnapshot(raw = null) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return {
+    type: cleanString(raw.type || 'safe_dom_page_snapshot', 80),
+    captureKind: cleanString(raw.captureKind || 'structured_layout', 80),
+    screenshotAvailable: raw.screenshotAvailable === true,
+    captureTarget: cleanString(raw.captureTarget || '', 80),
+    excluded: Array.isArray(raw.excluded) ? raw.excluded.map((item) => cleanString(item, 80)).filter(Boolean).slice(0, 12) : [],
+    viewport: raw.viewport && typeof raw.viewport === 'object' ? {
+      width: Number(raw.viewport.width || 0),
+      height: Number(raw.viewport.height || 0)
+    } : null,
+    regions: Array.isArray(raw.regions) ? raw.regions.map((item) => ({
+      id: cleanString(item.id || '', 120),
+      label: cleanString(item.label || '', 120),
+      role: cleanString(item.role || '', 60),
+      text: cleanString(item.text || '', 180),
+      rect: item.rect && typeof item.rect === 'object' ? sanitizeRect(item.rect) : null
+    })).filter((item) => item.id || item.label || item.text).slice(0, 50) : []
+  }
+}
+
+function sanitizeGuideTarget(item = {}) {
+  return {
+    guideId: cleanString(item.guideId || item.id || '', 120),
+    id: cleanString(item.id || item.guideId || '', 120),
+    label: cleanString(item.label || item.guideId || item.id || '', 120),
+    role: cleanString(item.role || '', 60),
+    text: cleanString(item.text || '', 180),
+    visible: item.visible !== false,
+    rect: item.rect && typeof item.rect === 'object' ? sanitizeRect(item.rect) : null
+  }
+}
+
+function sanitizeSafePageContext(raw = null) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  return {
+    guidanceSessionActive: raw.guidanceSessionActive === true,
+    guidanceSessionStatus: cleanString(raw.guidanceSessionStatus || '', 40),
+    guidanceSessionId: cleanString(raw.guidanceSessionId || raw.sessionId || '', 180),
+    sessionId: cleanString(raw.sessionId || raw.guidanceSessionId || '', 180),
+    shareMode: cleanString(raw.shareMode || '', 40),
+    route: cleanString(raw.route || raw.currentRoute || '', 240),
+    currentRoute: cleanString(raw.currentRoute || raw.route || '', 240),
+    routeLabel: cleanString(raw.routeLabel || '', 120),
+    pageTitle: cleanString(raw.pageTitle || '', 200),
+    featureArea: cleanString(raw.featureArea || '', 120),
+    activeModal: cleanString(raw.activeModal || '', 120),
+    viewport: raw.viewport && typeof raw.viewport === 'object' ? {
+      width: Number(raw.viewport.width || 0),
+      height: Number(raw.viewport.height || 0)
+    } : null,
+    scroll: raw.scroll && typeof raw.scroll === 'object' ? {
+      x: Number(raw.scroll.x || 0),
+      y: Number(raw.scroll.y || 0)
+    } : null,
+    visibleGuideTargets: Array.isArray(raw.visibleGuideTargets) ? raw.visibleGuideTargets.map(sanitizeGuideTarget).slice(0, 120) : [],
+    landmarks: Array.isArray(raw.landmarks) ? raw.landmarks.map(sanitizeGuideTarget).slice(0, 120) : [],
+    pageSnapshot: sanitizePageSnapshot(raw.pageSnapshot),
+    productId: cleanString(raw.productId || '', 180),
+    productTitle: cleanString(raw.productTitle || '', 200)
+  }
+}
+
 const sendInboxMessage = onCall(async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.')
@@ -61,6 +138,7 @@ const sendInboxMessage = onCall(async (request) => {
     }
   })
   const replyTo = sanitizeReplyTo(request.data?.replyTo)
+  const safePageContext = sanitizeSafePageContext(request.data?.safePageContext)
   const threadRef = db.collection('threads').doc(threadId)
   const messageRef = threadRef.collection('messages').doc(messageId)
   const participantRef = threadRef.collection('participants').doc(uid)
@@ -99,7 +177,7 @@ const sendInboxMessage = onCall(async (request) => {
       senderType: 'user',
       body,
       type,
-      metadata: {},
+      metadata: safePageContext ? { safePageContext } : {},
       attachments,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
