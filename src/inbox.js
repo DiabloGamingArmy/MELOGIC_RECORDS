@@ -1282,17 +1282,38 @@ function getTypingUsers(threadId) {
   })
 }
 
+function isActivityFresh(activity = {}) {
+  if (activity?.active !== true) return false
+  if (!activity.expiresAt) return true
+  const expires = new Date(activity.expiresAt).getTime()
+  return Number.isFinite(expires) ? expires > Date.now() : true
+}
+
+function getThreadResonaActivity(thread = null) {
+  const activity = thread?.resonaActivity || {}
+  return isActivityFresh(activity) ? activity : { active: false, label: '' }
+}
+
+function isThreadResonaResponding(thread = null) {
+  return getThreadResonaActivity(thread).active === true
+}
+
+function getThreadResonaActivityLabel(thread = null) {
+  return getThreadResonaActivity(thread).label || 'Resona is responding...'
+}
+
 function renderTypingUi(threadId) {
   if (!threadId || appState.selectedThreadId !== threadId || appState.activeFilter !== 'Messages') return
   const thread = getSelectedThread()
   if (!thread) return
-  const subtitle = getConversationSubtitle(thread)
+  const subtitle = isThreadResonaResponding(thread) ? getThreadResonaActivityLabel(thread) : getConversationSubtitle(thread)
   const headerSubtitle = inboxRoot.querySelector('.conversation-header-meta p')
   if (headerSubtitle) headerSubtitle.textContent = subtitle
   const inline = inboxRoot.querySelector('[data-typing-indicator-inline]')
   const typingUsers = getTypingUsers(threadId)
+  const resonaResponding = isThreadResonaResponding(thread)
   if (!inline) return
-  if (!typingUsers.length) {
+  if (!typingUsers.length && !resonaResponding) {
     inline.textContent = ''
     inline.hidden = true
     return
@@ -2538,12 +2559,14 @@ function getConversationBodyMarkup({
   const attachments = appState.attachmentDraftByThreadId[thread.id] || []
   const previewUrls = appState.attachmentPreviewByThreadId[thread.id] || []
   const typingUsers = getTypingUsers(thread.id)
+  const resonaResponding = isThreadResonaResponding(thread)
+  const resonaActivityLabel = getThreadResonaActivityLabel(thread)
   const blockState = getDmBlockState(thread)
   const isDmComposerBlocked = thread.type === 'dm' && (blockState.currentUserBlockedOther || blockState.otherBlockedCurrentUser)
   const isPreparingThread = Boolean(appState.preparingThreadIds[thread.id])
   const localParticipantIds = getThreadParticipantUids(thread)
   const isKnownParticipant = localParticipantIds.includes(appState.user?.uid)
-  const isComposerUnavailable = isDmComposerBlocked || isPreparingThread || !isKnownParticipant
+  const isComposerUnavailable = isDmComposerBlocked || isPreparingThread || !isKnownParticipant || resonaResponding
   const composerRenderSignature = hashRenderSignature({
     threadId: thread.id,
     isDmComposerBlocked,
@@ -2575,9 +2598,9 @@ function getConversationBodyMarkup({
             messages: messages || getRenderableMessages(thread),
             renderSignature: renderSignature || getMessageRenderSignature(thread, messages || getRenderableMessages(thread))
           })}
-      <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length ? '' : 'hidden'}>${typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : ''}</p>
+      <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length || resonaResponding ? '' : 'hidden'}>${resonaResponding ? escapeHtml(resonaActivityLabel) : (typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : '')}</p>
       ${blockAlertMarkup}
-      <form class="message-composer ${isComposerUnavailable ? 'is-blocked' : ''}" data-message-form data-guide-id="inbox-message-composer" data-guide-label="Message composer" data-guide-role="message-composer" data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
+      <form class="message-composer ${isComposerUnavailable ? 'is-blocked' : ''} ${resonaResponding ? 'is-resona-locked' : ''}" data-message-form data-guide-id="inbox-message-composer" data-guide-label="Message composer" data-guide-role="message-composer" data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
         <label class="sr-only" for="message-input">Message</label>
         ${replyDraft ? `
           <div class="composer-reply-preview">
@@ -2598,11 +2621,13 @@ function getConversationBodyMarkup({
           const ext = escapeHtml((String(file.name || '').split('.').pop() || type).toUpperCase().slice(0, 6))
           return `<article class="composer-attachment-preview is-file" title="${title}"><div class="composer-file-icon">${ext}</div><small>${title}</small><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`
         }).join('')}</div>` : ''}
-        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="${isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="${resonaResponding ? 'Resona is responding...' : isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
         <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isComposerUnavailable ? 'disabled' : ''} />
         <div class="message-composer-footer">
           ${appState.errorMessage
             ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>`
+            : resonaResponding
+              ? `<p class="composer-note">${escapeHtml(resonaActivityLabel)}</p>`
             : isPreparingThread
               ? '<p class="composer-note">Preparing conversation...</p>'
               : !isKnownParticipant
@@ -6670,6 +6695,11 @@ function buildClientTimeContext() {
 async function handleMessageSubmit(form) {
   let thread = getSelectedThread()
   if (!thread || !appState.user?.uid) return
+  if (isThreadResonaResponding(thread)) {
+    appState.errorMessage = 'Resona is responding. Please wait for the current reply to finish.'
+    renderSelectedConversation({ reason: 'state-update' })
+    return
+  }
   const blockState = getDmBlockState(thread)
   if (thread.type === 'dm' && blockState.isDmBlocked) {
     appState.errorMessage = blockState.currentUserBlockedOther

@@ -525,6 +525,7 @@ ${JSON.stringify({
 
 Safe page context:
 ${JSON.stringify({
+  contextSource: cleanString(safePageContext.contextSource || '', 80),
   guidanceSessionActive: safePageContext.guidanceSessionActive === true,
   guidanceSessionStatus: cleanString(safePageContext.guidanceSessionStatus || '', 40),
   route: cleanString(safePageContext.route || safePageContext.currentRoute || '', 200),
@@ -572,6 +573,12 @@ ${JSON.stringify({
       } : null
     })).filter((item) => item.id || item.label || item.text) : []
   } : null,
+  dawContext: safePageContext.dawContext && typeof safePageContext.dawContext === 'object' && !Array.isArray(safePageContext.dawContext)
+    ? safePageContext.dawContext
+    : null,
+  stageContext: safePageContext.stageContext && typeof safePageContext.stageContext === 'object' && !Array.isArray(safePageContext.stageContext)
+    ? safePageContext.stageContext
+    : null,
   productId: cleanString(safePageContext.productId || '', 180),
   productTitle: cleanString(safePageContext.productTitle || '', 200)
 })}
@@ -678,6 +685,7 @@ module.exports = {
   normalizeEscalationDecision,
   isScreenVisibilityQuestion,
   needsWebGrounding,
+  webGroundingDecision,
   sanitizeHighlightIntent,
   supportFallbackReply,
   __test: {

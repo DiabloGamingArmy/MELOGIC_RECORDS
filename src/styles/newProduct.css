@@ -396,6 +396,8 @@
 @media (max-width: 1280px) { .agreements-main-grid { grid-template-columns: 1fr; } .agreement-signature-row { grid-template-columns: 1fr; } }
 
 .publish-workspace { min-height: 620px; }
+.creator-eligibility-panel { display: grid; gap: .95rem; max-width: 980px; margin: 0 auto; }
+.creator-eligibility-panel .publish-submit-panel { width: 100%; box-sizing: border-box; }
 .publish-grid { display: grid; grid-template-columns: 1.05fr 1.2fr .85fr; gap: .95rem; align-items: start; }
 .publish-summary-card, .publish-checklist-panel, .publish-submit-panel { border: 1px solid rgba(99,128,197,.28); border-radius: 14px; background: rgba(10,15,29,.88); padding: .95rem; }
 .publish-summary-card h3, .publish-checklist-panel h3, .publish-submit-panel h3 { margin: 0 0 .7rem; text-transform: uppercase; letter-spacing: .06em; color: #cad8ff; }

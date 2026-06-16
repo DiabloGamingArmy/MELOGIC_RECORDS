@@ -215,7 +215,8 @@ const SETTINGS_SECTIONS = [
     title: 'Marketplace',
     fields: [
       ['marketplaceEnabled', 'Marketplace Enabled', 'boolean'],
-      ['manualReviewRequired', 'Manual Review Required', 'boolean']
+      ['manualReviewRequired', 'Manual Review Required', 'boolean'],
+      ['marketplaceCreatorAgeVerificationRequired', 'Creator Age Verification Required', 'boolean']
     ]
   },
   {
@@ -347,7 +348,7 @@ const state = {
   },
   adminData: {
     products: { items: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 },
-    users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, payoutConnect: null, earningsSummary: null, creatorLedgerEntries: [], accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
+    users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, payoutConnect: null, earningsSummary: null, creatorLedgerEntries: [], creatorAgeVerification: null, accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loadingMore: false, loaded: false, error: '', filter: 'open', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     community: {
       posts: [],
@@ -2534,6 +2535,7 @@ function selectedUserPanel() {
   const canSuspend = can('userModerate')
   const canGrantProduct = can('orderSupport') || can('listingEdit')
   const actioning = data.actioning || ''
+  const ageVerification = data.creatorAgeVerification || {}
   return `
     <header class="admin-page-header admin-hub-header">
       <div class="admin-hub-title">
@@ -2619,6 +2621,24 @@ function selectedUserPanel() {
             ${accountEventsList(data.accountEvents || [])}
           </div>
         </article>
+      </section>
+      <section class="admin-section-slab admin-fixed-panel">
+        <div class="admin-slab-heading"><h2>Creator Eligibility</h2>${renderBadge(humanLabel(ageVerification.status || 'not_started'), ageVerification.status === 'verified' ? 'published' : ageVerification.status === 'rejected' ? 'rejected' : 'warning')}</div>
+        <div class="admin-panel-scroll">
+          ${renderKeyValueGrid([
+            renderBooleanField('Required for publishing', ageVerification.required !== false),
+            renderField('Age verification status', humanLabel(ageVerification.status || 'not_started')),
+            renderField('Provider', humanLabel(ageVerification.provider || 'manual_foundation')),
+            renderField('Required for', normalizeList(ageVerification.requiredFor || []).map(humanLabel).join(', ') || 'Marketplace product creation'),
+            renderDateField('Started at', ageVerification.startedAt),
+            renderDateField('Verified at', ageVerification.verifiedAt),
+            renderDateField('Rejected at', ageVerification.rejectedAt),
+            renderDateField('Expired at', ageVerification.expiredAt),
+            renderField('Reviewed by', ageVerification.reviewedBy, { code: true }),
+            renderField('Rejection reason', ageVerification.rejectionReason, { wide: true })
+          ])}
+          <p class="admin-muted">Foundation status only. No date of birth or identity document data is stored here.</p>
+        </div>
       </section>
       <section class="admin-section-slab admin-fixed-panel is-products-panel">
         <div class="admin-slab-heading"><h2>Products</h2><span class="admin-muted">${data.recentProducts?.length || 0} loaded</span></div>
@@ -5572,6 +5592,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.payoutConnect = result.payoutConnect || null
         state.adminData.users.earningsSummary = result.earningsSummary || null
         state.adminData.users.creatorLedgerEntries = result.creatorLedgerEntries || []
+        state.adminData.users.creatorAgeVerification = result.creatorAgeVerification || null
         state.adminData.users.accountEvents = result.accountEvents || []
         state.adminData.users.adminNotes = result.adminNotes || []
         await hydrateReviewMedia(state.adminData.users.recentProducts)
@@ -5585,6 +5606,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.payoutConnect = null
         state.adminData.users.earningsSummary = null
         state.adminData.users.creatorLedgerEntries = []
+        state.adminData.users.creatorAgeVerification = null
         state.adminData.users.accountEvents = []
         state.adminData.users.adminNotes = []
       }

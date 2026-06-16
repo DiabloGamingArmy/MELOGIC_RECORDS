@@ -1,6 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentCreated } = require('firebase-functions/v2/firestore')
-const { FieldValue, getFirestore } = require('firebase-admin/firestore')
+const { FieldValue, Timestamp, getFirestore } = require('firebase-admin/firestore')
 const { getStorage } = require('firebase-admin/storage')
 const { assertAdmin, assertPermission } = require('../admin/adminAuth')
 const { DEFAULT_SETTINGS, mergeSettings } = require('../admin/adminSettingsShared')
@@ -9,7 +9,8 @@ const {
   SUPPORT_AI_MODEL,
   DEFAULT_SUPPORT_KNOWLEDGE,
   detectEscalationNeed,
-  generateSupportReply
+  generateSupportReply,
+  webGroundingDecision
 } = require('./aiSupportAgent')
 const { createGuidanceOverlayFromIntent, loadActiveGuidanceContext } = require('./siteGuidance')
 const {
@@ -23,6 +24,7 @@ const db = getFirestore()
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 const MAX_BODY_LENGTH = 1200
+const RESONA_ACTIVITY_TTL_MS = 90 * 1000
 const AI_IMAGE_ATTACHMENT_LIMIT = 4
 const AI_IMAGE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
 const AI_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
@@ -31,6 +33,14 @@ const CALLABLE_OPTIONS = {
   memory: '256MiB',
   cors: true,
   invoker: 'public'
+}
+
+const RESONA_ACTIVITY_LABELS = {
+  thinking: 'Resona is thinking...',
+  researching: 'Resona is doing research...',
+  reading_attachments: 'Resona is reading attachments...',
+  checking_page: 'Resona is checking this page...',
+  writing: 'Resona is writing...'
 }
 
 function resonaThreadIdFor(uid = '') {
@@ -291,6 +301,39 @@ async function setResonaTyping(threadRef, active = false) {
   await typingRef.delete().catch(() => {})
 }
 
+function resonaActivityPayload(state = 'thinking') {
+  const cleanState = Object.prototype.hasOwnProperty.call(RESONA_ACTIVITY_LABELS, state) ? state : 'thinking'
+  return {
+    active: true,
+    state: cleanState,
+    label: RESONA_ACTIVITY_LABELS[cleanState],
+    startedAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + RESONA_ACTIVITY_TTL_MS)
+  }
+}
+
+async function setResonaActivity(threadRef, state = 'thinking') {
+  await threadRef.set({
+    resonaActivity: resonaActivityPayload(state),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true })
+  await setResonaTyping(threadRef, true)
+}
+
+async function clearResonaActivity(threadRef) {
+  await threadRef.set({
+    resonaActivity: {
+      active: false,
+      state: '',
+      label: '',
+      expiresAt: null,
+      clearedAt: FieldValue.serverTimestamp()
+    },
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true }).catch(() => null)
+  await clearResonaActivity(threadRef)
+}
+
 async function loadReadableResonaMessage({ uid = '', threadId = '', messageId = '' } = {}) {
   if (!uid || !threadId || !messageId) throw new HttpsError('invalid-argument', 'Message is required.')
   const threadRef = db.collection('threads').doc(threadId)
@@ -539,7 +582,7 @@ const refreshResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
     }, { merge: true })
     addSystemMessage(transaction, threadRef, 'Resona chat refreshed.', { event: 'resona_refreshed', actorUid: uid })
   })
-  await setResonaTyping(threadRef, false)
+  await clearResonaActivity(threadRef)
   return { ok: true, threadId }
 })
 
@@ -570,7 +613,7 @@ const clearResonaChatHistory = onCall(CALLABLE_OPTIONS, async (request) => {
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true })
   })
-  await setResonaTyping(threadRef, false)
+  await clearResonaActivity(threadRef)
   return { ok: true, threadId }
 })
 
@@ -746,7 +789,7 @@ const handleResonaInboxReply = onDocumentCreated({
   const lock = await lockAiMessage(threadRef, messageId)
   if (!lock.locked) return
 
-  await setResonaTyping(threadRef, true)
+  await setResonaActivity(threadRef, 'thinking')
   try {
     const [recentMessages, knowledgeSnippets, resonaInstructions, requester] = await Promise.all([
       loadRecentMessages(threadRef, lock.thread.clearedAt),
@@ -766,12 +809,22 @@ const handleResonaInboxReply = onDocumentCreated({
       landmarks: inlinePageContext.landmarks || inlinePageContext.visibleGuideTargets || guidanceContext?.landmarks || guidanceContext?.visibleGuideTargets || [],
       pageSnapshot: inlinePageContext.pageSnapshot || guidanceContext?.pageSnapshot || null
     }
+    const hasPageContext = safePageContext.guidanceSessionActive === true
+      || Boolean(safePageContext.pageSnapshot)
+      || Boolean(safePageContext.dawContext)
+      || Boolean(safePageContext.stageContext)
+      || (Array.isArray(safePageContext.visibleGuideTargets) && safePageContext.visibleGuideTargets.length > 0)
+    if (hasPageContext) await setResonaActivity(threadRef, 'checking_page')
+    if (Array.isArray(message.attachments) && message.attachments.length) await setResonaActivity(threadRef, 'reading_attachments')
     const aiAttachmentInputs = await buildAiAttachmentInputs({
       threadId,
       messageId,
       attachments: Array.isArray(message.attachments) ? message.attachments : []
     })
     const explicitEscalation = detectEscalationNeed(message.body || '')
+    const grounding = webGroundingDecision(message.body || '', resonaInstructions)
+    if (!explicitEscalation.shouldEscalate && grounding.shouldUse) await setResonaActivity(threadRef, 'researching')
+    if (!explicitEscalation.shouldEscalate) await setResonaActivity(threadRef, 'writing')
     const aiResult = explicitEscalation.shouldEscalate
       ? {
           replyText: 'I’m routing this to a live Melogic support agent so they can review the details safely.',
@@ -823,7 +876,7 @@ const handleResonaInboxReply = onDocumentCreated({
       })
     }
   } finally {
-    await setResonaTyping(threadRef, false)
+    await clearResonaActivity(threadRef)
   }
 })
 
@@ -903,7 +956,7 @@ async function claimResonaThread({ request, threadId = '' }) {
     transaction.set(threadRef.collection('participants').doc(claims.uid), buildParticipantPayload({ uid: claims.uid, role: 'support' }), { merge: true })
     addSystemMessage(transaction, threadRef, 'A live agent joined the chat.', { event: 'live_agent_joined', agentUid: claims.uid })
   })
-  await setResonaTyping(threadRef, false)
+  await clearResonaActivity(threadRef)
   return { ok: true, threadId }
 }
 

@@ -55,8 +55,23 @@ export function normalizeSupportThread(threadId, raw = {}) {
     aiEscalationReason: String(raw.aiEscalationReason || '').trim(),
     aiSuggestedCategory: String(raw.aiSuggestedCategory || '').trim(),
     typing: normalizeSupportTyping(raw.typing),
+    resonaActivity: normalizeSupportActivity(raw.resonaActivity, raw.typing),
     requester: raw.requester && typeof raw.requester === 'object' ? raw.requester : null,
     assignedAgent: raw.assignedAgent && typeof raw.assignedAgent === 'object' ? raw.assignedAgent : null
+  }
+}
+
+function normalizeSupportActivity(raw = {}, typingRaw = {}) {
+  const activity = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const typing = normalizeSupportTyping(typingRaw)
+  const fallbackActive = typing.ai.active === true
+  return {
+    active: activity.active === true || fallbackActive,
+    state: String(activity.state || (fallbackActive ? 'thinking' : '')).trim(),
+    label: String(activity.label || typing.ai.label || '').trim(),
+    startedAt: toIsoDate(activity.startedAt || typing.ai.startedAt),
+    expiresAt: toIsoDate(activity.expiresAt || typing.ai.expiresAt),
+    clearedAt: toIsoDate(activity.clearedAt || typing.ai.clearedAt)
   }
 }
 
