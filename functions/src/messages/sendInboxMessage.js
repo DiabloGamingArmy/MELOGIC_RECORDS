@@ -100,6 +100,9 @@ function sanitizeSafePageContext(raw = null) {
     pageTitle: cleanString(raw.pageTitle || '', 200),
     featureArea: cleanString(raw.featureArea || '', 120),
     activeModal: cleanString(raw.activeModal || '', 120),
+    clientTimeZone: cleanString(raw.clientTimeZone || raw.timeZone || '', 80),
+    clientLocalTimeISO: cleanString(raw.clientLocalTimeISO || '', 80),
+    utcTimeISO: cleanString(raw.utcTimeISO || '', 80),
     viewport: raw.viewport && typeof raw.viewport === 'object' ? {
       width: Number(raw.viewport.width || 0),
       height: Number(raw.viewport.height || 0)

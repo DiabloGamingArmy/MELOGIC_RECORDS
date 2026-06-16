@@ -81,6 +81,7 @@ export function normalizeSupportMessage(messageId, raw = {}, metadata = {}) {
     senderType: ['user', 'agent', 'system', 'ai', 'system_ai'].includes(raw.senderType) ? raw.senderType : 'system',
     body: String(raw.body || '').trim(),
     createdAt: toIsoDate(raw.createdAt),
+    attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
     metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
     pendingWrites: metadata.hasPendingWrites === true
   }
@@ -113,6 +114,9 @@ export function sendSupportMessage({ threadId = '', body = '', safePageContext =
       pageTitle: String(safePageContext.pageTitle || '').trim().slice(0, 200),
       featureArea: String(safePageContext.featureArea || '').trim().slice(0, 120),
       activeModal: String(safePageContext.activeModal || '').trim().slice(0, 120),
+      clientTimeZone: String(safePageContext.clientTimeZone || safePageContext.timeZone || '').trim().slice(0, 80),
+      clientLocalTimeISO: String(safePageContext.clientLocalTimeISO || '').trim().slice(0, 80),
+      utcTimeISO: String(safePageContext.utcTimeISO || '').trim().slice(0, 80),
       viewport: safePageContext.viewport && typeof safePageContext.viewport === 'object' ? safePageContext.viewport : {},
       scroll: safePageContext.scroll && typeof safePageContext.scroll === 'object' ? safePageContext.scroll : {},
       visibleGuideTargets: Array.isArray(safePageContext.visibleGuideTargets) ? safePageContext.visibleGuideTargets.slice(0, 120) : [],

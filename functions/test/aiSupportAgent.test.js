@@ -81,6 +81,62 @@ test('Gemini JSON response is parsed into a support reply', async () => {
   assert.match(result.replyText, /Edit Profile/)
 })
 
+test('current date and time questions use server time context', async () => {
+  const result = await __test.generateSupportReply({
+    apiKey: '',
+    model: 'gemini-2.5-flash-lite',
+    userMessage: 'What is today’s date and time for NY East Coast?'
+  })
+
+  assert.equal(result.aiAvailable, true)
+  assert.equal(result.shouldEscalate, false)
+  assert.equal(result.modelUsed, 'server-time-rule')
+  assert.match(result.replyText, /America\/New_York/)
+  assert.match(result.replyText, /UTC/)
+})
+
+test('web grounding adds the Google Search tool for current web questions', async () => {
+  let requestBody = null
+  const result = await __test.generateSupportReply({
+    apiKey: 'AIza-valid-looking-support-key-1234567890',
+    model: 'gemini-2.5-flash-lite',
+    userMessage: 'What is the latest Melogic pricing online?',
+    resonaInstructions: {
+      resonaWebGroundingEnabled: true,
+      resonaWebGroundingBehavior: 'auto'
+    },
+    fetchImpl: async (_url, options) => {
+      requestBody = JSON.parse(options.body)
+      return {
+        ok: true,
+        json: async () => ({
+          candidates: [{
+            content: {
+              parts: [{
+                text: JSON.stringify({
+                  replyText: 'I would verify the latest pricing from current sources before relying on it.',
+                  confidence: 0.8,
+                  shouldEscalate: false,
+                  escalationReason: '',
+                  suggestedCategory: 'web'
+                })
+              }]
+            },
+            groundingMetadata: {
+              webSearchQueries: ['Melogic pricing'],
+              groundingChunks: [{ web: { title: 'Melogic', uri: 'https://example.com' } }]
+            }
+          }]
+        })
+      }
+    }
+  })
+
+  assert.deepEqual(requestBody.tools, [{ google_search: {} }])
+  assert.equal(result.webGrounding.attempted, true)
+  assert.equal(result.webGrounding.sources[0].title, 'Melogic')
+})
+
 test('screen visibility questions explain site-only context when active', async () => {
   const result = await __test.generateSupportReply({
     apiKey: '',

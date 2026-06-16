@@ -238,6 +238,8 @@ const SETTINGS_SECTIONS = [
       ['escalationRules', 'Escalation Rules', 'textarea'],
       ['restrictedActions', 'Restricted Actions', 'textarea'],
       ['toneGuidelines', 'Tone Guidelines', 'textarea'],
+      ['resonaWebGroundingEnabled', 'Resona Web Access', 'boolean'],
+      ['resonaWebGroundingBehavior', 'Web Search Behavior', 'select:webGroundingBehavior'],
       ['updatedAt', 'Updated At', 'string'],
       ['updatedBy', 'Updated By', 'string']
     ]
@@ -5032,6 +5034,23 @@ function settingsInput(key, label, type, value) {
       <label>
         <span>${escapeHtml(label)}</span>
         <textarea data-settings-field="${escapeHtml(key)}" data-settings-type="${escapeHtml(type)}" rows="${rows}">${escapeHtml(value || '')}</textarea>
+      </label>
+    `
+  }
+  if (type === 'select:webGroundingBehavior') {
+    const selected = ['auto', 'explicit', 'disabled'].includes(String(value || '').trim()) ? String(value || '').trim() : 'auto'
+    const options = [
+      ['auto', 'Auto when needed'],
+      ['explicit', 'Only explicit requests'],
+      ['disabled', 'Disabled']
+    ]
+    return `
+      <label>
+        <span>${escapeHtml(label)}</span>
+        <select data-settings-field="${escapeHtml(key)}" data-settings-type="string">
+          ${options.map(([optionValue, optionLabel]) => `<option value="${escapeHtml(optionValue)}" ${selected === optionValue ? 'selected' : ''}>${escapeHtml(optionLabel)}</option>`).join('')}
+        </select>
+        <small class="admin-muted">Controls whether Resona may use Google Search grounding for current or web-specific questions.</small>
       </label>
     `
   }

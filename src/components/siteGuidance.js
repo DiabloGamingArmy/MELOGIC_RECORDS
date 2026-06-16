@@ -269,11 +269,21 @@ function collectVisiblePageSnapshot() {
   }
 }
 
+function formatLocalIso(date = new Date()) {
+  const offsetMinutes = -date.getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? '+' : '-'
+  const absolute = Math.abs(offsetMinutes)
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`
+}
+
 function collectPageContext() {
   const heading = document.querySelector('main h1, main h2, [data-page-title]')
   const activeModal = document.querySelector('[role="dialog"][aria-modal="true"], .modal, .admin-modal-backdrop')
   const visibleGuideTargets = collectVisibleGuideTargets()
   const pageSnapshot = collectVisiblePageSnapshot()
+  const now = new Date()
+  const clientTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''
   return {
     shareMode: 'site_only',
     route: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
@@ -291,7 +301,10 @@ function collectPageContext() {
       x: window.scrollX || 0,
       y: window.scrollY || 0
     },
-    timestamp: new Date().toISOString(),
+    timestamp: now.toISOString(),
+    clientTimeZone,
+    clientLocalTimeISO: formatLocalIso(now),
+    utcTimeISO: now.toISOString(),
     visibleGuideTargets,
     landmarks: visibleGuideTargets,
     pageSnapshot

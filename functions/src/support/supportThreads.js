@@ -156,6 +156,7 @@ function serializeMessage(docSnap) {
     senderType: data.senderType || 'system',
     body: data.body || '',
     createdAt: serializeTimestamp(data.createdAt),
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
     metadata: data.metadata && typeof data.metadata === 'object' ? data.metadata : {}
   }
 }
@@ -273,6 +274,9 @@ function sanitizeSafeContext(raw = {}) {
     pageTitle: cleanString(source.pageTitle || '', 200),
     featureArea: cleanString(source.featureArea || '', 120),
     activeModal: cleanString(source.activeModal || '', 120),
+    clientTimeZone: cleanString(source.clientTimeZone || source.timeZone || '', 80),
+    clientLocalTimeISO: cleanString(source.clientLocalTimeISO || '', 80),
+    utcTimeISO: cleanString(source.utcTimeISO || '', 80),
     viewport: {
       width: Math.max(0, Math.min(10000, Math.round(Number(viewport.width || 0) || 0))),
       height: Math.max(0, Math.min(10000, Math.round(Number(viewport.height || 0) || 0)))
@@ -322,7 +326,9 @@ async function loadResonaInstructions() {
       siteOverview: cleanSupportPromptText(supportAi.siteOverview || DEFAULT_SETTINGS.supportAi.siteOverview, 4000),
       escalationRules: cleanSupportPromptText(supportAi.escalationRules || DEFAULT_SETTINGS.supportAi.escalationRules, 4000),
       restrictedActions: cleanSupportPromptText(supportAi.restrictedActions || DEFAULT_SETTINGS.supportAi.restrictedActions, 4000),
-      toneGuidelines: cleanSupportPromptText(supportAi.toneGuidelines || DEFAULT_SETTINGS.supportAi.toneGuidelines, 4000)
+      toneGuidelines: cleanSupportPromptText(supportAi.toneGuidelines || DEFAULT_SETTINGS.supportAi.toneGuidelines, 4000),
+      resonaWebGroundingEnabled: supportAi.resonaWebGroundingEnabled !== false,
+      resonaWebGroundingBehavior: cleanString(supportAi.resonaWebGroundingBehavior || DEFAULT_SETTINGS.supportAi.resonaWebGroundingBehavior || 'auto', 40)
     }
   } catch {
     return DEFAULT_SETTINGS.supportAi
@@ -474,6 +480,7 @@ async function completeAiHandling({ threadRef, threadId = '', messageId = '', us
             shouldEscalate,
             escalationReason,
             suggestedCategory,
+            webGrounding: aiResult.webGrounding && typeof aiResult.webGrounding === 'object' ? aiResult.webGrounding : null,
             handledForMessageId: messageId
           }
         })
@@ -665,7 +672,8 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
             displayName: requester.displayName || requester.username || '',
             role: 'user'
           },
-          safePageContext
+          safePageContext,
+          attachmentContext: Array.isArray(userMessage.attachments) ? userMessage.attachments : []
         })
       logSupportAi(threadId, aiResult.aiAvailable === false ? 'gemini_call_failure' : 'gemini_call_success', {
         lastUserMessageId: messageId,
