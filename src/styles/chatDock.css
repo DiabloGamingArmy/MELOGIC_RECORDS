@@ -111,9 +111,16 @@
 }
 
 .chat-dock-header button.chat-dock-header-action.is-muted {
-  border-color: rgba(255, 255, 255, 0.09);
-  color: rgba(220, 242, 255, 0.38);
-  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(83, 230, 255, 0.32);
+  color: #dff9ff;
+  background: rgba(83, 230, 255, 0.12);
+}
+
+body.site-guidance-active .chat-dock-header button.chat-dock-header-action.is-muted[data-site-guidance-start] {
+  border-color: rgba(111, 240, 255, 0.72);
+  color: #f5fdff;
+  background: rgba(83, 230, 255, 0.2);
+  box-shadow: 0 0 0 3px rgba(32, 216, 255, 0.1);
 }
 
 .chat-dock-header button:disabled {

@@ -18,6 +18,7 @@ import { getStorageAssetUrl } from '../firebase/storageAssets'
 
 const STORAGE_KEY = 'melogic_chat_dock_state_v1'
 const OPEN_EVENT = 'melogic:chat-dock-open'
+const SITE_GUIDANCE_REFRESH_EVENT = 'melogic:site-guidance-refresh-context'
 const MAX_DOCK_MESSAGES = 80
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 const RESONA_BACKGROUND_PATH = 'assets/profilePictures/aiSupport/resonaBackground.png'
@@ -141,6 +142,20 @@ function currentUid() {
 
 function currentProfile() {
   return shellSnapshot?.profile || {}
+}
+
+async function refreshSiteGuidanceContextForOutgoingMessage() {
+  const detail = {
+    reason: 'message-send',
+    promises: [],
+    contexts: []
+  }
+  window.dispatchEvent(new CustomEvent(SITE_GUIDANCE_REFRESH_EVENT, { detail }))
+  if (detail.promises.length) await Promise.allSettled(detail.promises)
+  return detail.contexts[0] || {
+    route: window.location?.pathname || '',
+    pageTitle: document.title || ''
+  }
 }
 
 function stopThreadSubscriptions() {
@@ -700,7 +715,7 @@ const dockScrollController = {
     if (this.settleTimer) window.clearTimeout(this.settleTimer)
     const apply = () => {
       if (!this.scroller || (!force && this.mode !== 'bottom')) return
-      this.setScrollTop(this.scroller.scrollHeight)
+      this.setScrollTop(Math.max(0, this.scroller.scrollHeight - this.scroller.clientHeight + 4))
       this.mode = 'bottom'
     }
     apply()
@@ -751,10 +766,38 @@ const dockScrollController = {
   }
 }
 
+function captureComposerFocus() {
+  const input = root?.querySelector('[data-chat-dock-input]')
+  if (!input || document.activeElement !== input) return null
+  return {
+    value: input.value,
+    selectionStart: input.selectionStart,
+    selectionEnd: input.selectionEnd
+  }
+}
+
+function restoreComposerFocus(snapshot = null) {
+  if (!snapshot) return
+  window.requestAnimationFrame(() => {
+    const input = root?.querySelector('[data-chat-dock-input]')
+    if (!input || input.disabled) return
+    if (input.value !== snapshot.value) input.value = snapshot.value
+    input.focus({ preventScroll: true })
+    try {
+      const start = Number.isFinite(snapshot.selectionStart) ? snapshot.selectionStart : input.value.length
+      const end = Number.isFinite(snapshot.selectionEnd) ? snapshot.selectionEnd : start
+      input.setSelectionRange(start, end)
+    } catch {
+      // Some input states do not expose selection ranges.
+    }
+  })
+}
+
 function renderDock() {
   if (!root) return
   const scrollSnapshot = dockScrollController.snapshot()
   const previousThreadKey = dockScrollController.threadKey
+  const focusSnapshot = captureComposerFocus()
   if (!dockState.open) {
     dockScrollController.detach()
     root.innerHTML = ''
@@ -792,6 +835,7 @@ function renderDock() {
       </header>
       <div class="chat-dock-messages" data-chat-dock-messages>
         ${dockState.mode === 'support' ? renderSupportPanel() : renderMessageList()}
+        <div class="chat-dock-bottom-sentinel" data-chat-dock-bottom-sentinel aria-hidden="true"></div>
       </div>
       ${renderComposer()}
     </section>
@@ -806,6 +850,7 @@ function renderDock() {
     forceBottom: forceDockBottom || !previousThreadKey || previousThreadKey !== nextThreadKey
   })
   forceDockBottom = false
+  restoreComposerFocus(focusSnapshot)
 }
 
 function focusComposer() {
@@ -1028,16 +1073,16 @@ async function handleSubmit(form) {
   if (!uid || !threadId || !body || sending) return
   sending = true
   errorMessage = ''
+  forceDockBottom = true
+  console.info('[dock-scroll] send -> force bottom', { mode: dockState.mode, threadId })
   renderDock()
   try {
+    const safePageContext = await refreshSiteGuidanceContextForOutgoingMessage()
     if (dockState.mode === 'support') {
       await sendSupportMessage({
         threadId,
         body,
-        safePageContext: {
-          route: window.location?.pathname || '',
-          pageTitle: document.title || ''
-        }
+        safePageContext
       })
     } else {
       await sendMessage(threadId, {

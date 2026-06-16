@@ -807,6 +807,18 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   cursor: pointer;
 }
 
+.inbox-site-guidance-trigger + .message-find-trigger,
+.inbox-site-guidance-trigger + .message-find {
+  margin-left: 0;
+}
+
+body.site-guidance-active .inbox-site-guidance-trigger {
+  border-color: rgba(111, 240, 255, 0.72);
+  color: #f5fdff;
+  background: rgba(83, 230, 255, 0.18);
+  box-shadow: 0 0 0 3px rgba(32, 216, 255, 0.1);
+}
+
 .message-find {
   margin-left: auto;
   display: grid;
