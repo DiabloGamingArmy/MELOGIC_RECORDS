@@ -5526,7 +5526,7 @@ function bindSharedEvents(scope = inboxRoot) {
         }
       } catch (error) {
         appState.errorMessage = error?.message || 'Could not open support chat.'
-        render()
+        renderSignedInState()
       } finally {
         button.disabled = false
       }
