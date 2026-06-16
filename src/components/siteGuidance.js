@@ -10,7 +10,7 @@ import '../styles/siteGuidance.css'
 
 const STORAGE_KEY = 'melogic_site_guidance_session_v1'
 const POSITION_KEY = 'melogic_site_guidance_position_v1'
-const UPDATE_INTERVAL_MS = 3500
+const UPDATE_INTERVAL_MS = 2500
 
 let initialized = false
 let root = null
@@ -20,6 +20,8 @@ let unsubscribeSession = () => {}
 let unsubscribeOverlays = () => {}
 let updateTimer = null
 let updateThrottleTimer = null
+let mutationObserver = null
+let routeHooksInstalled = false
 let dragState = null
 
 const state = {
@@ -111,9 +113,27 @@ function safeElementLabel(element) {
   return String(label).replace(/\s+/g, ' ').trim().slice(0, 120)
 }
 
-function collectLandmarks() {
+function safeGuideText(element) {
+  if (!element) return ''
+  if (element.closest('input, textarea, select, [contenteditable="true"], [data-private], [data-no-guidance]')) return ''
+  return String(element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180)
+}
+
+function isVisibleGuideElement(element) {
+  if (!element || element.closest('[data-site-guidance-root], [data-private], [data-no-guidance]')) return false
+  if (element.closest('input[type="password"], [data-payment-field], [data-secret], [data-token]')) return false
+  const rect = element.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return false
+  if (rect.bottom < 0 || rect.right < 0 || rect.top > window.innerHeight || rect.left > window.innerWidth) return false
+  const styles = window.getComputedStyle(element)
+  return styles.visibility !== 'hidden' && styles.display !== 'none' && Number(styles.opacity || 1) > 0
+}
+
+function collectVisibleGuideTargets() {
   const selectors = [
     '[data-guide-id]',
+    'header nav a',
+    'header nav button',
     'main h1',
     'main h2',
     'main nav[aria-label]',
@@ -122,31 +142,45 @@ function collectLandmarks() {
     'main a[aria-label]'
   ].join(',')
   return Array.from(document.querySelectorAll(selectors))
-    .filter((element) => {
-      if (element.closest('input, textarea, [type="password"], [data-private], [data-no-guidance]')) return false
-      const rect = element.getBoundingClientRect()
-      return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= window.innerHeight
-    })
-    .slice(0, 24)
+    .filter(isVisibleGuideElement)
+    .slice(0, 36)
     .map((element, index) => {
       const rect = element.getBoundingClientRect()
+      const guideId = element.getAttribute('data-guide-id') || `visible-target-${index + 1}`
+      const role = element.getAttribute('data-guide-role')
+        || element.getAttribute('role')
+        || element.tagName.toLowerCase()
+      const label = safeElementLabel(element) || guideId
       return {
-        id: element.getAttribute('data-guide-id') || `landmark-${index + 1}`,
-        label: safeElementLabel(element),
-        role: element.getAttribute('role') || element.tagName.toLowerCase(),
+        guideId,
+        id: guideId,
+        label,
+        role,
+        text: safeGuideText(element),
+        visible: true,
+        rect: {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height)
+        },
         x: Math.round(rect.left),
         y: Math.round(rect.top),
         width: Math.round(rect.width),
         height: Math.round(rect.height)
       }
     })
-    .filter((entry) => entry.label || entry.id)
+    .filter((entry) => entry.label || entry.guideId)
 }
 
 function collectPageContext() {
   const heading = document.querySelector('main h1, main h2, [data-page-title]')
   const activeModal = document.querySelector('[role="dialog"][aria-modal="true"], .modal, .admin-modal-backdrop')
+  const visibleGuideTargets = collectVisibleGuideTargets()
   return {
+    shareMode: 'site_only',
+    route: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
+    pathname: window.location.pathname || '/',
     currentRoute: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
     routeLabel: pageRouteLabel(),
     pageTitle: document.title || heading?.textContent || '',
@@ -160,8 +194,56 @@ function collectPageContext() {
       x: window.scrollX || 0,
       y: window.scrollY || 0
     },
-    landmarks: collectLandmarks()
+    timestamp: new Date().toISOString(),
+    visibleGuideTargets,
+    landmarks: visibleGuideTargets
   }
+}
+
+function normalizeMatchText(value = '') {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function findVisibleGuideElementById(guideId = '') {
+  const cleanId = String(guideId || '').trim()
+  if (!cleanId) return null
+  const escapedId = globalThis.CSS?.escape ? CSS.escape(cleanId) : cleanId.replace(/"/g, '\\"')
+  const element = document.querySelector(`[data-guide-id="${escapedId}"]`)
+  return isVisibleGuideElement(element) ? element : null
+}
+
+function findVisibleGuideElementByText(text = '') {
+  const target = normalizeMatchText(text)
+  if (!target) return null
+  return Array.from(document.querySelectorAll('[data-guide-id]')).find((element) => {
+    if (!isVisibleGuideElement(element)) return false
+    const haystack = normalizeMatchText(`${safeElementLabel(element)} ${safeGuideText(element)} ${element.getAttribute('data-guide-id') || ''}`)
+    return haystack === target || haystack.includes(target) || target.includes(haystack)
+  }) || null
+}
+
+function resolveOverlayRect(overlay = {}) {
+  const element = findVisibleGuideElementById(overlay.targetGuideId)
+    || findVisibleGuideElementById(overlay.guideId)
+    || findVisibleGuideElementByText(overlay.fallbackText || overlay.label)
+  if (element) {
+    const rect = element.getBoundingClientRect()
+    return {
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height
+    }
+  }
+  if (overlay.width > 0 && overlay.height > 0) {
+    return {
+      x: overlay.x,
+      y: overlay.y,
+      width: overlay.width,
+      height: overlay.height
+    }
+  }
+  return null
 }
 
 function isInboxPage() {
@@ -233,6 +315,7 @@ function stopUpdateTimer() {
 function startUpdateTimer() {
   if (updateTimer || !state.session?.id) return
   updateTimer = window.setInterval(sendPageContextUpdate, UPDATE_INTERVAL_MS)
+  schedulePageContextUpdate(0)
 }
 
 function sendPageContextUpdate() {
@@ -243,12 +326,12 @@ function sendPageContextUpdate() {
   }).catch(() => {})
 }
 
-function schedulePageContextUpdate() {
+function schedulePageContextUpdate(delayMs = 700) {
   if (!state.session?.id || state.session.status !== 'active' || updateThrottleTimer) return
   updateThrottleTimer = window.setTimeout(() => {
     updateThrottleTimer = null
     sendPageContextUpdate()
-  }, 900)
+  }, delayMs)
 }
 
 function requestSiteGuidanceStart(detail = {}) {
@@ -359,13 +442,19 @@ function dockMarkup() {
 
 function overlaysMarkup() {
   if (!state.overlays.length) return ''
+  const boxes = state.overlays.map((overlay) => {
+    const rect = resolveOverlayRect(overlay)
+    if (!rect) return ''
+    return `
+      <div class="site-guidance-box" style="left:${Math.round(rect.x)}px;top:${Math.round(rect.y)}px;width:${Math.round(rect.width)}px;height:${Math.round(rect.height)}px;">
+        ${overlay.label ? `<span>${escapeHtml(overlay.label)}</span>` : ''}
+      </div>
+    `
+  }).filter(Boolean).join('')
+  if (!boxes) return ''
   return `
     <div class="site-guidance-overlay-layer" aria-hidden="true">
-      ${state.overlays.map((overlay) => `
-        <div class="site-guidance-box" style="left:${Math.round(overlay.x)}px;top:${Math.round(overlay.y)}px;width:${Math.round(overlay.width)}px;height:${Math.round(overlay.height)}px;">
-          ${overlay.label ? `<span>${escapeHtml(overlay.label)}</span>` : ''}
-        </div>
-      `).join('')}
+      ${boxes}
     </div>
   `
 }
@@ -458,6 +547,33 @@ function bindEvents() {
   window.addEventListener('resize', () => {
     schedulePageContextUpdate()
   }, { passive: true })
+  window.addEventListener('popstate', () => {
+    schedulePageContextUpdate(0)
+  })
+  if (!routeHooksInstalled) {
+    routeHooksInstalled = true
+    ;['pushState', 'replaceState'].forEach((method) => {
+      const original = history[method]
+      history[method] = function patchedHistoryMethod(...args) {
+        const result = original.apply(this, args)
+        window.dispatchEvent(new Event('melogic:route-change'))
+        return result
+      }
+    })
+  }
+  window.addEventListener('melogic:route-change', () => {
+    schedulePageContextUpdate(0)
+  })
+  mutationObserver = new MutationObserver((records = []) => {
+    if (records.length && records.every((record) => record.target?.closest?.('[data-site-guidance-root]'))) return
+    schedulePageContextUpdate()
+  })
+  mutationObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['data-guide-id', 'data-guide-label', 'data-guide-role', 'aria-label', 'hidden', 'class']
+  })
 }
 
 export function initSiteGuidance(options = {}) {

@@ -41,16 +41,27 @@ function sanitizeNumber(value, min, max, fallback = 0) {
 
 function sanitizeLandmarks(raw = []) {
   if (!Array.isArray(raw)) return []
-  return raw.slice(0, 24).map((entry) => {
+  return raw.slice(0, 36).map((entry) => {
     const source = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {}
+    const rect = source.rect && typeof source.rect === 'object' ? source.rect : source
+    const id = cleanString(source.guideId || source.id || '', 120)
     return {
-      id: cleanString(source.id || '', 80),
+      guideId: id,
+      id,
       label: cleanString(source.label || '', 120),
       role: cleanString(source.role || '', 60),
-      x: sanitizeNumber(source.x, 0, 10000),
-      y: sanitizeNumber(source.y, 0, 10000),
-      width: sanitizeNumber(source.width, 0, 10000),
-      height: sanitizeNumber(source.height, 0, 10000)
+      text: cleanString(source.text || '', 180),
+      visible: source.visible !== false,
+      rect: {
+        x: sanitizeNumber(rect.x, 0, 10000),
+        y: sanitizeNumber(rect.y, 0, 10000),
+        width: sanitizeNumber(rect.width, 0, 10000),
+        height: sanitizeNumber(rect.height, 0, 10000)
+      },
+      x: sanitizeNumber(rect.x, 0, 10000),
+      y: sanitizeNumber(rect.y, 0, 10000),
+      width: sanitizeNumber(rect.width, 0, 10000),
+      height: sanitizeNumber(rect.height, 0, 10000)
     }
   }).filter((entry) => entry.label || entry.id)
 }
@@ -60,6 +71,9 @@ function sanitizePageContext(raw = {}) {
   const viewport = source.viewport && typeof source.viewport === 'object' ? source.viewport : {}
   const scroll = source.scroll && typeof source.scroll === 'object' ? source.scroll : {}
   return {
+    shareMode: source.shareMode === 'site_only' ? 'site_only' : 'site_only',
+    route: cleanString(source.route || source.currentRoute || '', 240),
+    pathname: cleanString(source.pathname || '', 200),
     currentRoute: cleanString(source.currentRoute || source.route || '', 240),
     routeLabel: cleanString(source.routeLabel || '', 120),
     pageTitle: cleanString(source.pageTitle || '', 200),
@@ -73,7 +87,8 @@ function sanitizePageContext(raw = {}) {
       x: sanitizeNumber(scroll.x, 0, 100000),
       y: sanitizeNumber(scroll.y, 0, 100000)
     },
-    landmarks: sanitizeLandmarks(source.landmarks)
+    visibleGuideTargets: sanitizeLandmarks(source.visibleGuideTargets || source.landmarks),
+    landmarks: sanitizeLandmarks(source.landmarks || source.visibleGuideTargets)
   }
 }
 
@@ -95,7 +110,8 @@ function serializeSession(docSnap) {
     activeModal: data.activeModal || '',
     viewport: data.viewport || { width: 0, height: 0 },
     scroll: data.scroll || { x: 0, y: 0 },
-    landmarks: Array.isArray(data.landmarks) ? data.landmarks : [],
+    visibleGuideTargets: Array.isArray(data.visibleGuideTargets) ? data.visibleGuideTargets : (Array.isArray(data.landmarks) ? data.landmarks : []),
+    landmarks: Array.isArray(data.landmarks) ? data.landmarks : (Array.isArray(data.visibleGuideTargets) ? data.visibleGuideTargets : []),
     createdAt: serializeTimestamp(data.createdAt),
     updatedAt: serializeTimestamp(data.updatedAt),
     stoppedAt: serializeTimestamp(data.stoppedAt)
@@ -155,6 +171,7 @@ const startSiteGuidanceSession = onCall(CALLABLE_OPTIONS, async (request) => {
     activeModal: page.activeModal,
     viewport: page.viewport,
     scroll: page.scroll,
+    visibleGuideTargets: page.visibleGuideTargets,
     landmarks: page.landmarks,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -179,6 +196,7 @@ const updateSiteGuidanceSession = onCall(CALLABLE_OPTIONS, async (request) => {
     activeModal: page.activeModal,
     viewport: page.viewport,
     scroll: page.scroll,
+    visibleGuideTargets: page.visibleGuideTargets,
     landmarks: page.landmarks,
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true })
@@ -227,6 +245,7 @@ function normalizeMatchText(value = '') {
 
 function resolveHighlightRect(intent = {}, landmarks = []) {
   const targetType = intent.targetType || ''
+  const targetGuideId = cleanString(intent.targetGuideId || intent.guideId || '', 120)
   if (targetType === 'rect') {
     const rect = intent.rect && typeof intent.rect === 'object' ? intent.rect : intent
     const width = sanitizeNumber(rect.width, 0, 10000)
@@ -242,14 +261,14 @@ function resolveHighlightRect(intent = {}, landmarks = []) {
     }
   }
   const rows = Array.isArray(landmarks) ? landmarks : []
-  if (targetType === 'guideId' && intent.guideId) {
-    const match = rows.find((entry) => cleanString(entry.id || '', 120) === cleanString(intent.guideId || '', 120))
+  if ((targetType === 'guideId' || targetGuideId) && targetGuideId) {
+    const match = rows.find((entry) => cleanString(entry.guideId || entry.id || '', 120) === targetGuideId)
     if (match) return { ...match, label: cleanString(intent.label || match.label || 'Guidance highlight', 120) }
   }
-  const targetText = normalizeMatchText(intent.text || intent.label || intent.guideId || '')
+  const targetText = normalizeMatchText(intent.fallbackText || intent.text || intent.label || targetGuideId || '')
   if (targetText) {
     const match = rows.find((entry) => {
-      const label = normalizeMatchText(`${entry.label || ''} ${entry.id || ''}`)
+      const label = normalizeMatchText(`${entry.label || ''} ${entry.text || ''} ${entry.guideId || entry.id || ''}`)
       return label === targetText || label.includes(targetText) || targetText.includes(label)
     })
     if (match) return { ...match, label: cleanString(intent.label || match.label || 'Guidance highlight', 120) }
@@ -265,14 +284,19 @@ async function createGuidanceOverlayFromIntent({ sessionId = '', intent = {}, la
   const overlayRef = db.collection('supportGuidanceSessions').doc(cleanSessionId).collection('overlays').doc()
   const now = Date.now()
   const durationMs = Math.max(1200, Math.min(8000, Math.round(Number(intent.durationMs || 5000) || 5000)))
+  const targetGuideId = cleanString(intent.targetGuideId || intent.guideId || rect.guideId || rect.id || '', 120)
+  const fallbackText = cleanString(intent.fallbackText || intent.text || rect.label || intent.label || '', 160)
   await overlayRef.set({
     type: 'box',
     source: 'resona',
+    targetGuideId,
+    fallbackText,
     x: sanitizeNumber(rect.x, 0, 10000),
     y: sanitizeNumber(rect.y, 0, 10000),
     width: sanitizeNumber(rect.width, 20, 10000),
     height: sanitizeNumber(rect.height, 20, 10000),
     label: cleanString(rect.label || intent.label || 'Guidance highlight', 120),
+    durationMs,
     createdAt: FieldValue.serverTimestamp(),
     expiresAt: Timestamp.fromMillis(now + durationMs)
   })
@@ -309,6 +333,7 @@ async function loadActiveGuidanceContext({ threadId = '', userUid = '' } = {}) {
     activeModal: session.activeModal,
     viewport: session.viewport,
     scroll: session.scroll,
+    visibleGuideTargets: session.visibleGuideTargets,
     landmarks: session.landmarks
   }
 }

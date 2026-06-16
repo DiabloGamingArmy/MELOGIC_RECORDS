@@ -48,7 +48,8 @@ function normalizeSession(sessionId = '', raw = {}) {
     activeModal: String(raw.activeModal || '').trim(),
     viewport: raw.viewport && typeof raw.viewport === 'object' ? raw.viewport : { width: 0, height: 0 },
     scroll: raw.scroll && typeof raw.scroll === 'object' ? raw.scroll : { x: 0, y: 0 },
-    landmarks: Array.isArray(raw.landmarks) ? raw.landmarks : [],
+    visibleGuideTargets: Array.isArray(raw.visibleGuideTargets) ? raw.visibleGuideTargets : (Array.isArray(raw.landmarks) ? raw.landmarks : []),
+    landmarks: Array.isArray(raw.landmarks) ? raw.landmarks : (Array.isArray(raw.visibleGuideTargets) ? raw.visibleGuideTargets : []),
     createdAt: toIsoDate(raw.createdAt),
     updatedAt: toIsoDate(raw.updatedAt),
     stoppedAt: toIsoDate(raw.stoppedAt)
@@ -60,11 +61,15 @@ function normalizeOverlay(overlayId = '', raw = {}) {
     id: String(raw.id || overlayId || '').trim(),
     type: raw.type === 'box' ? 'box' : 'box',
     source: raw.source === 'agent' ? 'agent' : 'resona',
+    targetGuideId: String(raw.targetGuideId || raw.guideId || '').trim(),
+    guideId: String(raw.guideId || raw.targetGuideId || '').trim(),
+    fallbackText: String(raw.fallbackText || raw.text || '').trim(),
     x: Number(raw.x || 0),
     y: Number(raw.y || 0),
     width: Number(raw.width || 0),
     height: Number(raw.height || 0),
     label: String(raw.label || '').trim(),
+    durationMs: Number(raw.durationMs || 5000),
     createdAt: toIsoDate(raw.createdAt),
     expiresAt: toIsoDate(raw.expiresAt)
   }
