@@ -252,15 +252,24 @@ function isResonaThread(thread = activeThread) {
   return Boolean(thread && thread.type === 'agent' && thread.agentId === 'resona')
 }
 
+function isResonaDockThread(thread = activeThread) {
+  if (dockState.mode !== 'thread') return false
+  if (isResonaThread(thread)) return true
+  return /^resona_[A-Za-z0-9_-]+$/.test(String(dockState.activeThreadId || ''))
+}
+
 function getThreadTitle() {
+  if (!activeThread && isResonaDockThread()) return 'Resona'
   return activeThread?.title || dockState.title || 'Conversation'
 }
 
 function getThreadSubtitle() {
   if (!currentUid()) return 'Sign in to continue'
   if (loadingThreads) return 'Loading conversation...'
+  if (!activeThread && isResonaDockThread()) return 'AI music support'
   if (!activeThread && dockState.activeThreadId) return 'Conversation unavailable'
   if (!activeThread) return 'No conversation selected'
+  if (isResonaThread(activeThread)) return 'AI music support'
   if (activeThread.type === 'group') {
     return `${Math.max(1, Number(activeThread.participantCount || getThreadParticipantUids(activeThread).length || 0))} members`
   }
@@ -560,7 +569,7 @@ function renderSupportHeaderActions() {
 }
 
 function renderThreadHeaderActions() {
-  if (!isResonaThread() || dockState.mode === 'support') return ''
+  if (!isResonaDockThread() || dockState.mode === 'support') return ''
   return `
     <div class="chat-dock-support-actions" aria-label="Resona chat actions">
       <button type="button" class="chat-dock-header-action is-muted" data-site-guidance-start data-site-guidance-thread-id="${escapeHtml(dockState.activeThreadId)}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" title="Share this Melogic page only.">Share Screen</button>
@@ -575,7 +584,7 @@ function dockPanelStyle() {
     parts.push(`--chat-dock-width:${size.width}px`)
     parts.push(`--chat-dock-height:${size.height}px`)
   }
-  if (isResonaThread() && resonaBackgroundURL) parts.push(`--resona-chat-background:url('${escapeHtml(resonaBackgroundURL)}')`)
+  if (isResonaDockThread() && resonaBackgroundURL) parts.push(`--resona-chat-background:url('${escapeHtml(resonaBackgroundURL)}')`)
   return parts.length ? ` style="${parts.join('; ')};"` : ''
 }
 
@@ -624,6 +633,8 @@ function stabilizeDockScroll(snapshot = {}, { forceBottom = false, reason = 'ren
   }
   apply()
   window.requestAnimationFrame(apply)
+  window.requestAnimationFrame(() => window.requestAnimationFrame(apply))
+  window.setTimeout(apply, 80)
 }
 
 function renderDock() {
@@ -643,12 +654,13 @@ function renderDock() {
 
   const title = dockState.mode === 'support' ? getSupportTitle() : getThreadTitle()
   const subtitle = dockState.mode === 'support' ? getSupportSubtitle() : getThreadSubtitle()
-  const headerAvatar = dockState.mode === 'support'
+  const isResonaDock = dockState.mode === 'support' || isResonaDockThread()
+  const headerAvatar = isResonaDock
     ? renderResonaAvatar(title)
     : renderAvatar(activeThread || { title }, title)
 
   root.innerHTML = `
-    <section class="chat-dock-panel ${isResonaThread() ? 'is-resona-chat' : ''}" role="dialog" aria-label="${escapeHtml(title)} chat dock" aria-live="polite"${dockPanelStyle()}>
+    <section class="chat-dock-panel ${isResonaDockThread() ? 'is-resona-chat' : ''}" role="dialog" aria-label="${escapeHtml(title)} chat dock" aria-live="polite"${dockPanelStyle()}>
       ${renderResizeHandles()}
       <header class="chat-dock-header">
         ${headerAvatar}
@@ -836,12 +848,13 @@ function syncThreadSubscriptions() {
 function setDockState(next = {}) {
   const previousMode = dockState.mode
   const previousThreadId = dockState.activeThreadId
+  const wasOpen = dockState.open === true
   dockState = {
     ...dockState,
     ...next,
     ownerUid: currentUid() || dockState.ownerUid || ''
   }
-  if (previousMode !== dockState.mode || previousThreadId !== dockState.activeThreadId) {
+  if (previousMode !== dockState.mode || previousThreadId !== dockState.activeThreadId || (!wasOpen && dockState.open)) {
     draft = ''
     sending = false
     requestingAgent = false

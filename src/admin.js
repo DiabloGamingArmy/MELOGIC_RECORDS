@@ -464,6 +464,8 @@ supportForms: {
 
   error: '',
 
+  message: '',
+
   selectedId: '',
 
   savingId: '',
@@ -4081,13 +4083,14 @@ function contactSupportFormsPanel() {
             ['archived', 'Archived'],
             ['all', 'All']
           ].map(([key, label]) => `
-            <button type="button" class="${formsState.filter === key ? 'is-active' : ''}" data-support-form-filter="${key}">
+            <button type="button" class="${formsState.filter === key ? 'is-active' : ''}" data-support-form-filter="${key}" data-guide-id="admin-support-form-filter-${key}" data-guide-label="${escapeHtml(label)} support forms filter">
               ${escapeHtml(label)}
             </button>
           `).join('')}
         </div>
 
         ${formsState.error ? `<p class="admin-status is-error">${escapeHtml(formsState.error)}</p>` : ''}
+        ${formsState.message ? `<p class="admin-status is-success">${escapeHtml(formsState.message)}</p>` : ''}
 
         <div class="admin-panel-scroll">
           ${formsState.loading ? '<article class="admin-empty-state">Loading support forms...</article>' : ''}
@@ -4148,7 +4151,7 @@ function contactSupportThreadsPanel() {
             ['resolved', 'Resolved'],
             ['all', 'All']
           ].map(([key, label]) => `
-            <button type="button" class="${threadsState.filter === key ? 'is-active' : ''}" data-support-thread-filter="${key}">
+            <button type="button" class="${threadsState.filter === key ? 'is-active' : ''}" data-support-thread-filter="${key}" data-guide-id="admin-support-thread-filter-${key}" data-guide-label="${escapeHtml(label)} support queue filter">
               ${escapeHtml(label)}
             </button>
           `).join('')}
@@ -4161,8 +4164,8 @@ function contactSupportThreadsPanel() {
           ${threadsState.loading ? '<article class="admin-empty-state">Loading support threads...</article>' : ''}
           ${!threadsState.loading && !threads.length ? `
             <article class="admin-empty-state">
-              <strong>No live support threads</strong>
-              <span>New chat requests will appear here.</span>
+              <strong>No live support threads yet</strong>
+              <span>Escalated Resona chats and live support requests will appear here.</span>
             </article>
           ` : ''}
           ${threads.map((thread) => supportThreadListCard(thread)).join('')}
@@ -4180,7 +4183,7 @@ function contactSupportThreadsPanel() {
         ${selected ? supportThreadDetail(selected) : `
           <article class="admin-empty-state">
             <strong>No chat selected</strong>
-            <span>Select a live support thread to review it.</span>
+            <span>Choose an escalated Resona or support conversation to review it here.</span>
           </article>
         `}
       </section>
@@ -4204,6 +4207,8 @@ function supportThreadListCard(thread = {}) {
   const selected = state.contact.supportThreads.selectedId === thread.id
   const status = thread.status || 'open'
   const preview = thread.lastMessagePreview || 'No messages yet.'
+  const assigned = thread.assignedAgent || {}
+  const assignedLabel = assigned.displayName || assigned.username || thread.assignedAgentUid || ''
   return `
     <button type="button" class="admin-list-card admin-support-form-card admin-support-thread-card ${selected ? 'is-selected' : ''}" data-support-thread-select="${escapeHtml(thread.id)}">
       <span class="admin-support-form-avatar" aria-hidden="true">${escapeHtml(supportThreadRequesterLabel(thread).slice(0, 1).toUpperCase())}</span>
@@ -4213,6 +4218,7 @@ function supportThreadListCard(thread = {}) {
           <span class="admin-pill status-${statusClass(status)}">${escapeHtml(humanLabel(status))}</span>
         </span>
         <small>${escapeHtml(supportThreadRequesterLabel(thread))}</small>
+        ${assignedLabel ? `<small>Assigned: ${escapeHtml(assignedLabel)}</small>` : '<small>Assigned: Unassigned</small>'}
         ${thread.aiEscalationReason ? `<small>Escalation: ${escapeHtml(humanLabel(thread.aiEscalationReason))}</small>` : ''}
         <span class="admin-support-form-preview">${escapeHtml(preview)}</span>
         <span class="admin-support-form-time">${escapeHtml(thread.updatedAt ? formatDate(thread.updatedAt) : 'Not dated')}</span>
@@ -4260,7 +4266,7 @@ function supportThreadDetail(thread = {}) {
         </label>
         <div class="admin-support-form-actions">
           <button type="button" class="admin-secondary-button" data-support-thread-claim="${escapeHtml(thread.id)}" ${saving || resolved ? 'disabled' : ''}>
-            ${thread.assignedAgentUid ? 'Reclaim' : 'Claim'}
+            ${thread.assignedAgentUid ? 'Reclaim / Join' : 'Claim / Join'}
           </button>
           <button type="submit" class="admin-primary-button" ${saving || resolved || !threadsState.replyDraft.trim() ? 'disabled' : ''}>
             ${saving ? 'Working...' : 'Send Reply'}
@@ -4372,7 +4378,7 @@ function supportFormDetail(form = {}) {
           Reply by Email
         </a>
         <button type="button" class="admin-primary-button admin-support-resolve-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="resolved" ${saving ? 'disabled' : ''}>
-          Resolve
+          Mark as Resolved
         </button>
       </div>
     </article>
@@ -7532,11 +7538,19 @@ async function changeSupportFormStatus(formId = '', status = 'reviewing') {
   if (!formId) return
 
   state.contact.supportForms.savingId = formId
-  state.contact.error = ''
+  state.contact.supportForms.error = ''
+  state.contact.supportForms.message = ''
   render()
 
   try {
     await updateSupportFormStatus(formId, status)
+    state.contact.supportForms.message = status === 'resolved' ? 'Support request marked as resolved.' : 'Support request updated.'
+    state.contact.supportForms.loaded = false
+    state.contact.supportForms.cursor = null
+    state.contact.supportForms.hasMore = false
+    state.contact.supportForms.items = []
+    state.contact.supportForms.selectedId = ''
+    await loadSupportFormsPage({ append: false })
   } catch (error) {
     console.warn('[admin support forms] status update failed', error)
     state.contact.supportForms.error = error?.message || 'Could not update support form status.'
@@ -8521,6 +8535,7 @@ app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
   state.contact.supportForms.cursor = null
   state.contact.supportForms.hasMore = false
   state.contact.supportForms.items = []
+  state.contact.supportForms.message = ''
   stopSupportFormsWatch()
   loadSupportFormsPage({ append: false })
 })
@@ -8534,6 +8549,7 @@ app.querySelectorAll('[data-support-form-filter]').forEach((button) => {
     state.contact.supportForms.hasMore = false
     state.contact.supportForms.items = []
     state.contact.supportForms.selectedId = ''
+    state.contact.supportForms.message = ''
     const params = new URLSearchParams(window.location.search)
     params.set('mode', 'support')
     params.set('filter', state.contact.supportForms.filter)

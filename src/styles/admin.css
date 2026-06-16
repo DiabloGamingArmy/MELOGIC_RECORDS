@@ -7,8 +7,8 @@
   --admin-muted: var(--ml-text-muted, #aebbd4);
   --admin-border: var(--ml-border, rgba(130, 160, 220, 0.18));
   --admin-border-strong: var(--ml-border-strong, rgba(130, 190, 255, 0.34));
-  --admin-primary: var(--ml-accent, #6ee7ff);
-  --admin-primary-strong: #276b8a;
+  --admin-primary: #2b7f9a;
+  --admin-primary-strong: #1e5f78;
   --admin-input: rgba(5, 9, 17, 0.86);
   --admin-code-bg: rgba(5, 9, 17, 0.9);
   --admin-shadow: rgba(0, 0, 0, 0.38);
@@ -130,7 +130,7 @@
 
 .admin-sidebar-nav a.is-active {
   border-color: var(--admin-border-strong);
-  background: rgba(110, 231, 255, 0.09);
+  background: color-mix(in srgb, var(--admin-primary) 18%, var(--admin-card));
   color: var(--admin-text);
 }
 
@@ -2171,7 +2171,7 @@
 .admin-contact-tabs a.is-active,
 .admin-contact-tabs button.is-active {
   border-color: var(--admin-primary);
-  background: var(--admin-primary);
+  background: color-mix(in srgb, var(--admin-primary) 88%, #06111b);
   color: #ffffff;
 }
 
@@ -3233,11 +3233,11 @@
   grid-template-columns: 42px minmax(0, 1fr);
   gap: 0.75rem;
   width: 100%;
-  min-height: 132px;
-  margin: 0 0 0.65rem;
-  padding: 0.85rem;
+  min-height: 106px;
+  margin: 0 0 0.55rem;
+  padding: 0.75rem;
   border: 1px solid var(--admin-border);
-  border-radius: 8px;
+  border-radius: 12px;
   background: var(--admin-card-subtle);
   color: var(--admin-text);
   text-align: left;
@@ -3255,8 +3255,8 @@
   place-items: center;
   width: 42px;
   height: 42px;
-  border-radius: 8px;
-  background: var(--admin-primary);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--admin-primary), var(--admin-primary-strong));
   color: #ffffff;
   font-weight: 900;
 }
@@ -3291,7 +3291,7 @@
 .admin-support-form-preview,
 .admin-support-form-time {
   color: var(--admin-muted);
-  font-size: 0.82rem;
+  font-size: 0.8rem;
 }
 
 .admin-support-form-preview {
@@ -3345,10 +3345,11 @@
 
 .admin-support-live-grid {
   margin-bottom: 1rem;
+  gap: 1rem;
 }
 
 .admin-support-thread-card {
-  min-height: 118px;
+  min-height: 104px;
 }
 
 .admin-support-thread-detail {
@@ -3358,11 +3359,11 @@
 .admin-support-thread-messages {
   display: grid;
   gap: 0.55rem;
-  max-height: 260px;
+  max-height: 340px;
   overflow: auto;
   border: 1px solid var(--admin-border);
-  border-radius: 8px;
-  background: var(--admin-card-subtle);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--admin-card-subtle) 72%, #02050a);
   padding: 0.75rem;
 }
 

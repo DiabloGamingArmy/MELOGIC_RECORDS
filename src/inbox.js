@@ -2622,7 +2622,7 @@ function getMessagesThreadListMarkup() {
   const resonaThread = getResonaDisplayThread()
   const normalThreads = appState.threads.filter((thread) => !isResonaThread(thread))
   const resonaCard = `
-    <article class="thread-row thread-row-resona ${resonaThread.id && resonaThread.id === appState.selectedThreadId ? 'is-active' : ''}" data-thread-row-id="${escapeHtml(resonaThread.id || 'resona')}" data-thread-render-signature="${escapeHtml(hashRenderSignature({ thread: resonaThread, avatar: appState.resonaAvatarURL }))}">
+    <article class="thread-row thread-row-resona ${resonaThread.id && resonaThread.id === appState.selectedThreadId ? 'is-active' : ''}" data-thread-row-id="${escapeHtml(resonaThread.id || 'resona')}" data-guide-id="inbox-thread-resona" data-guide-label="Resona conversation" data-thread-render-signature="${escapeHtml(hashRenderSignature({ thread: resonaThread, avatar: appState.resonaAvatarURL }))}">
       <button class="thread-row-main" type="button" data-open-resona-thread>
         ${renderThreadAvatar(resonaThread, { stableKey: `thread-list:${resonaThread.id || 'resona'}` })}
         <div class="thread-meta">
@@ -2687,7 +2687,7 @@ function getMessagesThreadListMarkup() {
         : ''
 
       return `
-        <article class="thread-row ${isActive ? 'is-active' : ''}" data-thread-row-id="${thread.id}" data-thread-render-signature="${escapeHtml(rowSignature)}">
+        <article class="thread-row ${isActive ? 'is-active' : ''}" data-thread-row-id="${thread.id}" data-guide-id="inbox-thread-${escapeHtml(thread.id)}" data-guide-label="${escapeHtml(thread.title || 'Conversation')}" data-thread-render-signature="${escapeHtml(rowSignature)}">
           <button class="thread-row-main" type="button" data-select-thread-id="${thread.id}">
             ${renderThreadAvatar(thread, { stableKey: `thread-list:${thread.id}` })}
             <div class="thread-meta">

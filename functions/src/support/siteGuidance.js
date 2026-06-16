@@ -221,6 +221,64 @@ const createGuidanceTestOverlay = onCall(CALLABLE_OPTIONS, async (request) => {
   return { ok: true, sessionId, overlayId: overlayRef.id }
 })
 
+function normalizeMatchText(value = '') {
+  return cleanString(value || '', 180).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function resolveHighlightRect(intent = {}, landmarks = []) {
+  const targetType = intent.targetType || ''
+  if (targetType === 'rect') {
+    const rect = intent.rect && typeof intent.rect === 'object' ? intent.rect : intent
+    const width = sanitizeNumber(rect.width, 0, 10000)
+    const height = sanitizeNumber(rect.height, 0, 10000)
+    if (width > 0 && height > 0) {
+      return {
+        x: sanitizeNumber(rect.x, 0, 10000),
+        y: sanitizeNumber(rect.y, 0, 10000),
+        width,
+        height,
+        label: cleanString(intent.label || 'Guidance highlight', 120)
+      }
+    }
+  }
+  const rows = Array.isArray(landmarks) ? landmarks : []
+  if (targetType === 'guideId' && intent.guideId) {
+    const match = rows.find((entry) => cleanString(entry.id || '', 120) === cleanString(intent.guideId || '', 120))
+    if (match) return { ...match, label: cleanString(intent.label || match.label || 'Guidance highlight', 120) }
+  }
+  const targetText = normalizeMatchText(intent.text || intent.label || intent.guideId || '')
+  if (targetText) {
+    const match = rows.find((entry) => {
+      const label = normalizeMatchText(`${entry.label || ''} ${entry.id || ''}`)
+      return label === targetText || label.includes(targetText) || targetText.includes(label)
+    })
+    if (match) return { ...match, label: cleanString(intent.label || match.label || 'Guidance highlight', 120) }
+  }
+  return null
+}
+
+async function createGuidanceOverlayFromIntent({ sessionId = '', intent = {}, landmarks = [] } = {}) {
+  const cleanSessionId = cleanString(sessionId || '', 180)
+  if (!cleanSessionId || !intent || intent.action !== 'highlight') return null
+  const rect = resolveHighlightRect(intent, landmarks)
+  if (!rect) return null
+  const overlayRef = db.collection('supportGuidanceSessions').doc(cleanSessionId).collection('overlays').doc()
+  const now = Date.now()
+  const durationMs = Math.max(1200, Math.min(8000, Math.round(Number(intent.durationMs || 5000) || 5000)))
+  await overlayRef.set({
+    type: 'box',
+    source: 'resona',
+    x: sanitizeNumber(rect.x, 0, 10000),
+    y: sanitizeNumber(rect.y, 0, 10000),
+    width: sanitizeNumber(rect.width, 20, 10000),
+    height: sanitizeNumber(rect.height, 20, 10000),
+    label: cleanString(rect.label || intent.label || 'Guidance highlight', 120),
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(now + durationMs)
+  })
+  return overlayRef.id
+}
+
 async function loadActiveGuidanceContext({ threadId = '', userUid = '' } = {}) {
   const cleanThreadId = cleanString(threadId || '', 180)
   const cleanUid = cleanString(userUid || '', 180)
@@ -241,6 +299,7 @@ async function loadActiveGuidanceContext({ threadId = '', userUid = '' } = {}) {
   })
   const session = serializeSession(docs[0])
   return {
+    sessionId: session.id,
     guidanceSessionActive: session.status === 'active',
     guidanceSessionStatus: session.status,
     route: session.currentRoute,
@@ -260,7 +319,9 @@ module.exports = {
   setSiteGuidanceSessionStatus,
   createGuidanceTestOverlay,
   loadActiveGuidanceContext,
+  createGuidanceOverlayFromIntent,
   __test: {
-    sanitizePageContext
+    sanitizePageContext,
+    resolveHighlightRect
   }
 }

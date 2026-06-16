@@ -10,7 +10,7 @@ const {
   detectEscalationNeed,
   generateSupportReply
 } = require('./aiSupportAgent')
-const { loadActiveGuidanceContext } = require('./siteGuidance')
+const { createGuidanceOverlayFromIntent, loadActiveGuidanceContext } = require('./siteGuidance')
 const {
   assertString,
   buildInboxSummaryPayload,
@@ -684,6 +684,19 @@ const handleResonaInboxReply = onDocumentCreated({
       userMessage: message,
       aiResult
     })
+    if (aiResult?.highlightIntent && safePageContext?.sessionId) {
+      await createGuidanceOverlayFromIntent({
+        sessionId: safePageContext.sessionId,
+        intent: aiResult.highlightIntent,
+        landmarks: safePageContext.landmarks || []
+      }).catch((error) => {
+        console.warn('[resona-guidance] highlight failed', {
+          threadId,
+          messageId,
+          message: error?.message || 'unknown'
+        })
+      })
+    }
   } finally {
     await setResonaTyping(threadRef, false)
   }

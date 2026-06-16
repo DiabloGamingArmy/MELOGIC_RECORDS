@@ -112,6 +112,7 @@ const {
   setSiteGuidanceSessionStatus,
   createGuidanceTestOverlay
 } = require('./src/support/siteGuidance')
+const { resolveSupportFormRequest } = require('./src/support/supportForms')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -233,3 +234,4 @@ exports.startSiteGuidanceSession = startSiteGuidanceSession
 exports.updateSiteGuidanceSession = updateSiteGuidanceSession
 exports.setSiteGuidanceSessionStatus = setSiteGuidanceSessionStatus
 exports.createGuidanceTestOverlay = createGuidanceTestOverlay
+exports.resolveSupportFormRequest = resolveSupportFormRequest

@@ -12,7 +12,9 @@ import {
   updateDoc,
   where
 } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
+import { functions } from '../firebase/functions'
 
 const SUPPORT_FORMS_COLLECTION = 'supportForms'
 
@@ -85,7 +87,9 @@ export function normalizeSupportForm(id, data = {}) {
     adminNote: data.adminNote || '',
     assignedTo: data.assignedTo || '',
     createdAt: timestampToIso(data.createdAt),
-    updatedAt: timestampToIso(data.updatedAt)
+    updatedAt: timestampToIso(data.updatedAt),
+    resolvedAt: timestampToIso(data.resolvedAt),
+    resolvedBy: data.resolvedBy || ''
   }
 }
 
@@ -149,6 +153,11 @@ export async function updateSupportFormStatus(formId, status = 'reviewed') {
   const cleanStatus = ['new', 'reviewing', 'reviewed', 'resolved', 'archived'].includes(status)
     ? status
     : 'reviewed'
+  if (cleanStatus === 'resolved') {
+    const callable = httpsCallable(functions, 'resolveSupportFormRequest')
+    await callable({ formId })
+    return
+  }
 
   await updateDoc(doc(db, SUPPORT_FORMS_COLLECTION, formId), {
     status: cleanStatus,
