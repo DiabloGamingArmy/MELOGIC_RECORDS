@@ -13,8 +13,10 @@ import {
   listThreadsForUser,
   restoreThreadForUser,
   refreshResonaThread,
+  reportResonaMessage,
   setThreadPinnedForUser,
   setThreadResonaAgent,
+  setResonaMessageFeedback,
   deleteThreadForUser,
   repairMyInboxThreads,
   removeParticipantFromThread,
@@ -140,7 +142,7 @@ async function decorateThread(thread, currentUid) {
     const attachmentCount = Number(thread.lastMessageAttachmentCount || 0)
     const fallbackSubtitle = thread.lastMessageText
       || thread.lastMessagePreview
-      || (attachmentCount > 0 ? `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : 'Ask questions, get support, or request a live agent.')
+      || (attachmentCount > 0 ? `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : 'Ask me anything')
     return {
       ...thread,
       otherParticipantId: '',
@@ -219,9 +221,11 @@ export {
   repairMyInboxThreads,
   restoreThreadForUser,
   refreshResonaThread,
+  reportResonaMessage,
   addParticipantsToThread,
   removeParticipantFromThread,
   setThreadResonaAgent,
+  setResonaMessageFeedback,
   updateThreadDetails,
   setThreadPinnedForUser,
   deleteThreadForUser,

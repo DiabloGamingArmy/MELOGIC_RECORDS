@@ -1967,6 +1967,80 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
+  align-items: stretch;
+}
+
+.admin-settings-card {
+  min-height: 420px;
+  max-height: 520px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.admin-settings-card .admin-slab-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--admin-card);
+  padding-bottom: 0.5rem;
+}
+
+.admin-settings-card-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.admin-settings-card-aiModeration,
+.admin-settings-card-supportAi {
+  max-height: 560px;
+}
+
+.admin-settings-card .admin-field dd {
+  max-height: 7.6rem;
+  overflow: auto;
+}
+
+.admin-decision-modal [data-settings-form] {
+  max-height: min(72vh, 680px);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.admin-decision-modal [data-settings-form] textarea[data-settings-field] {
+  min-height: 140px;
+  max-height: 240px;
+  overflow-y: auto;
+  resize: vertical;
+}
+
+.admin-resona-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.admin-resona-stats-grid div {
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  background: var(--admin-card-subtle);
+  padding: 0.65rem;
+}
+
+.admin-resona-stats-grid dt {
+  color: var(--admin-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.admin-resona-stats-grid dd {
+  margin: 0.25rem 0 0;
+  color: var(--admin-text);
+  font-size: 1rem;
+  font-weight: 900;
 }
 
 .admin-overview-grid {

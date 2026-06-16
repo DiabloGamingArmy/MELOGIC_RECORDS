@@ -315,6 +315,17 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   padding: 0.5rem 0.55rem;
 }
 
+.thread-row .thread-meta {
+  min-width: 0;
+}
+
+.thread-preview-row p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .thread-row.is-active,
 .thread-row:hover {
   border-color: rgba(127, 168, 248, 0.7);
@@ -857,6 +868,22 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   overflow: hidden;
 }
 
+.conversation-stack.is-resona-chat {
+  position: relative;
+  background-image:
+    linear-gradient(180deg, rgba(6, 10, 18, 0.68), rgba(6, 10, 18, 0.82)),
+    var(--resona-chat-background);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.conversation-stack.is-resona-chat .message-list,
+.conversation-stack.is-resona-chat .message-composer {
+  position: relative;
+  z-index: 1;
+}
+
 .message-list {
   flex: 1 1 0;
   height: 0;
@@ -994,6 +1021,23 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   padding: 0.14rem 0.55rem;
 }
 
+.message-service-pill {
+  align-self: center;
+  margin: 0.4rem auto;
+  text-align: center;
+}
+
+.message-service-pill span {
+  display: inline-block;
+  max-width: min(520px, 82vw);
+  border: 1px solid rgba(128, 153, 204, 0.32);
+  border-radius: 999px;
+  background: rgba(13, 21, 35, 0.76);
+  color: #9fb2d8;
+  font-size: 0.72rem;
+  padding: 0.18rem 0.66rem;
+}
+
 .message-cluster {
   display: flex;
   gap: 0.5rem;
@@ -1065,6 +1109,51 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   gap: 0.22rem;
   width: fit-content;
   max-width: 100%;
+}
+
+.resona-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.24rem;
+  margin-top: 0.24rem;
+  opacity: 0.68;
+  transition: opacity 0.15s ease;
+}
+
+.message-cluster:hover .resona-message-actions,
+.resona-message-actions:focus-within {
+  opacity: 1;
+}
+
+.resona-message-actions button {
+  width: 1.72rem;
+  height: 1.72rem;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(128, 153, 204, 0.28);
+  border-radius: 999px;
+  background: rgba(11, 18, 31, 0.74);
+  color: #b8caec;
+  cursor: pointer;
+}
+
+.resona-message-actions button svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.resona-message-actions button:hover,
+.resona-message-actions button:focus-visible,
+.resona-message-actions button.is-active {
+  border-color: rgba(125, 230, 255, 0.58);
+  color: #e3fbff;
+  background: rgba(52, 117, 188, 0.26);
+  outline: none;
+}
+
+.resona-message-actions button:disabled {
+  cursor: default;
+  opacity: 0.42;
 }
 
 .message-cluster.is-self .message-bubble-stack {

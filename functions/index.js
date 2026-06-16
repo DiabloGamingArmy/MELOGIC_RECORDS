@@ -101,6 +101,9 @@ const {
   createOrGetResonaThread,
   refreshResonaThread,
   setThreadResonaAgent,
+  setResonaMessageFeedback,
+  reportResonaMessage,
+  getResonaAiStats,
   handleResonaInboxReply
 } = require('./src/support/resonaInbox')
 
@@ -216,4 +219,7 @@ exports.handleSupportAiReply = handleSupportAiReply
 exports.createOrGetResonaThread = createOrGetResonaThread
 exports.refreshResonaThread = refreshResonaThread
 exports.setThreadResonaAgent = setThreadResonaAgent
+exports.setResonaMessageFeedback = setResonaMessageFeedback
+exports.reportResonaMessage = reportResonaMessage
+exports.getResonaAiStats = getResonaAiStats
 exports.handleResonaInboxReply = handleResonaInboxReply

@@ -1904,6 +1904,13 @@ export async function getAdminSettings() {
   return result?.data || { ok: false, settings: {} }
 }
 
+export async function getResonaAiStats() {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'getResonaAiStats')
+  const result = await callable({})
+  return result?.data || { ok: false, stats: {} }
+}
+
 export async function updateAdminSettings({ section = '', values = {}, reason = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'updateAdminSettings')

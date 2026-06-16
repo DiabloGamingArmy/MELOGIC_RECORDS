@@ -1,7 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentCreated } = require('firebase-functions/v2/firestore')
 const { FieldValue, getFirestore } = require('firebase-admin/firestore')
-const { assertPermission } = require('../admin/adminAuth')
+const { assertAdmin, assertPermission } = require('../admin/adminAuth')
 const { DEFAULT_SETTINGS, mergeSettings } = require('../admin/adminSettingsShared')
 const {
   SUPPORT_AI_API_KEY,
@@ -86,6 +86,14 @@ function serializeThread(docSnap) {
     aiSuggestedCategory: data.aiSuggestedCategory || '',
     agentParticipants: data.agentParticipants || {}
   }
+}
+
+function safeIdPart(value = '') {
+  return assertString(value)
+    .replace(/[/.#[\]\s]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 140) || 'item'
 }
 
 function serializeMessage(docSnap) {
@@ -204,6 +212,21 @@ async function setResonaTyping(threadRef, active = false) {
     return
   }
   await typingRef.delete().catch(() => {})
+}
+
+async function loadReadableResonaMessage({ uid = '', threadId = '', messageId = '' } = {}) {
+  if (!uid || !threadId || !messageId) throw new HttpsError('invalid-argument', 'Message is required.')
+  const threadRef = db.collection('threads').doc(threadId)
+  const messageRef = threadRef.collection('messages').doc(messageId)
+  const [threadSnap, messageSnap] = await Promise.all([threadRef.get(), messageRef.get()])
+  if (!threadSnap.exists || !messageSnap.exists) throw new HttpsError('not-found', 'Message not found.')
+  const thread = threadSnap.data() || {}
+  if (!getThreadParticipantUids(thread).includes(uid)) throw new HttpsError('permission-denied', 'You do not have access to this conversation.')
+  const message = messageSnap.data() || {}
+  if (message.senderType !== 'ai' || message.agentId !== RESONA_AGENT_ID) {
+    throw new HttpsError('failed-precondition', 'Only Resona messages can use this action.')
+  }
+  return { thread, message }
 }
 
 async function lockAiMessage(threadRef, messageId = '') {
@@ -385,7 +408,6 @@ const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
       thread: payload,
       recipientUid: uid
     }))
-    addSystemMessage(transaction, threadRef, 'Resona joined the chat.', { event: 'resona_joined' })
     return { threadId, existing: false }
   })
 
@@ -463,6 +485,125 @@ const setThreadResonaAgent = onCall(CALLABLE_OPTIONS, async (request) => {
   })
 
   return { ok: true, threadId, active }
+})
+
+const setResonaMessageFeedback = onCall(CALLABLE_OPTIONS, async (request) => {
+  const uid = assertSignedIn(request)
+  const threadId = assertString(request.data?.threadId || '')
+  const messageId = assertString(request.data?.messageId || '')
+  const value = assertString(request.data?.value || '')
+  if (!['like', 'dislike', 'clear'].includes(value)) throw new HttpsError('invalid-argument', 'Feedback value is invalid.')
+  await loadReadableResonaMessage({ uid, threadId, messageId })
+  const feedbackId = `${safeIdPart(threadId)}_${safeIdPart(messageId)}_${safeIdPart(uid)}`
+  const feedbackRef = db.collection('aiMessageFeedback').doc(feedbackId)
+  if (value === 'clear') {
+    await feedbackRef.delete().catch(() => null)
+    return { ok: true, threadId, messageId, value: '' }
+  }
+  await feedbackRef.set({
+    feedbackId,
+    threadId,
+    messageId,
+    userUid: uid,
+    agentId: RESONA_AGENT_ID,
+    value,
+    source: 'resona_message',
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp()
+  }, { merge: true })
+  return { ok: true, threadId, messageId, value }
+})
+
+const reportResonaMessage = onCall(CALLABLE_OPTIONS, async (request) => {
+  const uid = assertSignedIn(request)
+  const threadId = assertString(request.data?.threadId || '')
+  const messageId = assertString(request.data?.messageId || '')
+  const reason = assertString(request.data?.reason || 'Other').slice(0, 160) || 'Other'
+  const description = assertString(request.data?.description || 'Reported Resona message').slice(0, 2000) || 'Reported Resona message'
+  const { message } = await loadReadableResonaMessage({ uid, threadId, messageId })
+  const reportId = `resona_message_${safeIdPart(threadId)}_${safeIdPart(messageId)}_${safeIdPart(uid)}`
+  const reportRef = db.collection('reports').doc(reportId)
+  const duplicateSnap = await reportRef.get()
+  if (duplicateSnap.exists) return { ok: true, duplicate: true, reportId, status: duplicateSnap.data()?.status || 'open' }
+  await reportRef.set({
+    reportId,
+    type: 'resona_message',
+    targetType: 'resona_message',
+    targetId: messageId,
+    targetOwnerUid: RESONA_AGENT_ID,
+    reporterUid: uid,
+    reason,
+    description,
+    status: 'open',
+    priority: 'normal',
+    sourcePath: `/inbox/messages?thread=${encodeURIComponent(threadId)}`,
+    metadata: {
+      source: 'resona_message',
+      threadId,
+      messageId,
+      agentId: RESONA_AGENT_ID,
+      messagePreview: cleanBody(message.body || '', 500)
+    },
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    assignedTo: '',
+    resolvedAt: null,
+    resolvedBy: '',
+    resolution: '',
+    adminNotes: ''
+  })
+  return { ok: true, duplicate: false, reportId, status: 'open' }
+})
+
+const getResonaAiStats = onCall({ ...CALLABLE_OPTIONS, timeoutSeconds: 60 }, async (request) => {
+  assertAdmin(request)
+  const threadLimit = 200
+  const threadSnap = await db.collection('threads')
+    .where('type', '==', 'agent')
+    .where('agentId', '==', RESONA_AGENT_ID)
+    .limit(threadLimit)
+    .get()
+  const threads = threadSnap.docs.map((docSnap) => ({ id: docSnap.id, data: docSnap.data() || {} }))
+  let totalMessages = 0
+  let totalUserMessages = 0
+  let totalAiReplies = 0
+  let lastActivityMillis = 0
+  for (const row of threads) {
+    const messagesSnap = await db.collection('threads').doc(row.id).collection('messages').limit(500).get()
+    totalMessages += messagesSnap.size
+    messagesSnap.docs.forEach((messageDoc) => {
+      const message = messageDoc.data() || {}
+      if (message.senderType === 'user') totalUserMessages += 1
+      if (message.senderType === 'ai' && message.agentId === RESONA_AGENT_ID) totalAiReplies += 1
+    })
+    const updated = row.data.updatedAt?.toMillis?.() || row.data.lastMessageAt?.toMillis?.() || 0
+    if (updated > lastActivityMillis) lastActivityMillis = updated
+  }
+  const waitingForAgent = threads.filter((row) => row.data.status === 'waiting_for_agent').length
+  const assigned = threads.filter((row) => row.data.status === 'assigned').length
+  const escalated = threads.filter((row) => row.data.aiEscalationReason || ['waiting_for_agent', 'assigned'].includes(row.data.status)).length
+  const feedbackSnap = await db.collection('aiMessageFeedback').where('agentId', '==', RESONA_AGENT_ID).limit(500).get().catch(() => ({ size: 0 }))
+  const reportsSnap = await db.collection('reports').where('targetType', '==', 'resona_message').limit(500).get().catch(() => ({ size: 0 }))
+  return {
+    ok: true,
+    stats: {
+      totalConversations: threads.length,
+      totalMessages,
+      totalUserMessages,
+      totalAiReplies,
+      waitingForAgent,
+      assigned,
+      escalated,
+      feedbackCount: feedbackSnap.size || 0,
+      reportCount: reportsSnap.size || 0,
+      lastActivityAt: lastActivityMillis ? new Date(lastActivityMillis).toISOString() : null,
+      model: SUPPORT_AI_MODEL.value(),
+      aiEnabled: true,
+      sampledThreadLimit: threadLimit,
+      sampledMessageLimitPerThread: 500,
+      truncated: threadSnap.size >= threadLimit
+    }
+  }
 })
 
 const handleResonaInboxReply = onDocumentCreated({
@@ -675,6 +816,9 @@ module.exports = {
   createOrGetResonaThread,
   refreshResonaThread,
   setThreadResonaAgent,
+  setResonaMessageFeedback,
+  reportResonaMessage,
+  getResonaAiStats,
   handleResonaInboxReply,
   listEscalatedResonaThreads,
   listResonaMessagesForSupport,

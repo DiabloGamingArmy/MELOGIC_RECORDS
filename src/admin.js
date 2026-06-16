@@ -5,6 +5,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import {
   getAdminSettings,
+  getResonaAiStats,
   getAdminOrder,
   getEmailAdminStatus,
   getAdminLog,
@@ -219,13 +220,26 @@ const SETTINGS_SECTIONS = [
   },
   {
     key: 'aiModeration',
-    title: 'AI Moderation',
+    title: 'Product AI Moderation',
     fields: [
       ['productModerationModel', 'Moderation Model', 'string'],
       ['fallbackModels', 'Fallback Models', 'array'],
       ['autoApproveProducts', 'Auto Approve Products', 'boolean'],
       ['aiModerationEnabled', 'AI Moderation Enabled', 'boolean'],
       ['productModerationInstructions', 'Product Moderation Instructions', 'textarea']
+    ]
+  },
+  {
+    key: 'supportAi',
+    title: 'Resona AI Instructions',
+    fields: [
+      ['systemBehavior', 'Core Instructions', 'textarea'],
+      ['siteOverview', 'Site / Product Context', 'textarea'],
+      ['escalationRules', 'Escalation Rules', 'textarea'],
+      ['restrictedActions', 'Restricted Actions', 'textarea'],
+      ['toneGuidelines', 'Tone Guidelines', 'textarea'],
+      ['updatedAt', 'Updated At', 'string'],
+      ['updatedBy', 'Updated By', 'string']
     ]
   },
   {
@@ -367,7 +381,8 @@ const state = {
     updatedAt: null,
     updatedBy: '',
     dialog: { open: false, section: '' },
-    emailStatus: null
+    emailStatus: null,
+    resonaStats: null
   },
   operations: {
     loading: false,
@@ -3956,6 +3971,7 @@ function settingsView() {
     ${state.settings.updatedAt ? `<p class="admin-muted">Last updated ${escapeHtml(formatDate(state.settings.updatedAt))}${state.settings.updatedBy ? ` by ${escapeHtml(state.settings.updatedBy)}` : ''}.</p>` : ''}
     <section class="admin-settings-grid">
       ${SETTINGS_SECTIONS.map((section) => settingsCard(section, settings[section.key] || {})).join('')}
+      ${resonaStatsCard()}
     </section>
     ${emailConfigurationCard()}
     ${settingsDialog()}
@@ -4884,13 +4900,61 @@ function contactComingSoonPanel(title = '', body = '') {
 }
 
 function settingsCard(section, values = {}) {
+  const editableFields = section.key === 'supportAi'
+    ? section.fields.filter(([key]) => !['updatedAt', 'updatedBy'].includes(key))
+    : section.fields
   return `
-    <section class="admin-section-slab">
+    <section class="admin-section-slab admin-settings-card admin-settings-card-${escapeHtml(section.key)}">
       <div class="admin-slab-heading">
         <h2>${escapeHtml(section.title)}</h2>
         <button type="button" class="admin-secondary-button" data-edit-settings="${escapeHtml(section.key)}" ${can('settingsManage') || can('roleManage') ? '' : 'disabled'}>Edit</button>
       </div>
-      ${renderKeyValueGrid(section.fields.map(([key, label]) => renderField(label, formatSettingValue(values[key]))), { compact: true })}
+      <div class="admin-settings-card-scroll">
+        ${renderKeyValueGrid(editableFields.map(([key, label]) => renderField(label, formatSettingValue(values[key]))), { compact: true })}
+        ${section.key === 'supportAi' && (values.updatedAt || values.updatedBy) ? `<p class="admin-muted">Last Resona edit ${escapeHtml(values.updatedAt || 'unknown')}${values.updatedBy ? ` by ${escapeHtml(values.updatedBy)}` : ''}.</p>` : ''}
+      </div>
+    </section>
+  `
+}
+
+function resonaStatsCard() {
+  const stats = state.settings.resonaStats || {}
+  const unavailable = !state.settings.resonaStats
+  const statRows = [
+    ['Conversations', stats.totalConversations],
+    ['Messages', stats.totalMessages],
+    ['User messages', stats.totalUserMessages],
+    ['AI replies', stats.totalAiReplies],
+    ['Waiting for agent', stats.waitingForAgent],
+    ['Assigned', stats.assigned],
+    ['Escalated', stats.escalated],
+    ['Feedback', stats.feedbackCount],
+    ['Reports', stats.reportCount],
+    ['Model', stats.model || 'Not tracked yet'],
+    ['AI status', stats.aiEnabled === false ? 'Disabled' : 'Enabled'],
+    ['Last activity', stats.lastActivityAt ? formatDate(stats.lastActivityAt) : 'Not tracked yet']
+  ]
+  return `
+    <section class="admin-section-slab admin-settings-card admin-settings-card-resona-stats">
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Resona AI Stats</h2>
+          <p class="admin-muted">Operational snapshot for Inbox Resona conversations.</p>
+        </div>
+      </div>
+      <div class="admin-settings-card-scroll">
+        ${state.settings.loading ? '<article class="admin-empty-state">Loading Resona stats...</article>' : ''}
+        ${state.settings.error && unavailable ? `<p class="admin-status is-error">${escapeHtml(state.settings.error)}</p>` : ''}
+        <dl class="admin-resona-stats-grid">
+          ${statRows.map(([label, value]) => `
+            <div>
+              <dt>${escapeHtml(label)}</dt>
+              <dd>${escapeHtml(value === null || value === undefined || value === '' ? 'Not tracked yet' : value)}</dd>
+            </div>
+          `).join('')}
+        </dl>
+        ${stats.truncated ? '<p class="admin-muted">Stats are sampled from the most recent tracked thread window.</p>' : ''}
+      </div>
     </section>
   `
 }
@@ -4900,7 +4964,7 @@ function formatSettingValue(value) {
   if (value === true) return 'true'
   if (value === false) return 'false'
   if (value === null || value === undefined || value === '') return 'Not set'
-  return value
+  return String(value).length > 420 ? `${String(value).slice(0, 420).trimEnd()}...` : value
 }
 
 function settingsDialog() {
@@ -4911,6 +4975,8 @@ function settingsDialog() {
   const saving = state.settings.saving
   const editableFields = section.key === 'agreements'
     ? section.fields.filter(([key]) => !['sellerAgreementUpdatedAt', 'sellerAgreementUpdatedBy', 'sellerAgreementPath'].includes(key))
+    : section.key === 'supportAi'
+      ? section.fields.filter(([key]) => !['updatedAt', 'updatedBy'].includes(key))
     : section.fields
   return `
     <div class="admin-modal-backdrop" role="presentation">
@@ -4930,6 +4996,7 @@ function settingsDialog() {
             ${values.sellerAgreementPath ? `<p class="admin-muted">Current path: <code class="admin-code-value">${escapeHtml(values.sellerAgreementPath)}</code></p>` : ''}
           ` : ''}
           ${section.key === 'aiModeration' ? '<p class="admin-muted">Describe what the AI should allow, flag, or reject when reviewing marketplace products.</p>' : ''}
+          ${section.key === 'supportAi' ? '<p class="admin-muted">These instructions are loaded server-side by Resona for Inbox replies and support escalation decisions.</p>' : ''}
           <label>
             <span>Reason</span>
             <input data-settings-reason maxlength="1200" placeholder="Why this setting changed" ${saving ? 'disabled' : ''} />
@@ -4954,7 +5021,7 @@ function settingsInput(key, label, type, value) {
     `
   }
   if (type === 'textarea') {
-    const rows = key === 'productModerationInstructions' ? 8 : 4
+    const rows = key === 'productModerationInstructions' || key === 'systemBehavior' ? 8 : 5
     return `
       <label>
         <span>${escapeHtml(label)}</span>
@@ -5632,14 +5699,16 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       }
     },
     settings: async () => {
-      const [result, emailStatus] = await Promise.all([
+      const [result, emailStatus, resonaStats] = await Promise.all([
         getAdminSettings(),
-        getEmailAdminStatus().catch((error) => ({ ok: false, providerConfigured: false, recent: [], error: error?.message || 'Email status unavailable.' }))
+        getEmailAdminStatus().catch((error) => ({ ok: false, providerConfigured: false, recent: [], error: error?.message || 'Email status unavailable.' })),
+        getResonaAiStats().catch((error) => ({ ok: false, stats: null, error: error?.message || 'Resona stats unavailable.' }))
       ])
       state.settings.data = result.settings || {}
       state.settings.updatedAt = result.updatedAt || null
       state.settings.updatedBy = result.updatedBy || ''
       state.settings.emailStatus = emailStatus
+      state.settings.resonaStats = resonaStats?.stats || null
     },
     operations: async () => {
       const [banner, beta, pricing, studioLibrary] = await Promise.all([
