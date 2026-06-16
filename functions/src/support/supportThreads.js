@@ -17,7 +17,7 @@ const {
   resolveResonaThread,
   sendResonaSupportMessage
 } = require('./resonaInbox')
-const { loadActiveGuidanceContext } = require('./siteGuidance')
+const { createGuidanceOverlayFromIntent, loadActiveGuidanceContext } = require('./siteGuidance')
 
 const db = getFirestore()
 const ACTIVE_STATUSES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned'])
@@ -645,6 +645,19 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
 
   try {
     await completeAiHandling({ threadRef, threadId, messageId, userMessage, aiResult, recentMessages })
+    if (aiResult?.highlightIntent && safePageContext?.sessionId) {
+      await createGuidanceOverlayFromIntent({
+        sessionId: safePageContext.sessionId,
+        intent: aiResult.highlightIntent,
+        landmarks: safePageContext.landmarks || []
+      }).catch((error) => {
+        console.warn('[support-guidance] highlight failed', {
+          threadId,
+          messageId,
+          message: error?.message || 'unknown'
+        })
+      })
+    }
   } catch (error) {
     if (typingStarted) await clearResonaTyping(threadRef, threadId, 'message_write_failure')
     throw error

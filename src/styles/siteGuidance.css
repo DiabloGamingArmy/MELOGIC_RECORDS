@@ -162,10 +162,11 @@
 
 .site-guidance-box {
   position: fixed;
+  transform-origin: 0 0;
   border: 2px solid rgba(111, 240, 255, 0.95);
   border-radius: 14px;
   box-shadow: 0 0 0 9999px rgba(5, 12, 24, 0.08), 0 0 28px rgba(111, 240, 255, 0.35);
-  animation: site-guidance-box-fade 5s ease forwards;
+  animation: site-guidance-box-draw-fade 5s ease forwards;
 }
 
 .site-guidance-box span {
@@ -184,13 +185,22 @@
   text-overflow: ellipsis;
 }
 
-@keyframes site-guidance-box-fade {
-  0%,
+@keyframes site-guidance-box-draw-fade {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.06);
+  }
+  5% {
+    opacity: 1;
+    transform: scale(1);
+  }
   78% {
     opacity: 1;
+    transform: scale(1);
   }
   100% {
     opacity: 0;
+    transform: scale(1);
   }
 }
 
