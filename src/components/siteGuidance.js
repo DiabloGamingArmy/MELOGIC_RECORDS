@@ -1,4 +1,4 @@
-import { openChatDock } from './chatDock'
+import { getChatDockState, openChatDock } from './chatDock'
 import {
   setSiteGuidanceSessionStatus,
   startSiteGuidanceSession,
@@ -10,7 +10,7 @@ import '../styles/siteGuidance.css'
 
 const STORAGE_KEY = 'melogic_site_guidance_session_v1'
 const POSITION_KEY = 'melogic_site_guidance_position_v1'
-const UPDATE_INTERVAL_MS = 2500
+const CONTEXT_REFRESH_EVENT = 'melogic:site-guidance-refresh-context'
 
 let initialized = false
 let root = null
@@ -18,7 +18,6 @@ let getShellState = () => ({ authReady: false, user: null, profile: null })
 let unsubscribeShellState = () => {}
 let unsubscribeSession = () => {}
 let unsubscribeOverlays = () => {}
-let updateTimer = null
 let updateThrottleTimer = null
 let mutationObserver = null
 let routeHooksInstalled = false
@@ -281,8 +280,11 @@ function isInboxPage() {
 
 function openGuidanceDockIfNeeded(session = state.session) {
   if (!session || session.status === 'stopped' || isInboxPage()) return
+  const dock = getChatDockState()
+  const expectedMode = session.threadKind === 'support' ? 'support' : 'thread'
+  if (dock.open && !dock.minimized && dock.mode === expectedMode && dock.activeThreadId === session.threadId) return
   openChatDock({
-    mode: session.threadKind === 'support' ? 'support' : 'thread',
+    mode: expectedMode,
     support: session.threadKind === 'support',
     threadId: session.threadId,
     title: session.viewer === 'agent' ? 'Melogic Support' : 'Resona'
@@ -310,7 +312,6 @@ function subscribeActiveSession(sessionRef = readStoredSession()) {
       state.overlays = []
       stopUpdateTimer()
     } else {
-      startUpdateTimer()
       openGuidanceDockIfNeeded(session)
     }
     render()
@@ -356,34 +357,56 @@ function subscribeOverlayStream(sessionId = '') {
 }
 
 function stopUpdateTimer() {
-  if (updateTimer) window.clearInterval(updateTimer)
   if (updateThrottleTimer) window.clearTimeout(updateThrottleTimer)
   overlayHideTimers.forEach((timer) => window.clearTimeout(timer))
   overlayHideTimers = new Map()
-  updateTimer = null
   updateThrottleTimer = null
 }
 
-function startUpdateTimer() {
-  if (updateTimer || !state.session?.id) return
-  updateTimer = window.setInterval(sendPageContextUpdate, UPDATE_INTERVAL_MS)
-  schedulePageContextUpdate(0)
-}
-
-function sendPageContextUpdate() {
-  if (!state.session?.id || state.session.status !== 'active') return
-  updateSiteGuidanceSession({
-    sessionId: state.session.id,
-    pageContext: collectPageContext()
-  }).catch(() => {})
-}
-
-function schedulePageContextUpdate(delayMs = 700) {
-  if (!state.session?.id || state.session.status !== 'active' || updateThrottleTimer) return
+function scheduleLocalRender(delayMs = 80) {
+  if (updateThrottleTimer) return
   updateThrottleTimer = window.setTimeout(() => {
     updateThrottleTimer = null
-    sendPageContextUpdate()
+    render()
   }, delayMs)
+}
+
+async function refreshPageContextForOutgoingMessage(reason = 'message-send') {
+  if (!state.session?.id || state.session.status !== 'active') return null
+  const pageContext = collectPageContext()
+  const context = {
+    ...pageContext,
+    guidanceSessionActive: true,
+    guidanceSessionStatus: state.session.status,
+    guidanceSessionId: state.session.id
+  }
+  console.info('[guidance] context snapshot collected for outgoing message', {
+    reason,
+    route: context.currentRoute,
+    targetCount: Array.isArray(context.visibleGuideTargets) ? context.visibleGuideTargets.length : 0
+  })
+  await updateSiteGuidanceSession({
+    sessionId: state.session.id,
+    pageContext
+  })
+  return context
+}
+
+function handleContextRefreshRequest(event) {
+  const detail = event?.detail || {}
+  const promise = refreshPageContextForOutgoingMessage(detail.reason || 'message-send')
+    .then((context) => {
+      if (context && Array.isArray(detail.contexts)) detail.contexts.push(context)
+      return context
+    })
+    .catch((error) => {
+      console.warn('[guidance] context snapshot failed', {
+        code: error?.code || '',
+        message: error?.message || ''
+      })
+      return null
+    })
+  if (Array.isArray(detail.promises)) detail.promises.push(promise)
 }
 
 function requestSiteGuidanceStart(detail = {}) {
@@ -412,8 +435,11 @@ async function confirmStart() {
     state.session = result.session
     storeSession(result.session)
     subscribeActiveSession(result.session)
-    sendPageContextUpdate()
     openGuidanceDockIfNeeded(result.session)
+    console.info('[guidance] sharing started', {
+      threadKind: result.session?.threadKind || '',
+      route: window.location.pathname || '/'
+    })
   } catch (error) {
     state.error = error?.message || 'Could not start site guidance.'
   } finally {
@@ -435,6 +461,9 @@ async function setGuidanceStatus(status = '') {
   render()
   try {
     await setSiteGuidanceSessionStatus({ sessionId: state.session.id, status })
+    console.info(`[guidance] sharing ${status}`, {
+      route: window.location.pathname || '/'
+    })
     if (status === 'stopped') {
       storeSession(null)
       unsubscribeSession()
@@ -516,6 +545,7 @@ function overlaysMarkup() {
 
 function render() {
   if (!root) return
+  document.body.classList.toggle('site-guidance-active', Boolean(state.session && state.session.status === 'active'))
   root.innerHTML = `
     ${modalMarkup()}
     ${dockMarkup()}
@@ -597,13 +627,14 @@ function bindEvents() {
   })
 
   window.addEventListener('scroll', () => {
-    schedulePageContextUpdate()
+    scheduleLocalRender()
   }, { passive: true })
   window.addEventListener('resize', () => {
-    schedulePageContextUpdate()
+    scheduleLocalRender()
   }, { passive: true })
   window.addEventListener('popstate', () => {
-    schedulePageContextUpdate(0)
+    if (state.session?.id) console.info('[guidance] route changed, sharing remains active', { route: window.location.pathname || '/' })
+    scheduleLocalRender(0)
   })
   if (!routeHooksInstalled) {
     routeHooksInstalled = true
@@ -617,11 +648,13 @@ function bindEvents() {
     })
   }
   window.addEventListener('melogic:route-change', () => {
-    schedulePageContextUpdate(0)
+    if (state.session?.id) console.info('[guidance] route changed, sharing remains active', { route: window.location.pathname || '/' })
+    scheduleLocalRender(0)
   })
+  window.addEventListener(CONTEXT_REFRESH_EVENT, handleContextRefreshRequest)
   mutationObserver = new MutationObserver((records = []) => {
     if (records.length && records.every((record) => record.target?.closest?.('[data-site-guidance-root]'))) return
-    schedulePageContextUpdate()
+    scheduleLocalRender()
   })
   mutationObserver.observe(document.body, {
     childList: true,

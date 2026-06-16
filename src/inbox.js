@@ -103,6 +103,7 @@ const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 const RESONA_BACKGROUND_PATH = 'assets/profilePictures/aiSupport/resonaBackground.png'
 const RESONA_BACKGROUND_CACHE_KEY = 'melogic_resona_background_v1'
 const RESONA_BACKGROUND_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const SITE_GUIDANCE_REFRESH_EVENT = 'melogic:site-guidance-refresh-context'
 
 const inboxFilters = [
   { label: 'Messages', path: ROUTES.inboxMessages },
@@ -4139,6 +4140,25 @@ function getMessageFindMarkup() {
   `
 }
 
+function getSiteGuidanceHeaderMarkup(thread) {
+  if (!isResonaThread(thread)) return ''
+  return `
+    <button
+      type="button"
+      class="message-find-trigger inbox-site-guidance-trigger"
+      data-site-guidance-start
+      data-site-guidance-thread-id="${escapeHtml(thread.id)}"
+      data-site-guidance-thread-kind="thread"
+      data-site-guidance-viewer="resona"
+      aria-label="Share this Melogic page with Resona"
+      title="Share this Melogic page only. No full screen capture."
+      data-guide-id="inbox-conversation-share-screen"
+      data-guide-label="Share Screen"
+      data-guide-role="conversation-toolbar-button"
+    >Share Screen</button>
+  `
+}
+
 function getConversationHeaderMarkup(thread) {
   if (!thread) {
     return `
@@ -4178,6 +4198,7 @@ function getConversationHeaderMarkup(thread) {
         <h3>${escapeHtml(headerMeta.displayName || thread.title)}</h3>
         <p>${escapeHtml(getConversationSubtitle(thread))}</p>
       </div>
+      ${getSiteGuidanceHeaderMarkup(thread)}
       ${getMessageFindMarkup()}
       <button type="button" class="conversation-call-trigger" data-start-account-call="${escapeHtml(thread.id)}" aria-label="${thread.type === 'dm' ? 'Start audio call' : 'Group calls coming soon'}" title="${thread.type === 'dm' ? (hasLiveCall ? 'Finish the current call first' : 'Start audio call') : 'Group calls coming soon'}" data-guide-id="inbox-conversation-call" data-guide-label="Call" data-guide-role="conversation-toolbar-button" ${callDisabled ? 'disabled' : ''}>
         ${iconSvg('phone') || 'Call'}
@@ -6570,6 +6591,16 @@ async function ensureThreadReadyForSend(thread) {
   }
 }
 
+async function refreshSiteGuidanceContextForOutgoingMessage() {
+  const detail = {
+    reason: 'message-send',
+    promises: [],
+    contexts: []
+  }
+  window.dispatchEvent(new CustomEvent(SITE_GUIDANCE_REFRESH_EVENT, { detail }))
+  if (detail.promises.length) await Promise.allSettled(detail.promises)
+}
+
 async function handleMessageSubmit(form) {
   let thread = getSelectedThread()
   if (!thread || !appState.user?.uid) return
@@ -6629,6 +6660,7 @@ async function handleMessageSubmit(form) {
 
   let sendFailed = false
   try {
+    await refreshSiteGuidanceContextForOutgoingMessage()
     debugInboxSend('send start', {
       activeThreadId: thread.id,
       activeThreadType: thread.type || '',
