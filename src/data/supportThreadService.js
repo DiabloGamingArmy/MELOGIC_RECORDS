@@ -41,6 +41,10 @@ export function normalizeSupportThread(threadId, raw = {}) {
     lastMessagePreview: String(raw.lastMessagePreview || '').trim(),
     resolvedAt: toIsoDate(raw.resolvedAt),
     resolvedBy: String(raw.resolvedBy || '').trim(),
+    humanRequested: raw.humanRequested === true,
+    aiRoutedToAgent: raw.aiRoutedToAgent === true,
+    aiEscalationReason: String(raw.aiEscalationReason || '').trim(),
+    aiSuggestedCategory: String(raw.aiSuggestedCategory || '').trim(),
     requester: raw.requester && typeof raw.requester === 'object' ? raw.requester : null,
     assignedAgent: raw.assignedAgent && typeof raw.assignedAgent === 'object' ? raw.assignedAgent : null
   }
@@ -50,7 +54,7 @@ export function normalizeSupportMessage(messageId, raw = {}, metadata = {}) {
   return {
     id: String(raw.id || messageId || '').trim(),
     senderUid: String(raw.senderUid || '').trim(),
-    senderType: ['user', 'agent', 'system'].includes(raw.senderType) ? raw.senderType : 'system',
+    senderType: ['user', 'agent', 'system', 'ai', 'system_ai'].includes(raw.senderType) ? raw.senderType : 'system',
     body: String(raw.body || '').trim(),
     createdAt: toIsoDate(raw.createdAt),
     metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
@@ -71,10 +75,16 @@ export async function createSupportThread(payload = {}) {
   }
 }
 
-export function sendSupportMessage({ threadId = '', body = '' } = {}) {
+export function sendSupportMessage({ threadId = '', body = '', safePageContext = null } = {}) {
   return callable('sendSupportMessage', {
     threadId: String(threadId || '').trim(),
-    body: String(body || '').trim()
+    body: String(body || '').trim(),
+    safePageContext: safePageContext && typeof safePageContext === 'object' ? {
+      route: String(safePageContext.route || '').trim().slice(0, 200),
+      pageTitle: String(safePageContext.pageTitle || '').trim().slice(0, 200),
+      productId: String(safePageContext.productId || '').trim().slice(0, 180),
+      productTitle: String(safePageContext.productTitle || '').trim().slice(0, 200)
+    } : {}
   })
 }
 

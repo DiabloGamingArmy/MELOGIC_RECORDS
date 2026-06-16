@@ -3308,6 +3308,11 @@
   background: color-mix(in srgb, var(--admin-primary) 12%, var(--admin-card));
 }
 
+.admin-support-thread-message.is-ai {
+  border-color: color-mix(in srgb, #a892ff 42%, var(--admin-border));
+  background: color-mix(in srgb, #a892ff 12%, var(--admin-card));
+}
+
 .admin-support-thread-message.is-system {
   justify-self: center;
   max-width: 96%;
@@ -3331,6 +3336,17 @@
 .admin-support-thread-message small {
   color: var(--admin-muted);
   font-size: 0.75rem;
+}
+
+.admin-ai-label {
+  display: inline-flex;
+  margin-left: 0.4rem;
+  border: 1px solid color-mix(in srgb, #a892ff 48%, var(--admin-border));
+  border-radius: 999px;
+  padding: 0.05rem 0.35rem;
+  color: #dcd4ff;
+  font-size: 0.65rem;
+  line-height: 1.2;
 }
 
 .admin-support-thread-reply {

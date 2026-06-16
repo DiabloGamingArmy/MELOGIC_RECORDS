@@ -184,6 +184,7 @@ function getThreadSubtitle() {
 function supportStatusLabel(status = '') {
   const labels = {
     open: 'Open',
+    ai_active: 'AI support active',
     waiting_for_agent: 'Waiting for agent',
     assigned: 'Live agent assigned',
     resolved: 'Resolved'
@@ -243,7 +244,7 @@ function renderSupportPanel() {
       <section class="chat-dock-placeholder">
         <h3>Support chat is ready.</h3>
         <p>Send a message and Melogic Support will pick it up from the admin queue.</p>
-        ${supportThread.status === 'open' ? `<button type="button" class="chat-dock-support-link" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>` : ''}
+        ${['open', 'ai_active'].includes(supportThread.status) ? `<button type="button" class="chat-dock-support-link" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>` : ''}
       </section>
     `
   }
@@ -256,7 +257,7 @@ function renderSupportPanel() {
       </div>
     ` : ''}
     ${visibleMessages.map((message) => {
-      if (message.senderType === 'system') {
+      if (message.senderType === 'system' || message.senderType === 'system_ai') {
         return `
           <article class="chat-dock-message is-system">
             <div class="chat-dock-bubble">${renderMessageBody(message)}</div>
@@ -265,14 +266,17 @@ function renderSupportPanel() {
         `
       }
       const isMine = message.senderUid === currentUid()
-      const sender = message.senderType === 'agent'
+      const isAi = message.senderType === 'ai'
+      const sender = isAi
+        ? { displayName: 'Melogic AI Support', username: 'AI', avatarURL: '' }
+        : message.senderType === 'agent'
         ? { displayName: 'Melogic Support', username: '', avatarURL: '' }
         : senderMeta(message.senderUid)
       return `
-        <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${message.pendingWrites ? 'is-pending' : ''}">
+        <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${isAi ? 'is-ai' : ''} ${message.pendingWrites ? 'is-pending' : ''}">
           ${isMine ? '' : renderAvatar(sender, sender.displayName)}
           <div class="chat-dock-message-stack">
-            ${isMine ? '' : `<strong>${escapeHtml(sender.displayName)}</strong>`}
+            ${isMine ? '' : `<strong>${escapeHtml(sender.displayName)}${isAi ? '<span class="chat-dock-ai-label">AI</span>' : ''}</strong>`}
             <div class="chat-dock-bubble">${renderMessageBody(message)}</div>
             <time>${escapeHtml(getMessageTime(message.createdAt))}</time>
           </div>
@@ -652,7 +656,14 @@ async function handleSubmit(form) {
   renderDock()
   try {
     if (dockState.mode === 'support') {
-      await sendSupportMessage({ threadId, body })
+      await sendSupportMessage({
+        threadId,
+        body,
+        safePageContext: {
+          route: window.location?.pathname || '',
+          pageTitle: document.title || ''
+        }
+      })
     } else {
       await sendMessage(threadId, {
         senderId: uid,
