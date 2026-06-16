@@ -41,7 +41,7 @@ function sanitizeNumber(value, min, max, fallback = 0) {
 
 function sanitizeLandmarks(raw = []) {
   if (!Array.isArray(raw)) return []
-  return raw.slice(0, 36).map((entry) => {
+  return raw.slice(0, 120).map((entry) => {
     const source = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : {}
     const rect = source.rect && typeof source.rect === 'object' ? source.rect : source
     const id = cleanString(source.guideId || source.id || '', 120)
@@ -243,6 +243,37 @@ function normalizeMatchText(value = '') {
   return cleanString(value || '', 180).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
+function stableActionKey(value = '') {
+  const key = cleanString(value || '', 500)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 420)
+  return key || `highlight-${Date.now()}`
+}
+
+function scoreHighlightMatch(intent = {}, entry = {}) {
+  const guideId = normalizeMatchText(entry.guideId || entry.id || '')
+  const label = normalizeMatchText(entry.label || '')
+  const role = normalizeMatchText(entry.role || '')
+  const text = normalizeMatchText(entry.text || '')
+  const targetGuideId = normalizeMatchText(intent.targetGuideId || intent.guideId || '')
+  const targetText = normalizeMatchText(intent.fallbackText || intent.text || intent.label || '')
+  const combined = normalizeMatchText(`${entry.label || ''} ${entry.text || ''} ${entry.guideId || entry.id || ''}`)
+  const wantsSide = /\b(left|sidebar|side|nav|navigation|tab|button)\b/i.test(`${intent.fallbackText || ''} ${intent.text || ''} ${intent.label || ''}`)
+  let score = 0
+  if (targetGuideId && guideId === targetGuideId) score += 1000
+  if (targetText && label === targetText) score += 700
+  if (targetText && guideId === targetText) score += 650
+  if (targetText && `${label} ${role}`.trim() === targetText) score += 540
+  if (targetText && label.includes(targetText)) score += 420
+  if (targetText && targetText.includes(label) && label) score += 380
+  if (targetText && combined.includes(targetText)) score += 260
+  if (wantsSide && /\b(sidebar|nav|navigation|filter)\b/.test(role)) score += 160
+  if (/\bbutton|link|nav|card|filter|conversation\b/.test(role)) score += 40
+  return score
+}
+
 function resolveHighlightRect(intent = {}, landmarks = []) {
   const targetType = intent.targetType || ''
   const targetGuideId = cleanString(intent.targetGuideId || intent.guideId || '', 120)
@@ -267,30 +298,52 @@ function resolveHighlightRect(intent = {}, landmarks = []) {
   }
   const targetText = normalizeMatchText(intent.fallbackText || intent.text || intent.label || targetGuideId || '')
   if (targetText) {
-    const match = rows.find((entry) => {
-      const label = normalizeMatchText(`${entry.label || ''} ${entry.text || ''} ${entry.guideId || entry.id || ''}`)
-      return label === targetText || label.includes(targetText) || targetText.includes(label)
-    })
-    if (match) return { ...match, label: cleanString(intent.label || match.label || 'Guidance highlight', 120) }
+    const scored = rows
+      .map((entry) => ({ entry, score: scoreHighlightMatch(intent, entry) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+    if (scored[0]) {
+      const match = scored[0].entry
+      return { ...match, label: cleanString(intent.label || match.label || 'Guidance highlight', 120) }
+    }
   }
   return null
 }
 
-async function createGuidanceOverlayFromIntent({ sessionId = '', intent = {}, landmarks = [] } = {}) {
+async function createGuidanceOverlayFromIntent({
+  sessionId = '',
+  intent = {},
+  landmarks = [],
+  threadId = '',
+  sourceMessageId = '',
+  sourceUserMessageId = '',
+  actionIndex = 0
+} = {}) {
   const cleanSessionId = cleanString(sessionId || '', 180)
   if (!cleanSessionId || !intent || intent.action !== 'highlight') return null
   const rect = resolveHighlightRect(intent, landmarks)
   if (!rect) return null
-  const overlayRef = db.collection('supportGuidanceSessions').doc(cleanSessionId).collection('overlays').doc()
   const now = Date.now()
   const durationMs = Math.max(1200, Math.min(8000, Math.round(Number(intent.durationMs || 5000) || 5000)))
   const targetGuideId = cleanString(intent.targetGuideId || intent.guideId || rect.guideId || rect.id || '', 120)
   const fallbackText = cleanString(intent.fallbackText || intent.text || rect.label || intent.label || '', 160)
+  const actionId = stableActionKey(intent.actionId || [
+    threadId,
+    sourceMessageId || sourceUserMessageId,
+    actionIndex,
+    targetGuideId || fallbackText || rect.label || 'target'
+  ].filter(Boolean).join('__'))
+  const overlayRef = db.collection('supportGuidanceSessions').doc(cleanSessionId).collection('overlays').doc(actionId)
+  const existing = await overlayRef.get()
+  if (existing.exists) return overlayRef.id
   await overlayRef.set({
     type: 'box',
     source: 'resona',
     targetGuideId,
     fallbackText,
+    actionId,
+    sourceMessageId: cleanString(sourceMessageId || '', 180),
+    sourceUserMessageId: cleanString(sourceUserMessageId || '', 180),
     x: sanitizeNumber(rect.x, 0, 10000),
     y: sanitizeNumber(rect.y, 0, 10000),
     width: sanitizeNumber(rect.width, 20, 10000),

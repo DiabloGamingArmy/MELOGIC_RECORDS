@@ -971,7 +971,7 @@ function sidebar() {
         ${SECTIONS.map((section) => {
           const active = state.section === section.key
           const allowed = can(section.permission)
-          return `<a class="${active ? 'is-active' : ''} ${allowed ? '' : 'is-locked'}" href="${section.route}" ${active ? 'aria-current="page"' : ''} title="${allowed ? section.label : 'Permission required'}">${iconSvg(section.icon)}<span>${section.label}</span></a>`
+          return `<a class="${active ? 'is-active' : ''} ${allowed ? '' : 'is-locked'}" href="${section.route}" data-guide-id="admin-sidebar-${escapeHtml(section.key)}" data-guide-label="${escapeHtml(section.label)}" data-guide-role="admin-sidebar-nav-item" ${active ? 'aria-current="page"' : ''} title="${allowed ? section.label : 'Permission required'}">${iconSvg(section.icon)}<span>${section.label}</span></a>`
         }).join('')}
       </nav>
     </aside>
@@ -4071,7 +4071,7 @@ function contactSupportFormsPanel() {
             <h2>Support Forms</h2>
             <p class="admin-muted">Native public support requests submitted from the Support page.</p>
           </div>
-          <button type="button" class="admin-secondary-button" data-support-forms-refresh>
+          <button type="button" class="admin-secondary-button" data-support-forms-refresh data-guide-id="admin-support-forms-refresh" data-guide-label="Refresh support forms" data-guide-role="support-queue-button">
             Refresh
           </button>
         </div>
@@ -4137,7 +4137,7 @@ function contactSupportThreadsPanel() {
             <h2>Live Support Queue</h2>
             <p class="admin-muted">Real support chats opened from Inbox and the Support page.</p>
           </div>
-          <button type="button" class="admin-secondary-button" data-support-threads-refresh>
+          <button type="button" class="admin-secondary-button" data-support-threads-refresh data-guide-id="admin-support-threads-refresh" data-guide-label="Refresh live support queue" data-guide-role="support-queue-button">
             Refresh
           </button>
         </div>
@@ -4210,7 +4210,7 @@ function supportThreadListCard(thread = {}) {
   const assigned = thread.assignedAgent || {}
   const assignedLabel = assigned.displayName || assigned.username || thread.assignedAgentUid || ''
   return `
-    <button type="button" class="admin-list-card admin-support-form-card admin-support-thread-card ${selected ? 'is-selected' : ''}" data-support-thread-select="${escapeHtml(thread.id)}">
+    <button type="button" class="admin-list-card admin-support-form-card admin-support-thread-card ${selected ? 'is-selected' : ''}" data-support-thread-select="${escapeHtml(thread.id)}" data-guide-id="admin-support-thread-${escapeHtml(thread.id)}" data-guide-label="${escapeHtml(thread.subject || supportThreadRequesterLabel(thread) || 'Support chat')}" data-guide-role="support-thread-card">
       <span class="admin-support-form-avatar" aria-hidden="true">${escapeHtml(supportThreadRequesterLabel(thread).slice(0, 1).toUpperCase())}</span>
       <span class="admin-support-form-card-main">
         <span class="admin-support-form-card-top">
@@ -4317,7 +4317,7 @@ function supportFormListCard(form = {}) {
   const status = form.status || 'new'
 
   return `
-    <button type="button" class="admin-list-card admin-support-form-card ${selected ? 'is-selected' : ''}" data-support-form-select="${escapeHtml(form.id)}">
+    <button type="button" class="admin-list-card admin-support-form-card ${selected ? 'is-selected' : ''}" data-support-form-select="${escapeHtml(form.id)}" data-guide-id="admin-support-form-${escapeHtml(form.id)}" data-guide-label="${escapeHtml(form.subject || form.name || 'Support request')}" data-guide-role="support-form-card">
       <span class="admin-support-form-avatar" aria-hidden="true">${escapeHtml(supportFormInitial(form))}</span>
       <span class="admin-support-form-card-main">
         <span class="admin-support-form-card-top">
@@ -4377,7 +4377,7 @@ function supportFormDetail(form = {}) {
         <a class="admin-secondary-button" href="${escapeHtml(mailtoHref)}">
           Reply by Email
         </a>
-        <button type="button" class="admin-primary-button admin-support-resolve-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="resolved" ${saving ? 'disabled' : ''}>
+        <button type="button" class="admin-primary-button admin-support-resolve-button" data-support-form-status="${escapeHtml(form.id)}" data-status-value="resolved" data-guide-id="admin-support-form-resolve-${escapeHtml(form.id)}" data-guide-label="Mark as Resolved" data-guide-role="support-form-action" ${saving ? 'disabled' : ''}>
           Mark as Resolved
         </button>
       </div>

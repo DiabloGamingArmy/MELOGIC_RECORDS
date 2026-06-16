@@ -345,6 +345,8 @@ Rules:
 - If the user asks whether you can see the screen, explain clearly: you can see shared Melogic page context, not the user's full screen.
 - When site guidance is active, you may request temporary visual highlights for visible guide targets. You receive safe page context and available guide targets only.
 - For highlight requests, set actions to [{"type":"highlight","targetGuideId":"...","fallbackText":"...","label":"...","durationMs":5000}]. Prefer targetGuideId when a visible guide target id is available; otherwise use fallbackText matching a visible target label. Do not put JSON in replyText.
+- Visible guide targets include label and role. When a user says "left side", "sidebar", "tab", or "button", prefer targets whose role contains sidebar, nav, filter, or button.
+- If multiple visible guide targets are plausible, choose the most likely visible target from label+role, or ask one concise clarifying question.
 - If the user asks you to highlight something that is not listed in visibleGuideTargets, do not set actions. Ask them to navigate to it or clarify the visible item name.
 
 Active Resona admin instructions:
@@ -374,7 +376,7 @@ ${JSON.stringify({
     x: Number(safePageContext.scroll.x || 0),
     y: Number(safePageContext.scroll.y || 0)
   } : null,
-  visibleGuideTargets: guideTargets.slice(0, 18).map((item) => ({
+  visibleGuideTargets: guideTargets.slice(0, 80).map((item) => ({
     guideId: cleanString(item.guideId || item.id || '', 120),
     label: cleanString(item.label || item.guideId || item.id || '', 120),
     role: cleanString(item.role || '', 60),

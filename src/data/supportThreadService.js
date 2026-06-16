@@ -115,7 +115,7 @@ export function sendSupportMessage({ threadId = '', body = '', safePageContext =
       activeModal: String(safePageContext.activeModal || '').trim().slice(0, 120),
       viewport: safePageContext.viewport && typeof safePageContext.viewport === 'object' ? safePageContext.viewport : {},
       scroll: safePageContext.scroll && typeof safePageContext.scroll === 'object' ? safePageContext.scroll : {},
-      visibleGuideTargets: Array.isArray(safePageContext.visibleGuideTargets) ? safePageContext.visibleGuideTargets.slice(0, 36) : [],
+      visibleGuideTargets: Array.isArray(safePageContext.visibleGuideTargets) ? safePageContext.visibleGuideTargets.slice(0, 120) : [],
       landmarks: Array.isArray(safePageContext.landmarks) ? safePageContext.landmarks.slice(0, 24) : [],
       productId: String(safePageContext.productId || '').trim().slice(0, 180),
       productTitle: String(safePageContext.productTitle || '').trim().slice(0, 200)

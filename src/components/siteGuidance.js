@@ -22,6 +22,9 @@ let updateTimer = null
 let updateThrottleTimer = null
 let mutationObserver = null
 let routeHooksInstalled = false
+let overlayHideTimers = new Map()
+let overlaySeenAt = new Map()
+let dismissedOverlayIds = new Set()
 let dragState = null
 
 const state = {
@@ -121,6 +124,7 @@ function safeGuideText(element) {
 
 function isVisibleGuideElement(element) {
   if (!element || element.closest('[data-site-guidance-root], [data-private], [data-no-guidance]')) return false
+  if (element.getAttribute('aria-hidden') === 'true' || element.closest('[aria-hidden="true"]')) return false
   if (element.closest('input[type="password"], [data-payment-field], [data-secret], [data-token]')) return false
   const rect = element.getBoundingClientRect()
   if (rect.width <= 0 || rect.height <= 0) return false
@@ -142,8 +146,6 @@ function collectVisibleGuideTargets() {
     'main a[aria-label]'
   ].join(',')
   return Array.from(document.querySelectorAll(selectors))
-    .filter(isVisibleGuideElement)
-    .slice(0, 36)
     .map((element, index) => {
       const rect = element.getBoundingClientRect()
       const guideId = element.getAttribute('data-guide-id') || `visible-target-${index + 1}`
@@ -171,6 +173,14 @@ function collectVisibleGuideTargets() {
       }
     })
     .filter((entry) => entry.label || entry.guideId)
+    .filter((entry) => entry.visible !== false)
+    .sort((a, b) => {
+      const aInteractive = /\b(button|link|nav|card|filter|sidebar|conversation|composer)\b/i.test(a.role)
+      const bInteractive = /\b(button|link|nav|card|filter|sidebar|conversation|composer)\b/i.test(b.role)
+      if (aInteractive !== bInteractive) return aInteractive ? -1 : 1
+      return (a.rect.y - b.rect.y) || (a.rect.x - b.rect.x)
+    })
+    .slice(0, 120)
 }
 
 function collectPageContext() {
@@ -204,6 +214,28 @@ function normalizeMatchText(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
+function scoreGuideElementMatch(element, text = '') {
+  if (!isVisibleGuideElement(element)) return 0
+  const target = normalizeMatchText(text)
+  if (!target) return 0
+  const guideId = normalizeMatchText(element.getAttribute('data-guide-id') || '')
+  const label = normalizeMatchText(safeElementLabel(element))
+  const role = normalizeMatchText(element.getAttribute('data-guide-role') || element.getAttribute('role') || element.tagName.toLowerCase())
+  const body = normalizeMatchText(safeGuideText(element))
+  const combined = normalizeMatchText(`${label} ${body} ${guideId}`)
+  const wantsSide = /\b(left|sidebar|side|nav|navigation|tab|button)\b/.test(target)
+  let score = 0
+  if (guideId === target) score += 1000
+  if (label === target) score += 800
+  if (`${label} ${role}`.trim() === target) score += 620
+  if (label && target.includes(label)) score += 520
+  if (label.includes(target)) score += 460
+  if (combined.includes(target)) score += 260
+  if (wantsSide && /\b(sidebar|nav|navigation|filter)\b/.test(role)) score += 180
+  if (/\b(button|link|nav|card|filter|conversation|composer)\b/.test(role)) score += 50
+  return score
+}
+
 function findVisibleGuideElementById(guideId = '') {
   const cleanId = String(guideId || '').trim()
   if (!cleanId) return null
@@ -213,13 +245,10 @@ function findVisibleGuideElementById(guideId = '') {
 }
 
 function findVisibleGuideElementByText(text = '') {
-  const target = normalizeMatchText(text)
-  if (!target) return null
-  return Array.from(document.querySelectorAll('[data-guide-id]')).find((element) => {
-    if (!isVisibleGuideElement(element)) return false
-    const haystack = normalizeMatchText(`${safeElementLabel(element)} ${safeGuideText(element)} ${element.getAttribute('data-guide-id') || ''}`)
-    return haystack === target || haystack.includes(target) || target.includes(haystack)
-  }) || null
+  return Array.from(document.querySelectorAll('[data-guide-id]'))
+    .map((element) => ({ element, score: scoreGuideElementMatch(element, text) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)[0]?.element || null
 }
 
 function resolveOverlayRect(overlay = {}) {
@@ -294,12 +323,33 @@ function subscribeActiveSession(sessionRef = readStoredSession()) {
 
 function subscribeOverlayStream(sessionId = '') {
   unsubscribeOverlays()
+  overlayHideTimers.forEach((timer) => window.clearTimeout(timer))
+  overlayHideTimers = new Map()
+  overlaySeenAt = new Map()
+  dismissedOverlayIds = new Set()
   unsubscribeOverlays = subscribeToGuidanceOverlays(sessionId, (overlays) => {
     const now = Date.now()
+    overlayHideTimers.forEach((timer) => window.clearTimeout(timer))
+    overlayHideTimers = new Map()
     state.overlays = overlays.filter((overlay) => {
+      if (dismissedOverlayIds.has(overlay.id)) return false
       if (!overlay.expiresAt) return true
       const expires = new Date(overlay.expiresAt).getTime()
-      return Number.isNaN(expires) || expires > now
+      if (!Number.isNaN(expires) && expires <= now) {
+        dismissedOverlayIds.add(overlay.id)
+        return false
+      }
+      if (!overlaySeenAt.has(overlay.id)) {
+        const created = overlay.createdAt ? new Date(overlay.createdAt).getTime() : 0
+        overlaySeenAt.set(overlay.id, Number.isNaN(created) || !created ? now : created)
+      }
+      const remaining = Number.isNaN(expires) ? Math.max(1200, Number(overlay.durationMs || 5000)) : Math.max(0, expires - now)
+      overlayHideTimers.set(overlay.id, window.setTimeout(() => {
+        dismissedOverlayIds.add(overlay.id)
+        state.overlays = state.overlays.filter((entry) => entry.id !== overlay.id)
+        render()
+      }, remaining + 80))
+      return true
     })
     render()
   }, () => {})
@@ -308,6 +358,8 @@ function subscribeOverlayStream(sessionId = '') {
 function stopUpdateTimer() {
   if (updateTimer) window.clearInterval(updateTimer)
   if (updateThrottleTimer) window.clearTimeout(updateThrottleTimer)
+  overlayHideTimers.forEach((timer) => window.clearTimeout(timer))
+  overlayHideTimers = new Map()
   updateTimer = null
   updateThrottleTimer = null
 }
@@ -445,8 +497,11 @@ function overlaysMarkup() {
   const boxes = state.overlays.map((overlay) => {
     const rect = resolveOverlayRect(overlay)
     if (!rect) return ''
+    const durationMs = Math.max(1200, Number(overlay.durationMs || 5000))
+    const elapsedMs = Math.max(0, Date.now() - (overlaySeenAt.get(overlay.id) || Date.now()))
+    if (elapsedMs >= durationMs) return ''
     return `
-      <div class="site-guidance-box" style="left:${Math.round(rect.x)}px;top:${Math.round(rect.y)}px;width:${Math.round(rect.width)}px;height:${Math.round(rect.height)}px;">
+      <div class="site-guidance-box" data-site-guidance-overlay-id="${escapeHtml(overlay.id)}" style="left:${Math.round(rect.x)}px;top:${Math.round(rect.y)}px;width:${Math.round(rect.width)}px;height:${Math.round(rect.height)}px;--site-guidance-overlay-duration:${durationMs}ms;animation-delay:-${Math.round(elapsedMs)}ms;">
         ${overlay.label ? `<span>${escapeHtml(overlay.label)}</span>` : ''}
       </div>
     `

@@ -227,7 +227,7 @@ function sanitizeSafeContext(raw = {}) {
     : Array.isArray(source.landmarks)
       ? source.landmarks
       : []
-  const visibleGuideTargets = rawTargets.slice(0, 18).map((item) => ({
+  const visibleGuideTargets = rawTargets.slice(0, 80).map((item) => ({
     guideId: cleanString(item?.guideId || item?.id || '', 120),
     id: cleanString(item?.id || item?.guideId || '', 120),
     label: cleanString(item?.label || '', 120),
@@ -662,7 +662,10 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
       await createGuidanceOverlayFromIntent({
         sessionId: safePageContext.sessionId,
         intent: aiResult.highlightIntent,
-        landmarks: safePageContext.visibleGuideTargets || safePageContext.landmarks || []
+        landmarks: safePageContext.visibleGuideTargets || safePageContext.landmarks || [],
+        threadId,
+        sourceUserMessageId: messageId,
+        actionIndex: 0
       }).catch((error) => {
         console.warn('[support-guidance] highlight failed', {
           threadId,

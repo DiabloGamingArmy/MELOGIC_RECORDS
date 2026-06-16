@@ -1923,13 +1923,14 @@ function accountEventMatchesSystemFilter(item = {}, filter = 'all') {
 
 function getMessagesSidebarMarkup() {
   const filterMarkup = inboxFilters
-    .map(
-      (filter) => `
-        <button type="button" class="inbox-filter ${appState.activeFilter === filter.label ? 'is-active' : ''}" data-inbox-filter="${filter.label}" data-inbox-path="${filter.path}">
+    .map((filter) => {
+      const guideKey = String(filter.label || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      return `
+        <button type="button" class="inbox-filter ${appState.activeFilter === filter.label ? 'is-active' : ''}" data-inbox-filter="${filter.label}" data-inbox-path="${filter.path}" data-guide-id="inbox-sidebar-${escapeHtml(guideKey)}" data-guide-label="${escapeHtml(filter.label)}" data-guide-role="inbox-sidebar-button">
           <span>${filter.label}</span>
         </button>
       `
-    )
+    })
     .join('')
 
   return `
@@ -1939,7 +1940,7 @@ function getMessagesSidebarMarkup() {
     </div>
     <div class="inbox-filters" data-inbox-filters>${filterMarkup}</div>
     <section class="sidebar-support-block">
-      <button type="button" class="sidebar-support-button" data-open-support-dock>
+      <button type="button" class="sidebar-support-button" data-open-support-dock data-guide-id="inbox-sidebar-contact-support" data-guide-label="Contact Support" data-guide-role="inbox-sidebar-button">
         <strong>Contact Support</strong>
         <small>Open a chat with Resona</small>
       </button>
@@ -1964,11 +1965,11 @@ function getPinnedInboxSidebarMarkup() {
     const isActiveThread = pin.type === 'thread' && appState.activeFilter === 'Messages' && appState.selectedThreadId === pin.targetId
     return `
       <div class="sidebar-pin-row">
-        <button type="button" class="sidebar-thread-pill ${isActiveThread ? 'is-active' : ''}" data-open-inbox-pin="${escapeHtml(pin.pinId || pin.id)}">
+        <button type="button" class="sidebar-thread-pill ${isActiveThread ? 'is-active' : ''}" data-open-inbox-pin="${escapeHtml(pin.pinId || pin.id)}" data-guide-id="inbox-sidebar-pin-${escapeHtml(pin.pinId || pin.id)}" data-guide-label="${escapeHtml(pin.title)}" data-guide-role="inbox-sidebar-pinned-item">
           <strong>${escapeHtml(pin.title)}</strong>
           <small>${escapeHtml(pin.sourceCategory || 'Inbox')}${pin.subtitle ? ` · ${escapeHtml(pin.subtitle)}` : ''}</small>
         </button>
-        <button type="button" class="sidebar-pin-remove" data-unpin-inbox-pin="${escapeHtml(pin.pinId || pin.id)}" aria-label="Remove pinned item">×</button>
+        <button type="button" class="sidebar-pin-remove" data-unpin-inbox-pin="${escapeHtml(pin.pinId || pin.id)}" aria-label="Remove pinned item" data-guide-id="inbox-sidebar-pin-remove-${escapeHtml(pin.pinId || pin.id)}" data-guide-label="Remove pinned item" data-guide-role="inbox-sidebar-button">×</button>
       </div>
     `
   }).join('')
@@ -2038,7 +2039,7 @@ function getRecentThreadsSidebarMarkup() {
     .map((thread) => {
       const isActive = appState.selectedThreadId === thread.id
       return `
-        <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-select-thread-id="${escapeHtml(thread.id)}">
+        <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-select-thread-id="${escapeHtml(thread.id)}" data-guide-id="inbox-sidebar-thread-${escapeHtml(thread.id)}" data-guide-label="${escapeHtml(thread.title)}" data-guide-role="inbox-sidebar-thread">
           <strong>${escapeHtml(thread.title)}</strong>
           ${thread.type === 'group' ? '<small>Group</small>' : '<small>Direct</small>'}
         </button>
@@ -2559,7 +2560,7 @@ function getConversationBodyMarkup({
           })}
       <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length ? '' : 'hidden'}>${typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : ''}</p>
       ${blockAlertMarkup}
-      <form class="message-composer ${isComposerUnavailable ? 'is-blocked' : ''}" data-message-form data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
+      <form class="message-composer ${isComposerUnavailable ? 'is-blocked' : ''}" data-message-form data-guide-id="inbox-message-composer" data-guide-label="Message composer" data-guide-role="message-composer" data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
         <label class="sr-only" for="message-input">Message</label>
         ${replyDraft ? `
           <div class="composer-reply-preview">
@@ -2591,8 +2592,8 @@ function getConversationBodyMarkup({
                 ? '<p class="composer-error">You do not have permission to send in this conversation.</p>'
                 : '<span></span>'}
           <div class="composer-actions">
-            <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files" ${isComposerUnavailable ? 'disabled' : ''}>+</button>
-            <button type="submit" class="button button-accent" ${(isComposerUnavailable || (!draft.trim() && !attachments.length)) ? 'disabled' : ''}>Send</button>
+            <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files" data-guide-id="inbox-message-attach" data-guide-label="Attach files" data-guide-role="message-composer-button" ${isComposerUnavailable ? 'disabled' : ''}>+</button>
+            <button type="submit" class="button button-accent" data-guide-id="inbox-message-send" data-guide-label="Send" data-guide-role="message-composer-button" ${(isComposerUnavailable || (!draft.trim() && !attachments.length)) ? 'disabled' : ''}>Send</button>
           </div>
         </div>
       </form>
@@ -4121,7 +4122,7 @@ function getFilterContentMarkup(filterName) {
 
 function getMessageFindMarkup() {
   if (!appState.messageFind.open) {
-    return '<button type="button" class="message-find-trigger" data-message-find-action="open" aria-label="Find in messages">Find</button>'
+    return '<button type="button" class="message-find-trigger" data-message-find-action="open" aria-label="Find in messages" data-guide-id="inbox-conversation-find" data-guide-label="Find" data-guide-role="conversation-toolbar-button">Find</button>'
   }
   const countLabel = appState.messageFind.matchCount
     ? `${Math.max(1, appState.messageFind.activeIndex + 1)} of ${appState.messageFind.matchCount}`
@@ -4131,9 +4132,9 @@ function getMessageFindMarkup() {
       <label class="sr-only" for="message-find-input">Find in messages</label>
       <input id="message-find-input" type="search" value="${escapeHtml(appState.messageFind.query)}" placeholder="Find" autocomplete="off" data-message-find-input />
       <span class="message-find-count" data-message-find-count>${countLabel}</span>
-      <button type="button" data-message-find-action="previous" aria-label="Previous match" ${appState.messageFind.matchCount ? '' : 'disabled'}>↑</button>
-      <button type="button" data-message-find-action="next" aria-label="Next match" ${appState.messageFind.matchCount ? '' : 'disabled'}>↓</button>
-      <button type="button" data-message-find-action="close" aria-label="Close find">×</button>
+      <button type="button" data-message-find-action="previous" aria-label="Previous match" data-guide-id="inbox-conversation-find-previous" data-guide-label="Previous find result" data-guide-role="conversation-toolbar-button" ${appState.messageFind.matchCount ? '' : 'disabled'}>↑</button>
+      <button type="button" data-message-find-action="next" aria-label="Next match" data-guide-id="inbox-conversation-find-next" data-guide-label="Next find result" data-guide-role="conversation-toolbar-button" ${appState.messageFind.matchCount ? '' : 'disabled'}>↓</button>
+      <button type="button" data-message-find-action="close" aria-label="Close find" data-guide-id="inbox-conversation-find-close" data-guide-label="Close find" data-guide-role="conversation-toolbar-button">×</button>
     </div>
   `
 }
@@ -4178,10 +4179,10 @@ function getConversationHeaderMarkup(thread) {
         <p>${escapeHtml(getConversationSubtitle(thread))}</p>
       </div>
       ${getMessageFindMarkup()}
-      <button type="button" class="conversation-call-trigger" data-start-account-call="${escapeHtml(thread.id)}" aria-label="${thread.type === 'dm' ? 'Start audio call' : 'Group calls coming soon'}" title="${thread.type === 'dm' ? (hasLiveCall ? 'Finish the current call first' : 'Start audio call') : 'Group calls coming soon'}" ${callDisabled ? 'disabled' : ''}>
+      <button type="button" class="conversation-call-trigger" data-start-account-call="${escapeHtml(thread.id)}" aria-label="${thread.type === 'dm' ? 'Start audio call' : 'Group calls coming soon'}" title="${thread.type === 'dm' ? (hasLiveCall ? 'Finish the current call first' : 'Start audio call') : 'Group calls coming soon'}" data-guide-id="inbox-conversation-call" data-guide-label="Call" data-guide-role="conversation-toolbar-button" ${callDisabled ? 'disabled' : ''}>
         ${iconSvg('phone') || 'Call'}
       </button>
-      <button type="button" class="chat-settings-trigger" data-action="open-chat-settings" aria-label="Open chat settings">⋯</button>
+      <button type="button" class="chat-settings-trigger" data-action="open-chat-settings" aria-label="Open chat settings" data-guide-id="inbox-conversation-menu" data-guide-label="Conversation menu" data-guide-role="conversation-toolbar-button">⋯</button>
     </header>
   `
 }
