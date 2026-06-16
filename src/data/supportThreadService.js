@@ -84,10 +84,11 @@ export async function createSupportThread(payload = {}) {
   }
 }
 
-export function sendSupportMessage({ threadId = '', body = '', safePageContext = null } = {}) {
+export function sendSupportMessage({ threadId = '', body = '', safePageContext = null, asAgent = false } = {}) {
   return callable('sendSupportMessage', {
     threadId: String(threadId || '').trim(),
     body: String(body || '').trim(),
+    asAgent: asAgent === true,
     safePageContext: safePageContext && typeof safePageContext === 'object' ? {
       route: String(safePageContext.route || '').trim().slice(0, 200),
       pageTitle: String(safePageContext.pageTitle || '').trim().slice(0, 200),
@@ -107,6 +108,10 @@ export function claimSupportThread({ threadId = '' } = {}) {
 
 export function resolveSupportThread({ threadId = '' } = {}) {
   return callable('resolveSupportThread', { threadId: String(threadId || '').trim() })
+}
+
+export function endSupportThread({ threadId = '' } = {}) {
+  return callable('endSupportThread', { threadId: String(threadId || '').trim() })
 }
 
 export async function listSupportThreads(payload = {}) {

@@ -7380,7 +7380,7 @@ async function replyToSupportThread(threadId = '') {
   threadsState.message = ''
   render()
   try {
-    await sendSupportMessage({ threadId, body })
+    await sendSupportMessage({ threadId, body, asAgent: true })
     threadsState.replyDraft = ''
     threadsState.message = 'Reply sent.'
     await loadSupportThreads({ silent: true })

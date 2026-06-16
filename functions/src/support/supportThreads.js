@@ -42,14 +42,34 @@ function supportStaffClaims(request = {}) {
 }
 
 function cleanBody(value = '') {
-  const body = cleanString(value, MAX_BODY_LENGTH + 1)
+  const body = cleanSupportMessageBody(value, MAX_BODY_LENGTH + 1)
   if (!body) throw new HttpsError('invalid-argument', 'Message content is required.')
   if (body.length > MAX_BODY_LENGTH) throw new HttpsError('invalid-argument', 'Message is too long.')
   return body
 }
 
+function cleanSupportMessageBody(value = '', max = MAX_BODY_LENGTH) {
+  return String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/g, ''))
+    .join('\n')
+    .trim()
+    .slice(0, max)
+}
+
 function cleanSubject(value = '') {
   return cleanString(value || 'Support request', 180) || 'Support request'
+}
+
+function logSupportAi(threadId = '', stage = '', data = {}) {
+  console.log('[support-ai]', {
+    threadId,
+    stage,
+    ...data
+  })
 }
 
 function serializeTimestamp(value) {
@@ -208,14 +228,28 @@ async function markAiHandledStart(threadRef, messageId = '') {
       transaction.get(threadRef),
       transaction.get(messageRef)
     ])
-    if (!threadSnap.exists || !messageSnap.exists) return null
+    if (!threadSnap.exists || !messageSnap.exists) {
+      return {
+        locked: false,
+        skippedReason: !threadSnap.exists ? 'missing_thread' : 'missing_message'
+      }
+    }
     const thread = threadSnap.data() || {}
     const message = messageSnap.data() || {}
     const metadata = message.metadata && typeof message.metadata === 'object' ? message.metadata : {}
-    if (metadata.aiHandledAt || metadata.aiHandlingStartedAt) return null
-    if (message.senderType !== 'user' || !cleanString(message.body || '', MAX_BODY_LENGTH)) return null
-    if (thread.status === 'resolved' || thread.status === 'assigned' || thread.humanRequested === true || thread.assignedAgentUid) return null
-    if (!['open', 'ai_active'].includes(thread.status || 'open')) return null
+    if (metadata.aiHandledAt || metadata.aiHandlingStartedAt) {
+      return { locked: false, skippedReason: 'already_handled', thread, message }
+    }
+    if (message.senderType !== 'user' || !cleanSupportMessageBody(message.body || '', MAX_BODY_LENGTH)) {
+      return { locked: false, skippedReason: 'not_user_message', thread, message }
+    }
+    if (thread.status === 'resolved') return { locked: false, skippedReason: 'resolved_thread', thread, message }
+    if (thread.status === 'assigned') return { locked: false, skippedReason: 'assigned_thread', thread, message }
+    if (thread.assignedAgentUid) return { locked: false, skippedReason: 'assigned_agent', thread, message }
+    if (thread.humanRequested === true) return { locked: false, skippedReason: 'human_requested', thread, message }
+    if (!['open', 'ai_active'].includes(thread.status || 'open')) {
+      return { locked: false, skippedReason: 'not_ai_active', thread, message }
+    }
     transaction.set(messageRef, {
       metadata: {
         ...metadata,
@@ -228,11 +262,11 @@ async function markAiHandledStart(threadRef, messageId = '') {
         updatedAt: FieldValue.serverTimestamp()
       }, { merge: true })
     }
-    return { thread, message }
+    return { locked: true, thread, message }
   })
 }
 
-async function completeAiHandling({ threadRef, messageId = '', userMessage = {}, aiResult = {}, recentMessages = [] } = {}) {
+async function completeAiHandling({ threadRef, threadId = '', messageId = '', userMessage = {}, aiResult = {}, recentMessages = [] } = {}) {
   const messageRef = threadRef.collection('messages').doc(messageId)
   const aiMessageRef = threadRef.collection('messages').doc()
   const shouldEscalate = aiResult.shouldEscalate === true
@@ -241,76 +275,99 @@ async function completeAiHandling({ threadRef, messageId = '', userMessage = {},
   const escalationReason = cleanString(aiResult.escalationReason || '', 160)
   const suggestedCategory = cleanString(aiResult.suggestedCategory || '', 80)
 
-  await db.runTransaction(async (transaction) => {
-    const [threadSnap, messageSnap] = await Promise.all([
-      transaction.get(threadRef),
-      transaction.get(messageRef)
-    ])
-    if (!threadSnap.exists || !messageSnap.exists) return
-    const thread = threadSnap.data() || {}
-    const message = messageSnap.data() || {}
-    const metadata = message.metadata && typeof message.metadata === 'object' ? message.metadata : {}
-    if (metadata.aiHandledAt) return
-    if (thread.status === 'resolved' || thread.status === 'assigned' || thread.assignedAgentUid) {
+  let writeResult
+  try {
+    writeResult = await db.runTransaction(async (transaction) => {
+      const [threadSnap, messageSnap] = await Promise.all([
+        transaction.get(threadRef),
+        transaction.get(messageRef)
+      ])
+      if (!threadSnap.exists || !messageSnap.exists) return { wrote: false, skippedReason: 'missing_thread_or_message' }
+      const thread = threadSnap.data() || {}
+      const message = messageSnap.data() || {}
+      const metadata = message.metadata && typeof message.metadata === 'object' ? message.metadata : {}
+      if (metadata.aiHandledAt) return { wrote: false, skippedReason: 'already_handled' }
+      if (thread.status === 'resolved' || thread.status === 'assigned' || thread.assignedAgentUid) {
+        transaction.set(messageRef, {
+          metadata: {
+            ...metadata,
+            aiHandledAt: FieldValue.serverTimestamp(),
+            aiSkippedReason: 'thread_no_longer_eligible'
+          }
+        }, { merge: true })
+        return { wrote: false, skippedReason: 'thread_no_longer_eligible' }
+      }
+
+      const threadUpdate = {
+        updatedAt: FieldValue.serverTimestamp(),
+        aiLastHandledMessageId: messageId,
+        aiLastHandledAt: FieldValue.serverTimestamp(),
+        aiSuggestedCategory: suggestedCategory || thread.aiSuggestedCategory || ''
+      }
+
+      if (replyText && !aiUnavailable) {
+        transaction.set(aiMessageRef, {
+          senderUid: 'melogic-ai-support',
+          senderType: 'ai',
+          body: replyText,
+          createdAt: FieldValue.serverTimestamp(),
+          metadata: {
+            model: cleanString(aiResult.modelUsed || '', 120),
+            confidence: Number(aiResult.confidence || 0),
+            shouldEscalate,
+            escalationReason,
+            suggestedCategory,
+            handledForMessageId: messageId
+          }
+        })
+        threadUpdate.lastMessageAt = FieldValue.serverTimestamp()
+        threadUpdate.lastMessagePreview = replyText
+      }
+
+      if (shouldEscalate || aiUnavailable) {
+        threadUpdate.status = 'waiting_for_agent'
+        threadUpdate.humanRequested = true
+        threadUpdate.aiRoutedToAgent = true
+        threadUpdate.aiEscalationReason = escalationReason || (aiUnavailable ? 'ai_unavailable' : 'ai_escalated')
+        threadUpdate.lastMessageAt = FieldValue.serverTimestamp()
+        threadUpdate.lastMessagePreview = aiUnavailable
+          ? 'Support is being routed to a live agent.'
+          : 'AI support routed this to a live agent.'
+      } else {
+        threadUpdate.status = 'ai_active'
+      }
+
       transaction.set(messageRef, {
         metadata: {
           ...metadata,
           aiHandledAt: FieldValue.serverTimestamp(),
-          aiSkippedReason: 'thread_no_longer_eligible'
+          aiReplyMessageId: replyText && !aiUnavailable ? aiMessageRef.id : '',
+          aiEscalated: shouldEscalate || aiUnavailable,
+          aiEscalationReason: threadUpdate.aiEscalationReason || ''
         }
       }, { merge: true })
-      return
-    }
+      transaction.set(threadRef, threadUpdate, { merge: true })
+      return { wrote: true, replyWritten: Boolean(replyText && !aiUnavailable), escalated: shouldEscalate || aiUnavailable }
+    })
+  } catch (error) {
+    logSupportAi(threadId, 'message_write_failure', {
+      lastUserMessageId: messageId,
+      errorMessage: cleanString(error?.message || 'unknown', 240)
+    })
+    throw error
+  }
 
-    const threadUpdate = {
-      updatedAt: FieldValue.serverTimestamp(),
-      aiLastHandledMessageId: messageId,
-      aiLastHandledAt: FieldValue.serverTimestamp(),
-      aiSuggestedCategory: suggestedCategory || thread.aiSuggestedCategory || ''
-    }
-
-    if (replyText && !aiUnavailable) {
-      transaction.set(aiMessageRef, {
-        senderUid: 'melogic-ai-support',
-        senderType: 'ai',
-        body: replyText,
-        createdAt: FieldValue.serverTimestamp(),
-        metadata: {
-          model: cleanString(aiResult.modelUsed || '', 120),
-          confidence: Number(aiResult.confidence || 0),
-          shouldEscalate,
-          escalationReason,
-          suggestedCategory,
-          handledForMessageId: messageId
-        }
-      })
-      threadUpdate.lastMessageAt = FieldValue.serverTimestamp()
-      threadUpdate.lastMessagePreview = replyText
-    }
-
-    if (shouldEscalate || aiUnavailable) {
-      threadUpdate.status = 'waiting_for_agent'
-      threadUpdate.humanRequested = true
-      threadUpdate.aiRoutedToAgent = true
-      threadUpdate.aiEscalationReason = escalationReason || (aiUnavailable ? 'ai_unavailable' : 'ai_escalated')
-      threadUpdate.lastMessageAt = FieldValue.serverTimestamp()
-      threadUpdate.lastMessagePreview = aiUnavailable
-        ? 'Support is being routed to a live agent.'
-        : 'AI support routed this to a live agent.'
-    } else {
-      threadUpdate.status = 'ai_active'
-    }
-
-    transaction.set(messageRef, {
-      metadata: {
-        ...metadata,
-        aiHandledAt: FieldValue.serverTimestamp(),
-        aiReplyMessageId: replyText && !aiUnavailable ? aiMessageRef.id : '',
-        aiEscalated: shouldEscalate || aiUnavailable,
-        aiEscalationReason: threadUpdate.aiEscalationReason || ''
-      }
-    }, { merge: true })
-    transaction.set(threadRef, threadUpdate, { merge: true })
+  if (!writeResult?.wrote) {
+    logSupportAi(threadId, 'message_write_skipped', {
+      lastUserMessageId: messageId,
+      skippedReason: writeResult?.skippedReason || 'unknown'
+    })
+    return
+  }
+  logSupportAi(threadId, 'message_write_success', {
+    lastUserMessageId: messageId,
+    replyWritten: writeResult.replyWritten === true,
+    escalated: writeResult.escalated === true
   })
 
   if (shouldEscalate || aiUnavailable) {
@@ -336,19 +393,47 @@ async function completeAiHandling({ threadRef, messageId = '', userMessage = {},
 
 async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', apiKey = '', model = '' } = {}) {
   const threadRef = db.collection('supportThreads').doc(threadId)
+  logSupportAi(threadId, 'eligibility_check', {
+    lastUserMessageId: messageId,
+    model: cleanString(model || SUPPORT_AI_MODEL.value() || '', 120),
+    hasApiKey: Boolean(apiKey)
+  })
   const locked = await markAiHandledStart(threadRef, messageId)
-  if (!locked) return { ok: true, skipped: true }
+  if (!locked?.locked) {
+    const thread = locked?.thread || {}
+    logSupportAi(threadId, 'skipped', {
+      status: cleanString(thread.status || '', 40),
+      assignedAgentUidExists: Boolean(thread.assignedAgentUid),
+      humanRequested: thread.humanRequested === true,
+      lastUserMessageId: messageId,
+      skippedReason: locked?.skippedReason || 'lock_not_acquired'
+    })
+    return { ok: true, skipped: true, skippedReason: locked?.skippedReason || 'lock_not_acquired' }
+  }
 
   const threadSnap = await threadRef.get()
-  if (!threadSnap.exists) return { ok: false, skipped: true }
+  if (!threadSnap.exists) {
+    logSupportAi(threadId, 'skipped', {
+      lastUserMessageId: messageId,
+      skippedReason: 'missing_thread_after_lock'
+    })
+    return { ok: false, skipped: true, skippedReason: 'missing_thread_after_lock' }
+  }
   const thread = threadSnap.data() || {}
   const messageSnap = await threadRef.collection('messages').doc(messageId).get()
   const userMessage = messageSnap.data() || locked.message || {}
-  const messageText = cleanString(userMessage.body || '', MAX_BODY_LENGTH)
+  const messageText = cleanSupportMessageBody(userMessage.body || '', MAX_BODY_LENGTH)
   const recentMessages = await loadRecentSupportMessages(threadRef)
   const knowledgeSnippets = await loadSupportKnowledgeSnippets()
   const requester = thread.requester && typeof thread.requester === 'object' ? thread.requester : {}
   const safePageContext = sanitizeSafeContext(userMessage.metadata?.safePageContext || {})
+
+  logSupportAi(threadId, 'eligible', {
+    status: cleanString(thread.status || '', 40),
+    assignedAgentUidExists: Boolean(thread.assignedAgentUid),
+    lastUserMessageId: messageId,
+    model: cleanString(model || SUPPORT_AI_MODEL.value() || '', 120)
+  })
 
   const aiJoinedAlready = await hasSystemEvent(threadRef, 'ai_joined')
   if (!aiJoinedAlready) {
@@ -361,38 +446,66 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
     })
   }
 
+  let aiResult
   const directEscalation = detectEscalationNeed(messageText)
-  const aiResult = directEscalation.shouldEscalate
-    ? {
-        replyText: 'I’m routing this to a live Melogic support agent so they can review the details safely.',
-        confidence: 1,
-        shouldEscalate: true,
-        escalationReason: directEscalation.reason,
-        suggestedCategory: directEscalation.reason,
-        aiAvailable: true,
-        modelUsed: 'guardrail'
-      }
-    : await generateSupportReply({
-        apiKey,
-        model,
-        thread,
-        userMessage: messageText,
-        recentMessages,
-        knowledgeSnippets,
-        safeUserContext: {
-          displayName: requester.displayName || requester.username || '',
-          role: 'user'
-        },
-        safePageContext
+  if (directEscalation.shouldEscalate) {
+    logSupportAi(threadId, 'gemini_call_skipped', {
+      lastUserMessageId: messageId,
+      skippedReason: 'direct_escalation',
+      escalationReason: directEscalation.reason,
+      model: 'guardrail'
+    })
+    aiResult = {
+      replyText: 'I’m routing this to a live Melogic support agent so they can review the details safely.',
+      confidence: 1,
+      shouldEscalate: true,
+      escalationReason: directEscalation.reason,
+      suggestedCategory: directEscalation.reason,
+      aiAvailable: true,
+      modelUsed: 'guardrail'
+    }
+  } else {
+    logSupportAi(threadId, 'gemini_call_start', {
+      lastUserMessageId: messageId,
+      model: cleanString(model || SUPPORT_AI_MODEL.value() || '', 120)
+    })
+    try {
+      aiResult = await generateSupportReply({
+          apiKey,
+          model,
+          thread,
+          userMessage: messageText,
+          recentMessages,
+          knowledgeSnippets,
+          safeUserContext: {
+            displayName: requester.displayName || requester.username || '',
+            role: 'user'
+          },
+          safePageContext
+        })
+      logSupportAi(threadId, aiResult.aiAvailable === false ? 'gemini_call_failure' : 'gemini_call_success', {
+        lastUserMessageId: messageId,
+        model: cleanString(aiResult.modelUsed || model || SUPPORT_AI_MODEL.value() || '', 120),
+        escalationReason: cleanString(aiResult.escalationReason || '', 160),
+        shouldEscalate: aiResult.shouldEscalate === true
       })
+    } catch (error) {
+      logSupportAi(threadId, 'gemini_call_failure', {
+        lastUserMessageId: messageId,
+        model: cleanString(model || SUPPORT_AI_MODEL.value() || '', 120),
+        errorMessage: cleanString(error?.message || 'unknown', 240)
+      })
+      throw error
+    }
+  }
 
-  await completeAiHandling({ threadRef, messageId, userMessage, aiResult, recentMessages })
+  await completeAiHandling({ threadRef, threadId, messageId, userMessage, aiResult, recentMessages })
   return { ok: true, skipped: false, escalated: aiResult.shouldEscalate === true || aiResult.aiAvailable === false }
 }
 
 const createSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
-  const initialMessage = cleanString(request.data?.initialMessage || '', MAX_BODY_LENGTH + 1)
+  const initialMessage = cleanSupportMessageBody(request.data?.initialMessage || '', MAX_BODY_LENGTH + 1)
   if (initialMessage.length > MAX_BODY_LENGTH) throw new HttpsError('invalid-argument', 'Message is too long.')
 
   const existing = await findActiveThreadForRequester(uid)
@@ -479,6 +592,7 @@ const sendSupportMessage = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const threadId = cleanString(request.data?.threadId || '', 180)
   const body = cleanBody(request.data?.body || '')
   const safePageContext = sanitizeSafeContext(request.data?.safePageContext || {})
+  const requestedAgentSend = request.data?.asAgent === true
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
 
   const threadRef = db.collection('supportThreads').doc(threadId)
@@ -491,21 +605,23 @@ const sendSupportMessage = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
     assertThreadAccess(thread, uid, staff)
     if (thread.status === 'resolved') throw new HttpsError('failed-precondition', 'This support thread is resolved.')
 
-    const senderType = staff ? 'agent' : 'user'
+    const requesterUid = cleanString(thread.requesterUid || '', 180)
+    const sendAsAgent = staff && (requestedAgentSend || requesterUid !== uid)
+    const senderType = sendAsAgent ? 'agent' : 'user'
     const update = {
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
       lastMessagePreview: body,
       participantUids: FieldValue.arrayUnion(uid)
     }
-    if (staff) {
+    if (sendAsAgent) {
       update.assignedAgentUid = thread.assignedAgentUid || uid
       update.status = 'assigned'
       update.humanRequested = true
     } else if (thread.status === 'open') {
       update.status = 'ai_active'
     }
-    if (!staff && ['open', 'ai_active'].includes(thread.status || 'open') && !thread.assignedAgentUid && thread.humanRequested !== true) {
+    if (!sendAsAgent && ['open', 'ai_active'].includes(thread.status || 'open') && !thread.assignedAgentUid && thread.humanRequested !== true) {
       shouldAiHandle = true
     }
 
@@ -515,7 +631,7 @@ const sendSupportMessage = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
       body,
       createdAt: FieldValue.serverTimestamp(),
       metadata: {
-        ...(staff ? {} : { safePageContext })
+        ...(sendAsAgent ? {} : { safePageContext })
       }
     })
     transaction.set(threadRef, update, { merge: true })
@@ -575,6 +691,42 @@ const resolveSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) =>
   return { ok: true, threadId }
 })
 
+const endSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
+  const uid = assertSignedIn(request)
+  const staff = isSupportStaff(request)
+  const threadId = cleanString(request.data?.threadId || '', 180)
+  if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
+
+  const threadRef = db.collection('supportThreads').doc(threadId)
+  let alreadyResolved = false
+  await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(threadRef)
+    if (!snap.exists) throw new HttpsError('not-found', 'Support thread not found.')
+    const thread = snap.data() || {}
+    assertThreadAccess(thread, uid, staff)
+    alreadyResolved = thread.status === 'resolved'
+    if (alreadyResolved) return
+    transaction.set(threadRef, {
+      status: 'resolved',
+      resolvedAt: FieldValue.serverTimestamp(),
+      resolvedBy: uid,
+      endedAt: FieldValue.serverTimestamp(),
+      endedBy: uid,
+      humanRequested: true,
+      updatedAt: FieldValue.serverTimestamp(),
+      lastMessageAt: FieldValue.serverTimestamp(),
+      lastMessagePreview: 'Chat ended.'
+    }, { merge: true })
+    addSystemMessage(transaction, threadRef, 'Chat ended.', {
+      event: 'thread_ended',
+      endedBy: uid,
+      endedByType: staff ? 'agent' : 'user'
+    })
+  })
+
+  return { ok: true, threadId, alreadyResolved }
+})
+
 const listSupportThreads = onCall({
   ...SUPPORT_CALLABLE_OPTIONS,
   timeoutSeconds: 60
@@ -604,10 +756,27 @@ const handleSupportAiReply = onDocumentCreated({
   memory: '256MiB'
 }, async (event) => {
   const message = event.data?.data() || {}
-  if (message.senderType !== 'user') return
   const threadId = cleanString(event.params?.threadId || '', 180)
   const messageId = cleanString(event.params?.messageId || '', 180)
-  if (!threadId || !messageId) return
+  logSupportAi(threadId, 'trigger_invoked', {
+    lastUserMessageId: messageId,
+    senderType: cleanString(message.senderType || '', 40)
+  })
+  if (message.senderType !== 'user') {
+    logSupportAi(threadId, 'skipped', {
+      lastUserMessageId: messageId,
+      skippedReason: 'non_user_trigger',
+      senderType: cleanString(message.senderType || '', 40)
+    })
+    return
+  }
+  if (!threadId || !messageId) {
+    logSupportAi(threadId, 'skipped', {
+      lastUserMessageId: messageId,
+      skippedReason: 'missing_params'
+    })
+    return
+  }
   await handleSupportAiReplyForMessage({
     threadId,
     messageId,
@@ -634,12 +803,14 @@ module.exports = {
   sendSupportMessage,
   claimSupportThread,
   resolveSupportThread,
+  endSupportThread,
   requestSupportAgent,
   listSupportThreads,
   listSupportMessages,
   handleSupportAiReply,
   __test: {
     sanitizeSafeContext,
+    cleanSupportMessageBody,
     handleSupportAiReplyForMessage
   }
 }

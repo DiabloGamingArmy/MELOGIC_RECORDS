@@ -33,7 +33,7 @@
 
 .chat-dock-header {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 10px;
   padding: 12px;
@@ -75,6 +75,40 @@
   color: #dff9ff;
   background: rgba(255, 255, 255, 0.06);
   cursor: pointer;
+}
+
+.chat-dock-support-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-dock-header button.chat-dock-header-action {
+  width: auto;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.chat-dock-header button.chat-dock-header-action.is-danger {
+  border-color: rgba(255, 133, 160, 0.35);
+  color: #ffd8df;
+  background: rgba(255, 85, 119, 0.13);
+}
+
+.chat-dock-header button.chat-dock-header-action.is-muted {
+  border-color: rgba(255, 255, 255, 0.09);
+  color: rgba(220, 242, 255, 0.38);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.chat-dock-header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .chat-dock-header button:hover,
