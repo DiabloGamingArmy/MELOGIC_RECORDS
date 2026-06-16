@@ -22,9 +22,13 @@
 }
 
 .chat-dock-panel {
-  width: min(360px, calc(100vw - 28px));
-  height: min(540px, calc(100vh - var(--nav-offset, 76px) - 34px));
-  min-height: 420px;
+  position: relative;
+  width: min(var(--chat-dock-width, 380px), calc(100vw - 28px), 720px);
+  height: min(var(--chat-dock-height, 560px), calc(100vh - var(--nav-offset, 76px) - 34px), 85vh);
+  min-width: 320px;
+  max-width: min(720px, 90vw);
+  min-height: 380px;
+  max-height: 85vh;
   display: grid;
   grid-template-rows: auto 1fr auto;
   overflow: hidden;
@@ -33,9 +37,9 @@
 
 .chat-dock-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(132px, 1fr) auto auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.035);
@@ -43,6 +47,7 @@
 
 .chat-dock-title {
   min-width: 0;
+  max-width: 100%;
 }
 
 .chat-dock-title h2,
@@ -54,7 +59,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.96rem;
+  font-size: 1rem;
   letter-spacing: 0.01em;
 }
 
@@ -81,6 +86,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: max-content;
 }
 
 .chat-dock-header button.chat-dock-header-action {
@@ -143,6 +149,10 @@
 .chat-dock-avatar.is-support {
   color: #f6fbff;
   background: linear-gradient(135deg, rgba(32, 216, 255, 0.28), rgba(157, 123, 255, 0.3));
+}
+
+.chat-dock-avatar.is-support.has-image {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .chat-dock-messages {
@@ -223,6 +233,34 @@
   background:
     radial-gradient(circle at top left, rgba(168, 146, 255, 0.18), transparent 42%),
     rgba(255, 255, 255, 0.07);
+}
+
+.chat-dock-message.is-typing {
+  align-items: center;
+}
+
+.chat-dock-typing-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: rgba(240, 246, 255, 0.8);
+}
+
+.chat-dock-typing-bubble i {
+  width: 5px;
+  height: 5px;
+  display: inline-block;
+  border-radius: 999px;
+  background: rgba(220, 242, 255, 0.72);
+  animation: chat-dock-typing 1s infinite ease-in-out;
+}
+
+.chat-dock-typing-bubble i:nth-of-type(2) {
+  animation-delay: 0.12s;
+}
+
+.chat-dock-typing-bubble i:nth-of-type(3) {
+  animation-delay: 0.24s;
 }
 
 .chat-dock-ai-label {
@@ -436,6 +474,53 @@
   }
 }
 
+@keyframes chat-dock-typing {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.chat-dock-resize-handle {
+  position: absolute;
+  z-index: 4;
+  pointer-events: auto;
+}
+
+.chat-dock-resize-handle.is-top {
+  top: 0;
+  right: 16px;
+  left: 16px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.chat-dock-resize-handle.is-left {
+  top: 16px;
+  bottom: 16px;
+  left: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.chat-dock-resize-handle.is-corner {
+  top: 0;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+}
+
+.chat-dock-is-resizing {
+  user-select: none;
+}
+
 @media (max-width: 720px) {
   .chat-dock-root {
     right: 0;
@@ -446,11 +531,25 @@
   .chat-dock-panel {
     width: 100vw;
     height: min(82vh, calc(100vh - var(--nav-offset, 68px)));
+    min-width: 0;
     min-height: 360px;
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
     border-radius: 22px 22px 0 0;
+  }
+
+  .chat-dock-header {
+    grid-template-columns: auto minmax(96px, 1fr) auto auto;
+  }
+
+  .chat-dock-support-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .chat-dock-resize-handle {
+    display: none;
   }
 
   .chat-dock-minimized {

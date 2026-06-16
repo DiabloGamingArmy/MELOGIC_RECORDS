@@ -44,6 +44,12 @@ const updateAdminSettings = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
           sellerAgreementUpdatedAt: new Date().toISOString(),
           sellerAgreementUpdatedBy: actor.uid
         }
+      : {}),
+    ...(patch.section === 'supportAi'
+      ? {
+          updatedAt: new Date().toISOString(),
+          updatedBy: actor.uid
+        }
       : {})
   }
   if (patch.section === 'agreements' && !sellerAgreementVersionIsValid(sectionAfter.sellerAgreementVersion)) {

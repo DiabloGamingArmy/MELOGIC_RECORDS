@@ -95,8 +95,11 @@ const sendInboxMessage = onCall(async (request) => {
       : 'text'
     const message = {
       senderId: uid,
+      senderUid: uid,
+      senderType: 'user',
       body,
       type,
+      metadata: {},
       attachments,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),

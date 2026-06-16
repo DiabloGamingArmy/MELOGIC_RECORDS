@@ -54,8 +54,23 @@ export function normalizeSupportThread(threadId, raw = {}) {
     aiRoutedToAgent: raw.aiRoutedToAgent === true,
     aiEscalationReason: String(raw.aiEscalationReason || '').trim(),
     aiSuggestedCategory: String(raw.aiSuggestedCategory || '').trim(),
+    typing: normalizeSupportTyping(raw.typing),
     requester: raw.requester && typeof raw.requester === 'object' ? raw.requester : null,
     assignedAgent: raw.assignedAgent && typeof raw.assignedAgent === 'object' ? raw.assignedAgent : null
+  }
+}
+
+function normalizeSupportTyping(raw = {}) {
+  const typing = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const ai = typing.ai && typeof typing.ai === 'object' && !Array.isArray(typing.ai) ? typing.ai : {}
+  return {
+    ai: {
+      active: ai.active === true,
+      label: String(ai.label || '').trim(),
+      startedAt: toIsoDate(ai.startedAt),
+      expiresAt: toIsoDate(ai.expiresAt),
+      clearedAt: toIsoDate(ai.clearedAt)
+    }
   }
 }
 

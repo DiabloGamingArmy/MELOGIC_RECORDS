@@ -36,12 +36,32 @@ function getThreadParticipantUids(thread = {}) {
   return Array.from(new Set(ids.map((uid) => assertString(uid)).filter(Boolean)))
 }
 
-function buildThreadPayload({ type, createdBy, title = '', participantIds = [], imagePath = '', imageURL = '', dmKey = '' }) {
+function buildThreadPayload({
+  type,
+  createdBy,
+  title = '',
+  participantIds = [],
+  imagePath = '',
+  imageURL = '',
+  dmKey = '',
+  agentId = '',
+  requesterUid = '',
+  assignedAgentUid = null,
+  mode = '',
+  source = '',
+  agentParticipants = null
+}) {
   const canonicalParticipantIds = sanitizeParticipantIds(participantIds, createdBy)
   return {
     type,
+    ...(agentId ? { agentId } : {}),
     createdBy,
     ownerUid: createdBy,
+    ...(requesterUid ? { requesterUid } : {}),
+    ...(assignedAgentUid ? { assignedAgentUid } : assignedAgentUid === null ? { assignedAgentUid: null } : {}),
+    ...(mode ? { mode } : {}),
+    ...(source ? { source } : {}),
+    ...(agentParticipants && typeof agentParticipants === 'object' ? { agentParticipants } : {}),
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
     title: title || '',
@@ -78,6 +98,12 @@ function buildInboxSummaryPayload({ threadId, thread, recipientUid }) {
   return {
     threadId,
     type: thread.type,
+    agentId: thread.agentId || '',
+    requesterUid: thread.requesterUid || '',
+    assignedAgentUid: thread.assignedAgentUid || null,
+    mode: thread.mode || '',
+    source: thread.source || '',
+    agentParticipants: thread.agentParticipants && typeof thread.agentParticipants === 'object' ? thread.agentParticipants : null,
     title: thread.title || '',
     imageURL: thread.imageURL || '',
     imagePath: thread.imagePath || '',
@@ -95,6 +121,8 @@ function buildInboxSummaryPayload({ threadId, thread, recipientUid }) {
     ownerUid: thread.ownerUid || thread.createdBy || '',
     createdAt: thread.createdAt || FieldValue.serverTimestamp(),
     status: thread.status || 'active',
+    aiEscalationReason: thread.aiEscalationReason || '',
+    aiSuggestedCategory: thread.aiSuggestedCategory || '',
     unreadCount: 0,
     updatedAt: thread.updatedAt || FieldValue.serverTimestamp()
   }

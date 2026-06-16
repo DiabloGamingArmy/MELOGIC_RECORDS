@@ -14,10 +14,19 @@ import {
   subscribeToSupportMessages,
   subscribeToSupportThread
 } from '../data/supportThreadService'
+import { getStorageAssetUrl } from '../firebase/storageAssets'
 
 const STORAGE_KEY = 'melogic_chat_dock_state_v1'
 const OPEN_EVENT = 'melogic:chat-dock-open'
 const MAX_DOCK_MESSAGES = 80
+const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
+const DOCK_SCROLL_BOTTOM_THRESHOLD = 80
+const DOCK_SIZE_LIMITS = {
+  minWidth: 320,
+  maxWidth: 720,
+  minHeight: 380,
+  maxHeightRatio: 0.85
+}
 
 let initialized = false
 let root = null
@@ -45,6 +54,10 @@ let requestingAgent = false
 let endingSupport = false
 let draft = ''
 let lastMarkedReadKey = ''
+let resonaAvatarURL = ''
+let resonaAvatarRequested = false
+let forceDockBottom = false
+let activeResize = null
 
 let dockState = {
   open: false,
@@ -52,7 +65,8 @@ let dockState = {
   mode: 'thread',
   activeThreadId: '',
   title: '',
-  ownerUid: ''
+  ownerUid: '',
+  size: null
 }
 
 function escapeHtml(value = '') {
@@ -74,12 +88,35 @@ function readStoredState() {
       mode: parsed.mode === 'support' ? 'support' : 'thread',
       activeThreadId: String(parsed.activeThreadId || '').trim(),
       title: String(parsed.title || '').trim().slice(0, 160),
-      ownerUid: String(parsed.ownerUid || '').trim()
+      ownerUid: String(parsed.ownerUid || '').trim(),
+      size: normalizeDockSize(parsed.size)
     }
   } catch {
     localStorage.removeItem(STORAGE_KEY)
     return { ...dockState }
   }
+}
+
+function normalizeDockSize(size = null) {
+  if (!size || typeof size !== 'object' || Array.isArray(size)) return null
+  return {
+    width: clampDockWidth(size.width),
+    height: clampDockHeight(size.height)
+  }
+}
+
+function clampDockWidth(value) {
+  const viewportMax = Math.max(DOCK_SIZE_LIMITS.minWidth, Math.min(DOCK_SIZE_LIMITS.maxWidth, Math.floor(window.innerWidth * 0.9)))
+  const width = Number(value || 0)
+  if (!Number.isFinite(width) || width <= 0) return 360
+  return Math.max(DOCK_SIZE_LIMITS.minWidth, Math.min(viewportMax, Math.round(width)))
+}
+
+function clampDockHeight(value) {
+  const viewportMax = Math.max(DOCK_SIZE_LIMITS.minHeight, Math.floor(window.innerHeight * DOCK_SIZE_LIMITS.maxHeightRatio))
+  const height = Number(value || 0)
+  if (!Number.isFinite(height) || height <= 0) return 540
+  return Math.max(DOCK_SIZE_LIMITS.minHeight, Math.min(viewportMax, Math.round(height)))
 }
 
 function persistState() {
@@ -168,6 +205,30 @@ function renderAvatar(source = {}, label = 'Member') {
   `
 }
 
+function renderResonaAvatar(label = 'Resona') {
+  return renderAvatar({
+    displayName: 'Resona',
+    username: 'Resona',
+    avatarURL: resonaAvatarURL
+  }, label)
+}
+
+function loadResonaAvatar() {
+  if (resonaAvatarRequested) return
+  resonaAvatarRequested = true
+  getStorageAssetUrl(RESONA_AVATAR_PATH, {
+    warnOnFail: false,
+    scopeKey: 'chat-dock-resona',
+    type: 'resona-avatar'
+  })
+    .then((url) => {
+      if (!url) return
+      resonaAvatarURL = url
+      renderDock()
+    })
+    .catch(() => {})
+}
+
 function getThreadTitle() {
   return activeThread?.title || dockState.title || 'Conversation'
 }
@@ -187,12 +248,12 @@ function supportStatusLabel(thread = {}) {
   const status = String(thread?.status || 'open').trim()
   if (status === 'assigned') return thread?.assignedAgentUid ? 'Live agent assigned' : 'Waiting for live agent'
   const labels = {
-    open: 'AI support active',
-    ai_active: 'AI support active',
+    open: 'Resona active',
+    ai_active: 'Resona active',
     waiting_for_agent: 'Waiting for live agent',
     resolved: 'Resolved'
   }
-  return labels[status] || 'AI support active'
+  return labels[status] || 'Resona active'
 }
 
 function hasAssignedSupportAgent() {
@@ -204,8 +265,21 @@ function canRequestSupportAgent() {
   return !(supportThread.status === 'assigned' && hasAssignedSupportAgent())
 }
 
+function isResonaTyping() {
+  if (!supportThread || supportThread.status === 'resolved' || supportThread.assignedAgentUid) return false
+  const ai = supportThread.typing?.ai || {}
+  if (ai.active !== true) return false
+  const expiresAt = ai.expiresAt ? new Date(ai.expiresAt).getTime() : 0
+  return !expiresAt || expiresAt > Date.now()
+}
+
+function resonaTypingLabel() {
+  return supportThread?.typing?.ai?.label || 'Resona is typing...'
+}
+
 function getSupportTitle() {
-  return supportThread?.subject || dockState.title || 'Melogic Support'
+  if (supportThread?.assignedAgentUid) return 'Melogic Support'
+  return 'Resona'
 }
 
 function getSupportSubtitle() {
@@ -255,7 +329,7 @@ function renderSupportPanel() {
     return `
       <section class="chat-dock-placeholder">
         <h3>Support chat is ready.</h3>
-        <p>Send a message and Melogic Support will pick it up from the admin queue.</p>
+        <p>Send a message and Resona will help or route you to Melogic Support.</p>
         ${canRequestSupportAgent() ? `<button type="button" class="chat-dock-support-link" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>` : ''}
       </section>
     `
@@ -271,7 +345,7 @@ function renderSupportPanel() {
     ${visibleMessages.map((message) => {
       if (message.senderType === 'system' || message.senderType === 'system_ai') {
         return `
-          <article class="chat-dock-message is-system">
+          <article class="chat-dock-message is-system" data-message-render-key="support:${escapeHtml(message.id || '')}">
             <div class="chat-dock-bubble">${renderMessageBody(message)}</div>
             <time>${escapeHtml(getMessageTime(message.createdAt))}</time>
           </article>
@@ -280,12 +354,12 @@ function renderSupportPanel() {
       const isMine = message.senderUid === currentUid()
       const isAi = message.senderType === 'ai'
       const sender = isAi
-        ? { displayName: 'Melogic AI Support', username: 'AI', avatarURL: '' }
+        ? { displayName: 'Resona', username: 'AI', avatarURL: resonaAvatarURL }
         : message.senderType === 'agent'
         ? { displayName: 'Melogic Support', username: '', avatarURL: '' }
         : senderMeta(message.senderUid)
       return `
-        <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${isAi ? 'is-ai' : ''} ${message.pendingWrites ? 'is-pending' : ''}">
+        <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${isAi ? 'is-ai' : ''} ${message.pendingWrites ? 'is-pending' : ''}" data-message-render-key="support:${escapeHtml(message.id || '')}">
           ${isMine ? '' : renderAvatar(sender, sender.displayName)}
           <div class="chat-dock-message-stack">
             ${isMine ? '' : `<strong>${escapeHtml(sender.displayName)}${isAi ? '<span class="chat-dock-ai-label">AI</span>' : ''}</strong>`}
@@ -295,12 +369,13 @@ function renderSupportPanel() {
         </article>
       `
     }).join('')}
+    ${isResonaTyping() ? renderResonaTypingIndicator() : ''}
   `
 }
 
 function renderMessageBody(message = {}) {
   if (message.deleted) return '<em>Message removed</em>'
-  const text = escapeHtml(message.body || '')
+  const text = escapeHtml(dockMessageBody(message))
   const attachments = Array.isArray(message.attachments) ? message.attachments : []
   const attachmentMarkup = attachments.length
     ? `
@@ -320,6 +395,31 @@ function renderMessageBody(message = {}) {
     `
     : ''
   return `${text ? `<p>${text}</p>` : ''}${attachmentMarkup}`
+}
+
+function dockMessageBody(message = {}) {
+  const body = String(message.body || '')
+  if (dockState.mode !== 'support') return body
+  return body
+    .replace(/Melogic AI Support/g, 'Resona')
+    .replace(/AI support joined the chat\./g, 'Resona joined the chat.')
+    .replace(/AI support routed this to a live agent\./g, 'Resona routed this to a live agent.')
+    .replace(/AI support/g, 'Resona')
+}
+
+function renderResonaTypingIndicator() {
+  return `
+    <article class="chat-dock-message is-theirs is-ai is-typing" data-message-render-key="support-typing-resona">
+      ${renderResonaAvatar('Resona')}
+      <div class="chat-dock-message-stack">
+        <strong>Resona<span class="chat-dock-ai-label">AI</span></strong>
+        <div class="chat-dock-bubble chat-dock-typing-bubble">
+          <span>${escapeHtml(resonaTypingLabel())}</span>
+          <i></i><i></i><i></i>
+        </div>
+      </div>
+    </article>
+  `
 }
 
 function renderMessageList() {
@@ -373,7 +473,7 @@ function renderMessageList() {
     const isMine = message.senderId === currentUid()
     const sender = senderMeta(message.senderId)
     return `
-      <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${message.pendingWrites ? 'is-pending' : ''}">
+      <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${message.pendingWrites ? 'is-pending' : ''}" data-message-render-key="thread:${escapeHtml(message.id || '')}">
         ${isMine ? '' : renderAvatar(sender, sender.displayName)}
         <div class="chat-dock-message-stack">
           ${isMine ? '' : `<strong>${escapeHtml(sender.displayName)}</strong>`}
@@ -424,8 +524,62 @@ function renderSupportHeaderActions() {
   `
 }
 
+function dockPanelStyle() {
+  const size = normalizeDockSize(dockState.size)
+  if (!size) return ''
+  return ` style="--chat-dock-width:${size.width}px; --chat-dock-height:${size.height}px;"`
+}
+
+function renderResizeHandles() {
+  return `
+    <span class="chat-dock-resize-handle is-top" data-chat-dock-resize="top" aria-hidden="true"></span>
+    <span class="chat-dock-resize-handle is-left" data-chat-dock-resize="left" aria-hidden="true"></span>
+    <span class="chat-dock-resize-handle is-corner" data-chat-dock-resize="top-left" aria-hidden="true"></span>
+  `
+}
+
+function getDockScroller() {
+  return root?.querySelector('[data-chat-dock-messages]') || null
+}
+
+function isDockNearBottom(scroller = getDockScroller()) {
+  if (!scroller) return true
+  return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= DOCK_SCROLL_BOTTOM_THRESHOLD
+}
+
+function dockScrollSnapshot() {
+  const scroller = getDockScroller()
+  return {
+    mode: dockState.mode,
+    threadId: dockState.activeThreadId,
+    scrollTop: scroller?.scrollTop || 0,
+    scrollHeight: scroller?.scrollHeight || 0,
+    nearBottom: isDockNearBottom(scroller)
+  }
+}
+
+function stabilizeDockScroll(snapshot = {}, { forceBottom = false, reason = 'render' } = {}) {
+  const scroller = getDockScroller()
+  if (!scroller) return
+  const sameThread = snapshot.mode === dockState.mode && snapshot.threadId === dockState.activeThreadId
+  const shouldBottom = forceBottom || forceDockBottom || !sameThread || snapshot.nearBottom
+  const apply = () => {
+    const nextScroller = getDockScroller()
+    if (!nextScroller) return
+    if (shouldBottom) {
+      nextScroller.scrollTop = nextScroller.scrollHeight
+    } else {
+      nextScroller.scrollTop = Math.min(snapshot.scrollTop || 0, nextScroller.scrollHeight)
+    }
+    forceDockBottom = false
+  }
+  apply()
+  window.requestAnimationFrame(apply)
+}
+
 function renderDock() {
   if (!root) return
+  const scrollSnapshot = dockScrollSnapshot()
   if (!dockState.open) {
     root.innerHTML = ''
     root.hidden = true
@@ -441,11 +595,12 @@ function renderDock() {
   const title = dockState.mode === 'support' ? getSupportTitle() : getThreadTitle()
   const subtitle = dockState.mode === 'support' ? getSupportSubtitle() : getThreadSubtitle()
   const headerAvatar = dockState.mode === 'support'
-    ? '<span class="chat-dock-avatar is-support" aria-hidden="true">MS</span>'
+    ? renderResonaAvatar(title)
     : renderAvatar(activeThread || { title }, title)
 
   root.innerHTML = `
-    <section class="chat-dock-panel" role="dialog" aria-label="${escapeHtml(title)} chat dock" aria-live="polite">
+    <section class="chat-dock-panel" role="dialog" aria-label="${escapeHtml(title)} chat dock" aria-live="polite"${dockPanelStyle()}>
+      ${renderResizeHandles()}
       <header class="chat-dock-header">
         ${headerAvatar}
         <div class="chat-dock-title">
@@ -462,14 +617,7 @@ function renderDock() {
       ${renderComposer()}
     </section>
   `
-  scrollMessagesToBottom()
-}
-
-function scrollMessagesToBottom() {
-  window.requestAnimationFrame(() => {
-    const scroller = root?.querySelector('[data-chat-dock-messages]')
-    if (scroller) scroller.scrollTop = scroller.scrollHeight
-  })
+  stabilizeDockScroll(scrollSnapshot, { reason: 'render' })
 }
 
 function focusComposer() {
@@ -550,7 +698,11 @@ function syncSupportSubscriptions() {
   })
 
   unsubscribeMessages = subscribeToSupportMessages(dockState.activeThreadId, (nextMessages) => {
+    const hadMessages = supportMessages.length > 0
+    const previousLastId = supportMessages.at(-1)?.id || ''
+    const nextLastId = nextMessages.at(-1)?.id || ''
     supportMessages = nextMessages
+    if (!hadMessages || (nextLastId && nextLastId !== previousLastId && isDockNearBottom())) forceDockBottom = true
     loadingSupportMessages = false
     hydrateProfilesForDock()
     renderDock()
@@ -602,7 +754,11 @@ function syncThreadSubscriptions() {
   })
 
   unsubscribeMessages = subscribeToMessages(dockState.activeThreadId, (nextMessages) => {
+    const hadMessages = messages.length > 0
+    const previousLastId = messages.at(-1)?.id || ''
+    const nextLastId = nextMessages.at(-1)?.id || ''
     messages = nextMessages
+    if (!hadMessages || (nextLastId && nextLastId !== previousLastId && isDockNearBottom())) forceDockBottom = true
     loadingMessages = false
     hydrateProfilesForDock()
     markActiveThreadRead()
@@ -640,6 +796,7 @@ function setDockState(next = {}) {
     sending = false
     requestingAgent = false
     endingSupport = false
+    forceDockBottom = true
   }
   persistState()
   syncThreadSubscriptions()
@@ -658,7 +815,7 @@ export function openChatDock(options = {}) {
     minimized: false,
     mode: support ? 'support' : 'thread',
     activeThreadId: threadId,
-    title: String(detail.title || detail.threadTitle || (support ? 'Melogic Support' : '')).trim().slice(0, 160)
+    title: String(detail.title || detail.threadTitle || (support ? 'Resona' : '')).trim().slice(0, 160)
   })
   focusComposer()
 }
@@ -702,6 +859,7 @@ async function handleSubmit(form) {
       await markThreadRead({ threadId, uid }).catch(() => {})
     }
     draft = ''
+    forceDockBottom = true
     const input = form?.querySelector('[data-chat-dock-input]')
     if (input) input.value = ''
   } catch (error) {
@@ -713,6 +871,26 @@ async function handleSubmit(form) {
 }
 
 function bindRootEvents() {
+  root.addEventListener('pointerdown', (event) => {
+    const handle = event.target.closest('[data-chat-dock-resize]')
+    if (!handle || window.matchMedia('(max-width: 720px)').matches) return
+    const panel = root.querySelector('.chat-dock-panel')
+    if (!panel) return
+    event.preventDefault()
+    const rect = panel.getBoundingClientRect()
+    activeResize = {
+      edge: handle.getAttribute('data-chat-dock-resize') || '',
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: rect.width,
+      startHeight: rect.height
+    }
+    document.body.classList.add('chat-dock-is-resizing')
+    window.addEventListener('pointermove', handleDockResizeMove)
+    window.addEventListener('pointerup', finishDockResize, { once: true })
+    window.addEventListener('pointercancel', finishDockResize, { once: true })
+  })
+
   root.addEventListener('click', (event) => {
     const minimize = event.target.closest('[data-chat-dock-minimize]')
     if (minimize) {
@@ -796,6 +974,32 @@ function bindRootEvents() {
   })
 }
 
+function handleDockResizeMove(event) {
+  if (!activeResize) return
+  event.preventDefault()
+  const wantsWidth = activeResize.edge.includes('left')
+  const wantsHeight = activeResize.edge.includes('top')
+  const nextSize = normalizeDockSize({
+    width: wantsWidth ? activeResize.startWidth + (activeResize.startX - event.clientX) : dockState.size?.width || activeResize.startWidth,
+    height: wantsHeight ? activeResize.startHeight + (activeResize.startY - event.clientY) : dockState.size?.height || activeResize.startHeight
+  })
+  dockState.size = nextSize
+  const panel = root?.querySelector('.chat-dock-panel')
+  if (panel && nextSize) {
+    panel.style.setProperty('--chat-dock-width', `${nextSize.width}px`)
+    panel.style.setProperty('--chat-dock-height', `${nextSize.height}px`)
+  }
+}
+
+function finishDockResize() {
+  if (!activeResize) return
+  activeResize = null
+  document.body.classList.remove('chat-dock-is-resizing')
+  window.removeEventListener('pointermove', handleDockResizeMove)
+  persistState()
+  stabilizeDockScroll(dockScrollSnapshot(), { reason: 'resize' })
+}
+
 function handleShellUpdate(nextShellState = {}) {
   const previousUid = shellSnapshot?.user?.uid || ''
   shellSnapshot = nextShellState || getShellState()
@@ -828,6 +1032,7 @@ export function initChatDock(options = {}) {
   if (typeof options.getShellState === 'function') getShellState = options.getShellState
   shellSnapshot = getShellState()
   dockState = readStoredState()
+  loadResonaAvatar()
 
   root = document.querySelector('[data-chat-dock-root]')
   if (!root) {
@@ -847,6 +1052,7 @@ export function initChatDock(options = {}) {
 }
 
 export function destroyChatDock() {
+  finishDockResize()
   unsubscribeShellState()
   hasShellStateListener = false
   stopThreadSubscriptions()
