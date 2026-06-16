@@ -123,8 +123,13 @@ body.is-studio-editor main{padding-top:0}
 .studio-display-icon-button svg{width:11px;height:11px;stroke-width:2.4}
 .studio-editor-workspace{position:relative;z-index:1;min-height:0;overflow:hidden;display:grid;grid-template-columns:390px minmax(0,1fr) 56px}
 .studio-editor-page.has-left-panel .studio-editor-workspace{grid-template-columns:280px 390px minmax(0,1fr) 56px}
+.studio-editor-page.has-resona-panel .studio-editor-workspace{grid-template-columns:390px minmax(0,1fr) minmax(300px,340px) 56px}
+.studio-editor-page.has-left-panel.has-resona-panel .studio-editor-workspace{grid-template-columns:280px 390px minmax(0,1fr) minmax(300px,340px) 56px}
 
 .studio-track-panel{width:390px;min-width:390px;max-width:390px;padding:0 0 8px 8px;overflow-x:visible;overflow-y:auto;background:#171a22;border-right:1px solid #2a3042}
+.studio-resona-side-panel{min-width:0;min-height:0;height:100%;overflow:hidden;border-left:1px solid #2a3042;background:#10141f}
+.studio-resona-side-panel .resona-chat-surface-host,.studio-resona-side-panel .resona-chat-surface{height:100%;min-height:0}
+.studio-resona-side-panel .resona-chat-surface{border:0;border-radius:0;background:linear-gradient(180deg,rgba(12,17,28,.98),rgba(8,11,20,.98))}
 .studio-track-toolbar{height:var(--studio-ruler-height);display:flex;align-items:center;gap:6px;padding:8px 10px 8px 0;box-sizing:border-box;background:#171a22;border-bottom:1px solid rgba(130,150,210,.15)}
 .studio-track-toolbar button{width:30px;height:30px;display:grid;place-items:center;border:1px solid rgba(140,156,205,.28);border-radius:7px;background:#222838;color:#edf3ff;font-size:13px;font-weight:900;line-height:1;cursor:pointer}
 .studio-track-toolbar button:hover,.studio-track-toolbar button:focus-visible,.studio-track-toolbar button.is-active{border-color:rgba(111,209,255,.62);background:rgba(91,137,255,.24)}
@@ -283,6 +288,7 @@ body.is-studio-editor main{padding-top:0}
 .studio-left-panel--inspector{padding:10px;background:linear-gradient(180deg,#171c27,#10141d)}
 .studio-editor-page.has-left-panel:has(.studio-left-panel--library){--studio-left-panel-width:430px}
 .studio-editor-page.has-left-panel:has(.studio-left-panel--library) .studio-editor-workspace{grid-template-columns:430px 390px minmax(0,1fr) 56px}
+.studio-editor-page.has-left-panel.has-resona-panel:has(.studio-left-panel--library) .studio-editor-workspace{grid-template-columns:430px 390px minmax(0,1fr) minmax(300px,340px) 56px}
 .studio-left-panel--library{width:430px;min-width:430px;max-width:430px;padding:0;background:#10141d;overflow:hidden}
 .studio-daw-library{height:100%;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;color:#eaf0ff}
 .studio-daw-library>header{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid rgba(135,155,205,.22);background:#171c27}

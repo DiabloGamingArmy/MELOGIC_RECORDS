@@ -123,7 +123,7 @@ function renderNotesTab() {
 }
 
 function renderAiTab() {
-  return '<section class="stage-ai-panel"><h3>AI Assistant</h3><p>Future assistant changes will be previewed before applying to the StagePlan.</p><textarea aria-label="AI prompt" placeholder="Build a 24x16 stage for a 5-piece band with stereo playback, 4 vocal mics, front wash, and rear beams."></textarea><div class="stage-action-grid"><button type="button" aria-disabled="true">Preview Plan</button><button type="button" aria-disabled="true">Apply</button></div></section>'
+  return '<section class="stage-ai-panel stage-ai-panel--resona"><div data-resona-embedded="stagemaker"></div><p class="stage-help-text">Resona can discuss this StagePlan context. It will not directly rewrite your production plan without future confirmation tools.</p></section>'
 }
 
 export function renderInspectorTabs() {

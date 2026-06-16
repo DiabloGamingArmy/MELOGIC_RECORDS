@@ -17,6 +17,7 @@ import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspect
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
 import { mountStageThreeViewport } from './stage/stageThreeViewport'
 import { isOldDemoFallbackPlan, migrateDefaultFallbackPlan, normalizeStagePlan } from './stage/stagePlanModel'
+import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 
 const app = document.querySelector('#app')
 
@@ -482,10 +483,71 @@ function updateInspectorUI() {
   if (!current) return
   const { title, stamp } = editorTitleStamp()
   current.outerHTML = renderInspectorTabs(title, stamp)
+  mountStageResonaPanel()
 }
 
 function selectedViewportObject() {
   return (state.editorProject?.objects || []).find((object) => object.id === state.selectedEditorObject || object.key === state.selectedEditorObject)
+}
+
+function stageResonaContext() {
+  const selected = selectedViewportObject()
+  const objects = Array.isArray(state.editorProject?.objects) ? state.editorProject.objects : []
+  return {
+    contextSource: 'stagemaker',
+    featureArea: 'StageMaker',
+    stageContext: {
+      projectTitle: String(state.editorProject?.title || state.editorProject?.name || 'Untitled Stage Plan').slice(0, 140),
+      stageType: String(state.editorProject?.stageType || 'Stage').slice(0, 120),
+      dimensions: state.editorProject?.stageDimensions && typeof state.editorProject.stageDimensions === 'object' ? {
+        width: Number(state.editorProject.stageDimensions.width || 0),
+        depth: Number(state.editorProject.stageDimensions.depth || 0),
+        deckHeight: Number(state.editorProject.stageDimensions.deckHeight || 0),
+        unit: String(state.editorProject.stageDimensions.unit || 'ft').slice(0, 20)
+      } : null,
+      selectedObject: selected ? {
+        id: String(selected.id || selected.key || '').slice(0, 80),
+        label: String(selected.label || selected.name || '').slice(0, 120),
+        type: String(selected.type || '').slice(0, 80),
+        category: String(selected.category || '').slice(0, 80),
+        layer: String(selected.layer || '').slice(0, 80),
+        position: selected.position && typeof selected.position === 'object' ? {
+          x: Number(selected.position.x || 0),
+          y: Number(selected.position.y || 0),
+          z: Number(selected.position.z || 0)
+        } : null,
+        dimensions: selected.dimensions && typeof selected.dimensions === 'object' ? {
+          width: Number(selected.dimensions.width || 0),
+          height: Number(selected.dimensions.height || 0),
+          depth: Number(selected.dimensions.depth || 0)
+        } : null
+      } : null,
+      activeInspectorTab: String(state.activeInspectorTab || '').slice(0, 40),
+      editorMode: String(state.activeEditorMode || '').slice(0, 40),
+      toolMode: String(state.editorToolMode || '').slice(0, 40),
+      interactionMode: String(state.stageInteractionMode || '').slice(0, 40),
+      objectCount: objects.length,
+      visibleElementsSummary: objects.slice(0, 20).map((object) => ({
+        id: String(object.id || object.key || '').slice(0, 80),
+        label: String(object.label || object.name || '').slice(0, 120),
+        type: String(object.type || '').slice(0, 80),
+        category: String(object.category || '').slice(0, 80),
+        layer: String(object.layer || '').slice(0, 80)
+      }))
+    }
+  }
+}
+
+function mountStageResonaPanel() {
+  const root = app.querySelector('[data-resona-embedded="stagemaker"]')
+  if (!root) return
+  mountResonaChatSurface(root, {
+    variant: 'embedded',
+    contextSource: 'stagemaker',
+    title: 'StageMaker',
+    roundedParent: false,
+    getContext: stageResonaContext
+  })
 }
 
 function ensureInteractionModeMatchesSelection() {
@@ -645,6 +707,7 @@ function renderApp() {
     bindEditorEvents()
     ensureStageViewportMounted()
     refreshStageIcons()
+    mountStageResonaPanel()
     stageEditorMounted = true
     updateEditorProjectHeader()
     updateSaveStatusUI()

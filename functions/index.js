@@ -79,6 +79,11 @@ const { sendAdminSystemMessage } = require('./src/admin/sendAdminSystemMessage')
 const { forcePasswordReset, revokeRecoveryCodes, setTemporaryPassword } = require('./src/admin/adminUserSecurityTools')
 const { requestEmailVerification, requestPasswordResetEmail } = require('./src/email/authEmails')
 const { getEmailAdminStatus, listAdminEmailLogs, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
+const {
+  getCreatorAgeVerificationStatus,
+  setCreatorAgeVerificationStatus,
+  startCreatorAgeVerification
+} = require('./src/compliance/creatorAgeVerification')
 const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
 const { getPublicProfileStats, toggleProfileFollow } = require('./src/profiles/profileRelationships')
 const {
@@ -185,6 +190,9 @@ exports.setAdminUserRole = setAdminUserRole
 exports.listAdminProducts = listAdminProducts
 exports.listAdminUsers = listAdminUsers
 exports.getAdminUserProfile = getAdminUserProfile
+exports.getCreatorAgeVerificationStatus = getCreatorAgeVerificationStatus
+exports.setCreatorAgeVerificationStatus = setCreatorAgeVerificationStatus
+exports.startCreatorAgeVerification = startCreatorAgeVerification
 exports.searchAdminGrantProducts = searchAdminGrantProducts
 exports.grantAdminProducts = grantAdminProducts
 exports.listAdminReports = listAdminReports

@@ -86,9 +86,29 @@ function sanitizeGuideTarget(item = {}) {
   }
 }
 
+function sanitizeContextValue(value, depth = 0) {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'string') return cleanString(value, 240)
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value === 'boolean') return value
+  if (Array.isArray(value)) {
+    return value.slice(0, 24).map((item) => sanitizeContextValue(item, depth + 1)).filter((item) => item !== null)
+  }
+  if (typeof value === 'object' && depth < 3) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .slice(0, 24)
+        .map(([key, item]) => [cleanString(key, 80), sanitizeContextValue(item, depth + 1)])
+        .filter(([key, item]) => key && item !== null)
+    )
+  }
+  return null
+}
+
 function sanitizeSafePageContext(raw = null) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   return {
+    contextSource: cleanString(raw.contextSource || '', 80),
     guidanceSessionActive: raw.guidanceSessionActive === true,
     guidanceSessionStatus: cleanString(raw.guidanceSessionStatus || '', 40),
     guidanceSessionId: cleanString(raw.guidanceSessionId || raw.sessionId || '', 180),
@@ -114,6 +134,8 @@ function sanitizeSafePageContext(raw = null) {
     visibleGuideTargets: Array.isArray(raw.visibleGuideTargets) ? raw.visibleGuideTargets.map(sanitizeGuideTarget).slice(0, 120) : [],
     landmarks: Array.isArray(raw.landmarks) ? raw.landmarks.map(sanitizeGuideTarget).slice(0, 120) : [],
     pageSnapshot: sanitizePageSnapshot(raw.pageSnapshot),
+    dawContext: sanitizeContextValue(raw.dawContext),
+    stageContext: sanitizeContextValue(raw.stageContext),
     productId: cleanString(raw.productId || '', 180),
     productTitle: cleanString(raw.productTitle || '', 200)
   }

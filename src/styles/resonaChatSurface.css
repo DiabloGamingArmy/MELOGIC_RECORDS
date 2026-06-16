@@ -1,0 +1,288 @@
+.resona-chat-surface-host {
+  min-height: 0;
+  height: 100%;
+}
+
+.resona-chat-surface {
+  height: 100%;
+  min-height: 360px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(90, 221, 255, 0.18);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at top right, rgba(120, 94, 255, 0.18), transparent 38%),
+    linear-gradient(180deg, rgba(10, 15, 28, 0.98), rgba(7, 10, 18, 0.98));
+  color: #edf7ff;
+}
+
+.resona-chat-surface.is-square-parent {
+  border-radius: 0;
+}
+
+.resona-surface-header {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.resona-surface-header div {
+  display: grid;
+  gap: 1px;
+}
+
+.resona-surface-header strong {
+  font-size: 0.92rem;
+}
+
+.resona-surface-header span,
+.resona-surface-header em {
+  color: rgba(226, 242, 255, 0.62);
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.resona-surface-messages {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px;
+}
+
+.resona-surface-empty {
+  margin: auto;
+  max-width: 230px;
+  color: rgba(226, 242, 255, 0.66);
+  text-align: center;
+  font-size: 0.82rem;
+}
+
+.resona-surface-message {
+  display: flex;
+}
+
+.resona-surface-message.is-mine {
+  justify-content: flex-end;
+}
+
+.resona-surface-bubble {
+  max-width: 88%;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.075);
+  color: rgba(246, 251, 255, 0.93);
+  font-size: 0.82rem;
+  line-height: 1.38;
+}
+
+.resona-surface-message.is-mine .resona-surface-bubble {
+  border-color: rgba(104, 229, 255, 0.28);
+  background: linear-gradient(135deg, rgba(79, 213, 255, 0.22), rgba(162, 135, 255, 0.2));
+}
+
+.resona-surface-message.is-ai .resona-surface-bubble {
+  background: rgba(5, 10, 18, 0.72);
+}
+
+.resona-surface-bubble p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.resona-surface-message.is-activity .resona-surface-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: rgba(226, 242, 255, 0.72);
+}
+
+.resona-surface-message.is-activity i {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: resonaSurfacePulse 1s infinite ease-in-out;
+}
+
+.resona-surface-message.is-activity i:nth-of-type(2) {
+  animation-delay: 0.15s;
+}
+
+.resona-surface-message.is-activity i:nth-of-type(3) {
+  animation-delay: 0.3s;
+}
+
+.resona-surface-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.resona-surface-attachments img {
+  max-width: 180px;
+  max-height: 130px;
+  display: block;
+  border-radius: 10px;
+}
+
+.resona-surface-attachments audio {
+  max-width: 210px;
+}
+
+.resona-surface-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #bff7ff;
+  text-decoration: none;
+}
+
+.resona-surface-file span {
+  border-radius: 7px;
+  padding: 3px 5px;
+  color: #07121a;
+  background: rgba(111, 240, 255, 0.86);
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.resona-surface-composer {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.resona-surface-composer.is-locked {
+  opacity: 0.68;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.resona-surface-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+}
+
+.resona-surface-composer textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 112px;
+  resize: none;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  padding: 9px 10px;
+  color: #f8fcff;
+  background: rgba(255, 255, 255, 0.07);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.resona-surface-composer input[type="file"] {
+  display: none;
+}
+
+.resona-surface-composer button {
+  flex: 0 0 auto;
+  min-height: 38px;
+  border: 0;
+  border-radius: 11px;
+  padding: 0 11px;
+  color: #041018;
+  background: linear-gradient(135deg, #6ff0ff, #a892ff);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.resona-surface-composer button[data-resona-surface-attach] {
+  width: 38px;
+  padding: 0;
+  color: #eaf7ff;
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.resona-surface-composer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.resona-surface-preview-strip {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.resona-surface-preview-strip article {
+  position: relative;
+  flex: 0 0 72px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 5px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.resona-surface-preview-strip article > div {
+  height: 38px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6ff0ff, #a892ff);
+  color: #06131b;
+  font-size: 0.62rem;
+  font-weight: 900;
+}
+
+.resona-surface-preview-strip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.resona-surface-preview-strip small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: rgba(231, 246, 255, 0.72);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resona-surface-preview-strip article button {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  min-height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0;
+  color: #fff;
+  background: rgba(255, 82, 119, 0.94);
+}
+
+.resona-surface-error {
+  margin: 0;
+  color: #ffd1dc;
+  font-size: 0.72rem;
+}
+
+@keyframes resonaSurfacePulse {
+  0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+

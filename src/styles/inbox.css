@@ -1410,6 +1410,11 @@ body.site-guidance-active .inbox-site-guidance-trigger {
   filter: saturate(0.8);
 }
 
+.message-composer.is-resona-locked {
+  background: rgba(15, 23, 42, 0.62);
+  filter: saturate(0.72) grayscale(0.12);
+}
+
 .message-composer.is-blocked textarea,
 .message-composer.is-blocked button {
   cursor: not-allowed;

@@ -8,7 +8,8 @@ const {
   SUPPORT_AI_API_KEY,
   SUPPORT_AI_MODEL,
   detectEscalationNeed,
-  generateSupportReply
+  generateSupportReply,
+  webGroundingDecision
 } = require('./aiSupportAgent')
 const {
   listEscalatedResonaThreads,
@@ -24,6 +25,13 @@ const ACTIVE_STATUSES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assi
 const STATUS_VALUES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned', 'resolved'])
 const MAX_BODY_LENGTH = 1200
 const RESONA_TYPING_TTL_MS = 120000
+const RESONA_ACTIVITY_LABELS = {
+  thinking: 'Resona is thinking...',
+  researching: 'Resona is doing research...',
+  reading_attachments: 'Resona is reading attachments...',
+  checking_page: 'Resona is checking this page...',
+  writing: 'Resona is writing...'
+}
 const SUPPORT_CALLABLE_OPTIONS = {
   timeoutSeconds: 30,
   memory: '256MiB',
@@ -130,7 +138,8 @@ function serializeThread(docSnap) {
     aiSuggestedCategory: data.aiSuggestedCategory || '',
     requester: data.requester || null,
     assignedAgent: data.assignedAgent || null,
-    typing: serializeTyping(data.typing)
+    typing: serializeTyping(data.typing),
+    resonaActivity: serializeActivity(data.resonaActivity)
   }
 }
 
@@ -145,6 +154,18 @@ function serializeTyping(value = {}) {
       expiresAt: serializeTimestamp(ai.expiresAt),
       clearedAt: serializeTimestamp(ai.clearedAt)
     }
+  }
+}
+
+function serializeActivity(value = {}) {
+  const activity = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  return {
+    active: activity.active === true,
+    state: cleanString(activity.state || '', 80),
+    label: cleanString(activity.label || '', 160),
+    startedAt: serializeTimestamp(activity.startedAt),
+    expiresAt: serializeTimestamp(activity.expiresAt),
+    clearedAt: serializeTimestamp(activity.clearedAt)
   }
 }
 
@@ -265,7 +286,24 @@ function sanitizeSafeContext(raw = {}) {
       } : null
     })).filter((item) => item.id || item.label || item.text).slice(0, 50) : []
   } : null
+  const sanitizeContextValue = (value, depth = 0) => {
+    if (value === null || value === undefined) return null
+    if (typeof value === 'string') return cleanString(value, 240)
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+    if (typeof value === 'boolean') return value
+    if (Array.isArray(value)) return value.slice(0, 24).map((item) => sanitizeContextValue(item, depth + 1)).filter((item) => item !== null)
+    if (typeof value === 'object' && depth < 3) {
+      return Object.fromEntries(
+        Object.entries(value)
+          .slice(0, 24)
+          .map(([key, item]) => [cleanString(key, 80), sanitizeContextValue(item, depth + 1)])
+          .filter(([key, item]) => key && item !== null)
+      )
+    }
+    return null
+  }
   return {
+    contextSource: cleanString(source.contextSource || '', 80),
     sessionId: cleanString(source.sessionId || '', 180),
     guidanceSessionActive: source.guidanceSessionActive === true,
     guidanceSessionStatus: cleanString(source.guidanceSessionStatus || '', 40),
@@ -288,6 +326,8 @@ function sanitizeSafeContext(raw = {}) {
     visibleGuideTargets,
     landmarks: visibleGuideTargets,
     pageSnapshot,
+    dawContext: sanitizeContextValue(source.dawContext),
+    stageContext: sanitizeContextValue(source.stageContext),
     productId: cleanString(source.productId || '', 180),
     productTitle: cleanString(source.productTitle || '', 200)
   }
@@ -344,7 +384,7 @@ function resonaTypingState(active = false) {
   return active
     ? {
         active: true,
-        label: 'Resona is typing...',
+        label: RESONA_ACTIVITY_LABELS.thinking,
         startedAt: FieldValue.serverTimestamp(),
         expiresAt: Timestamp.fromMillis(Date.now() + RESONA_TYPING_TTL_MS)
       }
@@ -356,10 +396,48 @@ function resonaTypingState(active = false) {
       }
 }
 
+function resonaActivityState(state = 'thinking') {
+  const cleanState = Object.prototype.hasOwnProperty.call(RESONA_ACTIVITY_LABELS, state) ? state : 'thinking'
+  return {
+    active: true,
+    state: cleanState,
+    label: RESONA_ACTIVITY_LABELS[cleanState],
+    startedAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + RESONA_TYPING_TTL_MS)
+  }
+}
+
+function inactiveResonaActivityState() {
+  return {
+    active: false,
+    state: '',
+    label: '',
+    expiresAt: null,
+    clearedAt: FieldValue.serverTimestamp()
+  }
+}
+
+async function setResonaActivity(threadRef, threadId = '', state = 'thinking') {
+  try {
+    await threadRef.set({
+      resonaActivity: resonaActivityState(state),
+      typing: { ai: { ...resonaTypingState(true), label: RESONA_ACTIVITY_LABELS[state] || RESONA_ACTIVITY_LABELS.thinking } },
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true })
+    logSupportAi(threadId, 'activity_set', { state: cleanString(state, 80) })
+  } catch (error) {
+    logSupportAi(threadId, 'activity_set_failed', {
+      state: cleanString(state, 80),
+      errorMessage: cleanString(error?.message || 'unknown', 240)
+    })
+  }
+}
+
 async function clearResonaTyping(threadRef, threadId = '', reason = '') {
   try {
     await threadRef.set({
       typing: { ai: resonaTypingState(false) },
+      resonaActivity: inactiveResonaActivityState(),
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true })
     logSupportAi(threadId, 'typing_cleared', { reason: cleanString(reason, 120) })
@@ -416,12 +494,14 @@ async function markAiHandledStart(threadRef, messageId = '') {
       transaction.set(threadRef, {
         status: 'ai_active',
         updatedAt: FieldValue.serverTimestamp(),
-        typing: { ai: resonaTypingState(true) }
+        typing: { ai: resonaTypingState(true) },
+        resonaActivity: resonaActivityState('thinking')
       }, { merge: true })
     } else {
       transaction.set(threadRef, {
         updatedAt: FieldValue.serverTimestamp(),
-        typing: { ai: resonaTypingState(true) }
+        typing: { ai: resonaTypingState(true) },
+        resonaActivity: resonaActivityState('thinking')
       }, { merge: true })
     }
     return { locked: true, thread, message }
@@ -612,6 +692,15 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
     landmarks: inlineSafePageContext.landmarks?.length ? inlineSafePageContext.landmarks : (inlineSafePageContext.visibleGuideTargets || guidanceContext?.landmarks || guidanceContext?.visibleGuideTargets || []),
     pageSnapshot: inlineSafePageContext.pageSnapshot || guidanceContext?.pageSnapshot || null
   })
+  const hasPageContext = safePageContext.guidanceSessionActive === true
+    || Boolean(safePageContext.pageSnapshot)
+    || Boolean(safePageContext.dawContext)
+    || Boolean(safePageContext.stageContext)
+    || (Array.isArray(safePageContext.visibleGuideTargets) && safePageContext.visibleGuideTargets.length > 0)
+  if (hasPageContext) await setResonaActivity(threadRef, threadId, 'checking_page')
+  if (Array.isArray(userMessage.attachments) && userMessage.attachments.length) {
+    await setResonaActivity(threadRef, threadId, 'reading_attachments')
+  }
 
   logSupportAi(threadId, 'eligible', {
     status: cleanString(thread.status || '', 40),
@@ -655,6 +744,9 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
       modelUsed: 'guardrail'
     }
   } else {
+    const grounding = webGroundingDecision(messageText, resonaInstructions)
+    if (grounding.shouldUse) await setResonaActivity(threadRef, threadId, 'researching')
+    await setResonaActivity(threadRef, threadId, 'writing')
     logSupportAi(threadId, 'gemini_call_start', {
       lastUserMessageId: messageId,
       model: cleanString(model || SUPPORT_AI_MODEL.value() || '', 120)

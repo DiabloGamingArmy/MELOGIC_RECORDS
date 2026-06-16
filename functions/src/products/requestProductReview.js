@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentCreated } = require('firebase-functions/v2/firestore')
 const { defineSecret, defineString } = require('firebase-functions/params')
 const admin = require('firebase-admin')
+const { loadCreatorAgeVerification } = require('../compliance/creatorAgeVerification')
 
 const geminiApiKey = defineSecret('GEMINI_API_KEY')
 const productModerationModel = defineString('PRODUCT_MODERATION_MODEL', {
@@ -515,6 +516,19 @@ exports.requestProductReview = onCall(
 
   const product = productSnap.data() || {}
   if (product.artistId !== uid) throw new HttpsError('permission-denied', 'You do not own this product.')
+
+  const ageVerification = await loadCreatorAgeVerification(uid)
+  if (ageVerification.required !== false && ageVerification.status !== 'verified') {
+    throw new HttpsError(
+      'failed-precondition',
+      'Creator age verification is required before publishing marketplace products.',
+      {
+        code: 'creator_age_verification_required',
+        status: ageVerification.status || 'not_started',
+        required: true
+      }
+    )
+  }
 
   if (!String(product.title || '').trim()) throw new HttpsError('failed-precondition', 'Title is required.')
   if (!String(product.productType || '').trim()) throw new HttpsError('failed-precondition', 'Product type is required.')

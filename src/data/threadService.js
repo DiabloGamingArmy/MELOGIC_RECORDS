@@ -79,6 +79,7 @@ function normalizeThread(threadId, raw = {}) {
     requesterUid: String(raw.requesterUid || '').trim(),
     assignedAgentUid: raw.assignedAgentUid || null,
     agentParticipants: normalizeAgentParticipants(raw.agentParticipants),
+    resonaActivity: normalizeResonaActivity(raw.resonaActivity),
     aiEscalationReason: String(raw.aiEscalationReason || '').trim(),
     aiSuggestedCategory: String(raw.aiSuggestedCategory || '').trim(),
     dmKey: raw.dmKey || '',
@@ -88,6 +89,18 @@ function normalizeThread(threadId, raw = {}) {
     deleted: Boolean(raw.deleted),
     deletedAt: toIsoDate(raw.deletedAt),
     dmBlockState: normalizeDmBlockState(raw.dmBlockState)
+  }
+}
+
+function normalizeResonaActivity(raw = null) {
+  const activity = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  return {
+    active: activity.active === true,
+    state: String(activity.state || '').trim(),
+    label: String(activity.label || '').trim(),
+    startedAt: toIsoDate(activity.startedAt),
+    expiresAt: toIsoDate(activity.expiresAt),
+    clearedAt: toIsoDate(activity.clearedAt)
   }
 }
 

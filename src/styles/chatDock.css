@@ -425,6 +425,11 @@ body.site-guidance-active .chat-dock-header button.chat-dock-header-action.is-mu
   background: rgba(0, 0, 0, 0.2);
 }
 
+.chat-dock-composer.is-resona-locked {
+  opacity: 0.68;
+  background: rgba(10, 18, 30, 0.45);
+}
+
 .chat-dock-composer-row {
   display: flex;
   gap: 8px;

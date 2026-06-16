@@ -153,6 +153,32 @@ function currentProfile() {
   return shellSnapshot?.profile || {}
 }
 
+function isActivityFresh(activity = {}) {
+  if (activity?.active !== true) return false
+  if (!activity.expiresAt) return true
+  const expires = new Date(activity.expiresAt).getTime()
+  return Number.isFinite(expires) ? expires > Date.now() : true
+}
+
+function getCurrentResonaActivity() {
+  const thread = dockState.mode === 'support' ? supportThread : activeThread
+  const activity = thread?.resonaActivity || {}
+  if (isActivityFresh(activity)) return activity
+  if (dockState.mode === 'support') {
+    const ai = supportThread?.typing?.ai || {}
+    if (isActivityFresh(ai)) return { ...ai, state: 'thinking' }
+  }
+  return { active: false, label: '' }
+}
+
+function isResonaResponding() {
+  return getCurrentResonaActivity().active === true
+}
+
+function currentResonaActivityLabel() {
+  return getCurrentResonaActivity().label || 'Resona is responding...'
+}
+
 function formatLocalIso(date = new Date()) {
   const offsetMinutes = -date.getTimezoneOffset()
   const sign = offsetMinutes >= 0 ? '+' : '-'
@@ -353,15 +379,12 @@ function canRequestSupportAgent() {
 }
 
 function isResonaTyping() {
-  if (!supportThread || supportThread.status === 'resolved' || supportThread.assignedAgentUid) return false
-  const ai = supportThread.typing?.ai || {}
-  if (ai.active !== true) return false
-  const expiresAt = ai.expiresAt ? new Date(ai.expiresAt).getTime() : 0
-  return !expiresAt || expiresAt > Date.now()
+  if (dockState.mode === 'support' && (!supportThread || supportThread.status === 'resolved' || supportThread.assignedAgentUid)) return false
+  return isResonaResponding()
 }
 
 function resonaTypingLabel() {
-  return supportThread?.typing?.ai?.label || 'Resona is typing...'
+  return currentResonaActivityLabel()
 }
 
 function getSupportTitle() {
@@ -641,7 +664,7 @@ function renderMessageList() {
     `
   }
 
-  return visibleMessages.map((message) => {
+  const messageMarkup = visibleMessages.map((message) => {
     if (message.senderType === 'system') {
       if (/^Resona joined the chat\.?$/i.test(String(message.body || '').trim())) return ''
       return `
@@ -666,25 +689,28 @@ function renderMessageList() {
       </article>
     `
   }).join('')
+  return `${messageMarkup}${isResonaTyping() ? renderResonaTypingIndicator() : ''}`
 }
 
 function renderComposer() {
   const isSupport = dockState.mode === 'support'
+  const resonaLocked = isResonaResponding()
   const disabled = isSupport
-    ? (!currentUid() || !supportThread || supportThread.status === 'resolved' || loadingSupportThread || sending || Boolean(errorMessage))
-    : (!currentUid() || !activeThread || loadingThreads || sending || Boolean(errorMessage))
+    ? (!currentUid() || !supportThread || supportThread.status === 'resolved' || loadingSupportThread || sending || Boolean(errorMessage) || resonaLocked)
+    : (!currentUid() || !activeThread || loadingThreads || sending || Boolean(errorMessage) || resonaLocked)
   const attachmentsSupported = !isSupport
   const canSend = Boolean(draft.trim() || draftAttachments.length)
   const placeholder = isSupport
     ? supportThread?.status === 'resolved' ? 'Support thread resolved' : 'Message Melogic Support...'
     : 'Write a message...'
+  const finalPlaceholder = resonaLocked ? 'Resona is responding...' : placeholder
   return `
-    <form class="chat-dock-composer" data-chat-dock-form>
+    <form class="chat-dock-composer ${resonaLocked ? 'is-resona-locked' : ''}" data-chat-dock-form>
       ${renderDraftAttachmentPreview()}
       ${attachmentNotice ? `<p class="chat-dock-attachment-notice">${escapeHtml(attachmentNotice)}</p>` : ''}
       <div class="chat-dock-composer-row">
         <label class="sr-only" for="chat-dock-input">Message</label>
-        <textarea id="chat-dock-input" data-chat-dock-input rows="1" maxlength="1200" placeholder="${disabled ? 'Chat unavailable' : placeholder}" ${disabled ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <textarea id="chat-dock-input" data-chat-dock-input rows="1" maxlength="1200" placeholder="${disabled && !resonaLocked ? 'Chat unavailable' : finalPlaceholder}" ${disabled ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
         <input class="chat-dock-file-input" type="file" data-chat-dock-file-input multiple accept="${DOCK_ATTACHMENT_ACCEPT}" ${disabled || !attachmentsSupported ? 'disabled' : ''} />
         <button type="button" class="chat-dock-attach-button" data-chat-dock-attach aria-label="Add attachment" title="${attachmentsSupported ? 'Add attachment' : 'Attachments are available in Inbox conversations'}" ${disabled || !attachmentsSupported ? 'disabled' : ''}>+</button>
         <button type="submit" class="chat-dock-send-button" aria-label="Send message" ${disabled || !canSend ? 'disabled' : ''}>Send</button>
@@ -1255,7 +1281,7 @@ async function handleSubmit(form) {
   const threadId = dockState.activeThreadId
   const body = draft.trim()
   const attachments = dockState.mode === 'support' ? [] : draftAttachments.slice()
-  if (!uid || !threadId || (!body && !attachments.length) || sending) return
+  if (!uid || !threadId || (!body && !attachments.length) || sending || isResonaResponding()) return
   sending = true
   errorMessage = ''
   forceDockBottom = true

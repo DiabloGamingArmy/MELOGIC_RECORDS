@@ -25,7 +25,8 @@ const DEFAULT_RESONA_TONE_GUIDELINES = 'Be clear, concise, calm, and practical. 
 const DEFAULT_SETTINGS = {
   marketplace: {
     marketplaceEnabled: true,
-    manualReviewRequired: true
+    manualReviewRequired: true,
+    marketplaceCreatorAgeVerificationRequired: true
   },
   aiModeration: {
     productModerationModel: 'gemini-2.5-flash-lite',
@@ -69,7 +70,8 @@ const DEFAULT_SETTINGS = {
 const SCHEMA = {
   marketplace: {
     marketplaceEnabled: 'boolean',
-    manualReviewRequired: 'boolean'
+    manualReviewRequired: 'boolean',
+    marketplaceCreatorAgeVerificationRequired: 'boolean'
   },
   aiModeration: {
     productModerationModel: 'string',
