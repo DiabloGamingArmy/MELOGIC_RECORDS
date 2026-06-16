@@ -48,9 +48,12 @@ export function getThreadParticipantUids(thread = {}) {
 
 function normalizeThread(threadId, raw = {}) {
   const participantUids = getThreadParticipantUids(raw)
+  const rawType = String(raw.type || '').trim()
+  const type = rawType === 'group' || rawType === 'agent' ? rawType : 'dm'
   return {
     id: threadId,
-    type: raw.type === 'group' ? 'group' : 'dm',
+    type,
+    agentId: String(raw.agentId || '').trim(),
     createdBy: raw.createdBy || '',
     createdAt: toIsoDate(raw.createdAt),
     updatedAt: toIsoDate(raw.updatedAt),
@@ -69,6 +72,13 @@ function normalizeThread(threadId, raw = {}) {
     lastMessageType: raw.lastMessageType || 'text',
     lastMessageAttachmentCount: Number(raw.lastMessageAttachmentCount || 0),
     status: raw.status || 'active',
+    mode: String(raw.mode || '').trim(),
+    source: String(raw.source || '').trim(),
+    requesterUid: String(raw.requesterUid || '').trim(),
+    assignedAgentUid: raw.assignedAgentUid || null,
+    agentParticipants: normalizeAgentParticipants(raw.agentParticipants),
+    aiEscalationReason: String(raw.aiEscalationReason || '').trim(),
+    aiSuggestedCategory: String(raw.aiSuggestedCategory || '').trim(),
     dmKey: raw.dmKey || '',
     unreadCount: Number(raw.unreadCount || 0),
     pinned: Boolean(raw.pinned),
@@ -76,6 +86,23 @@ function normalizeThread(threadId, raw = {}) {
     deleted: Boolean(raw.deleted),
     deletedAt: toIsoDate(raw.deletedAt),
     dmBlockState: normalizeDmBlockState(raw.dmBlockState)
+  }
+}
+
+function normalizeAgentParticipants(raw = null) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const resona = raw.resona && typeof raw.resona === 'object' && !Array.isArray(raw.resona) ? raw.resona : null
+  return {
+    ...(resona
+      ? {
+          resona: {
+            active: resona.active === true,
+            addedBy: String(resona.addedBy || '').trim(),
+            addedAt: toIsoDate(resona.addedAt),
+            mode: String(resona.mode || 'mention_only').trim() || 'mention_only'
+          }
+        }
+      : {})
   }
 }
 
@@ -300,12 +327,46 @@ export async function hydrateThreadFromSourceIfNeeded(thread) {
       : (sourceThread.participantIds || []),
     participantCount: Number(thread.participantCount || sourceThread.participantCount || 0),
     type: thread.type || sourceThread.type || 'dm',
+    agentId: thread.agentId || sourceThread.agentId || '',
+    mode: thread.mode || sourceThread.mode || '',
+    source: thread.source || sourceThread.source || '',
+    requesterUid: thread.requesterUid || sourceThread.requesterUid || '',
+    assignedAgentUid: thread.assignedAgentUid || sourceThread.assignedAgentUid || null,
+    agentParticipants: Object.keys(thread.agentParticipants || {}).length ? thread.agentParticipants : (sourceThread.agentParticipants || {}),
+    aiEscalationReason: thread.aiEscalationReason || sourceThread.aiEscalationReason || '',
+    aiSuggestedCategory: thread.aiSuggestedCategory || sourceThread.aiSuggestedCategory || '',
     createdBy: thread.createdBy || sourceThread.createdBy || '',
     updatedAt: thread.updatedAt || sourceThread.updatedAt || null,
     otherParticipantIds: Array.isArray(thread.otherParticipantIds) && thread.otherParticipantIds.length
       ? thread.otherParticipantIds
       : (sourceThread.participantIds || []),
     dmBlockState: thread.dmBlockState || sourceThread.dmBlockState || null
+  }
+}
+
+export async function createOrGetResonaThread() {
+  const callable = httpsCallable(functions, 'createOrGetResonaThread')
+  const result = await callable({})
+  if (result?.data?.threadId) return getThread(result.data.threadId)
+  throw new Error('Resona thread could not be opened.')
+}
+
+export async function refreshResonaThread({ threadId = '' } = {}) {
+  const callable = httpsCallable(functions, 'refreshResonaThread')
+  const result = await callable({ threadId: String(threadId || '').trim() })
+  return {
+    ok: result?.data?.ok === true,
+    threadId: result?.data?.threadId || threadId
+  }
+}
+
+export async function setThreadResonaAgent({ threadId = '', active }) {
+  const callable = httpsCallable(functions, 'setThreadResonaAgent')
+  const result = await callable({ threadId: String(threadId || '').trim(), active: active === true })
+  return {
+    ok: result?.data?.ok === true,
+    threadId: result?.data?.threadId || threadId,
+    active: result?.data?.active === true
   }
 }
 

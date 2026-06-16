@@ -6,7 +6,7 @@ import { attachHeroVideo } from './components/heroVideo'
 import { createCriticalAssetPreloader } from './components/pagePreloader'
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { submitSupportForm } from './data/supportFormService'
-import { createSupportThread } from './data/supportThreadService'
+import { createOrGetResonaThread } from './data/inboxService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { openChatDock } from './components/chatDock'
 import { ROUTES, authRoute } from './utils/routes'
@@ -276,16 +276,12 @@ document.querySelectorAll('[data-open-support-chat]').forEach((button) => {
         window.location.href = authRoute({ redirect: ROUTES.support })
         return
       }
-      const result = await createSupportThread({
-        source: 'support_page',
-        subject: 'Melogic Support'
-      })
-      if (result.threadId) {
+      const thread = await createOrGetResonaThread()
+      if (thread?.id) {
         openChatDock({
-          mode: 'support',
-          support: true,
-          threadId: result.threadId,
-          title: result.thread?.subject || 'Melogic Support'
+          mode: 'thread',
+          threadId: thread.id,
+          title: 'Resona'
         })
       }
     } catch (error) {

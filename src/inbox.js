@@ -16,9 +16,11 @@ import {
   addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
+  createOrGetResonaThread,
   blockUser,
   subscribeToBlockedUsers,
   restoreThreadForUser,
+  refreshResonaThread,
   unblockUser,
   deleteThreadForUser,
   hydrateThreadFromSourceIfNeeded,
@@ -46,6 +48,7 @@ import {
   subscribeToThread,
   subscribeToTypingState,
   setThreadPinnedForUser,
+  setThreadResonaAgent,
   updateThreadDetails
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -91,9 +94,10 @@ import {
 } from './data/mutualUsersService'
 import { detectPlatformCapabilities } from './platform/platformCapabilities'
 import { acceptProductGift, denyProductGift, listIncomingProductGifts } from './data/productGiftService'
-import { createSupportThread } from './data/supportThreadService'
 
 const app = document.querySelector('#app')
+const RESONA_AGENT_ID = 'resona'
+const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 
 const inboxFilters = [
   { label: 'Messages', path: ROUTES.inboxMessages },
@@ -230,6 +234,10 @@ const appState = {
   isLoadingThreads: false,
   threads: [],
   selectedThreadId: '',
+  resonaThreadId: '',
+  resonaAvatarURL: '',
+  resonaAvatarRequested: false,
+  openingResonaThread: false,
   messagesByThreadId: {},
   messageSnapshotVersionByThreadId: {},
   messagePaginationByThreadId: {},
@@ -674,7 +682,7 @@ async function hydrateProfilesForThread(thread) {
     ...getThreadParticipantUids(thread),
     ...(Array.isArray(thread.otherParticipantIds) ? thread.otherParticipantIds : []),
     thread.otherParticipantId || ''
-  ].filter(Boolean)))
+  ].filter((uid) => uid && uid !== RESONA_AGENT_ID && uid !== 'system')))
   if (!ids.length) return
   const missingIds = ids.filter((uid) => !hydratedProfileUids.has(uid))
   if (!missingIds.length) return
@@ -687,7 +695,7 @@ async function hydrateProfilesForThread(thread) {
 
 async function hydrateProfilesForMessages(threadId, messages = [], { render = true } = {}) {
   if (!threadId || !messages.length) return
-  const senderIds = Array.from(new Set(messages.map((message) => message?.senderId).filter(Boolean)))
+  const senderIds = Array.from(new Set(messages.map((message) => message?.senderId).filter((uid) => uid && uid !== RESONA_AGENT_ID && uid !== 'system')))
   const missing = senderIds.filter((uid) => !hydratedProfileUids.has(uid))
   if (!missing.length) return
   const loaded = await loadProfilesByUids(missing)
@@ -702,7 +710,7 @@ async function hydrateProfilesForThreads(threads = []) {
       ...getThreadParticipantUids(thread),
       ...(Array.isArray(thread?.otherParticipantIds) ? thread.otherParticipantIds : []),
       thread?.otherParticipantId || ''
-    ]).filter(Boolean)
+    ]).filter((uid) => uid && uid !== RESONA_AGENT_ID && uid !== 'system')
   ))
   const missing = ids.filter((uid) => !hydratedProfileUids.has(uid))
   if (!missing.length) return false
@@ -873,6 +881,9 @@ function describeAttachmentType(fileOrAttachment = {}) {
 
 function summarizeThreadPreview(thread) {
   if (!thread) return 'No messages yet.'
+  if (isResonaThread(thread) && !thread.lastMessageText && !thread.lastMessageAt) {
+    return 'Ask questions, get support, or request a live agent.'
+  }
   const lastMessageType = String(thread.lastMessageType || 'text')
   const attachmentCount = Number(thread.lastMessageAttachmentCount || 0)
   const threadText = truncateThreadPreview(thread.lastMessageText || '')
@@ -966,8 +977,72 @@ function getSelectedThread() {
   return appState.threads.find((thread) => thread.id === appState.selectedThreadId) || null
 }
 
+function isResonaThread(thread = null) {
+  return Boolean(thread && thread.type === 'agent' && thread.agentId === RESONA_AGENT_ID)
+}
+
+function hasResonaAgent(thread = null) {
+  return Boolean(thread?.agentParticipants?.resona?.active === true)
+}
+
+function getResonaThread() {
+  return appState.threads.find((thread) => isResonaThread(thread)) || null
+}
+
+function resonaThreadPlaceholder() {
+  return {
+    id: appState.resonaThreadId || '',
+    type: 'agent',
+    agentId: RESONA_AGENT_ID,
+    title: 'Resona',
+    imagePath: RESONA_AVATAR_PATH,
+    imageURL: appState.resonaAvatarURL || '',
+    subtitle: 'Ask questions, get support, or request a live agent.',
+    lastMessageText: '',
+    lastMessagePreview: '',
+    status: 'ai_active',
+    mode: 'general',
+    participantIds: appState.user?.uid ? [appState.user.uid] : [],
+    participantUids: appState.user?.uid ? [appState.user.uid] : [],
+    memberUids: appState.user?.uid ? [appState.user.uid] : [],
+    participantCount: appState.user?.uid ? 1 : 0,
+    unreadCount: 0,
+    createdAt: null,
+    updatedAt: null,
+    lastMessageAt: null,
+    isAgent: true
+  }
+}
+
+function getResonaDisplayThread() {
+  const existing = getResonaThread()
+  if (!existing) return resonaThreadPlaceholder()
+  return {
+    ...existing,
+    title: 'Resona',
+    imagePath: existing.imagePath || RESONA_AVATAR_PATH,
+    imageURL: appState.resonaAvatarURL || existing.imageURL || '',
+    subtitle: summarizeThreadPreview(existing)
+  }
+}
+
 function getThreadParticipants(threadId) {
   return appState.participantsByThreadId[threadId] || []
+}
+
+function loadResonaAvatar() {
+  if (appState.resonaAvatarRequested || appState.resonaAvatarURL || !storage) return
+  appState.resonaAvatarRequested = true
+  getDownloadURL(ref(storage, RESONA_AVATAR_PATH))
+    .then((url) => {
+      appState.resonaAvatarURL = url || ''
+      upsertThreadInState(getResonaDisplayThread())
+      renderThreadListOnly()
+      renderSelectedConversation({ reason: 'state-update' })
+    })
+    .catch(() => {
+      appState.resonaAvatarURL = ''
+    })
 }
 
 function getGroupAvatarProfiles(thread, limit = 3) {
@@ -985,6 +1060,18 @@ function getGroupAvatarProfiles(thread, limit = 3) {
 
 function renderThreadAvatar(thread, { className = 'thread-avatar', stableKey = '' } = {}) {
   const key = stableKey || `thread:${thread?.id || 'unknown'}`
+  if (isResonaThread(thread)) {
+    const imageURL = appState.resonaAvatarURL || getAvatarURL(thread)
+    if (imageURL) {
+      return `
+        <div class="${className} has-image thread-avatar-resona" data-inbox-avatar-root>
+          <img decoding="async" src="${escapeHtml(imageURL)}" alt="" data-inbox-avatar-image data-stable-image-key="${escapeHtml(`${key}:resona`)}" />
+          <span class="inbox-avatar-fallback">R</span>
+        </div>
+      `
+    }
+    return `<div class="${className} thread-avatar-resona"><span>R</span></div>`
+  }
   const otherUid = thread?.otherParticipantId
     || getThreadParticipantUids(thread).find((uid) => uid && uid !== appState.user?.uid)
     || ''
@@ -1723,7 +1810,7 @@ function threadInboxPin(thread = {}) {
     type: 'thread',
     targetId: thread.id,
     title: thread.title || 'Chat',
-    subtitle: thread.type === 'group' ? 'Group chat' : 'Direct message',
+    subtitle: isResonaThread(thread) ? 'Agent' : thread.type === 'group' ? 'Group chat' : 'Direct message',
     sourceCategory: 'Messages',
     targetPath: ROUTES.inboxMessages,
     metadata: { threadType: thread.type || 'thread' }
@@ -1782,7 +1869,7 @@ function getMessagesSidebarMarkup() {
     <section class="sidebar-support-block">
       <button type="button" class="sidebar-support-button" data-open-support-dock>
         <strong>Contact Support</strong>
-        <small>Open a live support thread</small>
+        <small>Open a chat with Resona</small>
       </button>
     </section>
     ${getPinnedInboxSidebarMarkup()}
@@ -1904,6 +1991,13 @@ function getConversationSubtitle(thread) {
   }
   if (typingUsers.length > 1) return 'Several people are typing…'
 
+  if (isResonaThread(thread)) {
+    if (thread.status === 'waiting_for_agent') return 'Waiting for live agent'
+    if (thread.status === 'assigned' || thread.mode === 'live_agent_joined') return 'Live agent joined'
+    return 'Resona active'
+  }
+  if (hasResonaAgent(thread)) return 'Resona active · Mention @Resona to ask'
+
   if (thread.type === 'group') {
     return `${Math.max(1, Number(thread.participantCount || getThreadParticipantUids(thread).length || 0))} members`
   }
@@ -1963,6 +2057,24 @@ function groupMessages(messages = []) {
 }
 
 function getParticipantMeta(thread, uid) {
+  if (uid === RESONA_AGENT_ID) {
+    return {
+      uid: RESONA_AGENT_ID,
+      displayName: 'Resona',
+      username: 'AI',
+      avatarURL: appState.resonaAvatarURL || '',
+      photoURL: appState.resonaAvatarURL || ''
+    }
+  }
+  if (uid === 'system' || !uid) {
+    return {
+      uid: 'system',
+      displayName: 'System',
+      username: '',
+      avatarURL: '',
+      photoURL: ''
+    }
+  }
   const profile = uid ? (appState.profileByUid[uid] || null) : null
   const participants = getThreadParticipants(thread.id)
   const participantDoc = participants.find((entry) => entry.uid === uid)
@@ -2412,16 +2524,47 @@ function getMessagesThreadListMarkup() {
     return `<div class="inbox-thread-list">${skeleton}</div>`
   }
 
-  if (!appState.threads.length) {
+  const resonaThread = getResonaDisplayThread()
+  const normalThreads = appState.threads.filter((thread) => !isResonaThread(thread))
+  const resonaCard = `
+    <article class="thread-row thread-row-resona ${resonaThread.id && resonaThread.id === appState.selectedThreadId ? 'is-active' : ''}" data-thread-row-id="${escapeHtml(resonaThread.id || 'resona')}" data-thread-render-signature="${escapeHtml(hashRenderSignature({ thread: resonaThread, avatar: appState.resonaAvatarURL }))}">
+      <button class="thread-row-main" type="button" data-open-resona-thread>
+        ${renderThreadAvatar(resonaThread, { stableKey: `thread-list:${resonaThread.id || 'resona'}` })}
+        <div class="thread-meta">
+          <div class="thread-title-row">
+            <strong>Resona</strong>
+            <span>${escapeHtml(formatThreadTimestamp(resonaThread.lastMessageAt || resonaThread.updatedAt || resonaThread.createdAt))}</span>
+          </div>
+          <div class="thread-preview-row">
+            <p>${escapeHtml(summarizeThreadPreview(resonaThread) || 'Ask questions, get support, or request a live agent.')}</p>
+            <small class="thread-badge thread-badge-agent">Agent</small>
+          </div>
+        </div>
+      </button>
+      ${resonaThread.id ? `
+        <button type="button" class="thread-row-menu-trigger" data-thread-menu-id="${escapeHtml(resonaThread.id)}" aria-label="Open Resona actions">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="5" r="1.8" fill="currentColor"/>
+            <circle cx="12" cy="12" r="1.8" fill="currentColor"/>
+            <circle cx="12" cy="19" r="1.8" fill="currentColor"/>
+          </svg>
+        </button>
+      ` : ''}
+    </article>
+    <div class="thread-list-divider" aria-hidden="true"></div>
+  `
+
+  if (!normalThreads.length && appState.hasLoadedThreadsOnce) {
     return `
       <div class="inbox-thread-list is-empty">
+        ${resonaCard}
         <p>No conversations yet.</p>
         <p>Start a direct message or create a group conversation.</p>
       </div>
     `
   }
 
-  const rows = appState.threads
+  const rows = normalThreads
     .map((thread) => {
       const isActive = thread.id === appState.selectedThreadId
       const unread = Number(thread.unreadCount || 0)
@@ -2476,7 +2619,7 @@ function getMessagesThreadListMarkup() {
     })
     .join('')
 
-  return `<div class="inbox-thread-list">${rows}</div>`
+  return `<div class="inbox-thread-list">${resonaCard}${rows}</div>`
 }
 
 function getThreadActionMenuMarkup() {
@@ -2487,16 +2630,29 @@ function getThreadActionMenuMarkup() {
   const position = clampMenuPosition(menu.x, menu.y, 220, 280)
   const dmOtherUid = getDmOtherParticipant(thread)
   const isDm = thread.type === 'dm' && Boolean(dmOtherUid)
+  const isResona = isResonaThread(thread)
   const sidebarPinned = isInboxPinned('thread', thread.id)
   const dock = getChatDockState()
   const isOpenInDock = dock.open && dock.mode === 'thread' && dock.activeThreadId === thread.id
   const dockAction = isOpenInDock && !dock.minimized ? 'close-dock' : 'open-dock'
   const dockLabel = isOpenInDock ? (dock.minimized ? 'Open dock' : 'Unpin from dock') : 'Open in dock'
-  const blockAction = isDm
+  const blockAction = isDm && !isResona
     ? `<button type="button" data-thread-action="${isUserBlocked(dmOtherUid) ? 'unblock-contact' : 'block-contact'}" data-thread-action-id="${thread.id}">
         ${iconSvg('user')}<span>${isUserBlocked(dmOtherUid) ? 'Unblock contact' : 'Block contact'}</span>
       </button>`
     : ''
+  const resonaAgentAction = !isResona
+    ? `<button type="button" data-thread-action="${hasResonaAgent(thread) ? 'remove-resona' : 'add-resona'}" data-thread-action-id="${thread.id}">
+        ${iconSvg(hasResonaAgent(thread) ? 'x' : 'at')}<span>${hasResonaAgent(thread) ? 'Remove Resona' : 'Add Resona'}</span>
+      </button>`
+    : ''
+  const resetOrDeleteAction = isResona
+    ? `<button type="button" class="is-danger" data-thread-action="refresh-resona" data-thread-action-id="${thread.id}">
+        ${iconSvg('refresh')}<span>Refresh chat</span>
+      </button>`
+    : `<button type="button" class="is-danger" data-thread-action="delete" data-thread-action-id="${thread.id}">
+        ${iconSvg('trash')}<span>Delete chat</span>
+      </button>`
   return `
     <div class="message-context-backdrop" data-thread-menu-close>
       <div class="thread-actions-menu" role="menu" aria-label="Chat actions" style="left:${position.x}px;top:${position.y}px;">
@@ -2512,9 +2668,8 @@ function getThreadActionMenuMarkup() {
         <button type="button" data-thread-action="${dockAction}" data-thread-action-id="${thread.id}">
           ${iconSvg('messageCircle')}<span>${dockLabel}</span>
         </button>
-        <button type="button" class="is-danger" data-thread-action="delete" data-thread-action-id="${thread.id}">
-          ${iconSvg('trash')}<span>Delete chat</span>
-        </button>
+        ${resonaAgentAction}
+        ${resetOrDeleteAction}
         ${blockAction}
       </div>
     </div>
@@ -2528,6 +2683,78 @@ function openThreadInChatDock(threadId = '') {
     threadId,
     title: thread.title || 'Conversation'
   })
+}
+
+async function selectThread(threadId = '', { forceBottom = true } = {}) {
+  if (!threadId) return
+  if (appState.activeFilter !== 'Messages') {
+    applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
+    window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxMessages))
+  }
+  if (activeTypingThreadId && activeTypingThreadId !== threadId) clearTypingForThread(activeTypingThreadId)
+  if (appState.selectedThreadId && appState.selectedThreadId !== threadId) {
+    delete appState.replyDraftByThreadId[appState.selectedThreadId]
+  }
+  appState.threadActionMenu = null
+  appState.threadConfirmModal = null
+  appState.messageFind = { open: false, query: '', activeIndex: -1, matchCount: 0 }
+  appState.selectedThreadId = threadId
+  saveLastSelectedThread(appState.user?.uid, threadId)
+  appState.errorMessage = ''
+  const selectedMirror = appState.threads.find((thread) => thread.id === threadId)
+  const hydratedThread = await hydrateThreadFromSourceIfNeeded(selectedMirror)
+  if (hydratedThread) {
+    upsertThreadInState(hydratedThread)
+  }
+  startMessageSubscription(threadId)
+  hydrateProfilesForThread(getSelectedThread())
+  renderThreadListOnly()
+  renderSelectedConversation({ forceBottom })
+  if (canMarkThreadRead(threadId)) {
+    await markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
+      warnRealtimePermission(`participants-read-${threadId}`, error)
+    })
+  }
+}
+
+async function ensureResonaThread({ select = false } = {}) {
+  if (!appState.user?.uid) return null
+  if (appState.openingResonaThread && !select) return getResonaThread()
+  appState.openingResonaThread = true
+  try {
+    const existing = getResonaThread()
+    if (existing?.id) {
+      appState.resonaThreadId = existing.id
+      if (select) await selectThread(existing.id)
+      return existing
+    }
+    const thread = await createOrGetResonaThread()
+    if (thread?.id) {
+      appState.resonaThreadId = thread.id
+      upsertThreadInState({
+        ...thread,
+        title: 'Resona',
+        imagePath: thread.imagePath || RESONA_AVATAR_PATH,
+        imageURL: appState.resonaAvatarURL || thread.imageURL || ''
+      })
+      if (select) await selectThread(thread.id)
+      else {
+        renderThreadListOnly()
+      }
+      return thread
+    }
+  } catch (error) {
+    console.error('[inbox] createOrGetResonaThread failed', {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details
+    })
+    appState.errorMessage = error?.message || 'Could not open Resona.'
+    renderSignedInState()
+  } finally {
+    appState.openingResonaThread = false
+  }
+  return null
 }
 
 function getThreadConfirmModalMarkup() {
@@ -3740,7 +3967,9 @@ function getConversationHeaderMarkup(thread) {
   }
 
   const otherParticipant = thread.otherParticipantId || (thread.participantIds || []).find((uid) => uid !== appState.user?.uid)
-  const headerMeta = thread.type === 'dm' && otherParticipant
+  const headerMeta = isResonaThread(thread)
+    ? { displayName: 'Resona', avatarURL: appState.resonaAvatarURL || thread.imageURL || '' }
+    : thread.type === 'dm' && otherParticipant
     ? getProfileMeta(otherParticipant, { title: thread.title, avatarURL: thread.imageURL })
     : { displayName: thread.title, avatarURL: thread.imageURL }
   const avatarThread = thread.type === 'dm'
@@ -3755,7 +3984,7 @@ function getConversationHeaderMarkup(thread) {
     callUiState: appState.callUiState
   })
   const hasLiveCall = appState.activeCall && !isCallFinal(appState.activeCall.status)
-  const callDisabled = thread.type !== 'dm' || hasLiveCall
+  const callDisabled = thread.type !== 'dm' || isResonaThread(thread) || hasLiveCall
 
   return `
     <header class="conversation-header" data-conversation-header-signature="${escapeHtml(headerSignature)}">
@@ -4569,6 +4798,44 @@ function setupFloatingEventDelegates() {
         if (action === 'pin-sidebar') await saveInboxPin(pin)
         else await removeInboxPin(pin.pinId)
         renderFloatingUi()
+        return
+      }
+      if (action === 'refresh-resona') {
+        appState.threadActionMenu = null
+        appState.isSavingThreadAction = true
+        renderFloatingUi()
+        try {
+          await refreshResonaThread({ threadId })
+          const refreshed = await getThread(threadId).catch(() => null)
+          if (refreshed) upsertThreadInState(refreshed)
+          appState.errorMessage = ''
+        } catch (error) {
+          appState.errorMessage = error?.message || 'Could not refresh Resona chat.'
+        } finally {
+          appState.isSavingThreadAction = false
+          renderThreadListOnly()
+          renderSelectedConversation({ reason: 'state-update' })
+          renderFloatingUi()
+        }
+        return
+      }
+      if (action === 'add-resona' || action === 'remove-resona') {
+        appState.threadActionMenu = null
+        appState.isSavingThreadAction = true
+        renderFloatingUi()
+        try {
+          await setThreadResonaAgent({ threadId, active: action === 'add-resona' })
+          const updated = await getThread(threadId).catch(() => null)
+          if (updated) upsertThreadInState(updated)
+          appState.errorMessage = ''
+        } catch (error) {
+          appState.errorMessage = error?.message || 'Could not update Resona for this chat.'
+        } finally {
+          appState.isSavingThreadAction = false
+          renderThreadListOnly()
+          renderSelectedConversation({ reason: 'state-update' })
+          renderFloatingUi()
+        }
         return
       }
       if (action === 'details') {
@@ -5470,39 +5737,17 @@ function bindSharedEvents(scope = inboxRoot) {
 
   scope.querySelectorAll('[data-select-thread-id]').forEach((button) => {
     button.addEventListener('click', async () => {
-      if (appState.activeFilter !== 'Messages') {
-        applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
-        window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxMessages))
-      }
-
       const threadId = button.getAttribute('data-select-thread-id') || ''
-      if (!threadId) return
-      if (activeTypingThreadId && activeTypingThreadId !== threadId) clearTypingForThread(activeTypingThreadId)
-      if (appState.selectedThreadId && appState.selectedThreadId !== threadId) {
-        delete appState.replyDraftByThreadId[appState.selectedThreadId]
-      }
-      appState.threadActionMenu = null
-      appState.threadConfirmModal = null
-      appState.messageFind = { open: false, query: '', activeIndex: -1, matchCount: 0 }
+      await selectThread(threadId)
+    })
+  })
 
-      appState.selectedThreadId = threadId
-      saveLastSelectedThread(appState.user?.uid, threadId)
-      appState.errorMessage = ''
-      const selectedMirror = appState.threads.find((thread) => thread.id === threadId)
-      const hydratedThread = await hydrateThreadFromSourceIfNeeded(selectedMirror)
-      if (hydratedThread) {
-        upsertThreadInState(hydratedThread)
-      }
-      startMessageSubscription(threadId)
-      hydrateProfilesForThread(getSelectedThread())
-      renderThreadListOnly()
-      renderSelectedConversation({ forceBottom: true })
-
-      if (canMarkThreadRead(threadId)) {
-        await markThreadRead({ threadId, uid: appState.user?.uid }).catch((error) => {
-          warnRealtimePermission(`participants-read-${threadId}`, error)
-        })
-      }
+  scope.querySelectorAll('[data-open-resona-thread]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (button.disabled) return
+      button.disabled = true
+      await ensureResonaThread({ select: true })
+      button.disabled = false
     })
   })
 
@@ -5512,20 +5757,9 @@ function bindSharedEvents(scope = inboxRoot) {
       if (button.disabled) return
       button.disabled = true
       try {
-        const result = await createSupportThread({
-          source: 'inbox',
-          subject: 'Melogic Support'
-        })
-        if (result.threadId) {
-          openChatDock({
-            mode: 'support',
-            support: true,
-            threadId: result.threadId,
-            title: result.thread?.subject || 'Melogic Support'
-          })
-        }
+        await ensureResonaThread({ select: true })
       } catch (error) {
-        appState.errorMessage = error?.message || 'Could not open support chat.'
+        appState.errorMessage = error?.message || 'Could not open Resona.'
         renderSignedInState()
       } finally {
         button.disabled = false
@@ -6404,6 +6638,8 @@ function startThreadSubscription() {
   appState.inboxRepairAttempted = false
   appState.isRepairingInbox = false
   renderSignedInState()
+  loadResonaAvatar()
+  ensureResonaThread({ select: false }).catch(() => {})
 
   appState.threadUnsubscribe()
   appState.threadUnsubscribe = subscribeToInboxThreads(appState.user.uid, async (threads) => {

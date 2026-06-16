@@ -321,6 +321,17 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   background: rgba(24, 36, 58, 0.76);
 }
 
+.thread-row-resona {
+  border-color: rgba(110, 221, 255, 0.28);
+  background: linear-gradient(135deg, rgba(20, 36, 58, 0.88), rgba(11, 17, 31, 0.78));
+}
+
+.thread-list-divider {
+  height: 1px;
+  margin: 0.05rem 0 0.15rem;
+  background: linear-gradient(90deg, transparent, rgba(128, 153, 204, 0.36), transparent);
+}
+
 .thread-row-main {
   border: 0;
   background: transparent;
@@ -511,6 +522,13 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
   font-size: 0.68rem;
 }
 
+.thread-avatar-resona {
+  background: radial-gradient(circle at 30% 20%, rgba(137, 243, 255, 0.26), rgba(76, 116, 255, 0.18) 42%, rgba(9, 14, 24, 0.92));
+  border: 1px solid rgba(130, 218, 255, 0.42);
+  color: #e5fbff;
+  font-weight: 800;
+}
+
 .thread-pin-indicator svg {
   width: 0.74rem;
   height: 0.74rem;
@@ -527,6 +545,12 @@ body.is-inbox-page *::-webkit-scrollbar-thumb:hover {
 .thread-badge {
   color: #c6d8ff;
   border: 1px solid rgba(143, 173, 232, 0.45);
+}
+
+.thread-badge-agent {
+  color: #d9fbff;
+  border-color: rgba(125, 230, 255, 0.55);
+  background: rgba(72, 175, 255, 0.12);
 }
 
 .thread-unread {

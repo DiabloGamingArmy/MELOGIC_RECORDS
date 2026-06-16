@@ -97,6 +97,12 @@ const {
   listSupportMessages,
   handleSupportAiReply
 } = require('./src/support/supportThreads')
+const {
+  createOrGetResonaThread,
+  refreshResonaThread,
+  setThreadResonaAgent,
+  handleResonaInboxReply
+} = require('./src/support/resonaInbox')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -207,3 +213,7 @@ exports.requestSupportAgent = requestSupportAgent
 exports.listSupportThreads = listSupportThreads
 exports.listSupportMessages = listSupportMessages
 exports.handleSupportAiReply = handleSupportAiReply
+exports.createOrGetResonaThread = createOrGetResonaThread
+exports.refreshResonaThread = refreshResonaThread
+exports.setThreadResonaAgent = setThreadResonaAgent
+exports.handleResonaInboxReply = handleResonaInboxReply

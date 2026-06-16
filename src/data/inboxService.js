@@ -4,6 +4,7 @@ import {
   addParticipantsToThread,
   createGroupThread,
   createOrGetDm,
+  createOrGetResonaThread,
   blockUser,
   getBlockedUsers,
   getThread,
@@ -11,7 +12,9 @@ import {
   hydrateThreadFromSourceIfNeeded,
   listThreadsForUser,
   restoreThreadForUser,
+  refreshResonaThread,
   setThreadPinnedForUser,
+  setThreadResonaAgent,
   deleteThreadForUser,
   repairMyInboxThreads,
   removeParticipantFromThread,
@@ -120,6 +123,7 @@ export async function loadProfilesByUids(uids = []) {
 }
 
 function buildFallbackTitle(thread, currentUid) {
+  if (thread.type === 'agent' && thread.agentId === 'resona') return 'Resona'
   if (thread.type === 'group') return thread.title || 'Untitled group'
   const participantUids = getThreadParticipantUids(thread)
   if (participantUids.length > 1) {
@@ -131,6 +135,26 @@ function buildFallbackTitle(thread, currentUid) {
 
 async function decorateThread(thread, currentUid) {
   const participantIds = getThreadParticipantUids(thread)
+  const isAgent = thread.type === 'agent'
+  if (isAgent && thread.agentId === 'resona') {
+    const attachmentCount = Number(thread.lastMessageAttachmentCount || 0)
+    const fallbackSubtitle = thread.lastMessageText
+      || thread.lastMessagePreview
+      || (attachmentCount > 0 ? `${attachmentCount} attachment${attachmentCount === 1 ? '' : 's'}` : 'Ask questions, get support, or request a live agent.')
+    return {
+      ...thread,
+      otherParticipantId: '',
+      otherProfile: null,
+      title: 'Resona',
+      imageURL: thread.imageURL || '',
+      imagePath: thread.imagePath || 'assets/profilePictures/aiSupport/resona.png',
+      subtitle: fallbackSubtitle,
+      formattedTime: formatThreadTime(thread.lastMessageAt || thread.updatedAt || thread.createdAt),
+      unreadCount: Number(thread.unreadCount || 0),
+      isGroup: false,
+      isAgent: true
+    }
+  }
   const isGroup = thread.type === 'group'
   const otherByMirror = Array.isArray(thread.otherParticipantIds) ? thread.otherParticipantIds.find((id) => id && id !== currentUid) : ''
   const otherParticipantId = otherByMirror || participantIds.find((id) => id && id !== currentUid) || ''
@@ -190,11 +214,14 @@ export {
   listOlderMessages,
   subscribeToMessages,
   createOrGetDm,
+  createOrGetResonaThread,
   createGroupThread,
   repairMyInboxThreads,
   restoreThreadForUser,
+  refreshResonaThread,
   addParticipantsToThread,
   removeParticipantFromThread,
+  setThreadResonaAgent,
   updateThreadDetails,
   setThreadPinnedForUser,
   deleteThreadForUser,

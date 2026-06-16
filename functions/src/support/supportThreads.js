@@ -1,7 +1,8 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentCreated } = require('firebase-functions/v2/firestore')
-const { FieldValue, getFirestore } = require('firebase-admin/firestore')
+const { FieldValue, Timestamp, getFirestore } = require('firebase-admin/firestore')
 const { assertPermission, cleanString, getRequesterClaims } = require('../admin/adminAuth')
+const { DEFAULT_SETTINGS, mergeSettings } = require('../admin/adminSettingsShared')
 const {
   DEFAULT_SUPPORT_KNOWLEDGE,
   SUPPORT_AI_API_KEY,
@@ -9,16 +10,28 @@ const {
   detectEscalationNeed,
   generateSupportReply
 } = require('./aiSupportAgent')
+const {
+  listEscalatedResonaThreads,
+  listResonaMessagesForSupport,
+  claimResonaThread,
+  resolveResonaThread,
+  sendResonaSupportMessage
+} = require('./resonaInbox')
 
 const db = getFirestore()
 const ACTIVE_STATUSES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned'])
 const STATUS_VALUES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned', 'resolved'])
 const MAX_BODY_LENGTH = 1200
+const RESONA_TYPING_TTL_MS = 120000
 const SUPPORT_CALLABLE_OPTIONS = {
   timeoutSeconds: 30,
   memory: '256MiB',
   cors: true,
   invoker: 'public'
+}
+
+function isResonaThreadId(threadId = '') {
+  return /^resona_[A-Za-z0-9_-]+$/.test(String(threadId || ''))
 }
 
 function assertSignedIn(request = {}) {
@@ -49,6 +62,18 @@ function cleanBody(value = '') {
 }
 
 function cleanSupportMessageBody(value = '', max = MAX_BODY_LENGTH) {
+  return String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/g, ''))
+    .join('\n')
+    .trim()
+    .slice(0, max)
+}
+
+function cleanSupportPromptText(value = '', max = 8000) {
   return String(value ?? '')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
@@ -103,7 +128,22 @@ function serializeThread(docSnap) {
     aiEscalationReason: data.aiEscalationReason || '',
     aiSuggestedCategory: data.aiSuggestedCategory || '',
     requester: data.requester || null,
-    assignedAgent: data.assignedAgent || null
+    assignedAgent: data.assignedAgent || null,
+    typing: serializeTyping(data.typing)
+  }
+}
+
+function serializeTyping(value = {}) {
+  const typing = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const ai = typing.ai && typeof typing.ai === 'object' && !Array.isArray(typing.ai) ? typing.ai : {}
+  return {
+    ai: {
+      active: ai.active === true,
+      label: cleanString(ai.label || '', 160),
+      startedAt: serializeTimestamp(ai.startedAt),
+      expiresAt: serializeTimestamp(ai.expiresAt),
+      clearedAt: serializeTimestamp(ai.clearedAt)
+    }
   }
 }
 
@@ -210,9 +250,57 @@ async function loadSupportKnowledgeSnippets() {
   }
 }
 
+async function loadResonaInstructions() {
+  try {
+    const snap = await db.collection('platformConfig').doc('current').get()
+    const settings = mergeSettings(snap.exists ? snap.data() || {} : {})
+    const supportAi = settings.supportAi || DEFAULT_SETTINGS.supportAi || {}
+    return {
+      systemBehavior: cleanSupportPromptText(supportAi.systemBehavior || DEFAULT_SETTINGS.supportAi.systemBehavior, 8000),
+      siteOverview: cleanSupportPromptText(supportAi.siteOverview || DEFAULT_SETTINGS.supportAi.siteOverview, 4000),
+      escalationRules: cleanSupportPromptText(supportAi.escalationRules || DEFAULT_SETTINGS.supportAi.escalationRules, 4000),
+      restrictedActions: cleanSupportPromptText(supportAi.restrictedActions || DEFAULT_SETTINGS.supportAi.restrictedActions, 4000),
+      toneGuidelines: cleanSupportPromptText(supportAi.toneGuidelines || DEFAULT_SETTINGS.supportAi.toneGuidelines, 4000)
+    }
+  } catch {
+    return DEFAULT_SETTINGS.supportAi
+  }
+}
+
 async function loadRecentSupportMessages(threadRef) {
   const snapshot = await threadRef.collection('messages').orderBy('createdAt', 'desc').limit(12).get()
   return snapshot.docs.map(serializeMessage).reverse()
+}
+
+function resonaTypingState(active = false) {
+  return active
+    ? {
+        active: true,
+        label: 'Resona is typing...',
+        startedAt: FieldValue.serverTimestamp(),
+        expiresAt: Timestamp.fromMillis(Date.now() + RESONA_TYPING_TTL_MS)
+      }
+    : {
+        active: false,
+        label: '',
+        expiresAt: null,
+        clearedAt: FieldValue.serverTimestamp()
+      }
+}
+
+async function clearResonaTyping(threadRef, threadId = '', reason = '') {
+  try {
+    await threadRef.set({
+      typing: { ai: resonaTypingState(false) },
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true })
+    logSupportAi(threadId, 'typing_cleared', { reason: cleanString(reason, 120) })
+  } catch (error) {
+    logSupportAi(threadId, 'typing_clear_failed', {
+      reason: cleanString(reason, 120),
+      errorMessage: cleanString(error?.message || 'unknown', 240)
+    })
+  }
 }
 
 async function hasSystemEvent(threadRef, eventName = '') {
@@ -259,7 +347,13 @@ async function markAiHandledStart(threadRef, messageId = '') {
     if (thread.status === 'open') {
       transaction.set(threadRef, {
         status: 'ai_active',
-        updatedAt: FieldValue.serverTimestamp()
+        updatedAt: FieldValue.serverTimestamp(),
+        typing: { ai: resonaTypingState(true) }
+      }, { merge: true })
+    } else {
+      transaction.set(threadRef, {
+        updatedAt: FieldValue.serverTimestamp(),
+        typing: { ai: resonaTypingState(true) }
       }, { merge: true })
     }
     return { locked: true, thread, message }
@@ -271,7 +365,7 @@ async function completeAiHandling({ threadRef, threadId = '', messageId = '', us
   const aiMessageRef = threadRef.collection('messages').doc()
   const shouldEscalate = aiResult.shouldEscalate === true
   const aiUnavailable = aiResult.aiAvailable === false
-  const replyText = cleanString(aiResult.replyText || '', MAX_BODY_LENGTH)
+  const replyText = cleanSupportMessageBody(aiResult.replyText || '', MAX_BODY_LENGTH)
   const escalationReason = cleanString(aiResult.escalationReason || '', 160)
   const suggestedCategory = cleanString(aiResult.suggestedCategory || '', 80)
 
@@ -300,6 +394,7 @@ async function completeAiHandling({ threadRef, threadId = '', messageId = '', us
 
       const threadUpdate = {
         updatedAt: FieldValue.serverTimestamp(),
+        typing: { ai: resonaTypingState(false) },
         aiLastHandledMessageId: messageId,
         aiLastHandledAt: FieldValue.serverTimestamp(),
         aiSuggestedCategory: suggestedCategory || thread.aiSuggestedCategory || ''
@@ -330,9 +425,9 @@ async function completeAiHandling({ threadRef, threadId = '', messageId = '', us
         threadUpdate.aiRoutedToAgent = true
         threadUpdate.aiEscalationReason = escalationReason || (aiUnavailable ? 'ai_unavailable' : 'ai_escalated')
         threadUpdate.lastMessageAt = FieldValue.serverTimestamp()
-        threadUpdate.lastMessagePreview = aiUnavailable
-          ? 'Support is being routed to a live agent.'
-          : 'AI support routed this to a live agent.'
+      threadUpdate.lastMessagePreview = aiUnavailable
+        ? 'Support is being routed to a live agent.'
+        : 'Resona routed this to a live agent.'
       } else {
         threadUpdate.status = 'ai_active'
       }
@@ -375,7 +470,7 @@ async function completeAiHandling({ threadRef, threadId = '', messageId = '', us
     if (!(await hasSystemEvent(threadRef, routedEvent))) {
       const body = aiUnavailable
         ? 'Support is being routed to a live agent.'
-        : 'AI support routed this to a live agent.'
+        : 'Resona routed this to a live agent.'
       await threadRef.collection('messages').add({
         senderUid: '',
         senderType: 'system',
@@ -393,6 +488,7 @@ async function completeAiHandling({ threadRef, threadId = '', messageId = '', us
 
 async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', apiKey = '', model = '' } = {}) {
   const threadRef = db.collection('supportThreads').doc(threadId)
+  let typingStarted = false
   logSupportAi(threadId, 'eligibility_check', {
     lastUserMessageId: messageId,
     model: cleanString(model || SUPPORT_AI_MODEL.value() || '', 120),
@@ -410,6 +506,7 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
     })
     return { ok: true, skipped: true, skippedReason: locked?.skippedReason || 'lock_not_acquired' }
   }
+  typingStarted = true
 
   const threadSnap = await threadRef.get()
   if (!threadSnap.exists) {
@@ -417,6 +514,7 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
       lastUserMessageId: messageId,
       skippedReason: 'missing_thread_after_lock'
     })
+    if (typingStarted) await clearResonaTyping(threadRef, threadId, 'missing_thread_after_lock')
     return { ok: false, skipped: true, skippedReason: 'missing_thread_after_lock' }
   }
   const thread = threadSnap.data() || {}
@@ -425,6 +523,7 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
   const messageText = cleanSupportMessageBody(userMessage.body || '', MAX_BODY_LENGTH)
   const recentMessages = await loadRecentSupportMessages(threadRef)
   const knowledgeSnippets = await loadSupportKnowledgeSnippets()
+  const resonaInstructions = await loadResonaInstructions()
   const requester = thread.requester && typeof thread.requester === 'object' ? thread.requester : {}
   const safePageContext = sanitizeSafeContext(userMessage.metadata?.safePageContext || {})
 
@@ -440,7 +539,7 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
     await threadRef.collection('messages').add({
       senderUid: '',
       senderType: 'system',
-      body: 'AI support joined the chat.',
+      body: 'Resona joined the chat.',
       createdAt: FieldValue.serverTimestamp(),
       metadata: { event: 'ai_joined' }
     })
@@ -477,6 +576,7 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
           userMessage: messageText,
           recentMessages,
           knowledgeSnippets,
+          resonaInstructions,
           safeUserContext: {
             displayName: requester.displayName || requester.username || '',
             role: 'user'
@@ -495,11 +595,18 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
         model: cleanString(model || SUPPORT_AI_MODEL.value() || '', 120),
         errorMessage: cleanString(error?.message || 'unknown', 240)
       })
+      if (typingStarted) await clearResonaTyping(threadRef, threadId, 'gemini_failure')
       throw error
     }
   }
 
-  await completeAiHandling({ threadRef, threadId, messageId, userMessage, aiResult, recentMessages })
+  try {
+    await completeAiHandling({ threadRef, threadId, messageId, userMessage, aiResult, recentMessages })
+  } catch (error) {
+    if (typingStarted) await clearResonaTyping(threadRef, threadId, 'message_write_failure')
+    throw error
+  }
+  if (typingStarted) await clearResonaTyping(threadRef, threadId, 'completed')
   return { ok: true, skipped: false, escalated: aiResult.shouldEscalate === true || aiResult.aiAvailable === false }
 }
 
@@ -532,6 +639,7 @@ const createSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => 
       priority,
       requester,
       humanRequested: false,
+      typing: { ai: resonaTypingState(false) },
       aiRoutedToAgent: false,
       aiEscalationReason: '',
       aiSuggestedCategory: '',
@@ -543,7 +651,7 @@ const createSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => 
       resolvedBy: null
     })
     addSystemMessage(transaction, threadRef, 'Support request opened.', { event: 'thread_opened' })
-    addSystemMessage(transaction, threadRef, 'AI support joined the chat.', { event: 'ai_joined' })
+    addSystemMessage(transaction, threadRef, 'Resona joined the chat.', { event: 'ai_joined' })
     if (initialMessage) {
       transaction.set(threadRef.collection('messages').doc(), {
         senderUid: uid,
@@ -574,6 +682,7 @@ const requestSupportAgent = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => 
     transaction.set(threadRef, {
       status: thread.assignedAgentUid ? 'assigned' : 'waiting_for_agent',
       humanRequested: true,
+      typing: { ai: resonaTypingState(false) },
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
       lastMessagePreview: 'Live agent requested.'
@@ -594,6 +703,9 @@ const sendSupportMessage = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const safePageContext = sanitizeSafeContext(request.data?.safePageContext || {})
   const requestedAgentSend = request.data?.asAgent === true
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
+  if (isResonaThreadId(threadId) && staff && requestedAgentSend) {
+    return sendResonaSupportMessage({ request, threadId, body })
+  }
 
   const threadRef = db.collection('supportThreads').doc(threadId)
   const messageRef = threadRef.collection('messages').doc()
@@ -618,6 +730,7 @@ const sendSupportMessage = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
       update.assignedAgentUid = thread.assignedAgentUid || uid
       update.status = 'assigned'
       update.humanRequested = true
+      update.typing = { ai: resonaTypingState(false) }
     } else if (thread.status === 'open') {
       update.status = 'ai_active'
     }
@@ -644,6 +757,7 @@ const claimSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const claims = supportStaffClaims(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
+  if (isResonaThreadId(threadId)) return claimResonaThread({ request, threadId })
 
   const threadRef = db.collection('supportThreads').doc(threadId)
   await db.runTransaction(async (transaction) => {
@@ -655,6 +769,7 @@ const claimSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
       assignedAgentUid: claims.uid,
       status: 'assigned',
       humanRequested: true,
+      typing: { ai: resonaTypingState(false) },
       participantUids: FieldValue.arrayUnion(claims.uid),
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
@@ -672,6 +787,7 @@ const resolveSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) =>
   const claims = supportStaffClaims(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
+  if (isResonaThreadId(threadId)) return resolveResonaThread({ request, threadId })
 
   const threadRef = db.collection('supportThreads').doc(threadId)
   await db.runTransaction(async (transaction) => {
@@ -679,6 +795,7 @@ const resolveSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) =>
     if (!snap.exists) throw new HttpsError('not-found', 'Support thread not found.')
     transaction.set(threadRef, {
       status: 'resolved',
+      typing: { ai: resonaTypingState(false) },
       resolvedAt: FieldValue.serverTimestamp(),
       resolvedBy: claims.uid,
       updatedAt: FieldValue.serverTimestamp(),
@@ -708,6 +825,7 @@ const endSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
     if (alreadyResolved) return
     transaction.set(threadRef, {
       status: 'resolved',
+      typing: { ai: resonaTypingState(false) },
       resolvedAt: FieldValue.serverTimestamp(),
       resolvedBy: uid,
       endedAt: FieldValue.serverTimestamp(),
@@ -740,13 +858,17 @@ const listSupportThreads = onCall({
     .get()
 
   const threads = await Promise.all(snapshot.docs.map(hydrateThread))
+  const resonaThreads = await listEscalatedResonaThreads({ status, limitCount }).catch(() => [])
   const filtered = threads.filter((thread) => {
     if (status === 'all') return true
     if (status === 'active') return thread.status !== 'resolved'
     return thread.status === status
   })
 
-  return { ok: true, threads: filtered, total: filtered.length }
+  const merged = [...filtered, ...resonaThreads]
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+    .slice(0, limitCount)
+  return { ok: true, threads: merged, total: merged.length }
 })
 
 const handleSupportAiReply = onDocumentCreated({
@@ -790,6 +912,7 @@ const listSupportMessages = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => 
   const staff = isSupportStaff(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
+  if (isResonaThreadId(threadId)) return listResonaMessagesForSupport({ request, threadId })
   const threadRef = db.collection('supportThreads').doc(threadId)
   const threadSnap = await threadRef.get()
   if (!threadSnap.exists) throw new HttpsError('not-found', 'Support thread not found.')
