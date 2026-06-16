@@ -20,6 +20,7 @@ const STORAGE_KEY = 'melogic_chat_dock_state_v1'
 const OPEN_EVENT = 'melogic:chat-dock-open'
 const MAX_DOCK_MESSAGES = 80
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
+const RESONA_BACKGROUND_PATH = 'assets/profilePictures/aiSupport/resonaBackground.png'
 const DOCK_SCROLL_BOTTOM_THRESHOLD = 80
 const DOCK_SIZE_LIMITS = {
   minWidth: 320,
@@ -56,6 +57,8 @@ let draft = ''
 let lastMarkedReadKey = ''
 let resonaAvatarURL = ''
 let resonaAvatarRequested = false
+let resonaBackgroundURL = ''
+let resonaBackgroundRequested = false
 let forceDockBottom = false
 let activeResize = null
 
@@ -227,6 +230,26 @@ function loadResonaAvatar() {
       renderDock()
     })
     .catch(() => {})
+}
+
+function loadResonaBackground() {
+  if (resonaBackgroundRequested) return
+  resonaBackgroundRequested = true
+  getStorageAssetUrl(RESONA_BACKGROUND_PATH, {
+    warnOnFail: false,
+    scopeKey: 'chat-dock-resona-background',
+    type: 'resona-background'
+  })
+    .then((url) => {
+      if (!url) return
+      resonaBackgroundURL = url
+      renderDock()
+    })
+    .catch(() => {})
+}
+
+function isResonaThread(thread = activeThread) {
+  return Boolean(thread && thread.type === 'agent' && thread.agentId === 'resona')
 }
 
 function getThreadTitle() {
@@ -470,13 +493,24 @@ function renderMessageList() {
   }
 
   return visibleMessages.map((message) => {
+    if (message.senderType === 'system') {
+      if (/^Resona joined the chat\.?$/i.test(String(message.body || '').trim())) return ''
+      return `
+        <article class="chat-dock-message is-system-service" data-message-render-key="thread-system:${escapeHtml(message.id || '')}">
+          <div class="chat-dock-service-pill">${escapeHtml(message.body || 'System update')}</div>
+        </article>
+      `
+    }
     const isMine = message.senderId === currentUid()
-    const sender = senderMeta(message.senderId)
+    const isResonaAi = message.senderType === 'ai' && message.agentId === 'resona'
+    const sender = isResonaAi
+      ? { displayName: 'Resona', username: 'AI', avatarURL: resonaAvatarURL }
+      : senderMeta(message.senderId)
     return `
-      <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${message.pendingWrites ? 'is-pending' : ''}" data-message-render-key="thread:${escapeHtml(message.id || '')}">
-        ${isMine ? '' : renderAvatar(sender, sender.displayName)}
+      <article class="chat-dock-message ${isMine ? 'is-mine' : 'is-theirs'} ${isResonaAi ? 'is-ai' : ''} ${message.pendingWrites ? 'is-pending' : ''}" data-message-render-key="thread:${escapeHtml(message.id || '')}">
+        ${isMine ? '' : (isResonaAi ? renderResonaAvatar('Resona') : renderAvatar(sender, sender.displayName))}
         <div class="chat-dock-message-stack">
-          ${isMine ? '' : `<strong>${escapeHtml(sender.displayName)}</strong>`}
+          ${isMine ? '' : `<strong>${escapeHtml(sender.displayName)}${isResonaAi ? '<span class="chat-dock-ai-label">AI</span>' : ''}</strong>`}
           <div class="chat-dock-bubble">${renderMessageBody(message)}</div>
           <time>${escapeHtml(getMessageTime(message.createdAt))}</time>
         </div>
@@ -526,8 +560,13 @@ function renderSupportHeaderActions() {
 
 function dockPanelStyle() {
   const size = normalizeDockSize(dockState.size)
-  if (!size) return ''
-  return ` style="--chat-dock-width:${size.width}px; --chat-dock-height:${size.height}px;"`
+  const parts = []
+  if (size) {
+    parts.push(`--chat-dock-width:${size.width}px`)
+    parts.push(`--chat-dock-height:${size.height}px`)
+  }
+  if (isResonaThread() && resonaBackgroundURL) parts.push(`--resona-chat-background:url('${escapeHtml(resonaBackgroundURL)}')`)
+  return parts.length ? ` style="${parts.join('; ')};"` : ''
 }
 
 function renderResizeHandles() {
@@ -599,7 +638,7 @@ function renderDock() {
     : renderAvatar(activeThread || { title }, title)
 
   root.innerHTML = `
-    <section class="chat-dock-panel" role="dialog" aria-label="${escapeHtml(title)} chat dock" aria-live="polite"${dockPanelStyle()}>
+    <section class="chat-dock-panel ${isResonaThread() ? 'is-resona-chat' : ''}" role="dialog" aria-label="${escapeHtml(title)} chat dock" aria-live="polite"${dockPanelStyle()}>
       ${renderResizeHandles()}
       <header class="chat-dock-header">
         ${headerAvatar}
@@ -1033,6 +1072,7 @@ export function initChatDock(options = {}) {
   shellSnapshot = getShellState()
   dockState = readStoredState()
   loadResonaAvatar()
+  loadResonaBackground()
 
   root = document.querySelector('[data-chat-dock-root]')
   if (!root) {

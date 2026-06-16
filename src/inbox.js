@@ -21,6 +21,7 @@ import {
   subscribeToBlockedUsers,
   restoreThreadForUser,
   refreshResonaThread,
+  reportResonaMessage,
   unblockUser,
   deleteThreadForUser,
   hydrateThreadFromSourceIfNeeded,
@@ -49,6 +50,7 @@ import {
   subscribeToTypingState,
   setThreadPinnedForUser,
   setThreadResonaAgent,
+  setResonaMessageFeedback,
   updateThreadDetails
 } from './data/inboxService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -98,6 +100,9 @@ import { acceptProductGift, denyProductGift, listIncomingProductGifts } from './
 const app = document.querySelector('#app')
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
+const RESONA_BACKGROUND_PATH = 'assets/profilePictures/aiSupport/resonaBackground.png'
+const RESONA_BACKGROUND_CACHE_KEY = 'melogic_resona_background_v1'
+const RESONA_BACKGROUND_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
 const inboxFilters = [
   { label: 'Messages', path: ROUTES.inboxMessages },
@@ -237,6 +242,11 @@ const appState = {
   resonaThreadId: '',
   resonaAvatarURL: '',
   resonaAvatarRequested: false,
+  resonaBackgroundURL: '',
+  resonaBackgroundRequested: false,
+  resonaFeedbackByMessageId: {},
+  resonaActionMenu: null,
+  resonaSpeakingMessageId: '',
   openingResonaThread: false,
   messagesByThreadId: {},
   messageSnapshotVersionByThreadId: {},
@@ -882,7 +892,7 @@ function describeAttachmentType(fileOrAttachment = {}) {
 function summarizeThreadPreview(thread) {
   if (!thread) return 'No messages yet.'
   if (isResonaThread(thread) && !thread.lastMessageText && !thread.lastMessageAt) {
-    return 'Ask questions, get support, or request a live agent.'
+    return 'Ask me anything'
   }
   const lastMessageType = String(thread.lastMessageType || 'text')
   const attachmentCount = Number(thread.lastMessageAttachmentCount || 0)
@@ -981,6 +991,14 @@ function isResonaThread(thread = null) {
   return Boolean(thread && thread.type === 'agent' && thread.agentId === RESONA_AGENT_ID)
 }
 
+function isResonaAiMessage(message = null) {
+  return Boolean(message && message.senderType === 'ai' && message.agentId === RESONA_AGENT_ID)
+}
+
+function resonaMessageStateKey(threadId = '', messageId = '') {
+  return `${threadId}:${messageId}`
+}
+
 function hasResonaAgent(thread = null) {
   return Boolean(thread?.agentParticipants?.resona?.active === true)
 }
@@ -997,7 +1015,7 @@ function resonaThreadPlaceholder() {
     title: 'Resona',
     imagePath: RESONA_AVATAR_PATH,
     imageURL: appState.resonaAvatarURL || '',
-    subtitle: 'Ask questions, get support, or request a live agent.',
+    subtitle: 'Ask me anything',
     lastMessageText: '',
     lastMessagePreview: '',
     status: 'ai_active',
@@ -1026,6 +1044,23 @@ function getResonaDisplayThread() {
   }
 }
 
+function resonaMessageActionsMarkup(thread, message) {
+  if (!isResonaAiMessage(message)) return ''
+  const stateKey = resonaMessageStateKey(thread.id, message.id)
+  const feedback = appState.resonaFeedbackByMessageId[stateKey] || ''
+  const ttsSupported = typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined'
+  const speaking = appState.resonaSpeakingMessageId === stateKey
+  return `
+    <div class="resona-message-actions" data-resona-message-actions>
+      <button type="button" class="${feedback === 'like' ? 'is-active' : ''}" data-resona-feedback="${escapeHtml(thread.id)}:${escapeHtml(message.id)}:like" aria-label="Like Resona response" title="Like">${iconSvg('thumbsUp')}</button>
+      <button type="button" class="${feedback === 'dislike' ? 'is-active' : ''}" data-resona-feedback="${escapeHtml(thread.id)}:${escapeHtml(message.id)}:dislike" aria-label="Dislike Resona response" title="Dislike">${iconSvg('thumbsDown')}</button>
+      <button type="button" data-resona-copy="${escapeHtml(thread.id)}:${escapeHtml(message.id)}" aria-label="Copy Resona response" title="Copy">${iconSvg('copy')}</button>
+      <button type="button" class="${speaking ? 'is-active' : ''}" data-resona-speak="${escapeHtml(thread.id)}:${escapeHtml(message.id)}" aria-label="${speaking ? 'Stop reading response' : 'Read response aloud'}" title="${ttsSupported ? (speaking ? 'Stop' : 'Read aloud') : 'Text-to-speech unavailable in this browser'}" ${ttsSupported ? '' : 'disabled'}>${iconSvg('volume2')}</button>
+      <button type="button" data-resona-message-menu="${escapeHtml(thread.id)}:${escapeHtml(message.id)}" aria-label="More Resona response actions" title="More">${iconSvg('moreVertical')}</button>
+    </div>
+  `
+}
+
 function getThreadParticipants(threadId) {
   return appState.participantsByThreadId[threadId] || []
 }
@@ -1042,6 +1077,43 @@ function loadResonaAvatar() {
     })
     .catch(() => {
       appState.resonaAvatarURL = ''
+    })
+}
+
+function readCachedResonaBackground() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(RESONA_BACKGROUND_CACHE_KEY) || '{}')
+    if (
+      cached?.path === RESONA_BACKGROUND_PATH
+      && cached.url
+      && Date.now() - Number(cached.cachedAt || 0) < RESONA_BACKGROUND_CACHE_TTL_MS
+    ) {
+      return cached.url
+    }
+  } catch {
+    localStorage.removeItem(RESONA_BACKGROUND_CACHE_KEY)
+  }
+  return ''
+}
+
+function loadResonaBackground() {
+  if (appState.resonaBackgroundRequested || appState.resonaBackgroundURL || !storage) return
+  const cached = readCachedResonaBackground()
+  if (cached) appState.resonaBackgroundURL = cached
+  appState.resonaBackgroundRequested = true
+  getDownloadURL(ref(storage, RESONA_BACKGROUND_PATH))
+    .then((url) => {
+      if (!url) return
+      appState.resonaBackgroundURL = url
+      localStorage.setItem(RESONA_BACKGROUND_CACHE_KEY, JSON.stringify({
+        path: RESONA_BACKGROUND_PATH,
+        url,
+        cachedAt: Date.now()
+      }))
+      renderSelectedConversation({ reason: 'state-update' })
+    })
+    .catch(() => {
+      if (!cached) appState.resonaBackgroundURL = ''
     })
 }
 
@@ -2015,6 +2087,14 @@ function groupMessages(messages = []) {
   let previousStamp = 0
 
   messages.forEach((message) => {
+    if (message.senderType === 'system') {
+      groups.push({
+        kind: 'system',
+        id: `system-${message.renderKey || message.clientMessageId || message.id}`,
+        message
+      })
+      return
+    }
     const createdAt = message.createdAt || ''
     const dateKey = createdAt ? new Date(createdAt).toDateString() : 'unknown'
     const createdStamp = createdAt ? new Date(createdAt).getTime() : 0
@@ -2233,6 +2313,8 @@ function getMessageRenderSignature(thread, messages = getRenderableMessages(thre
     participants: getThreadParticipants(thread.id),
     profiles,
     reactions: appState.reactionsByThreadId[thread.id] || {},
+    resonaFeedback: appState.resonaFeedbackByMessageId,
+    resonaSpeakingMessageId: appState.resonaSpeakingMessageId,
     editingMessageId: appState.editingMessageByThreadId[thread.id] || '',
     editDrafts: appState.editDraftByMessageId,
     revealedBlockedMessages: appState.revealBlockedMessageIdsByThreadId[thread.id] || []
@@ -2263,11 +2345,15 @@ function getMessageGroupsMarkup(thread, {
 } = {}) {
   if (!messages.length) {
     const isPreparing = Boolean(appState.preparingThreadIds[thread.id])
+    const emptyTitle = isResonaThread(thread) ? 'Ask Resona anything.' : 'No messages yet.'
+    const emptyBody = isResonaThread(thread)
+      ? 'Ask Resona anything about Melogic, your projects, or support.'
+      : 'Start this conversation with your first message.'
     return `
       <section class="message-list message-list-empty" data-message-list data-message-render-signature="${escapeHtml(renderSignature)}">
         <div class="inbox-empty-panel inbox-empty-panel-inline">
-          <h3>${isPreparing ? 'Preparing conversation...' : 'No messages yet.'}</h3>
-          <p>${isPreparing ? 'Confirming your membership before messages can be sent.' : 'Start this conversation with your first message.'}</p>
+          <h3>${isPreparing ? 'Preparing conversation...' : escapeHtml(emptyTitle)}</h3>
+          <p>${isPreparing ? 'Confirming your membership before messages can be sent.' : escapeHtml(emptyBody)}</p>
         </div>
       </section>
     `
@@ -2285,6 +2371,11 @@ function getMessageGroupsMarkup(thread, {
     .map((entry, index) => {
       if (entry.kind === 'separator') {
         return `<p class="message-date-separator"><span>${escapeHtml(entry.label)}</span></p>`
+      }
+      if (entry.kind === 'system') {
+        const body = entry.message?.body || ''
+        if (/^Resona joined the chat\.?$/i.test(body.trim())) return ''
+        return `<p class="message-service-pill" data-message-id="${escapeHtml(entry.message?.id || '')}"><span>${escapeHtml(body || 'System update')}</span></p>`
       }
 
       const isSelf = entry.senderId === appState.user?.uid
@@ -2377,6 +2468,7 @@ function getMessageGroupsMarkup(thread, {
               ${reactionPills ? `<div class="message-reaction-row">${reactionPills}</div>` : ''}
               ${editedMarker}
             </article>
+            ${resonaMessageActionsMarkup(thread, message)}
           `
         })
         .join('')
@@ -2453,9 +2545,12 @@ function getConversationBodyMarkup({
       </div>
     `
     : ''
+  const resonaBackgroundStyle = isResonaThread(thread) && appState.resonaBackgroundURL
+    ? ` style="--resona-chat-background:url('${escapeHtml(appState.resonaBackgroundURL)}')"`
+    : ''
 
   return `
-    <div class="conversation-stack">
+    <div class="conversation-stack ${isResonaThread(thread) ? 'is-resona-chat' : ''}"${resonaBackgroundStyle}>
       ${reuseMessageList
         ? '<div data-message-list-slot></div>'
         : getMessageGroupsMarkup(thread, {
@@ -2536,7 +2631,7 @@ function getMessagesThreadListMarkup() {
             <span>${escapeHtml(formatThreadTimestamp(resonaThread.lastMessageAt || resonaThread.updatedAt || resonaThread.createdAt))}</span>
           </div>
           <div class="thread-preview-row">
-            <p>${escapeHtml(summarizeThreadPreview(resonaThread) || 'Ask questions, get support, or request a live agent.')}</p>
+            <p>${escapeHtml(summarizeThreadPreview(resonaThread) || 'Ask me anything')}</p>
             <small class="thread-badge thread-badge-agent">Agent</small>
           </div>
         </div>
@@ -2694,6 +2789,7 @@ async function selectThread(threadId = '', { forceBottom = true } = {}) {
   if (activeTypingThreadId && activeTypingThreadId !== threadId) clearTypingForThread(activeTypingThreadId)
   if (appState.selectedThreadId && appState.selectedThreadId !== threadId) {
     delete appState.replyDraftByThreadId[appState.selectedThreadId]
+    stopResonaSpeech({ render: false })
   }
   appState.threadActionMenu = null
   appState.threadConfirmModal = null
@@ -2755,6 +2851,94 @@ async function ensureResonaThread({ select = false } = {}) {
     appState.openingResonaThread = false
   }
   return null
+}
+
+function findThreadMessage(threadId = '', messageId = '') {
+  return (appState.messagesByThreadId[threadId] || []).find((message) => message.id === messageId) || null
+}
+
+function parseResonaActionKey(value = '') {
+  const [threadId, messageId, action = ''] = String(value || '').split(':')
+  return { threadId, messageId, action }
+}
+
+async function handleResonaFeedback(value = '') {
+  const { threadId, messageId, action } = parseResonaActionKey(value)
+  if (!threadId || !messageId || !['like', 'dislike'].includes(action)) return
+  const stateKey = resonaMessageStateKey(threadId, messageId)
+  const current = appState.resonaFeedbackByMessageId[stateKey] || ''
+  const nextValue = current === action ? 'clear' : action
+  appState.resonaFeedbackByMessageId = {
+    ...appState.resonaFeedbackByMessageId,
+    [stateKey]: nextValue === 'clear' ? '' : nextValue
+  }
+  renderSelectedConversation({ reason: 'state-update' })
+  try {
+    await setResonaMessageFeedback({ threadId, messageId, value: nextValue })
+  } catch (error) {
+    appState.resonaFeedbackByMessageId = { ...appState.resonaFeedbackByMessageId, [stateKey]: current }
+    appState.errorMessage = error?.message || 'Could not save feedback.'
+    renderSelectedConversation({ reason: 'state-update' })
+  }
+}
+
+async function handleResonaCopy(value = '') {
+  const { threadId, messageId } = parseResonaActionKey(value)
+  const message = findThreadMessage(threadId, messageId)
+  if (!message?.body) return
+  try {
+    await navigator.clipboard.writeText(message.body)
+    appState.errorMessage = 'Copied Resona response.'
+  } catch {
+    appState.errorMessage = 'Could not copy message.'
+  }
+  renderSelectedConversation({ reason: 'state-update' })
+}
+
+function stopResonaSpeech({ render = true } = {}) {
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+  appState.resonaSpeakingMessageId = ''
+  if (render) renderSelectedConversation({ reason: 'state-update' })
+}
+
+function handleResonaSpeak(value = '') {
+  const { threadId, messageId } = parseResonaActionKey(value)
+  const message = findThreadMessage(threadId, messageId)
+  if (!message?.body || !('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') return
+  const stateKey = resonaMessageStateKey(threadId, messageId)
+  if (appState.resonaSpeakingMessageId === stateKey) {
+    stopResonaSpeech()
+    return
+  }
+  window.speechSynthesis.cancel()
+  const utterance = new SpeechSynthesisUtterance(message.body)
+  utterance.onend = () => {
+    if (appState.resonaSpeakingMessageId === stateKey) stopResonaSpeech({ render: true })
+  }
+  utterance.onerror = () => {
+    if (appState.resonaSpeakingMessageId === stateKey) stopResonaSpeech({ render: true })
+  }
+  appState.resonaSpeakingMessageId = stateKey
+  renderSelectedConversation({ reason: 'state-update' })
+  window.speechSynthesis.speak(utterance)
+}
+
+async function handleReportResonaMessage(threadId = '', messageId = '') {
+  if (!threadId || !messageId) return
+  appState.resonaActionMenu = null
+  renderFloatingUi()
+  try {
+    await reportResonaMessage({
+      threadId,
+      messageId,
+      reason: 'Other',
+      description: 'Reported from Resona message actions.'
+    })
+    appState.errorMessage = 'Resona message reported.'
+  } catch (error) {
+    appState.errorMessage = error?.message || 'Could not report message.'
+  }
+  renderSelectedConversation({ reason: 'state-update' })
 }
 
 function getThreadConfirmModalMarkup() {
@@ -4188,6 +4372,19 @@ function getContextMenuMarkup() {
   `
 }
 
+function getResonaActionMenuMarkup() {
+  const menu = appState.resonaActionMenu
+  if (!menu) return ''
+  const position = clampMenuPosition(menu.x, menu.y, 210, 120)
+  return `
+    <div class="message-context-backdrop" data-resona-menu-close>
+      <div class="message-context-menu resona-action-menu" role="menu" aria-label="Resona message actions" style="left:${position.x}px;top:${position.y}px;">
+        <button type="button" data-resona-menu-action="report" data-thread-id="${escapeHtml(menu.threadId)}" data-message-id="${escapeHtml(menu.messageId)}">Report message</button>
+      </div>
+    </div>
+  `
+}
+
 function getImagePreviewModalMarkup() {
   const modal = appState.imagePreviewModal
   if (!modal?.url) return ''
@@ -4256,7 +4453,7 @@ function getAccountCallOverlayMarkup() {
 }
 
 function renderFloatingUi() {
-  floatingRoot.innerHTML = `${getNotificationActionMenuMarkup()}${getContextMenuMarkup()}${getReactionDetailModalMarkup()}${getImagePreviewModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}${getAccountCallOverlayMarkup()}`
+  floatingRoot.innerHTML = `${getNotificationActionMenuMarkup()}${getContextMenuMarkup()}${getResonaActionMenuMarkup()}${getReactionDetailModalMarkup()}${getImagePreviewModalMarkup()}${getThreadActionMenuMarkup()}${getThreadConfirmModalMarkup()}${getAccountCallOverlayMarkup()}`
 }
 
 function closeNotificationActionMenu({ restoreFocus = false } = {}) {
@@ -4854,6 +5051,26 @@ function setupFloatingEventDelegates() {
       if (action === 'pin' || action === 'unpin' || action === 'delete' || action === 'block-contact' || action === 'unblock-contact') {
         openThreadConfirmModal(action, threadId)
       }
+      return
+    }
+
+    const resonaMenuAction = event.target.closest('[data-resona-menu-action]')
+    if (resonaMenuAction) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (resonaMenuAction.getAttribute('data-resona-menu-action') === 'report') {
+        await handleReportResonaMessage(
+          resonaMenuAction.getAttribute('data-thread-id') || '',
+          resonaMenuAction.getAttribute('data-message-id') || ''
+        )
+      }
+      return
+    }
+
+    const resonaMenuClose = event.target.closest('[data-resona-menu-close]')
+    if (resonaMenuClose && event.target.hasAttribute('data-resona-menu-close')) {
+      appState.resonaActionMenu = null
+      renderFloatingUi()
       return
     }
 
@@ -5776,6 +5993,28 @@ function bindSharedEvents(scope = inboxRoot) {
     })
   })
 
+  scope.querySelectorAll('[data-resona-feedback]').forEach((button) => {
+    button.addEventListener('click', () => handleResonaFeedback(button.getAttribute('data-resona-feedback') || ''))
+  })
+
+  scope.querySelectorAll('[data-resona-copy]').forEach((button) => {
+    button.addEventListener('click', () => handleResonaCopy(button.getAttribute('data-resona-copy') || ''))
+  })
+
+  scope.querySelectorAll('[data-resona-speak]').forEach((button) => {
+    button.addEventListener('click', () => handleResonaSpeak(button.getAttribute('data-resona-speak') || ''))
+  })
+
+  scope.querySelectorAll('[data-resona-message-menu]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const { threadId, messageId } = parseResonaActionKey(button.getAttribute('data-resona-message-menu') || '')
+      appState.resonaActionMenu = { threadId, messageId, x: event.clientX, y: event.clientY }
+      renderFloatingUi()
+    })
+  })
+
   scope.querySelectorAll('[data-open-inbox-pin]').forEach((button) => {
     button.addEventListener('click', async () => {
       await openInboxPin(button.getAttribute('data-open-inbox-pin') || '')
@@ -6639,6 +6878,7 @@ function startThreadSubscription() {
   appState.isRepairingInbox = false
   renderSignedInState()
   loadResonaAvatar()
+  loadResonaBackground()
   ensureResonaThread({ select: false }).catch(() => {})
 
   appState.threadUnsubscribe()
@@ -6983,6 +7223,11 @@ function handleGlobalKeydown(event) {
   }
   if (event.key === 'Escape' && appState.messageContextMenu) {
     clearFloatingOverlays()
+    renderFloatingUi()
+    return
+  }
+  if (event.key === 'Escape' && appState.resonaActionMenu) {
+    appState.resonaActionMenu = null
     renderFloatingUi()
     return
   }

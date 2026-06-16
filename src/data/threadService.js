@@ -370,6 +370,27 @@ export async function setThreadResonaAgent({ threadId = '', active }) {
   }
 }
 
+export async function setResonaMessageFeedback({ threadId = '', messageId = '', value = '' } = {}) {
+  const callable = httpsCallable(functions, 'setResonaMessageFeedback')
+  const result = await callable({
+    threadId: String(threadId || '').trim(),
+    messageId: String(messageId || '').trim(),
+    value: String(value || '').trim()
+  })
+  return result?.data || { ok: false }
+}
+
+export async function reportResonaMessage({ threadId = '', messageId = '', reason = 'Other', description = '' } = {}) {
+  const callable = httpsCallable(functions, 'reportResonaMessage')
+  const result = await callable({
+    threadId: String(threadId || '').trim(),
+    messageId: String(messageId || '').trim(),
+    reason: String(reason || 'Other').trim(),
+    description: String(description || '').trim()
+  })
+  return result?.data || { ok: false }
+}
+
 export function subscribeToThread(threadId, callback, onError) {
   if (!db || !threadId || typeof callback !== 'function') return () => {}
   return onSnapshot(doc(db, 'threads', threadId), (docSnap) => {
