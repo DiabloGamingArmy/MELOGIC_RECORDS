@@ -1,4 +1,4 @@
 import { getFunctions } from 'firebase/functions'
 import { app } from './firebaseConfig'
 
-export const functions = getFunctions(app)
+export const functions = getFunctions(app, 'us-central1')
