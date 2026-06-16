@@ -604,6 +604,19 @@ function humanLabel(value = '') {
     ai_error: 'AI Error',
     ai_failed: 'AI Error',
     failed_ai_auth: 'AI Auth Error',
+    ai_active: 'AI Active',
+    waiting_for_agent: 'Waiting for Agent',
+    assigned: 'Assigned',
+    resolved: 'Resolved',
+    human_requested: 'Human Requested',
+    refund_or_payment: 'Refund or Payment',
+    missing_paid_purchase: 'Missing Paid Purchase',
+    library_entitlement_issue: 'Library Access Issue',
+    account_or_security_change: 'Account or Security Change',
+    legal_tax_financial: 'Legal/Tax/Financial',
+    product_grant_request: 'Product Grant Request',
+    ai_unavailable: 'AI Unavailable',
+    low_confidence: 'Low Confidence',
     marketplaceReviewer: 'Marketplace Reviewer',
     listingEditor: 'Listing Editor',
     emailSend: 'Email Send'
@@ -4113,6 +4126,7 @@ function contactSupportThreadsPanel() {
         <div class="admin-contact-tabs is-subtabs" aria-label="Support thread filters">
           ${[
             ['active', 'Active'],
+            ['ai_active', 'AI Active'],
             ['waiting_for_agent', 'Waiting'],
             ['assigned', 'Assigned'],
             ['resolved', 'Resolved'],
@@ -4183,6 +4197,7 @@ function supportThreadListCard(thread = {}) {
           <span class="admin-pill status-${statusClass(status)}">${escapeHtml(humanLabel(status))}</span>
         </span>
         <small>${escapeHtml(supportThreadRequesterLabel(thread))}</small>
+        ${thread.aiEscalationReason ? `<small>Escalation: ${escapeHtml(humanLabel(thread.aiEscalationReason))}</small>` : ''}
         <span class="admin-support-form-preview">${escapeHtml(preview)}</span>
         <span class="admin-support-form-time">${escapeHtml(thread.updatedAt ? formatDate(thread.updatedAt) : 'Not dated')}</span>
       </span>
@@ -4212,6 +4227,7 @@ function supportThreadDetail(thread = {}) {
         <div class="admin-field"><dt>Requester</dt><dd>${escapeHtml(supportThreadRequesterLabel(thread))}</dd></div>
         <div class="admin-field"><dt>Email</dt><dd>${requester.email ? `<a href="mailto:${escapeHtml(requester.email)}">${escapeHtml(requester.email)}</a>` : '<span class="admin-muted">Not provided</span>'}</dd></div>
         <div class="admin-field"><dt>Assigned agent</dt><dd>${escapeHtml(assigned.displayName || assigned.username || thread.assignedAgentUid || 'Unassigned')}</dd></div>
+        <div class="admin-field"><dt>AI escalation</dt><dd>${thread.aiEscalationReason ? escapeHtml(humanLabel(thread.aiEscalationReason)) : '<span class="admin-muted">None</span>'}</dd></div>
         <div class="admin-field"><dt>Updated</dt><dd>${escapeHtml(thread.updatedAt ? formatDate(thread.updatedAt) : 'Not set')}</dd></div>
       </dl>
 
@@ -4244,10 +4260,16 @@ function supportThreadDetail(thread = {}) {
 
 function supportThreadMessageBubble(message = {}) {
   const type = message.senderType || 'system'
-  const label = type === 'agent' ? 'Melogic Support' : type === 'user' ? 'Requester' : 'System'
+  const label = type === 'agent'
+    ? 'Melogic Support'
+    : type === 'user'
+      ? 'Requester'
+      : type === 'ai'
+        ? 'Melogic AI Support'
+        : 'System'
   return `
     <div class="admin-support-thread-message is-${escapeHtml(type)}">
-      <strong>${escapeHtml(label)}</strong>
+      <strong>${escapeHtml(label)}${type === 'ai' ? '<span class="admin-ai-label">AI</span>' : ''}</strong>
       <p>${escapeHtml(message.body || '')}</p>
       <small>${escapeHtml(message.createdAt ? formatDate(message.createdAt) : 'Not dated')}</small>
     </div>
@@ -7266,7 +7288,7 @@ async function loadSupportThreads({ silent = false } = {}) {
 
 async function startSupportThreadsWatch() {
   const requestedFilter = new URLSearchParams(window.location.search).get('threadFilter') || ''
-  if (['active', 'waiting_for_agent', 'assigned', 'resolved', 'all'].includes(requestedFilter) && state.contact.supportThreads.filter !== requestedFilter) {
+  if (['active', 'ai_active', 'waiting_for_agent', 'assigned', 'resolved', 'all'].includes(requestedFilter) && state.contact.supportThreads.filter !== requestedFilter) {
     state.contact.supportThreads.filter = requestedFilter
     state.contact.supportThreads.loaded = false
     state.contact.supportThreads.items = []

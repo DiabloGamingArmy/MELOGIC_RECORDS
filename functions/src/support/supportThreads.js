@@ -1,10 +1,18 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
+const { onDocumentCreated } = require('firebase-functions/v2/firestore')
 const { FieldValue, getFirestore } = require('firebase-admin/firestore')
 const { assertPermission, cleanString, getRequesterClaims } = require('../admin/adminAuth')
+const {
+  DEFAULT_SUPPORT_KNOWLEDGE,
+  SUPPORT_AI_API_KEY,
+  SUPPORT_AI_MODEL,
+  detectEscalationNeed,
+  generateSupportReply
+} = require('./aiSupportAgent')
 
 const db = getFirestore()
-const ACTIVE_STATUSES = new Set(['open', 'waiting_for_agent', 'assigned'])
-const STATUS_VALUES = new Set(['open', 'waiting_for_agent', 'assigned', 'resolved'])
+const ACTIVE_STATUSES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned'])
+const STATUS_VALUES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned', 'resolved'])
 const MAX_BODY_LENGTH = 1200
 
 function assertSignedIn(request = {}) {
@@ -64,6 +72,10 @@ function serializeThread(docSnap) {
     lastMessagePreview: data.lastMessagePreview || '',
     resolvedAt: serializeTimestamp(data.resolvedAt),
     resolvedBy: data.resolvedBy || '',
+    humanRequested: data.humanRequested === true,
+    aiRoutedToAgent: data.aiRoutedToAgent === true,
+    aiEscalationReason: data.aiEscalationReason || '',
+    aiSuggestedCategory: data.aiSuggestedCategory || '',
     requester: data.requester || null,
     assignedAgent: data.assignedAgent || null
   }
@@ -139,6 +151,239 @@ async function addSystemMessage(transaction, threadRef, body = '', metadata = {}
   })
 }
 
+function sanitizeSafeContext(raw = {}) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  return {
+    route: cleanString(source.route || '', 200),
+    pageTitle: cleanString(source.pageTitle || '', 200),
+    productId: cleanString(source.productId || '', 180),
+    productTitle: cleanString(source.productTitle || '', 200)
+  }
+}
+
+async function loadSupportKnowledgeSnippets() {
+  try {
+    const snapshot = await db.collection('supportKnowledge')
+      .where('active', '==', true)
+      .where('visibility', '==', 'public')
+      .limit(12)
+      .get()
+    const docs = snapshot.docs.map((docSnap) => {
+      const data = docSnap.data() || {}
+      return {
+        id: docSnap.id,
+        title: cleanString(data.title || '', 180),
+        category: cleanString(data.category || '', 80),
+        body: cleanString(data.body || '', 1200),
+        tags: Array.isArray(data.tags) ? data.tags.map((tag) => cleanString(tag, 60)).filter(Boolean).slice(0, 12) : []
+      }
+    }).filter((item) => item.title && item.body)
+    return docs.length ? docs : DEFAULT_SUPPORT_KNOWLEDGE
+  } catch {
+    return DEFAULT_SUPPORT_KNOWLEDGE
+  }
+}
+
+async function loadRecentSupportMessages(threadRef) {
+  const snapshot = await threadRef.collection('messages').orderBy('createdAt', 'desc').limit(12).get()
+  return snapshot.docs.map(serializeMessage).reverse()
+}
+
+async function hasSystemEvent(threadRef, eventName = '') {
+  if (!eventName) return false
+  const snapshot = await threadRef.collection('messages').where('metadata.event', '==', eventName).limit(1).get()
+  return !snapshot.empty
+}
+
+async function markAiHandledStart(threadRef, messageId = '') {
+  const messageRef = threadRef.collection('messages').doc(messageId)
+  return db.runTransaction(async (transaction) => {
+    const [threadSnap, messageSnap] = await Promise.all([
+      transaction.get(threadRef),
+      transaction.get(messageRef)
+    ])
+    if (!threadSnap.exists || !messageSnap.exists) return null
+    const thread = threadSnap.data() || {}
+    const message = messageSnap.data() || {}
+    const metadata = message.metadata && typeof message.metadata === 'object' ? message.metadata : {}
+    if (metadata.aiHandledAt || metadata.aiHandlingStartedAt) return null
+    if (message.senderType !== 'user' || !cleanString(message.body || '', MAX_BODY_LENGTH)) return null
+    if (thread.status === 'resolved' || thread.status === 'assigned' || thread.humanRequested === true || thread.assignedAgentUid) return null
+    if (!['open', 'ai_active'].includes(thread.status || 'open')) return null
+    transaction.set(messageRef, {
+      metadata: {
+        ...metadata,
+        aiHandlingStartedAt: FieldValue.serverTimestamp()
+      }
+    }, { merge: true })
+    if (thread.status === 'open') {
+      transaction.set(threadRef, {
+        status: 'ai_active',
+        updatedAt: FieldValue.serverTimestamp()
+      }, { merge: true })
+    }
+    return { thread, message }
+  })
+}
+
+async function completeAiHandling({ threadRef, messageId = '', userMessage = {}, aiResult = {}, recentMessages = [] } = {}) {
+  const messageRef = threadRef.collection('messages').doc(messageId)
+  const aiMessageRef = threadRef.collection('messages').doc()
+  const shouldEscalate = aiResult.shouldEscalate === true
+  const aiUnavailable = aiResult.aiAvailable === false
+  const replyText = cleanString(aiResult.replyText || '', MAX_BODY_LENGTH)
+  const escalationReason = cleanString(aiResult.escalationReason || '', 160)
+  const suggestedCategory = cleanString(aiResult.suggestedCategory || '', 80)
+
+  await db.runTransaction(async (transaction) => {
+    const [threadSnap, messageSnap] = await Promise.all([
+      transaction.get(threadRef),
+      transaction.get(messageRef)
+    ])
+    if (!threadSnap.exists || !messageSnap.exists) return
+    const thread = threadSnap.data() || {}
+    const message = messageSnap.data() || {}
+    const metadata = message.metadata && typeof message.metadata === 'object' ? message.metadata : {}
+    if (metadata.aiHandledAt) return
+    if (thread.status === 'resolved' || thread.status === 'assigned' || thread.assignedAgentUid) {
+      transaction.set(messageRef, {
+        metadata: {
+          ...metadata,
+          aiHandledAt: FieldValue.serverTimestamp(),
+          aiSkippedReason: 'thread_no_longer_eligible'
+        }
+      }, { merge: true })
+      return
+    }
+
+    const threadUpdate = {
+      updatedAt: FieldValue.serverTimestamp(),
+      aiLastHandledMessageId: messageId,
+      aiLastHandledAt: FieldValue.serverTimestamp(),
+      aiSuggestedCategory: suggestedCategory || thread.aiSuggestedCategory || ''
+    }
+
+    if (replyText && !aiUnavailable) {
+      transaction.set(aiMessageRef, {
+        senderUid: 'melogic-ai-support',
+        senderType: 'ai',
+        body: replyText,
+        createdAt: FieldValue.serverTimestamp(),
+        metadata: {
+          model: cleanString(aiResult.modelUsed || '', 120),
+          confidence: Number(aiResult.confidence || 0),
+          shouldEscalate,
+          escalationReason,
+          suggestedCategory,
+          handledForMessageId: messageId
+        }
+      })
+      threadUpdate.lastMessageAt = FieldValue.serverTimestamp()
+      threadUpdate.lastMessagePreview = replyText
+    }
+
+    if (shouldEscalate || aiUnavailable) {
+      threadUpdate.status = 'waiting_for_agent'
+      threadUpdate.humanRequested = true
+      threadUpdate.aiRoutedToAgent = true
+      threadUpdate.aiEscalationReason = escalationReason || (aiUnavailable ? 'ai_unavailable' : 'ai_escalated')
+      threadUpdate.lastMessageAt = FieldValue.serverTimestamp()
+      threadUpdate.lastMessagePreview = aiUnavailable
+        ? 'Support is being routed to a live agent.'
+        : 'AI support routed this to a live agent.'
+    } else {
+      threadUpdate.status = 'ai_active'
+    }
+
+    transaction.set(messageRef, {
+      metadata: {
+        ...metadata,
+        aiHandledAt: FieldValue.serverTimestamp(),
+        aiReplyMessageId: replyText && !aiUnavailable ? aiMessageRef.id : '',
+        aiEscalated: shouldEscalate || aiUnavailable,
+        aiEscalationReason: threadUpdate.aiEscalationReason || ''
+      }
+    }, { merge: true })
+    transaction.set(threadRef, threadUpdate, { merge: true })
+  })
+
+  if (shouldEscalate || aiUnavailable) {
+    const routedEvent = aiUnavailable ? 'ai_unavailable_routed' : 'ai_routed_to_agent'
+    if (!(await hasSystemEvent(threadRef, routedEvent))) {
+      const body = aiUnavailable
+        ? 'Support is being routed to a live agent.'
+        : 'AI support routed this to a live agent.'
+      await threadRef.collection('messages').add({
+        senderUid: '',
+        senderType: 'system',
+        body,
+        createdAt: FieldValue.serverTimestamp(),
+        metadata: {
+          event: routedEvent,
+          escalationReason: escalationReason || (aiUnavailable ? 'ai_unavailable' : 'ai_escalated'),
+          handledForMessageId: messageId
+        }
+      })
+    }
+  }
+}
+
+async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', apiKey = '', model = '' } = {}) {
+  const threadRef = db.collection('supportThreads').doc(threadId)
+  const locked = await markAiHandledStart(threadRef, messageId)
+  if (!locked) return { ok: true, skipped: true }
+
+  const threadSnap = await threadRef.get()
+  if (!threadSnap.exists) return { ok: false, skipped: true }
+  const thread = threadSnap.data() || {}
+  const messageSnap = await threadRef.collection('messages').doc(messageId).get()
+  const userMessage = messageSnap.data() || locked.message || {}
+  const messageText = cleanString(userMessage.body || '', MAX_BODY_LENGTH)
+  const recentMessages = await loadRecentSupportMessages(threadRef)
+  const knowledgeSnippets = await loadSupportKnowledgeSnippets()
+  const requester = thread.requester && typeof thread.requester === 'object' ? thread.requester : {}
+  const safePageContext = sanitizeSafeContext(userMessage.metadata?.safePageContext || {})
+
+  const aiJoinedAlready = await hasSystemEvent(threadRef, 'ai_joined')
+  if (!aiJoinedAlready) {
+    await threadRef.collection('messages').add({
+      senderUid: '',
+      senderType: 'system',
+      body: 'AI support joined the chat.',
+      createdAt: FieldValue.serverTimestamp(),
+      metadata: { event: 'ai_joined' }
+    })
+  }
+
+  const directEscalation = detectEscalationNeed(messageText)
+  const aiResult = directEscalation.shouldEscalate
+    ? {
+        replyText: 'I’m routing this to a live Melogic support agent so they can review the details safely.',
+        confidence: 1,
+        shouldEscalate: true,
+        escalationReason: directEscalation.reason,
+        suggestedCategory: directEscalation.reason,
+        aiAvailable: true,
+        modelUsed: 'guardrail'
+      }
+    : await generateSupportReply({
+        apiKey,
+        model,
+        thread,
+        userMessage: messageText,
+        recentMessages,
+        knowledgeSnippets,
+        safeUserContext: {
+          displayName: requester.displayName || requester.username || '',
+          role: 'user'
+        },
+        safePageContext
+      })
+
+  await completeAiHandling({ threadRef, messageId, userMessage, aiResult, recentMessages })
+  return { ok: true, skipped: false, escalated: aiResult.shouldEscalate === true || aiResult.aiAvailable === false }
+}
+
 const createSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
   const uid = assertSignedIn(request)
   const initialMessage = cleanString(request.data?.initialMessage || '', MAX_BODY_LENGTH + 1)
@@ -156,7 +401,7 @@ const createSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asy
   const requester = await loadProfileSummary(uid)
 
   await db.runTransaction(async (transaction) => {
-    const status = initialMessage ? 'waiting_for_agent' : 'open'
+    const status = 'ai_active'
     transaction.set(threadRef, {
       type: 'support',
       requesterUid: uid,
@@ -167,6 +412,10 @@ const createSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asy
       subject,
       priority,
       requester,
+      humanRequested: false,
+      aiRoutedToAgent: false,
+      aiEscalationReason: '',
+      aiSuggestedCategory: '',
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
@@ -175,6 +424,7 @@ const createSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asy
       resolvedBy: null
     })
     addSystemMessage(transaction, threadRef, 'Support request opened.', { event: 'thread_opened' })
+    addSystemMessage(transaction, threadRef, 'AI support joined the chat.', { event: 'ai_joined' })
     if (initialMessage) {
       transaction.set(threadRef.collection('messages').doc(), {
         senderUid: uid,
@@ -204,11 +454,14 @@ const requestSupportAgent = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asy
     if (thread.status === 'resolved') throw new HttpsError('failed-precondition', 'This support thread is resolved.')
     transaction.set(threadRef, {
       status: thread.assignedAgentUid ? 'assigned' : 'waiting_for_agent',
+      humanRequested: true,
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
       lastMessagePreview: 'Live agent requested.'
     }, { merge: true })
-    addSystemMessage(transaction, threadRef, 'A live agent has been requested.', { event: 'agent_requested' })
+    if (thread.humanRequested !== true) {
+      addSystemMessage(transaction, threadRef, 'A live agent has been requested.', { event: 'agent_requested' })
+    }
   })
 
   return { ok: true, threadId }
@@ -219,10 +472,12 @@ const sendSupportMessage = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asyn
   const staff = isSupportStaff(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
   const body = cleanBody(request.data?.body || '')
+  const safePageContext = sanitizeSafeContext(request.data?.safePageContext || {})
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
 
   const threadRef = db.collection('supportThreads').doc(threadId)
   const messageRef = threadRef.collection('messages').doc()
+  let shouldAiHandle = false
   await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
     if (!snap.exists) throw new HttpsError('not-found', 'Support thread not found.')
@@ -240,8 +495,12 @@ const sendSupportMessage = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asyn
     if (staff) {
       update.assignedAgentUid = thread.assignedAgentUid || uid
       update.status = 'assigned'
+      update.humanRequested = true
     } else if (thread.status === 'open') {
-      update.status = 'waiting_for_agent'
+      update.status = 'ai_active'
+    }
+    if (!staff && ['open', 'ai_active'].includes(thread.status || 'open') && !thread.assignedAgentUid && thread.humanRequested !== true) {
+      shouldAiHandle = true
     }
 
     transaction.set(messageRef, {
@@ -249,12 +508,14 @@ const sendSupportMessage = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asyn
       senderType,
       body,
       createdAt: FieldValue.serverTimestamp(),
-      metadata: {}
+      metadata: {
+        ...(staff ? {} : { safePageContext })
+      }
     })
     transaction.set(threadRef, update, { merge: true })
   })
 
-  return { ok: true, threadId, messageId: messageRef.id }
+  return { ok: true, threadId, messageId: messageRef.id, aiEligible: shouldAiHandle }
 })
 
 const claimSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
@@ -271,6 +532,7 @@ const claimSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asyn
     transaction.set(threadRef, {
       assignedAgentUid: claims.uid,
       status: 'assigned',
+      humanRequested: true,
       participantUids: FieldValue.arrayUnion(claims.uid),
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
@@ -326,6 +588,25 @@ const listSupportThreads = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asyn
   return { ok: true, threads: filtered, total: filtered.length }
 })
 
+const handleSupportAiReply = onDocumentCreated({
+  document: 'supportThreads/{threadId}/messages/{messageId}',
+  secrets: [SUPPORT_AI_API_KEY],
+  timeoutSeconds: 90,
+  memory: '256MiB'
+}, async (event) => {
+  const message = event.data?.data() || {}
+  if (message.senderType !== 'user') return
+  const threadId = cleanString(event.params?.threadId || '', 180)
+  const messageId = cleanString(event.params?.messageId || '', 180)
+  if (!threadId || !messageId) return
+  await handleSupportAiReplyForMessage({
+    threadId,
+    messageId,
+    apiKey: SUPPORT_AI_API_KEY.value(),
+    model: SUPPORT_AI_MODEL.value()
+  })
+})
+
 const listSupportMessages = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
   const uid = assertSignedIn(request)
   const staff = isSupportStaff(request)
@@ -346,5 +627,10 @@ module.exports = {
   resolveSupportThread,
   requestSupportAgent,
   listSupportThreads,
-  listSupportMessages
+  listSupportMessages,
+  handleSupportAiReply,
+  __test: {
+    sanitizeSafeContext,
+    handleSupportAiReplyForMessage
+  }
 }

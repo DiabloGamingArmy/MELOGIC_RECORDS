@@ -93,7 +93,8 @@ const {
   resolveSupportThread,
   requestSupportAgent,
   listSupportThreads,
-  listSupportMessages
+  listSupportMessages,
+  handleSupportAiReply
 } = require('./src/support/supportThreads')
 
 exports.createOrGetDm = createOrGetDm
@@ -203,3 +204,4 @@ exports.resolveSupportThread = resolveSupportThread
 exports.requestSupportAgent = requestSupportAgent
 exports.listSupportThreads = listSupportThreads
 exports.listSupportMessages = listSupportMessages
+exports.handleSupportAiReply = handleSupportAiReply
