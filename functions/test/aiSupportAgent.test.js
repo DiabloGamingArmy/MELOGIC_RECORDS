@@ -15,6 +15,30 @@ test('routes missing paid purchases to live support', () => {
   assert.equal(result.reason, 'missing_paid_purchase')
 })
 
+test('casual personality chat does not escalate', () => {
+  const result = __test.detectEscalationNeed('Tell me a bit about yourself.')
+  assert.equal(result.shouldEscalate, false)
+  assert.equal(result.reason, '')
+})
+
+test('tone requests do not escalate', () => {
+  const result = __test.detectEscalationNeed('Can you use more of a human tone and be less robotic?')
+  assert.equal(result.shouldEscalate, false)
+  assert.equal(result.reason, '')
+})
+
+test('refund issues escalate', () => {
+  const result = __test.detectEscalationNeed('I need a refund for my order.')
+  assert.equal(result.shouldEscalate, true)
+  assert.equal(result.reason, 'refund_or_payment')
+})
+
+test('payout and Stripe issues escalate', () => {
+  const result = __test.detectEscalationNeed('My Stripe Connect payout is missing and onboarding is broken.')
+  assert.equal(result.shouldEscalate, true)
+  assert.equal(result.reason, 'payout_or_stripe')
+})
+
 test('invalid AI secret returns unavailable escalation', async () => {
   const result = await __test.generateSupportReply({
     apiKey: '',

@@ -531,7 +531,8 @@ function renderComposer() {
     <form class="chat-dock-composer" data-chat-dock-form>
       <label class="sr-only" for="chat-dock-input">Message</label>
       <textarea id="chat-dock-input" data-chat-dock-input rows="1" maxlength="1200" placeholder="${disabled ? 'Chat unavailable' : placeholder}" ${disabled ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
-      <button type="submit" aria-label="Send message" ${disabled || !draft.trim() ? 'disabled' : ''}>Send</button>
+      <button type="button" class="chat-dock-attach-button" data-chat-dock-attach aria-label="Add attachment" title="Attachments are coming soon" ${disabled ? 'disabled' : ''}>+</button>
+      <button type="submit" class="chat-dock-send-button" aria-label="Send message" ${disabled || !draft.trim() ? 'disabled' : ''}>Send</button>
     </form>
   `
 }
@@ -553,7 +554,16 @@ function renderSupportHeaderActions() {
       <button type="button" class="chat-dock-header-action is-danger" data-chat-dock-end-support ${canEnd ? '' : 'disabled'}>
         ${endingSupport ? 'Ending...' : 'End Chat'}
       </button>
-      <button type="button" class="chat-dock-header-action is-muted" disabled title="Screen sharing coming soon.">Share Screen</button>
+      <button type="button" class="chat-dock-header-action is-muted" data-site-guidance-start data-site-guidance-thread-id="${escapeHtml(dockState.activeThreadId)}" data-site-guidance-thread-kind="support" data-site-guidance-viewer="resona" ${supportThread?.status === 'resolved' ? 'disabled' : ''} title="Share this Melogic page only.">Share Screen</button>
+    </div>
+  `
+}
+
+function renderThreadHeaderActions() {
+  if (!isResonaThread() || dockState.mode === 'support') return ''
+  return `
+    <div class="chat-dock-support-actions" aria-label="Resona chat actions">
+      <button type="button" class="chat-dock-header-action is-muted" data-site-guidance-start data-site-guidance-thread-id="${escapeHtml(dockState.activeThreadId)}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" title="Share this Melogic page only.">Share Screen</button>
     </div>
   `
 }
@@ -647,6 +657,7 @@ function renderDock() {
           <p>${escapeHtml(subtitle)}</p>
         </div>
         ${renderSupportHeaderActions()}
+        ${renderThreadHeaderActions()}
         <button type="button" data-chat-dock-minimize aria-label="Minimize chat">–</button>
         <button type="button" data-chat-dock-close aria-label="Close chat">×</button>
       </header>

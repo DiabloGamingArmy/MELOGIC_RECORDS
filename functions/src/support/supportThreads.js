@@ -17,6 +17,7 @@ const {
   resolveResonaThread,
   sendResonaSupportMessage
 } = require('./resonaInbox')
+const { loadActiveGuidanceContext } = require('./siteGuidance')
 
 const db = getFirestore()
 const ACTIVE_STATUSES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned'])
@@ -219,9 +220,30 @@ async function addSystemMessage(transaction, threadRef, body = '', metadata = {}
 
 function sanitizeSafeContext(raw = {}) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  const viewport = source.viewport && typeof source.viewport === 'object' ? source.viewport : {}
+  const scroll = source.scroll && typeof source.scroll === 'object' ? source.scroll : {}
   return {
-    route: cleanString(source.route || '', 200),
+    guidanceSessionActive: source.guidanceSessionActive === true,
+    guidanceSessionStatus: cleanString(source.guidanceSessionStatus || '', 40),
+    route: cleanString(source.route || source.currentRoute || '', 200),
+    routeLabel: cleanString(source.routeLabel || '', 120),
     pageTitle: cleanString(source.pageTitle || '', 200),
+    featureArea: cleanString(source.featureArea || '', 120),
+    activeModal: cleanString(source.activeModal || '', 120),
+    viewport: {
+      width: Math.max(0, Math.min(10000, Math.round(Number(viewport.width || 0) || 0))),
+      height: Math.max(0, Math.min(10000, Math.round(Number(viewport.height || 0) || 0)))
+    },
+    scroll: {
+      x: Math.max(0, Math.min(100000, Math.round(Number(scroll.x || 0) || 0))),
+      y: Math.max(0, Math.min(100000, Math.round(Number(scroll.y || 0) || 0)))
+    },
+    landmarks: Array.isArray(source.landmarks)
+      ? source.landmarks.slice(0, 12).map((item) => ({
+          id: cleanString(item?.id || '', 80),
+          label: cleanString(item?.label || '', 120)
+        })).filter((item) => item.id || item.label)
+      : [],
     productId: cleanString(source.productId || '', 180),
     productTitle: cleanString(source.productTitle || '', 200)
   }
@@ -461,6 +483,12 @@ async function completeAiHandling({ threadRef, threadId = '', messageId = '', us
   }
   logSupportAi(threadId, 'message_write_success', {
     lastUserMessageId: messageId,
+    escalationDecision: aiResult.escalationDecision || {
+      shouldEscalate: shouldEscalate || aiUnavailable,
+      escalationReason: escalationReason || (aiUnavailable ? 'ai_unavailable' : ''),
+      confidence: Number(aiResult.confidence || 0)
+    },
+    escalationReason: escalationReason || (aiUnavailable ? 'ai_unavailable' : ''),
     replyWritten: writeResult.replyWritten === true,
     escalated: writeResult.escalated === true
   })
@@ -525,7 +553,12 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
   const knowledgeSnippets = await loadSupportKnowledgeSnippets()
   const resonaInstructions = await loadResonaInstructions()
   const requester = thread.requester && typeof thread.requester === 'object' ? thread.requester : {}
-  const safePageContext = sanitizeSafeContext(userMessage.metadata?.safePageContext || {})
+  const inlineSafePageContext = sanitizeSafeContext(userMessage.metadata?.safePageContext || {})
+  const guidanceContext = await loadActiveGuidanceContext({
+    threadId,
+    userUid: thread.requesterUid || userMessage.senderUid || ''
+  })
+  const safePageContext = sanitizeSafeContext(guidanceContext || inlineSafePageContext)
 
   logSupportAi(threadId, 'eligible', {
     status: cleanString(thread.status || '', 40),
@@ -559,6 +592,11 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
       confidence: 1,
       shouldEscalate: true,
       escalationReason: directEscalation.reason,
+      escalationDecision: {
+        shouldEscalate: true,
+        escalationReason: directEscalation.reason,
+        confidence: 1
+      },
       suggestedCategory: directEscalation.reason,
       aiAvailable: true,
       modelUsed: 'guardrail'
@@ -586,6 +624,11 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
       logSupportAi(threadId, aiResult.aiAvailable === false ? 'gemini_call_failure' : 'gemini_call_success', {
         lastUserMessageId: messageId,
         model: cleanString(aiResult.modelUsed || model || SUPPORT_AI_MODEL.value() || '', 120),
+        escalationDecision: aiResult.escalationDecision || {
+          shouldEscalate: aiResult.shouldEscalate === true,
+          escalationReason: cleanString(aiResult.escalationReason || '', 160),
+          confidence: Number(aiResult.confidence || 0)
+        },
         escalationReason: cleanString(aiResult.escalationReason || '', 160),
         shouldEscalate: aiResult.shouldEscalate === true
       })
