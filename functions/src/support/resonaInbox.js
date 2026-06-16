@@ -10,6 +10,7 @@ const {
   detectEscalationNeed,
   generateSupportReply
 } = require('./aiSupportAgent')
+const { loadActiveGuidanceContext } = require('./siteGuidance')
 const {
   assertString,
   buildInboxSummaryPayload,
@@ -271,10 +272,12 @@ async function lockAiMessage(threadRef, messageId = '') {
   })
 }
 
-async function writeResonaReply({ threadRef, messageId, thread, userMessage, aiResult }) {
+async function writeResonaReply({ threadRef, threadId = '', messageId, thread, userMessage, aiResult }) {
   const replyText = cleanBody(aiResult.replyText || 'I’m routing this to a live Melogic support agent so they can review the details safely.')
   const aiMessageRef = threadRef.collection('messages').doc()
   const shouldEscalate = aiResult.shouldEscalate === true
+  const statusBefore = cleanBody(thread.status || 'ai_active', 80)
+  let statusAfter = statusBefore
   await db.runTransaction(async (transaction) => {
     transaction.set(aiMessageRef, {
       senderId: RESONA_AGENT_ID,
@@ -315,6 +318,7 @@ async function writeResonaReply({ threadRef, messageId, thread, userMessage, aiR
     }
     if (shouldEscalate) {
       threadUpdate.status = 'waiting_for_agent'
+      statusAfter = 'waiting_for_agent'
       threadUpdate.mode = 'support'
       threadUpdate.assignedAgentUid = null
       threadUpdate.requesterUid = thread.requesterUid || getThreadParticipantUids(thread)[0] || ''
@@ -324,10 +328,23 @@ async function writeResonaReply({ threadRef, messageId, thread, userMessage, aiR
       })
     } else if (thread.type === 'agent') {
       threadUpdate.status = 'ai_active'
+      statusAfter = 'ai_active'
       threadUpdate.mode = 'general'
       threadUpdate.assignedAgentUid = null
     }
     transaction.set(threadRef, threadUpdate, { merge: true })
+  })
+  console.log('[resona-ai]', {
+    threadId,
+    userMessageId: messageId,
+    escalationDecision: aiResult.escalationDecision || {
+      shouldEscalate,
+      escalationReason: aiResult.escalationReason || '',
+      confidence: Number(aiResult.confidence || 0)
+    },
+    escalationReason: aiResult.escalationReason || '',
+    statusBefore,
+    statusAfter
   })
 }
 
@@ -629,6 +646,11 @@ const handleResonaInboxReply = onDocumentCreated({
       loadResonaInstructions(),
       loadProfileSummary(lock.thread.requesterUid || message.senderId || message.senderUid || '')
     ])
+    const guidanceContext = await loadActiveGuidanceContext({
+      threadId,
+      userUid: lock.thread.requesterUid || message.senderId || message.senderUid || ''
+    })
+    const safePageContext = guidanceContext || message.metadata?.safePageContext || {}
     const explicitEscalation = detectEscalationNeed(message.body || '')
     const aiResult = explicitEscalation.shouldEscalate
       ? {
@@ -636,6 +658,11 @@ const handleResonaInboxReply = onDocumentCreated({
           confidence: 1,
           shouldEscalate: true,
           escalationReason: explicitEscalation.reason,
+          escalationDecision: {
+            shouldEscalate: true,
+            escalationReason: explicitEscalation.reason,
+            confidence: 1
+          },
           suggestedCategory: explicitEscalation.reason
         }
       : await generateSupportReply({
@@ -647,10 +674,11 @@ const handleResonaInboxReply = onDocumentCreated({
           knowledgeSnippets,
           resonaInstructions,
           safeUserContext: requester || {},
-          safePageContext: message.metadata?.safePageContext || {}
+          safePageContext
         })
     await writeResonaReply({
       threadRef,
+      threadId,
       messageId,
       thread: lock.thread,
       userMessage: message,

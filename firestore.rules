@@ -1997,6 +1997,26 @@ service cloud.firestore {
       }
     }
 
+    match /supportGuidanceSessions/{sessionId} {
+      allow get, list: if signedIn()
+        && (
+          hasOrderSupportClaim()
+          || hasEmailSendClaim()
+          || resource.data.userUid == request.auth.uid
+        );
+      allow create, update, delete: if false;
+
+      match /overlays/{overlayId} {
+        allow get, list: if signedIn()
+          && (
+            hasOrderSupportClaim()
+            || hasEmailSendClaim()
+            || get(/databases/$(database)/documents/supportGuidanceSessions/$(sessionId)).data.userUid == request.auth.uid
+          );
+        allow create, update, delete: if false;
+      }
+    }
+
     match /supportKnowledge/{docId} {
       allow get, list: if resource.data.active == true
         && resource.data.visibility == 'public';

@@ -105,8 +105,17 @@ export function sendSupportMessage({ threadId = '', body = '', safePageContext =
     body: String(body || '').trim(),
     asAgent: asAgent === true,
     safePageContext: safePageContext && typeof safePageContext === 'object' ? {
-      route: String(safePageContext.route || '').trim().slice(0, 200),
+      guidanceSessionActive: safePageContext.guidanceSessionActive === true,
+      guidanceSessionStatus: String(safePageContext.guidanceSessionStatus || '').trim().slice(0, 40),
+      route: String(safePageContext.route || safePageContext.currentRoute || '').trim().slice(0, 200),
+      currentRoute: String(safePageContext.currentRoute || safePageContext.route || '').trim().slice(0, 240),
+      routeLabel: String(safePageContext.routeLabel || '').trim().slice(0, 120),
       pageTitle: String(safePageContext.pageTitle || '').trim().slice(0, 200),
+      featureArea: String(safePageContext.featureArea || '').trim().slice(0, 120),
+      activeModal: String(safePageContext.activeModal || '').trim().slice(0, 120),
+      viewport: safePageContext.viewport && typeof safePageContext.viewport === 'object' ? safePageContext.viewport : {},
+      scroll: safePageContext.scroll && typeof safePageContext.scroll === 'object' ? safePageContext.scroll : {},
+      landmarks: Array.isArray(safePageContext.landmarks) ? safePageContext.landmarks.slice(0, 24) : [],
       productId: String(safePageContext.productId || '').trim().slice(0, 180),
       productTitle: String(safePageContext.productTitle || '').trim().slice(0, 200)
     } : {}

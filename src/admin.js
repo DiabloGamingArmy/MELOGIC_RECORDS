@@ -138,7 +138,7 @@ const SECTIONS = [
   { key: 'orders', route: ROUTES.adminOrders, label: 'Orders', icon: 'shoppingCart', permission: 'orderSupport' },
   { key: 'team', route: ROUTES.adminTeam, label: 'Roles', icon: 'folderPlus', permission: 'roleManage' },
   { key: 'logs', route: ROUTES.adminLogs, label: 'Logs', icon: 'fileText', permission: 'auditRead' },
-  { key: 'contact', route: ROUTES.adminContact, label: 'Contact', icon: 'mailSend', permission: 'emailSend' },
+  { key: 'contact', route: ROUTES.adminContact, label: 'Support Queue', icon: 'mailSend', permission: 'emailSend' },
   { key: 'tools', route: ROUTES.adminTools, label: 'Tools', icon: 'folderPlus', permission: 'admin' },
   { key: 'operations', route: ROUTES.adminOperations, label: 'Operations', icon: 'fileText', permission: 'admin' },
   { key: 'settings', route: ROUTES.adminSettings, label: 'Settings', icon: 'edit', permission: 'admin' }
@@ -1079,7 +1079,7 @@ function dashboardView() {
         orderLifecycleLabel(order),
         htmlCell(`<a class="admin-row-action-button" href="${ROUTES.adminOrders}/${encodeURIComponent(order.id)}">Audit/View</a>`)
       ]), 'No recent orders loaded.')}
-      ${overviewSnapshotTable('Support Forms Snapshot', `${ROUTES.adminContact}?mode=support`, ['Subject', 'Sender', 'Status', 'Created', 'Action'], overviewSupportForms.slice(0, 5).map((form) => [
+      ${overviewSnapshotTable('Support Queue Snapshot', `${ROUTES.adminContact}?mode=support`, ['Subject', 'Sender', 'Status', 'Created', 'Action'], overviewSupportForms.slice(0, 5).map((form) => [
         htmlCell(`<strong>${escapeHtml(form.subject || 'Untitled request')}</strong><small>${escapeHtml(supportFormPreview(form, 72))}</small>`),
         supportFormSender(form),
         htmlCell(renderBadge(humanLabel(form.status || 'new'), statusClass(form.status || 'new'))),
@@ -4009,7 +4009,7 @@ function contactModeTabs(mode = contactMode()) {
   const tabs = [
     ['email', 'Email'],
     ['system', 'System Message'],
-    ['support', 'Support Forms'],
+    ['support', 'Support Queue'],
     ['text', 'Text'],
     ['call', 'Calls']
   ]

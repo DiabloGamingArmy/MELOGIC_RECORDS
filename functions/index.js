@@ -106,6 +106,12 @@ const {
   getResonaAiStats,
   handleResonaInboxReply
 } = require('./src/support/resonaInbox')
+const {
+  startSiteGuidanceSession,
+  updateSiteGuidanceSession,
+  setSiteGuidanceSessionStatus,
+  createGuidanceTestOverlay
+} = require('./src/support/siteGuidance')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -223,3 +229,7 @@ exports.setResonaMessageFeedback = setResonaMessageFeedback
 exports.reportResonaMessage = reportResonaMessage
 exports.getResonaAiStats = getResonaAiStats
 exports.handleResonaInboxReply = handleResonaInboxReply
+exports.startSiteGuidanceSession = startSiteGuidanceSession
+exports.updateSiteGuidanceSession = updateSiteGuidanceSession
+exports.setSiteGuidanceSessionStatus = setSiteGuidanceSessionStatus
+exports.createGuidanceTestOverlay = createGuidanceTestOverlay
