@@ -14,6 +14,12 @@ const db = getFirestore()
 const ACTIVE_STATUSES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned'])
 const STATUS_VALUES = new Set(['open', 'ai_active', 'waiting_for_agent', 'assigned', 'resolved'])
 const MAX_BODY_LENGTH = 1200
+const SUPPORT_CALLABLE_OPTIONS = {
+  timeoutSeconds: 30,
+  memory: '256MiB',
+  cors: true,
+  invoker: 'public'
+}
 
 function assertSignedIn(request = {}) {
   const uid = cleanString(request.auth?.uid || request.context?.auth?.uid || '', 180)
@@ -384,7 +390,7 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
   return { ok: true, skipped: false, escalated: aiResult.shouldEscalate === true || aiResult.aiAvailable === false }
 }
 
-const createSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
+const createSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
   const initialMessage = cleanString(request.data?.initialMessage || '', MAX_BODY_LENGTH + 1)
   if (initialMessage.length > MAX_BODY_LENGTH) throw new HttpsError('invalid-argument', 'Message is too long.')
@@ -440,7 +446,7 @@ const createSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asy
   return { ok: true, created: true, threadId: threadRef.id, thread: await hydrateThread(createdSnap) }
 })
 
-const requestSupportAgent = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
+const requestSupportAgent = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
@@ -467,7 +473,7 @@ const requestSupportAgent = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asy
   return { ok: true, threadId }
 })
 
-const sendSupportMessage = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
+const sendSupportMessage = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
   const staff = isSupportStaff(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
@@ -518,7 +524,7 @@ const sendSupportMessage = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asyn
   return { ok: true, threadId, messageId: messageRef.id, aiEligible: shouldAiHandle }
 })
 
-const claimSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
+const claimSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const claims = supportStaffClaims(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
@@ -546,7 +552,7 @@ const claimSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, asyn
   return { ok: true, threadId }
 })
 
-const resolveSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
+const resolveSupportThread = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const claims = supportStaffClaims(request)
   const threadId = cleanString(request.data?.threadId || '', 180)
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
@@ -569,7 +575,10 @@ const resolveSupportThread = onCall({ timeoutSeconds: 30, memory: '256MiB' }, as
   return { ok: true, threadId }
 })
 
-const listSupportThreads = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
+const listSupportThreads = onCall({
+  ...SUPPORT_CALLABLE_OPTIONS,
+  timeoutSeconds: 60
+}, async (request) => {
   supportStaffClaims(request)
   const limitCount = Math.min(Math.max(Number(request.data?.limitCount || request.data?.limit || 50), 1), 100)
   const status = cleanString(request.data?.status || 'active', 40)
@@ -607,7 +616,7 @@ const handleSupportAiReply = onDocumentCreated({
   })
 })
 
-const listSupportMessages = onCall({ timeoutSeconds: 30, memory: '256MiB' }, async (request) => {
+const listSupportMessages = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
   const staff = isSupportStaff(request)
   const threadId = cleanString(request.data?.threadId || '', 180)

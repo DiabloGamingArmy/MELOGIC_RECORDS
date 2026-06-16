@@ -13,7 +13,16 @@ import { functions } from '../firebase/functions'
 
 function callable(name, payload = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  return httpsCallable(functions, name)(payload).then((response) => response?.data || {})
+  return httpsCallable(functions, name)(payload)
+    .then((response) => response?.data || {})
+    .catch((error) => {
+      console.error(`[support] ${name} failed`, {
+        code: error?.code,
+        message: error?.message,
+        details: error?.details
+      })
+      throw error
+    })
 }
 
 function toIsoDate(value) {
