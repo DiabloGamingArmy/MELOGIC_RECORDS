@@ -1,6 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentCreated } = require('firebase-functions/v2/firestore')
 const { FieldValue, getFirestore } = require('firebase-admin/firestore')
+const { getStorage } = require('firebase-admin/storage')
 const { assertAdmin, assertPermission } = require('../admin/adminAuth')
 const { DEFAULT_SETTINGS, mergeSettings } = require('../admin/adminSettingsShared')
 const {
@@ -22,6 +23,9 @@ const db = getFirestore()
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 const MAX_BODY_LENGTH = 1200
+const AI_IMAGE_ATTACHMENT_LIMIT = 4
+const AI_IMAGE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+const AI_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'])
 const CALLABLE_OPTIONS = {
   timeoutSeconds: 30,
   memory: '256MiB',
@@ -110,7 +114,65 @@ function serializeMessage(docSnap) {
     body: data.body || '',
     type: data.type || 'text',
     createdAt: serializeDate(data.createdAt),
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
     metadata: data.metadata && typeof data.metadata === 'object' ? data.metadata : {}
+  }
+}
+
+function safeAttachmentName(value = '') {
+  return assertString(value || 'Attachment').replace(/\s+/g, ' ').trim().slice(0, 180) || 'Attachment'
+}
+
+function normalizeAttachmentForAi(raw = {}, threadId = '', messageId = '') {
+  const storagePath = assertString(raw.storagePath || '')
+  const mimeType = assertString(raw.mimeType || '').toLowerCase().slice(0, 120)
+  const size = Math.max(0, Number(raw.size || 0))
+  const expectedPrefix = `threads/${threadId}/messages/${messageId}/attachments/`
+  const base = {
+    name: safeAttachmentName(raw.name || ''),
+    type: assertString(raw.type || '').slice(0, 24) || (mimeType.split('/')[0] || 'file'),
+    mimeType,
+    size,
+    storagePath: storagePath.slice(0, 600),
+    aiReadable: false,
+    aiLimitation: 'metadata only'
+  }
+  if (!storagePath || !storagePath.startsWith(expectedPrefix) || storagePath.includes('../')) {
+    return { ...base, storagePath: '', aiLimitation: 'storage path unavailable or invalid' }
+  }
+  if (!AI_IMAGE_MIME_TYPES.has(mimeType)) {
+    return { ...base, aiLimitation: mimeType.startsWith('image/') ? 'unsupported image type' : 'metadata only for this file type' }
+  }
+  if (size > AI_IMAGE_ATTACHMENT_MAX_BYTES) {
+    return { ...base, aiLimitation: 'image is too large for AI inspection' }
+  }
+  return { ...base, aiReadable: true, aiLimitation: '' }
+}
+
+async function buildAiAttachmentInputs({ threadId = '', messageId = '', attachments = [] } = {}) {
+  const normalized = Array.isArray(attachments)
+    ? attachments.slice(0, 8).map((attachment) => normalizeAttachmentForAi(attachment, threadId, messageId))
+    : []
+  const imageCandidates = normalized.filter((attachment) => attachment.aiReadable).slice(0, AI_IMAGE_ATTACHMENT_LIMIT)
+  const imageParts = []
+  for (const attachment of imageCandidates) {
+    try {
+      const [buffer] = await getStorage().bucket().file(attachment.storagePath).download()
+      if (!buffer?.length || buffer.length > AI_IMAGE_ATTACHMENT_MAX_BYTES) continue
+      imageParts.push({
+        inline_data: {
+          mime_type: attachment.mimeType,
+          data: buffer.toString('base64')
+        }
+      })
+    } catch (error) {
+      attachment.aiReadable = false
+      attachment.aiLimitation = `image download failed: ${assertString(error?.message || 'unknown').slice(0, 120)}`
+    }
+  }
+  return {
+    attachmentContext: normalized,
+    attachmentImageParts: imageParts
   }
 }
 
@@ -180,7 +242,9 @@ async function loadResonaInstructions() {
       siteOverview: cleanPromptText(supportAi.siteOverview || DEFAULT_SETTINGS.supportAi.siteOverview, 4000),
       escalationRules: cleanPromptText(supportAi.escalationRules || DEFAULT_SETTINGS.supportAi.escalationRules, 4000),
       restrictedActions: cleanPromptText(supportAi.restrictedActions || DEFAULT_SETTINGS.supportAi.restrictedActions, 4000),
-      toneGuidelines: cleanPromptText(supportAi.toneGuidelines || DEFAULT_SETTINGS.supportAi.toneGuidelines, 4000)
+      toneGuidelines: cleanPromptText(supportAi.toneGuidelines || DEFAULT_SETTINGS.supportAi.toneGuidelines, 4000),
+      resonaWebGroundingEnabled: supportAi.resonaWebGroundingEnabled !== false,
+      resonaWebGroundingBehavior: assertString(supportAi.resonaWebGroundingBehavior || DEFAULT_SETTINGS.supportAi.resonaWebGroundingBehavior || 'auto').slice(0, 40)
     }
   } catch {
     return DEFAULT_SETTINGS.supportAi
@@ -308,6 +372,7 @@ async function writeResonaReply({ threadRef, threadId = '', messageId, thread, u
         modelUsed: aiResult.modelUsed || '',
         shouldEscalate,
         escalationReason: aiResult.escalationReason || '',
+        webGrounding: aiResult.webGrounding && typeof aiResult.webGrounding === 'object' ? aiResult.webGrounding : null,
         source: 'resona_inbox'
       }
     })
@@ -701,6 +766,11 @@ const handleResonaInboxReply = onDocumentCreated({
       landmarks: inlinePageContext.landmarks || inlinePageContext.visibleGuideTargets || guidanceContext?.landmarks || guidanceContext?.visibleGuideTargets || [],
       pageSnapshot: inlinePageContext.pageSnapshot || guidanceContext?.pageSnapshot || null
     }
+    const aiAttachmentInputs = await buildAiAttachmentInputs({
+      threadId,
+      messageId,
+      attachments: Array.isArray(message.attachments) ? message.attachments : []
+    })
     const explicitEscalation = detectEscalationNeed(message.body || '')
     const aiResult = explicitEscalation.shouldEscalate
       ? {
@@ -724,7 +794,9 @@ const handleResonaInboxReply = onDocumentCreated({
           knowledgeSnippets,
           resonaInstructions,
           safeUserContext: requester || {},
-          safePageContext
+          safePageContext,
+          attachmentContext: aiAttachmentInputs.attachmentContext,
+          attachmentImageParts: aiAttachmentInputs.attachmentImageParts
         })
     await writeResonaReply({
       threadRef,

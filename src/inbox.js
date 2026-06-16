@@ -6644,7 +6644,27 @@ async function refreshSiteGuidanceContextForOutgoingMessage() {
   }
   window.dispatchEvent(new CustomEvent(SITE_GUIDANCE_REFRESH_EVENT, { detail }))
   if (detail.promises.length) await Promise.allSettled(detail.promises)
-  return detail.contexts[0] || null
+  return {
+    ...buildClientTimeContext(),
+    ...(detail.contexts[0] || {})
+  }
+}
+
+function buildClientTimeContext() {
+  const now = new Date()
+  const offsetMinutes = -now.getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? '+' : '-'
+  const absolute = Math.abs(offsetMinutes)
+  const pad = (value) => String(value).padStart(2, '0')
+  const clientLocalTimeISO = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`
+  return {
+    route: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
+    currentRoute: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
+    pageTitle: document.title || '',
+    clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+    clientLocalTimeISO,
+    utcTimeISO: now.toISOString()
+  }
 }
 
 async function handleMessageSubmit(form) {

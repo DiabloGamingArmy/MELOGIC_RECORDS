@@ -54,6 +54,8 @@ const DEFAULT_SETTINGS = {
     escalationRules: DEFAULT_RESONA_ESCALATION_RULES,
     restrictedActions: DEFAULT_RESONA_RESTRICTED_ACTIONS,
     toneGuidelines: DEFAULT_RESONA_TONE_GUIDELINES,
+    resonaWebGroundingEnabled: true,
+    resonaWebGroundingBehavior: 'auto',
     updatedAt: '',
     updatedBy: ''
   },
@@ -96,6 +98,8 @@ const SCHEMA = {
     escalationRules: 'longString',
     restrictedActions: 'longString',
     toneGuidelines: 'longString',
+    resonaWebGroundingEnabled: 'boolean',
+    resonaWebGroundingBehavior: 'string',
     updatedAt: 'string',
     updatedBy: 'string'
   },

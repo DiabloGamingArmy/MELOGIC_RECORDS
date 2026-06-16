@@ -105,6 +105,9 @@ function sanitizePageContext(raw = {}) {
     pageTitle: cleanString(source.pageTitle || '', 200),
     featureArea: cleanString(source.featureArea || '', 120),
     activeModal: cleanString(source.activeModal || '', 120),
+    clientTimeZone: cleanString(source.clientTimeZone || source.timeZone || '', 80),
+    clientLocalTimeISO: cleanString(source.clientLocalTimeISO || '', 80),
+    utcTimeISO: cleanString(source.utcTimeISO || '', 80),
     viewport: {
       width: sanitizeNumber(viewport.width, 0, 10000),
       height: sanitizeNumber(viewport.height, 0, 10000)
@@ -135,6 +138,9 @@ function serializeSession(docSnap) {
     pageTitle: data.pageTitle || '',
     featureArea: data.featureArea || '',
     activeModal: data.activeModal || '',
+    clientTimeZone: data.clientTimeZone || '',
+    clientLocalTimeISO: data.clientLocalTimeISO || '',
+    utcTimeISO: data.utcTimeISO || '',
     viewport: data.viewport || { width: 0, height: 0 },
     scroll: data.scroll || { x: 0, y: 0 },
     visibleGuideTargets: Array.isArray(data.visibleGuideTargets) ? data.visibleGuideTargets : (Array.isArray(data.landmarks) ? data.landmarks : []),

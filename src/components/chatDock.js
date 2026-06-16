@@ -30,6 +30,11 @@ const DOCK_SIZE_LIMITS = {
   minHeight: 380,
   maxHeightRatio: 0.85
 }
+const DOCK_ATTACHMENT_LIMIT = 4
+const DOCK_ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024
+const DOCK_ATTACHMENT_MAX_LABEL = '50 MB'
+const DOCK_ATTACHMENT_ACCEPT = 'image/*,audio/*,.pdf,.txt,.md'
+const DOCK_ALLOWED_ATTACHMENT_EXTENSIONS = new Set(['pdf', 'txt', 'md'])
 
 let initialized = false
 let root = null
@@ -56,6 +61,9 @@ let sending = false
 let requestingAgent = false
 let endingSupport = false
 let draft = ''
+let draftAttachments = []
+let draftAttachmentPreviewUrls = []
+let attachmentNotice = ''
 let lastMarkedReadKey = ''
 let resonaAvatarURL = ''
 let resonaAvatarRequested = false
@@ -145,6 +153,26 @@ function currentProfile() {
   return shellSnapshot?.profile || {}
 }
 
+function formatLocalIso(date = new Date()) {
+  const offsetMinutes = -date.getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? '+' : '-'
+  const absolute = Math.abs(offsetMinutes)
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`
+}
+
+function buildClientTimeContext() {
+  const now = new Date()
+  return {
+    route: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
+    currentRoute: `${window.location.pathname || '/'}${window.location.search || ''}`.slice(0, 240),
+    pageTitle: document.title || '',
+    clientTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+    clientLocalTimeISO: formatLocalIso(now),
+    utcTimeISO: now.toISOString()
+  }
+}
+
 async function refreshSiteGuidanceContextForOutgoingMessage() {
   const detail = {
     reason: 'message-send',
@@ -153,9 +181,9 @@ async function refreshSiteGuidanceContextForOutgoingMessage() {
   }
   window.dispatchEvent(new CustomEvent(SITE_GUIDANCE_REFRESH_EVENT, { detail }))
   if (detail.promises.length) await Promise.allSettled(detail.promises)
-  return detail.contexts[0] || {
-    route: window.location?.pathname || '',
-    pageTitle: document.title || ''
+  return {
+    ...buildClientTimeContext(),
+    ...(detail.contexts[0] || {})
   }
 }
 
@@ -446,14 +474,99 @@ function renderMessageBody(message = {}) {
           if (mime.startsWith('image/') && url) {
             return `<a href="${url}" target="_blank" rel="noopener" class="chat-dock-image-attachment"><img src="${url}" alt="${name}" loading="lazy" /></a>`
           }
+          if (mime.startsWith('audio/') && url) {
+            return `<figure class="chat-dock-audio-attachment"><figcaption>${name}</figcaption><audio controls preload="metadata" src="${url}"></audio></figure>`
+          }
+          if (mime.startsWith('video/') && url) {
+            return `<video class="chat-dock-video-attachment" controls preload="metadata" src="${url}"></video>`
+          }
           return url
-            ? `<a href="${url}" target="_blank" rel="noopener" class="chat-dock-file-attachment">${name}</a>`
-            : `<span class="chat-dock-file-attachment">${name}</span>`
+            ? `<a href="${url}" target="_blank" rel="noopener" class="chat-dock-file-attachment"><span>${attachmentKindLabel(attachment)}</span><strong>${name}</strong></a>`
+            : `<span class="chat-dock-file-attachment"><span>${attachmentKindLabel(attachment)}</span><strong>${name}</strong></span>`
         }).join('')}
       </div>
     `
     : ''
   return `${text ? `<p>${text}</p>` : ''}${attachmentMarkup}`
+}
+
+function attachmentKindLabel(attachment = {}) {
+  const mime = String(attachment.mimeType || '').toLowerCase()
+  const name = String(attachment.name || '').toLowerCase()
+  if (mime.includes('pdf') || name.endsWith('.pdf')) return 'PDF'
+  if (mime.startsWith('text/') || name.endsWith('.txt') || name.endsWith('.md')) return 'TXT'
+  if (mime.startsWith('audio/')) return 'AUDIO'
+  if (mime.startsWith('video/')) return 'VIDEO'
+  return 'FILE'
+}
+
+function isDockAttachmentAllowed(file) {
+  const mime = String(file?.type || '').toLowerCase()
+  const ext = String(file?.name || '').split('.').pop().toLowerCase()
+  return mime.startsWith('image/') || mime.startsWith('audio/') || DOCK_ALLOWED_ATTACHMENT_EXTENSIONS.has(ext)
+}
+
+function revokeDraftAttachmentPreviews() {
+  draftAttachmentPreviewUrls.forEach((url) => URL.revokeObjectURL(url))
+  draftAttachmentPreviewUrls = []
+}
+
+function setDraftAttachments(nextAttachments = []) {
+  revokeDraftAttachmentPreviews()
+  draftAttachments = nextAttachments.slice(0, DOCK_ATTACHMENT_LIMIT)
+  draftAttachmentPreviewUrls = draftAttachments.map((file) => (
+    file instanceof File && String(file.type || '').startsWith('image/') ? URL.createObjectURL(file) : ''
+  ))
+  attachmentNotice = ''
+}
+
+function resetDraftAttachments() {
+  setDraftAttachments([])
+}
+
+function renderDraftAttachmentPreview() {
+  if (!draftAttachments.length) return ''
+  return `
+    <div class="chat-dock-attachment-preview-strip">
+      ${draftAttachments.map((file, index) => {
+        const name = escapeHtml(file.name || 'Attachment')
+        const previewUrl = draftAttachmentPreviewUrls[index] || ''
+        const typeLabel = escapeHtml(attachmentKindLabel({ name: file.name, mimeType: file.type }))
+        if (previewUrl) {
+          return `<article class="chat-dock-attachment-preview is-image" title="${name}"><img src="${escapeHtml(previewUrl)}" alt="${name}" /><small>${name}</small><button type="button" data-chat-dock-remove-attachment="${index}" aria-label="Remove ${name}">×</button></article>`
+        }
+        return `<article class="chat-dock-attachment-preview is-file" title="${name}"><div>${typeLabel}</div><small>${name}</small><button type="button" data-chat-dock-remove-attachment="${index}" aria-label="Remove ${name}">×</button></article>`
+      }).join('')}
+    </div>
+  `
+}
+
+function addDraftAttachments(fileList = []) {
+  const incoming = Array.from(fileList || [])
+  if (!incoming.length) return
+  const accepted = []
+  let rejectedReason = ''
+  incoming.forEach((file) => {
+    if (!(file instanceof File)) return
+    if (draftAttachments.length + accepted.length >= DOCK_ATTACHMENT_LIMIT) {
+      rejectedReason = `You can attach up to ${DOCK_ATTACHMENT_LIMIT} files.`
+      return
+    }
+    if (Number(file.size || 0) > DOCK_ATTACHMENT_MAX_BYTES) {
+      rejectedReason = `Attachment is too large. Maximum size is ${DOCK_ATTACHMENT_MAX_LABEL}.`
+      return
+    }
+    if (!isDockAttachmentAllowed(file)) {
+      rejectedReason = 'That file type is not supported in the dock yet.'
+      return
+    }
+    accepted.push(file)
+  })
+  if (accepted.length) {
+    setDraftAttachments([...draftAttachments, ...accepted])
+  }
+  attachmentNotice = rejectedReason
+  renderDock()
 }
 
 function dockMessageBody(message = {}) {
@@ -560,15 +673,22 @@ function renderComposer() {
   const disabled = isSupport
     ? (!currentUid() || !supportThread || supportThread.status === 'resolved' || loadingSupportThread || sending || Boolean(errorMessage))
     : (!currentUid() || !activeThread || loadingThreads || sending || Boolean(errorMessage))
+  const attachmentsSupported = !isSupport
+  const canSend = Boolean(draft.trim() || draftAttachments.length)
   const placeholder = isSupport
     ? supportThread?.status === 'resolved' ? 'Support thread resolved' : 'Message Melogic Support...'
     : 'Write a message...'
   return `
     <form class="chat-dock-composer" data-chat-dock-form>
-      <label class="sr-only" for="chat-dock-input">Message</label>
-      <textarea id="chat-dock-input" data-chat-dock-input rows="1" maxlength="1200" placeholder="${disabled ? 'Chat unavailable' : placeholder}" ${disabled ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
-      <button type="button" class="chat-dock-attach-button" data-chat-dock-attach aria-label="Add attachment" title="Attachments are coming soon" ${disabled ? 'disabled' : ''}>+</button>
-      <button type="submit" class="chat-dock-send-button" aria-label="Send message" ${disabled || !draft.trim() ? 'disabled' : ''}>Send</button>
+      ${renderDraftAttachmentPreview()}
+      ${attachmentNotice ? `<p class="chat-dock-attachment-notice">${escapeHtml(attachmentNotice)}</p>` : ''}
+      <div class="chat-dock-composer-row">
+        <label class="sr-only" for="chat-dock-input">Message</label>
+        <textarea id="chat-dock-input" data-chat-dock-input rows="1" maxlength="1200" placeholder="${disabled ? 'Chat unavailable' : placeholder}" ${disabled ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <input class="chat-dock-file-input" type="file" data-chat-dock-file-input multiple accept="${DOCK_ATTACHMENT_ACCEPT}" ${disabled || !attachmentsSupported ? 'disabled' : ''} />
+        <button type="button" class="chat-dock-attach-button" data-chat-dock-attach aria-label="Add attachment" title="${attachmentsSupported ? 'Add attachment' : 'Attachments are available in Inbox conversations'}" ${disabled || !attachmentsSupported ? 'disabled' : ''}>+</button>
+        <button type="submit" class="chat-dock-send-button" aria-label="Send message" ${disabled || !canSend ? 'disabled' : ''}>Send</button>
+      </div>
     </form>
   `
 }
@@ -1092,6 +1212,7 @@ function setDockState(next = {}) {
   }
   if (previousMode !== dockState.mode || previousThreadId !== dockState.activeThreadId || (!wasOpen && dockState.open)) {
     draft = ''
+    resetDraftAttachments()
     sending = false
     requestingAgent = false
     endingSupport = false
@@ -1133,7 +1254,8 @@ async function handleSubmit(form) {
   const uid = currentUid()
   const threadId = dockState.activeThreadId
   const body = draft.trim()
-  if (!uid || !threadId || !body || sending) return
+  const attachments = dockState.mode === 'support' ? [] : draftAttachments.slice()
+  if (!uid || !threadId || (!body && !attachments.length) || sending) return
   sending = true
   errorMessage = ''
   forceDockBottom = true
@@ -1152,13 +1274,14 @@ async function handleSubmit(form) {
         senderId: uid,
         body,
         type: 'text',
-        attachments: [],
+        attachments,
         clientMessageId: createClientMessageId(),
         safePageContext
       })
       await markThreadRead({ threadId, uid }).catch(() => {})
     }
     draft = ''
+    resetDraftAttachments()
     forceDockBottom = true
     const input = form?.querySelector('[data-chat-dock-input]')
     if (input) input.value = ''
@@ -1249,6 +1372,21 @@ function bindRootEvents() {
           renderDock()
         })
     }
+    const attachButton = event.target.closest('[data-chat-dock-attach]')
+    if (attachButton) {
+      event.preventDefault()
+      if (attachButton.disabled) return
+      root.querySelector('[data-chat-dock-file-input]')?.click()
+      return
+    }
+    const removeAttachment = event.target.closest('[data-chat-dock-remove-attachment]')
+    if (removeAttachment) {
+      event.preventDefault()
+      const index = Number(removeAttachment.getAttribute('data-chat-dock-remove-attachment'))
+      if (!Number.isFinite(index)) return
+      setDraftAttachments(draftAttachments.filter((_, itemIndex) => itemIndex !== index))
+      renderDock()
+    }
   })
 
   root.addEventListener('input', (event) => {
@@ -1256,7 +1394,14 @@ function bindRootEvents() {
     if (!input) return
     draft = input.value
     const button = input.closest('form')?.querySelector('button[type="submit"]')
-    if (button) button.disabled = !draft.trim() || sending
+    if (button) button.disabled = (!draft.trim() && !draftAttachments.length) || sending
+  })
+
+  root.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-chat-dock-file-input]')
+    if (!input) return
+    addDraftAttachments(input.files)
+    input.value = ''
   })
 
   root.addEventListener('keydown', (event) => {
