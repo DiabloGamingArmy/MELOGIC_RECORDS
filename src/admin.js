@@ -4083,7 +4083,7 @@ function contactSupportFormsPanel() {
             ['archived', 'Archived'],
             ['all', 'All']
           ].map(([key, label]) => `
-            <button type="button" class="${formsState.filter === key ? 'is-active' : ''}" data-support-form-filter="${key}" data-guide-id="admin-support-form-filter-${key}" data-guide-label="${escapeHtml(label)} support forms filter">
+            <button type="button" class="${formsState.filter === key ? 'is-active' : ''}" data-support-form-filter="${key}" data-guide-id="admin-support-form-filter-${key}" data-guide-label="${escapeHtml(label)} support forms filter" data-guide-role="support-form-filter">
               ${escapeHtml(label)}
             </button>
           `).join('')}
@@ -4151,7 +4151,7 @@ function contactSupportThreadsPanel() {
             ['resolved', 'Resolved'],
             ['all', 'All']
           ].map(([key, label]) => `
-            <button type="button" class="${threadsState.filter === key ? 'is-active' : ''}" data-support-thread-filter="${key}" data-guide-id="admin-support-thread-filter-${key}" data-guide-label="${escapeHtml(label)} support queue filter">
+            <button type="button" class="${threadsState.filter === key ? 'is-active' : ''}" data-support-thread-filter="${key}" data-guide-id="admin-support-thread-filter-${key}" data-guide-label="${escapeHtml(label)} support queue filter" data-guide-role="support-queue-filter">
               ${escapeHtml(label)}
             </button>
           `).join('')}

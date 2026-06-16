@@ -222,7 +222,24 @@ function sanitizeSafeContext(raw = {}) {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
   const viewport = source.viewport && typeof source.viewport === 'object' ? source.viewport : {}
   const scroll = source.scroll && typeof source.scroll === 'object' ? source.scroll : {}
+  const rawTargets = Array.isArray(source.visibleGuideTargets)
+    ? source.visibleGuideTargets
+    : Array.isArray(source.landmarks)
+      ? source.landmarks
+      : []
+  const visibleGuideTargets = rawTargets.slice(0, 18).map((item) => ({
+    guideId: cleanString(item?.guideId || item?.id || '', 120),
+    id: cleanString(item?.id || item?.guideId || '', 120),
+    label: cleanString(item?.label || '', 120),
+    role: cleanString(item?.role || '', 60),
+    text: cleanString(item?.text || '', 160),
+    x: Math.max(0, Math.min(10000, Math.round(Number(item?.x || item?.rect?.x || 0) || 0))),
+    y: Math.max(0, Math.min(10000, Math.round(Number(item?.y || item?.rect?.y || 0) || 0))),
+    width: Math.max(0, Math.min(10000, Math.round(Number(item?.width || item?.rect?.width || 0) || 0))),
+    height: Math.max(0, Math.min(10000, Math.round(Number(item?.height || item?.rect?.height || 0) || 0)))
+  })).filter((item) => item.guideId || item.label)
   return {
+    sessionId: cleanString(source.sessionId || '', 180),
     guidanceSessionActive: source.guidanceSessionActive === true,
     guidanceSessionStatus: cleanString(source.guidanceSessionStatus || '', 40),
     route: cleanString(source.route || source.currentRoute || '', 200),
@@ -238,12 +255,8 @@ function sanitizeSafeContext(raw = {}) {
       x: Math.max(0, Math.min(100000, Math.round(Number(scroll.x || 0) || 0))),
       y: Math.max(0, Math.min(100000, Math.round(Number(scroll.y || 0) || 0)))
     },
-    landmarks: Array.isArray(source.landmarks)
-      ? source.landmarks.slice(0, 12).map((item) => ({
-          id: cleanString(item?.id || '', 80),
-          label: cleanString(item?.label || '', 120)
-        })).filter((item) => item.id || item.label)
-      : [],
+    visibleGuideTargets,
+    landmarks: visibleGuideTargets,
     productId: cleanString(source.productId || '', 180),
     productTitle: cleanString(source.productTitle || '', 200)
   }
@@ -649,7 +662,7 @@ async function handleSupportAiReplyForMessage({ threadId = '', messageId = '', a
       await createGuidanceOverlayFromIntent({
         sessionId: safePageContext.sessionId,
         intent: aiResult.highlightIntent,
-        landmarks: safePageContext.landmarks || []
+        landmarks: safePageContext.visibleGuideTargets || safePageContext.landmarks || []
       }).catch((error) => {
         console.warn('[support-guidance] highlight failed', {
           threadId,
