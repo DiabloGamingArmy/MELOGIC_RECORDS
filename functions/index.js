@@ -91,6 +91,7 @@ const {
   sendSupportMessage,
   claimSupportThread,
   resolveSupportThread,
+  endSupportThread,
   requestSupportAgent,
   listSupportThreads,
   listSupportMessages,
@@ -201,6 +202,7 @@ exports.createSupportThread = createSupportThread
 exports.sendSupportMessage = sendSupportMessage
 exports.claimSupportThread = claimSupportThread
 exports.resolveSupportThread = resolveSupportThread
+exports.endSupportThread = endSupportThread
 exports.requestSupportAgent = requestSupportAgent
 exports.listSupportThreads = listSupportThreads
 exports.listSupportMessages = listSupportMessages

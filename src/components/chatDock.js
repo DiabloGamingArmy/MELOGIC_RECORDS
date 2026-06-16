@@ -8,6 +8,7 @@ import {
   subscribeToMessages
 } from '../data/inboxService'
 import {
+  endSupportThread,
   requestSupportAgent,
   sendSupportMessage,
   subscribeToSupportMessages,
@@ -41,6 +42,7 @@ let loadingSupportMessages = false
 let errorMessage = ''
 let sending = false
 let requestingAgent = false
+let endingSupport = false
 let draft = ''
 let lastMarkedReadKey = ''
 
@@ -181,15 +183,25 @@ function getThreadSubtitle() {
   return 'Direct message'
 }
 
-function supportStatusLabel(status = '') {
+function supportStatusLabel(thread = {}) {
+  const status = String(thread?.status || 'open').trim()
+  if (status === 'assigned') return thread?.assignedAgentUid ? 'Live agent assigned' : 'Waiting for live agent'
   const labels = {
-    open: 'Open',
+    open: 'AI support active',
     ai_active: 'AI support active',
-    waiting_for_agent: 'Waiting for agent',
-    assigned: 'Live agent assigned',
+    waiting_for_agent: 'Waiting for live agent',
     resolved: 'Resolved'
   }
-  return labels[status] || 'Open'
+  return labels[status] || 'AI support active'
+}
+
+function hasAssignedSupportAgent() {
+  return Boolean(supportThread?.assignedAgentUid)
+}
+
+function canRequestSupportAgent() {
+  if (!supportThread || supportThread.status === 'resolved') return false
+  return !(supportThread.status === 'assigned' && hasAssignedSupportAgent())
 }
 
 function getSupportTitle() {
@@ -201,7 +213,7 @@ function getSupportSubtitle() {
   if (loadingSupportThread) return 'Loading support...'
   if (!supportThread && dockState.activeThreadId) return 'Support thread unavailable'
   if (!supportThread) return 'Open a support chat'
-  return supportStatusLabel(supportThread.status)
+  return supportStatusLabel(supportThread)
 }
 
 function renderSupportPanel() {
@@ -244,15 +256,15 @@ function renderSupportPanel() {
       <section class="chat-dock-placeholder">
         <h3>Support chat is ready.</h3>
         <p>Send a message and Melogic Support will pick it up from the admin queue.</p>
-        ${['open', 'ai_active'].includes(supportThread.status) ? `<button type="button" class="chat-dock-support-link" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>` : ''}
+        ${canRequestSupportAgent() ? `<button type="button" class="chat-dock-support-link" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>` : ''}
       </section>
     `
   }
 
   return `
-    ${supportThread.status !== 'resolved' && supportThread.status !== 'assigned' ? `
+    ${canRequestSupportAgent() ? `
       <div class="chat-dock-support-banner">
-        <span>${escapeHtml(supportStatusLabel(supportThread.status))}</span>
+        <span>${escapeHtml(supportStatusLabel(supportThread))}</span>
         <button type="button" data-chat-dock-request-agent ${requestingAgent ? 'disabled' : ''}>${requestingAgent ? 'Requesting...' : 'Talk to a person'}</button>
       </div>
     ` : ''}
@@ -399,6 +411,19 @@ function renderMinimized() {
   `
 }
 
+function renderSupportHeaderActions() {
+  if (dockState.mode !== 'support') return ''
+  const canEnd = Boolean(supportThread?.id || dockState.activeThreadId) && supportThread?.status !== 'resolved' && !endingSupport
+  return `
+    <div class="chat-dock-support-actions" aria-label="Support chat actions">
+      <button type="button" class="chat-dock-header-action is-danger" data-chat-dock-end-support ${canEnd ? '' : 'disabled'}>
+        ${endingSupport ? 'Ending...' : 'End Chat'}
+      </button>
+      <button type="button" class="chat-dock-header-action is-muted" disabled title="Screen sharing coming soon.">Share Screen</button>
+    </div>
+  `
+}
+
 function renderDock() {
   if (!root) return
   if (!dockState.open) {
@@ -427,6 +452,7 @@ function renderDock() {
           <h2>${escapeHtml(title)}</h2>
           <p>${escapeHtml(subtitle)}</p>
         </div>
+        ${renderSupportHeaderActions()}
         <button type="button" data-chat-dock-minimize aria-label="Minimize chat">–</button>
         <button type="button" data-chat-dock-close aria-label="Close chat">×</button>
       </header>
@@ -613,6 +639,7 @@ function setDockState(next = {}) {
     draft = ''
     sending = false
     requestingAgent = false
+    endingSupport = false
   }
   persistState()
   syncThreadSubscriptions()
@@ -704,6 +731,27 @@ function bindRootEvents() {
     if (close) {
       event.preventDefault()
       setDockState({ open: false, minimized: false, activeThreadId: '', title: '', mode: 'thread' })
+      return
+    }
+    const endSupport = event.target.closest('[data-chat-dock-end-support]')
+    if (endSupport) {
+      event.preventDefault()
+      const threadId = dockState.activeThreadId
+      if (!threadId || endingSupport) return
+      endingSupport = true
+      errorMessage = ''
+      renderDock()
+      endSupportThread({ threadId })
+        .then(() => {
+          setDockState({ open: false, minimized: false, activeThreadId: '', title: '', mode: 'thread' })
+        })
+        .catch((error) => {
+          errorMessage = error?.message || 'Could not end support chat.'
+        })
+        .finally(() => {
+          endingSupport = false
+          renderDock()
+        })
       return
     }
     const requestAgent = event.target.closest('[data-chat-dock-request-agent]')
