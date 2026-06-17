@@ -559,7 +559,9 @@ function applyStageGuideTargets() {
     ['.stage-editor-right', 'stagemaker-inspector', 'StageMaker inspector', 'stage-inspector'],
     ['.stage-inspector-tabs [data-inspector-tab="ai"]', 'stagemaker-resona-tab', 'StageMaker Resona tab', 'stage-resona-tab'],
     ['.stage-viewport-tools', 'stagemaker-viewport-tools', 'StageMaker viewport tools', 'stage-viewport-tools'],
-    ['.stage-editor-bottom', 'stagemaker-bottom-panel', 'StageMaker object data panel', 'stage-bottom-panel']
+    ['.stage-editor-bottom', 'stagemaker-bottom-panel', 'StageMaker object data panel', 'stage-bottom-panel'],
+    ['[data-resona-surface-dock]', 'stagemaker-resona-open-dock', 'Open StageMaker Resona dock', 'stagemaker-resona-action'],
+    ['[data-site-guidance-start][data-site-guidance-context-type="stagemaker"]', 'stagemaker-resona-enable-guidance', 'Enable StageMaker guidance', 'stagemaker-resona-action']
   ]
   targets.forEach(([selector, id, label, role]) => {
     const element = app.querySelector(selector)
@@ -753,8 +755,8 @@ function renderApp() {
     bindEditorEvents()
     ensureStageViewportMounted()
     refreshStageIcons()
-    applyStageGuideTargets()
     mountStageResonaPanel()
+    applyStageGuideTargets()
     stageEditorMounted = true
     updateEditorProjectHeader()
     updateSaveStatusUI()

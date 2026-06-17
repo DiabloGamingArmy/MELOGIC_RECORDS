@@ -411,7 +411,15 @@ async function createGuidanceOverlayFromIntent({
   const cleanSessionId = cleanString(sessionId || '', 180)
   if (!cleanSessionId || !intent || intent.action !== 'highlight') return null
   const rect = resolveHighlightRect(intent, landmarks)
-  if (!rect) return null
+  if (!rect) {
+    console.info('[highlight] no match', {
+      sessionId: cleanSessionId,
+      targetGuideId: cleanString(intent.targetGuideId || intent.guideId || '', 120),
+      label: cleanString(intent.label || intent.fallbackText || intent.text || '', 120),
+      landmarkCount: Array.isArray(landmarks) ? landmarks.length : 0
+    })
+    return null
+  }
   const now = Date.now()
   const durationMs = Math.max(1200, Math.min(8000, Math.round(Number(intent.durationMs || 5000) || 5000)))
   const targetGuideId = cleanString(intent.targetGuideId || intent.guideId || rect.guideId || rect.id || '', 120)
@@ -425,6 +433,13 @@ async function createGuidanceOverlayFromIntent({
   const overlayRef = db.collection('supportGuidanceSessions').doc(cleanSessionId).collection('overlays').doc(actionId)
   const existing = await overlayRef.get()
   if (existing.exists) return overlayRef.id
+  console.info('[highlight] resolved', {
+    sessionId: cleanSessionId,
+    targetGuideId,
+    label: cleanString(rect.label || intent.label || '', 120),
+    role: cleanString(rect.role || '', 80),
+    entityId: cleanString(rect.entityId || '', 120)
+  })
   await overlayRef.set({
     type: 'box',
     source: 'resona',

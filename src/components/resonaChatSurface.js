@@ -112,8 +112,11 @@ class ResonaChatSurface {
       if (this.bottomLocked) this.scrollMessagesToBottom()
     }) : null
     this.guidanceStateHandler = (event) => {
-      this.guidanceState = event?.detail || { active: false, starting: false, threadId: '' }
-      this.render()
+      const nextState = event?.detail || { active: false, starting: false, threadId: '' }
+      const wasForThisThread = this.guidanceState?.threadId && this.guidanceState.threadId === this.thread?.id
+      const isForThisThread = nextState?.threadId && nextState.threadId === this.thread?.id
+      this.guidanceState = nextState
+      if (wasForThisThread || isForThisThread) this.render()
     }
     this.contextKey = this.threadContextKey()
     this.unsubscribeThread = () => {}
@@ -356,11 +359,18 @@ class ResonaChatSurface {
     const previousMessages = this.messageContainer()
     const previousScrollTop = previousMessages?.scrollTop || 0
     if (previousMessages) this.bottomLocked = this.isNearBottom(previousMessages)
+    const activeInput = document.activeElement?.matches?.('[data-resona-surface-input]')
+      ? document.activeElement
+      : null
+    const restoreInputFocus = Boolean(activeInput && this.root.contains(activeInput))
+    const selectionStart = restoreInputFocus ? activeInput.selectionStart : null
+    const selectionEnd = restoreInputFocus ? activeInput.selectionEnd : null
     const variant = this.options.variant || 'embedded'
     const locked = this.locked()
     const activityLabel = this.activity().label || 'Resona is responding...'
     const hasThread = Boolean(this.thread?.id)
-    const disabled = this.sending || locked || !this.user || !hasThread
+    const inputDisabled = this.sending || !this.user || !hasThread
+    const sendDisabled = inputDisabled || locked
     const threadContext = this.threadContext()
     const showActions = this.options.showHeaderActions !== false
     const showGuidance = this.options.showGuidanceButton !== false
@@ -374,7 +384,6 @@ class ResonaChatSurface {
         <header class="resona-surface-header">
           <div><strong>Resona</strong><span>${escapeHtml(this.options.title || 'Platform agent')}</span></div>
           <div class="resona-surface-header-actions">
-            ${locked ? `<em>${escapeHtml(activityLabel)}</em>` : ''}
             ${showActions ? `<button type="button" data-resona-surface-dock ${hasThread ? '' : 'disabled'}>Open Dock</button>` : ''}
             ${showGuidance ? `<button type="button" data-site-guidance-start data-site-guidance-origin="embedded" data-site-guidance-thread-id="${escapeHtml(this.thread?.id || '')}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" data-site-guidance-context-type="${escapeHtml(threadContext.contextType)}" data-site-guidance-context-id="${escapeHtml(threadContext.contextId)}" data-site-guidance-context-label="${escapeHtml(threadContext.contextLabel)}" ${hasThread && !guidanceStarting && !guidanceActive ? '' : 'disabled'}>${escapeHtml(guidanceLabel)}</button>` : ''}
           </div>
@@ -400,16 +409,26 @@ class ResonaChatSurface {
           }).join('')}</div>` : ''}
           ${this.error ? `<p class="resona-surface-error">${escapeHtml(this.error)}</p>` : ''}
           <div class="resona-surface-composer-row">
-            <textarea data-resona-surface-input rows="2" maxlength="1200" placeholder="${locked ? 'Resona is responding...' : 'Write a message...'}" ${disabled ? 'disabled' : ''}>${escapeHtml(this.draft)}</textarea>
-            <input data-resona-surface-file type="file" multiple accept="image/*,audio/*,.pdf,.txt,.md" ${disabled ? 'disabled' : ''} />
-            <button type="button" data-resona-surface-attach ${disabled ? 'disabled' : ''}>+</button>
-            <button type="submit" ${disabled || (!this.draft.trim() && !this.attachments.length) ? 'disabled' : ''}>Send</button>
+            <textarea data-resona-surface-input rows="2" maxlength="1200" placeholder="${locked ? 'Resona is responding, but you can keep drafting...' : 'Write a message...'}" ${inputDisabled ? 'disabled' : ''}>${escapeHtml(this.draft)}</textarea>
+            <input data-resona-surface-file type="file" multiple accept="image/*,audio/*,.pdf,.txt,.md" ${inputDisabled ? 'disabled' : ''} />
+            <button type="button" data-resona-surface-attach ${inputDisabled ? 'disabled' : ''}>+</button>
+            <button type="submit" ${sendDisabled || (!this.draft.trim() && !this.attachments.length) ? 'disabled' : ''}>Send</button>
           </div>
         </form>
       </section>
     `
     this.bind()
     this.observeMessages()
+    if (restoreInputFocus && !inputDisabled) {
+      requestAnimationFrame(() => {
+        const input = this.root.querySelector('[data-resona-surface-input]')
+        if (!input) return
+        input.focus({ preventScroll: true })
+        if (selectionStart != null && selectionEnd != null) {
+          input.setSelectionRange(selectionStart, selectionEnd)
+        }
+      })
+    }
     if (scrollBottom) {
       this.scrollMessagesToBottom()
     } else if (previousMessages) {
