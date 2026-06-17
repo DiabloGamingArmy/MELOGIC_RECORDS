@@ -1,6 +1,8 @@
 import { currentStageDimensions, exportReadiness, isStageObjectSelected, selectedEditorObject, stageEntities, stageObjectsForTable, stageWarnings, state, viewportModeLabel } from '../app/stageState'
 import { renderStagePlotSvg } from '../export/exportPreview'
 
+const escapeAttr = (value = '') => String(value ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+
 function renderInputListTable() {
   const rows = Array.isArray(state.editorProject?.audioInputs) ? state.editorProject.audioInputs : []
   return `<table class="stage-input-table"><thead><tr><th>✓</th><th>Ch</th><th>Source</th><th>Mic/DI</th><th>Stand</th><th>Patch</th><th>Location</th><th>Notes</th></tr></thead><tbody>${rows.map((row) => `<tr data-select-object="${row.linkedObjectId || row.id || ''}"><td>✓</td><td><input data-audio-input-field="channel" data-row-id="${row.id || ''}" type="number" min="1" value="${row.channel || ''}"></td><td><input data-audio-input-field="source" data-row-id="${row.id || ''}" value="${row.source || ''}"></td><td><input data-audio-input-field="micDi" data-row-id="${row.id || ''}" value="${row.micDi || row.mic || ''}"></td><td><input data-audio-input-field="stand" data-row-id="${row.id || ''}" value="${row.stand || 'N/A'}"></td><td><input data-audio-input-field="patch" data-row-id="${row.id || ''}" value="${row.patch || ''}"></td><td><input data-audio-input-field="stageLocation" data-row-id="${row.id || ''}" value="${row.stageLocation || row.location || ''}"></td><td><input data-audio-input-field="notes" data-row-id="${row.id || ''}" value="${row.notes || ''}"></td></tr>`).join('') || '<tr><td colspan="8">No audio inputs yet. Add audio assets from the Object Library.</td></tr>'}</tbody></table>`
@@ -16,7 +18,7 @@ function renderEntityTable() {
       row.status,
       row.warnings ? `${row.warnings} warning${row.warnings === 1 ? '' : 's'}` : ''
     ].filter(Boolean)
-    return `<tr data-select-object="${row.id || ''}" class="${isStageObjectSelected(row.id) ? 'is-selected' : ''}">
+    return `<tr data-select-object="${escapeAttr(row.id || '')}" data-guide-id="stagemaker-object-${escapeAttr(row.id || '')}" data-guide-label="${escapeAttr(row.name || row.id || 'Stage object')}" data-guide-role="stage-entity-row" data-guide-entity-id="${escapeAttr(row.id || '')}" class="${isStageObjectSelected(row.id) ? 'is-selected' : ''}">
       <td><span class="stage-row-dot ${row.visible ? 'is-visible' : 'is-hidden'}"></span></td>
       <td class="stage-object-name"><strong>${row.name || 'Untitled'}</strong><small>${row.id || ''}</small></td>
       <td>${row.kind || row.type || 'object'}</td>
@@ -27,10 +29,10 @@ function renderEntityTable() {
       <td><span class="stage-entity-status ${row.locked ? 'is-locked' : 'is-open'}">${row.locked ? 'locked' : 'open'}</span></td>
       <td><span class="stage-entity-status ${row.visible ? 'is-visible' : 'is-hidden'}">${row.visible ? 'visible' : 'hidden'}</span></td>
       <td>${linked}</td>
-      <td><div class="stage-object-row-actions">${statusBadges.map((badge) => `<span class="stage-entity-status">${badge}</span>`).join('')}<button type="button" data-focus-object="${row.id}">Focus</button></div></td>
+      <td><div class="stage-object-row-actions">${statusBadges.map((badge) => `<span class="stage-entity-status">${badge}</span>`).join('')}<button type="button" data-focus-object="${escapeAttr(row.id)}" data-guide-id="stagemaker-focus-object-${escapeAttr(row.id || '')}" data-guide-label="Focus ${escapeAttr(row.name || row.id || 'stage object')}" data-guide-role="stagemaker-tool-button">Focus</button></div></td>
     </tr>`
   }).join('')
-  return `<div class="stage-object-table-wrap"><table class="stage-object-data-grid"><colgroup><col class="is-state"><col class="is-name"><col class="is-kind"><col class="is-category"><col class="is-layer"><col class="is-position"><col class="is-size"><col class="is-flag"><col class="is-flag"><col class="is-linked"><col class="is-status"></colgroup><thead><tr><th></th><th>Name / Label</th><th>Kind</th><th>Category</th><th>Layer</th><th>Position</th><th>Size</th><th>Locked</th><th>Visible</th><th>Linked Data</th><th>Status</th></tr></thead><tbody>${body || '<tr class="is-empty"><td colspan="11">No stage objects yet. Add assets from the Object Library.</td></tr>'}</tbody></table></div>`
+  return `<div class="stage-object-table-wrap" data-guide-id="stagemaker-object-table" data-guide-label="StageMaker object table" data-guide-role="stagemaker-object-table"><table class="stage-object-data-grid"><colgroup><col class="is-state"><col class="is-name"><col class="is-kind"><col class="is-category"><col class="is-layer"><col class="is-position"><col class="is-size"><col class="is-flag"><col class="is-flag"><col class="is-linked"><col class="is-status"></colgroup><thead><tr><th></th><th>Name / Label</th><th>Kind</th><th>Category</th><th>Layer</th><th>Position</th><th>Size</th><th>Locked</th><th>Visible</th><th>Linked Data</th><th>Status</th></tr></thead><tbody>${body || '<tr class="is-empty"><td colspan="11">No stage objects yet. Add assets from the Object Library.</td></tr>'}</tbody></table></div>`
 }
 
 function renderLightingTable() {

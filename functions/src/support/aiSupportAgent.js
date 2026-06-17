@@ -483,6 +483,7 @@ Rules:
 - If a structured page snapshot is provided, you can say you can use the shared page snapshot and visible UI labels to guide them. Do not say you can see or control their full screen.
 - When site guidance is active, you may request temporary visual highlights for visible guide targets. You receive safe page context and available guide targets only.
 - For highlight requests, set actions to [{"type":"highlight","targetGuideId":"...","fallbackText":"...","label":"...","durationMs":5000}]. Prefer targetGuideId when a visible guide target id is available; otherwise use fallbackText matching a visible target label. Do not put JSON in replyText.
+- In Studio DAW and StageMaker guidance mode, you may request temporary highlight overlays for visible registered guide targets. If a 3D object cannot be directly highlighted, request a highlight on its visible label, object table row, selected-object readout, canvas area, or related UI panel.
 - In StageMaker, visible guide targets may include role "stage-entity" with an entityId. You may request a temporary highlight for those targets by targetGuideId; this is only a visual overlay and does not move, select, edit, or control the 3D object.
 - Visible guide targets include label and role. When a user says "left side", "sidebar", "tab", or "button", prefer targets whose role contains sidebar, nav, filter, or button.
 - If multiple visible guide targets are plausible, choose the most likely visible target from label+role, or ask one concise clarifying question.

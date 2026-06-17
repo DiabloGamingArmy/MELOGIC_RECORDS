@@ -27,6 +27,7 @@ let overlayHideTimers = new Map()
 let overlaySeenAt = new Map()
 let dismissedOverlayIds = new Set()
 let dragState = null
+let lastGuidanceStateSignature = ''
 
 const state = {
   user: null,
@@ -433,18 +434,20 @@ function openGuidanceDockIfNeeded(session = state.session) {
 
 function dispatchGuidanceState() {
   const threadId = state.pendingStart?.threadId || state.session?.threadId || ''
-  window.dispatchEvent(new CustomEvent(GUIDANCE_STATE_EVENT, {
-    detail: {
-      active: state.session?.status === 'active',
-      paused: state.session?.status === 'paused',
-      starting: state.starting === true,
-      pending: Boolean(state.pendingStart),
-      threadId,
-      contextType: state.pendingStart?.contextType || state.session?.contextType || '',
-      contextId: state.pendingStart?.contextId || state.session?.contextId || '',
-      contextLabel: state.pendingStart?.contextLabel || state.session?.contextLabel || ''
-    }
-  }))
+  const detail = {
+    active: state.session?.status === 'active',
+    paused: state.session?.status === 'paused',
+    starting: state.starting === true,
+    pending: Boolean(state.pendingStart),
+    threadId,
+    contextType: state.pendingStart?.contextType || state.session?.contextType || '',
+    contextId: state.pendingStart?.contextId || state.session?.contextId || '',
+    contextLabel: state.pendingStart?.contextLabel || state.session?.contextLabel || ''
+  }
+  const signature = JSON.stringify(detail)
+  if (signature === lastGuidanceStateSignature) return
+  lastGuidanceStateSignature = signature
+  window.dispatchEvent(new CustomEvent(GUIDANCE_STATE_EVENT, { detail }))
 }
 
 function subscribeActiveSession(sessionRef = readStoredSession()) {
@@ -585,6 +588,12 @@ function requestSiteGuidanceStart(detail = {}) {
     origin: String(detail.origin || '').trim()
   }
   state.error = ''
+  console.info('[guidance] start requested', {
+    threadId,
+    contextType: state.pendingStart.contextType,
+    contextId: state.pendingStart.contextId,
+    origin: state.pendingStart.origin || ''
+  })
   render()
 }
 
@@ -594,9 +603,10 @@ async function confirmStart() {
   state.error = ''
   render()
   try {
+    const pageContext = collectPageContext(state.pendingStart)
     const result = await startSiteGuidanceSession({
       ...state.pendingStart,
-      pageContext: collectPageContext(state.pendingStart)
+      pageContext
     })
     state.pendingStart = null
     state.session = result.session
@@ -604,7 +614,11 @@ async function confirmStart() {
     subscribeActiveSession(result.session)
     openGuidanceDockIfNeeded(result.session)
     console.info('[guidance] sharing started', {
+      sessionId: result.session?.id || '',
       threadKind: result.session?.threadKind || '',
+      contextType: result.session?.contextType || '',
+      contextId: result.session?.contextId || '',
+      guideTargetCount: Array.isArray(pageContext.visibleGuideTargets) ? pageContext.visibleGuideTargets.length : 0,
       route: window.location.pathname || '/'
     })
   } catch (error) {
