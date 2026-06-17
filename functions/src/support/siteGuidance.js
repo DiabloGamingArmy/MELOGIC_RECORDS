@@ -50,6 +50,7 @@ function sanitizeLandmarks(raw = []) {
       id,
       label: cleanString(source.label || '', 120),
       role: cleanString(source.role || '', 60),
+      entityId: cleanString(source.entityId || '', 120),
       text: cleanString(source.text || '', 180),
       visible: source.visible !== false,
       rect: {
@@ -201,6 +202,42 @@ const startSiteGuidanceSession = onCall(CALLABLE_OPTIONS, async (request) => {
   const contextType = page.contextType || requestedContextType
   const contextId = page.contextId || requestedContextId
   const contextLabel = page.contextLabel || requestedContextLabel
+  const existingSnapshot = await db.collection('supportGuidanceSessions')
+    .where('threadId', '==', threadId)
+    .where('userUid', '==', uid)
+    .where('shareMode', '==', 'site_only')
+    .where('status', 'in', ['active', 'paused'])
+    .limit(10)
+    .get()
+    .catch(() => null)
+  if (existingSnapshot && !existingSnapshot.empty) {
+    const existingDoc = existingSnapshot.docs.slice().sort((a, b) => {
+      const aTime = a.data()?.updatedAt?.toMillis?.() || 0
+      const bTime = b.data()?.updatedAt?.toMillis?.() || 0
+      return bTime - aTime
+    })[0]
+    await existingDoc.ref.set({
+      threadKind,
+      viewer,
+      contextType,
+      contextId,
+      contextLabel,
+      status: 'active',
+      currentRoute: page.currentRoute,
+      routeLabel: page.routeLabel,
+      pageTitle: page.pageTitle,
+      featureArea: page.featureArea,
+      activeModal: page.activeModal,
+      viewport: page.viewport,
+      scroll: page.scroll,
+      visibleGuideTargets: page.visibleGuideTargets,
+      landmarks: page.landmarks,
+      updatedAt: FieldValue.serverTimestamp(),
+      stoppedAt: null
+    }, { merge: true })
+    const existing = await existingDoc.ref.get()
+    return { ok: true, reused: true, session: serializeSession(existing) }
+  }
   const sessionRef = db.collection('supportGuidanceSessions').doc()
   await sessionRef.set({
     threadId,

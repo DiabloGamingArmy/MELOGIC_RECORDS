@@ -76,6 +76,8 @@
 .resona-surface-messages {
   min-height: 0;
   overflow-y: auto;
+  scroll-behavior: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 9px;
