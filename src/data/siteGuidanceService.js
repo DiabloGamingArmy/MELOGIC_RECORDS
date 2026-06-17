@@ -39,6 +39,9 @@ function normalizeSession(sessionId = '', raw = {}) {
     threadKind: raw.threadKind === 'support' ? 'support' : 'thread',
     userUid: String(raw.userUid || '').trim(),
     viewer: raw.viewer === 'agent' ? 'agent' : 'resona',
+    contextType: String(raw.contextType || '').trim(),
+    contextId: String(raw.contextId || '').trim(),
+    contextLabel: String(raw.contextLabel || '').trim(),
     status: ['active', 'paused', 'stopped'].includes(raw.status) ? raw.status : 'active',
     shareMode: raw.shareMode === 'site_only' ? 'site_only' : 'site_only',
     currentRoute: String(raw.currentRoute || '').trim(),
@@ -78,11 +81,14 @@ function normalizeOverlay(overlayId = '', raw = {}) {
   }
 }
 
-export async function startSiteGuidanceSession({ threadId = '', threadKind = 'thread', viewer = 'resona', pageContext = {} } = {}) {
+export async function startSiteGuidanceSession({ threadId = '', threadKind = 'thread', viewer = 'resona', contextType = '', contextId = '', contextLabel = '', pageContext = {} } = {}) {
   const result = await callable('startSiteGuidanceSession', {
     threadId: String(threadId || '').trim(),
     threadKind: threadKind === 'support' ? 'support' : 'thread',
     viewer: viewer === 'agent' ? 'agent' : 'resona',
+    contextType: String(contextType || '').trim(),
+    contextId: String(contextId || '').trim(),
+    contextLabel: String(contextLabel || '').trim(),
     pageContext
   })
   return {

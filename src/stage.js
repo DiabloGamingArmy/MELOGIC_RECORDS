@@ -543,10 +543,30 @@ function mountStageResonaPanel() {
   if (!root) return
   mountResonaChatSurface(root, {
     variant: 'embedded',
+    contextType: 'stagemaker',
+    contextId: state.projectId || getCurrentStageProjectId() || '',
+    contextLabel: state.editorProject?.title || state.editorProject?.name || 'StageMaker',
     contextSource: 'stagemaker',
     title: 'StageMaker',
     roundedParent: false,
     getContext: stageResonaContext
+  })
+}
+
+function applyStageGuideTargets() {
+  const targets = [
+    ['.stage-editor-canvas', 'stagemaker-viewport', 'StageMaker 3D viewport', 'stage-viewport'],
+    ['.stage-editor-right', 'stagemaker-inspector', 'StageMaker inspector', 'stage-inspector'],
+    ['.stage-inspector-tabs [data-inspector-tab="ai"]', 'stagemaker-resona-tab', 'StageMaker Resona tab', 'stage-resona-tab'],
+    ['.stage-viewport-tools', 'stagemaker-viewport-tools', 'StageMaker viewport tools', 'stage-viewport-tools'],
+    ['.stage-editor-bottom', 'stagemaker-bottom-panel', 'StageMaker object data panel', 'stage-bottom-panel']
+  ]
+  targets.forEach(([selector, id, label, role]) => {
+    const element = app.querySelector(selector)
+    if (!element) return
+    element.setAttribute('data-guide-id', id)
+    element.setAttribute('data-guide-label', label)
+    element.setAttribute('data-guide-role', role)
   })
 }
 
@@ -707,6 +727,7 @@ function renderApp() {
     bindEditorEvents()
     ensureStageViewportMounted()
     refreshStageIcons()
+    applyStageGuideTargets()
     mountStageResonaPanel()
     stageEditorMounted = true
     updateEditorProjectHeader()
@@ -725,6 +746,7 @@ function renderApp() {
   updateStageAppMenu()
   updateExportPreview()
   ensureStageViewportMounted()
+  applyStageGuideTargets()
 }
 
 function closeModal() {

@@ -304,6 +304,9 @@ function sanitizeSafeContext(raw = {}) {
   }
   return {
     contextSource: cleanString(source.contextSource || '', 80),
+    contextType: cleanString(source.contextType || '', 80),
+    contextId: cleanString(source.contextId || '', 180),
+    contextLabel: cleanString(source.contextLabel || '', 140),
     sessionId: cleanString(source.sessionId || '', 180),
     guidanceSessionActive: source.guidanceSessionActive === true,
     guidanceSessionStatus: cleanString(source.guidanceSessionStatus || '', 40),

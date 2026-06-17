@@ -526,6 +526,9 @@ ${JSON.stringify({
 Safe page context:
 ${JSON.stringify({
   contextSource: cleanString(safePageContext.contextSource || '', 80),
+  contextType: cleanString(safePageContext.contextType || '', 80),
+  contextId: cleanString(safePageContext.contextId || '', 180),
+  contextLabel: cleanString(safePageContext.contextLabel || '', 140),
   guidanceSessionActive: safePageContext.guidanceSessionActive === true,
   guidanceSessionStatus: cleanString(safePageContext.guidanceSessionStatus || '', 40),
   route: cleanString(safePageContext.route || safePageContext.currentRoute || '', 200),
@@ -587,6 +590,9 @@ Thread:
 ${JSON.stringify({
   status: cleanString(thread.status || '', 40),
   source: cleanString(thread.source || '', 80),
+  contextType: cleanString(thread.contextType || safePageContext.contextType || '', 80),
+  contextId: cleanString(thread.contextId || safePageContext.contextId || '', 180),
+  contextLabel: cleanString(thread.contextLabel || safePageContext.contextLabel || '', 140),
   subject: cleanString(thread.subject || '', 180)
 })}
 

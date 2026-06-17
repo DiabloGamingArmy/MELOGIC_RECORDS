@@ -43,8 +43,35 @@ const RESONA_ACTIVITY_LABELS = {
   writing: 'Resona is writing...'
 }
 
-function resonaThreadIdFor(uid = '') {
-  return `resona_${uid}`
+function normalizeResonaContext(raw = {}) {
+  const contextType = ['studio_daw', 'stagemaker'].includes(assertString(raw.contextType || ''))
+    ? assertString(raw.contextType || '')
+    : 'inbox'
+  const contextId = contextType === 'inbox' ? '' : safeIdPart(raw.contextId || raw.projectId || raw.sessionId || '')
+  return {
+    contextType,
+    contextId,
+    contextLabel: assertString(raw.contextLabel || '').replace(/\s+/g, ' ').trim().slice(0, 140)
+  }
+}
+
+function resonaThreadIdFor(uid = '', context = {}) {
+  const scoped = normalizeResonaContext(context)
+  if (scoped.contextType === 'inbox') return `resona_${uid}`
+  return `resona_${safeIdPart(uid)}_${scoped.contextType}_${safeIdPart(scoped.contextId)}`
+}
+
+async function assertContextAccess({ uid = '', contextType = 'inbox', contextId = '' } = {}) {
+  if (contextType === 'inbox') return
+  if (!contextId) throw new HttpsError('invalid-argument', 'Project context is required for scoped Resona.')
+  const collectionName = contextType === 'studio_daw' ? 'studioProjects' : 'stageProjects'
+  const snap = await db.collection(collectionName).doc(contextId).get()
+  if (!snap.exists) throw new HttpsError('not-found', 'Project context not found.')
+  const project = snap.data() || {}
+  const collaboratorIds = Array.isArray(project.collaboratorIds) ? project.collaboratorIds : []
+  if (project.ownerId !== uid && project.ownerUid !== uid && !collaboratorIds.includes(uid)) {
+    throw new HttpsError('permission-denied', 'You do not have access to this project context.')
+  }
 }
 
 function assertSignedIn(request = {}) {
@@ -89,6 +116,9 @@ function serializeThread(docSnap) {
     status: data.status || 'ai_active',
     mode: data.mode || 'general',
     source: data.source || 'inbox_resona',
+    contextType: data.contextType || 'inbox',
+    contextId: data.contextId || '',
+    contextLabel: data.contextLabel || '',
     title: data.title || 'Resona',
     imagePath: data.imagePath || RESONA_AVATAR_PATH,
     imageURL: data.imageURL || '',
@@ -449,7 +479,7 @@ async function writeResonaReply({ threadRef, threadId = '', messageId, thread, u
     } else if (thread.type === 'agent') {
       threadUpdate.status = 'ai_active'
       statusAfter = 'ai_active'
-      threadUpdate.mode = 'general'
+      threadUpdate.mode = thread.contextType && thread.contextType !== 'inbox' ? 'project_assistant' : 'general'
       threadUpdate.assignedAgentUid = null
     }
     transaction.set(threadRef, threadUpdate, { merge: true })
@@ -470,8 +500,14 @@ async function writeResonaReply({ threadRef, threadId = '', messageId, thread, u
 
 const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
-  const threadId = resonaThreadIdFor(uid)
+  const context = normalizeResonaContext(request.data || {})
+  await assertContextAccess({ uid, contextType: context.contextType, contextId: context.contextId })
+  const threadId = resonaThreadIdFor(uid, context)
   const threadRef = db.collection('threads').doc(threadId)
+  const isInboxContext = context.contextType === 'inbox'
+  const mode = isInboxContext ? 'general' : 'project_assistant'
+  const source = isInboxContext ? 'inbox_resona' : `${context.contextType}_resona`
+  const title = context.contextLabel ? `Resona - ${context.contextLabel}` : 'Resona'
 
   const result = await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
@@ -481,7 +517,6 @@ const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
       const repaired = {
         type: 'agent',
         agentId: RESONA_AGENT_ID,
-        title: 'Resona',
         imagePath: current.imagePath || RESONA_AVATAR_PATH,
         participantIds: participantUids,
         participantUids,
@@ -489,22 +524,28 @@ const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
         participantCount: participantUids.length,
         requesterUid: current.requesterUid || uid,
         status: current.status || 'ai_active',
-        mode: current.mode || 'general',
-        source: current.source || 'inbox_resona',
+        mode: current.mode || mode,
+        source: current.source || source,
+        contextType: current.contextType || context.contextType,
+        contextId: current.contextId || context.contextId,
+        contextLabel: context.contextLabel || current.contextLabel || '',
+        title: context.contextLabel ? title : (current.title || 'Resona'),
         updatedAt: FieldValue.serverTimestamp()
       }
       transaction.set(threadRef, repaired, { merge: true })
       transaction.set(threadRef.collection('participants').doc(uid), buildParticipantPayload({ uid, role: 'owner' }), { merge: true })
-      transaction.set(db.collection('users').doc(uid).collection('inboxThreads').doc(threadId), buildInboxSummaryPayload({
-        threadId,
-        thread: { ...current, ...repaired },
-        recipientUid: uid
-      }), { merge: true })
-      transaction.set(db.collection('users').doc(uid).collection('inboxThreads').doc(threadId), {
-        deleted: false,
-        deletedAt: null,
-        updatedAt: FieldValue.serverTimestamp()
-      }, { merge: true })
+      if (isInboxContext) {
+        transaction.set(db.collection('users').doc(uid).collection('inboxThreads').doc(threadId), buildInboxSummaryPayload({
+          threadId,
+          thread: { ...current, ...repaired },
+          recipientUid: uid
+        }), { merge: true })
+        transaction.set(db.collection('users').doc(uid).collection('inboxThreads').doc(threadId), {
+          deleted: false,
+          deletedAt: null,
+          updatedAt: FieldValue.serverTimestamp()
+        }, { merge: true })
+      }
       return { threadId, existing: true }
     }
 
@@ -517,9 +558,12 @@ const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
       requesterUid: uid,
       assignedAgentUid: null,
       status: 'ai_active',
-      mode: 'general',
-      source: 'inbox_resona',
-      title: 'Resona',
+      mode,
+      source,
+      contextType: context.contextType,
+      contextId: context.contextId,
+      contextLabel: context.contextLabel,
+      title,
       imagePath: RESONA_AVATAR_PATH,
       imageURL: '',
       participantIds: participantUids,
@@ -540,11 +584,13 @@ const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
     }
     transaction.set(threadRef, payload)
     transaction.set(threadRef.collection('participants').doc(uid), buildParticipantPayload({ uid, role: 'owner' }))
-    transaction.set(db.collection('users').doc(uid).collection('inboxThreads').doc(threadId), buildInboxSummaryPayload({
-      threadId,
-      thread: payload,
-      recipientUid: uid
-    }))
+    if (isInboxContext) {
+      transaction.set(db.collection('users').doc(uid).collection('inboxThreads').doc(threadId), buildInboxSummaryPayload({
+        threadId,
+        thread: payload,
+        recipientUid: uid
+      }))
+    }
     return { threadId, existing: false }
   })
 
@@ -556,19 +602,18 @@ const refreshResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
   const requestedThreadId = assertString(request.data?.threadId || '')
   const threadId = requestedThreadId || resonaThreadIdFor(uid)
-  if (threadId !== resonaThreadIdFor(uid)) throw new HttpsError('permission-denied', 'You can only refresh your Resona chat.')
   const threadRef = db.collection('threads').doc(threadId)
 
   await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
     if (!snap.exists) throw new HttpsError('not-found', 'Resona chat not found.')
     const thread = snap.data() || {}
-    if (thread.type !== 'agent' || thread.agentId !== RESONA_AGENT_ID || thread.requesterUid !== uid) {
+    if (thread.type !== 'agent' || thread.agentId !== RESONA_AGENT_ID || !getThreadParticipantUids(thread).includes(uid)) {
       throw new HttpsError('permission-denied', 'You can only refresh your Resona chat.')
     }
     transaction.set(threadRef, {
       status: 'ai_active',
-      mode: 'general',
+      mode: thread.contextType && thread.contextType !== 'inbox' ? 'project_assistant' : 'general',
       assignedAgentUid: null,
       aiEscalationReason: '',
       aiSuggestedCategory: '',
@@ -589,7 +634,6 @@ const refreshResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
 const clearResonaChatHistory = onCall(CALLABLE_OPTIONS, async (request) => {
   const uid = assertSignedIn(request)
   const threadId = cleanBody(request.data?.threadId || resonaThreadIdFor(uid), 180)
-  if (threadId !== resonaThreadIdFor(uid)) throw new HttpsError('permission-denied', 'You can only clear your own Resona history.')
   const threadRef = db.collection('threads').doc(threadId)
   await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
@@ -600,7 +644,7 @@ const clearResonaChatHistory = onCall(CALLABLE_OPTIONS, async (request) => {
     transaction.set(threadRef, {
       clearedAt: FieldValue.serverTimestamp(),
       clearedBy: uid,
-      mode: 'general',
+      mode: thread.contextType && thread.contextType !== 'inbox' ? 'project_assistant' : 'general',
       status: 'ai_active',
       assignedAgentUid: null,
       aiEscalationReason: '',

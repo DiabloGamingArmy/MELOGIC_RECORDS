@@ -104,6 +104,9 @@ function sanitizePageContext(raw = {}) {
     routeLabel: cleanString(source.routeLabel || '', 120),
     pageTitle: cleanString(source.pageTitle || '', 200),
     featureArea: cleanString(source.featureArea || '', 120),
+    contextType: cleanString(source.contextType || '', 80),
+    contextId: cleanString(source.contextId || '', 180),
+    contextLabel: cleanString(source.contextLabel || '', 140),
     activeModal: cleanString(source.activeModal || '', 120),
     clientTimeZone: cleanString(source.clientTimeZone || source.timeZone || '', 80),
     clientLocalTimeISO: cleanString(source.clientLocalTimeISO || '', 80),
@@ -130,6 +133,9 @@ function serializeSession(docSnap) {
     threadKind: data.threadKind || 'thread',
     userUid: data.userUid || '',
     viewer: data.viewer || 'resona',
+    contextType: data.contextType || '',
+    contextId: data.contextId || '',
+    contextLabel: data.contextLabel || '',
     status: data.status || 'active',
     consentGranted: data.consentGranted === true,
     shareMode: data.shareMode || 'site_only',
@@ -186,15 +192,24 @@ const startSiteGuidanceSession = onCall(CALLABLE_OPTIONS, async (request) => {
   const threadId = cleanString(request.data?.threadId || '', 180)
   const threadKind = request.data?.threadKind === 'support' ? 'support' : 'thread'
   const viewer = request.data?.viewer === 'agent' ? 'agent' : 'resona'
+  const requestedContextType = cleanString(request.data?.contextType || '', 80)
+  const requestedContextId = cleanString(request.data?.contextId || '', 180)
+  const requestedContextLabel = cleanString(request.data?.contextLabel || '', 140)
   if (!threadId) throw new HttpsError('invalid-argument', 'Conversation is required.')
   await loadAccessibleThread({ request, uid, threadId, threadKind })
   const page = sanitizePageContext(request.data?.pageContext || {})
+  const contextType = page.contextType || requestedContextType
+  const contextId = page.contextId || requestedContextId
+  const contextLabel = page.contextLabel || requestedContextLabel
   const sessionRef = db.collection('supportGuidanceSessions').doc()
   await sessionRef.set({
     threadId,
     threadKind,
     userUid: uid,
     viewer,
+    contextType,
+    contextId,
+    contextLabel,
     status: 'active',
     consentGranted: true,
     shareMode: 'site_only',
@@ -227,6 +242,9 @@ const updateSiteGuidanceSession = onCall(CALLABLE_OPTIONS, async (request) => {
     routeLabel: page.routeLabel,
     pageTitle: page.pageTitle,
     featureArea: page.featureArea,
+    contextType: page.contextType || session.contextType || '',
+    contextId: page.contextId || session.contextId || '',
+    contextLabel: page.contextLabel || session.contextLabel || '',
     activeModal: page.activeModal,
     viewport: page.viewport,
     scroll: page.scroll,
@@ -417,6 +435,9 @@ async function loadActiveGuidanceContext({ threadId = '', userUid = '' } = {}) {
     routeLabel: session.routeLabel,
     pageTitle: session.pageTitle,
     featureArea: session.featureArea,
+    contextType: session.contextType || '',
+    contextId: session.contextId || '',
+    contextLabel: session.contextLabel || '',
     activeModal: session.activeModal,
     viewport: session.viewport,
     scroll: session.scroll,
