@@ -1,11 +1,14 @@
 import '../styles/resonaChatSurface.css'
 import { waitForInitialAuthState } from '../firebase/auth'
+import { openChatDock } from './chatDock'
 import { createOrGetResonaThread, subscribeToThread } from '../data/threadService'
 import { markThreadRead, sendMessage, subscribeToMessages } from '../data/messageService'
 
 const instances = new WeakMap()
 const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+const THREAD_CACHE_PREFIX = 'melogic_resona_surface_thread_v1'
+const CONTEXT_TYPES = new Set(['inbox', 'studio_daw', 'stagemaker'])
 
 function escapeHtml(value = '') {
   return String(value ?? '')
@@ -19,6 +22,17 @@ function escapeHtml(value = '') {
 function createClientMessageId() {
   if (globalThis.crypto?.randomUUID) return crypto.randomUUID()
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function safeContextType(value = '') {
+  const clean = String(value || '').trim()
+  return CONTEXT_TYPES.has(clean) ? clean : 'inbox'
+}
+
+function threadCacheKey(uid = '', context = {}) {
+  const contextType = safeContextType(context.contextType)
+  const contextId = String(context.contextId || '').trim() || 'default'
+  return `${THREAD_CACHE_PREFIX}:${uid}:${contextType}:${contextId}`
 }
 
 function toLocalIso(date = new Date()) {
@@ -92,6 +106,7 @@ class ResonaChatSurface {
     this.sending = false
     this.unsubscribeThread = () => {}
     this.unsubscribeMessages = () => {}
+    this.render()
     this.init()
   }
 
@@ -103,15 +118,19 @@ class ResonaChatSurface {
         this.render()
         return
       }
-      this.thread = await createOrGetResonaThread()
-      this.unsubscribeThread = subscribeToThread(this.thread.id, (thread) => {
-        this.thread = thread || this.thread
+      const cachedThreadId = this.readCachedThreadId()
+      if (cachedThreadId) {
+        this.thread = this.threadPlaceholder(cachedThreadId)
+        this.subscribeToThreadId(cachedThreadId)
+        this.loading = false
         this.render()
-      })
-      this.unsubscribeMessages = subscribeToMessages(this.thread.id, (messages) => {
-        this.messages = messages
-        this.render(true)
-      })
+      }
+      const thread = await createOrGetResonaThread(this.threadContext())
+      if (thread?.id) {
+        this.writeCachedThreadId(thread.id)
+        this.thread = thread
+        if (thread.id !== cachedThreadId) this.subscribeToThreadId(thread.id)
+      }
       this.loading = false
       this.render(true)
     } catch (error) {
@@ -124,6 +143,67 @@ class ResonaChatSurface {
   update(options = {}) {
     this.options = { ...this.options, ...options }
     this.render()
+  }
+
+  threadContext() {
+    const contextType = safeContextType(this.options.contextType || this.options.contextSource || 'inbox')
+    const contextId = contextType === 'inbox' ? '' : String(this.options.contextId || '').trim()
+    const contextLabel = String(this.options.contextLabel || this.options.title || '').trim()
+    return { contextType, contextId, contextLabel }
+  }
+
+  threadPlaceholder(threadId = '') {
+    return {
+      id: threadId,
+      type: 'agent',
+      agentId: 'resona',
+      title: 'Resona',
+      imagePath: '',
+      participantIds: this.user?.uid ? [this.user.uid] : [],
+      participantUids: this.user?.uid ? [this.user.uid] : [],
+      ...this.threadContext()
+    }
+  }
+
+  readCachedThreadId() {
+    try {
+      if (!this.user?.uid) return ''
+      return String(localStorage.getItem(threadCacheKey(this.user.uid, this.threadContext())) || '').trim()
+    } catch {
+      return ''
+    }
+  }
+
+  writeCachedThreadId(threadId = '') {
+    try {
+      if (!this.user?.uid || !threadId) return
+      localStorage.setItem(threadCacheKey(this.user.uid, this.threadContext()), threadId)
+    } catch {
+      // Cache is only a startup hint; failures should not block chat.
+    }
+  }
+
+  subscribeToThreadId(threadId = '') {
+    if (!threadId) return
+    this.unsubscribeThread()
+    this.unsubscribeMessages()
+    this.unsubscribeThread = subscribeToThread(threadId, (thread) => {
+      this.thread = thread || this.thread
+      this.render()
+    }, () => {
+      this.thread = null
+      this.loading = true
+      this.render()
+    })
+    this.unsubscribeMessages = subscribeToMessages(threadId, (messages) => {
+      this.messages = messages
+      this.loading = false
+      this.render(true)
+    }, (error) => {
+      this.error = error?.message || 'Could not load Resona messages.'
+      this.loading = false
+      this.render()
+    })
   }
 
   activity() {
@@ -140,6 +220,7 @@ class ResonaChatSurface {
     const extra = typeof this.options.getContext === 'function' ? this.options.getContext() : {}
     return {
       ...basePageContext(contextSource),
+      ...this.threadContext(),
       featureArea: contextSource,
       ...(extra && typeof extra === 'object' ? extra : {})
     }
@@ -200,21 +281,39 @@ class ResonaChatSurface {
     this.render(true)
   }
 
+  openDock() {
+    if (!this.thread?.id) return
+    openChatDock({
+      mode: 'thread',
+      threadId: this.thread.id,
+      title: this.thread.contextLabel || this.options.title || 'Resona'
+    })
+  }
+
   render(scrollBottom = false) {
     const variant = this.options.variant || 'embedded'
     const locked = this.locked()
     const activityLabel = this.activity().label || 'Resona is responding...'
-    const disabled = this.loading || this.sending || locked || !this.user || !this.thread
+    const hasThread = Boolean(this.thread?.id)
+    const disabled = this.sending || locked || !this.user || !hasThread
+    const threadContext = this.threadContext()
+    const showActions = this.options.showHeaderActions !== false
+    const showGuidance = this.options.showGuidanceButton !== false
     this.root.classList.add('resona-chat-surface-host')
     this.root.innerHTML = `
       <section class="resona-chat-surface is-${escapeHtml(variant)} ${this.options.roundedParent === false ? 'is-square-parent' : ''}">
         <header class="resona-surface-header">
           <div><strong>Resona</strong><span>${escapeHtml(this.options.title || 'Platform agent')}</span></div>
-          ${locked ? `<em>${escapeHtml(activityLabel)}</em>` : ''}
+          <div class="resona-surface-header-actions">
+            ${locked ? `<em>${escapeHtml(activityLabel)}</em>` : ''}
+            ${showActions ? `<button type="button" data-resona-surface-dock ${hasThread ? '' : 'disabled'}>Open Dock</button>` : ''}
+            ${showGuidance ? `<button type="button" data-site-guidance-start data-site-guidance-thread-id="${escapeHtml(this.thread?.id || '')}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" data-site-guidance-context-type="${escapeHtml(threadContext.contextType)}" data-site-guidance-context-id="${escapeHtml(threadContext.contextId)}" data-site-guidance-context-label="${escapeHtml(threadContext.contextLabel)}" ${hasThread ? '' : 'disabled'}>Enable Guidance</button>` : ''}
+          </div>
         </header>
         <div class="resona-surface-messages" data-resona-surface-messages>
-          ${this.loading ? '<p class="resona-surface-empty">Opening Resona...</p>' : ''}
+          ${this.loading && !hasThread ? '<p class="resona-surface-empty">Opening Resona...</p>' : ''}
           ${!this.loading && !this.user ? '<p class="resona-surface-empty">Sign in to chat with Resona.</p>' : ''}
+          ${this.user && hasThread && this.loading && !this.messages.length ? '<p class="resona-surface-empty">Loading conversation...</p>' : ''}
           ${!this.loading && this.user && !this.messages.length ? '<p class="resona-surface-empty">Ask Resona about this workspace.</p>' : ''}
           ${this.messages.slice(-80).map((message) => {
             if (message.senderType === 'system') return ''
@@ -266,6 +365,9 @@ class ResonaChatSurface {
     })
     this.root.querySelector('[data-resona-surface-attach]')?.addEventListener('click', () => {
       this.root.querySelector('[data-resona-surface-file]')?.click()
+    })
+    this.root.querySelector('[data-resona-surface-dock]')?.addEventListener('click', () => {
+      this.openDock()
     })
     this.root.querySelector('[data-resona-surface-file]')?.addEventListener('change', (event) => {
       this.addAttachments(event.target.files)

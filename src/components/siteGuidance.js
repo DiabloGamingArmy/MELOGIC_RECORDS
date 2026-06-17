@@ -53,7 +53,10 @@ function readStoredSession() {
       id: String(parsed.id || '').trim(),
       threadId: String(parsed.threadId || '').trim(),
       threadKind: parsed.threadKind === 'support' ? 'support' : 'thread',
-      viewer: parsed.viewer === 'agent' ? 'agent' : 'resona'
+      viewer: parsed.viewer === 'agent' ? 'agent' : 'resona',
+      contextType: String(parsed.contextType || '').trim(),
+      contextId: String(parsed.contextId || '').trim(),
+      contextLabel: String(parsed.contextLabel || '').trim()
     }
   } catch {
     localStorage.removeItem(STORAGE_KEY)
@@ -68,7 +71,10 @@ function storeSession(session = null) {
       id: session.id,
       threadId: session.threadId,
       threadKind: session.threadKind,
-      viewer: session.viewer
+      viewer: session.viewer,
+      contextType: session.contextType || '',
+      contextId: session.contextId || '',
+      contextLabel: session.contextLabel || ''
     }))
   } catch {
     // Persistence failure should not break chat guidance.
@@ -277,7 +283,7 @@ function formatLocalIso(date = new Date()) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}${sign}${pad(Math.floor(absolute / 60))}:${pad(absolute % 60)}`
 }
 
-function collectPageContext() {
+function collectPageContext(extraContext = state.session || state.pendingStart || {}) {
   const heading = document.querySelector('main h1, main h2, [data-page-title]')
   const activeModal = document.querySelector('[role="dialog"][aria-modal="true"], .modal, .admin-modal-backdrop')
   const visibleGuideTargets = collectVisibleGuideTargets()
@@ -292,6 +298,9 @@ function collectPageContext() {
     routeLabel: pageRouteLabel(),
     pageTitle: document.title || heading?.textContent || '',
     featureArea: safeElementLabel(heading) || pageRouteLabel(),
+    contextType: String(extraContext?.contextType || '').trim(),
+    contextId: String(extraContext?.contextId || '').trim(),
+    contextLabel: String(extraContext?.contextLabel || '').trim(),
     activeModal: activeModal ? safeElementLabel(activeModal) || 'Modal open' : '',
     viewport: {
       width: window.innerWidth || 0,
@@ -475,7 +484,7 @@ function scheduleLocalRender(delayMs = 80) {
 
 async function refreshPageContextForOutgoingMessage(reason = 'message-send') {
   if (!state.session?.id || state.session.status !== 'active') return null
-  const pageContext = collectPageContext()
+  const pageContext = collectPageContext(state.session)
   const context = {
     ...pageContext,
     guidanceSessionActive: true,
@@ -517,7 +526,10 @@ function requestSiteGuidanceStart(detail = {}) {
   state.pendingStart = {
     threadId,
     threadKind: detail.threadKind === 'support' || detail.support === true || detail.mode === 'support' ? 'support' : 'thread',
-    viewer: detail.viewer === 'agent' ? 'agent' : 'resona'
+    viewer: detail.viewer === 'agent' ? 'agent' : 'resona',
+    contextType: String(detail.contextType || '').trim(),
+    contextId: String(detail.contextId || '').trim(),
+    contextLabel: String(detail.contextLabel || '').trim()
   }
   state.error = ''
   render()
@@ -531,7 +543,7 @@ async function confirmStart() {
   try {
     const result = await startSiteGuidanceSession({
       ...state.pendingStart,
-      pageContext: collectPageContext()
+      pageContext: collectPageContext(state.pendingStart)
     })
     state.pendingStart = null
     state.session = result.session
@@ -585,11 +597,25 @@ async function setGuidanceStatus(status = '') {
 
 function modalMarkup() {
   if (!state.pendingStart) return ''
+  const contextType = state.pendingStart.contextType || ''
+  const noun = contextType === 'studio_daw'
+    ? 'this Studio DAW project'
+    : contextType === 'stagemaker'
+      ? 'this StageMaker plan'
+      : 'this Melogic page'
+  const title = state.pendingStart.viewer === 'agent'
+    ? `Share ${noun} with Melogic Support?`
+    : `Share ${noun} with Resona?`
+  const body = contextType === 'studio_daw'
+    ? 'Resona will receive safe site-only context about the current Studio DAW layout, selected track, transport state, and visible controls. This does not share your full screen, other browser tabs, files, or apps.'
+    : contextType === 'stagemaker'
+      ? 'Resona will receive safe site-only context about the current StageMaker plan, selected entity readout, viewport controls, and visible interface areas. This does not share your full screen, other browser tabs, files, or apps.'
+      : 'Resona will receive safe context about this website page, such as the current page, scroll position, and visible interface areas. This does not share your full screen, other browser tabs, or other apps.'
   return `
     <div class="site-guidance-modal-backdrop" data-site-guidance-cancel>
       <section class="site-guidance-modal" role="dialog" aria-modal="true" aria-labelledby="site-guidance-title">
-        <h2 id="site-guidance-title">Share this Melogic page with Resona?</h2>
-        <p>Resona will receive safe context about this website page, such as the current page, scroll position, and visible interface areas. This does not share your full screen, other browser tabs, or other apps.</p>
+        <h2 id="site-guidance-title">${escapeHtml(title)}</h2>
+        <p>${escapeHtml(body)}</p>
         ${state.error ? `<p class="site-guidance-error">${escapeHtml(state.error)}</p>` : ''}
         <div class="site-guidance-modal-actions">
           <button type="button" class="site-guidance-secondary" data-site-guidance-cancel ${state.starting ? 'disabled' : ''}>Cancel</button>
@@ -684,7 +710,10 @@ function bindEvents() {
       requestSiteGuidanceStart({
         threadId: starter.getAttribute('data-site-guidance-thread-id') || '',
         threadKind: starter.getAttribute('data-site-guidance-thread-kind') || 'thread',
-        viewer: starter.getAttribute('data-site-guidance-viewer') || 'resona'
+        viewer: starter.getAttribute('data-site-guidance-viewer') || 'resona',
+        contextType: starter.getAttribute('data-site-guidance-context-type') || '',
+        contextId: starter.getAttribute('data-site-guidance-context-id') || '',
+        contextLabel: starter.getAttribute('data-site-guidance-context-label') || ''
       })
       return
     }

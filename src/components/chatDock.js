@@ -5,7 +5,8 @@ import {
   sendMessage,
   subscribeToHiddenThreadMessages,
   subscribeToInboxThreads,
-  subscribeToMessages
+  subscribeToMessages,
+  subscribeToThread
 } from '../data/inboxService'
 import {
   endSupportThread,
@@ -43,6 +44,7 @@ let shellSnapshot = getShellState()
 let unsubscribeShellState = () => {}
 let hasShellStateListener = false
 let unsubscribeThreads = () => {}
+let unsubscribeSourceThread = () => {}
 let unsubscribeMessages = () => {}
 let unsubscribeHiddenMessages = () => {}
 let activeThread = null
@@ -216,6 +218,8 @@ async function refreshSiteGuidanceContextForOutgoingMessage() {
 function stopThreadSubscriptions() {
   unsubscribeThreads()
   unsubscribeThreads = () => {}
+  unsubscribeSourceThread()
+  unsubscribeSourceThread = () => {}
   unsubscribeMessages()
   unsubscribeMessages = () => {}
   unsubscribeHiddenMessages()
@@ -743,9 +747,12 @@ function renderSupportHeaderActions() {
 
 function renderThreadHeaderActions() {
   if (!isResonaDockThread() || dockState.mode === 'support') return ''
+  const contextType = activeThread?.contextType || ''
+  const contextId = activeThread?.contextId || ''
+  const contextLabel = activeThread?.contextLabel || activeThread?.title || ''
   return `
     <div class="chat-dock-support-actions" aria-label="Resona chat actions">
-      <button type="button" class="chat-dock-header-action is-muted" data-site-guidance-start data-site-guidance-thread-id="${escapeHtml(dockState.activeThreadId)}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" title="Share this Melogic page only.">Share Screen</button>
+      <button type="button" class="chat-dock-header-action is-muted" data-site-guidance-start data-site-guidance-thread-id="${escapeHtml(dockState.activeThreadId)}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" data-site-guidance-context-type="${escapeHtml(contextType)}" data-site-guidance-context-id="${escapeHtml(contextId)}" data-site-guidance-context-label="${escapeHtml(contextLabel)}" title="Share this Melogic page only.">Share Screen</button>
     </div>
   `
 }
@@ -1112,8 +1119,10 @@ function syncSupportSubscriptions() {
   renderDock()
 
   unsubscribeThreads()
+  unsubscribeSourceThread()
   unsubscribeMessages()
   unsubscribeHiddenMessages()
+  unsubscribeSourceThread = () => {}
   unsubscribeThreads = () => {}
   unsubscribeMessages = () => {}
   unsubscribeHiddenMessages = () => {}
@@ -1182,10 +1191,39 @@ function syncThreadSubscriptions() {
     activeThread = inboxThreads.find((thread) => thread.id === dockState.activeThreadId) || null
     loadingThreads = false
     if (activeThread) {
+      unsubscribeSourceThread()
+      unsubscribeSourceThread = () => {}
       errorMessage = ''
       dockState.title = activeThread.title || dockState.title
       persistState()
       hydrateProfilesForDock()
+    } else if (isResonaDockThread()) {
+      activeThread = {
+        id: dockState.activeThreadId,
+        type: 'agent',
+        agentId: 'resona',
+        title: dockState.title || 'Resona',
+        participantIds: uid ? [uid] : [],
+        participantUids: uid ? [uid] : []
+      }
+      errorMessage = ''
+      unsubscribeSourceThread()
+      unsubscribeSourceThread = subscribeToThread(dockState.activeThreadId, (thread) => {
+        if (thread) {
+          activeThread = thread
+          dockState.title = thread.title || dockState.title
+          persistState()
+          hydrateProfilesForDock()
+        } else {
+          activeThread = null
+          errorMessage = 'You do not have access to this conversation.'
+        }
+        renderDock()
+      }, (error) => {
+        activeThread = null
+        errorMessage = error?.message || 'Conversation could not be loaded.'
+        renderDock()
+      })
     } else {
       errorMessage = 'You do not have access to this conversation.'
     }

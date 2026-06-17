@@ -76,6 +76,9 @@ function normalizeThread(threadId, raw = {}) {
     status: raw.status || 'active',
     mode: String(raw.mode || '').trim(),
     source: String(raw.source || '').trim(),
+    contextType: String(raw.contextType || '').trim() || 'inbox',
+    contextId: String(raw.contextId || '').trim(),
+    contextLabel: String(raw.contextLabel || '').trim(),
     requesterUid: String(raw.requesterUid || '').trim(),
     assignedAgentUid: raw.assignedAgentUid || null,
     agentParticipants: normalizeAgentParticipants(raw.agentParticipants),
@@ -359,9 +362,13 @@ export async function hydrateThreadFromSourceIfNeeded(thread) {
   }
 }
 
-export async function createOrGetResonaThread() {
+export async function createOrGetResonaThread(options = {}) {
   const callable = httpsCallable(functions, 'createOrGetResonaThread')
-  const result = await callable({})
+  const result = await callable({
+    contextType: String(options.contextType || 'inbox').trim(),
+    contextId: String(options.contextId || '').trim(),
+    contextLabel: String(options.contextLabel || '').trim()
+  })
   if (result?.data?.threadId) return getThread(result.data.threadId)
   throw new Error('Resona thread could not be opened.')
 }

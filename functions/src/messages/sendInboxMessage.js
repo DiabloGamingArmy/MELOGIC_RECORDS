@@ -109,6 +109,9 @@ function sanitizeSafePageContext(raw = null) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   return {
     contextSource: cleanString(raw.contextSource || '', 80),
+    contextType: cleanString(raw.contextType || '', 80),
+    contextId: cleanString(raw.contextId || '', 180),
+    contextLabel: cleanString(raw.contextLabel || '', 140),
     guidanceSessionActive: raw.guidanceSessionActive === true,
     guidanceSessionStatus: cleanString(raw.guidanceSessionStatus || '', 40),
     guidanceSessionId: cleanString(raw.guidanceSessionId || raw.sessionId || '', 180),
