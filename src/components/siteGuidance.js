@@ -11,6 +11,8 @@ import '../styles/siteGuidance.css'
 const STORAGE_KEY = 'melogic_site_guidance_session_v1'
 const POSITION_KEY = 'melogic_site_guidance_position_v1'
 const CONTEXT_REFRESH_EVENT = 'melogic:site-guidance-refresh-context'
+const GUIDANCE_STATE_EVENT = 'melogic:site-guidance-state'
+const EMBEDDED_CONTEXT_TYPES = new Set(['studio_daw', 'stagemaker'])
 
 let initialized = false
 let root = null
@@ -150,7 +152,7 @@ function collectVisibleGuideTargets() {
     'main button[aria-label]',
     'main a[aria-label]'
   ].join(',')
-  return Array.from(document.querySelectorAll(selectors))
+  const domTargets = Array.from(document.querySelectorAll(selectors))
     .map((element, index) => {
       const rect = element.getBoundingClientRect()
       const guideId = element.getAttribute('data-guide-id') || `visible-target-${index + 1}`
@@ -179,9 +181,35 @@ function collectVisibleGuideTargets() {
     })
     .filter((entry) => entry.label || entry.guideId)
     .filter((entry) => entry.visible !== false)
+  const registeredTargets = Array.isArray(globalThis.__MELOGIC_GUIDE_TARGETS__)
+    ? globalThis.__MELOGIC_GUIDE_TARGETS__.map((entry = {}, index) => {
+      const rect = entry.rect && typeof entry.rect === 'object' ? entry.rect : entry
+      const guideId = String(entry.guideId || entry.id || `registered-target-${index + 1}`).trim()
+      return {
+        guideId,
+        id: guideId,
+        label: String(entry.label || guideId).replace(/\s+/g, ' ').trim().slice(0, 120),
+        role: String(entry.role || 'registered-target').trim().slice(0, 80),
+        text: String(entry.text || '').replace(/\s+/g, ' ').trim().slice(0, 180),
+        entityId: String(entry.entityId || '').trim().slice(0, 120),
+        visible: entry.visible !== false,
+        rect: {
+          x: Math.round(Number(rect.x || 0)),
+          y: Math.round(Number(rect.y || 0)),
+          width: Math.max(0, Math.round(Number(rect.width || 0))),
+          height: Math.max(0, Math.round(Number(rect.height || 0)))
+        },
+        x: Math.round(Number(rect.x || 0)),
+        y: Math.round(Number(rect.y || 0)),
+        width: Math.max(0, Math.round(Number(rect.width || 0))),
+        height: Math.max(0, Math.round(Number(rect.height || 0)))
+      }
+    }).filter((entry) => entry.visible && entry.guideId && entry.rect.width > 0 && entry.rect.height > 0)
+    : []
+  return [...domTargets, ...registeredTargets]
     .sort((a, b) => {
-      const aInteractive = /\b(button|link|nav|card|filter|sidebar|conversation|composer)\b/i.test(a.role)
-      const bInteractive = /\b(button|link|nav|card|filter|sidebar|conversation|composer)\b/i.test(b.role)
+      const aInteractive = /\b(button|link|nav|card|filter|sidebar|conversation|composer|stage-entity)\b/i.test(a.role)
+      const bInteractive = /\b(button|link|nav|card|filter|sidebar|conversation|composer|stage-entity)\b/i.test(b.role)
       if (aInteractive !== bInteractive) return aInteractive ? -1 : 1
       return (a.rect.y - b.rect.y) || (a.rect.x - b.rect.x)
     })
@@ -391,6 +419,7 @@ function isInboxPage() {
 
 function openGuidanceDockIfNeeded(session = state.session) {
   if (!session || session.status === 'stopped' || isInboxPage()) return
+  if (EMBEDDED_CONTEXT_TYPES.has(session.contextType || '')) return
   const dock = getChatDockState()
   const expectedMode = session.threadKind === 'support' ? 'support' : 'thread'
   if (dock.open && !dock.minimized && dock.mode === expectedMode && dock.activeThreadId === session.threadId) return
@@ -400,6 +429,22 @@ function openGuidanceDockIfNeeded(session = state.session) {
     threadId: session.threadId,
     title: session.viewer === 'agent' ? 'Melogic Support' : 'Resona'
   })
+}
+
+function dispatchGuidanceState() {
+  const threadId = state.pendingStart?.threadId || state.session?.threadId || ''
+  window.dispatchEvent(new CustomEvent(GUIDANCE_STATE_EVENT, {
+    detail: {
+      active: state.session?.status === 'active',
+      paused: state.session?.status === 'paused',
+      starting: state.starting === true,
+      pending: Boolean(state.pendingStart),
+      threadId,
+      contextType: state.pendingStart?.contextType || state.session?.contextType || '',
+      contextId: state.pendingStart?.contextId || state.session?.contextId || '',
+      contextLabel: state.pendingStart?.contextLabel || state.session?.contextLabel || ''
+    }
+  }))
 }
 
 function subscribeActiveSession(sessionRef = readStoredSession()) {
@@ -523,13 +568,21 @@ function handleContextRefreshRequest(event) {
 function requestSiteGuidanceStart(detail = {}) {
   const threadId = String(detail.threadId || '').trim()
   if (!threadId) return
+  if (state.starting) return
+  if (state.session?.threadId === threadId && ['active', 'paused'].includes(state.session.status || '')) {
+    state.pendingStart = null
+    state.error = ''
+    render()
+    return
+  }
   state.pendingStart = {
     threadId,
     threadKind: detail.threadKind === 'support' || detail.support === true || detail.mode === 'support' ? 'support' : 'thread',
     viewer: detail.viewer === 'agent' ? 'agent' : 'resona',
     contextType: String(detail.contextType || '').trim(),
     contextId: String(detail.contextId || '').trim(),
-    contextLabel: String(detail.contextLabel || '').trim()
+    contextLabel: String(detail.contextLabel || '').trim(),
+    origin: String(detail.origin || '').trim()
   }
   state.error = ''
   render()
@@ -673,6 +726,7 @@ function overlaysMarkup() {
 
 function render() {
   if (!root) return
+  dispatchGuidanceState()
   document.body.classList.toggle('site-guidance-active', Boolean(state.session && state.session.status === 'active'))
   root.innerHTML = `
     ${modalMarkup()}
@@ -713,7 +767,8 @@ function bindEvents() {
         viewer: starter.getAttribute('data-site-guidance-viewer') || 'resona',
         contextType: starter.getAttribute('data-site-guidance-context-type') || '',
         contextId: starter.getAttribute('data-site-guidance-context-id') || '',
-        contextLabel: starter.getAttribute('data-site-guidance-context-label') || ''
+        contextLabel: starter.getAttribute('data-site-guidance-context-label') || '',
+        origin: starter.getAttribute('data-site-guidance-origin') || ''
       })
       return
     }

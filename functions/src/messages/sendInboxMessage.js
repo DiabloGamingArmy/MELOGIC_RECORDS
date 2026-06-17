@@ -80,6 +80,7 @@ function sanitizeGuideTarget(item = {}) {
     id: cleanString(item.id || item.guideId || '', 120),
     label: cleanString(item.label || item.guideId || item.id || '', 120),
     role: cleanString(item.role || '', 60),
+    entityId: cleanString(item.entityId || '', 120),
     text: cleanString(item.text || '', 180),
     visible: item.visible !== false,
     rect: item.rect && typeof item.rect === 'object' ? sanitizeRect(item.rect) : null

@@ -148,7 +148,7 @@ function createClientMessageId() {
 }
 
 function currentUid() {
-  return shellSnapshot?.user?.uid || ''
+  return shellSnapshot?.user?.uid || dockState.ownerUid || ''
 }
 
 function currentProfile() {
@@ -1299,7 +1299,8 @@ export function openChatDock(options = {}) {
     minimized: false,
     mode: support ? 'support' : 'thread',
     activeThreadId: threadId,
-    title: String(detail.title || detail.threadTitle || (support ? 'Resona' : '')).trim().slice(0, 160)
+    title: String(detail.title || detail.threadTitle || (support ? 'Resona' : '')).trim().slice(0, 160),
+    ownerUid: String(detail.ownerUid || detail.uid || '').trim()
   })
   focusComposer()
 }

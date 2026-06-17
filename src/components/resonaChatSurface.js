@@ -9,6 +9,8 @@ const MAX_ATTACHMENTS = 4
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 const THREAD_CACHE_PREFIX = 'melogic_resona_surface_thread_v1'
 const CONTEXT_TYPES = new Set(['inbox', 'studio_daw', 'stagemaker'])
+const BOTTOM_LOCK_THRESHOLD = 80
+const GUIDANCE_STATE_EVENT = 'melogic:site-guidance-state'
 
 function escapeHtml(value = '') {
   return String(value ?? '')
@@ -104,8 +106,19 @@ class ResonaChatSurface {
     this.error = ''
     this.loading = true
     this.sending = false
+    this.bottomLocked = true
+    this.guidanceState = { active: false, starting: false, threadId: '' }
+    this.resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(() => {
+      if (this.bottomLocked) this.scrollMessagesToBottom()
+    }) : null
+    this.guidanceStateHandler = (event) => {
+      this.guidanceState = event?.detail || { active: false, starting: false, threadId: '' }
+      this.render()
+    }
+    this.contextKey = this.threadContextKey()
     this.unsubscribeThread = () => {}
     this.unsubscribeMessages = () => {}
+    window.addEventListener(GUIDANCE_STATE_EVENT, this.guidanceStateHandler)
     this.render()
     this.init()
   }
@@ -142,6 +155,19 @@ class ResonaChatSurface {
 
   update(options = {}) {
     this.options = { ...this.options, ...options }
+    const nextContextKey = this.threadContextKey()
+    if (nextContextKey !== this.contextKey) {
+      this.contextKey = nextContextKey
+      this.unsubscribeThread()
+      this.unsubscribeMessages()
+      this.thread = null
+      this.messages = []
+      this.loading = true
+      this.bottomLocked = true
+      this.render()
+      this.init()
+      return
+    }
     this.render()
   }
 
@@ -150,6 +176,11 @@ class ResonaChatSurface {
     const contextId = contextType === 'inbox' ? '' : String(this.options.contextId || '').trim()
     const contextLabel = String(this.options.contextLabel || this.options.title || '').trim()
     return { contextType, contextId, contextLabel }
+  }
+
+  threadContextKey() {
+    const context = this.threadContext()
+    return `${context.contextType}:${context.contextId || 'general'}`
   }
 
   threadPlaceholder(threadId = '') {
@@ -196,9 +227,13 @@ class ResonaChatSurface {
       this.render()
     })
     this.unsubscribeMessages = subscribeToMessages(threadId, (messages) => {
+      const hadMessages = this.messages.length > 0
+      const previousLastId = this.messages.at(-1)?.id || ''
+      const nextLastId = messages.at(-1)?.id || ''
+      const shouldScroll = !hadMessages || (nextLastId && nextLastId !== previousLastId && this.bottomLocked)
       this.messages = messages
       this.loading = false
-      this.render(true)
+      this.render(shouldScroll)
     }, (error) => {
       this.error = error?.message || 'Could not load Resona messages.'
       this.loading = false
@@ -286,11 +321,41 @@ class ResonaChatSurface {
     openChatDock({
       mode: 'thread',
       threadId: this.thread.id,
-      title: this.thread.contextLabel || this.options.title || 'Resona'
+      title: this.thread.contextLabel || this.options.title || 'Resona',
+      ownerUid: this.user?.uid || ''
     })
   }
 
+  messageContainer() {
+    return this.root.querySelector('[data-resona-surface-messages]')
+  }
+
+  isNearBottom(element = this.messageContainer()) {
+    if (!element) return true
+    return element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_LOCK_THRESHOLD
+  }
+
+  scrollMessagesToBottom() {
+    const messages = this.messageContainer()
+    if (!messages) return
+    messages.scrollTop = messages.scrollHeight
+    requestAnimationFrame(() => {
+      const latest = this.messageContainer()
+      if (latest) latest.scrollTop = latest.scrollHeight
+    })
+  }
+
+  observeMessages() {
+    const messages = this.messageContainer()
+    if (!messages || !this.resizeObserver) return
+    this.resizeObserver.disconnect()
+    this.resizeObserver.observe(messages)
+  }
+
   render(scrollBottom = false) {
+    const previousMessages = this.messageContainer()
+    const previousScrollTop = previousMessages?.scrollTop || 0
+    if (previousMessages) this.bottomLocked = this.isNearBottom(previousMessages)
     const variant = this.options.variant || 'embedded'
     const locked = this.locked()
     const activityLabel = this.activity().label || 'Resona is responding...'
@@ -299,6 +364,10 @@ class ResonaChatSurface {
     const threadContext = this.threadContext()
     const showActions = this.options.showHeaderActions !== false
     const showGuidance = this.options.showGuidanceButton !== false
+    const guidanceForThread = this.guidanceState?.threadId && this.guidanceState.threadId === this.thread?.id
+    const guidanceStarting = guidanceForThread && this.guidanceState.starting === true
+    const guidanceActive = guidanceForThread && this.guidanceState.active === true
+    const guidanceLabel = guidanceActive ? 'Guidance On' : (guidanceStarting ? 'Starting...' : 'Enable Guidance')
     this.root.classList.add('resona-chat-surface-host')
     this.root.innerHTML = `
       <section class="resona-chat-surface is-${escapeHtml(variant)} ${this.options.roundedParent === false ? 'is-square-parent' : ''}">
@@ -307,7 +376,7 @@ class ResonaChatSurface {
           <div class="resona-surface-header-actions">
             ${locked ? `<em>${escapeHtml(activityLabel)}</em>` : ''}
             ${showActions ? `<button type="button" data-resona-surface-dock ${hasThread ? '' : 'disabled'}>Open Dock</button>` : ''}
-            ${showGuidance ? `<button type="button" data-site-guidance-start data-site-guidance-thread-id="${escapeHtml(this.thread?.id || '')}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" data-site-guidance-context-type="${escapeHtml(threadContext.contextType)}" data-site-guidance-context-id="${escapeHtml(threadContext.contextId)}" data-site-guidance-context-label="${escapeHtml(threadContext.contextLabel)}" ${hasThread ? '' : 'disabled'}>Enable Guidance</button>` : ''}
+            ${showGuidance ? `<button type="button" data-site-guidance-start data-site-guidance-origin="embedded" data-site-guidance-thread-id="${escapeHtml(this.thread?.id || '')}" data-site-guidance-thread-kind="thread" data-site-guidance-viewer="resona" data-site-guidance-context-type="${escapeHtml(threadContext.contextType)}" data-site-guidance-context-id="${escapeHtml(threadContext.contextId)}" data-site-guidance-context-label="${escapeHtml(threadContext.contextLabel)}" ${hasThread && !guidanceStarting && !guidanceActive ? '' : 'disabled'}>${escapeHtml(guidanceLabel)}</button>` : ''}
           </div>
         </header>
         <div class="resona-surface-messages" data-resona-surface-messages>
@@ -340,10 +409,13 @@ class ResonaChatSurface {
       </section>
     `
     this.bind()
+    this.observeMessages()
     if (scrollBottom) {
+      this.scrollMessagesToBottom()
+    } else if (previousMessages) {
       requestAnimationFrame(() => {
-        const messages = this.root.querySelector('[data-resona-surface-messages]')
-        if (messages) messages.scrollTop = messages.scrollHeight
+        const messages = this.messageContainer()
+        if (messages) messages.scrollTop = previousScrollTop
       })
     }
   }
@@ -369,6 +441,9 @@ class ResonaChatSurface {
     this.root.querySelector('[data-resona-surface-dock]')?.addEventListener('click', () => {
       this.openDock()
     })
+    this.root.querySelector('[data-resona-surface-messages]')?.addEventListener('scroll', (event) => {
+      this.bottomLocked = this.isNearBottom(event.currentTarget)
+    }, { passive: true })
     this.root.querySelector('[data-resona-surface-file]')?.addEventListener('change', (event) => {
       this.addAttachments(event.target.files)
       event.target.value = ''

@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "melogic-records",
     "public": "dist",
     "ignore": [
       "firebase.json",

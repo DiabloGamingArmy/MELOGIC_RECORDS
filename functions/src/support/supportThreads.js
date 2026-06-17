@@ -254,6 +254,7 @@ function sanitizeSafeContext(raw = {}) {
     id: cleanString(item?.id || item?.guideId || '', 120),
     label: cleanString(item?.label || '', 120),
     role: cleanString(item?.role || '', 60),
+    entityId: cleanString(item?.entityId || '', 120),
     text: cleanString(item?.text || '', 160),
     x: Math.max(0, Math.min(10000, Math.round(Number(item?.x || item?.rect?.x || 0) || 0))),
     y: Math.max(0, Math.min(10000, Math.round(Number(item?.y || item?.rect?.y || 0) || 0))),

@@ -1565,10 +1565,18 @@ function mountStudioResonaPanel() {
 
 function applyStudioGuideTargets() {
   const targets = [
+    ['.studio-editor-title', 'studio-project-title', 'Studio project title', 'daw-project-title'],
     ['.studio-editor-transport', 'studio-transport', 'Studio transport controls', 'daw-transport'],
+    ['.studio-logic-section--tempo', 'studio-tempo-control', 'Studio tempo display', 'daw-tempo'],
+    ['.studio-logic-section--key', 'studio-key-control', 'Studio key display', 'daw-key'],
     ['.studio-track-panel', 'studio-track-panel', 'Studio track list', 'daw-track-list'],
     ['.studio-arrangement', 'studio-arrangement', 'Studio arrangement timeline', 'daw-arrangement'],
-    ['.studio-right-rail [data-bottom-panel="resona"]', 'studio-right-rail-resona', 'Studio Resona tab', 'daw-resona-tab']
+    ['.studio-resona-side-panel', 'studio-resona-panel', 'Studio Resona panel', 'daw-resona-panel'],
+    ['.studio-right-rail [data-bottom-panel="mixer"]', 'studio-right-rail-mixer', 'Studio mixer tab', 'daw-panel-tab'],
+    ['.studio-right-rail [data-bottom-panel="instrument"]', 'studio-right-rail-instrument', 'Studio instrument tab', 'daw-panel-tab'],
+    ['.studio-right-rail [data-bottom-panel="resona"]', 'studio-right-rail-resona', 'Studio Resona tab', 'daw-resona-tab'],
+    ['[data-resona-surface-dock]', 'studio-resona-open-dock', 'Open Studio Resona dock', 'daw-resona-action'],
+    ['[data-site-guidance-start][data-site-guidance-context-type="studio_daw"]', 'studio-resona-enable-guidance', 'Enable Studio DAW guidance', 'daw-resona-action']
   ]
   targets.forEach(([selector, id, label, role]) => {
     const element = app.querySelector(selector)
@@ -2917,6 +2925,7 @@ function renderEditor() {
   dawWindowManager.bind(app)
   restoreMidiRollViewport()
   mountStudioResonaPanel()
+  applyStudioGuideTargets()
 }
 
 

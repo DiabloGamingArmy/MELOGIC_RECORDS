@@ -568,6 +568,32 @@ function applyStageGuideTargets() {
     element.setAttribute('data-guide-label', label)
     element.setAttribute('data-guide-role', role)
   })
+  const selected = selectedViewportObject()
+  const canvas = app.querySelector('.stage-editor-canvas')
+  if (!selected || !canvas) {
+    globalThis.__MELOGIC_GUIDE_TARGETS__ = []
+    return
+  }
+  const rect = canvas.getBoundingClientRect()
+  const entityId = String(selected.id || selected.key || '').trim()
+  if (!entityId || rect.width <= 0 || rect.height <= 0) {
+    globalThis.__MELOGIC_GUIDE_TARGETS__ = []
+    return
+  }
+  globalThis.__MELOGIC_GUIDE_TARGETS__ = [{
+    guideId: `stagemaker-entity-${entityId}`,
+    label: selected.label || selected.name || selected.type || 'Selected stage entity',
+    role: 'stage-entity',
+    entityId,
+    visible: true,
+    text: 'Selected StageMaker entity in the 3D viewport. Overlay rectangle is a safe viewport anchor, not a remote-control action.',
+    rect: {
+      x: Math.round(rect.left + rect.width * 0.25),
+      y: Math.round(rect.top + rect.height * 0.22),
+      width: Math.round(rect.width * 0.5),
+      height: Math.round(rect.height * 0.5)
+    }
+  }]
 }
 
 function ensureInteractionModeMatchesSelection() {
