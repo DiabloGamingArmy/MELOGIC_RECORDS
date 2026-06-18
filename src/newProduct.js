@@ -1257,17 +1257,19 @@ function renderCreatorEligibilityPanel() {
   const starting = editorState.creatorEligibility.starting
   return `
     <section class="creator-eligibility-panel">
-      <article class="publish-submit-panel">
-        <h3>Creator Eligibility</h3>
-        <p>Marketplace publishing requires creator age verification when this platform setting is enabled.</p>
-        <div class="publish-checklist-row is-${verified ? 'ready' : status.status === 'pending' ? 'warning' : 'error'}">
+      <article class="publish-submit-panel creator-eligibility-card">
+        <div class="creator-eligibility-header">
+          <h3>Creator Eligibility</h3>
+          <p>Marketplace publishing requires creator age verification when this platform setting is enabled.</p>
+        </div>
+        <div class="publish-checklist-row creator-eligibility-status is-${verified ? 'ready' : status.status === 'pending' ? 'warning' : 'error'}">
           <div>
             <p><strong>${escapeHtml(verified ? 'Ready' : status.status === 'pending' ? 'Pending' : 'Blocked')}</strong> · Age verification</p>
             <p>${escapeHtml(creatorEligibilityMessage(status))}</p>
           </div>
           <span>${escapeHtml(loading ? 'Loading...' : status.status || 'not_started')}</span>
         </div>
-        <div class="product-info-grid">
+        <div class="product-info-grid creator-eligibility-details">
           <div class="product-info-field"><label>Status</label><div class="product-info-readonly">${escapeHtml(status.status || 'not_started')}</div></div>
           <div class="product-info-field"><label>Provider</label><div class="product-info-readonly">${escapeHtml(status.provider || 'manual_foundation')}</div></div>
           <div class="product-info-field"><label>Required</label><div class="product-info-readonly">${status.required === false ? 'No' : 'Yes'}</div></div>
@@ -1275,11 +1277,11 @@ function renderCreatorEligibilityPanel() {
         </div>
         ${editorState.creatorEligibility.error ? `<p class="pricing-warning">${escapeHtml(editorState.creatorEligibility.error)}</p>` : ''}
         ${verified ? '<p class="agreement-accepted-status">Creator eligibility is complete for marketplace publishing.</p>' : `
-          <label class="agreement-checkbox">
+          <label class="agreement-checkbox creator-eligibility-attestation">
             <input type="checkbox" data-creator-eligibility-attestation ${editorState.creatorEligibility.attestationAccepted ? 'checked' : ''} />
             <span>I confirm I am eligible to use creator marketplace tools and understand verification must be completed before publishing.</span>
           </label>
-          <div class="publish-action-row">
+          <div class="publish-action-row creator-eligibility-actions">
             <button type="button" class="button button-accent" data-start-creator-eligibility ${starting ? 'disabled' : ''}>${starting ? 'Starting...' : status.status === 'pending' ? 'Resume age verification' : 'Start age verification'}</button>
           </div>
           <p class="dashboard-mini-note">Provider verification is not connected yet. Starting this flow marks the request pending; only an admin can mark the creator verified.</p>
