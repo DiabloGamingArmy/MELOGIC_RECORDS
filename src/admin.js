@@ -2536,6 +2536,15 @@ function selectedUserPanel() {
   const canGrantProduct = can('orderSupport') || can('listingEdit')
   const actioning = data.actioning || ''
   const ageVerification = data.creatorAgeVerification || {}
+  const eligibilityStatus = ageVerification.status || 'not_started'
+  const eligibilityProvider = ageVerification.provider || {}
+  const eligibilityAttestation = ageVerification.attestation || {}
+  const eligibilityConfirmedAt = eligibilityAttestation.acceptedAt || ageVerification.reviewedAt || ageVerification.updatedAt
+  const eligibilityBadgeType = ['attested', 'approved', 'verified'].includes(eligibilityStatus)
+    ? 'published'
+    : eligibilityStatus === 'rejected'
+      ? 'rejected'
+      : 'warning'
   return `
     <header class="admin-page-header admin-hub-header">
       <div class="admin-hub-title">
@@ -2623,21 +2632,23 @@ function selectedUserPanel() {
         </article>
       </section>
       <section class="admin-section-slab admin-fixed-panel">
-        <div class="admin-slab-heading"><h2>Creator Eligibility</h2>${renderBadge(humanLabel(ageVerification.status || 'not_started'), ageVerification.status === 'verified' ? 'published' : ageVerification.status === 'rejected' ? 'rejected' : 'warning')}</div>
+        <div class="admin-slab-heading"><h2>Creator Eligibility</h2>${renderBadge(humanLabel(eligibilityStatus), eligibilityBadgeType)}</div>
         <div class="admin-panel-scroll">
           ${renderKeyValueGrid([
             renderBooleanField('Required for publishing', ageVerification.required !== false),
-            renderField('Age verification status', humanLabel(ageVerification.status || 'not_started')),
-            renderField('Provider', humanLabel(ageVerification.provider || 'manual_foundation')),
-            renderField('Required for', normalizeList(ageVerification.requiredFor || []).map(humanLabel).join(', ') || 'Marketplace product creation'),
-            renderDateField('Started at', ageVerification.startedAt),
-            renderDateField('Verified at', ageVerification.verifiedAt),
+            renderField('Creator Eligibility status', humanLabel(eligibilityStatus)),
+            renderField('Minimum age', `${Number(ageVerification.minimumAge || 18)}+`),
+            renderBooleanField('Attestation accepted', eligibilityAttestation.accepted === true || eligibilityStatus === 'attested' || eligibilityStatus === 'approved'),
+            renderDateField('Attestation accepted at', eligibilityAttestation.acceptedAt),
+            renderField('Terms version', eligibilityAttestation.termsVersion || 'creator-eligibility-v1'),
+            renderField('Provider type', humanLabel(eligibilityProvider.type || ageVerification.providerType || 'native_attestation')),
+            renderDateField('Confirmed at', eligibilityConfirmedAt),
+            renderDateField('Updated at', ageVerification.updatedAt),
             renderDateField('Rejected at', ageVerification.rejectedAt),
-            renderDateField('Expired at', ageVerification.expiredAt),
             renderField('Reviewed by', ageVerification.reviewedBy, { code: true }),
             renderField('Rejection reason', ageVerification.rejectionReason, { wide: true })
           ])}
-          <p class="admin-muted">Foundation status only. No date of birth or identity document data is stored here.</p>
+          <p class="admin-muted">Native attestation only. No date of birth or identity document data is stored here.</p>
         </div>
       </section>
       <section class="admin-section-slab admin-fixed-panel is-products-panel">

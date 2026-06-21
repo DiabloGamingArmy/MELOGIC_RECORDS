@@ -80,6 +80,7 @@ const { forcePasswordReset, revokeRecoveryCodes, setTemporaryPassword } = requir
 const { requestEmailVerification, requestPasswordResetEmail } = require('./src/email/authEmails')
 const { getEmailAdminStatus, listAdminEmailLogs, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
 const {
+  confirmCreatorEligibility,
   getCreatorAgeVerificationStatus,
   setCreatorAgeVerificationStatus,
   startCreatorAgeVerification
@@ -190,6 +191,7 @@ exports.setAdminUserRole = setAdminUserRole
 exports.listAdminProducts = listAdminProducts
 exports.listAdminUsers = listAdminUsers
 exports.getAdminUserProfile = getAdminUserProfile
+exports.confirmCreatorEligibility = confirmCreatorEligibility
 exports.getCreatorAgeVerificationStatus = getCreatorAgeVerificationStatus
 exports.setCreatorAgeVerificationStatus = setCreatorAgeVerificationStatus
 exports.startCreatorAgeVerification = startCreatorAgeVerification

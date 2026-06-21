@@ -8,9 +8,13 @@ export async function getCreatorAgeVerificationStatus() {
   return result?.data?.ageVerification || { required: true, status: 'not_started' }
 }
 
-export async function startCreatorAgeVerification({ attestationAccepted = false } = {}) {
+export async function confirmCreatorEligibility() {
   if (!functions) throw new Error('Firebase functions are unavailable.')
-  const callable = httpsCallable(functions, 'startCreatorAgeVerification')
-  const result = await callable({ attestationAccepted })
-  return result?.data?.ageVerification || { required: true, status: 'pending' }
+  const callable = httpsCallable(functions, 'confirmCreatorEligibility')
+  const result = await callable({})
+  return result?.data?.creatorEligibility || { required: true, status: result?.data?.status || 'attested' }
+}
+
+export async function startCreatorAgeVerification() {
+  return confirmCreatorEligibility()
 }
