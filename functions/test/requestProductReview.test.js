@@ -3,6 +3,15 @@ const assert = require('node:assert/strict')
 
 const { __test } = require('../src/products/requestProductReview')
 
+test('creator eligibility submit gate accepts native attestation and admin approval only', () => {
+  assert.equal(__test.creatorEligibilityAllowsSubmit({ required: false, status: 'not_started' }), true)
+  assert.equal(__test.creatorEligibilityAllowsSubmit({ required: true, status: 'attested' }), true)
+  assert.equal(__test.creatorEligibilityAllowsSubmit({ required: true, status: 'approved' }), true)
+  assert.equal(__test.creatorEligibilityAllowsSubmit({ required: true, status: 'not_started' }), false)
+  assert.equal(__test.creatorEligibilityAllowsSubmit({ required: true, status: 'provider_required' }), false)
+  assert.equal(__test.creatorEligibilityAllowsSubmit({ required: true, status: 'rejected' }), false)
+})
+
 test('Gemini 401 keeps product pending and marks AI auth failure', () => {
   const outcome = __test.decideReviewOutcome({
     product: { visibility: 'public' },

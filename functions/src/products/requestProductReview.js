@@ -35,6 +35,11 @@ const BLOCKED_KEYWORDS = [
   'cocaine'
 ]
 
+function creatorEligibilityAllowsSubmit(status = {}) {
+  const value = String(status?.status || '').trim()
+  return status?.required === false || value === 'attested' || value === 'approved'
+}
+
 function safeString(value = '', max = 240) {
   return String(value || '').replace(/\s+/g, ' ').trim().slice(0, max)
 }
@@ -518,14 +523,14 @@ exports.requestProductReview = onCall(
   if (product.artistId !== uid) throw new HttpsError('permission-denied', 'You do not own this product.')
 
   const ageVerification = await loadCreatorAgeVerification(uid)
-  if (ageVerification.required !== false && ageVerification.status !== 'verified') {
+  if (!creatorEligibilityAllowsSubmit(ageVerification)) {
     throw new HttpsError(
       'failed-precondition',
-      'Creator age verification is required before publishing marketplace products.',
+      'Creator eligibility must be confirmed before publishing marketplace products.',
       {
-        code: 'creator_age_verification_required',
+        code: 'creator_eligibility_required',
         status: ageVerification.status || 'not_started',
-        required: true
+        required: ageVerification.required !== false
       }
     )
   }
@@ -568,6 +573,7 @@ exports.requestProductReview = onCall(
 })
 
 exports.__test = {
+  creatorEligibilityAllowsSubmit,
   decideReviewOutcome,
   isObviouslyInvalidGeminiSecret,
   moderateProductWithAI,

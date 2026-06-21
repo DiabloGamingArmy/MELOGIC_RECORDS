@@ -25,7 +25,7 @@ import { sanitizeRichDescription, escapeHtml as escapeRichHtml } from './utils/r
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
 import { getAgreementMarkdown, getLatestMarketplaceSellerAgreement } from './data/legalAgreementService'
-import { getCreatorAgeVerificationStatus, startCreatorAgeVerification } from './data/creatorComplianceService'
+import { confirmCreatorEligibility, getCreatorAgeVerificationStatus } from './data/creatorComplianceService'
 
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
@@ -307,8 +307,8 @@ function friendlySubmitError(error, step = '') {
   const code = String(error?.code || '').toLowerCase()
   const message = String(error?.message || '')
   const haystack = `${code} ${message}`.toLowerCase()
-  if (String(error?.details?.code || '').includes('creator_age_verification_required') || haystack.includes('age verification')) {
-    return 'Creator age verification is required before publishing marketplace products.'
+  if (String(error?.details?.code || '').includes('creator_eligibility_required') || String(error?.details?.code || '').includes('creator_age_verification_required') || haystack.includes('creator eligibility') || haystack.includes('age verification')) {
+    return 'Creator eligibility must be confirmed before publishing marketplace products.'
   }
   if (haystack.includes('unauthenticated') || haystack.includes('auth')) {
     return 'You need to sign in again before submitting this product.'
@@ -1120,7 +1120,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   const agreementAccepted = Boolean(draft.sellerAgreementAccepted)
   const agreementVersionMatch = agreementAccepted && acceptedVersion && latestVersion && acceptedVersion === latestVersion
   const eligibility = state.creatorEligibility?.status || { required: true, status: 'not_started' }
-  const eligibilityReady = eligibility.required === false || eligibility.status === 'verified'
+  const eligibilityReady = eligibility.required === false || ['attested', 'approved', 'verified'].includes(eligibility.status)
   return [
     { id: 'title', label: 'Product title exists', severity: title ? 'success' : 'error', blocking: !title, message: title ? 'Title added.' : 'Add a product title.', targetSection: 'product-info' },
     { id: 'type', label: 'Product type selected', severity: draft.productType ? 'success' : 'error', blocking: !draft.productType, message: draft.productType ? 'Product type selected.' : 'Select a product type.', targetSection: 'product-info' },
@@ -1135,7 +1135,7 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
     { id: 'contributors', label: 'Contributors resolved', severity: pendingContributors > 0 ? 'warning' : 'success', blocking: false, message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
     { id: 'agreement', label: 'Seller agreement accepted', severity: agreementAccepted ? 'success' : 'error', blocking: !agreementAccepted, message: agreementAccepted ? `Accepted ${draft.sellerAgreementVersion || ''}.` : 'Accept seller agreement.', targetSection: 'agreements' },
     { id: 'agreement-version', label: 'Agreement version matches latest', severity: agreementVersionMatch ? 'success' : 'error', blocking: !agreementVersionMatch, message: agreementVersionMatch ? `Latest version ${latestVersion} accepted.` : `Latest seller agreement ${latestVersion || 'version'} must be accepted before publishing.`, targetSection: 'agreements' },
-    { id: 'creator-eligibility', label: 'Creator eligibility verified', severity: eligibilityReady ? 'success' : (eligibility.status === 'pending' ? 'warning' : 'error'), blocking: !eligibilityReady, message: creatorEligibilityMessage(eligibility), targetSection: 'creator-eligibility' },
+    { id: 'creator-eligibility', label: 'Creator eligibility confirmed', severity: eligibilityReady ? 'success' : (eligibility.status === 'provider_required' ? 'warning' : 'error'), blocking: !eligibilityReady, message: creatorEligibilityMessage(eligibility), targetSection: 'creator-eligibility' },
     { id: 'visibility', label: 'Visibility selected', severity: draft.visibility ? 'success' : 'error', blocking: !draft.visibility, message: draft.visibility ? `Visibility: ${draft.visibility}.` : 'Select visibility.', targetSection: 'product-info' },
     { id: 'quota', label: 'No quota errors', severity: 'success', blocking: false, message: 'No quota errors detected.', targetSection: 'media-upload' },
     { id: 'save-errors', label: 'No upload/save errors', severity: state.status?.state === 'error' ? 'warning' : 'success', blocking: false, message: state.status?.state === 'error' ? 'Recent action reported an error; verify before submit.' : 'No recent save/upload errors.', targetSection: 'publish' },
@@ -1199,16 +1199,20 @@ function creatorEligibilityStatus() {
 
 function isCreatorEligibilityVerified() {
   const status = creatorEligibilityStatus()
-  return status.required === false || status.status === 'verified'
+  return status.required === false || ['attested', 'approved', 'verified'].includes(status.status)
 }
 
 function creatorEligibilityMessage(status = creatorEligibilityStatus()) {
-  if (status.required === false) return 'Creator age verification is not currently required.'
-  if (status.status === 'verified') return 'Creator eligibility verified.'
-  if (status.status === 'pending') return 'Age verification is pending. A verification provider flow is coming soon.'
-  if (status.status === 'rejected') return 'Age verification was rejected. Contact support if you believe this is wrong.'
-  if (status.status === 'expired') return 'Age verification expired and must be renewed.'
-  return 'Age verification is required before publishing marketplace products.'
+  if (status.required === false) return 'Creator eligibility confirmation is not currently required.'
+  if (['attested', 'approved', 'verified'].includes(status.status)) {
+    const acceptedAt = status.attestation?.acceptedAt || status.reviewedAt || status.updatedAt
+    return acceptedAt
+      ? `Creator eligibility was confirmed on ${formatAgreementAcceptedDate(acceptedAt)}.`
+      : 'Creator eligibility has been confirmed.'
+  }
+  if (status.status === 'rejected') return 'Creator eligibility was rejected. Contact support if you believe this is wrong.'
+  if (status.status === 'provider_required') return 'Additional creator eligibility verification is required before publishing.'
+  return 'Confirm creator eligibility before publishing marketplace products.'
 }
 
 async function loadCreatorEligibility({ force = false } = {}) {
@@ -1231,18 +1235,22 @@ async function loadCreatorEligibility({ force = false } = {}) {
 
 async function startCreatorEligibility() {
   if (!editorState.user || editorState.creatorEligibility.starting) return
+  if (!editorState.creatorEligibility.attestationAccepted) {
+    editorState.creatorEligibility.error = 'Confirm the attestation checkbox before continuing.'
+    renderEditor()
+    return
+  }
   editorState.creatorEligibility.starting = true
   editorState.creatorEligibility.error = ''
   renderEditor()
   try {
-    const status = await startCreatorAgeVerification({
-      attestationAccepted: editorState.creatorEligibility.attestationAccepted === true
-    })
+    const status = await confirmCreatorEligibility()
     editorState.creatorEligibility.status = status
-    setStatus('Age verification started. Provider verification is coming soon.', 'info')
+    editorState.creatorEligibility.attestationAccepted = false
+    setStatus('Creator eligibility confirmed.', 'success')
   } catch (error) {
     console.warn('[new-product] creator eligibility start failed', { code: error?.code, message: error?.message, details: error?.details })
-    editorState.creatorEligibility.error = error?.message || 'Could not start age verification.'
+    editorState.creatorEligibility.error = error?.message || 'Could not confirm creator eligibility.'
     setStatus(editorState.creatorEligibility.error, 'error')
   } finally {
     editorState.creatorEligibility.starting = false
@@ -1255,37 +1263,42 @@ function renderCreatorEligibilityPanel() {
   const verified = isCreatorEligibilityVerified()
   const loading = editorState.creatorEligibility.loading
   const starting = editorState.creatorEligibility.starting
+  const statusLabel = verified ? 'Confirmed' : status.status === 'rejected' ? 'Rejected' : 'Not confirmed'
+  const acceptedAt = status.attestation?.acceptedAt || status.reviewedAt || status.updatedAt
+  const method = status.provider?.type || status.providerType || 'native_attestation'
+  const termsVersion = status.attestation?.termsVersion || 'creator-eligibility-v1'
   return `
     <section class="creator-eligibility-panel">
       <article class="publish-submit-panel creator-eligibility-card">
         <div class="creator-eligibility-header">
           <h3>Creator Eligibility</h3>
-          <p>Marketplace publishing requires creator age verification when this platform setting is enabled.</p>
+          <p>Marketplace creators must confirm they are at least 18 years old and eligible to publish products on Melogic Records.</p>
         </div>
-        <div class="publish-checklist-row creator-eligibility-status is-${verified ? 'ready' : status.status === 'pending' ? 'warning' : 'error'}">
+        <div class="publish-checklist-row creator-eligibility-status is-${verified ? 'ready' : status.status === 'provider_required' ? 'warning' : 'error'}">
           <div>
-            <p><strong>${escapeHtml(verified ? 'Ready' : status.status === 'pending' ? 'Pending' : 'Blocked')}</strong> · Age verification</p>
+            <p><strong>Status: ${escapeHtml(statusLabel)}</strong></p>
             <p>${escapeHtml(creatorEligibilityMessage(status))}</p>
           </div>
-          <span>${escapeHtml(loading ? 'Loading...' : status.status || 'not_started')}</span>
+          <span>${escapeHtml(loading ? 'Checking...' : statusLabel)}</span>
         </div>
-        <div class="product-info-grid creator-eligibility-details">
-          <div class="product-info-field"><label>Status</label><div class="product-info-readonly">${escapeHtml(status.status || 'not_started')}</div></div>
-          <div class="product-info-field"><label>Provider</label><div class="product-info-readonly">${escapeHtml(status.provider || 'manual_foundation')}</div></div>
-          <div class="product-info-field"><label>Required</label><div class="product-info-readonly">${status.required === false ? 'No' : 'Yes'}</div></div>
-          <div class="product-info-field"><label>Verified at</label><div class="product-info-readonly">${escapeHtml(status.verifiedAt || 'Not verified')}</div></div>
+        <div class="creator-eligibility-details">
+          <div class="creator-eligibility-detail-card"><span>Status</span><strong>${escapeHtml(statusLabel)}</strong></div>
+          <div class="creator-eligibility-detail-card"><span>Method</span><strong>${escapeHtml(method === 'native_attestation' ? 'Native attestation' : method.replace(/_/g, ' '))}</strong></div>
+          <div class="creator-eligibility-detail-card"><span>Minimum age</span><strong>${escapeHtml(String(status.minimumAge || 18))}+</strong></div>
+          <div class="creator-eligibility-detail-card"><span>Confirmed at</span><strong>${escapeHtml(verified && acceptedAt ? formatAgreementAcceptedDate(acceptedAt) : 'Not confirmed')}</strong></div>
+          <div class="creator-eligibility-detail-card is-wide"><span>Terms version</span><strong>${escapeHtml(termsVersion)}</strong></div>
         </div>
         ${editorState.creatorEligibility.error ? `<p class="pricing-warning">${escapeHtml(editorState.creatorEligibility.error)}</p>` : ''}
-        ${verified ? '<p class="agreement-accepted-status">Creator eligibility is complete for marketplace publishing.</p>' : `
+        ${verified ? '<p class="agreement-accepted-status">Creator eligibility is confirmed for marketplace publishing.</p>' : `
           <label class="agreement-checkbox creator-eligibility-attestation">
-            <input type="checkbox" data-creator-eligibility-attestation ${editorState.creatorEligibility.attestationAccepted ? 'checked' : ''} />
-            <span>I confirm I am eligible to use creator marketplace tools and understand verification must be completed before publishing.</span>
+            <input type="checkbox" data-creator-eligibility-attestation ${editorState.creatorEligibility.attestationAccepted ? 'checked' : ''} ${starting ? 'disabled' : ''} />
+            <span>I confirm I am at least 18 years old and eligible to use creator marketplace tools and publish products on Melogic Records.</span>
           </label>
           <div class="publish-action-row creator-eligibility-actions">
-            <button type="button" class="button button-accent" data-start-creator-eligibility ${starting ? 'disabled' : ''}>${starting ? 'Starting...' : status.status === 'pending' ? 'Resume age verification' : 'Start age verification'}</button>
+            <button type="button" class="button button-accent" data-start-creator-eligibility ${starting || !editorState.creatorEligibility.attestationAccepted ? 'disabled' : ''}>${starting ? 'Confirming...' : 'Confirm Creator Eligibility'}</button>
           </div>
-          <p class="dashboard-mini-note">Provider verification is not connected yet. Starting this flow marks the request pending; only an admin can mark the creator verified.</p>
         `}
+        <p class="dashboard-mini-note">Melogic may require additional identity verification in the future for marketplace safety, payouts, or compliance.</p>
       </article>
     </section>
   `
@@ -1665,6 +1678,7 @@ function renderEditor() {
   })
   editorRoot.querySelector('[data-creator-eligibility-attestation]')?.addEventListener('change', (event) => {
     editorState.creatorEligibility.attestationAccepted = event.target.checked === true
+    renderEditor()
   })
   editorRoot.querySelector('[data-start-creator-eligibility]')?.addEventListener('click', () => {
     startCreatorEligibility()
@@ -2292,7 +2306,7 @@ function renderEditor() {
     }
     if (desiredStatus === 'published') {
       const eligibility = await loadCreatorEligibility({ force: true })
-      if (eligibility.required !== false && eligibility.status !== 'verified') {
+      if (eligibility.required !== false && !['attested', 'approved', 'verified'].includes(eligibility.status)) {
         editorState.submitError = creatorEligibilityMessage(eligibility)
         setStatus(editorState.submitError, 'error')
         window.location.hash = 'creator-eligibility'

@@ -451,15 +451,33 @@
   white-space: nowrap;
 }
 .creator-eligibility-details {
+  display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: .65rem;
 }
-.creator-eligibility-details .product-info-readonly {
-  display: flex;
-  align-items: center;
-  min-height: 42px;
-  padding: .52rem .65rem;
-  line-height: 1.2;
+.creator-eligibility-detail-card {
+  display: grid;
+  gap: .28rem;
+  min-height: 68px;
+  border: 1px solid rgba(105,133,203,.24);
+  border-radius: 6px;
+  background: rgba(13,20,38,.68);
+  padding: .65rem .75rem;
+}
+.creator-eligibility-detail-card span {
+  color: #8fa6d8;
+  font-size: .72rem;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.creator-eligibility-detail-card strong {
+  color: #e4eeff;
+  font-size: .9rem;
+  line-height: 1.25;
+  text-transform: none;
+}
+.creator-eligibility-detail-card.is-wide {
+  grid-column: span 2;
 }
 .creator-eligibility-attestation {
   display: flex;
@@ -486,6 +504,11 @@
 .creator-eligibility-actions .button {
   width: auto;
   min-height: 40px;
+}
+.creator-eligibility-actions .button:disabled {
+  opacity: .58;
+  cursor: not-allowed;
+  transform: none;
 }
 .publish-checklist-row.is-ready { border-color: rgba(96, 214, 199, .35); }
 .publish-checklist-row.is-warning { border-color: rgba(252, 190, 92, .4); }
@@ -516,6 +539,7 @@
 @media (max-width: 640px) {
   .creator-eligibility-status { grid-template-columns: 1fr; }
   .creator-eligibility-details { grid-template-columns: 1fr; }
+  .creator-eligibility-detail-card.is-wide { grid-column: span 1; }
 }
 .rich-editor-toolbar{display:flex;flex-wrap:wrap;gap:.35rem;margin-bottom:.45rem}
 .rich-editor-toolbar button,.rich-editor-toolbar select,.rich-editor-toolbar input[type='color']{min-height:34px;border-radius:8px;border:1px solid rgba(102,129,201,.35);background:rgba(13,18,33,.95);color:#e8efff;padding:.2rem .45rem}
@@ -583,6 +607,7 @@
 .tag-editor,
 .placeholder-panel,
 .product-info-readonly,
+.creator-eligibility-detail-card,
 .listing-preview-card,
 .listing-preview-card-cover,
 .file-viewer-add-btn,

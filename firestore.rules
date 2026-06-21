@@ -1258,6 +1258,11 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /creatorCompliance/{complianceId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /billing/{billingId} {
         allow read: if isOwner(uid);
         allow write: if false;
