@@ -27,6 +27,11 @@ const app = document.querySelector('#app')
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 
+const STUDIO_TOOL_LABELS = {
+  daw: 'Soura',
+  stage: 'Vertix'
+}
+
 function stageCreateErrorMessage(error, user) {
   const kind = classifyStageProjectError(error, user)
   if (kind === 'unauthenticated') return 'Please sign in to create a stage plan.'
@@ -36,22 +41,22 @@ function stageCreateErrorMessage(error, user) {
 }
 
 const dawDemos = [
-  { title: 'WILDFLOWER', artist: 'Billie Eilish', year: '2024', tool: 'DAW' },
-  { title: 'Blinding Lights', artist: 'The Weeknd', year: '2019', tool: 'DAW' },
-  { title: 'As It Was', artist: 'Harry Styles', year: '2022', tool: 'DAW' },
-  { title: 'bad guy', artist: 'Billie Eilish', year: '2019', tool: 'DAW' }
+  { title: 'WILDFLOWER', artist: 'Billie Eilish', year: '2024', tool: STUDIO_TOOL_LABELS.daw },
+  { title: 'Blinding Lights', artist: 'The Weeknd', year: '2019', tool: STUDIO_TOOL_LABELS.daw },
+  { title: 'As It Was', artist: 'Harry Styles', year: '2022', tool: STUDIO_TOOL_LABELS.daw },
+  { title: 'bad guy', artist: 'Billie Eilish', year: '2019', tool: STUDIO_TOOL_LABELS.daw }
 ]
 
 const stageDemos = [
-  { title: 'Red Rocks Amphitheatre', artist: 'Outdoor venue', year: 'Stagemaker', tool: 'Stagemaker' },
-  { title: 'Madison Square Garden', artist: 'Arena layout', year: 'Stagemaker', tool: 'Stagemaker' },
-  { title: 'Coachella Outdoor Stage', artist: 'Festival plot', year: 'Stagemaker', tool: 'Stagemaker' },
-  { title: 'Tiny Desk / Live Room', artist: 'Small room', year: 'Stagemaker', tool: 'Stagemaker' }
+  { title: 'Red Rocks Amphitheatre', artist: 'Outdoor venue', year: STUDIO_TOOL_LABELS.stage, tool: STUDIO_TOOL_LABELS.stage },
+  { title: 'Madison Square Garden', artist: 'Arena layout', year: STUDIO_TOOL_LABELS.stage, tool: STUDIO_TOOL_LABELS.stage },
+  { title: 'Coachella Outdoor Stage', artist: 'Festival plot', year: STUDIO_TOOL_LABELS.stage, tool: STUDIO_TOOL_LABELS.stage },
+  { title: 'Tiny Desk / Live Room', artist: 'Small room', year: STUDIO_TOOL_LABELS.stage, tool: STUDIO_TOOL_LABELS.stage }
 ]
 
 const moduleCards = [
-  { title: 'DAW', href: ROUTES.studioDaw, body: 'Open projects, build arrangements, and produce sessions.' },
-  { title: 'Stagemaker', href: ROUTES.studioStagemaker, body: 'Build stage plots, input lists, viewport plans, and show files.' },
+  { title: STUDIO_TOOL_LABELS.daw, href: ROUTES.studioDaw, body: "Soura is Melogic's browser-based music production workspace for arranging, editing, and building tracks." },
+  { title: STUDIO_TOOL_LABELS.stage, href: ROUTES.studioStagemaker, body: "Vertix is Melogic's stage design and live production planning workspace." },
   { title: 'Demos', href: ROUTES.studioDemos, body: 'Explore example sessions and production references.' },
   { title: 'Tutorials', href: ROUTES.studioTutorials, body: 'Learn the tools and workflows inside Melogic Studio.' },
   { title: 'Release Builder', href: '#', body: 'Future release prep, assets, checklists, and distribution handoff.', placeholder: true }
@@ -140,10 +145,17 @@ function mixedProjects() {
   ].sort((a, b) => projectTime(b) - projectTime(a))
 }
 
+function studioToolDisplayLabel(tool = '') {
+  const normalized = String(tool || '').toLowerCase()
+  if (normalized === 'daw') return STUDIO_TOOL_LABELS.daw
+  if (normalized === 'stagemaker') return STUDIO_TOOL_LABELS.stage
+  return String(tool || '')
+}
+
 function renderDemoCards(items = []) {
   return `<div class="studio-card-grid studio-explore-row">${items.map((item) => `
     <button type="button" class="studio-explore-card is-placeholder" data-placeholder-demo aria-disabled="true">
-      <div class="studio-cover-placeholder ${item.tool === 'Stagemaker' ? 'is-stage-demo' : ''}"></div>
+      <div class="studio-cover-placeholder ${item.tool === STUDIO_TOOL_LABELS.stage ? 'is-stage-demo' : ''}"></div>
       <div class="studio-explore-copy">
         <h3 class="studio-explore-title">${item.title}</h3>
         <p>${item.artist}</p>
@@ -169,7 +181,7 @@ function renderDemoSection(title = '', body = '', items = []) {
 
 function renderRecentList(projects = [], kind = 'daw') {
   if (!projects.length) {
-    return `<p class="studio-recents-empty">${kind === 'stage' ? 'Your stage plans will appear here.' : 'Your DAW sessions will appear here.'}</p>`
+    return `<p class="studio-recents-empty">${kind === 'stage' ? 'Your Vertix plans will appear here.' : 'Your Soura sessions will appear here.'}</p>`
   }
   const attr = kind === 'stage' ? 'data-open-stage-project' : 'data-open-daw-project'
   return `<div class="studio-recent-list">${projects.map((project) => `
@@ -183,13 +195,13 @@ function renderRecentList(projects = [], kind = 'daw') {
 function renderRecentLane(kind = 'daw', projects = []) {
   const isStage = kind === 'stage'
   const href = isStage ? ROUTES.studioStagemaker : ROUTES.studioDaw
-  const createLabel = isStage ? 'New Stage Plan' : 'New DAW Project'
+  const createLabel = isStage ? 'New Vertix Plan' : 'New Soura Project'
   const createAttr = isStage ? 'data-new-stage-project' : 'data-new-daw-project'
   return `
     <article class="studio-type-lane">
       <div class="studio-type-heading">
         <div>
-          <h3>${isStage ? 'StageMaker Recents' : 'DAW Recents'}</h3>
+          <h3>${isStage ? 'Vertix Recents' : 'Soura Recents'}</h3>
           <p>${isStage ? 'Stage plots, input lists, and room plans.' : 'Sessions, arrangements, and production files.'}</p>
         </div>
         <a href="${href}">View all</a>
@@ -216,10 +228,10 @@ function renderMixedProjectRows(projects = []) {
   if (!projects.length) {
     return `
       <div class="studio-hub-empty">
-        <p>Your DAW and Stagemaker projects will appear here once you start working.</p>
+        <p>Your Soura and Vertix projects will appear here once you start working.</p>
         <div>
-          <a class="button button-muted" href="${state.user ? ROUTES.studioDaw : authRoute({ redirect: ROUTES.studioDaw })}">Create DAW Project</a>
-          <a class="button button-muted" href="${state.user ? ROUTES.studioStagemaker : authRoute({ redirect: ROUTES.studioStagemaker })}">Create Stage Plan</a>
+          <a class="button button-muted" href="${state.user ? ROUTES.studioDaw : authRoute({ redirect: ROUTES.studioDaw })}">Create Soura Project</a>
+          <a class="button button-muted" href="${state.user ? ROUTES.studioStagemaker : authRoute({ redirect: ROUTES.studioStagemaker })}">Create Vertix Plan</a>
         </div>
       </div>
     `
@@ -230,13 +242,13 @@ function renderMixedProjectRows(projects = []) {
     return `
       <article class="studio-project-row">
         <div class="studio-card-topline">
-          <span class="studio-card-kicker">${project.studioTool}</span>
+          <span class="studio-card-kicker">${studioToolDisplayLabel(project.studioTool)}</span>
           <span class="studio-badge">${ownerBadge(project)}</span>
         </div>
         <button class="studio-project-open" ${attr}="${project.id}" type="button">
           <h4>${project.title}</h4>
           <p>${isStage ? stageSubtitle(project) : dawSubtitle(project)}</p>
-          <small>${project.studioTool} - ${fmtDate(project)}</small>
+          <small>${studioToolDisplayLabel(project.studioTool)} - ${fmtDate(project)}</small>
         </button>
       </article>
     `
@@ -254,28 +266,28 @@ function renderProjectLibrary() {
         </div>
         <div class="studio-filter-pills" aria-label="Project types">
           <span>All</span>
-          <span>DAW</span>
-          <span>StageMaker</span>
+          <span>Soura</span>
+          <span>Vertix</span>
         </div>
       </div>
       <div class="studio-library-columns">
         <article>
           <div class="studio-type-heading">
             <div>
-              <h3>DAW Projects</h3>
+              <h3>Soura Projects</h3>
               <p>${state.daw.projects.length} session${state.daw.projects.length === 1 ? '' : 's'}</p>
             </div>
-            <a href="${ROUTES.studioDaw}">Open DAW</a>
+            <a href="${ROUTES.studioDaw}">Open Soura</a>
           </div>
           ${renderProjectArea('daw')}
         </article>
         <article>
           <div class="studio-type-heading">
             <div>
-              <h3>Stage Plans</h3>
+              <h3>Vertix Plans</h3>
               <p>${state.stage.projects.length} plan${state.stage.projects.length === 1 ? '' : 's'}</p>
             </div>
-            <a href="${ROUTES.studioStagemaker}">Open StageMaker</a>
+            <a href="${ROUTES.studioStagemaker}">Open Vertix</a>
           </div>
           ${renderProjectArea('stage')}
         </article>
@@ -289,14 +301,14 @@ function renderProjectArea(kind = 'daw') {
   if (source.loading) return '<p class="studio-recents-empty">Loading projects...</p>'
   if (source.error) return `<p class="studio-recents-empty">${source.error}</p>`
   if (!source.projects.length) {
-    return `<div class="studio-projects-empty"><p class="studio-projects-empty-title">No ${kind === 'stage' ? 'stage plans' : 'project files'} yet.</p><p>${kind === 'stage' ? 'Create a Stagemaker project to start building plots, lists, and show files.' : 'Create a project, folder, or import sounds to start building.'}</p></div>`
+    return `<div class="studio-projects-empty"><p class="studio-projects-empty-title">No ${kind === 'stage' ? 'Vertix plans' : 'Soura project files'} yet.</p><p>${kind === 'stage' ? 'Create a Vertix project to start building plots, lists, and show files.' : 'Create a project, folder, or import sounds to start building.'}</p></div>`
   }
 
   const attr = kind === 'stage' ? 'data-open-stage-project' : 'data-open-daw-project'
   return `<div class="studio-project-grid">${source.projects.map((project) => `
     <article class="studio-project-row">
       <div class="studio-card-topline">
-        <span class="studio-card-kicker">${kind === 'stage' ? 'Stagemaker' : 'DAW'}</span>
+        <span class="studio-card-kicker">${kind === 'stage' ? 'Vertix' : 'Soura'}</span>
         <span class="studio-badge">${ownerBadge(project)}</span>
       </div>
       <button class="studio-project-open" ${attr}="${project.id}" type="button">
@@ -310,7 +322,7 @@ function renderProjectArea(kind = 'daw') {
 
 function renderStageProjectGrid(projects = [], emptyMessage = 'No stage plans yet. Start with a template or create a blank stage.') {
   if (!projects.length) {
-    return `<div class="studio-projects-empty studio-stage-empty"><p class="studio-projects-empty-title">${esc(emptyMessage)}</p><p>StageMaker plans you own or collaborate on will appear here.</p></div>`
+    return `<div class="studio-projects-empty studio-stage-empty"><p class="studio-projects-empty-title">${esc(emptyMessage)}</p><p>Vertix plans you own or collaborate on will appear here.</p></div>`
   }
 
   return `<div class="studio-stage-project-grid">${projects.map((project) => {
@@ -373,8 +385,8 @@ function renderHub() {
           <p>Your creative workspace for production, stage planning, collaboration, and release prep.</p>
         </div>
         <div class="studio-hub-actions">
-          <a class="studio-hub-cta" href="${ROUTES.studioDaw}">Open DAW</a>
-          <a class="studio-hub-cta" href="${ROUTES.studioStagemaker}">Open StageMaker</a>
+          <a class="studio-hub-cta" href="${ROUTES.studioDaw}">Open Soura</a>
+          <a class="studio-hub-cta" href="${ROUTES.studioStagemaker}">Open Vertix</a>
         </div>
       </section>
 
@@ -383,8 +395,8 @@ function renderHub() {
 
       <div class="studio-section-heading"><h2>DEMO PROJECTS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       <div class="studio-demo-stack">
-        ${renderDemoSection('DAW Demos', 'Reference sessions and production examples.', dawDemos)}
-        ${renderDemoSection('StageMaker Templates', 'Venue layouts and stage-plan starting points.', stageDemos)}
+        ${renderDemoSection('Soura Demos', 'Reference sessions and production examples.', dawDemos)}
+        ${renderDemoSection('Vertix Templates', 'Venue layouts and stage-plan starting points.', stageDemos)}
       </div>
 
       <div class="studio-section-heading"><h2>PROJECT LIBRARY</h2><span class="studio-section-line studio-section-line--projects"></span></div>
@@ -423,19 +435,19 @@ function renderStagemaker() {
       <section class="studio-hub-hero studio-stage-hero">
         <div>
           <p class="eyebrow">Studio Module</p>
-          <h1>StageMaker</h1>
-          <p>Plan stages, input lists, camera plots, lighting layouts, and export-ready blueprints.</p>
+          <h1>Vertix</h1>
+          <p>Vertix is Melogic's stage design and live production planning workspace.</p>
         </div>
         <div class="studio-hub-actions">
-          <a class="button button-accent" data-new-stage-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">New Stage Plan</a>
+          <a class="button button-accent" data-new-stage-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">New Vertix Plan</a>
           <a class="button button-muted" href="#stage-templates">View Templates</a>
         </div>
       </section>
 
       <div id="stage-recents" class="studio-section-heading"><h2>CONTINUE WORKING</h2><span class="studio-section-line studio-section-line--recents"></span></div>
-      ${state.stage.loading ? '<p class="studio-recents-empty">Loading recent stage plans...</p>' : renderStageProjectGrid(state.stage.recentProjects, 'Recent stage plans will appear here once you open a StageMaker project.')}
+      ${state.stage.loading ? '<p class="studio-recents-empty">Loading recent Vertix plans...</p>' : renderStageProjectGrid(state.stage.recentProjects, 'Recent Vertix plans will appear here once you open a Vertix project.')}
 
-      <div id="stage-templates" class="studio-section-heading"><h2>STAGEMAKER TEMPLATES</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      <div id="stage-templates" class="studio-section-heading"><h2>VERTIX TEMPLATES</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       ${renderStageTemplateCards()}
 
       <div class="studio-section-heading"><h2>DEMO STAGE PLANS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
@@ -444,7 +456,7 @@ function renderStagemaker() {
       <div class="studio-section-heading"><h2>MY STAGE PLANS</h2><span class="studio-section-line studio-section-line--projects"></span></div>
       <section class="studio-projects-panel studio-stage-projects-panel"><div class="studio-projects-body">${renderStageProjectArea(state.stage.projects)}</div></section>
 
-      <div class="studio-section-heading"><h2>STAGEMAKER TOOLS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
+      <div class="studio-section-heading"><h2>VERTIX TOOLS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       ${renderStageTools()}
       <div data-studio-modal-root></div>
     </section>
@@ -477,7 +489,7 @@ async function loadDawData() {
   state.daw.recentProjects = deduped.slice(0, 6)
   state.daw.error = deduped.length || indexedResult.status === 'fulfilled' || accessibleResult.status === 'fulfilled'
     ? ''
-    : 'Could not load DAW projects.'
+    : 'Could not load Soura projects.'
 }
 
 async function loadStageData() {
@@ -490,7 +502,7 @@ async function loadStageData() {
     console.error('[studio] stage project query failed', error)
     state.stage.projects = []
     state.stage.recentProjects = []
-    state.stage.error = 'Could not load Stagemaker projects.'
+    state.stage.error = 'Could not load Vertix projects.'
   }
 }
 
