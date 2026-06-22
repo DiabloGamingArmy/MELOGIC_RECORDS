@@ -36,6 +36,8 @@ export function normalizeRegion(region = {}) {
   const trimStartSeconds = clamp(num(region.trimStartSeconds, 0), 0, Math.max(0, fileDurationSeconds))
   const trimEndSeconds = region.trimEndSeconds == null ? null : clamp(num(region.trimEndSeconds, fileDurationSeconds), trimStartSeconds, Math.max(trimStartSeconds, fileDurationSeconds))
   const stretchRatio = Math.max(0.05, num(region.stretch?.ratio, 1))
+  const lengthRatio = Math.max(0.05, num(region.stretch?.lengthRatio, stretchRatio))
+  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(region.stretch?.renderStatus) ? region.stretch.renderStatus : 'idle'
   return {
     id: String(region.id || makeId('region')),
     trackId: String(region.trackId || 'demo-track'),
@@ -62,15 +64,54 @@ export function normalizeRegion(region = {}) {
     stretch: {
       enabled: !!region.stretch?.enabled,
       ratio: stretchRatio,
+      lengthRatio,
+      speedPercent: Math.max(0.01, num(region.stretch?.speedPercent, 100 / lengthRatio)),
+      targetDurationSeconds: region.stretch?.targetDurationSeconds == null ? null : Math.max(0.0001, num(region.stretch.targetDurationSeconds, 0)),
       mode: String(region.stretch?.mode || 'none'),
       algorithm: String(region.stretch?.algorithm || 'none'),
       preservesPitch: !!region.stretch?.preservesPitch,
+      renderedObjectUrl: null,
       renderedAudioUrl: region.stretch?.renderedAudioUrl || null,
-      renderedStoragePath: region.stretch?.renderedStoragePath || null
+      renderedStoragePath: region.stretch?.renderedStoragePath || null,
+      renderedRuntimeId: region.stretch?.renderedRuntimeId || null,
+      renderedDurationSeconds: region.stretch?.renderedDurationSeconds == null ? null : Math.max(0, num(region.stretch.renderedDurationSeconds, 0)),
+      renderedAt: region.stretch?.renderedAt == null ? null : num(region.stretch.renderedAt, 0),
+      renderedSessionOnly: region.stretch?.renderedSessionOnly === true,
+      renderStatus,
+      renderError: region.stretch?.renderError || null
     },
+    audioEdit: type === 'audio'
+      ? {
+        mute: region.audioEdit?.mute === true,
+        loop: region.audioEdit?.loop === true,
+        quantize: String(region.audioEdit?.quantize || 'off'),
+        qSwing: clamp(num(region.audioEdit?.qSwing, 0), 0, 100),
+        qRange: region.audioEdit?.qRange == null ? null : num(region.audioEdit.qRange, 0),
+        qStrength: clamp(num(region.audioEdit?.qStrength, 100), 0, 100),
+        transposeSemitones: clamp(num(region.audioEdit?.transposeSemitones, 0), -48, 48),
+        fineTuneCents: clamp(num(region.audioEdit?.fineTuneCents, 0), -100, 100),
+        pitchSource: String(region.audioEdit?.pitchSource || 'off'),
+        flexFollow: region.audioEdit?.flexFollow === 'on' ? 'on' : 'off',
+        gainDb: clamp(num(region.audioEdit?.gainDb, 0), -24, 24),
+        delayMs: clamp(num(region.audioEdit?.delayMs, 0), -2000, 2000),
+        fadeInSeconds: Math.max(0, num(region.audioEdit?.fadeInSeconds, 0)),
+        fadeInCurve: String(region.audioEdit?.fadeInCurve || 'linear'),
+        fadeOutSeconds: Math.max(0, num(region.audioEdit?.fadeOutSeconds, 0)),
+        fadeOutCurve: String(region.audioEdit?.fadeOutCurve || 'linear'),
+        fadeType: String(region.audioEdit?.fadeType || 'out'),
+        reverse: region.audioEdit?.reverse === true,
+        phaseInvert: region.audioEdit?.phaseInvert === true
+      }
+      : null,
     sourceHash: region.sourceHash ?? null,
     audioClip: type === 'audio' && region.audioClip && typeof region.audioClip === 'object'
-      ? { ...region.audioClip, sessionOnly: region.audioClip.sessionOnly !== false, missingAfterReload: region.audioClip.missingAfterReload !== false }
+      ? {
+        ...region.audioClip,
+        storagePath: region.audioClip.storagePath || null,
+        downloadUrl: region.audioClip.downloadUrl || null,
+        sessionOnly: region.audioClip.storagePath || region.audioClip.downloadUrl ? false : region.audioClip.sessionOnly !== false,
+        missingAfterReload: region.audioClip.storagePath || region.audioClip.downloadUrl ? false : region.audioClip.missingAfterReload !== false
+      }
       : null,
     waveform: type === 'audio' && region.waveform && typeof region.waveform === 'object'
       ? {
