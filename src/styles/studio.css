@@ -231,6 +231,16 @@ body.is-studio-editor main{padding-top:0}
 .studio-audio-region.is-stretching .studio-midi-region-handle{opacity:1;background:linear-gradient(90deg,rgba(255,211,110,.42),rgba(255,255,255,.03))}
 .studio-audio-stretch-label{position:absolute;right:8px;top:20px;z-index:4;padding:3px 6px;border-radius:999px;background:rgba(255,211,110,.18);color:#ffe4a6;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
 body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
+.studio-audio-render-modal{position:fixed;inset:0;z-index:var(--z-modal,4800);display:grid;place-items:center;padding:20px;background:rgba(5,8,14,.66);backdrop-filter:blur(12px)}
+.studio-audio-render-panel{width:min(420px,calc(100vw - 32px));display:grid;gap:10px;padding:18px;border:1px solid rgba(255,211,110,.34);border-radius:16px;background:linear-gradient(180deg,rgba(22,24,32,.98),rgba(11,14,22,.98));box-shadow:0 24px 80px rgba(0,0,0,.5)}
+.studio-audio-render-panel span{color:#ffe4a6;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}
+.studio-audio-render-panel h3{margin:0;color:#fff;font-size:21px;line-height:1.1}
+.studio-audio-render-panel p{margin:0;color:#cbd6f4;font-size:13px;line-height:1.45}
+.studio-audio-render-panel small{color:#98a8cf;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+.studio-audio-render-progress{position:relative;height:8px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.08)}
+.studio-audio-render-progress i{position:absolute;inset:0 auto 0 0;display:block;border-radius:inherit;background:linear-gradient(90deg,#ffe4a6,#66e7ff);box-shadow:0 0 16px rgba(255,211,110,.32)}
+.studio-audio-render-progress.is-indeterminate i{width:38%;animation:studioAudioRenderPulse 1.1s ease-in-out infinite}
+@keyframes studioAudioRenderPulse{0%{transform:translateX(-105%)}100%{transform:translateX(275%)}}
 .studio-midi-context-menu,.studio-midi-color-popover,.studio-midi-rename-popover{position:fixed;z-index:calc(var(--z-plugin-window) + 24);display:grid;gap:5px;min-width:210px;padding:8px;border:1px solid rgba(126,211,255,.36);border-radius:6px;background:#111827;color:#eaf2ff;box-shadow:0 22px 60px rgba(0,0,0,.54)}
 .studio-midi-context-menu strong{padding:3px 7px 5px;color:#8bdfff;font-size:11px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .studio-midi-context-menu button,.studio-midi-color-popover button,.studio-midi-rename-popover button{min-height:28px;text-align:left;border:0;border-radius:5px;background:transparent;color:#e6ecff;padding:5px 8px;font-weight:800}
