@@ -221,10 +221,16 @@ body.is-studio-editor main{padding-top:0}
 .studio-audio-region::before{opacity:.22}
 .studio-audio-region strong{z-index:3}
 .studio-audio-waveform{position:absolute;inset:22px 8px 7px;z-index:2;width:calc(100% - 16px);height:calc(100% - 29px);overflow:visible}
+.studio-audio-waveform-bars{position:absolute;inset:22px 8px 7px;z-index:2;pointer-events:none}
+.studio-audio-waveform-bars span{position:absolute;display:block;border-radius:2px;background:color-mix(in srgb,var(--region-color) 70%,#fff 10%);opacity:.55}
 .studio-audio-waveform polygon{fill:color-mix(in srgb,var(--region-color) 42%,transparent)}
 .studio-audio-waveform polyline{fill:none;stroke:color-mix(in srgb,var(--region-color) 78%,#fff 16%);stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round;vector-effect:non-scaling-stroke}
 .studio-audio-region em{position:absolute;right:8px;bottom:6px;z-index:3;color:#ffd9a3;font-size:10px;font-style:normal;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
 .studio-audio-region.is-missing-media{border-style:dashed;filter:saturate(.75)}
+.studio-audio-region.is-stretched{border-color:color-mix(in srgb,var(--region-color) 55%,#f8d477 35%)}
+.studio-audio-region.is-stretching .studio-midi-region-handle{opacity:1;background:linear-gradient(90deg,rgba(255,211,110,.42),rgba(255,255,255,.03))}
+.studio-audio-stretch-label{position:absolute;right:8px;top:20px;z-index:4;padding:3px 6px;border-radius:999px;background:rgba(255,211,110,.18);color:#ffe4a6;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
 .studio-midi-context-menu,.studio-midi-color-popover,.studio-midi-rename-popover{position:fixed;z-index:calc(var(--z-plugin-window) + 24);display:grid;gap:5px;min-width:210px;padding:8px;border:1px solid rgba(126,211,255,.36);border-radius:6px;background:#111827;color:#eaf2ff;box-shadow:0 22px 60px rgba(0,0,0,.54)}
 .studio-midi-context-menu strong{padding:3px 7px 5px;color:#8bdfff;font-size:11px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .studio-midi-context-menu button,.studio-midi-color-popover button,.studio-midi-rename-popover button{min-height:28px;text-align:left;border:0;border-radius:5px;background:transparent;color:#e6ecff;padding:5px 8px;font-weight:800}

@@ -12,6 +12,56 @@ const clampBpm = (value) => Math.max(40, Math.min(240, Number.isFinite(Number(va
 const sanitizeTitle = (value) => String(value || '').trim().slice(0, 120) || 'Untitled Project'
 const sanitizeKey = (value) => String(value || '').trim().slice(0, 40) || 'C minor'
 const sanitizeType = (value) => (STUDIO_TYPES.includes(value) ? value : 'song')
+const isDev = () => typeof import.meta !== 'undefined' && Boolean(import.meta?.env?.DEV)
+const RUNTIME_OBJECT_NAMES = new Set(['Blob', 'File', 'MediaRecorder', 'MediaStream', 'AudioBuffer', 'AudioNode', 'AudioContext', 'HTMLAudioElement', 'HTMLElement'])
+const FIRESTORE_OBJECT_NAMES = new Set(['Timestamp', 'GeoPoint', 'Bytes', 'FieldValue', 'DeleteFieldValue', 'ServerTimestampFieldValue'])
+
+function isRuntimeOnlyObject(value) {
+  if (!value || typeof value !== 'object') return false
+  const ctorName = value.constructor?.name || ''
+  if (RUNTIME_OBJECT_NAMES.has(ctorName)) return true
+  if (typeof Blob !== 'undefined' && value instanceof Blob) return true
+  if (typeof File !== 'undefined' && value instanceof File) return true
+  if (typeof MediaStream !== 'undefined' && value instanceof MediaStream) return true
+  if (typeof Element !== 'undefined' && value instanceof Element) return true
+  return false
+}
+
+function isFirestoreSpecialValue(value) {
+  if (!value || typeof value !== 'object') return false
+  const ctorName = value.constructor?.name || ''
+  return value instanceof Date || FIRESTORE_OBJECT_NAMES.has(ctorName) || typeof value.toMillis === 'function'
+}
+
+export function findUndefinedPaths(value, basePath = 'payload') {
+  const paths = []
+  const visit = (current, path) => {
+    if (current === undefined) {
+      paths.push(path)
+      return
+    }
+    if (!current || typeof current !== 'object' || isFirestoreSpecialValue(current) || isRuntimeOnlyObject(current)) return
+    if (Array.isArray(current)) {
+      current.forEach((item, index) => visit(item, `${path}.${index}`))
+      return
+    }
+    Object.entries(current).forEach(([key, item]) => visit(item, `${path}.${key}`))
+  }
+  visit(value, basePath)
+  return paths
+}
+
+export function sanitizeForFirestore(value, { inArray = false } = {}) {
+  if (value === undefined || typeof value === 'function' || isRuntimeOnlyObject(value)) return inArray ? null : undefined
+  if (value === null || typeof value !== 'object' || isFirestoreSpecialValue(value)) return value
+  if (Array.isArray(value)) return value.map((item) => sanitizeForFirestore(item, { inArray: true }))
+  const output = {}
+  Object.entries(value).forEach(([key, item]) => {
+    const sanitized = sanitizeForFirestore(item)
+    if (sanitized !== undefined) output[key] = sanitized
+  })
+  return output
+}
 
 export function normalizeStudioProject(projectId, raw = {}) { return { id: String(projectId || '').trim(), title: sanitizeTitle(raw.title), ownerId: String(raw.ownerId || '').trim(), collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds.filter(Boolean) : [], bpm: clampBpm(raw.bpm), key: sanitizeKey(raw.key), type: sanitizeType(raw.type), visibility: 'private', createdAt: raw.createdAt || null, updatedAt: raw.updatedAt || null, lastOpenedAt: raw.lastOpenedAt || null, version: 1, tracks: Array.isArray(raw.tracks) ? raw.tracks : [], timeline: raw.timeline && typeof raw.timeline === 'object' ? raw.timeline : { bars: 32, snap: 'bar' }, mixer: raw.mixer && typeof raw.mixer === 'object' ? raw.mixer : { masterVolume: 0 }, collaboration: raw.collaboration && typeof raw.collaboration === 'object' ? raw.collaboration : { activeUsers: [] }, editorState: raw.editorState && typeof raw.editorState === 'object' ? raw.editorState : null } }
 
@@ -48,4 +98,11 @@ export async function createStudioProject(user, input = {}) {
 }
 export async function touchStudioProject(projectId) { const id = String(projectId || '').trim(); if (!id) return; await updateDoc(doc(db, 'studioProjects', id), { updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() }) }
 
-export async function saveStudioProjectEditorState(projectId, editorState) { const id = String(projectId || '').trim(); if (!id || !editorState || typeof editorState !== 'object') return; await updateDoc(doc(db, 'studioProjects', id), { editorState, updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() }) }
+export async function saveStudioProjectEditorState(projectId, editorState) {
+  const id = String(projectId || '').trim()
+  if (!id || !editorState || typeof editorState !== 'object') return
+  const undefinedPaths = findUndefinedPaths(editorState, 'editorState')
+  if (undefinedPaths.length && isDev()) console.warn('[studioProject] Firestore payload had undefined fields', undefinedPaths)
+  const safeEditorState = sanitizeForFirestore(editorState)
+  await updateDoc(doc(db, 'studioProjects', id), { editorState: safeEditorState, updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() })
+}
