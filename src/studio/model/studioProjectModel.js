@@ -6,11 +6,15 @@ function makeId(prefix) {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+export function normalizeTrackType(type) {
+  return type === 'audio' ? 'audio' : 'software'
+}
+
 export function createTrackModel(input = {}) {
   return {
     id: String(input.id || makeId('track')),
     name: String(input.name || 'Track'),
-    type: input.type === 'midi' ? 'midi' : 'audio',
+    type: normalizeTrackType(input.type),
     muted: !!input.muted,
     soloed: !!input.soloed
   }
@@ -27,7 +31,7 @@ export function normalizeMidiNote(note = {}) {
 }
 
 export function normalizeRegion(region = {}) {
-  const type = region.type === 'midi' ? 'midi' : 'audio'
+  const type = region.type === 'audio' ? 'audio' : 'midi'
   return {
     id: String(region.id || makeId('region')),
     trackId: String(region.trackId || 'demo-track'),
@@ -35,6 +39,12 @@ export function normalizeRegion(region = {}) {
     startBeat: num(region.startBeat, 0),
     durationBeats: Math.max(0.0001, num(region.durationBeats, 4)),
     sourceHash: region.sourceHash ?? null,
+    audioClip: type === 'audio' && region.audioClip && typeof region.audioClip === 'object'
+      ? { ...region.audioClip, sessionOnly: region.audioClip.sessionOnly !== false, missingAfterReload: region.audioClip.missingAfterReload !== false }
+      : null,
+    waveform: type === 'audio' && region.waveform && typeof region.waveform === 'object'
+      ? { ...region.waveform, peaks: Array.isArray(region.waveform.peaks) ? region.waveform.peaks.map((peak) => clamp(num(peak, 0), 0, 1)) : [] }
+      : null,
     gain: clamp(num(region.gain, 1), 0, 2),
     pan: clamp(num(region.pan, 0), -1, 1),
     muted: !!region.muted,
