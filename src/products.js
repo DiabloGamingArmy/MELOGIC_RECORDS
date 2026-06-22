@@ -10,13 +10,22 @@ import { claimFreeProduct } from './data/entitlementService'
 import { listPublicProductsPage } from './data/productService'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute, productRoute, publicProfileRoute, usernameProfileRoute } from './utils/routes'
+import {
+  fulfillmentTypeLabel,
+  hasDigitalFulfillment,
+  hasPhysicalFulfillment,
+  isPhysicalSoldOut,
+  normalizeProductFulfillment,
+  physicalAvailableQuantity,
+  shippingModeLabel
+} from './utils/productFulfillment'
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250
 
 const app = document.querySelector('#app')
 
-const categoryOptions = ['All categories', 'Sample Pack', 'Preset Pack', 'Wavetable Pack', 'Plugin / VST', 'Project File', 'Audio Loop Kit', 'Drum Kit', 'MIDI Pack', 'Vocal Pack', 'Course / Tutorial', 'Release', 'Other']
+const categoryOptions = ['All categories', 'Single Sample', 'Sample Pack', 'Drum Kit', 'Vocal Pack', 'Preset Bank', 'Wavetable Pack', 'MIDI Pack', 'Project File', 'Plugin / VST', 'Course / Tutorial', 'Vinyl', 'CD', 'Cassette', 'Merch', 'Apparel', 'Hardware', 'Collectible', 'Signed Item', 'Bundle', 'Release', 'Other']
 const genreOptions = ['All genres', 'Dubstep', 'Melodic Dubstep', 'Future Bass', 'Color Bass', 'Riddim', 'Trap', 'Drum & Bass', 'House', 'Techno', 'Metalcore', 'Rock', 'Cinematic', 'Pop', 'Hip-Hop', 'Other']
 const sortOptions = [
   { label: 'Featured', value: 'featured' },
@@ -43,7 +52,10 @@ const defaultFilters = {
   contributors: 'Any contributor count',
   tags: '',
   releaseWindow: 'Any time',
-  format: 'Any format'
+  format: 'Any format',
+  productFormat: 'All formats',
+  condition: 'Any condition',
+  shippingMode: 'Any shipping'
 }
 
 const state = {
@@ -96,7 +108,18 @@ function productCardMarkup(product) {
   const dislikes = product.counts?.dislikes ?? 0
   const isFreeProduct = Boolean(product.isFree) || Number(product.priceCents || 0) <= 0
   const isOwnProduct = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
-  const actionLabel = isOwnProduct ? 'Your product' : isFreeProduct ? 'Add to Library' : 'Add to cart'
+  const fulfillment = normalizeProductFulfillment(product)
+  const physicalSoldOut = isPhysicalSoldOut(product)
+  const physicalSummary = hasPhysicalFulfillment(product)
+    ? `${physicalSoldOut ? 'Sold out' : `${physicalAvailableQuantity(product)} available`} · ${shippingModeLabel(fulfillment.physical.shipping.mode)}`
+    : 'Instant digital download'
+  const actionLabel = isOwnProduct
+    ? 'Your product'
+    : physicalSoldOut
+      ? 'Sold out'
+      : isFreeProduct
+        ? hasDigitalFulfillment(product) ? 'Add to Library' : 'Claim'
+        : 'Add to cart'
 
   const mediaMarkup = product.thumbnailURL || product.coverURL
     ? `<img src="${escapeHtml(product.thumbnailURL || product.coverURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`
@@ -112,13 +135,14 @@ function productCardMarkup(product) {
       </div>
       <div class="product-content">
         <div class="product-meta-row">
-          <p class="product-type">${escapeHtml(product.productType || 'Release')}</p>
+          <p class="product-type"><span class="product-format-badge">${escapeHtml(fulfillmentTypeLabel(product))}</span> ${escapeHtml(product.productType || 'Release')}</p>
           <p class="product-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
         </div>
         <h3>${escapeHtml(product.title)}</h3>
         <p class="product-creator">by <a href="${artistHref}" data-artist-link>${escapeHtml(product.artistName)}</a></p>
         <p class="product-description">${escapeHtml(product.shortDescription || 'No description available yet.')}</p>
         <p class="product-tags">${tags || '#new'}</p>
+        <p class="product-fulfillment-note">${escapeHtml(physicalSummary)}</p>
 
         <div class="product-stats" aria-label="Product engagement stats">
           <span>👍 ${likes}</span>
@@ -127,7 +151,7 @@ function productCardMarkup(product) {
 
         <div class="product-actions">
           <button type="button" class="preview-btn" ${(product.previewAssignment?.hoverAudioURL || product.previewAssignment?.hoverVideoURL || product.previewAudioURLs.length || product.primaryPreviewURL) ? '' : 'disabled'} aria-label="Preview ${escapeHtml(product.title)}">▶ Preview</button>
-          <button type="button" class="add-btn" data-product-card-action data-product-id="${escapeHtml(product.id)}" ${isOwnProduct ? 'disabled' : ''} aria-label="${escapeHtml(actionLabel)} ${escapeHtml(product.title)}">${escapeHtml(actionLabel)}</button>
+          <button type="button" class="add-btn" data-product-card-action data-product-id="${escapeHtml(product.id)}" ${isOwnProduct || physicalSoldOut ? 'disabled' : ''} aria-label="${escapeHtml(actionLabel)} ${escapeHtml(product.title)}">${escapeHtml(actionLabel)}</button>
         </div>
       </div>
     </article>
@@ -166,6 +190,8 @@ function applyClientFilters(products) {
   const formatKey = normalizeKey(state.filters.format)
 
   return products.filter((product) => {
+    const fulfillment = normalizeProductFulfillment(product)
+    const physical = fulfillment.physical
     const haystack = [
       product.title,
       product.artistName,
@@ -177,7 +203,10 @@ function applyClientFilters(products) {
     ].join(' ').toLowerCase()
 
     if (tokens.length && !tokens.every((token) => haystack.includes(token))) return false
-    if (state.filters.category !== 'All categories' && !(product.categoryKeys || []).includes(categoryKey)) return false
+    if (state.filters.productFormat !== 'All formats' && fulfillment.type !== normalizeKey(state.filters.productFormat)) return false
+    if (state.filters.condition !== 'Any condition' && normalizeKey(physical.condition) !== normalizeKey(state.filters.condition)) return false
+    if (state.filters.shippingMode !== 'Any shipping' && normalizeKey(shippingModeLabel(physical.shipping.mode)) !== normalizeKey(state.filters.shippingMode)) return false
+    if (state.filters.category !== 'All categories' && !(product.categoryKeys || []).includes(categoryKey) && normalizeKey(product.productType) !== categoryKey) return false
     if (state.filters.genre !== 'All genres' && !(product.genreKeys || []).includes(genreKey)) return false
     if (state.filters.daw !== 'Any DAW' && !(product.dawCompatibility || []).includes(dawKey)) return false
     if (state.filters.format !== 'Any format' && !(product.formatKeys || []).includes(formatKey)) return false
@@ -236,7 +265,21 @@ function renderProducts() {
       </article>
     `
   } else {
-    grid.innerHTML = filtered.map((product) => productCardMarkup(product)).join('')
+    const groups = [
+      { type: 'digital', title: 'Digital Products' },
+      { type: 'physical', title: 'Physical Products' },
+      { type: 'hybrid', title: 'Hybrid Products' }
+    ]
+    grid.innerHTML = groups.map((group) => {
+      const products = filtered.filter((product) => normalizeProductFulfillment(product).type === group.type)
+      if (!products.length) return ''
+      return `
+        <section class="products-group" data-product-group="${group.type}">
+          <div class="products-group-header"><h2>${escapeHtml(group.title)}</h2><span>${products.length}</span></div>
+          <div class="products-group-grid">${products.map((product) => productCardMarkup(product)).join('')}</div>
+        </section>
+      `
+    }).join('')
   }
 
   const loadingMore = app.querySelector('[data-products-loading-more]')
@@ -350,6 +393,7 @@ function bindProductActions(visibleProducts = []) {
       if (!product) return
       const isFreeProduct = Boolean(product.isFree) || Number(product.priceCents || 0) <= 0
       if (isFreeProduct) {
+        const freeActionLabel = hasDigitalFulfillment(product) ? 'Add to Library' : 'Claim'
         if (!state.currentUser?.uid) {
           window.location.assign(authRoute({ redirect: productRoute(product) }))
           return
@@ -362,7 +406,7 @@ function bindProductActions(visibleProducts = []) {
         } catch (error) {
           console.warn('[products] free claim failed', { code: error?.code, message: error?.message })
           button.disabled = false
-          button.textContent = 'Add to Library'
+          button.textContent = freeActionLabel
         }
         return
       }
@@ -489,7 +533,11 @@ function bindCatalogControls() {
     }, SEARCH_DEBOUNCE_MS)
   })
 
-  category?.addEventListener('change', (event) => setFilter('category', event.target.value))
+  category?.addEventListener('change', (event) => {
+    setFilter('category', event.target.value)
+    const sidebarCategory = app.querySelector('[data-sidebar-filter="category"]')
+    if (sidebarCategory) sidebarCategory.value = event.target.value
+  })
   genre?.addEventListener('change', (event) => setFilter('genre', event.target.value))
   sort?.addEventListener('change', (event) => setFilter('sort', event.target.value))
 
@@ -513,9 +561,17 @@ function bindCatalogControls() {
     })
   })
 
+  app.querySelectorAll('[data-sidebar-filter]').forEach((field) => {
+    const key = field.getAttribute('data-sidebar-filter')
+    field.addEventListener('change', (event) => {
+      setFilter(key, event.target.value)
+      if (key === 'category' && category) category.value = event.target.value
+    })
+  })
+
   app.querySelector('[data-reset-filters]')?.addEventListener('click', () => {
     state.filters = { ...defaultFilters }
-    app.querySelectorAll('[data-filter], [data-advanced-field]').forEach((field) => {
+    app.querySelectorAll('[data-filter], [data-advanced-field], [data-sidebar-filter]').forEach((field) => {
       if (field.tagName === 'SELECT') field.selectedIndex = 0
       if (field.tagName === 'INPUT') field.value = ''
     })
@@ -615,9 +671,28 @@ app.innerHTML = `
           </div>
         </section>
 
-        <div class="products-grid" role="list" aria-label="Product catalog" data-products-grid></div>
-        <div class="products-loading-more" data-products-loading-more></div>
-        <div class="products-sentinel" data-products-sentinel aria-hidden="true"></div>
+        <div class="products-catalog-layout">
+          <aside class="products-sidebar" aria-label="Marketplace filters">
+            <div class="products-sidebar-section">
+              <h2>Product Type</h2>
+              <label class="filter-control"><span>Format</span><select data-sidebar-filter="productFormat"><option>All formats</option><option>Digital</option><option>Physical</option><option>Hybrid</option></select></label>
+            </div>
+            <div class="products-sidebar-section">
+              <h2>Physical Filters</h2>
+              <label class="filter-control"><span>Condition</span><select data-sidebar-filter="condition"><option>Any condition</option><option>New</option><option>Like New</option><option>Good</option><option>Fair</option><option>Used / Vintage</option><option>Made to Order</option></select></label>
+              <label class="filter-control"><span>Shipping</span><select data-sidebar-filter="shippingMode"><option>Any shipping</option><option>Flat-rate shipping</option><option>Free shipping</option><option>Seller will contact buyer</option><option>Local pickup</option></select></label>
+            </div>
+            <div class="products-sidebar-section">
+              <h2>Categories</h2>
+              <label class="filter-control"><span>Category</span><select data-sidebar-filter="category">${categoryOptions.map((option) => `<option>${escapeHtml(option)}</option>`).join('')}</select></label>
+            </div>
+          </aside>
+          <div class="products-main-results">
+            <div class="products-grid" role="list" aria-label="Product catalog" data-products-grid></div>
+            <div class="products-loading-more" data-products-loading-more></div>
+            <div class="products-sentinel" data-products-sentinel aria-hidden="true"></div>
+          </div>
+        </div>
       </div>
     </section>
 

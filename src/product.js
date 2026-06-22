@@ -13,6 +13,15 @@ import { createMarketplaceReviewReport, createProductReview, createProductReview
 import { waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
+import {
+  fulfillmentTypeLabel,
+  hasDigitalFulfillment,
+  hasPhysicalFulfillment,
+  isPhysicalSoldOut,
+  normalizeProductFulfillment,
+  physicalAvailableQuantity,
+  shippingModeLabel
+} from './utils/productFulfillment'
 import { getProductGiftSendUiState } from './utils/productGiftState'
 import { renderSafeRichDescription } from './utils/richDescription'
 import { iconSvg } from './utils/icons'
@@ -1114,6 +1123,10 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
 
   const listingThumbnailURL = product.thumbnailURL || product.coverURL || ''
   const typeLabel = product.productType || 'Product'
+  const fulfillment = normalizeProductFulfillment(product)
+  const physicalEnabled = hasPhysicalFulfillment(product)
+  const digitalEnabled = hasDigitalFulfillment(product)
+  const physicalSoldOut = isPhysicalSoldOut(product)
   const creatorHref = product.artistId ? publicProfileRoute({ uid: product.artistId }) : ROUTES.profilePublic
   if (state.productEngagement.productId !== product.id) {
     state.productEngagement = {
@@ -1162,10 +1175,12 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const isFreeProduct = Boolean(product.isFree) || Number(product.priceCents || 0) <= 0
   const userHasAccess = Boolean(isOwner || ownsProduct)
   const primaryActionLabel = userHasAccess
-    ? 'In Library'
-    : isFreeProduct
-      ? 'Add to Library'
-      : 'Add to Cart'
+    ? (digitalEnabled ? 'In Library' : 'Purchased')
+    : physicalSoldOut
+      ? 'Sold Out'
+      : isFreeProduct
+        ? (digitalEnabled ? 'Add to Library' : 'Claim')
+        : 'Add to Cart'
 
   const thumbMarkup = mediaItems.map((item, index) => `
     <button type="button" class="dashboard-thumb" data-media-index="${index}" aria-label="Show media ${index + 1}" aria-pressed="${index === 0 ? 'true' : 'false'}">
@@ -1231,6 +1246,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                       <p>${escapeHtml((product.dawCompatibility || []).join(', ') || (product.formatKeys || []).join(', ') || 'Compatibility details are based on creator-provided metadata.')}</p>
                     </article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>License / Usage</h2><p>${product.licensePath ? 'License included.' : 'License details were not uploaded yet.'}</p></article>
+                    <article class="dashboard-section-card dashboard-metadata-card"><h2>Fulfillment</h2><p>${escapeHtml(fulfillmentTypeLabel(product))}${physicalEnabled ? ` · ${escapeHtml(shippingModeLabel(fulfillment.physical.shipping.mode))}` : ' · Instant digital download'}</p></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Creator Notes</h2><p>${escapeHtml(product.shortDescription || 'Creator notes will appear here when provided.')}</p></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Tags</h2><div class="dashboard-tag-row">${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}</div></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Stats</h2><p>${Math.max(0, likeCount)} likes · ${Math.max(0, dislikeCount)} dislikes · Saves ${state.productEngagement.saveCount} · Downloads ${product.downloadCount ?? product.counts?.downloads ?? 0}</p></article>
@@ -1263,16 +1279,19 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h2>${escapeHtml(product.title)}</h2>
               <p class="dashboard-short-description">${escapeHtml(product.shortDescription || product.description || 'No description has been shared yet.')}</p>
               <div class="dashboard-top-badges">
+                <span class="dashboard-pill">${escapeHtml(fulfillmentTypeLabel(product))}</span>
                 ${(product.genres || []).slice(0, 3).map((genre) => `<span class="dashboard-pill">${escapeHtml(genre)}</span>`).join('')}
               </div>
               <dl class="dashboard-overview-grid">
                 <div><dt>Type</dt><dd>${escapeHtml(typeLabel)}</dd></div>
+                <div><dt>Fulfillment</dt><dd>${escapeHtml(fulfillmentTypeLabel(product))}</dd></div>
                 <div><dt>Release date</dt><dd>${escapeHtml(formatReleaseDate(product.releasedAt || product.createdAt))}</dd></div>
                 <div><dt>Creator</dt><dd>${escapeHtml(product.artistName)}</dd></div>
                 <div><dt>Categories</dt><dd>${escapeHtml((product.categories || []).join(', ') || 'Unspecified')}</dd></div>
                 <div><dt>Genres</dt><dd>${escapeHtml((product.genres || []).join(', ') || 'Unspecified')}</dd></div>
                 <div><dt>DAW compatibility</dt><dd>${escapeHtml((product.dawCompatibility || []).join(', ') || 'Creator has not listed DAWs')}</dd></div>
                 <div><dt>Formats</dt><dd>${escapeHtml((product.formatKeys || []).join(', ') || 'Creator has not listed formats')}</dd></div>
+                ${physicalEnabled ? `<div><dt>Condition</dt><dd>${escapeHtml(fulfillment.physical.condition || 'Not specified')}</dd></div><div><dt>Availability</dt><dd>${escapeHtml(physicalSoldOut ? 'Sold out' : `${physicalAvailableQuantity(product)} available`)}</dd></div><div><dt>Ships from</dt><dd>${escapeHtml([fulfillment.physical.shipsFrom.city, fulfillment.physical.shipsFrom.region, fulfillment.physical.shipsFrom.country].filter(Boolean).join(', ') || 'Seller will confirm')}</dd></div><div><dt>Shipping</dt><dd>${escapeHtml(shippingModeLabel(fulfillment.physical.shipping.mode))}</dd></div>` : ''}
               </dl>
               <div class="dashboard-tag-row">
                 ${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}
@@ -1295,12 +1314,12 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <h3>Get ${escapeHtml(product.title)}</h3>
               <p class="dashboard-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
               <div class="dashboard-action-stack">
-                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-product-primary-action ${state.isDraftPreview || userHasAccess ? 'disabled' : ''} ${state.isDraftPreview ? 'title="Disabled in marketplace preview."' : ''}>${escapeHtml(primaryActionLabel)}</button>
+                <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-product-primary-action ${state.isDraftPreview || userHasAccess || physicalSoldOut ? 'disabled' : ''} ${state.isDraftPreview ? 'title="Disabled in marketplace preview."' : ''}>${escapeHtml(primaryActionLabel)}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
                 <button type="button" class="button button-muted" data-report-product ${state.isDraftPreview || isOwner ? 'disabled' : ''} title="${isOwner ? 'You cannot report your own product.' : 'Report this product'}">Report Product</button>
                 ${userHasAccess && !state.isDraftPreview ? `
                   <div class="dashboard-download-divider"></div>
-                  <button type="button" class="button dashboard-download-button" data-product-download>Download Content</button>
+                  ${digitalEnabled ? '<button type="button" class="button dashboard-download-button" data-product-download>Download Content</button>' : ''}
                   ${isOwner ? `<a class="button button-muted" href="${productRoute(product)}?sendgift=1">Send as Gift</a>` : ''}
                 ` : ''}
                 <div class="dashboard-action-icons-row">
@@ -1311,7 +1330,9 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 </div>
                 
               </div>
-              <p class="dashboard-mini-note">Instant digital download</p>
+              <p class="dashboard-mini-note">${escapeHtml(physicalEnabled ? shippingModeLabel(fulfillment.physical.shipping.mode) : 'Instant digital download')}</p>
+              ${physicalEnabled && fulfillment.physical.shipping.notes ? `<p class="dashboard-mini-note">${escapeHtml(fulfillment.physical.shipping.notes)}</p>` : ''}
+              ${physicalEnabled && fulfillment.physical.returnPolicy ? `<p class="dashboard-mini-note">${escapeHtml(fulfillment.physical.returnPolicy)}</p>` : ''}
               ${state.productReport.message ? `<p class="dashboard-mini-note">${escapeHtml(state.productReport.message)}</p>` : ''}
               <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
               <p class="dashboard-mini-note">Created by ${escapeHtml(product.artistName)}</p>

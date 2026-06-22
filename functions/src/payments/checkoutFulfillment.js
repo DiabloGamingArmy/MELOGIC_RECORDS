@@ -10,6 +10,11 @@ const {
   loadCreatorEarningsConfig,
   rebuildCreatorEarningsSummaries
 } = require('./creatorEarnings')
+const {
+  hasDigitalFulfillment,
+  hasPhysicalFulfillment,
+  normalizeProductFulfillment
+} = require('../products/productFulfillment')
 
 function cleanString(value = '', max = 900) {
   return String(value ?? '')
@@ -77,6 +82,11 @@ function productSnapshot(productId = '', product = {}, orderItem = {}) {
   const itemSnapshot = orderItem.productSnapshot && typeof orderItem.productSnapshot === 'object'
     ? orderItem.productSnapshot
     : {}
+  const fulfillment = normalizeProductFulfillment({
+    ...(itemSnapshot || {}),
+    ...(orderItem || {}),
+    ...(product || {})
+  })
   return {
     title: cleanString(product.title || orderItem.title || itemSnapshot.title || productId, 180),
     slug: cleanString(product.slug || orderItem.slug || itemSnapshot.slug || '', 180),
@@ -92,6 +102,8 @@ function productSnapshot(productId = '', product = {}, orderItem = {}) {
     coverPath: cleanString(product.coverPath || product.thumbnailPath || itemSnapshot.coverPath || '', 900),
     coverURL: cleanString(product.coverURL || product.thumbnailURL || itemSnapshot.coverURL || '', 900),
     productType: cleanString(product.productType || product.productKind || itemSnapshot.productType || 'Product', 120),
+    marketplaceProductType: fulfillment.type,
+    fulfillment,
     usageLicense: cleanString(product.usageLicense || itemSnapshot.usageLicense || 'Standard License', 160),
     sizeBytes: Math.max(0, Math.round(Number(
       product.primaryDownloadBytes
@@ -308,6 +320,8 @@ async function fulfillPaidCheckout({
       const libraryNeedsWrite = accessWriteNeeded(librarySnap, context)
       const product = productSnap.exists ? productSnap.data() || {} : {}
       const orderItem = orderItemForProduct(order, productId)
+      const digitalRequired = hasDigitalFulfillment({ ...product, ...orderItem })
+      const physicalRequired = hasPhysicalFulfillment({ ...product, ...orderItem })
       const payload = purchaseAccessPayload({
         uid: context.uid,
         productId,
@@ -318,11 +332,13 @@ async function fulfillPaidCheckout({
         now
       })
 
-      if (!entitlementNeedsWrite && !libraryNeedsWrite && entitlementActive && libraryActive) duplicateProductIds.push(productId)
-      else if (entitlementSnap.exists || librarySnap.exists) repairedProductIds.push(productId)
-      else grantedProductIds.push(productId)
+      if (digitalRequired) {
+        if (!entitlementNeedsWrite && !libraryNeedsWrite && entitlementActive && libraryActive) duplicateProductIds.push(productId)
+        else if (entitlementSnap.exists || librarySnap.exists) repairedProductIds.push(productId)
+        else grantedProductIds.push(productId)
+      }
 
-      if (entitlementNeedsWrite) {
+      if (digitalRequired && entitlementNeedsWrite) {
         const existing = entitlementSnap.exists ? entitlementSnap.data() || {} : {}
         transaction.set(entitlementRefs[index], {
           ...payload,
@@ -332,13 +348,20 @@ async function fulfillPaidCheckout({
         }, { merge: true })
       }
 
-      if (libraryNeedsWrite) {
+      if (digitalRequired && libraryNeedsWrite) {
         const existing = librarySnap.exists ? librarySnap.data() || {} : {}
         transaction.set(libraryRefs[index], {
           ...payload,
           entitlementId: cleanString(existing.entitlementId || `${context.uid}_${productId}`, 380),
           acquiredAt: existing.acquiredAt || existing.createdAt || now,
           createdAt: existing.createdAt || now
+        }, { merge: true })
+      }
+
+      if (physicalRequired && orderChanged) {
+        transaction.set(productRefs[index], {
+          physical: { quantitySold: admin.firestore.FieldValue.increment(1) },
+          updatedAt: now
         }, { merge: true })
       }
 
@@ -386,12 +409,25 @@ async function fulfillPaidCheckout({
       }
     })
 
-    const items = (Array.isArray(order.items) ? order.items : []).map((item) => ({
-      ...item,
-      entitlementStatus: context.productIds.includes(cleanString(item?.productId || '', 180))
-        ? 'active'
-        : item?.entitlementStatus
-    }))
+    const items = (Array.isArray(order.items) ? order.items : []).map((item) => {
+      const productId = cleanString(item?.productId || '', 180)
+      if (!context.productIds.includes(productId)) return item
+      const productIndex = context.productIds.indexOf(productId)
+      const productSnap = productIndex >= 0 ? snapshots[productOffset + productIndex] : null
+      const product = productSnap?.exists ? productSnap.data() || {} : {}
+      const digitalRequired = hasDigitalFulfillment({ ...product, ...item })
+      const physicalRequired = hasPhysicalFulfillment({ ...product, ...item })
+      return {
+        ...item,
+        entitlementStatus: digitalRequired ? 'active' : 'not_applicable',
+        fulfillment: {
+          ...(item.fulfillment || {}),
+          type: normalizeProductFulfillment({ ...product, ...item }).type,
+          digital: { ...(item.fulfillment?.digital || {}), required: digitalRequired, status: digitalRequired ? 'active' : 'not_applicable' },
+          physical: { ...(item.fulfillment?.physical || {}), required: physicalRequired, status: physicalRequired ? 'pending_seller_fulfillment' : 'not_applicable' }
+        }
+      }
+    })
     transaction.set(context.orderRef, {
       uid: context.uid,
       buyerUid: context.uid,
@@ -406,7 +442,7 @@ async function fulfillPaidCheckout({
       livemode: session.livemode === true,
       paymentSource: session.livemode === true ? 'stripe_live' : 'stripe_test',
       fulfillmentSource: source,
-      entitlementStatus: 'active',
+      entitlementStatus: grantedProductIds.length || repairedProductIds.length || duplicateProductIds.length ? 'active' : 'not_applicable',
       updatedAt: now
     }, { merge: true })
     transaction.set(eventRef, {

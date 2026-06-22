@@ -2,6 +2,12 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { defineSecret, defineString } = require('firebase-functions/params')
 const Stripe = require('stripe')
 const admin = require('firebase-admin')
+const {
+  hasDigitalFulfillment,
+  hasPhysicalFulfillment,
+  isPhysicalSoldOut,
+  normalizeProductFulfillment
+} = require('../products/productFulfillment')
 
 const STRIPE_SECRET_KEY = defineSecret('STRIPE_SECRET_KEY')
 const PUBLIC_SITE_URL = defineString('PUBLIC_SITE_URL', {
@@ -57,11 +63,17 @@ exports.createCheckoutSession = onCall(
       }
       if (product.artistId === uid) continue
 
-      const [entitlementDoc, libraryDoc] = await Promise.all([
-        db.doc(`users/${uid}/entitlements/${productId}`).get(),
-        db.doc(`users/${uid}/libraryItems/${productId}`).get()
-      ])
-      if (entitlementDoc.exists || libraryDoc.exists) continue
+      if (hasPhysicalFulfillment(product) && isPhysicalSoldOut(product)) {
+        throw new HttpsError('failed-precondition', `${String(product.title || 'This product')} is sold out.`)
+      }
+
+      if (hasDigitalFulfillment(product) && !hasPhysicalFulfillment(product)) {
+        const [entitlementDoc, libraryDoc] = await Promise.all([
+          db.doc(`users/${uid}/entitlements/${productId}`).get(),
+          db.doc(`users/${uid}/libraryItems/${productId}`).get()
+        ])
+        if (entitlementDoc.exists || libraryDoc.exists) continue
+      }
 
       const priceCents = Number(product.priceCents || 0)
       const isFree = Boolean(product.isFree) || priceCents <= 0
@@ -132,7 +144,11 @@ exports.createCheckoutSession = onCall(
       buyerUid: uid,
       productIds: paidProductIds,
       orderId: orderRef.id,
-      items: paidProducts.map(({ productId, product, priceCents }) => ({
+      items: paidProducts.map(({ productId, product, priceCents }) => {
+        const fulfillment = normalizeProductFulfillment(product)
+        const digitalRequired = hasDigitalFulfillment(product)
+        const physicalRequired = hasPhysicalFulfillment(product)
+        return {
         productId,
         title: String(product.title || productId),
         creatorUid: String(product.artistId || ''),
@@ -142,7 +158,12 @@ exports.createCheckoutSession = onCall(
         amountCents: priceCents,
         amountTotalCents: priceCents,
         currency: String(product.currency || currency).toUpperCase(),
-        entitlementStatus: 'pending',
+        entitlementStatus: digitalRequired ? 'pending' : 'not_applicable',
+        fulfillment: {
+          type: fulfillment.type,
+          digital: { required: digitalRequired, status: digitalRequired ? 'pending' : 'not_applicable' },
+          physical: { required: physicalRequired, status: physicalRequired ? 'pending_payment' : 'not_applicable' }
+        },
         productSnapshot: {
           title: String(product.title || productId),
           slug: String(product.slug || ''),
@@ -151,10 +172,13 @@ exports.createCheckoutSession = onCall(
           coverPath: String(product.coverPath || product.thumbnailPath || ''),
           coverURL: String(product.coverURL || product.thumbnailURL || ''),
           productType: String(product.productType || product.productKind || 'Product'),
+          marketplaceProductType: fulfillment.type,
+          fulfillment,
           usageLicense: String(product.usageLicense || 'Standard License'),
           sizeBytes: Math.max(0, Math.round(Number(product.primaryDownloadBytes || product.assetSummary?.totalBytes || 0)))
         }
-      })),
+        }
+      }),
       status: 'checkout_created',
       paymentStatus: 'checkout_created',
       orderState: 'checkout_created',

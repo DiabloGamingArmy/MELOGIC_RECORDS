@@ -2,6 +2,12 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { writeAccountEvent } = require('../account/accountEvents')
 const { rebuildCommerceSummary } = require('../account/commerceSummary')
+const {
+  hasDigitalFulfillment,
+  hasPhysicalFulfillment,
+  isPhysicalSoldOut,
+  normalizeProductFulfillment
+} = require('./productFulfillment')
 
 const db = admin.firestore()
 
@@ -16,6 +22,7 @@ function isFreeProduct(product = {}) {
 
 function productLibraryPayload({ uid = '', productId = '', product = {}, source = 'free_claim' } = {}) {
   const now = admin.firestore.FieldValue.serverTimestamp()
+  const fulfillment = normalizeProductFulfillment(product)
   return {
     uid,
     userId: uid,
@@ -26,6 +33,8 @@ function productLibraryPayload({ uid = '', productId = '', product = {}, source 
     artistName: String(product.artistName || product.artistDisplayName || 'Creator'),
     productSlug: String(product.slug || ''),
     productType: String(product.productType || 'Product'),
+    marketplaceProductType: fulfillment.type,
+    fulfillment,
     priceCents: 0,
     currency: String(product.currency || 'USD'),
     acquisitionType: 'free',
@@ -65,37 +74,50 @@ exports.claimFreeProduct = onCall(
     if (!isFreeProduct(product)) {
       throw new HttpsError('failed-precondition', 'Paid products must be purchased through checkout.')
     }
+    if (hasPhysicalFulfillment(product) && isPhysicalSoldOut(product)) {
+      throw new HttpsError('failed-precondition', 'This product is sold out.')
+    }
 
     const entitlementRef = db.doc(`users/${uid}/entitlements/${productId}`)
     const libraryRef = db.doc(`users/${uid}/libraryItems/${productId}`)
     const orderRef = db.collection('orders').doc()
     const payload = productLibraryPayload({ uid, productId, product })
+    const fulfillment = normalizeProductFulfillment(product)
+    const digitalRequired = hasDigitalFulfillment(product)
+    const physicalRequired = hasPhysicalFulfillment(product)
     let createdClaim = false
 
     await db.runTransaction(async (tx) => {
-      const [entitlementSnap, librarySnap] = await Promise.all([
-        tx.get(entitlementRef),
-        tx.get(libraryRef)
-      ])
-      const alreadyActive = [entitlementSnap, librarySnap].some((snap) => snap.exists && (snap.data()?.status || 'active') === 'active')
-      if (alreadyActive) return
+      const [entitlementSnap, librarySnap] = digitalRequired
+        ? await Promise.all([tx.get(entitlementRef), tx.get(libraryRef)])
+        : [{ exists: false, data: () => ({}) }, { exists: false, data: () => ({}) }]
+      const alreadyActive = digitalRequired && [entitlementSnap, librarySnap].some((snap) => snap.exists && (snap.data()?.status || 'active') === 'active')
+      if (alreadyActive && !physicalRequired) return
 
-      tx.set(entitlementRef, {
-        ...payload,
-        orderId: orderRef.id,
-        entitlementId: `${uid}_${productId}`,
-        source: entitlementSnap.exists ? (entitlementSnap.data()?.source || payload.source) : payload.source,
-        grantedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true })
-      tx.set(libraryRef, {
-        ...payload,
-        orderId: orderRef.id,
-        entitlementId: `${uid}_${productId}`,
-        acquiredAt: admin.firestore.FieldValue.serverTimestamp(),
-        source: librarySnap.exists ? (librarySnap.data()?.source || payload.source) : payload.source,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true })
+      if (digitalRequired && !alreadyActive) {
+        tx.set(entitlementRef, {
+          ...payload,
+          orderId: orderRef.id,
+          entitlementId: `${uid}_${productId}`,
+          source: entitlementSnap.exists ? (entitlementSnap.data()?.source || payload.source) : payload.source,
+          grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true })
+        tx.set(libraryRef, {
+          ...payload,
+          orderId: orderRef.id,
+          entitlementId: `${uid}_${productId}`,
+          acquiredAt: admin.firestore.FieldValue.serverTimestamp(),
+          source: librarySnap.exists ? (librarySnap.data()?.source || payload.source) : payload.source,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true })
+      }
+      if (physicalRequired) {
+        tx.set(productRef, {
+          physical: { quantitySold: admin.firestore.FieldValue.increment(1) },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true })
+      }
       tx.set(orderRef, {
         orderId: orderRef.id,
         uid,
@@ -112,6 +134,12 @@ exports.claimFreeProduct = onCall(
           priceCents: 0,
           currency: String(product.currency || 'USD'),
           quantity: 1,
+          entitlementStatus: digitalRequired ? 'active' : 'not_applicable',
+          fulfillment: {
+            type: fulfillment.type,
+            digital: { required: digitalRequired, status: digitalRequired ? 'active' : 'not_applicable' },
+            physical: { required: physicalRequired, status: physicalRequired ? 'pending_seller_fulfillment' : 'not_applicable' }
+          },
           productSnapshot: {
             title: String(product.title || 'Untitled product'),
             slug: String(product.slug || ''),
@@ -119,13 +147,16 @@ exports.claimFreeProduct = onCall(
             coverPath: String(product.coverPath || product.thumbnailPath || ''),
             coverURL: String(product.coverURL || product.thumbnailURL || ''),
             productType: String(product.productType || product.productKind || 'Product'),
+            marketplaceProductType: fulfillment.type,
+            fulfillment,
             usageLicense: String(product.usageLicense || 'Standard License')
           }
         }],
         source: 'free_claim',
         status: 'paid',
         paymentStatus: 'free_claim',
-        orderState: 'library_added',
+        orderState: physicalRequired ? 'order_placed' : 'library_added',
+        entitlementStatus: digitalRequired ? 'active' : 'not_applicable',
         refundStatus: '',
         amountTotalCents: 0,
         amountCents: 0,
@@ -144,11 +175,13 @@ exports.claimFreeProduct = onCall(
       await writeAccountEvent(db, uid, {
         type: 'order_created',
         severity: 'success',
-        title: 'Product added to library',
-        message: `${String(product.title || 'Product')} was added to your library.`,
+        title: digitalRequired ? 'Product added to library' : 'Product claimed',
+        message: digitalRequired
+          ? `${String(product.title || 'Product')} was added to your library.`
+          : `${String(product.title || 'Product')} was added to your orders.`,
         actorType: 'system',
         source: 'free_claim',
-        path: '/account/library',
+        path: digitalRequired ? '/account/library' : '/account/orders',
         metadata: { orderId: orderRef.id, productId }
       })
       await rebuildCommerceSummary(db, uid).catch(() => {})

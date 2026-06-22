@@ -3,6 +3,7 @@ const admin = require('firebase-admin')
 
 const db = admin.firestore()
 const { FieldValue } = admin.firestore
+const { normalizeProductFulfillment } = require('./productFulfillment')
 
 const FILE_ROLES = new Set(['cover', 'thumbnail', 'gallery', 'previewAudio', 'previewVideo', 'deliverable', 'license'])
 const MAX_FILE_ROWS = 500
@@ -280,6 +281,10 @@ exports.saveProductManifest = onCall(
       const deliverableRows = normalizeDeliverableRows(productId, manifest, fileRows)
       const deliverable = deliverableRows[0] || null
       const assetSummary = normalizeAssetSummary(manifest, fileRows, deliverableRows)
+      const fulfillment = normalizeProductFulfillment({
+        ...(product || {}),
+        ...(manifest || {})
+      })
       const productUpdate = {
         coverPath: normalizeProductPath(productId, manifest.coverPath || '', { field: 'coverPath' }),
         thumbnailPath: normalizeProductPath(productId, manifest.thumbnailPath || '', { field: 'thumbnailPath' }),
@@ -296,6 +301,11 @@ exports.saveProductManifest = onCall(
         primaryDownloadPath: normalizeProductPath(productId, manifest.primaryDownloadPath || manifest.downloadPath || deliverable?.storagePath || '', { field: 'primaryDownloadPath' }),
         primaryDownloadBytes: normalizeNumber(manifest.primaryDownloadBytes, deliverable?.sizeBytes || 0),
         previewAssignment: normalizePreviewAssignment(productId, manifest.previewAssignment || {}),
+        marketplaceProductType: fulfillment.type,
+        fulfillmentType: fulfillment.type,
+        fulfillment,
+        digital: fulfillment.digital,
+        physical: fulfillment.physical,
         productKind: cleanString(manifest.productKind || product.productKind || '', 80),
         previewMode: cleanString(manifest.previewMode || product.previewMode || '', 80),
         distributionMode: cleanString(manifest.distributionMode || product.distributionMode || '', 80),

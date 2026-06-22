@@ -3,6 +3,7 @@ const admin = require('firebase-admin')
 
 const db = admin.firestore()
 const { FieldValue } = admin.firestore
+const { normalizeProductFulfillment } = require('./productFulfillment')
 
 const ALLOWED_STATUSES = new Set([
   'draft',
@@ -233,12 +234,16 @@ function baseProductPayload({ product = {}, productId = '', uid = '', existing =
   const categories = normalizeStringArray(product.categories ?? existing?.categories, 20, 80)
   const genres = normalizeStringArray(product.genres ?? existing?.genres, 20, 80)
   const tags = normalizeStringArray(product.tags ?? existing?.tags, 50, 80)
-  const categoryKeys = normalizeKeyArray(product.categoryKeys ?? categories, 20)
+  const categoryKeys = Array.from(new Set([...normalizeKeyArray(product.categoryKeys ?? categories, 20), normalizeKey(product.productType || existing?.productType || 'Sample Pack')].filter(Boolean))).slice(0, 20)
   const genreKeys = normalizeKeyArray(product.genreKeys ?? genres, 20)
   const tagKeys = normalizeKeyArray(product.tagKeys ?? tags, 50)
   const contributorIds = normalizeStringArray(product.contributorIds ?? existing?.contributorIds, 25, 120)
   const contributorNames = normalizeStringArray(product.contributorNames ?? existing?.contributorNames, 25, 160)
   const pendingContributorIds = normalizeStringArray(product.pendingContributorIds ?? existing?.pendingContributorIds, 25, 120)
+  const fulfillment = normalizeProductFulfillment({
+    ...(existing || {}),
+    ...(product || {})
+  })
 
   const payload = {
     id: productId,
@@ -251,6 +256,11 @@ function baseProductPayload({ product = {}, productId = '', uid = '', existing =
     version: cleanString(product.version || existing?.version || '', 80),
     usageLicense: cleanString(product.usageLicense || existing?.usageLicense || '', 120),
     productType: cleanString(product.productType || existing?.productType || 'Sample Pack', 120) || 'Sample Pack',
+    marketplaceProductType: fulfillment.type,
+    fulfillmentType: fulfillment.type,
+    fulfillment,
+    digital: fulfillment.digital,
+    physical: fulfillment.physical,
     productKind: cleanString(product.productKind || existing?.productKind || '', 80),
     previewMode: cleanString(product.previewMode || existing?.previewMode || '', 80),
     distributionMode: cleanString(product.distributionMode || existing?.distributionMode || '', 80),

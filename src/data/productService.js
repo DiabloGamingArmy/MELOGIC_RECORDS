@@ -21,6 +21,7 @@ import { storage } from '../firebase/storage'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STORAGE_PATHS } from '../config/storagePaths'
 import { getCachedStorageUrl } from '../services/pageMediaCache'
+import { normalizeProductFulfillment } from '../utils/productFulfillment'
 
 let hasWarnedProductFetch = false
 let hasWarnedProductMedia = false
@@ -220,7 +221,9 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const saveCount = normalizeCount(counts.saves, rawProduct.saveCount)
   const downloadCount = normalizeCount(counts.downloads, rawProduct.downloadCount)
   const commentCount = normalizeCount(counts.comments, rawProduct.commentCount)
-  const categoryKeys = Array.isArray(rawProduct.categoryKeys) && rawProduct.categoryKeys.length ? rawProduct.categoryKeys : categories.map(normalizeKey).filter(Boolean)
+  const categoryKeys = Array.isArray(rawProduct.categoryKeys) && rawProduct.categoryKeys.length
+    ? Array.from(new Set([...rawProduct.categoryKeys, normalizeKey(rawProduct.productType || '')].filter(Boolean)))
+    : Array.from(new Set([...categories, rawProduct.productType].map(normalizeKey).filter(Boolean)))
   const genreKeys = Array.isArray(rawProduct.genreKeys) && rawProduct.genreKeys.length ? rawProduct.genreKeys : genres.map(normalizeKey).filter(Boolean)
   const tagKeys = Array.isArray(rawProduct.tagKeys) && rawProduct.tagKeys.length ? rawProduct.tagKeys : tags.map(normalizeKey).filter(Boolean)
   const dawCompatibility = Array.isArray(rawProduct.dawCompatibility) ? rawProduct.dawCompatibility : []
@@ -228,6 +231,7 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const searchKeywords = Array.isArray(rawProduct.searchKeywords) ? rawProduct.searchKeywords : []
   const kindSettings = resolveKindSettings(rawProduct.productType, rawProduct.productKind, rawProduct.previewMode, rawProduct.distributionMode)
   const previewAssignment = normalizePreviewAssignment(rawProduct.previewAssignment || {}, rawProduct.productType)
+  const fulfillment = normalizeProductFulfillment(rawProduct)
   const assetSummary = rawProduct.assetSummary && typeof rawProduct.assetSummary === 'object'
     ? rawProduct.assetSummary
     : {}
@@ -242,6 +246,11 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     version: rawProduct.version || '',
     usageLicense: rawProduct.usageLicense || '',
     productType: rawProduct.productType || 'Release',
+    marketplaceProductType: fulfillment.type,
+    fulfillmentType: fulfillment.type,
+    fulfillment,
+    digital: fulfillment.digital,
+    physical: fulfillment.physical,
     productKind: kindSettings.productKind,
     previewMode: kindSettings.previewMode,
     distributionMode: kindSettings.distributionMode,
@@ -665,6 +674,7 @@ export function buildProductPayload(input = {}, user = null) {
     downloadableCount: Number(input.assetSummary?.downloadableCount ?? deliverableRows.filter((row) => row.isDownloadable !== false).length ?? 0)
   }
   const previewAssignment = normalizePreviewAssignment(input.previewAssignment || {}, input.productType)
+  const fulfillment = normalizeProductFulfillment(input)
 
   return {
     id: input.id || slug,
@@ -677,6 +687,11 @@ export function buildProductPayload(input = {}, user = null) {
     version: input.version || '',
     usageLicense: input.usageLicense || '',
     productType: input.productType || 'Sample Pack',
+    marketplaceProductType: fulfillment.type,
+    fulfillmentType: fulfillment.type,
+    fulfillment,
+    digital: fulfillment.digital,
+    physical: fulfillment.physical,
     productKind: kindSettings.productKind,
     previewMode: kindSettings.previewMode,
     distributionMode: kindSettings.distributionMode,
@@ -724,9 +739,12 @@ export function buildProductPayload(input = {}, user = null) {
       ...String(creator.artistUsername || '').toLowerCase().split(/\s+/),
       ...parseCsv(input.tags).map((tag) => String(tag).toLowerCase()),
       ...parseCsv(input.genres).map((genre) => String(genre).toLowerCase()),
-      ...parseCsv(input.categories).map((category) => String(category).toLowerCase())
+      ...parseCsv(input.categories).map((category) => String(category).toLowerCase()),
+      fulfillment.type,
+      fulfillment.digital.enabled ? 'digital' : '',
+      fulfillment.physical.enabled ? 'physical' : ''
     ].map((token) => token.trim()).filter((token) => token.length > 1))),
-    categoryKeys: (Array.isArray(input.categories) ? input.categories : parseCsv(input.categories)).map(normalizeKey).filter(Boolean),
+    categoryKeys: Array.from(new Set([...(Array.isArray(input.categories) ? input.categories : parseCsv(input.categories)), input.productType].map(normalizeKey).filter(Boolean))),
     genreKeys: (Array.isArray(input.genres) ? input.genres : parseCsv(input.genres)).map(normalizeKey).filter(Boolean),
     tagKeys: (Array.isArray(input.tags) ? input.tags : parseCsv(input.tags)).map(normalizeKey).filter(Boolean),
     dawCompatibility: (Array.isArray(input.dawCompatibility) ? input.dawCompatibility : parseCsv(input.dawCompatibility)).map(normalizeKey).filter(Boolean),
@@ -770,6 +788,7 @@ const CLIENT_STRIPPED_PRODUCT_KEYS = [
 const FIRESTORE_PRODUCT_CLIENT_ALLOWED_KEYS = new Set([
   'id', 'slug', 'status', 'visibility',
   'title', 'shortDescription', 'description', 'version', 'usageLicense', 'productType', 'productKind', 'previewMode', 'distributionMode',
+  'marketplaceProductType', 'fulfillmentType', 'fulfillment', 'digital', 'physical',
   'categories', 'genres', 'tags', 'categoryKeys', 'genreKeys', 'tagKeys', 'searchKeywords',
   'artistId', 'artistName', 'artistDisplayName', 'artistUsername', 'artistProfilePath', 'artistAvatarURL', 'artistPhotoURL', 'artistNameLower', 'artistUsernameLower',
   'contributorIds', 'contributorNames', 'contributors', 'contributorCount', 'pendingContributorIds', 'contributorRequestCount', 'sellerAgreement', 'sellerAgreementAccepted', 'sellerAgreementVersion',
@@ -1611,6 +1630,7 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
   const totalBytes = fileRows.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
   const resolvedCoverPath = cover?.storagePath || draft.coverPath || ''
   const resolvedThumbnailPath = thumbnail?.storagePath || draft.thumbnailPath || resolvedCoverPath || ''
+  const fulfillment = normalizeProductFulfillment(draft)
   const manifest = {
     coverPath: resolvedCoverPath,
     thumbnailPath: resolvedThumbnailPath,
@@ -1649,6 +1669,11 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
     primaryPreviewType: draft.primaryPreviewType || '',
     primaryPreviewDuration: Number(draft.primaryPreviewDuration || 0),
     previewAssignment: normalizePreviewAssignment(draft.previewAssignment || {}, draft.productType),
+    marketplaceProductType: fulfillment.type,
+    fulfillmentType: fulfillment.type,
+    fulfillment,
+    digital: fulfillment.digital,
+    physical: fulfillment.physical,
     productKind: draft.productKind || normalizeProductKind(draft.productType),
     previewMode: draft.previewMode || '',
     distributionMode: draft.distributionMode || '',
