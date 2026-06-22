@@ -2,6 +2,7 @@ const test = require('node:test')
 const assert = require('node:assert/strict')
 
 const checkout = require('../src/payments/checkoutFulfillment').__test
+const fulfillment = require('../src/products/productFulfillment')
 const adminGrant = require('../src/admin/grantAdminProducts').__test
 const webhook = require('../src/payments/stripeWebhook').__test
 const commerceSummary = require('../src/account/commerceSummary').__test
@@ -59,6 +60,36 @@ test('paid checkout payload records purchase access for both access collections'
   assert.equal(payload.currency, 'USD')
   assert.equal(payload.productSnapshot.title, 'Body Armor')
   assert.equal(payload.updatedAt, now)
+})
+
+test('product fulfillment defaults legacy products to digital and preserves physical metadata', () => {
+  assert.equal(fulfillment.normalizeProductFulfillment({ productType: 'Sample Pack' }).type, 'digital')
+  const physical = fulfillment.normalizeProductFulfillment({
+    marketplaceProductType: 'physical',
+    physical: {
+      condition: 'New',
+      quantityAvailable: 3,
+      shipping: { mode: 'flat_rate', flatRateCents: 599 },
+      shipsFrom: { country: 'US', region: 'CA', city: 'Los Angeles' }
+    }
+  })
+  assert.equal(physical.type, 'physical')
+  assert.equal(physical.digital.enabled, false)
+  assert.equal(physical.physical.enabled, true)
+  assert.equal(fulfillment.physicalAvailableQuantity({ fulfillment: physical }), 3)
+})
+
+test('checkout product snapshot includes marketplace fulfillment fields', () => {
+  const snapshot = checkout.productSnapshot('product-physical', {
+    title: 'Signed Vinyl',
+    productType: 'Vinyl',
+    marketplaceProductType: 'physical',
+    physical: { condition: 'New', quantityAvailable: 1, shipping: { mode: 'flat_rate' } }
+  })
+  assert.equal(snapshot.productType, 'Vinyl')
+  assert.equal(snapshot.marketplaceProductType, 'physical')
+  assert.equal(snapshot.fulfillment.type, 'physical')
+  assert.equal(snapshot.fulfillment.physical.enabled, true)
 })
 
 test('checkout replay repairs missing or stale access and leaves complete access alone', () => {

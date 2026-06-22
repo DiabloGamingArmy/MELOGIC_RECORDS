@@ -22,6 +22,14 @@ import { ROUTES, productRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 import { formatUsername } from './utils/format'
 import { sanitizeRichDescription, escapeHtml as escapeRichHtml } from './utils/richDescription'
+import {
+  fulfillmentTypeLabel,
+  hasDigitalFulfillment,
+  hasPhysicalFulfillment,
+  normalizeProductFulfillment,
+  physicalAvailableQuantity,
+  shippingModeLabel
+} from './utils/productFulfillment'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
 import { getAgreementMarkdown, getLatestMarketplaceSellerAgreement } from './data/legalAgreementService'
@@ -30,6 +38,7 @@ import { confirmCreatorEligibility, getCreatorAgeVerificationStatus } from './da
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
   { key: 'media-upload', label: 'Media & Upload' },
+  { key: 'physical-details', label: 'Physical Details' },
   { key: 'contributors', label: 'Contributors' },
   { key: 'pricing', label: 'Pricing' },
   { key: 'agreements', label: 'Agreements' },
@@ -40,6 +49,19 @@ const PRODUCT_SECTIONS = [
 const PRODUCT_TYPE_OPTIONS = [
   'Single Sample', 'Sample Pack', 'Drum Kit', 'Vocal Pack', 'Preset Bank', 'Wavetable Pack',
   'MIDI Pack', 'Project File', 'Plugin / VST', 'Course / Tutorial', 'Release', 'Other'
+]
+
+const PHYSICAL_PRODUCT_TYPE_OPTIONS = [
+  'Vinyl', 'CD', 'Cassette', 'Merch', 'Apparel', 'Hardware', 'Collectible',
+  'Signed Item', 'Bundle', 'Other'
+]
+
+const HYBRID_PRODUCT_TYPE_OPTIONS = Array.from(new Set([...PRODUCT_TYPE_OPTIONS, ...PHYSICAL_PRODUCT_TYPE_OPTIONS]))
+
+const FULFILLMENT_TYPE_OPTIONS = [
+  { type: 'digital', label: 'Digital Product', description: 'Downloadable files and library access.' },
+  { type: 'physical', label: 'Physical Product', description: 'Ships or transfers outside the digital library.' },
+  { type: 'hybrid', label: 'Hybrid Product', description: 'Digital download plus physical fulfillment.' }
 ]
 
 const USAGE_LICENSE_OPTIONS = ['Standard License', 'Royalty Free', 'Custom License', 'Exclusive License']
@@ -165,6 +187,11 @@ function createEmptyProductDraft(user = null, profile = null) {
     shortDescription: '',
     description: '',
     productType: 'Single Sample',
+    marketplaceProductType: 'digital',
+    fulfillmentType: 'digital',
+    fulfillment: normalizeProductFulfillment({ marketplaceProductType: 'digital' }),
+    digital: normalizeProductFulfillment({ marketplaceProductType: 'digital' }).digital,
+    physical: normalizeProductFulfillment({ marketplaceProductType: 'digital' }).physical,
     artistId: creator.artistId,
     artistName: creator.artistName,
     artistUsername: creator.artistUsername,
@@ -214,7 +241,13 @@ function readSectionHash() {
     window.location.hash = 'media-upload'
     return 'media-upload'
   }
-  return PRODUCT_SECTIONS.some((item) => item.key === hash) ? hash : 'product-info'
+  const sections = visibleProductSections()
+  return sections.some((item) => item.key === hash) ? hash : 'product-info'
+}
+
+function visibleProductSections(draft = editorState.draft) {
+  const showPhysical = hasPhysicalFulfillment(draft || {})
+  return PRODUCT_SECTIONS.filter((item) => item.key !== 'physical-details' || showPhysical)
 }
 
 function slugify(value) {
@@ -350,6 +383,64 @@ function updateDraftField(key, value) {
   saveDraftState()
 }
 
+function syncDraftFulfillment(next = editorState.draft) {
+  if (!editorState.draft) return normalizeProductFulfillment(next || {})
+  const fulfillment = normalizeProductFulfillment(next || editorState.draft)
+  editorState.draft.marketplaceProductType = fulfillment.type
+  editorState.draft.fulfillmentType = fulfillment.type
+  editorState.draft.fulfillment = fulfillment
+  editorState.draft.digital = fulfillment.digital
+  editorState.draft.physical = fulfillment.physical
+  saveDraftState()
+  return fulfillment
+}
+
+function setFulfillmentType(type = 'digital') {
+  if (!editorState.draft) return
+  syncDraftFulfillment({
+    ...editorState.draft,
+    marketplaceProductType: type,
+    fulfillmentType: type,
+    fulfillment: { ...(editorState.draft.fulfillment || {}), type }
+  })
+  const options = productCategoryOptionsFor(editorState.draft)
+  if (!options.includes(editorState.draft.productType)) {
+    updateDraftField('productType', options[0] || 'Other')
+  }
+}
+
+function updatePhysicalField(path = '', value = '') {
+  if (!editorState.draft) return
+  const fulfillment = normalizeProductFulfillment(editorState.draft)
+  const physical = { ...(fulfillment.physical || {}) }
+  if (path === 'condition') physical.condition = value
+  if (path === 'quantityAvailable') physical.quantityAvailable = Math.max(0, Math.round(Number(value || 0) || 0))
+  if (path === 'shipsFrom.country') physical.shipsFrom = { ...(physical.shipsFrom || {}), country: value }
+  if (path === 'shipsFrom.region') physical.shipsFrom = { ...(physical.shipsFrom || {}), region: value }
+  if (path === 'shipsFrom.city') physical.shipsFrom = { ...(physical.shipsFrom || {}), city: value }
+  if (path === 'shipping.mode') physical.shipping = { ...(physical.shipping || {}), mode: value }
+  if (path === 'shipping.flatRateCents') physical.shipping = { ...(physical.shipping || {}), flatRateCents: Math.max(0, Math.round(Number(value || 0) * 100)) }
+  if (path === 'shipping.notes') physical.shipping = { ...(physical.shipping || {}), notes: value }
+  if (path === 'dimensions.weightOz') physical.dimensions = { ...(physical.dimensions || {}), weightOz: Math.max(0, Number(value || 0) || 0) }
+  if (path === 'dimensions.lengthIn') physical.dimensions = { ...(physical.dimensions || {}), lengthIn: Math.max(0, Number(value || 0) || 0) }
+  if (path === 'dimensions.widthIn') physical.dimensions = { ...(physical.dimensions || {}), widthIn: Math.max(0, Number(value || 0) || 0) }
+  if (path === 'dimensions.heightIn') physical.dimensions = { ...(physical.dimensions || {}), heightIn: Math.max(0, Number(value || 0) || 0) }
+  if (path === 'pickupAvailable') physical.pickupAvailable = value === true
+  if (path === 'returnPolicy') physical.returnPolicy = value
+  syncDraftFulfillment({
+    ...editorState.draft,
+    physical,
+    fulfillment: { ...(editorState.draft.fulfillment || {}), physical }
+  })
+}
+
+function productCategoryOptionsFor(draft = {}) {
+  const fulfillment = normalizeProductFulfillment(draft)
+  if (fulfillment.type === 'physical') return PHYSICAL_PRODUCT_TYPE_OPTIONS
+  if (fulfillment.type === 'hybrid') return HYBRID_PRODUCT_TYPE_OPTIONS
+  return PRODUCT_TYPE_OPTIONS
+}
+
 function formatBytes(size = 0) {
   const kb = Number(size || 0) / 1024
   if (kb < 1024) return `${kb.toFixed(1)} KB`
@@ -366,8 +457,14 @@ function toPathString(value) {
 }
 
 function normalizeDraftPaths(draft = {}) {
+  const fulfillment = normalizeProductFulfillment(draft)
   return {
     ...draft,
+    marketplaceProductType: fulfillment.type,
+    fulfillmentType: fulfillment.type,
+    fulfillment,
+    digital: fulfillment.digital,
+    physical: fulfillment.physical,
     previewAudioPaths: toPathArray(draft.previewAudioPaths),
     previewVideoPaths: toPathArray(draft.previewVideoPaths),
     galleryPaths: toPathArray(draft.galleryPaths),
@@ -446,6 +543,10 @@ function validateDraftFiles(draft = editorState.draft, mediaFiles = editorState.
   const deliverables = Array.from(mediaFiles?.deliverables || [])
   const folderDeliverables = Array.from(mediaFiles?.folderDeliverables || [])
   const allDeliverables = [...deliverables, ...folderDeliverables]
+
+  if (!hasDigitalFulfillment(draft)) {
+    return { ok: true, errors, warnings }
+  }
 
   if (!allDeliverables.length && !toPathArray(draft?.downloadPath || draft?.primaryDownloadPath).length) {
     warnings.push('No deliverable has been added yet.')
@@ -1109,7 +1210,17 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   const coverReady = Boolean(draft.coverPath || draft.coverURL || state.mediaPreview?.cover || state.mediaFiles?.cover)
   const thumbnailReady = Boolean(draft.thumbnailPath || draft.thumbnailURL || state.mediaFiles?.thumbnail || state.mediaPreview?.cover)
   const deliverablesCount = (state.mediaFiles?.deliverables?.length || 0) + (state.mediaFiles?.folderDeliverables?.length || 0)
-  const hasDownload = Boolean(draft.downloadPath || deliverablesCount > 0)
+  const digitalEnabled = hasDigitalFulfillment(draft)
+  const physicalEnabled = hasPhysicalFulfillment(draft)
+  const fulfillment = normalizeProductFulfillment(draft)
+  const hasDownload = !digitalEnabled || Boolean(draft.downloadPath || deliverablesCount > 0)
+  const physicalReady = !physicalEnabled || Boolean(
+    fulfillment.physical.condition
+    && Number(fulfillment.physical.quantityAvailable || 0) > 0
+    && fulfillment.physical.shipsFrom.country
+    && fulfillment.physical.shipsFrom.region
+    && fulfillment.physical.shipping.mode
+  )
   const hasPreviewMedia = Boolean(toPathArray(draft.previewAudioPaths).length || toPathArray(draft.previewVideoPaths).length || state.mediaFiles?.previewAudio?.length || state.mediaFiles?.previewVideo?.length)
   const previewDecision = hasPreviewMedia || Boolean(draft.previewMode === 'none')
   const pricingMetrics = pricingMetricsFromState()
@@ -1124,12 +1235,14 @@ function buildPublishChecklist(draft = {}, state = {}, latestAgreement = {}) {
   return [
     { id: 'title', label: 'Product title exists', severity: title ? 'success' : 'error', blocking: !title, message: title ? 'Title added.' : 'Add a product title.', targetSection: 'product-info' },
     { id: 'type', label: 'Product type selected', severity: draft.productType ? 'success' : 'error', blocking: !draft.productType, message: draft.productType ? 'Product type selected.' : 'Select a product type.', targetSection: 'product-info' },
+    { id: 'fulfillment-type', label: 'Fulfillment type selected', severity: fulfillment.type ? 'success' : 'error', blocking: !fulfillment.type, message: `${fulfillmentTypeLabel(draft)} fulfillment selected.`, targetSection: 'product-info' },
     { id: 'slug', label: 'Slug exists', severity: slug ? 'success' : 'error', blocking: !slug, message: slug ? 'Slug ready.' : 'Add a slug.', targetSection: 'product-info' },
     { id: 'short', label: 'Short description exists', severity: shortDescription ? 'success' : 'error', blocking: !shortDescription, message: shortDescription ? 'Short description ready.' : 'Add a short description.', targetSection: 'product-info' },
     { id: 'long', label: 'Long description exists', severity: description ? 'success' : 'error', blocking: !description, message: description ? 'Long description ready.' : 'Add a long description.', targetSection: 'product-info' },
     { id: 'cover', label: 'Cover image exists', severity: coverReady ? 'success' : 'error', blocking: !coverReady, message: coverReady ? 'Cover ready.' : 'Upload a cover image.', targetSection: 'media-upload' },
     { id: 'thumbnail', label: 'Thumbnail exists', severity: thumbnailReady ? 'success' : 'error', blocking: !thumbnailReady, message: thumbnailReady ? 'Thumbnail ready.' : 'Add a thumbnail image.', targetSection: 'media-upload' },
-    { id: 'deliverables', label: 'Deliverable/download exists', severity: hasDownload ? 'success' : 'error', blocking: !hasDownload, message: hasDownload ? 'Download source detected.' : 'Add at least one deliverable.', targetSection: 'media-upload' },
+    { id: 'deliverables', label: digitalEnabled ? 'Deliverable/download exists' : 'Digital deliverable not required', severity: hasDownload ? 'success' : 'error', blocking: !hasDownload, message: digitalEnabled ? (hasDownload ? 'Download source detected.' : 'Add at least one deliverable.') : 'Physical-only products do not require a download.', targetSection: 'media-upload' },
+    { id: 'physical-details', label: 'Physical fulfillment details complete', severity: physicalReady ? 'success' : 'error', blocking: !physicalReady, message: physicalReady ? 'Physical fulfillment details ready.' : 'Add condition, quantity, ship-from, and shipping mode.', targetSection: 'physical-details' },
     { id: 'preview', label: 'Preview media decision made', severity: previewDecision ? (hasPreviewMedia ? 'success' : 'warning') : 'error', blocking: !previewDecision, message: hasPreviewMedia ? 'Preview media assigned.' : (previewDecision ? 'No preview selected intentionally.' : 'Assign preview media or choose no preview.'), targetSection: 'media-upload' },
     { id: 'price', label: 'Price/currency valid', severity: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'success' : 'error', blocking: Boolean(pricingMetrics.invalidConfig || !draft.currency || (!draft.isFree && pricingMetrics.sellerNetTargetCents <= 0)), message: (!pricingMetrics.invalidConfig && draft.currency && (draft.isFree || pricingMetrics.sellerNetTargetCents > 0)) ? 'Pricing configured.' : (pricingMetrics.invalidConfig ? 'Marketplace fee configuration is invalid.' : 'Set pricing and currency.'), targetSection: 'pricing' },
     { id: 'contributors', label: 'Contributors resolved', severity: pendingContributors > 0 ? 'warning' : 'success', blocking: false, message: pendingContributors > 0 ? `${pendingContributors} pending contributor request(s).` : `${acceptedContributors} accepted contributor(s).`, targetSection: 'contributors' },
@@ -1405,11 +1518,19 @@ function renderProductInfoPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
   const isEditMode = Boolean(editorState.requestedProductId || (draft.id && !isPlaceholderProductId(draft.id)))
   const releaseDisplay = draft.releasedAt ? formattedEditDate(draft.releasedAt) : (isEditMode ? (draft.publishedAt ? formattedEditDate(draft.publishedAt) : 'Not set') : 'Set automatically on publish')
+  const fulfillment = normalizeProductFulfillment(draft)
+  const categoryOptions = productCategoryOptionsFor(draft)
   return `
     <section class="product-info-grid">
+      <div class="product-info-field is-wide product-fulfillment-selector">
+        <label>Marketplace Product Format</label>
+        <div class="fulfillment-type-grid" role="radiogroup" aria-label="Marketplace product format">
+          ${FULFILLMENT_TYPE_OPTIONS.map((option) => `<button type="button" class="fulfillment-type-card ${fulfillment.type === option.type ? 'is-active' : ''}" data-fulfillment-type="${option.type}" aria-pressed="${fulfillment.type === option.type ? 'true' : 'false'}"><strong>${escapeHtml(option.label)}</strong><span>${escapeHtml(option.description)}</span></button>`).join('')}
+        </div>
+      </div>
       <div class="product-info-field"><label>Product Title</label><input name="title" value="${escapeHtml(draft.title)}" /></div>
       <div class="product-info-field"><label>Slug</label><input name="slug" value="${escapeHtml(draft.slug)}" /></div>
-      <div class="product-info-field"><label>Product Type</label><select name="productType">${PRODUCT_TYPE_OPTIONS.map((option) => `<option ${draft.productType === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
+      <div class="product-info-field"><label>Product Category</label><select name="productType">${categoryOptions.map((option) => `<option ${draft.productType === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
 
       <div class="product-info-field"><label>Artist / Primary Creator</label><input name="artistName" value="${escapeHtml(draft.artistName)}" readonly class="locked-input" /></div>
       <div class="product-info-field"><label>Version</label><input name="version" value="${escapeHtml(draft.version || '')}" placeholder="v1.0" /></div>
@@ -1433,12 +1554,42 @@ function renderProductInfoPanel() {
   `
 }
 
+function renderPhysicalDetailsPanel() {
+  const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const fulfillment = normalizeProductFulfillment(draft)
+  const physical = fulfillment.physical
+  return `
+    <section class="product-info-grid physical-details-grid">
+      <div class="product-info-field"><label>Condition</label><select data-physical-field="condition"><option value="">Select condition</option>${['New', 'Like New', 'Good', 'Fair', 'Used / Vintage', 'Made to Order'].map((option) => `<option value="${escapeHtml(option)}" ${physical.condition === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}</select></div>
+      <div class="product-info-field"><label>Quantity Available</label><input type="number" min="0" step="1" value="${escapeHtml(physical.quantityAvailable)}" data-physical-field="quantityAvailable" /></div>
+      <div class="product-info-field"><label>Available After Sales</label><div class="product-info-readonly">${physicalAvailableQuantity(draft)}</div></div>
+
+      <div class="product-info-field"><label>Ships From Country</label><input value="${escapeHtml(physical.shipsFrom.country)}" data-physical-field="shipsFrom.country" placeholder="United States" /></div>
+      <div class="product-info-field"><label>State / Region</label><input value="${escapeHtml(physical.shipsFrom.region)}" data-physical-field="shipsFrom.region" placeholder="CA" /></div>
+      <div class="product-info-field"><label>City</label><input value="${escapeHtml(physical.shipsFrom.city)}" data-physical-field="shipsFrom.city" placeholder="Los Angeles" /></div>
+
+      <div class="product-info-field"><label>Shipping Mode</label><select data-physical-field="shipping.mode"><option value="">Select shipping mode</option><option value="flat_rate" ${physical.shipping.mode === 'flat_rate' ? 'selected' : ''}>Flat-rate shipping</option><option value="free_shipping" ${physical.shipping.mode === 'free_shipping' ? 'selected' : ''}>Free shipping</option><option value="seller_contact" ${physical.shipping.mode === 'seller_contact' ? 'selected' : ''}>Seller contacts buyer</option><option value="local_pickup" ${physical.shipping.mode === 'local_pickup' ? 'selected' : ''}>Local pickup</option></select></div>
+      <div class="product-info-field"><label>Flat Rate Shipping</label><input type="number" min="0" step="0.01" value="${escapeHtml(centsToPriceInput(physical.shipping.flatRateCents || 0))}" data-physical-field="shipping.flatRateCents" /></div>
+      <div class="product-info-field"><label>Pickup Available</label><div class="physical-toggle-row"><input type="checkbox" ${physical.pickupAvailable ? 'checked' : ''} data-physical-field="pickupAvailable" /><span>Allow local pickup coordination</span></div></div>
+
+      <div class="product-info-field"><label>Weight (oz)</label><input type="number" min="0" step="0.1" value="${escapeHtml(physical.dimensions.weightOz || '')}" data-physical-field="dimensions.weightOz" /></div>
+      <div class="product-info-field"><label>Length (in)</label><input type="number" min="0" step="0.1" value="${escapeHtml(physical.dimensions.lengthIn || '')}" data-physical-field="dimensions.lengthIn" /></div>
+      <div class="product-info-field"><label>Width (in)</label><input type="number" min="0" step="0.1" value="${escapeHtml(physical.dimensions.widthIn || '')}" data-physical-field="dimensions.widthIn" /></div>
+      <div class="product-info-field"><label>Height (in)</label><input type="number" min="0" step="0.1" value="${escapeHtml(physical.dimensions.heightIn || '')}" data-physical-field="dimensions.heightIn" /></div>
+      <div class="product-info-field is-wide"><label>Shipping Notes</label><textarea data-physical-field="shipping.notes" placeholder="Packaging, expected handling time, or buyer contact instructions.">${escapeHtml(physical.shipping.notes)}</textarea></div>
+      <div class="product-info-field is-wide"><label>Return Policy</label><textarea data-physical-field="returnPolicy" placeholder="Seller return policy or final-sale note.">${escapeHtml(physical.returnPolicy)}</textarea></div>
+      <div class="product-info-field"><label>Summary</label><div class="product-info-readonly">${escapeHtml(shippingModeLabel(physical.shipping.mode))}</div></div>
+    </section>
+  `
+}
+
 function renderPlaceholderPanel(section) {
   return `<section class="placeholder-panel"><h3>${escapeHtml(PRODUCT_SECTIONS.find((item) => item.key === section)?.label || 'Section')}</h3><p>This section will be redesigned in the next pass. Product Info is fully redesigned now.</p></section>`
 }
 
 function renderMediaUploadPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
+  const digitalEnabled = hasDigitalFulfillment(draft)
   const fileEntries = gatherFileEntries()
   const currentFolderPath = sanitizeDeliverableFolderPath(editorState.currentDeliverableFolderPath || '')
   editorState.currentDeliverableFolderPath = currentFolderPath
@@ -1453,11 +1604,11 @@ function renderMediaUploadPanel() {
     <section class="media-upload-workspace">
       <div class="media-upload-main-grid">
         <article class="listing-preview-panel">
-          <h3>Listing Preview</h3>
+              <h3>Listing Preview</h3>
           <article class="listing-preview-card">
             <div class="listing-preview-card-cover">${editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL ? `<img src="${escapeHtml(editorState.mediaPreview.cover || draft.coverURL || draft.thumbnailURL)}" alt="Listing preview cover" />` : '<div class="listing-preview-fallback">No cover yet</div>'}</div>
             <div class="listing-preview-content">
-              <p class="listing-preview-type">${escapeHtml(draft.productType || 'Product')}</p>
+              <p class="listing-preview-type">${escapeHtml(fulfillmentTypeLabel(draft))} · ${escapeHtml(draft.productType || 'Product')}</p>
               <h4>${escapeHtml(draft.title || 'Untitled product')}</h4>
               <p>by ${escapeHtml(draft.artistName || 'Creator')}</p>
               <p>${escapeHtml(draft.shortDescription || 'Short description preview appears here.')}</p>
@@ -1471,16 +1622,17 @@ function renderMediaUploadPanel() {
         <article class="file-viewer-panel">
           <div class="file-viewer-toolbar editor-file-toolbar">
             <div>
-              <h3>Deliverables</h3>
+              <h3>${digitalEnabled ? 'Digital Deliverables' : 'Product Media'}</h3>
               <p class="editor-file-stats">${fileEntries.length} ${fileEntries.length === 1 ? 'file' : 'files'} · ${formatBytes(totalBytes)} · ${deliverableCount} deliverable${deliverableCount === 1 ? '' : 's'}</p>
+              ${digitalEnabled ? '' : '<p class="editor-file-stats">Physical-only products do not require a downloadable file.</p>'}
             </div>
-            <div class="editor-file-add-wrap">
+            ${digitalEnabled ? `<div class="editor-file-add-wrap">
               <button type="button" class="editor-file-add-button" data-deliverable-add-menu-toggle aria-label="Add file or folder" aria-haspopup="menu" aria-expanded="${editorState.deliverableAddMenuOpen ? 'true' : 'false'}">+</button>
               <div class="editor-file-add-menu ${editorState.deliverableAddMenuOpen ? 'is-open' : ''}" data-deliverable-menu role="menu">
                 <button type="button" data-deliverable-add-file role="menuitem">Add File</button>
                 <button type="button" data-deliverable-create-folder role="menuitem">Create Folder</button>
               </div>
-            </div>
+            </div>` : ''}
           </div>
           <div class="editor-file-browser"><div class="editor-file-browser-header"><p>Files</p></div><div class="editor-file-browser-divider"></div><div class="editor-file-breadcrumbs"><button type="button" data-deliverable-folder-path="">Root</button>${folderSegments.map((segment, idx) => `<span>/</span><button type="button" class="${idx === folderSegments.length - 1 ? 'is-current' : ''}" data-deliverable-folder-path="${escapeHtml(folderSegments.slice(0, idx + 1).join('/'))}">${escapeHtml(segment.charAt(0).toUpperCase() + segment.slice(1))}</button>`).join('')}</div><div class="editor-file-list-wrap editor-file-browser-scroll"><div class="editor-file-list">
             ${treeRows.length
@@ -1492,7 +1644,7 @@ function renderMediaUploadPanel() {
                     <div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="file:${escapeHtml(row.entry.id)}" aria-label="Open file actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'is-open' : ''}" role="menu"><button type="button" data-file-action="rename:${escapeHtml(row.entry.id)}">Rename</button><button type="button" data-file-action="move:${escapeHtml(row.entry.id)}">Move</button><button type="button" data-file-action="delete:${escapeHtml(row.entry.id)}">Delete</button></div></div>
                     ${row.entry.status === 'uploading' ? `<div class="editor-file-progress"><span style="width:${Math.max(0, Math.min(100, Number(row.entry.progress || 0)))}%"></span></div>` : ''}
                   </div>`).join('')}`
-              : '<p class="file-viewer-empty">No product files added yet. Use + Add to attach your main deliverable.</p>'}
+              : `<p class="file-viewer-empty">${digitalEnabled ? 'No product files added yet. Use + Add to attach your main deliverable.' : 'No media added yet. Use the image and preview buttons to build the listing.'}</p>`}
           </div></div></div>
         </article>
 
@@ -1608,6 +1760,7 @@ function renderContributorsPanel() {
 
 function renderEditor() {
   const section = readSectionHash()
+  const sections = visibleProductSections()
 
   editorRoot.innerHTML = `
     <div class="marketplace-editor-page">
@@ -1621,7 +1774,7 @@ function renderEditor() {
       <section class="marketplace-editor-tabs-wrap">
         <p class="marketplace-editor-pages-label"><span></span>PAGES<span></span></p>
         <div class="marketplace-editor-tabs">
-          ${PRODUCT_SECTIONS.map((item) => `<button type="button" class="marketplace-editor-tab ${item.key === section ? 'is-active' : ''}" data-section="${item.key}">${item.label}</button>`).join('')}
+          ${sections.map((item) => `<button type="button" class="marketplace-editor-tab ${item.key === section ? 'is-active' : ''}" data-section="${item.key}">${item.label}</button>`).join('')}
         </div>
       </section>
 
@@ -1631,6 +1784,8 @@ function renderEditor() {
             ? renderProductInfoPanel()
             : section === 'media-upload'
               ? renderMediaUploadPanel()
+              : section === 'physical-details'
+                ? renderPhysicalDetailsPanel()
               : section === 'contributors'
                 ? renderContributorsPanel()
                 : section === 'pricing'
@@ -1684,15 +1839,8 @@ function renderEditor() {
     startCreatorEligibility()
   })
   editorRoot.querySelector('[data-next-section]')?.addEventListener('click', () => {
-    const idx = PRODUCT_SECTIONS.findIndex((item) => item.key === section)
-    const next = PRODUCT_SECTIONS[idx + 1]
-    if (!next) return
-    window.location.hash = next.key
-    renderEditor()
-  })
-  editorRoot.querySelector('[data-next-section]')?.addEventListener('click', () => {
-    const idx = PRODUCT_SECTIONS.findIndex((item) => item.key === section)
-    const next = PRODUCT_SECTIONS[idx + 1]
+    const idx = sections.findIndex((item) => item.key === section)
+    const next = sections[idx + 1]
     if (!next) return
     window.location.hash = next.key
     renderEditor()
@@ -1781,6 +1929,22 @@ function renderEditor() {
   form?.querySelector('[data-rich-color]')?.addEventListener('input', (event) => {
     document.execCommand('styleWithCSS', false, true)
     runRichCommand('foreColor', String(event.target.value || '#dbe9ff'))
+  })
+
+  editorRoot.querySelectorAll('[data-fulfillment-type]').forEach((button) => {
+    button.addEventListener('click', () => {
+      setFulfillmentType(button.getAttribute('data-fulfillment-type') || 'digital')
+      renderEditor()
+    })
+  })
+
+  editorRoot.querySelectorAll('[data-physical-field]').forEach((field) => {
+    const eventName = field.tagName === 'SELECT' || field.type === 'checkbox' ? 'change' : 'input'
+    field.addEventListener(eventName, (event) => {
+      const path = field.getAttribute('data-physical-field') || ''
+      const value = field.type === 'checkbox' ? event.target.checked : event.target.value
+      updatePhysicalField(path, value)
+    })
   })
 
   form?.addEventListener('input', (event) => {
@@ -2338,6 +2502,7 @@ function renderEditor() {
     renderEditor()
     let submitStep = 'starting'
     try {
+      syncDraftFulfillment()
       const pendingContributors = (editorState.contributorUI.rows || []).filter((row) => row.status === 'pending').length
       if (desiredStatus === 'published' && pendingContributors > 0) {
         editorState.isSubmittingReview = false
@@ -2360,6 +2525,23 @@ function renderEditor() {
         setStatus('Add a deliverable before submitting for review.', 'error')
         renderEditor()
         return
+      }
+      const fulfillment = normalizeProductFulfillment(editorState.draft)
+      if (desiredStatus === 'published' && hasPhysicalFulfillment(editorState.draft)) {
+        const physical = fulfillment.physical
+        const missingPhysical = !physical.condition
+          || Number(physical.quantityAvailable || 0) <= 0
+          || !physical.shipsFrom.country
+          || !physical.shipsFrom.region
+          || !physical.shipping.mode
+        if (missingPhysical) {
+          editorState.isSubmittingReview = false
+          editorState.submitError = 'Complete physical fulfillment details before submitting for review.'
+          setStatus(editorState.submitError, 'error')
+          window.location.hash = 'physical-details'
+          renderEditor()
+          return
+        }
       }
       submitStep = 'create-product-shell'
       if (submittingForReview) setSubmitProgress('saving-product-draft', 'Saving product draft...')

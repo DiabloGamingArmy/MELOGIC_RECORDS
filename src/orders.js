@@ -6,6 +6,7 @@ import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES } from './utils/routes'
 import { accountDateIso, getUserCommerceSummary, getUserOrder, listUserOrders } from './data/accountCommerceService'
 import { isPaidMoneyOrder, orderAmountAvailable, orderLifecycleLabel } from './utils/commerce'
+import { fulfillmentTypeLabel, hasPhysicalFulfillment, normalizeProductFulfillment, shippingModeLabel } from './utils/productFulfillment'
 
 const app = document.querySelector('#app')
 const state = { user: null, loading: true, error: '', orders: [], summary: null, detail: null, supportModal: '', filter: 'lifetime' }
@@ -50,6 +51,16 @@ function orderAmount(order = {}) {
   return orderAmountAvailable(order)
     ? money(order.amountTotalCents, order.currency)
     : 'Amount unavailable'
+}
+
+function itemFulfillmentLabel(item = {}) {
+  const product = { ...item.productSnapshot, ...item }
+  const fulfillment = normalizeProductFulfillment(product)
+  const physicalStatus = item.fulfillment?.physical?.status || ''
+  if (hasPhysicalFulfillment(product)) {
+    return `${fulfillmentTypeLabel(product)} - ${physicalStatus ? physicalStatus.replaceAll('_', ' ') : shippingModeLabel(fulfillment.physical.shipping.mode)}`
+  }
+  return fulfillmentTypeLabel(product)
 }
 
 function withinDays(order, days) {
@@ -175,7 +186,7 @@ function renderOrderDetail() {
       <div class="account-detail-grid">
         <article>
           <h2>Line Items</h2>
-          ${items.map((product) => `<p><strong>${escapeHtml(product.title || product.productId || product.id)}</strong><span>${escapeHtml(product.artistName || product.artistDisplayName || product.creatorName || '')}${Number.isFinite(Number(product.amountCents)) ? ` - ${escapeHtml(money(product.amountCents, product.currency || order.currency))}` : ''}</span></p>`).join('') || '<p>No product lines were stored on this order.</p>'}
+          ${items.map((product) => `<p><strong>${escapeHtml(product.title || product.productId || product.id)}</strong><span>${escapeHtml(product.artistName || product.artistDisplayName || product.creatorName || '')}${Number.isFinite(Number(product.amountCents)) ? ` - ${escapeHtml(money(product.amountCents, product.currency || order.currency))}` : ''} - ${escapeHtml(itemFulfillmentLabel(product))}</span></p>`).join('') || '<p>No product lines were stored on this order.</p>'}
         </article>
         <article>
           <h2>Entitlement / Library</h2>
