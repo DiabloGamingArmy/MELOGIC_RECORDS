@@ -30,9 +30,16 @@ function resampleForPitch(audioBuffer, semitones = 0) {
     for (let index = 0; index < outputLength; index += 1) {
       const sourcePosition = index * pitchRatio
       const left = Math.floor(sourcePosition)
-      const right = Math.min(inputLength - 1, left + 1)
       const amount = sourcePosition - left
-      target[index] = ((input[left] || 0) * (1 - amount)) + ((input[right] || 0) * amount)
+      const y0 = input[clamp(left - 1, 0, inputLength - 1)] || 0
+      const y1 = input[clamp(left, 0, inputLength - 1)] || 0
+      const y2 = input[clamp(left + 1, 0, inputLength - 1)] || 0
+      const y3 = input[clamp(left + 2, 0, inputLength - 1)] || 0
+      const a0 = y3 - y2 - y0 + y1
+      const a1 = y0 - y1 - a0
+      const a2 = y2 - y0
+      const a3 = y1
+      target[index] = clamp((((a0 * amount + a1) * amount + a2) * amount + a3), -1, 1)
     }
   }
   return output
@@ -86,6 +93,7 @@ export async function renderPitchShiftedAudio({
   onProgress = null
 } = {}) {
   if (!audioBuffer?.length) throw new Error('Missing audio buffer')
+  const startedAt = performance.now?.() || Date.now()
   const totalSemitones = (Number(transposeSemitones) || 0) + ((Number(fineTuneCents) || 0) / 100)
   const source = copyAudioRange(audioBuffer, trimStartSeconds, trimEndSeconds)
   if (Math.abs(totalSemitones) < 0.001) {
@@ -97,8 +105,9 @@ export async function renderPitchShiftedAudio({
       renderedObjectUrl: URL.createObjectURL(renderedBlob),
       renderedDurationSeconds: source.duration,
       algorithm: 'identity_pitch_shift',
-      quality: 'lossless',
+      quality: 'high',
       preservesDuration: true,
+      renderTimeMs: Math.round((performance.now?.() || Date.now()) - startedAt),
       createdAt: Date.now()
     }
   }
@@ -109,6 +118,7 @@ export async function renderPitchShiftedAudio({
     originalAudioBuffer: resampled,
     clipId,
     stretchRatio,
+    targetDurationSeconds: source.duration,
     sampleRate,
     preservesPitchPreferred: false,
     onProgress: (progress) => onProgress?.(0.15 + (progress * 0.75))
@@ -120,10 +130,11 @@ export async function renderPitchShiftedAudio({
     renderedBlob: stretched.renderedBlob,
     renderedObjectUrl: stretched.renderedObjectUrl,
     renderedDurationSeconds: stretched.renderedDurationSeconds,
-    algorithm: 'resample_granular_pitch_mvp',
-    quality: 'mvp',
+    algorithm: 'cubic_resample_wsola_phase_vocoder_v1',
+    quality: 'high',
     preservesDuration: true,
     totalSemitones,
+    renderTimeMs: Math.round((performance.now?.() || Date.now()) - startedAt),
     createdAt: stretched.createdAt || Date.now()
   }
 }
@@ -140,6 +151,7 @@ export async function renderPitchTraceEdits({
   onProgress = null
 } = {}) {
   if (!audioBuffer?.length) throw new Error('Missing audio buffer')
+  const startedAt = performance.now?.() || Date.now()
   const source = copyAudioRange(audioBuffer, trimStartSeconds, trimEndSeconds)
   const output = createAudioBuffer(source.numberOfChannels || 1, source.length, source.sampleRate || sampleRate)
   for (let channelIndex = 0; channelIndex < output.numberOfChannels; channelIndex += 1) {
@@ -206,9 +218,10 @@ export async function renderPitchTraceEdits({
     renderedBlob,
     renderedObjectUrl: URL.createObjectURL(renderedBlob),
     renderedDurationSeconds: output.duration,
-    algorithm: 'segmented_resample_granular_pitch_mvp',
-    quality: 'mvp',
+    algorithm: 'segmented_cubic_resample_wsola_phase_vocoder_v1',
+    quality: 'high',
     preservesDuration: true,
+    renderTimeMs: Math.round((performance.now?.() || Date.now()) - startedAt),
     createdAt: Date.now()
   }
 }
