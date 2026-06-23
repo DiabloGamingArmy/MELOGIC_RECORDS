@@ -67,13 +67,25 @@ function resampleBuffer(audioBuffer, outputLength, sampleRate = audioBuffer?.sam
   return output
 }
 
-function stretchChannelPhaseVocoder(input, outputLength, sampleRate) {
+function getFrameEnergy(input, start, size, step = 16) {
+  let sum = 0
+  let count = 0
+  for (let index = 0; index < size; index += step) {
+    const sample = input[start + index] || 0
+    sum += sample * sample
+    count += 1
+  }
+  return count ? sum / count : 0
+}
+
+function stretchChannelPhaseVocoder(input, outputLength, sampleRate, { quality = 'high' } = {}) {
   const inputLength = Math.max(1, input.length || 1)
   const targetLength = Math.max(1, Math.round(outputLength))
   if (Math.abs(targetLength - inputLength) <= 8) return input.slice(0, targetLength)
   const ratio = targetLength / inputLength
-  const frameSize = clamp(Math.round(sampleRate * 0.08), 2048, 8192)
-  const analysisHop = Math.max(128, Math.round(frameSize / 4))
+  const highQuality = quality !== 'fast' && quality !== 'mvp'
+  const frameSize = highQuality ? clamp(Math.round(sampleRate * 0.046), 1024, 4096) : clamp(Math.round(sampleRate * 0.08), 2048, 8192)
+  const analysisHop = Math.max(96, Math.round(frameSize / (highQuality ? 5 : 4)))
   const synthesisHop = Math.max(1, Math.round(analysisHop * ratio))
   const window = hannWindow(frameSize)
   const output = new Float32Array(targetLength + frameSize)
@@ -82,15 +94,18 @@ function stretchChannelPhaseVocoder(input, outputLength, sampleRate) {
   for (let inputPos = 0, outputPos = 0; outputPos < targetLength; inputPos += analysisHop, outputPos += synthesisHop) {
     const center = inputPos
     let bestOffset = 0
-    if (frameIndex > 0 && ratio > 0.65 && ratio < 1.65) {
+    const priorEnergy = getFrameEnergy(input, Math.max(0, inputPos - analysisHop), Math.min(frameSize, analysisHop * 2))
+    const currentEnergy = getFrameEnergy(input, inputPos, Math.min(frameSize, analysisHop * 2))
+    const transientFrame = highQuality && currentEnergy > Math.max(0.00001, priorEnergy * 2.35)
+    if (!transientFrame && frameIndex > 0 && ratio > 0.65 && ratio < 1.65) {
       let bestScore = -Infinity
-      const search = Math.min(Math.round(analysisHop * 0.75), 320)
-      const compare = Math.min(Math.round(frameSize * 0.35), 1600)
+      const search = Math.min(Math.round(analysisHop * (highQuality ? 1 : 0.75)), highQuality ? 480 : 320)
+      const compare = Math.min(Math.round(frameSize * (highQuality ? 0.45 : 0.35)), highQuality ? 2200 : 1600)
       const priorInput = Math.max(0, inputPos - analysisHop)
-      for (let offset = -search; offset <= search; offset += 8) {
+      for (let offset = -search; offset <= search; offset += highQuality ? 4 : 8) {
         const candidate = clamp(center + offset, 0, Math.max(0, inputLength - frameSize))
         let score = 0
-        for (let index = 0; index < compare; index += 8) {
+        for (let index = 0; index < compare; index += highQuality ? 4 : 8) {
           score += (input[priorInput + index] || 0) * (input[candidate + index] || 0)
         }
         if (score > bestScore) {
@@ -117,11 +132,11 @@ function stretchChannelPhaseVocoder(input, outputLength, sampleRate) {
   return trimmed
 }
 
-function renderPhaseVocoderStretch(audioBuffer, targetLength, sampleRate, onProgress = null) {
+function renderPhaseVocoderStretch(audioBuffer, targetLength, sampleRate, onProgress = null, { quality = 'high' } = {}) {
   const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
   const output = createAudioBuffer(channels, Math.max(1, Math.round(targetLength)), sampleRate)
   for (let channelIndex = 0; channelIndex < channels; channelIndex += 1) {
-    output.copyToChannel(stretchChannelPhaseVocoder(audioBuffer.getChannelData(channelIndex), output.length, sampleRate), channelIndex)
+    output.copyToChannel(stretchChannelPhaseVocoder(audioBuffer.getChannelData(channelIndex), output.length, sampleRate, { quality }), channelIndex)
     onProgress?.((channelIndex + 1) / channels)
   }
   return output
@@ -133,11 +148,43 @@ function writeAscii(view, offset, value) {
   }
 }
 
-export function audioBufferToWavBlob(audioBuffer) {
+export function normalizeWavBitDepth(bitDepth = null) {
+  const value = Math.round(Number(bitDepth) || 0)
+  return [16, 24, 32].includes(value) ? value : 16
+}
+
+export function createRenderedAudioMetadata({
+  sourceBuffer,
+  renderedBuffer,
+  sourceBitDepth = null,
+  renderedBitDepth = null,
+  algorithm = null,
+  qualityMode = 'high',
+  createdAt = Date.now()
+} = {}) {
+  const sourceDepth = Number.isFinite(Number(sourceBitDepth)) && Number(sourceBitDepth) > 0 ? Number(sourceBitDepth) : null
+  const renderedDepth = normalizeWavBitDepth(renderedBitDepth ?? sourceDepth)
+  return {
+    sourceSampleRate: Number.isFinite(Number(sourceBuffer?.sampleRate)) ? Number(sourceBuffer.sampleRate) : null,
+    renderedSampleRate: Number.isFinite(Number(renderedBuffer?.sampleRate)) ? Number(renderedBuffer.sampleRate) : null,
+    sourceBitDepth: sourceDepth,
+    renderedBitDepth: renderedDepth,
+    bitDepthPreserved: sourceDepth != null && sourceDepth === renderedDepth,
+    sourceChannelCount: Number.isFinite(Number(sourceBuffer?.numberOfChannels)) ? Number(sourceBuffer.numberOfChannels) : null,
+    renderedChannelCount: Number.isFinite(Number(renderedBuffer?.numberOfChannels)) ? Number(renderedBuffer.numberOfChannels) : null,
+    algorithm: algorithm || null,
+    qualityMode: qualityMode || 'high',
+    renderedDurationSeconds: Number.isFinite(Number(renderedBuffer?.duration)) ? Number(renderedBuffer.duration) : null,
+    renderCreatedAt: Number.isFinite(Number(createdAt)) ? Number(createdAt) : Date.now()
+  }
+}
+
+export function audioBufferToWavBlob(audioBuffer, { bitDepth = 16 } = {}) {
   const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
   const sampleRate = Math.max(1, audioBuffer.sampleRate || 44100)
   const samples = Math.max(1, audioBuffer.length || 1)
-  const bytesPerSample = 2
+  const wavBitDepth = normalizeWavBitDepth(bitDepth)
+  const bytesPerSample = wavBitDepth / 8
   const blockAlign = channels * bytesPerSample
   const dataSize = samples * blockAlign
   const buffer = new ArrayBuffer(44 + dataSize)
@@ -153,7 +200,7 @@ export function audioBufferToWavBlob(audioBuffer) {
   view.setUint32(24, sampleRate, true)
   view.setUint32(28, sampleRate * blockAlign, true)
   view.setUint16(32, blockAlign, true)
-  view.setUint16(34, 16, true)
+  view.setUint16(34, wavBitDepth, true)
   writeAscii(view, 36, 'data')
   view.setUint32(40, dataSize, true)
 
@@ -162,8 +209,19 @@ export function audioBufferToWavBlob(audioBuffer) {
   for (let sampleIndex = 0; sampleIndex < samples; sampleIndex += 1) {
     for (let channelIndex = 0; channelIndex < channels; channelIndex += 1) {
       const sample = clamp(channelData[channelIndex][sampleIndex] || 0, -1, 1)
-      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
-      offset += 2
+      if (wavBitDepth === 24) {
+        const value = Math.round(sample < 0 ? sample * 0x800000 : sample * 0x7fffff)
+        view.setUint8(offset, value & 0xff)
+        view.setUint8(offset + 1, (value >> 8) & 0xff)
+        view.setUint8(offset + 2, (value >> 16) & 0xff)
+        offset += 3
+      } else if (wavBitDepth === 32) {
+        view.setInt32(offset, Math.round(sample < 0 ? sample * 0x80000000 : sample * 0x7fffffff), true)
+        offset += 4
+      } else {
+        view.setInt16(offset, Math.round(sample < 0 ? sample * 0x8000 : sample * 0x7fff), true)
+        offset += 2
+      }
     }
   }
 
@@ -179,6 +237,8 @@ export async function renderStretchedAudioClip({
   targetDurationSeconds = null,
   sampleRate = originalAudioBuffer?.sampleRate || 44100,
   preservesPitchPreferred = true,
+  sourceBitDepth = null,
+  quality = 'high',
   onProgress = null
 } = {}) {
   if (!originalAudioBuffer?.length) throw new Error('Missing original audio buffer')
@@ -187,26 +247,39 @@ export async function renderStretchedAudioClip({
   const source = copyAudioRange(originalAudioBuffer, sourceStartSeconds, sourceDurationSeconds, sampleRate)
   const ratio = clamp(Number(stretchRatio) || (targetDurationSeconds ? targetDurationSeconds / source.duration : 1), 0.25, 4)
   const inputLength = Math.max(1, source.length || 1)
-  const renderSampleRate = Math.max(1, Number(sampleRate) || originalAudioBuffer.sampleRate || 44100)
+  const renderSampleRate = Math.max(1, source.sampleRate || originalAudioBuffer.sampleRate || Number(sampleRate) || 44100)
   const outputLength = Math.max(1, Math.round((Number(targetDurationSeconds) > 0 ? Number(targetDurationSeconds) : source.duration * ratio) * renderSampleRate))
   await Promise.resolve()
   const outputBuffer = Math.abs(outputLength - inputLength) <= 8
     ? resampleBuffer(source, outputLength, renderSampleRate)
-    : renderPhaseVocoderStretch(source, outputLength, renderSampleRate, onProgress)
+    : renderPhaseVocoderStretch(source, outputLength, renderSampleRate, onProgress, { quality })
 
-  const renderedBlob = audioBufferToWavBlob(outputBuffer)
+  const algorithm = preservesPitchPreferred ? 'transient_aware_wsola_phase_vocoder_v2' : 'cubic_resample_time_restore_v2'
+  const createdAt = Date.now()
+  const renderedBitDepth = normalizeWavBitDepth(sourceBitDepth)
+  const renderedBlob = audioBufferToWavBlob(outputBuffer, { bitDepth: renderedBitDepth })
   const renderedObjectUrl = URL.createObjectURL(renderedBlob)
+  const renderedAudio = createRenderedAudioMetadata({
+    sourceBuffer: originalAudioBuffer,
+    renderedBuffer: outputBuffer,
+    sourceBitDepth,
+    renderedBitDepth,
+    algorithm,
+    qualityMode: quality,
+    createdAt
+  })
   return {
     clipId,
     renderedAudioBuffer: outputBuffer,
     renderedBlob,
     renderedObjectUrl,
     renderedDurationSeconds: outputBuffer.duration,
-    algorithm: preservesPitchPreferred ? 'wsola_overlap_add_mvp_v1' : 'resample_mvp_v1',
-    quality: 'mvp',
+    algorithm,
+    quality,
+    renderedAudio,
     preservesPitch: Boolean(preservesPitchPreferred),
     renderTimeMs: Math.max(0, Math.round((globalThis.performance?.now?.() || Date.now()) - startedAt)),
-    createdAt: Date.now()
+    createdAt
   }
 }
 
@@ -216,7 +289,8 @@ export async function renderTimeStretch({
   sourceDurationSeconds = null,
   targetDurationSeconds = null,
   sampleRate = sourceBuffer?.sampleRate || 44100,
-  quality = 'mvp',
+  sourceBitDepth = null,
+  quality = 'high',
   onProgress = null
 } = {}) {
   return renderStretchedAudioClip({
@@ -226,6 +300,8 @@ export async function renderTimeStretch({
     sourceDurationSeconds,
     targetDurationSeconds,
     sampleRate,
+    sourceBitDepth,
+    quality,
     preservesPitchPreferred: quality !== 'resample',
     onProgress
   })

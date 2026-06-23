@@ -1,6 +1,8 @@
 import {
   audioBufferToWavBlob,
+  createRenderedAudioMetadata,
   createAudioBuffer,
+  normalizeWavBitDepth,
   renderStretchedAudioClip
 } from './audioStretchRenderService.js'
 
@@ -88,6 +90,8 @@ export async function renderPitchShiftedAudio({
   transposeSemitones = 0,
   fineTuneCents = 0,
   sampleRate = audioBuffer?.sampleRate || 44100,
+  sourceBitDepth = null,
+  quality = 'high',
   trimStartSeconds = 0,
   trimEndSeconds = null,
   onProgress = null
@@ -97,7 +101,18 @@ export async function renderPitchShiftedAudio({
   const totalSemitones = (Number(transposeSemitones) || 0) + ((Number(fineTuneCents) || 0) / 100)
   const source = copyAudioRange(audioBuffer, trimStartSeconds, trimEndSeconds)
   if (Math.abs(totalSemitones) < 0.001) {
-    const renderedBlob = audioBufferToWavBlob(source)
+    const createdAt = Date.now()
+    const renderedBitDepth = normalizeWavBitDepth(sourceBitDepth)
+    const renderedBlob = audioBufferToWavBlob(source, { bitDepth: renderedBitDepth })
+    const renderedAudio = createRenderedAudioMetadata({
+      sourceBuffer: audioBuffer,
+      renderedBuffer: source,
+      sourceBitDepth,
+      renderedBitDepth,
+      algorithm: 'identity_pitch_shift',
+      qualityMode: quality,
+      createdAt
+    })
     return {
       clipId,
       renderedAudioBuffer: source,
@@ -105,10 +120,11 @@ export async function renderPitchShiftedAudio({
       renderedObjectUrl: URL.createObjectURL(renderedBlob),
       renderedDurationSeconds: source.duration,
       algorithm: 'identity_pitch_shift',
-      quality: 'high',
+      quality,
+      renderedAudio,
       preservesDuration: true,
       renderTimeMs: Math.round((performance.now?.() || Date.now()) - startedAt),
-      createdAt: Date.now()
+      createdAt
     }
   }
   onProgress?.(0.15)
@@ -120,6 +136,8 @@ export async function renderPitchShiftedAudio({
     stretchRatio,
     targetDurationSeconds: source.duration,
     sampleRate,
+    sourceBitDepth,
+    quality,
     preservesPitchPreferred: false,
     onProgress: (progress) => onProgress?.(0.15 + (progress * 0.75))
   })
@@ -131,7 +149,12 @@ export async function renderPitchShiftedAudio({
     renderedObjectUrl: stretched.renderedObjectUrl,
     renderedDurationSeconds: stretched.renderedDurationSeconds,
     algorithm: 'cubic_resample_wsola_phase_vocoder_v1',
-    quality: 'high',
+    quality,
+    renderedAudio: {
+      ...(stretched.renderedAudio || {}),
+      algorithm: 'cubic_resample_wsola_phase_vocoder_v1',
+      qualityMode: quality
+    },
     preservesDuration: true,
     totalSemitones,
     renderTimeMs: Math.round((performance.now?.() || Date.now()) - startedAt),
@@ -146,6 +169,8 @@ export async function renderPitchTraceEdits({
   transposeSemitones = 0,
   fineTuneCents = 0,
   sampleRate = audioBuffer?.sampleRate || 44100,
+  sourceBitDepth = null,
+  quality = 'high',
   trimStartSeconds = 0,
   trimEndSeconds = null,
   onProgress = null
@@ -189,6 +214,8 @@ export async function renderPitchTraceEdits({
       transposeSemitones: totalSemitones,
       fineTuneCents: 0,
       sampleRate: source.sampleRate,
+      sourceBitDepth,
+      quality,
       trimStartSeconds: 0,
       trimEndSeconds: segment.duration
     })
@@ -205,13 +232,26 @@ export async function renderPitchTraceEdits({
       transposeSemitones,
       fineTuneCents,
       sampleRate,
+      sourceBitDepth,
+      quality,
       trimStartSeconds,
       trimEndSeconds,
       onProgress
     })
   }
 
-  const renderedBlob = audioBufferToWavBlob(output)
+  const createdAt = Date.now()
+  const renderedBitDepth = normalizeWavBitDepth(sourceBitDepth)
+  const renderedBlob = audioBufferToWavBlob(output, { bitDepth: renderedBitDepth })
+  const renderedAudio = createRenderedAudioMetadata({
+    sourceBuffer: audioBuffer,
+    renderedBuffer: output,
+    sourceBitDepth,
+    renderedBitDepth,
+    algorithm: 'segmented_cubic_resample_wsola_phase_vocoder_v1',
+    qualityMode: quality,
+    createdAt
+  })
   return {
     clipId,
     renderedAudioBuffer: output,
@@ -219,9 +259,10 @@ export async function renderPitchTraceEdits({
     renderedObjectUrl: URL.createObjectURL(renderedBlob),
     renderedDurationSeconds: output.duration,
     algorithm: 'segmented_cubic_resample_wsola_phase_vocoder_v1',
-    quality: 'high',
+    quality,
+    renderedAudio,
     preservesDuration: true,
     renderTimeMs: Math.round((performance.now?.() || Date.now()) - startedAt),
-    createdAt: Date.now()
+    createdAt
   }
 }
