@@ -214,12 +214,18 @@ body.is-studio-editor main{padding-top:0}
 .studio-midi-note-preview{position:absolute;z-index:2;height:4px;border-radius:999px;background:rgba(235,250,255,.78);box-shadow:0 0 6px color-mix(in srgb,var(--region-color) 60%,transparent);pointer-events:none}
 .studio-midi-region.is-selected{z-index:7;border-color:#ddf5ff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 0 0 2px rgba(96,219,255,.34),0 8px 18px rgba(0,0,0,.24)}
 .studio-midi-region.is-selected::before{opacity:0}
+.studio-midi-region.is-region-muted{opacity:.58;filter:saturate(.55)}
+.studio-midi-region.is-region-muted::after{content:"";position:absolute;inset:0;z-index:4;background:repeating-linear-gradient(135deg,rgba(255,255,255,.08) 0 4px,transparent 4px 10px);pointer-events:none}
 .studio-midi-region.is-recording{border-color:#ff6f91;background:linear-gradient(180deg,rgba(255,45,85,.55),rgba(255,45,85,.2));animation:studio-record-pulse 1s ease-in-out infinite}
 .studio-midi-region-handle{position:absolute;top:0;bottom:0;z-index:5;width:7px;background:linear-gradient(90deg,rgba(255,255,255,.28),rgba(255,255,255,.02));opacity:0;transition:opacity 120ms ease}
 .studio-midi-region-handle--left{left:0;cursor:ew-resize}
 .studio-midi-region-handle--right{right:0;cursor:ew-resize;transform:scaleX(-1)}
 .studio-midi-region:hover .studio-midi-region-handle,.studio-midi-region.is-selected .studio-midi-region-handle{opacity:1}
 .studio-midi-region:active{cursor:grabbing}
+body.is-region-tool-split .studio-midi-region{cursor:crosshair}
+body.is-region-tool-erase .studio-midi-region{cursor:not-allowed}
+body.is-region-tool-mute .studio-midi-region{cursor:pointer}
+body.is-region-tool-stretch .studio-audio-region .studio-midi-region-handle{opacity:1;background:linear-gradient(90deg,rgba(255,211,110,.42),rgba(255,255,255,.03))}
 .studio-audio-region{background:linear-gradient(180deg,color-mix(in srgb,var(--region-color) 34%,#101522),color-mix(in srgb,var(--region-color) 16%,#0c111a))}
 .studio-audio-region::before{opacity:.22}
 .studio-audio-region strong{z-index:3}
@@ -566,6 +572,13 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-piano-key span{font-size:38px;line-height:.9;padding-left:4px}
 .studio-piano-key small{font-size:12px}
 .studio-right-rail-divider{height:1px;background:rgba(120,140,200,.35);margin:6px 4px}
+.studio-right-rail-divider--region-tools{margin-top:8px}
+.studio-region-tool-rail{display:grid;gap:6px;padding:0 0 8px;max-height:calc(100vh - 430px);overflow-y:auto;scrollbar-width:thin}
+.studio-region-tool-button{width:40px!important;min-height:40px!important;height:40px;display:grid;place-items:center;gap:1px;writing-mode:horizontal-tb!important;text-orientation:mixed;border-radius:9px;border:1px solid #39405a;background:#1b2231;color:#d7def5;padding:3px!important;box-sizing:border-box}
+.studio-region-tool-button span{font-size:12px;line-height:1;font-weight:900;letter-spacing:.02em}
+.studio-region-tool-button small{font-size:7px;line-height:1;text-transform:uppercase;letter-spacing:.04em;opacity:.72;max-width:34px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.studio-region-tool-button.is-active{border-color:rgba(96,219,255,.85);background:linear-gradient(180deg,rgba(48,75,116,.82),rgba(22,31,48,.96));color:#fff;box-shadow:0 0 0 1px rgba(96,219,255,.2),0 0 14px rgba(96,219,255,.16)}
+.studio-region-tool-button.is-disabled,.studio-region-tool-button[disabled]{opacity:.36;cursor:not-allowed}
 .studio-right-rail-subtools{display:grid;gap:6px;padding:0 2px 8px}
 .studio-right-rail-subtool{width:40px;min-height:34px;writing-mode:vertical-rl;text-orientation:mixed;border-radius:8px;border:1px solid #38425f;background:#1c2232;color:#8c96b2;font-size:11px}
 .studio-right-rail-subtool[disabled]{opacity:.45;cursor:not-allowed}
