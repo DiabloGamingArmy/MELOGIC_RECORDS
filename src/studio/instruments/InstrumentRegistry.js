@@ -43,15 +43,15 @@ export class InstrumentRegistry {
     return this.instances.get(id) || null
   }
 
-  noteOn(id, note, velocity = 0.85) {
+  noteOn(id, note, velocity = 0.85, options = {}) {
     const instrument = this.get(id)
-    Promise.resolve(instrument?.ensureRunning?.()).then(() => instrument?.noteOn(note, velocity)).catch((error) => {
+    Promise.resolve(instrument?.ensureRunning?.()).then(() => instrument?.noteOn(note, velocity, options)).catch((error) => {
       console.warn('[InstrumentRegistry] noteOn failed', { id, message: error?.message })
     })
   }
 
-  noteOff(id, note) {
-    this.get(id)?.noteOff(note)
+  noteOff(id, note, options = {}) {
+    this.get(id)?.noteOff(note, options)
   }
 
   setParam(id, name, value) {

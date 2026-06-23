@@ -148,6 +148,8 @@ let isPlaying = false
 let playRaf = 0
 let lastPlayTimestamp = 0
 let isTransportTicking = false
+let transportClock = null
+let transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
 let panDrag = null
 let followPlayhead = false
 let isCycleEnabled = false
@@ -306,10 +308,19 @@ const STRETCH_SPEED_MIN = 25
 const STRETCH_SPEED_MAX = 400
 const STRETCH_RATIO_MIN = 100 / STRETCH_SPEED_MAX
 const STRETCH_RATIO_MAX = 100 / STRETCH_SPEED_MIN
+const TRANSPORT_SCHEDULER_START_DELAY_SECONDS = 0.08
+const TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS = 0.16
+const PLAYBACK_LATENCY_COMPENSATION_SECONDS = 0
 const PITCH_TRACE_VERSION = 'pitch-trace-v1'
 const PITCH_TRACE_ALGORITHM = 'yin-js-worker-v1'
 const PITCH_RENDER_STATUSES = ['idle', 'rendering', 'ready', 'failed', 'needs_render']
 
+function beatsToSecondsAtBpm(beats = 0, bpm = Number(projectState?.bpm || 140)) {
+  return Math.max(0, Number(beats) || 0) * (60 / Math.max(1, Number(bpm) || 140))
+}
+function secondsToBeatsAtBpm(seconds = 0, bpm = Number(projectState?.bpm || 140)) {
+  return Math.max(0, Number(seconds) || 0) * (Math.max(1, Number(bpm) || 140) / 60)
+}
 function getTimelineSecondsAtBeat(beat = 0) {
   return beatsToSeconds(clampBeat(Number(beat) || 0))
 }
@@ -2602,8 +2613,33 @@ function disposeTrackAudioChannel(trackId = '') {
   try { channel.analyser.disconnect() } catch {}
   trackAudioChannels.delete(trackId)
 }
-function playMetronomeClick(isDownbeat){ const ctx=getAudioContext(); const osc=ctx.createOscillator(); const gain=ctx.createGain(); osc.type='sine'; osc.frequency.value=isDownbeat?1200:760; gain.gain.setValueAtTime(0.0001,ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.16,ctx.currentTime+0.004); gain.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+0.055); osc.connect(gain); gain.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime+0.065) }
-function maybeTickMetronome(){ if(!isPlaying||!isMetronomeEnabled) return; const ppb=timelineState.pixelsPerBar/timelineState.beatsPerBar; const beatIndex=Math.floor(timelineState.playheadX/ppb); if(beatIndex!==lastMetronomeBeat){ lastMetronomeBeat=beatIndex; playMetronomeClick(beatIndex%timelineState.beatsPerBar===0) } }
+function playMetronomeClick(isDownbeat, startTime = null){
+  const ctx=getAudioContext()
+  const startAt=Math.max(ctx.currentTime, Number.isFinite(Number(startTime)) ? Number(startTime) : ctx.currentTime)
+  const osc=ctx.createOscillator()
+  const gain=ctx.createGain()
+  osc.type='sine'
+  osc.frequency.setValueAtTime(isDownbeat?1200:760,startAt)
+  gain.gain.setValueAtTime(0.0001,startAt)
+  gain.gain.exponentialRampToValueAtTime(0.16,startAt+0.004)
+  gain.gain.exponentialRampToValueAtTime(0.0001,startAt+0.055)
+  osc.connect(gain)
+  gain.connect(ctx.destination)
+  osc.start(startAt)
+  osc.stop(startAt+0.065)
+}
+function maybeTickMetronome(){
+  if(!isPlaying||!isMetronomeEnabled) return
+  const bpm = transportClock?.bpm || Number(projectState?.bpm || 140)
+  const currentSeconds = getTransportClockProjectSeconds()
+  const currentBeatIndex = Math.max(0, Math.floor(secondsToBeatsAtBpm(currentSeconds, bpm)))
+  const lookaheadBeatIndex = Math.max(currentBeatIndex, Math.floor(secondsToBeatsAtBpm(currentSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS, bpm)))
+  const firstBeatToSchedule = Math.max(lastMetronomeBeat + 1, currentBeatIndex)
+  for (let beatIndex = firstBeatToSchedule; beatIndex <= lookaheadBeatIndex; beatIndex += 1) {
+    playMetronomeClick(beatIndex%timelineState.beatsPerBar===0, getTransportScheduleTimeForProjectSeconds(beatsToSecondsAtBpm(beatIndex, bpm)))
+    lastMetronomeBeat = beatIndex
+  }
+}
 function secondsFromPlayhead(){ const bpm=Number(projectState?.bpm||140); const beatsFromZero=xToBeatsFromBarZero(timelineState.playheadX); return beatsFromZero*(60/bpm) }
 function formatTimeFromPlayhead(){ const raw=secondsFromPlayhead(); const total=Math.abs(raw)<0.0005?0:raw; const isNegative=total<0; const absTotal=Math.abs(total); const m=Math.floor(absTotal/60); const s=Math.floor(absTotal%60); const ms=Math.floor((absTotal%1)*1000); const sub=Math.floor(((absTotal*1000)%1)*100); return `${isNegative?'-':''}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}.${String(sub).padStart(2,'0')}` }
 function formatBarsFromPlayhead(){ const beatsFromZero=xToBeatsFromBarZero(timelineState.playheadX); const bar=Math.floor(beatsFromZero/timelineState.beatsPerBar); const beatWithinBar=beatsFromZero-(bar*timelineState.beatsPerBar); const beat=Math.floor(beatWithinBar)+1; const bf=beatWithinBar%1; const div=Math.floor(bf*4)+1; const tick=Math.floor((bf*4%1)*240)+1; const barLabel=bar<0?`-${String(Math.abs(bar)).padStart(3,'0')}`:String(bar).padStart(3,'0'); return `${barLabel} ${String(beat).padStart(2,'0')} ${div} ${String(tick).padStart(3,'0')}` }
@@ -2613,6 +2649,73 @@ function updateCycleDomFromState(){ const rangeEl = app.querySelector('[data-cyc
 function updateCycleButtonDom(){ const btn=app.querySelector('[data-toggle-cycle]'); if(!btn) return; btn.classList.toggle('is-active', isCycleEnabled); btn.setAttribute('aria-pressed', String(isCycleEnabled)) }
 function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
 function followPlayheadIfNeeded(){ if(!followPlayhead) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); const ruler=app.querySelector('[data-timeline-ruler]'); if(ruler) ruler.scrollLeft=grid.scrollLeft }
+function getTransportClockProjectSeconds() {
+  if (!isPlaying || !transportClock) return secondsFromPlayhead()
+  const ctx = getAudioContext()
+  const elapsed = Math.max(0, ctx.currentTime - transportClock.audioContextStartTime)
+  return Math.max(0, transportClock.playheadStartSeconds + elapsed - PLAYBACK_LATENCY_COMPENSATION_SECONDS)
+}
+function getTransportClockProjectBeat() {
+  const bpm = transportClock?.bpm || Number(projectState?.bpm || 140)
+  return clampBeat(secondsToBeatsAtBpm(getTransportClockProjectSeconds(), bpm))
+}
+function projectSecondsToTimelineX(seconds = 0, bpm = transportClock?.bpm || Number(projectState?.bpm || 140)) {
+  return beatsFromBarZeroToX(secondsToBeatsAtBpm(seconds, bpm))
+}
+function getTransportScheduleTimeForProjectSeconds(projectSeconds = 0) {
+  if (!transportClock) return getAudioContext().currentTime
+  return transportClock.audioContextStartTime + (Math.max(0, Number(projectSeconds) || 0) - transportClock.playheadStartSeconds)
+}
+function beginTransportClock(playheadX = timelineState.playheadX, { schedulerStartDelaySeconds = TRANSPORT_SCHEDULER_START_DELAY_SECONDS } = {}) {
+  const ctx = getAudioContext()
+  const bpm = Number(projectState?.bpm || 140)
+  const playheadStartBeats = clampBeat(xToBeat(playheadX))
+  const playheadStartSeconds = beatsToSecondsAtBpm(playheadStartBeats, bpm)
+  transportClock = {
+    audioContextStartTime: ctx.currentTime + Math.max(0, schedulerStartDelaySeconds),
+    playheadStartSeconds,
+    playheadStartBeats,
+    bpm,
+    startedAtPerformanceTime: performance.now(),
+    schedulerStartDelaySeconds: Math.max(0, schedulerStartDelaySeconds),
+    baseLatencySeconds: Number(ctx.baseLatency) || 0,
+    outputLatencySeconds: Number(ctx.outputLatency) || 0
+  }
+  transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
+  lastMetronomeBeat = Math.max(-1, Math.floor(playheadStartBeats) - 1)
+  console.info('[transport] play requested', {
+    playheadStartSeconds,
+    playheadStartBeats,
+    audioContextCurrentTime: ctx.currentTime,
+    audioContextStartTime: transportClock.audioContextStartTime,
+    schedulerStartDelayMs: Math.round(transportClock.schedulerStartDelaySeconds * 1000),
+    bpm,
+    baseLatencyMs: Math.round(transportClock.baseLatencySeconds * 1000),
+    outputLatencyMs: Math.round(transportClock.outputLatencySeconds * 1000),
+    playbackLatencyCompensationMs: Math.round(PLAYBACK_LATENCY_COMPENSATION_SECONDS * 1000)
+  })
+  return transportClock
+}
+function clearTransportClock() {
+  transportClock = null
+  transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
+}
+function updatePlayheadFromTransportClock() {
+  const projectSeconds = getTransportClockProjectSeconds()
+  const x = projectSecondsToTimelineX(projectSeconds)
+  isTransportTicking = true
+  setPlayhead(x)
+  isTransportTicking = false
+  if (!transportDebugState.playheadLogged && transportClock && getAudioContext().currentTime >= transportClock.audioContextStartTime) {
+    transportDebugState.playheadLogged = true
+    console.info('[playhead]', {
+      projectSeconds,
+      audioContextCurrentTime: getAudioContext().currentTime,
+      derivedFromAudioClock: true
+    })
+  }
+  return { projectSeconds, beat: clampBeat(xToBeat(timelineState.playheadX)) }
+}
 function getArrangementGrid() { return app.querySelector('[data-arrangement-grid]') }
 function syncArrangementRulerScroll(left = null) {
   const grid = getArrangementGrid()
@@ -3014,10 +3117,68 @@ function applyStudioGuideTargets() {
     element.setAttribute('data-guide-role', role)
   })
 }
-function setPlayhead(x) { timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX()); if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`); updateTransportDisplay(); updateMidiRollPlayheadDom(); if (isPlaying && !isTransportTicking) { stopAllAudioClipPlayback(); updateAudioClipPlayback(clampBeat(xToBeat(timelineState.playheadX))) } }
+function setPlayhead(x) {
+  timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX())
+  if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
+  app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`)
+  updateTransportDisplay()
+  updateMidiRollPlayheadDom()
+  if (isPlaying && !isTransportTicking) {
+    stopAllAudioClipPlayback()
+    stopAllPlaybackNotes()
+    beginTransportClock(timelineState.playheadX)
+    const beat = clampBeat(xToBeat(timelineState.playheadX))
+    updateMidiRegionPlayback(beat)
+    updateAudioClipPlayback(beat)
+  }
+}
 function pixelsPerSecond() { const bpm = Number(projectState?.bpm || 140); const bps = bpm / 60; const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
 function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
-function tickPlayback(now) { if (!isPlaying) return; const delta=(now-lastPlayTimestamp)/1000; lastPlayTimestamp=now; let nextX = timelineState.playheadX + pixelsPerSecond()*delta; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle) { if (nextX >= cycle.end) { stopAllPlaybackNotes(); stopAllAudioClipPlayback(); nextX = cycle.start + ((nextX - cycle.end) % (cycle.end-cycle.start)) } } if (isCountInRunning && countInTargetX != null && nextX >= countInTargetX) { nextX = countInTargetX } isTransportTicking = true; setPlayhead(nextX); isTransportTicking = false; if (isCountInRunning && countInTargetX != null) { const nextRemaining = clamp(Math.ceil((countInTargetX - timelineState.playheadX) / Math.max(1, beatWidth())), 0, 4); if (nextRemaining !== countInBeatsRemaining) { countInBeatsRemaining = nextRemaining; updateEditorTitleStatus() } if (timelineState.playheadX >= countInTargetX - 0.5) { const track = tracks.find((item)=>item.id === countInTargetTrackId) || getRecordingTrack(); isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = ''; if (isAudioTrack(track)) beginAudioRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) }); else beginMidiRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) }); playRaf = requestAnimationFrame(tickPlayback); return } } const currentBeat = clampBeat(xToBeat(timelineState.playheadX)); updateMidiRegionPlayback(currentBeat); updateAudioClipPlayback(currentBeat); lastPlaybackBeat = currentBeat; if(activeRecording) refreshMidiRegionDom(); followPlayheadIfNeeded(); maybeTickMetronome(); if (timelineState.playheadX >= maxTimelineX()) return pausePlayback(); playRaf = requestAnimationFrame(tickPlayback) }
+function tickPlayback() {
+  if (!isPlaying) return
+  const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null
+  let state = updatePlayheadFromTransportClock()
+  if (cycle && timelineState.playheadX >= cycle.end) {
+    stopAllPlaybackNotes()
+    stopAllAudioClipPlayback()
+    beginTransportClock(cycle.start, { schedulerStartDelaySeconds: 0 })
+    state = updatePlayheadFromTransportClock()
+  }
+  if (isCountInRunning && countInTargetX != null && timelineState.playheadX >= countInTargetX) {
+    isTransportTicking = true
+    setPlayhead(countInTargetX)
+    isTransportTicking = false
+    beginTransportClock(timelineState.playheadX, { schedulerStartDelaySeconds: 0 })
+    state = updatePlayheadFromTransportClock()
+  }
+  if (isCountInRunning && countInTargetX != null) {
+    const nextRemaining = clamp(Math.ceil((countInTargetX - timelineState.playheadX) / Math.max(1, beatWidth())), 0, 4)
+    if (nextRemaining !== countInBeatsRemaining) {
+      countInBeatsRemaining = nextRemaining
+      updateEditorTitleStatus()
+    }
+    if (timelineState.playheadX >= countInTargetX - 0.5) {
+      const track = tracks.find((item)=>item.id === countInTargetTrackId) || getRecordingTrack()
+      isCountInRunning = false
+      countInBeatsRemaining = 0
+      countInTargetX = null
+      countInTargetTrackId = ''
+      if (isAudioTrack(track)) beginAudioRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) })
+      else beginMidiRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) })
+      playRaf = requestAnimationFrame(tickPlayback)
+      return
+    }
+  }
+  const currentBeat = state.beat
+  updateMidiRegionPlayback(currentBeat)
+  updateAudioClipPlayback(currentBeat)
+  lastPlaybackBeat = currentBeat
+  if(activeRecording) refreshMidiRegionDom()
+  followPlayheadIfNeeded()
+  maybeTickMetronome()
+  if (timelineState.playheadX >= maxTimelineX()) return pausePlayback()
+  playRaf = requestAnimationFrame(tickPlayback)
+}
 async function prepareProjectPlayback() {
   const ctx = getAudioContext()
   if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
@@ -3123,7 +3284,10 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
     }
     setPlayhead(playbackStartX || requestedPlayheadX)
   }
+  const ctx = getAudioContext()
+  if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
   recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus
+  beginTransportClock(timelineState.playheadX)
   prewarmDawAudio().then((engine) => {
     engine.setBpm(Number(projectState?.bpm || 140))
     engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
@@ -3134,11 +3298,12 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
   lastPlayTimestamp = performance.now()
   startTrackMeterLoop()
   updateAudioClipPlayback(lastPlaybackBeat)
+  updateMidiRegionPlayback(lastPlaybackBeat)
   playRaf = requestAnimationFrame(tickPlayback)
   updateTransportPlaybackUI()
   updateEditorTitleStatus()
 }
-function pausePlayback() { isPlaying = false; stopAllPlaybackNotes(); stopAllAudioClipPlayback(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI() }
+function pausePlayback() { isPlaying = false; clearTransportClock(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI() }
 function togglePlayback(){ isPlaying ? pausePlayback() : startPlayback() }
 function stopPlayback() { pausePlayback(); audioEditPlaybackBypassRegionIds.clear(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = '' }
 function getNormalizedCycleRange(){ if(!cycleRange) return null; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return end-start>=cycleMinWidth()?{start,end}:null }
@@ -3343,7 +3508,7 @@ function stopPlaybackNote(key) {
   const active = activePlaybackNotes.get(key)
   if (!active) return
   const track = tracks.find((item)=>item.id === active.trackId)
-  if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, active.note)
+  if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, active.note, { immediate: true })
   setTrackKeyboardNoteActive(active.trackId, active.note, `playback:${key}`, false)
   activePlaybackNotes.delete(key)
 }
@@ -3860,8 +4025,11 @@ function getAudioPlaybackRenderChoice(region, edit, stretch) {
   }
   return { runtimeId: region.audioClip?.runtimeId || region.id, mode: 'original' }
 }
-function updateAudioClipPlayback(currentBeat) {
+function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat()) {
   const beat = clampBeat(currentBeat)
+  const ctx = getAudioContext()
+  const currentProjectSeconds = getTransportClockProjectSeconds()
+  const lookaheadEndSeconds = currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS
   midiRegions.filter((region)=>region.type === 'audio').forEach((region) => {
     syncAudioRegionTimeline(region)
     const startBeat = Number(region.startBeat) || 0
@@ -3878,10 +4046,16 @@ function updateAudioClipPlayback(currentBeat) {
       if (active) stopAudioClipPlayback(region.id)
       return
     }
+    const clipStartSeconds = Number.isFinite(Number(region.timelineStartSeconds)) ? Number(region.timelineStartSeconds) : beatsToSecondsAtBpm(startBeat, transportClock?.bpm || Number(projectState?.bpm || 140))
+    const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
+    const clipEndSeconds = clipStartSeconds + visibleDurationSeconds
+    if (active) {
+      if (!isTrackOutputAudible(track) || currentProjectSeconds >= clipEndSeconds + 0.05 || lookaheadEndSeconds < clipStartSeconds) stopAudioClipPlayback(region.id)
+      else return
+    }
     const playbackChoice = getAudioPlaybackRenderChoice(region, edit, stretch)
     if (playbackChoice.needsRender) {
-      if (active) stopAudioClipPlayback(region.id)
-      if (isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
+      if (isTrackOutputAudible(track) && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds) {
         recordingStatus = playbackChoice.message
         updateEditorTitleStatus()
         if (!audioPitchRenderState.active && audioEditPlaybackPrompt?.regionId !== region.id) {
@@ -3892,8 +4066,7 @@ function updateAudioClipPlayback(currentBeat) {
       return
     }
     if (playbackChoice.needsStretchRender) {
-      if (active) stopAudioClipPlayback(region.id)
-      if (isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
+      if (isTrackOutputAudible(track) && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds) {
         recordingStatus = playbackChoice.message || 'This stretched audio region must finish rendering before playback.'
         updateEditorTitleStatus()
         if (!audioStretchRenderState.active && stretch.renderStatus !== 'rendering' && stretchPlaybackPrompt?.regionId !== region.id) {
@@ -3904,10 +4077,9 @@ function updateAudioClipPlayback(currentBeat) {
       return
     }
     const runtime = audioClipRuntime.get(playbackChoice.runtimeId)
-    const shouldPlay = runtime?.audioBuffer && isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat
+    const shouldPlay = runtime?.audioBuffer && isTrackOutputAudible(track) && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds
     if (!shouldPlay) {
-      if (active) stopAudioClipPlayback(region.id)
-      if (!runtime?.audioBuffer && isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
+      if (!runtime?.audioBuffer && isTrackOutputAudible(track) && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds) {
         recordingStatus = 'Audio file missing or not loaded.'
         updateEditorTitleStatus()
         if (!audioOfflineWarnedRegionIds.has(region.id)) {
@@ -3917,13 +4089,14 @@ function updateAudioClipPlayback(currentBeat) {
       }
       return
     }
-    if (active) return
     try {
-      const ctx = getAudioContext()
-      const clipStartSeconds = Number.isFinite(Number(region.timelineStartSeconds)) ? Number(region.timelineStartSeconds) : getTimelineSecondsAtBeat(startBeat)
-      const playheadSeconds = getTimelineSecondsAtBeat(beat)
-      const elapsedVisibleSeconds = Math.max(0, playheadSeconds - clipStartSeconds)
-      const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
+      const rawScheduleTime = getTransportScheduleTimeForProjectSeconds(clipStartSeconds)
+      const transportStartTime = transportClock?.audioContextStartTime || ctx.currentTime
+      const scheduleTime = Math.max(ctx.currentTime, transportStartTime, rawScheduleTime)
+      const projectSecondsAtSchedule = transportClock
+        ? transportClock.playheadStartSeconds + Math.max(0, scheduleTime - transportClock.audioContextStartTime)
+        : currentProjectSeconds
+      const elapsedVisibleSeconds = Math.max(0, projectSecondsAtSchedule - clipStartSeconds)
       if (elapsedVisibleSeconds >= visibleDurationSeconds) return
       const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch' || playbackChoice.mode === 'reverse'
       if (playbackChoice.mode === 'stretch') {
@@ -3955,7 +4128,7 @@ function updateAudioClipPlayback(currentBeat) {
       const channel = getTrackAudioChannel(track?.id || region.trackId)
       const gainNode = ctx.createGain()
       const baseGain = dbToGain(edit.gainDb)
-      gainNode.gain.setValueAtTime(baseGain, ctx.currentTime)
+      gainNode.gain.setValueAtTime(baseGain, scheduleTime)
       const offsetSeconds = Math.min(runtime.audioBuffer.duration - 0.01, sourceOffsetSeconds)
       const remainingBufferSeconds = Math.max(0.01, trimEndSeconds - offsetSeconds)
       const playDuration = Math.max(0.01, Math.min(remainingBufferSeconds, remainingVisibleSeconds * playbackRate))
@@ -3968,14 +4141,14 @@ function updateAudioClipPlayback(currentBeat) {
       }
       if (fadeIn > 0 && elapsedVisibleSeconds < fadeIn) {
         const fadeProgress = clamp(elapsedVisibleSeconds / fadeIn, 0, 1)
-        gainNode.gain.setValueAtTime(Math.max(0.0001, baseGain * fadeGainValue(fadeProgress, edit.fadeInCurve, 'in')), ctx.currentTime)
+        gainNode.gain.setValueAtTime(Math.max(0.0001, baseGain * fadeGainValue(fadeProgress, edit.fadeInCurve, 'in')), scheduleTime)
         gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
           baseGain,
           fromProgress: fadeProgress,
           toProgress: 1,
           curve: edit.fadeInCurve,
           direction: 'in'
-        }), ctx.currentTime, Math.max(0.01, fadeIn * (1 - fadeProgress)))
+        }), scheduleTime, Math.max(0.01, fadeIn * (1 - fadeProgress)))
       }
       if (fadeOut > 0 && remainingVisibleSeconds <= fadeOut) {
         const fadeProgress = clamp((fadeOut - remainingVisibleSeconds) / fadeOut, 0, 1)
@@ -3985,22 +4158,35 @@ function updateAudioClipPlayback(currentBeat) {
           toProgress: 1,
           curve: edit.fadeOutCurve,
           direction: 'out'
-        }), ctx.currentTime, Math.max(0.01, remainingVisibleSeconds))
+        }), scheduleTime, Math.max(0.01, remainingVisibleSeconds))
       } else if (fadeOut > 0 && playDuration > fadeOut) {
-        gainNode.gain.setValueAtTime(baseGain, ctx.currentTime + Math.max(0.01, playDuration - fadeOut))
+        gainNode.gain.setValueAtTime(baseGain, scheduleTime + Math.max(0.01, playDuration - fadeOut))
         gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
           baseGain,
           fromProgress: 0,
           toProgress: 1,
           curve: edit.fadeOutCurve,
           direction: 'out'
-        }), ctx.currentTime + Math.max(0.01, playDuration - fadeOut), Math.max(0.01, fadeOut))
+        }), scheduleTime + Math.max(0.01, playDuration - fadeOut), Math.max(0.01, fadeOut))
       }
       source.connect(gainNode)
       gainNode.connect(channel.input)
       source.onended = () => activeAudioClipSources.delete(region.id)
-      source.start(Math.max(0, edit.delayMs / 1000), Math.max(0, offsetSeconds), playDuration)
-      activeAudioClipSources.set(region.id, { source, gainNode, trackId: track?.id || region.trackId })
+      const startTime = scheduleTime + Math.max(0, edit.delayMs / 1000)
+      source.start(startTime, Math.max(0, offsetSeconds), playDuration)
+      activeAudioClipSources.set(region.id, { source, gainNode, trackId: track?.id || region.trackId, scheduleTime: startTime, clipStartSeconds, clipEndSeconds })
+      if (!transportDebugState.firstAudioScheduled) {
+        transportDebugState.firstAudioScheduled = true
+        console.info('[audio-schedule]', {
+          clipId: region.audioClip?.audioAssetId || region.audioClip?.id || region.id,
+          clipTimelineStartSeconds: clipStartSeconds,
+          playheadStartSeconds: transportClock?.playheadStartSeconds ?? currentProjectSeconds,
+          scheduleTime: startTime,
+          deltaToStartMs: Math.round((startTime - ctx.currentTime) * 1000),
+          bufferOffset: offsetSeconds,
+          mode: playbackChoice.mode
+        })
+      }
       startTrackMeterLoop()
     } catch (err) {
       console.warn('[studioProject] audio clip playback failed', err)
@@ -4008,12 +4194,19 @@ function updateAudioClipPlayback(currentBeat) {
     }
   })
 }
-function updateMidiRegionPlayback(currentBeat) {
+function updateMidiRegionPlayback(currentBeat = getTransportClockProjectBeat()) {
   const beat = clampBeat(currentBeat)
+  const ctx = getAudioContext()
+  const bpm = transportClock?.bpm || Number(projectState?.bpm || 140)
+  const currentProjectSeconds = getTransportClockProjectSeconds()
+  const lookaheadEndSeconds = currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS
   activePlaybackNotes.forEach((active, key) => {
     const region = midiRegions.find((item)=>item.id === active.regionId)
     const track = tracks.find((item)=>item.id === active.trackId)
-    if (!region || !isTrackAudible(track) || beat < active.startBeat || beat >= active.endBeat || beat < region.startBeat || beat >= region.endBeat) stopPlaybackNote(key)
+    const activeEndSeconds = beatsToSecondsAtBpm(active.endBeat, bpm)
+    if (!region || !isTrackAudible(track) || currentProjectSeconds >= activeEndSeconds + 0.05) {
+      stopPlaybackNote(key)
+    }
   })
   midiRegions.forEach((region) => {
     if (region.type === 'audio') return
@@ -4025,10 +4218,24 @@ function updateMidiRegionPlayback(currentBeat) {
       const startBeat = Number(note.startBeat) || 0
       const endBeat = startBeat + Math.max(0.05, Number(note.durationBeats) || 0.05)
       const key = `${region.id}:${index}:${note.note}`
-      if (beat >= startBeat && beat < endBeat && !activePlaybackNotes.has(key)) {
-        dawInstrumentRegistry.noteOn(track.instrument.pluginInstanceId, note.note, clamp((Number(note.velocity) || 0.85), 0, 1))
-        activePlaybackNotes.set(key, { regionId: region.id, trackId: track.id, note: note.note, startBeat, endBeat })
+      const noteStartSeconds = beatsToSecondsAtBpm(startBeat, bpm)
+      const noteEndSeconds = beatsToSecondsAtBpm(endBeat, bpm)
+      if (lookaheadEndSeconds >= noteStartSeconds && currentProjectSeconds < noteEndSeconds && !activePlaybackNotes.has(key)) {
+        const scheduleTime = Math.max(ctx.currentTime, getTransportScheduleTimeForProjectSeconds(Math.max(noteStartSeconds, currentProjectSeconds)))
+        const stopTime = Math.max(scheduleTime + 0.01, getTransportScheduleTimeForProjectSeconds(noteEndSeconds))
+        dawInstrumentRegistry.noteOn(track.instrument.pluginInstanceId, note.note, clamp((Number(note.velocity) || 0.85), 0, 1), { startTime: scheduleTime, stopTime })
+        activePlaybackNotes.set(key, { regionId: region.id, trackId: track.id, note: note.note, startBeat, endBeat, scheduleTime, stopTime })
         setTrackKeyboardNoteActive(track.id, note.note, `playback:${key}`, true)
+        if (!transportDebugState.firstMidiScheduled) {
+          transportDebugState.firstMidiScheduled = true
+          console.info('[midi-schedule]', {
+            noteId: note.id || key,
+            noteStartSeconds,
+            playheadStartSeconds: transportClock?.playheadStartSeconds ?? currentProjectSeconds,
+            scheduleTime,
+            deltaToStartMs: Math.round((scheduleTime - ctx.currentTime) * 1000)
+          })
+        }
         startTrackMeterLoop()
       }
     })

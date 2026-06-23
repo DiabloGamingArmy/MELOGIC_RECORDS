@@ -130,12 +130,13 @@ export class BasicSynthInstrument {
     return wave
   }
 
-  noteOn(note, velocity = 0.8) {
+  noteOn(note, velocity = 0.8, { startTime = null, stopTime = null } = {}) {
     const midi = Number(note)
     if (!Number.isFinite(midi)) return
     if (!this.params.oscEnabled) return
     this.noteOff(midi, { immediate: true })
     const now = this.audioContext.currentTime
+    const startAt = Math.max(now, Number.isFinite(Number(startTime)) ? Number(startTime) : now)
     const velocityGain = clamp(velocity, 0, 1)
     const envelope = this.audioContext.createGain()
     const filter = this.audioContext.createBiquadFilter()
@@ -144,24 +145,24 @@ export class BasicSynthInstrument {
     const oscillators = []
     const unison = this.params.unisonVoices
     const baseFrequency = midiToFrequency(midi + (this.params.octave * 12) + this.params.coarsePitch + (this.params.pitchBend * 2))
-    envelope.gain.setValueAtTime(0.0001, now)
-    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, velocityGain), now + this.params.attack)
-    envelope.gain.linearRampToValueAtTime(Math.max(0.0001, this.params.sustain * velocityGain), now + this.params.attack + this.params.decay)
+    envelope.gain.setValueAtTime(0.0001, startAt)
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, velocityGain), startAt + this.params.attack)
+    envelope.gain.linearRampToValueAtTime(Math.max(0.0001, this.params.sustain * velocityGain), startAt + this.params.attack + this.params.decay)
     filter.type = this.params.filterType
-    filter.frequency.setValueAtTime(cutoffToFrequency(this.getEffectiveFilterCutoff()), now)
-    filter.Q.setValueAtTime(clamp(this.params.resonance * 24, 0.0001, 24), now)
-    voiceGain.gain.setValueAtTime(this.params.oscLevel / Math.max(1, unison), now)
+    filter.frequency.setValueAtTime(cutoffToFrequency(this.getEffectiveFilterCutoff()), startAt)
+    filter.Q.setValueAtTime(clamp(this.params.resonance * 24, 0.0001, 24), startAt)
+    voiceGain.gain.setValueAtTime(this.params.oscLevel / Math.max(1, unison), startAt)
 
     for (let index = 0; index < unison; index += 1) {
       const oscillator = this.audioContext.createOscillator()
       oscillator.setPeriodicWave(this.getPeriodicWave())
       const spread = unison === 1 ? 0 : index - ((unison - 1) / 2)
       oscillator.melogicSpread = spread
-      oscillator.frequency.setValueAtTime(baseFrequency, now)
-      oscillator.detune.setValueAtTime(this.params.finePitch + this.params.pitchFine + (spread * this.params.detune * 28), now)
+      oscillator.frequency.setValueAtTime(baseFrequency, startAt)
+      oscillator.detune.setValueAtTime(this.params.finePitch + this.params.pitchFine + (spread * this.params.detune * 28), startAt)
       if (lfo && lfo.target === 'pitch') lfo.gain.connect(oscillator.detune)
       oscillator.connect(voiceGain)
-      oscillator.start(now)
+      oscillator.start(startAt)
       oscillators.push(oscillator)
     }
 
@@ -173,8 +174,12 @@ export class BasicSynthInstrument {
     } else {
       envelope.connect(this.outputNode)
     }
-    lfo?.oscillator.start(now)
-    this.voices.set(midi, { midi, oscillators, envelope, filter, voiceGain, lfo })
+    lfo?.oscillator.start(startAt)
+    const voice = { midi, oscillators, envelope, filter, voiceGain, lfo, startTime: startAt }
+    this.voices.set(midi, voice)
+    if (Number.isFinite(Number(stopTime)) && Number(stopTime) > startAt) {
+      this.noteOff(midi, { stopTime: Number(stopTime) })
+    }
   }
 
   createLfo() {
@@ -194,17 +199,22 @@ export class BasicSynthInstrument {
     return { oscillator, gain, target: route.target }
   }
 
-  noteOff(note, { immediate = false } = {}) {
+  noteOff(note, { immediate = false, stopTime = null } = {}) {
     const midi = Number(note)
     const voice = this.voices.get(midi)
     if (!voice) return
+    if (voice.released && !immediate) return
+    voice.released = true
     const now = this.audioContext.currentTime
+    const stopAt = Math.max(now, Number.isFinite(Number(stopTime)) ? Number(stopTime) : now)
     const release = immediate ? 0.015 : this.params.release
-    voice.envelope.gain.cancelScheduledValues(now)
-    voice.envelope.gain.setValueAtTime(Math.max(0.0001, voice.envelope.gain.value), now)
-    voice.envelope.gain.exponentialRampToValueAtTime(0.0001, now + release)
-    voice.oscillators.forEach((oscillator) => oscillator.stop(now + release + 0.02))
-    voice.lfo?.oscillator.stop(now + release + 0.02)
+    voice.envelope.gain.cancelScheduledValues(stopAt)
+    voice.envelope.gain.setValueAtTime(Math.max(0.0001, voice.envelope.gain.value), stopAt)
+    voice.envelope.gain.exponentialRampToValueAtTime(0.0001, stopAt + release)
+    voice.oscillators.forEach((oscillator) => {
+      try { oscillator.stop(Math.max(voice.startTime || now, stopAt + release + 0.02)) } catch {}
+    })
+    try { voice.lfo?.oscillator.stop(Math.max(voice.startTime || now, stopAt + release + 0.02)) } catch {}
     window.setTimeout(() => {
       try {
         voice.oscillators.forEach((oscillator) => oscillator.disconnect())
@@ -216,8 +226,8 @@ export class BasicSynthInstrument {
       } catch {
         // Voice may already be disconnected.
       }
-    }, Math.ceil((release + 0.05) * 1000))
-    this.voices.delete(midi)
+      if (this.voices.get(midi) === voice) this.voices.delete(midi)
+    }, Math.ceil((Math.max(0, stopAt - now) + release + 0.05) * 1000))
   }
 
   setParam(name, value) {

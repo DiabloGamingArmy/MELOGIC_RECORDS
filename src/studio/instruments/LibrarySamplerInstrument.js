@@ -138,7 +138,7 @@ export class LibrarySamplerInstrument {
     return selectLibrarySample(this.samples, note, this.samplePlaybackMode)
   }
 
-  async noteOn(note, velocity = 0.8) {
+  async noteOn(note, velocity = 0.8, { startTime = null, stopTime = null } = {}) {
     const midi = Number(note)
     if (!Number.isFinite(midi)) return
     this.noteOff(midi, { immediate: true })
@@ -156,38 +156,43 @@ export class LibrarySamplerInstrument {
     this.pendingNotes.delete(midi)
 
     const now = this.audioContext.currentTime
+    const startAt = Math.max(now, Number.isFinite(Number(startTime)) ? Number(startTime) : now)
     const source = this.audioContext.createBufferSource()
     const envelope = this.audioContext.createGain()
     source.buffer = buffer
     const playbackRate = this.samplePlaybackMode === 'exact-position'
       ? 1
       : 2 ** ((midi - sample.rootMidi) / 12)
-    source.playbackRate.setValueAtTime(playbackRate, now)
-    envelope.gain.setValueAtTime(0.0001, now)
-    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, clamp(velocity, 0, 1)), now + this.params.attack)
+    source.playbackRate.setValueAtTime(playbackRate, startAt)
+    envelope.gain.setValueAtTime(0.0001, startAt)
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, clamp(velocity, 0, 1)), startAt + this.params.attack)
     source.connect(envelope)
     envelope.connect(this.outputNode)
-    const voice = { source, envelope, sample, released: false }
+    const voice = { source, envelope, sample, released: false, startTime: startAt }
     this.voices.set(midi, voice)
     source.onended = () => this.cleanupVoice(midi, voice)
-    source.start(now)
+    source.start(startAt)
+    if (Number.isFinite(Number(stopTime)) && Number(stopTime) > startAt) {
+      this.noteOff(midi, { stopTime: Number(stopTime) })
+    }
     this.status = 'loaded'
   }
 
-  noteOff(note, { immediate = false } = {}) {
+  noteOff(note, { immediate = false, stopTime = null } = {}) {
     const midi = Number(note)
     this.heldNotes.delete(midi)
     this.pendingNotes.delete(midi)
     const voice = this.voices.get(midi)
-    if (!voice || voice.released) return
+    if (!voice || (voice.released && !immediate)) return
     voice.released = true
     const now = this.audioContext.currentTime
+    const stopAt = Math.max(now, Number.isFinite(Number(stopTime)) ? Number(stopTime) : now)
     const release = immediate ? 0.015 : this.params.release
-    voice.envelope.gain.cancelScheduledValues(now)
-    voice.envelope.gain.setValueAtTime(Math.max(0.0001, voice.envelope.gain.value), now)
-    voice.envelope.gain.exponentialRampToValueAtTime(0.0001, now + release)
+    voice.envelope.gain.cancelScheduledValues(stopAt)
+    voice.envelope.gain.setValueAtTime(Math.max(0.0001, voice.envelope.gain.value), stopAt)
+    voice.envelope.gain.exponentialRampToValueAtTime(0.0001, stopAt + release)
     try {
-      voice.source.stop(now + release + 0.02)
+      voice.source.stop(Math.max(voice.startTime || now, stopAt + release + 0.02))
     } catch {
       this.cleanupVoice(midi, voice)
     }
