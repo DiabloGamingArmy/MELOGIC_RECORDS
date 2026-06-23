@@ -36,6 +36,24 @@ const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw'
 const PREF_KEY = 'melogic_studio_keep_site_menu_open'
 const MUSICAL_TYPING_PREF_KEY = 'melogic:daw:musicalTyping'
 const CHANNEL_ACCORDION_PREF_KEY = 'melogic:daw:channelStripSettings:accordionState'
+const REGION_TOOL_ITEMS = [
+  { id: 'select', label: 'Select', glyph: 'V', shortcut: 'V / 1', enabled: true, mode: 'cursor' },
+  { id: 'split', label: 'Split', glyph: 'S', shortcut: 'S / 3', enabled: true, mode: 'cursor' },
+  { id: 'erase', label: 'Erase', glyph: 'E', shortcut: 'E / 4', enabled: true, mode: 'cursor' },
+  { id: 'mute', label: 'Mute', glyph: 'M', shortcut: 'M', enabled: true, mode: 'cursor' },
+  { id: 'loop', label: 'Repeat', glyph: 'R', shortcut: 'Action', enabled: true, mode: 'action' },
+  { id: 'duplicate', label: 'Duplicate', glyph: 'D', shortcut: 'Cmd/Ctrl+D', enabled: true, mode: 'action' },
+  { id: 'stretch', label: 'Stretch', glyph: 'T', shortcut: 'Edge drag', enabled: true, mode: 'cursor' },
+  { id: 'draw', label: 'Draw', glyph: 'P', enabled: false, reason: 'Use Pencil in Region Editor' },
+  { id: 'fade', label: 'Fade', glyph: 'F', enabled: false, reason: 'Use Region Editor fades' },
+  { id: 'slip', label: 'Slip', glyph: 'L', enabled: false, reason: 'Coming soon' },
+  { id: 'audition', label: 'Audition', glyph: 'A', enabled: false, reason: 'Coming soon' },
+  { id: 'marquee', label: 'Marquee', glyph: 'Q', enabled: false, reason: 'Coming soon' },
+  { id: 'glue', label: 'Glue', glyph: 'G', enabled: false, reason: 'Coming soon' },
+  { id: 'reverse', label: 'Reverse', glyph: 'RV', enabled: false, reason: 'Use Region Editor render' },
+  { id: 'gain', label: 'Gain', glyph: '+', enabled: false, reason: 'Use Region Editor gain' },
+  { id: 'automation', label: 'Automation', glyph: 'AU', enabled: false, reason: 'Use track automation' }
+]
 let keepSiteMenuOpen = localStorage.getItem(PREF_KEY) === '1'
 let channelAccordionState = (() => {
   try {
@@ -191,6 +209,8 @@ let recordingStatus = ''
 let activeRecording = null
 let addTrackModalOpen = false
 let selectedMidiRegionId = ''
+const selectedRegionIds = new Set()
+let activeRegionTool = 'select'
 let midiRegionDrag = null
 let timelineEdgeScrollRaf = 0
 let timelineEdgeScrollState = null
@@ -1334,52 +1354,322 @@ function renderMidiRollPanel(motionClass = '') {
     </div>
   </section>`
 }
+function getLiveRegionIds() {
+  return new Set(midiRegions.map((region)=>region.id).filter(Boolean))
+}
+function pruneSelectedRegionIds() {
+  const liveIds = getLiveRegionIds()
+  Array.from(selectedRegionIds).forEach((id)=>{ if (!liveIds.has(id)) selectedRegionIds.delete(id) })
+  if (selectedMidiRegionId && !liveIds.has(selectedMidiRegionId)) selectedMidiRegionId = selectedRegionIds.values().next().value || ''
+}
+function getSelectedRegionIds() {
+  pruneSelectedRegionIds()
+  if (!selectedRegionIds.size && selectedMidiRegionId) selectedRegionIds.add(selectedMidiRegionId)
+  return Array.from(selectedRegionIds).filter((id)=>midiRegions.some((region)=>region.id === id))
+}
+function regionIsSelected(regionId) {
+  return getSelectedRegionIds().includes(regionId)
+}
+function setSelectedRegions(regionIds = [], { primaryId = null } = {}) {
+  selectedRegionIds.clear()
+  regionIds.filter(Boolean).forEach((id)=>selectedRegionIds.add(id))
+  selectedMidiRegionId = primaryId || regionIds.find(Boolean) || ''
+}
+function selectSingleRegion(regionId) {
+  setSelectedRegions(regionId ? [regionId] : [], { primaryId: regionId || '' })
+}
+function toggleRegionSelection(regionId) {
+  if (!regionId) return
+  pruneSelectedRegionIds()
+  if (selectedRegionIds.has(regionId)) selectedRegionIds.delete(regionId)
+  else selectedRegionIds.add(regionId)
+  selectedMidiRegionId = selectedRegionIds.has(regionId) ? regionId : (selectedRegionIds.values().next().value || '')
+}
+function clearRegionSelection() {
+  setSelectedRegions([])
+}
+function getSelectedRegions() {
+  const ids = new Set(getSelectedRegionIds())
+  return midiRegions.filter((region)=>ids.has(region.id)).sort((a,b)=>(Number(a.startBeat)||0)-(Number(b.startBeat)||0))
+}
+function getRegionTypeTrackType(region) {
+  return region?.type === 'audio' ? 'audio' : 'software'
+}
+function trackSupportsRegionType(track, regionType) {
+  if (!track) return false
+  return regionType === 'audio' ? isAudioTrack(track) : !isAudioTrack(track)
+}
+function makeTrackForPaste({ regionType = 'midi', sourceTrack = null, insertIndex = tracks.length } = {}) {
+  const type = getRegionTypeTrackType({ type: regionType })
+  const id = makeTrackId()
+  const source = sourceTrack ? ensureTrackInsertState(deepClone(sourceTrack)) : null
+  const colors = source ? { color: source.color, colorSoft: source.colorSoft } : nextTrackColor(Math.max(0, insertIndex))
+  const instrument = type === 'software' && source?.instrument ? { ...source.instrument, id: makeInsertId('instrument'), pluginInstanceId: `${source.instrument.type}:${id}`, params: { ...(source.instrument.params || {}) } } : null
+  const track = ensureTrackInsertState({
+    id,
+    name: source ? `${source.name} Paste` : (type === 'audio' ? `Audio ${tracks.length + 1}` : `Software ${tracks.length + 1}`),
+    type,
+    color: colors.color,
+    colorSoft: colors.colorSoft,
+    icon: type === 'audio' ? 'audio' : 'instrument',
+    muted: false,
+    soloed: false,
+    recordArmed: false,
+    automationOpen: Boolean(source?.automationOpen),
+    volume: Number.isFinite(Number(source?.volume)) ? Number(source.volume) : 72,
+    pan: Number.isFinite(Number(source?.pan)) ? Number(source.pan) : 0,
+    outputLevel: 0,
+    midiEffects: type === 'software' ? cloneInsertList(source?.midiEffects || []) : [],
+    instrument,
+    audioEffects: cloneInsertList(source?.audioEffects || [])
+  })
+  tracks.splice(clamp(insertIndex, 0, tracks.length), 0, track)
+  warmTrackInstrument(track, { reason: 'paste-region-track' })
+  return track
+}
+function ensurePasteTargetTrack({ desiredIndex = 0, regionType = 'midi', sourceTrack = null } = {}) {
+  const safeIndex = clamp(Number(desiredIndex) || 0, 0, Math.max(0, tracks.length))
+  const existing = tracks[safeIndex]
+  if (trackSupportsRegionType(existing, regionType)) return existing
+  return makeTrackForPaste({ regionType, sourceTrack, insertIndex: safeIndex })
+}
 function copyMidiRegion(regionId = selectedMidiRegionId) {
-  const region = midiRegions.find((item)=>item.id === regionId)
-  if (!region) return
+  const ids = regionIsSelected(regionId) ? getSelectedRegionIds() : [regionId]
+  const regions = midiRegions.filter((region)=>ids.includes(region.id))
+  if (!regions.length) return
+  const sorted = regions.sort((a,b)=>{
+    const trackDelta = tracks.findIndex((track)=>track.id === a.trackId) - tracks.findIndex((track)=>track.id === b.trackId)
+    return trackDelta || ((Number(a.startBeat)||0)-(Number(b.startBeat)||0))
+  })
+  const earliestStartBeat = Math.min(...sorted.map((region)=>Number(region.startBeat) || 0))
+  const minTrackIndex = Math.min(...sorted.map((region)=>Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))))
   midiRegionClipboard = {
-    ...region,
-    id: '',
-    notes: (region.notes || []).map((note)=>({ ...note }))
+    type: 'regions',
+    earliestStartBeat,
+    minTrackIndex,
+    regions: sorted.map((region)=>({
+      region: cloneRegionForState(region, { persist: false }),
+      relativeStartBeat: (Number(region.startBeat) || 0) - earliestStartBeat,
+      relativeTrackOffset: Math.max(0, tracks.findIndex((track)=>track.id === region.trackId)) - minTrackIndex,
+      sourceTrack: deepClone(ensureTrackInsertState(tracks.find((track)=>track.id === region.trackId) || getSelectedTrack()))
+    }))
   }
 }
+function cloneRegionForArrangementCopy(sourceRegion, { id = makeInsertId(sourceRegion.type === 'audio' ? 'audio-region' : 'midi-region'), trackId = sourceRegion.trackId, startBeat = Number(sourceRegion.startBeat) || 0 } = {}) {
+  const sourceStart = Number(sourceRegion.startBeat) || 0
+  const sourceEnd = Math.max(sourceStart + 0.25, Number(sourceRegion.endBeat) || sourceStart + 1)
+  const length = Math.max(0.25, sourceEnd - sourceStart)
+  const delta = startBeat - sourceStart
+  const next = cloneRegionForState(sourceRegion, { persist: false })
+  next.id = id
+  next.trackId = trackId || sourceRegion.trackId
+  next.startBeat = startBeat
+  next.endBeat = startBeat + length
+  next.color = next.independentColor || tracks.find((track)=>track.id === next.trackId)?.color || next.color
+  next.name = next.name || ''
+  if (next.type === 'midi') {
+    next.notes = (sourceRegion.notes || []).map((note)=>({ ...note, startBeat: (Number(note.startBeat) || sourceStart) + delta }))
+  } else if (next.type === 'audio') {
+    next.clipId = sourceRegion.clipId || sourceRegion.audioClip?.audioAssetId || sourceRegion.audioClip?.id || sourceRegion.id
+    next.audioClip = {
+      ...(sourceRegion.audioClip || {}),
+      runtimeId: sourceRegion.audioClip?.runtimeId || sourceRegion.id,
+      audioAssetId: sourceRegion.audioClip?.audioAssetId || sourceRegion.audioClip?.id || sourceRegion.clipId || sourceRegion.id,
+      id: sourceRegion.audioClip?.id || sourceRegion.clipId || sourceRegion.id
+    }
+    next.timelineStartBeats = startBeat
+    next.timelineStartSeconds = getTimelineSecondsAtBeat(startBeat)
+    syncAudioRegionTimeline(next)
+  }
+  return next
+}
 function pasteMidiRegion({ beat = clampBeat(xToBeat(timelineState.playheadX)), trackId = selectedTrackId } = {}) {
-  if (!midiRegionClipboard) return
-  commitHistoryMutation('paste-midi-region', () => {
-    const sourceStart = Number(midiRegionClipboard.startBeat) || 0
-    const sourceEnd = Math.max(sourceStart + 0.25, Number(midiRegionClipboard.endBeat) || sourceStart + 1)
-    const length = sourceEnd - sourceStart
+  if (!midiRegionClipboard?.regions?.length) return
+  commitHistoryMutation('paste-midi-regions', () => {
     const startBeat = clampBeat(isSnapEnabled ? snapBeat(beat) : beat)
-    const targetTrack = tracks.find((track)=>track.id === trackId) || getSelectedTrack()
-    const id = makeInsertId(midiRegionClipboard.type === 'audio' ? 'audio-region' : 'midi-region')
-    const notes = (midiRegionClipboard.notes || []).map((note)=>({ ...note, startBeat: startBeat + ((Number(note.startBeat) || sourceStart) - sourceStart) }))
-    midiRegions.push({
-      ...midiRegionClipboard,
-      id,
-      trackId: targetTrack?.id || midiRegionClipboard.trackId,
-      startBeat,
-      endBeat: startBeat + length,
-      color: midiRegionClipboard.independentColor || targetTrack?.color || midiRegionClipboard.color,
-      notes,
-      name: midiRegionClipboard.name || '',
-      audioClip: midiRegionClipboard.type === 'audio' ? { ...(midiRegionClipboard.audioClip || {}), runtimeId: midiRegionClipboard.audioClip?.runtimeId || midiRegionClipboard.id, sessionOnly: true, missingAfterReload: true } : midiRegionClipboard.audioClip
+    const baseIndex = Math.max(0, tracks.findIndex((track)=>track.id === (trackId || selectedTrackId)))
+    const sorted = midiRegionClipboard.regions.slice().sort((a,b)=>a.relativeTrackOffset-b.relativeTrackOffset || a.relativeStartBeat-b.relativeStartBeat)
+    const created = []
+    sorted.forEach((item) => {
+      const sourceRegion = item.region
+      const targetTrack = ensurePasteTargetTrack({
+        desiredIndex: baseIndex + Number(item.relativeTrackOffset || 0),
+        regionType: sourceRegion.type || 'midi',
+        sourceTrack: item.sourceTrack
+      })
+      const copy = cloneRegionForArrangementCopy(sourceRegion, {
+        trackId: targetTrack.id,
+        startBeat: startBeat + Number(item.relativeStartBeat || 0)
+      })
+      midiRegions.push(copy)
+      created.push(copy.id)
     })
-    selectedMidiRegionId = id
+    setSelectedRegions(created, { primaryId: created[0] || '' })
+    selectedTrackId = tracks.find((track)=>track.id === (trackId || selectedTrackId))?.id || tracks[baseIndex]?.id || selectedTrackId
   })
 }
+function cleanupRegionAfterDelete(regionId) {
+  activePlaybackNotes.forEach((active, key) => { if (active.regionId === regionId) stopPlaybackNote(key) })
+  stopAudioClipPlayback(regionId)
+  if (midiRollState?.regionId === regionId) {
+    midiRollState = null
+    midiRollSelectedNoteIndex = null
+    midiRollSelectedNoteIndices = []
+    if (activeBottomPanel === 'midi-roll') activeBottomPanel = ''
+  }
+}
 function deleteMidiRegion(regionId = selectedMidiRegionId) {
-  if (!midiRegions.some((region)=>region.id === regionId)) return
-  commitHistoryMutation('delete-midi-region', () => {
-    midiRegions = midiRegions.filter((region)=>region.id !== regionId)
-    activePlaybackNotes.forEach((active, key) => { if (active.regionId === regionId) stopPlaybackNote(key) })
-    stopAudioClipPlayback(regionId)
-    if (selectedMidiRegionId === regionId) selectedMidiRegionId = ''
-    if (midiRollState?.regionId === regionId) {
-      midiRollState = null
-      midiRollSelectedNoteIndex = null
-      if (activeBottomPanel === 'midi-roll') activeBottomPanel = ''
+  const ids = regionIsSelected(regionId) ? getSelectedRegionIds() : [regionId]
+  const deleteIds = ids.filter((id)=>midiRegions.some((region)=>region.id === id))
+  if (!deleteIds.length) return
+  commitHistoryMutation('delete-midi-regions', () => {
+    midiRegions = midiRegions.filter((region)=>!deleteIds.includes(region.id))
+    deleteIds.forEach(cleanupRegionAfterDelete)
+    selectedRegionIds.clear()
+    if (deleteIds.includes(selectedMidiRegionId)) selectedMidiRegionId = ''
+  })
+}
+function duplicateSelectedRegions() {
+  const regions = getSelectedRegions()
+  if (!regions.length) return
+  commitHistoryMutation('duplicate-midi-regions', () => {
+    const groupStart = Math.min(...regions.map((region)=>Number(region.startBeat) || 0))
+    const groupEnd = Math.max(...regions.map((region)=>Number(region.endBeat) || ((Number(region.startBeat) || 0) + 1)))
+    const offset = Math.max(0.25, groupEnd - groupStart)
+    const created = []
+    regions.forEach((region) => {
+      const copy = cloneRegionForArrangementCopy(region, { startBeat: (Number(region.startBeat) || 0) + offset })
+      midiRegions.push(copy)
+      created.push(copy.id)
+    })
+    setSelectedRegions(created, { primaryId: created[0] || '' })
+  })
+}
+function repeatSelectedRegions() {
+  const regions = getSelectedRegions()
+  if (!regions.length) return
+  duplicateSelectedRegions()
+}
+function toggleSelectedRegionMute(regionId = selectedMidiRegionId) {
+  const ids = regionIsSelected(regionId) ? getSelectedRegionIds() : [regionId]
+  const regions = midiRegions.filter((region)=>ids.includes(region.id))
+  if (!regions.length) return
+  commitHistoryMutation('toggle-region-mute', () => {
+    const nextMuted = !regions.every((region)=>region.type === 'audio' ? normalizeAudioEdit(region.audioEdit).mute : region.muted === true)
+    regions.forEach((region) => {
+      if (region.type === 'audio') region.audioEdit = { ...normalizeAudioEdit(region.audioEdit), mute: nextMuted }
+      region.muted = nextMuted
+      if (nextMuted) {
+        activePlaybackNotes.forEach((active, key) => { if (active.regionId === region.id) stopPlaybackNote(key) })
+        stopAudioClipPlayback(region.id)
+      }
+    })
+  })
+}
+function makeSplitStretchMetadata(sourceDurationSeconds, targetDurationSeconds) {
+  if (Math.abs(sourceDurationSeconds - targetDurationSeconds) < 0.01) return makeDefaultAudioStretch(sourceDurationSeconds)
+  return createPendingStretchMetadata({ sourceDurationSeconds, targetDurationSeconds })
+}
+function splitAudioRegionAtBeat(region, splitBeat) {
+  syncAudioRegionTimeline(region)
+  const startBeat = Number(region.startBeat) || 0
+  const endBeat = Number(region.endBeat) || (startBeat + Math.max(0.25, Number(region.durationBeats) || 0.25))
+  if (splitBeat <= startBeat + 0.05 || splitBeat >= endBeat - 0.05) return []
+  const trimStart = getAudioTrimStartSeconds(region)
+  const trimEnd = getAudioTrimEndSeconds(region)
+  const playbackRate = getAudioRegionPlaybackRate(region)
+  const splitVisibleSeconds = Math.max(minAudioRegionSeconds, beatsToSeconds(splitBeat - startBeat))
+  const sourceSplitSeconds = clamp(trimStart + (splitVisibleSeconds * playbackRate), trimStart + minAudioRegionSeconds, trimEnd - minAudioRegionSeconds)
+  const left = cloneRegionForState(region, { persist: false })
+  const right = cloneRegionForState(region, { persist: false })
+  left.endBeat = splitBeat
+  left.trimStartSeconds = trimStart
+  left.trimEndSeconds = sourceSplitSeconds
+  left.visibleDurationSeconds = beatsToSeconds(splitBeat - startBeat)
+  left.durationSeconds = left.visibleDurationSeconds
+  left.durationBeats = splitBeat - startBeat
+  left.stretch = makeSplitStretchMetadata(Math.max(minAudioRegionSeconds, sourceSplitSeconds - trimStart), left.visibleDurationSeconds)
+  left.stretchRender = null
+  left.renderedWaveform = null
+  right.id = makeInsertId('audio-region')
+  right.startBeat = splitBeat
+  right.timelineStartBeats = splitBeat
+  right.timelineStartSeconds = getTimelineSecondsAtBeat(splitBeat)
+  right.endBeat = endBeat
+  right.trimStartSeconds = sourceSplitSeconds
+  right.trimEndSeconds = trimEnd
+  right.visibleDurationSeconds = beatsToSeconds(endBeat - splitBeat)
+  right.durationSeconds = right.visibleDurationSeconds
+  right.durationBeats = endBeat - splitBeat
+  right.stretch = makeSplitStretchMetadata(Math.max(minAudioRegionSeconds, trimEnd - sourceSplitSeconds), right.visibleDurationSeconds)
+  right.stretchRender = null
+  right.renderedWaveform = null
+  right.clipId = region.clipId || region.audioClip?.audioAssetId || region.audioClip?.id || region.id
+  right.audioClip = { ...(region.audioClip || {}), runtimeId: region.audioClip?.runtimeId || region.id, audioAssetId: region.audioClip?.audioAssetId || region.audioClip?.id || region.clipId || region.id, id: region.audioClip?.id || region.clipId || region.id }
+  syncAudioRegionTimeline(left)
+  syncAudioRegionTimeline(right)
+  return [left, right]
+}
+function splitMidiRegionAtBeat(region, splitBeat) {
+  const startBeat = Number(region.startBeat) || 0
+  const endBeat = Math.max(startBeat + 0.25, Number(region.endBeat) || startBeat + 1)
+  if (splitBeat <= startBeat + 0.05 || splitBeat >= endBeat - 0.05) return []
+  const left = cloneRegionForState(region, { persist: false })
+  const right = cloneRegionForState(region, { persist: false })
+  left.endBeat = splitBeat
+  right.id = makeInsertId('midi-region')
+  right.startBeat = splitBeat
+  right.endBeat = endBeat
+  left.notes = []
+  right.notes = []
+  ;(region.notes || []).forEach((note) => {
+    const noteStart = Number(note.startBeat) || startBeat
+    const noteEnd = noteStart + Math.max(0.05, Number(note.durationBeats) || 0.05)
+    if (noteEnd <= splitBeat) left.notes.push({ ...note })
+    else if (noteStart >= splitBeat) right.notes.push({ ...note })
+    else {
+      left.notes.push({ ...note, durationBeats: Math.max(0.05, splitBeat - noteStart) })
+      right.notes.push({ ...note, id: makeInsertId('note'), startBeat: splitBeat, durationBeats: Math.max(0.05, noteEnd - splitBeat) })
     }
   })
+  return [left, right]
+}
+function splitRegionAtBeat(regionId, beat) {
+  const region = midiRegions.find((item)=>item.id === regionId)
+  if (!region) return
+  const splitBeat = clampBeat(isSnapEnabled ? snapBeat(beat) : beat)
+  const pieces = region.type === 'audio' ? splitAudioRegionAtBeat(region, splitBeat) : splitMidiRegionAtBeat(region, splitBeat)
+  if (pieces.length !== 2) return
+  commitHistoryMutation('split-region', () => {
+    const index = midiRegions.findIndex((item)=>item.id === region.id)
+    if (index < 0) return
+    midiRegions.splice(index, 1, pieces[0], pieces[1])
+    setSelectedRegions(pieces.map((piece)=>piece.id), { primaryId: pieces[1].id })
+  })
+}
+function handleRegionToolPointer(event, regionId) {
+  if (activeRegionTool === 'split') {
+    splitRegionAtBeat(regionId, pointerEventToTimelineBeat(event, { snapped: false }))
+    return true
+  }
+  if (activeRegionTool === 'erase') {
+    deleteMidiRegion(regionId)
+    return true
+  }
+  if (activeRegionTool === 'mute') {
+    toggleSelectedRegionMute(regionId)
+    return true
+  }
+  return false
+}
+function setActiveRegionTool(toolId = 'select') {
+  const tool = REGION_TOOL_ITEMS.find((item)=>item.id === toolId && item.enabled && item.mode !== 'action')
+  activeRegionTool = tool?.id || 'select'
+  renderEditor()
+}
+function runRegionToolAction(toolId) {
+  if (toolId === 'loop') repeatSelectedRegions()
+  else if (toolId === 'duplicate') duplicateSelectedRegions()
 }
 const renderTrackRenamePopover = () => renameTrackState ? `<form class="studio-track-popover studio-track-popover--rename" data-track-rename-form style="left:${Math.round(renameTrackState.x)}px;top:${Math.round(renameTrackState.y)}px"><label>Rename Track<input data-track-rename-input value="${(renameTrackState.name || '').replace(/"/g, '&quot;')}" /></label><div><button type="submit">Save</button><button type="button" data-track-rename-cancel>Cancel</button></div></form>` : ''
 const renderTrackColorPopover = () => colorPickerState ? `<form class="studio-track-popover studio-track-popover--color" data-track-color-form style="left:${Math.round(colorPickerState.x)}px;top:${Math.round(colorPickerState.y)}px"><label>Track Color<input type="color" data-track-color-input value="${colorPickerState.color || '#58d4ff'}" /></label><button type="submit">Apply</button></form>` : ''
@@ -1552,8 +1842,8 @@ function renderMidiRegion(region, isRecording = false) {
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
   const notes = Array.isArray(region.notes) ? region.notes : []
   const visibleNotes = isRecording ? notes : notes.filter((note)=>noteIsVisibleInRegion(region, note))
-  const selected = !isRecording && selectedMidiRegionId === region.id
-  return `<article class="studio-midi-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''}" data-midi-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${color};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording MIDI' : esc(getMidiRegionLabel(region))}</strong>${visibleNotes.slice(0,24).map((note)=>{ const noteStart=Number(note.startBeat) || startBeat; const noteLeft=(noteStart - startBeat) * beatWidth(); const noteWidth=Math.max(4, (Number(note.durationBeats) || 0.05) * beatWidth()); const noteTop=clamp(82 - (((note.note || 60) - 48) / 36) * 70, 8, 82); return `<span class="studio-midi-note-preview" style="left:${noteLeft}px;width:${noteWidth}px;top:${noteTop}%"></span>` }).join('')}</article>`
+  const selected = !isRecording && regionIsSelected(region.id)
+  return `<article class="studio-midi-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${region.muted ? 'is-region-muted' : ''}" data-midi-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${color};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording MIDI' : esc(getMidiRegionLabel(region))}</strong>${visibleNotes.slice(0,24).map((note)=>{ const noteStart=Number(note.startBeat) || startBeat; const noteLeft=(noteStart - startBeat) * beatWidth(); const noteWidth=Math.max(4, (Number(note.durationBeats) || 0.05) * beatWidth()); const noteTop=clamp(82 - (((note.note || 60) - 48) / 36) * 70, 8, 82); return `<span class="studio-midi-note-preview" style="left:${noteLeft}px;width:${noteWidth}px;top:${noteTop}%"></span>` }).join('')}</article>`
 }
 function normalizeWaveformPeak(peak) {
   if (peak && typeof peak === 'object') {
@@ -1668,7 +1958,7 @@ function renderAudioRegion(region, isRecording = false) {
   const track = tracks[trackIndex] || getSelectedTrack()
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
   const waveformColor = getReadableWaveformColor(color)
-  const selected = !isRecording && selectedMidiRegionId === region.id
+  const selected = !isRecording && regionIsSelected(region.id)
   const stretch = normalizeAudioStretch(region.stretch, {
     clipId: region.id,
     sourceDurationSeconds: getAudioSourceDurationSeconds(region),
@@ -1682,7 +1972,7 @@ function renderAudioRegion(region, isRecording = false) {
   const speedLabel = Math.round(stretchMath.speedPercent)
   const stretchLabel = stretching || stretch.enabled ? `<b class="studio-audio-stretch-label">${stretching ? 'Time Stretch' : stretchStatus} ${speedLabel}% speed</b>` : ''
   const edit = normalizeAudioEdit(region.audioEdit)
-  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute ? 'is-audio-muted' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
+  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute || region.muted ? 'is-audio-muted is-region-muted' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
 }
 function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=app.querySelector(`[data-track-volume="${track.id}"]`); if(!input) return; input.value=String(track.volume); input.setAttribute('value', String(track.volume)) }
 function getInstrumentKnobDescriptors(){
@@ -2248,6 +2538,17 @@ function renderAudioEditPlaybackPrompt() {
 }
 function renderFileMenu(){ if(!isFileMenuOpen) return ''; return `<div class="studio-controls-menu studio-file-menu" data-file-menu><button type="button" data-import-audio-selected-track>Import Audio to Selected Track</button><p>Import browser-decodable audio into the selected audio track.</p></div>` }
 function renderControlsMenu(){ if(!isControlsMenuOpen) return ''; return `<div class="studio-controls-menu" data-controls-menu><label><input type="checkbox" data-musical-typing-toggle ${isTypingPianoEnabled ? 'checked' : ''}> Musical Typing</label><p>${isTypingPianoEnabled ? 'Typing keys play the selected instrument.' : 'Typing keys run DAW commands.'}</p></div>` }
+function renderRegionToolRail() {
+  return `<div class="studio-right-rail-divider studio-right-rail-divider--region-tools"></div><div class="studio-region-tool-rail" role="toolbar" aria-label="Global region tools">${REGION_TOOL_ITEMS.map((tool) => {
+    const isAction = tool.mode === 'action'
+    const active = activeRegionTool === tool.id && !isAction
+    const attrs = tool.enabled
+      ? `${isAction ? `data-region-tool-action="${tool.id}"` : `data-region-tool="${tool.id}"`} aria-pressed="${String(active)}"`
+      : `disabled aria-disabled="true"`
+    const title = `${tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}${tool.reason ? ` - ${tool.reason}` : ''}`
+    return `<button type="button" class="studio-region-tool-button ${active ? 'is-active' : ''} ${!tool.enabled ? 'is-disabled' : ''}" ${attrs} title="${esc(title)}"><span>${esc(tool.glyph)}</span><small>${esc(tool.label)}</small></button>`
+  }).join('')}</div>`
+}
 
 function cloneRegionForState(region = {}, { persist = false } = {}) {
   const waveform = region.waveform
@@ -2978,6 +3279,7 @@ function captureDawSnapshot() {
     tracks: cloneTracksForHistory(),
     selectedTrackId,
     selectedMidiRegionId,
+    selectedRegionIds: getSelectedRegionIds(),
     midiRollState: midiRollState ? { ...midiRollState } : null,
     midiRollSelectedNoteIndex,
     midiRollSelectedNoteIndices: [...midiRollSelectedNoteIndices]
@@ -2992,6 +3294,7 @@ function restoreDawSnapshot(snapshot) {
   tracks.splice(0, tracks.length, ...(snapshot.tracks || []).map((track)=>ensureTrackInsertState(deepClone(track))))
   selectedTrackId = snapshot.selectedTrackId || tracks[0]?.id || ''
   selectedMidiRegionId = snapshot.selectedMidiRegionId || ''
+  setSelectedRegions(Array.isArray(snapshot.selectedRegionIds) ? snapshot.selectedRegionIds : (selectedMidiRegionId ? [selectedMidiRegionId] : []), { primaryId: selectedMidiRegionId })
   midiRollState = snapshot.midiRollState ? { ...snapshot.midiRollState } : null
   midiRollSelectedNoteIndex = Number.isInteger(snapshot.midiRollSelectedNoteIndex) ? snapshot.midiRollSelectedNoteIndex : null
   midiRollSelectedNoteIndices = Array.isArray(snapshot.midiRollSelectedNoteIndices) ? [...snapshot.midiRollSelectedNoteIndices] : []
@@ -4249,7 +4552,7 @@ function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat()) {
     })
     const edit = normalizeAudioEdit(region.audioEdit)
     const active = activeAudioClipSources.get(region.id)
-    if (edit.mute) {
+    if (edit.mute || region.muted) {
       if (active) stopAudioClipPlayback(region.id)
       return
     }
@@ -4411,12 +4714,13 @@ function updateMidiRegionPlayback(currentBeat = getTransportClockProjectBeat()) 
     const region = midiRegions.find((item)=>item.id === active.regionId)
     const track = tracks.find((item)=>item.id === active.trackId)
     const activeEndSeconds = beatsToSecondsAtBpm(active.endBeat, bpm)
-    if (!region || !isTrackAudible(track) || currentProjectSeconds >= activeEndSeconds + 0.05) {
+    if (!region || region.muted || !isTrackAudible(track) || currentProjectSeconds >= activeEndSeconds + 0.05) {
       stopPlaybackNote(key)
     }
   })
   midiRegions.forEach((region) => {
     if (region.type === 'audio') return
+    if (region.muted) return
     const track = tracks.find((item)=>item.id === region.trackId)
     if (!isTrackAudible(track)) return
     ensureTrackInstrumentInstance(track)
@@ -4460,11 +4764,24 @@ function refreshMidiRegionDom() {
 }
 function bindMidiRegionEvents() {
   app.querySelectorAll('[data-midi-region]').forEach((region)=>{
-    region.addEventListener('pointerdown',(event)=>startMidiRegionDrag(event, region.dataset.midiRegion))
+    region.addEventListener('pointerdown',(event)=>{
+      const regionId = region.dataset.midiRegion
+      if (event.button !== 0) return
+      if (event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        toggleRegionSelection(regionId)
+        refreshMidiRegionDom()
+        return
+      }
+      if (!regionIsSelected(regionId)) selectSingleRegion(regionId)
+      if (handleRegionToolPointer(event, regionId)) return
+      startMidiRegionDrag(event, regionId)
+    })
     region.addEventListener('contextmenu',(event)=>{
       event.preventDefault()
       event.stopPropagation()
-      selectedMidiRegionId = region.dataset.midiRegion
+      if (!regionIsSelected(region.dataset.midiRegion)) selectSingleRegion(region.dataset.midiRegion)
       const pos = getClampedFloatingPosition(event.clientX, event.clientY, 220, 230)
       midiRegionMenuState = { regionId: region.dataset.midiRegion, x: pos.x, y: pos.y, pasteBeat: pointerEventToTimelineBeat(event), trackId: tracks[getTrackLaneFromY(event.clientY)]?.id || selectedTrackId }
       renderEditor()
@@ -4767,7 +5084,7 @@ async function createAudioRegionFromFile({
     })
     syncAudioRegionTimeline(region)
     midiRegions.push(region)
-    selectedMidiRegionId = region.id
+    selectSingleRegion(region.id)
     activeBottomPanel = 'midi-roll'
     recordingStatus = ''
     pushHistory('import-audio-region', before, captureDawSnapshot())
@@ -4991,7 +5308,7 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
   syncAudioRegionTimeline(region)
   region.missingMedia = false
   midiRegions.push(region)
-  selectedMidiRegionId = region.id
+  selectSingleRegion(region.id)
   recordingStatus = uploadError ? 'Audio recorded for this session, but upload failed. It may not play after refresh.' : ''
   pushHistory('record-audio-region', before, captureDawSnapshot())
   scheduleEditorSave()
@@ -5070,11 +5387,12 @@ function startMidiRegionDrag(event, regionId) {
   if (!region || !gridEl) return
   event.preventDefault()
   event.stopPropagation()
-  selectedMidiRegionId = region.id
+  if (!regionIsSelected(region.id)) selectSingleRegion(region.id)
+  else selectedMidiRegionId = region.id
   const handle = event.target.closest('[data-midi-region-handle]')?.dataset?.midiRegionHandle || 'move'
   const isAudioRegion = region.type === 'audio'
   if (isAudioRegion) syncAudioRegionTimeline(region)
-  const altStretch = event.altKey === true || event.getModifierState?.('Alt') === true
+  const altStretch = event.altKey === true || event.getModifierState?.('Alt') === true || activeRegionTool === 'stretch'
   const editMode = isAudioRegion && ['left', 'right'].includes(handle) && altStretch ? 'stretch' : (isAudioRegion && ['left', 'right'].includes(handle) ? 'trim' : 'move')
   const originalSourceDurationSeconds = isAudioRegion ? getAudioSourceDurationSeconds(region) : 0
   const originalStretch = isAudioRegion ? normalizeAudioStretch(region.stretch, {
@@ -5260,7 +5578,7 @@ function selectMidiNote(regionId, noteIndex) {
   const region = midiRegions.find((item)=>item.id === regionId)
   if (!region?.notes?.[noteIndex]) return
   midiRollState = { ...(midiRollState || {}), regionId }
-  selectedMidiRegionId = regionId
+  selectSingleRegion(regionId)
   midiRollSelectedNoteIndex = noteIndex
   midiRollStatus = ''
   renderEditor()
@@ -5597,7 +5915,7 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
   if (!region || !note || !grid) return
   event.preventDefault()
   event.stopPropagation()
-  selectedMidiRegionId = regionId
+  selectSingleRegion(regionId)
   if (event.shiftKey) {
     const selected = new Set(midiRollSelectedNoteIndices)
     if (selected.has(noteIndex)) selected.delete(noteIndex)
@@ -5684,7 +6002,7 @@ function beginPitchTraceNoteDrag(event, regionId, noteId) {
   if (!region || !note) return
   event.preventDefault()
   event.stopPropagation()
-  selectedMidiRegionId = regionId
+  selectSingleRegion(regionId)
   pitchTraceSelectedNoteId = noteId
   const visibleNotes = edit.pitchTrace.notes.filter((item)=>item.confidence >= edit.pitchTrace.confidenceThreshold)
   const noteValues = visibleNotes.map((item)=>Number(item.editedMidiNote ?? item.midiNote)).filter(Number.isFinite)
@@ -6728,7 +7046,7 @@ function bindEditorEvents() {
   extensionLane?.addEventListener('scroll', () => syncTimelineScroll(extensionLane), { passive:true })
   app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight }; document.body.classList.add('is-studio-dragging') }))
   ruler?.addEventListener('pointerdown', (event) => { const cycleHandle = event.target.closest('[data-cycle-handle]'); const cycleMove = event.target.closest('[data-cycle-drag]'); const inCycleStrip = isCycleStripPointerEvent(event, ruler); if (cycleHandle && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: cycleHandle.dataset.cycleHandle === 'start' ? 'resize-start' : 'resize-end', fixedX: cycleHandle.dataset.cycleHandle === 'start' ? cycleRange.endX : cycleRange.startX }; return } if (cycleMove && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: 'move', startPointerX: x, startRange: { ...cycleRange } }; return } if (inCycleStrip) { event.preventDefault(); const x = getRulerLocalX(event); setCycleEnabled(true); cycleDrag = { mode: 'create', anchorX: x }; applyCycleRange(x, x + beatWidth()); document.body.classList.add('is-studio-dragging'); return } event.preventDefault(); timelineState.isDraggingPlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); scheduleEditorSave() })
-  grid?.addEventListener('pointerdown', (event) => { if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); selectedMidiRegionId = ''; midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.hidden = false } })
+  grid?.addEventListener('pointerdown', (event) => { if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); if (!event.shiftKey) clearRegionSelection(); midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.hidden = false } })
 	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); if (grid) { grid.scrollLeft = extensionDrag.side==='right' ? Math.max(0, grid.scrollWidth-grid.clientWidth) : extensionDrag.scrollLeft; syncTimelineScroll() } return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
 	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
   window.addEventListener('pointermove', (event) => {
@@ -6853,6 +7171,14 @@ function bindEditorEvents() {
   })
   app.querySelectorAll('[data-midi]').forEach((key)=>{ const midi=Number(key.dataset.midi); key.addEventListener('pointerdown',(e)=>{ e.preventDefault(); const track=getSelectedTrack(); playTrackMidiNote(track, midi+(instrumentOctaveOffset*12), 0.85) }); key.addEventListener('pointerup',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }); key.addEventListener('pointerleave',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }) }); app.querySelector('[data-typing-piano-toggle]')?.addEventListener('click',()=>{ setMusicalTypingEnabled(!isTypingPianoEnabled); renderEditor() }); app.querySelector('[data-sustain-toggle]')?.addEventListener('click',()=>{ isSustainEnabled=!isSustainEnabled; if(!isSustainEnabled) stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-down]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.max(-2,instrumentOctaveOffset-1); stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-up]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.min(2,instrumentOctaveOffset+1); stopAllTrackInstrumentNotes(); renderEditor() }); bindMidiRegionEvents(); app.querySelectorAll('[data-instrument-knob]').forEach((input)=>{ input.addEventListener('input',(e)=>{ const knob=e.target.dataset.instrumentKnob; const value=Number(e.target.value); const selected=getSelectedTrack(); if(knob==='volume'){ instrumentVolume=value; if(selected){ selected.volume=Math.round(value*100); syncSelectedTrackVolumeControl(selected); if(selected.instrument?.pluginInstanceId) dawInstrumentRegistry.setParam(selected.instrument.pluginInstanceId, 'volume', value) } if(instrumentMasterGain&&instrumentAudioContext) instrumentMasterGain.gain.setValueAtTime(instrumentVolume,instrumentAudioContext.currentTime) } else if(knob==='pan'){ instrumentPan=value; if(selected) selected.pan=value; if(instrumentPanNode&&instrumentAudioContext) instrumentPanNode.pan.setValueAtTime(instrumentPan,instrumentAudioContext.currentTime); app.querySelector(`[data-track-pan="${selected?.id}"]`)?.style.setProperty('--pan-angle', `${value * 135}deg`) } const dial=app.querySelector(`[data-instrument-knob-dial="${knob}"]`); const valueEl=app.querySelector(`[data-instrument-knob-value="${knob}"]`); if(dial) dial.style.setProperty('--knob-angle',`${-135 + ((value-Number(e.target.min))/(Number(e.target.max)-Number(e.target.min)))*270}deg`); if(valueEl) valueEl.textContent = knob==='pan' ? value.toFixed(2) : `${Math.round(value*100)}%` }); input.addEventListener('change',()=>scheduleEditorSave()); input.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const startY=event.clientY; const startValue=Number(input.value); const min=Number(input.min); const max=Number(input.max); const speed = input.dataset.instrumentKnob==='pan' ? 0.004 : 0.002; const onMove=(ev)=>{ const delta=-(ev.clientY-startY)*speed; const next=clamp(startValue+delta,min,max); input.value=String(next); input.dispatchEvent(new Event('input',{bubbles:true})) }; const onUp=()=>{ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); scheduleEditorSave() }; window.addEventListener('pointermove',onMove); window.addEventListener('pointerup',onUp,{once:true}) }) }); app.querySelectorAll('[data-preset-load]').forEach((button)=>{ button.addEventListener('click',(event)=>{ event.stopPropagation(); const preset=instrumentPresetItems.find((item)=>item.id===button.dataset.presetLoad); if(!preset) return; selectedInstrumentName=preset.name; renderEditor() }) }); app.querySelector('[data-arp-toggle]')?.addEventListener('click',()=>{ arpEnabled=!arpEnabled; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-mode]')?.addEventListener('change',(e)=>{ arpMode=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-rate]')?.addEventListener('change',(e)=>{ arpRate=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-length]')?.addEventListener('change',(e)=>{ arpLength=Number(e.target.value)||16; if(selectedArpStepIndex>=arpLength) selectedArpStepIndex=arpLength-1; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-octave]').forEach((btn)=>btn.addEventListener('click',()=>{ const d=Number(btn.dataset.arpOctave||0); arpOctaves=clamp(arpOctaves+d,1,4); renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-gate]')?.addEventListener('input',(e)=>{ arpGate=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpGate}%` }); app.querySelector('[data-arp-swing]')?.addEventListener('input',(e)=>{ arpSwing=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpSwing}%` }); app.querySelector('[data-arp-velocity]')?.addEventListener('input',(e)=>{ arpVelocity=Number(e.target.value); e.target.nextElementSibling.textContent=String(arpVelocity) }); app.querySelectorAll('[data-arp-gate],[data-arp-swing],[data-arp-velocity]').forEach((el)=>el.addEventListener('change',()=>scheduleEditorSave())); app.querySelectorAll('[data-arp-edit-mode]').forEach((button)=>{ button.addEventListener('click',()=>{ const next=button.dataset.arpEditMode; if(!next||arpEditMode===next) return; arpEditMode=next; if(next!=='note') arpNotePickerStepIndex=null; renderEditor() }) }); app.querySelectorAll('[data-arp-step]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ const i=Number(el.dataset.arpStep); if(!Number.isFinite(i)||!arpSteps[i]) return; const step=arpSteps[i]=normalizeArpStep(arpSteps[i],i); selectedArpStepIndex=i; if(event.ctrlKey||event.metaKey){ step.active=!step.active; renderEditor(); scheduleEditorSave(); return } if(event.shiftKey){ step.accent=!step.accent; renderEditor(); scheduleEditorSave(); return } if(event.altKey){ step.octave=step.octave>=2?-1:step.octave+1; renderEditor(); scheduleEditorSave(); return } if(arpEditMode==='note'){ arpNotePickerStepIndex=i; arpNotePickerOctave=step.noteOctave ?? arpNotePickerOctave; renderEditor(); return } if(arpEditMode==='velocity'){ step.active=true; step.velocity=getVelocityFromStepPointer(event, el); renderEditor(); scheduleEditorSave(); return } cycleArpStepByMode(step, arpEditMode); step.active=true; renderEditor(); scheduleEditorSave() })); app.querySelectorAll('[data-arp-note-picker-octave]').forEach((button)=>{ button.addEventListener('click',()=>{ arpNotePickerOctave=clamp(arpNotePickerOctave+Number(button.dataset.arpNotePickerOctave||0),0,8); renderEditor() }) }); app.querySelector('[data-arp-note-picker-close]')?.addEventListener('click',()=>{ arpNotePickerStepIndex=null; renderEditor() }); app.querySelectorAll('[data-arp-note-value]').forEach((button)=>{ button.addEventListener('click',()=>{ const stepIndex=arpNotePickerStepIndex; if(stepIndex==null||!arpSteps[stepIndex]) return; const st=arpSteps[stepIndex]=normalizeArpStep(arpSteps[stepIndex],stepIndex); st.note=clamp(Number(button.dataset.arpNoteValue),0,11); st.noteOctave=arpNotePickerOctave; st.active=true; selectedArpStepIndex=stepIndex; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-reset]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ ...createDefaultArpStep(i), octave:0, accent:false },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-randomize]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ active:Math.random()>.35, note:Math.floor(Math.random()*12), noteOctave:Math.floor(3+Math.random()*3), velocity:Math.floor(35+Math.random()*92), octave:[-1,0,0,1][Math.floor(Math.random()*4)], gate:[10,25,50,70,85,100][Math.floor(Math.random()*6)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.75, tie:Math.random()>.9 },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-pattern]').forEach((el)=>el.addEventListener('click',()=>{ const name=el.dataset.arpPattern||''; if(name.includes('Straight')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:i%2===0, velocity:95, octave:0, accent:false },i)); else if(name.includes('Random')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:Math.random()>.45, velocity:Math.floor(45+Math.random()*80), octave:[-1,0,1][Math.floor(Math.random()*3)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.8 },i)); else if(name.includes('Chord')) arpMode='Chord Repeat'; currentArpPatternName=name; renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-step-active]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.active=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.note=clamp(Number(e.target.value)||0,0,11); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.noteOctave=clamp(Number(e.target.value)||4,0,8); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.octave=clamp(Number(e.target.value)||0,-2,4); renderEditor(); scheduleEditorSave() }); [['[data-arp-step-velocity]','velocity','[data-arp-step-velocity-value]',''],['[data-arp-step-gate]','gate','[data-arp-step-gate-value]','%'],['[data-arp-step-probability]','probability','[data-arp-step-probability-value]','%']].forEach(([sel,key,valSel,suffix])=>{ const input=app.querySelector(sel); const valueEl=app.querySelector(valSel); if(!input) return; input.addEventListener('input',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st[key]=Number(e.target.value); if(valueEl) valueEl.textContent=`${st[key]}${suffix}` }); input.addEventListener('change',()=>{ renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-step-accent]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.accent=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-tie]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.tie=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-instrument-select]')?.addEventListener('change',(e)=>{ selectedInstrumentName=e.target.value });
   app.querySelector('.studio-editor-page')?.addEventListener('click', (event) => {
+    const regionToolButton = event.target.closest('[data-region-tool], [data-region-tool-action]')
+    if (regionToolButton) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (regionToolButton.dataset.regionTool) setActiveRegionTool(regionToolButton.dataset.regionTool)
+      else if (regionToolButton.dataset.regionToolAction) runRegionToolAction(regionToolButton.dataset.regionToolAction)
+      return
+    }
     const actionButton = event.target.closest('[data-midi-region-action]')
     if (actionButton) {
       event.stopPropagation()
@@ -6865,7 +7191,7 @@ function bindEditorEvents() {
       else if (action === 'paste') pasteMidiRegion({ beat: context.pasteBeat, trackId: context.trackId })
       else if (action === 'view-roll') {
         const region = midiRegions.find((item)=>item.id === regionId)
-        selectedMidiRegionId = regionId
+        selectSingleRegion(regionId)
         midiRollState = region?.type === 'audio' ? null : { regionId, quantize: midiRollState?.quantize || '0.25' }
         midiRollSelectedNoteIndex = null
         openBottomPanel('midi-roll')
@@ -6969,12 +7295,15 @@ function renderEditor() {
   const project = projectState
   if (studioAudioEngine) studioAudioEngine.setBpm(Number(project?.bpm || 140))
   document.body.classList.add('is-studio-editor')
+  Array.from(document.body.classList).forEach((className)=>{ if (className.startsWith('is-region-tool-')) document.body.classList.remove(className) })
+  document.body.classList.add(`is-region-tool-${activeRegionTool}`)
   const showResonaPanel = activeBottomPanel === 'resona'
   const bottomPanelId = activeBottomPanel || closingBottomPanel
   const shouldRenderBottomPanel = Boolean(bottomPanelId && bottomPanelId !== 'resona')
   const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button type="button" data-toggle-file-menu class="${isFileMenuOpen ? 'is-active' : ''}">File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button type="button" data-toggle-controls-menu class="${isControlsMenuOpen ? 'is-active' : ''}">Controls</button><button>Help</button></nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}</main>`
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   initShellChrome()
+  app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')?.insertAdjacentHTML('afterend', renderRegionToolRail())
   app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
   const audioRenderModal = renderAudioStretchRenderModal()
   if (audioRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioRenderModal)
@@ -7018,6 +7347,27 @@ function handleStudioKeydown(event){
       redoDawEdit()
       return
     }
+    if(event.code === 'KeyC'){
+      event.preventDefault()
+      copyMidiRegion()
+      return
+    }
+    if(event.code === 'KeyV'){
+      event.preventDefault()
+      pasteMidiRegion()
+      return
+    }
+    if(event.code === 'KeyX'){
+      event.preventDefault()
+      copyMidiRegion()
+      deleteMidiRegion()
+      return
+    }
+    if(event.code === 'KeyD'){
+      event.preventDefault()
+      duplicateSelectedRegions()
+      return
+    }
     return
   }
   if(event.altKey && !['ArrowLeft','ArrowRight'].includes(event.code)) return
@@ -7034,6 +7384,11 @@ function handleStudioKeydown(event){
     return
   }
   if(event.code==='Delete'||event.code==='Backspace'){event.preventDefault(); if(activeBottomPanel==='midi-roll'&&deleteSelectedMidiNote()) return; if(selectedMidiRegionId) deleteMidiRegion(selectedMidiRegionId)}
+  else if(event.code==='Escape'){event.preventDefault(); activeRegionTool='select'; clearRegionSelection(); renderEditor()}
+  else if(event.code==='KeyV'||event.code==='Digit1'){event.preventDefault(); setActiveRegionTool('select')}
+  else if(event.code==='KeyS'||event.code==='Digit3'){event.preventDefault(); setActiveRegionTool('split')}
+  else if(event.code==='KeyE'||event.code==='Digit4'){event.preventDefault(); setActiveRegionTool('erase')}
+  else if(event.code==='KeyM'){event.preventDefault(); toggleSelectedRegionMute()}
   else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1}
   else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: -1, event })));scheduleEditorSave()}
   else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: 1, event })));scheduleEditorSave()}
