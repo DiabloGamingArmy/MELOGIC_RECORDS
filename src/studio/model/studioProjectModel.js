@@ -8,6 +8,24 @@ const stretchRatioMin = 100 / stretchSpeedMax
 const stretchRatioMax = 100 / stretchSpeedMin
 const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 
+function normalizeRenderedAudioMetadata(metadata = null) {
+  if (!metadata || typeof metadata !== 'object') return null
+  const numOrNull = (value) => Number.isFinite(Number(value)) ? Number(value) : null
+  return {
+    sourceSampleRate: numOrNull(metadata.sourceSampleRate),
+    renderedSampleRate: numOrNull(metadata.renderedSampleRate),
+    sourceBitDepth: numOrNull(metadata.sourceBitDepth),
+    renderedBitDepth: numOrNull(metadata.renderedBitDepth),
+    bitDepthPreserved: metadata.bitDepthPreserved === true,
+    sourceChannelCount: numOrNull(metadata.sourceChannelCount),
+    renderedChannelCount: numOrNull(metadata.renderedChannelCount),
+    algorithm: metadata.algorithm || null,
+    qualityMode: metadata.qualityMode || null,
+    renderedDurationSeconds: numOrNull(metadata.renderedDurationSeconds),
+    renderCreatedAt: numOrNull(metadata.renderCreatedAt)
+  }
+}
+
 function midiToName(midi = 60) {
   const note = Math.round(num(midi, 60))
   const pitch = ((note % 12) + 12) % 12
@@ -98,6 +116,7 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
     renderedRuntimeId: source.renderedRuntimeId || null,
     renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
     renderAlgorithm: source.renderAlgorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
     preservesDuration: source.preservesDuration !== false,
     lastError: source.lastError || null,
     renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0),
@@ -126,6 +145,7 @@ function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCe
     renderedRuntimeId: source.renderedRuntimeId || null,
     renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
     algorithm: source.algorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
     preservesDuration: source.preservesDuration !== false,
     lastError: source.lastError || null,
     renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0)
@@ -144,6 +164,7 @@ function normalizeReverseEdit(reverse = {}, legacyStatus = 'idle', legacyStorage
     renderedRuntimeId: source.renderedRuntimeId || null,
     renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
     algorithm: source.algorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
     lastError: source.lastError || null,
     renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0)
   }
@@ -184,6 +205,7 @@ function normalizeStretchEdit(region = {}, sourceDurationSeconds = 0, visibleDur
       renderedStoragePath: null,
       renderedRuntimeId: null,
       renderedDurationSeconds: null,
+      renderedAudio: null,
       renderedAt: null,
       renderedSessionOnly: false,
       renderStatus: 'idle',
@@ -207,6 +229,7 @@ function normalizeStretchEdit(region = {}, sourceDurationSeconds = 0, visibleDur
     renderedStoragePath: source.renderedStoragePath || null,
     renderedRuntimeId: source.renderedRuntimeId || null,
     renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
     renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0),
     renderedSessionOnly: source.renderedSessionOnly === true,
     renderStatus,

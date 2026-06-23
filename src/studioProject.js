@@ -41,8 +41,7 @@ const REGION_TOOL_ITEMS = [
   { id: 'split', label: 'Split', glyph: 'S', shortcut: 'S / 3', enabled: true, mode: 'cursor' },
   { id: 'erase', label: 'Erase', glyph: 'E', shortcut: 'E / 4', enabled: true, mode: 'cursor' },
   { id: 'mute', label: 'Mute', glyph: 'M', shortcut: 'M', enabled: true, mode: 'cursor' },
-  { id: 'loop', label: 'Repeat', glyph: 'R', shortcut: 'Action', enabled: true, mode: 'action' },
-  { id: 'duplicate', label: 'Duplicate', glyph: 'D', shortcut: 'Cmd/Ctrl+D', enabled: true, mode: 'action' },
+  { id: 'loop', label: 'Loop', glyph: 'L', shortcut: 'L', enabled: true, mode: 'action', title: 'Loop selected region' },
   { id: 'stretch', label: 'Stretch', glyph: 'T', shortcut: 'Edge drag', enabled: true, mode: 'cursor' },
   { id: 'draw', label: 'Draw', glyph: 'P', enabled: false, reason: 'Use Pencil in Region Editor' },
   { id: 'fade', label: 'Fade', glyph: 'F', enabled: false, reason: 'Use Region Editor fades' },
@@ -212,6 +211,8 @@ let selectedMidiRegionId = ''
 const selectedRegionIds = new Set()
 let activeRegionTool = 'select'
 let midiRegionDrag = null
+let midiRegionDragRenderRaf = 0
+let pendingMidiRegionDragEvent = null
 let timelineEdgeScrollRaf = 0
 let timelineEdgeScrollState = null
 let audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
@@ -354,6 +355,23 @@ function midiNoteToFrequency(midi = 60) {
 function getAudioPitchShiftTotal(transposeSemitones = 0, fineTuneCents = 0) {
   return (Number(transposeSemitones) || 0) + ((Number(fineTuneCents) || 0) / 100)
 }
+function normalizeRenderedAudioMetadata(metadata = null) {
+  if (!metadata || typeof metadata !== 'object') return null
+  const numOrNull = (value) => Number.isFinite(Number(value)) ? Number(value) : null
+  return {
+    sourceSampleRate: numOrNull(metadata.sourceSampleRate),
+    renderedSampleRate: numOrNull(metadata.renderedSampleRate),
+    sourceBitDepth: numOrNull(metadata.sourceBitDepth),
+    renderedBitDepth: numOrNull(metadata.renderedBitDepth),
+    bitDepthPreserved: metadata.bitDepthPreserved === true,
+    sourceChannelCount: numOrNull(metadata.sourceChannelCount),
+    renderedChannelCount: numOrNull(metadata.renderedChannelCount),
+    algorithm: metadata.algorithm || null,
+    qualityMode: metadata.qualityMode || null,
+    renderedDurationSeconds: numOrNull(metadata.renderedDurationSeconds),
+    renderCreatedAt: numOrNull(metadata.renderCreatedAt)
+  }
+}
 function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCents = 0) {
   const source = pitchShift && typeof pitchShift === 'object' ? pitchShift : {}
   const transpose = clamp(Number(transposeSemitones) || 0, -48, 48)
@@ -377,6 +395,7 @@ function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCe
     renderedRuntimeId: source.renderedRuntimeId || null,
     renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
     algorithm: source.algorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
     preservesDuration: source.preservesDuration !== false,
     lastError: source.lastError || null,
     renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null
@@ -394,6 +413,7 @@ function normalizeReverseEdit(reverse = {}, legacyStatus = 'idle', legacyStorage
     renderedRuntimeId: source.renderedRuntimeId || null,
     renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
     algorithm: source.algorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
     lastError: source.lastError || null,
     renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null
   }
@@ -452,6 +472,7 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
     renderedRuntimeId: source.renderedRuntimeId || null,
     renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
     renderAlgorithm: source.renderAlgorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
     preservesDuration: source.preservesDuration !== false,
     lastError: source.lastError || null,
     renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null,
@@ -543,6 +564,7 @@ function makeDefaultAudioStretch(sourceDurationSeconds = null, overrides = {}) {
     renderedStoragePath: null,
     renderedRuntimeId: null,
     renderedDurationSeconds: null,
+    renderedAudio: null,
     renderedAt: null,
     renderedSessionOnly: false,
     renderStatus: 'idle',
@@ -562,6 +584,7 @@ function buildCanonicalStretch({
   renderedStoragePath = null,
   renderedRuntimeId = null,
   renderedDurationSeconds = null,
+  renderedAudio = null,
   renderedAt = null,
   renderedSessionOnly = false,
   algorithm = null,
@@ -595,6 +618,7 @@ function buildCanonicalStretch({
     renderedStoragePath: renderedStoragePath || null,
     renderedRuntimeId: renderedRuntimeId || null,
     renderedDurationSeconds: finitePositiveNumber(renderedDurationSeconds),
+    renderedAudio: normalizeRenderedAudioMetadata(renderedAudio),
     renderedAt: Number.isFinite(Number(renderedAt)) ? Number(renderedAt) : null,
     renderedSessionOnly: renderedSessionOnly === true,
     renderStatus: getStretchStatus(renderStatus),
@@ -644,6 +668,7 @@ function normalizeAudioStretch(stretch = {}, context = {}) {
     renderedStoragePath: stretch.renderedStoragePath,
     renderedRuntimeId: stretch.renderedRuntimeId,
     renderedDurationSeconds: stretch.renderedDurationSeconds,
+    renderedAudio: stretch.renderedAudio,
     renderedAt: stretch.renderedAt,
     renderedSessionOnly: stretch.renderedSessionOnly,
     algorithm: stretch.algorithm,
@@ -1181,6 +1206,27 @@ function formatBitDepth(region = {}) {
   if (source === 'not_applicable') return 'Compressed / not directly available'
   return 'Unknown'
 }
+function formatRenderedBitDepth(value = null) {
+  const bitDepth = Number(value)
+  return Number.isFinite(bitDepth) && bitDepth > 0 ? `${bitDepth}-bit` : 'Unknown'
+}
+function getAudioSourceBitDepth(region = {}) {
+  const bitDepth = Number(region.bitDepth ?? region.audioClip?.bitDepth)
+  return Number.isFinite(bitDepth) && bitDepth > 0 ? bitDepth : null
+}
+function getActiveRenderedAudioMetadata(region = {}) {
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  if (edit.pitchTrace?.renderStatus === 'ready' && edit.pitchTrace.renderedAudio) return edit.pitchTrace.renderedAudio
+  if (edit.pitchShift?.renderStatus === 'ready' && edit.pitchShift.renderedAudio) return edit.pitchShift.renderedAudio
+  if (stretch.renderStatus === 'ready' && stretch.renderedAudio) return stretch.renderedAudio
+  if (edit.reverse?.renderStatus === 'ready' && edit.reverse.renderedAudio) return edit.reverse.renderedAudio
+  return null
+}
 function formatStorageStatus(region = {}) {
   if (region.audioClip?.loadStatus === 'ready' || region.audioClip?.audioReady) return 'Loaded'
   if (region.audioClip?.loadStatus === 'loading' || region.audioClip?.loadStatus === 'pending') return 'Loading'
@@ -1192,6 +1238,7 @@ function renderAudioSourceInfo(region = {}) {
   const sourceLabel = (region.source || clip.source) === 'import' ? 'Imported' : 'Recorded'
   const sampleRate = Number(region.sampleRate ?? clip.sampleRate ?? region.audioContextSampleRate ?? region.projectSampleRate)
   const channels = Number(region.channelCount ?? clip.channelCount)
+  const renderedAudio = getActiveRenderedAudioMetadata(region)
   const rows = [
     ['File name', clip.fileName || region.fileName || 'Unknown'],
     ['File type', clip.contentType || region.contentType || clip.fileType || region.fileType || 'Unknown'],
@@ -1203,6 +1250,14 @@ function renderAudioSourceInfo(region = {}) {
     ['Source', sourceLabel],
     ['Storage status', formatStorageStatus(region)]
   ]
+  if (renderedAudio) {
+    rows.push(
+      ['Rendered sample rate', renderedAudio.renderedSampleRate ? `${Math.round(renderedAudio.renderedSampleRate)} Hz` : 'Unknown'],
+      ['Rendered bit depth', `${formatRenderedBitDepth(renderedAudio.renderedBitDepth)}${renderedAudio.bitDepthPreserved ? ' (preserved)' : renderedAudio.sourceBitDepth ? ' (changed)' : ' (source unknown)'}`],
+      ['Render algorithm', renderedAudio.algorithm || 'Unknown'],
+      ['Render quality', renderedAudio.qualityMode || 'Unknown']
+    )
+  }
   return `<section class="studio-audio-file-info"><header><strong>Source Audio</strong><span>Read-only</span></header><dl>${rows.map(([label, value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`
 }
 function renderAudioRegionEditorPanel(region, motionClass = '') {
@@ -1392,6 +1447,154 @@ function getSelectedRegions() {
   const ids = new Set(getSelectedRegionIds())
   return midiRegions.filter((region)=>ids.has(region.id)).sort((a,b)=>(Number(a.startBeat)||0)-(Number(b.startBeat)||0))
 }
+function getRegionBeatRange(region = {}) {
+  if (region.type === 'audio') syncAudioRegionTimeline(region)
+  const startBeat = Number(region.startBeat) || 0
+  const fallbackLength = region.type === 'audio' ? secondsToBeats(getAudioRegionVisibleDurationSeconds(region)) : Math.max(0.25, Number(region.durationBeats) || 1)
+  const endBeat = Math.max(startBeat + 0.001, Number(region.endBeat) || (startBeat + fallbackLength))
+  return { startBeat, endBeat }
+}
+function stopRegionPlayback(regionId) {
+  activePlaybackNotes.forEach((active, key) => { if (active.regionId === regionId) stopPlaybackNote(key) })
+  stopAudioClipPlayback(regionId)
+}
+function invalidateAudioRegionRenderState(region) {
+  if (!region || region.type !== 'audio') return region
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  if (stretch.enabled && stretch.renderStatus === 'ready') {
+    region.stretch = {
+      ...stretch,
+      renderStatus: 'needs_render',
+      renderedObjectUrl: null,
+      renderedAudioUrl: null,
+      renderedStoragePath: null,
+      renderedRuntimeId: null,
+      renderedDurationSeconds: null,
+      renderedAt: null,
+      renderedAudio: null,
+      renderError: null,
+      lastError: null
+    }
+  } else {
+    region.stretch = stretch
+  }
+  const edit = normalizeAudioEdit(region.audioEdit)
+  if (edit.pitchShift?.renderStatus === 'ready') {
+    edit.pitchShift = { ...edit.pitchShift, renderStatus: 'needs_render', renderedStoragePath: null, renderedAudioUrl: null, renderedRuntimeId: null, renderedDurationSeconds: null, renderedAt: null, renderedAudio: null, lastError: null }
+  }
+  if (edit.pitchTrace?.renderStatus === 'ready') {
+    edit.pitchTrace = { ...edit.pitchTrace, renderStatus: getPitchTraceEditedNoteCount(edit.pitchTrace) ? 'needs_render' : 'idle', renderedStoragePath: null, renderedAudioUrl: null, renderedRuntimeId: null, renderedDurationSeconds: null, renderedAt: null, renderedAudio: null, lastError: null }
+  }
+  if (edit.reverse?.renderStatus === 'ready') {
+    edit.reverse = { ...edit.reverse, renderStatus: edit.reverse.enabled ? 'needs_render' : 'idle', renderedStoragePath: null, renderedAudioUrl: null, renderedRuntimeId: null, renderedDurationSeconds: null, renderedAt: null, renderedAudio: null, lastError: null }
+  }
+  region.audioEdit = edit
+  region.renderedWaveform = null
+  region.stretchRender = null
+  return region
+}
+function makeAudioRegionSlice(region, sliceStartBeat, sliceEndBeat, { preserveId = false } = {}) {
+  const { startBeat, endBeat } = getRegionBeatRange(region)
+  const nextStart = clamp(sliceStartBeat, startBeat, endBeat)
+  const nextEnd = clamp(sliceEndBeat, nextStart, endBeat)
+  if (nextEnd - nextStart < 0.01) return null
+  const playbackRate = getAudioRegionPlaybackRate(region)
+  const trimStart = getAudioTrimStartSeconds(region)
+  const sourceStart = trimStart + (beatsToSeconds(nextStart - startBeat) * playbackRate)
+  const sourceEnd = trimStart + (beatsToSeconds(nextEnd - startBeat) * playbackRate)
+  const visibleDurationSeconds = Math.max(minAudioRegionSeconds, beatsToSeconds(nextEnd - nextStart))
+  const sourceDurationSeconds = Math.max(minAudioRegionSeconds, sourceEnd - sourceStart)
+  const slice = cloneRegionForState(region, { persist: false })
+  if (!preserveId) slice.id = makeInsertId('audio-region')
+  slice.startBeat = nextStart
+  slice.endBeat = nextEnd
+  slice.timelineStartBeats = nextStart
+  slice.timelineStartSeconds = getTimelineSecondsAtBeat(nextStart)
+  slice.trimStartSeconds = sourceStart
+  slice.trimEndSeconds = sourceEnd
+  slice.visibleDurationSeconds = visibleDurationSeconds
+  slice.durationSeconds = visibleDurationSeconds
+  slice.durationBeats = nextEnd - nextStart
+  slice.clipId = region.clipId || region.audioClip?.audioAssetId || region.audioClip?.id || region.id
+  slice.audioClip = { ...(region.audioClip || {}), runtimeId: region.audioClip?.runtimeId || region.id, audioAssetId: region.audioClip?.audioAssetId || region.audioClip?.id || region.clipId || region.id, id: region.audioClip?.id || region.clipId || region.id }
+  const wasStretched = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  }).enabled
+  slice.stretch = wasStretched ? createPendingStretchMetadata({ sourceDurationSeconds, targetDurationSeconds: visibleDurationSeconds }) : makeDefaultAudioStretch(sourceDurationSeconds)
+  invalidateAudioRegionRenderState(slice)
+  syncAudioRegionTimeline(slice)
+  return slice
+}
+function makeMidiRegionSlice(region, sliceStartBeat, sliceEndBeat, { preserveId = false } = {}) {
+  const { startBeat, endBeat } = getRegionBeatRange(region)
+  const nextStart = clamp(sliceStartBeat, startBeat, endBeat)
+  const nextEnd = clamp(sliceEndBeat, nextStart, endBeat)
+  if (nextEnd - nextStart < 0.01) return null
+  const slice = cloneRegionForState(region, { persist: false })
+  if (!preserveId) slice.id = makeInsertId('midi-region')
+  slice.startBeat = nextStart
+  slice.endBeat = nextEnd
+  slice.notes = (region.notes || []).map((note) => {
+    const noteStart = Number(note.startBeat) || startBeat
+    const noteEnd = noteStart + Math.max(0.05, Number(note.durationBeats) || 0.05)
+    const overlapStart = Math.max(noteStart, nextStart)
+    const overlapEnd = Math.min(noteEnd, nextEnd)
+    if (overlapEnd - overlapStart < 0.01) return null
+    const changed = overlapStart !== noteStart || overlapEnd !== noteEnd || !preserveId
+    return { ...note, id: changed ? makeInsertId('note') : note.id, startBeat: overlapStart, durationBeats: Math.max(0.01, overlapEnd - overlapStart) }
+  }).filter(Boolean)
+  return slice
+}
+function sliceRegionForBeatRange(region, startBeat, endBeat, options = {}) {
+  return region.type === 'audio'
+    ? makeAudioRegionSlice(region, startBeat, endBeat, options)
+    : makeMidiRegionSlice(region, startBeat, endBeat, options)
+}
+function splitExistingRegionAroundIncoming(existingRegion, incomingRegion) {
+  const existing = getRegionBeatRange(existingRegion)
+  const incoming = getRegionBeatRange(incomingRegion)
+  if (existingRegion.trackId !== incomingRegion.trackId || existing.endBeat <= incoming.startBeat || existing.startBeat >= incoming.endBeat) return [existingRegion]
+  stopRegionPlayback(existingRegion.id)
+  const pieces = []
+  if (existing.startBeat < incoming.startBeat - 0.001) {
+    const left = sliceRegionForBeatRange(existingRegion, existing.startBeat, incoming.startBeat, { preserveId: true })
+    if (left) pieces.push(left)
+  }
+  if (existing.endBeat > incoming.endBeat + 0.001) {
+    const right = sliceRegionForBeatRange(existingRegion, incoming.endBeat, existing.endBeat, { preserveId: pieces.length === 0 })
+    if (right) pieces.push(right)
+  }
+  return pieces
+}
+function applyRegionPlacementWithOverlapResolution(incomingRegions = []) {
+  const incoming = (Array.isArray(incomingRegions) ? incomingRegions : [incomingRegions]).filter(Boolean)
+  if (!incoming.length) return []
+  incoming.forEach((region)=>{ if (region.type === 'audio') syncAudioRegionTimeline(region) })
+  const incomingIds = new Set(incoming.map((region)=>region.id).filter(Boolean))
+  const sortedIncoming = incoming.slice().sort((a,b)=>{
+    const trackDelta = tracks.findIndex((track)=>track.id === a.trackId) - tracks.findIndex((track)=>track.id === b.trackId)
+    return trackDelta || (getRegionBeatRange(a).startBeat - getRegionBeatRange(b).startBeat)
+  })
+  let working = midiRegions.filter((region)=>!incomingIds.has(region.id))
+  sortedIncoming.forEach((incomingRegion) => {
+    const next = []
+    working.forEach((existingRegion) => {
+      next.push(...splitExistingRegionAroundIncoming(existingRegion, incomingRegion))
+    })
+    next.push(incomingRegion)
+    working = next
+  })
+  midiRegions = working
+  pruneSelectedRegionIds()
+  return sortedIncoming
+}
 function getRegionTypeTrackType(region) {
   return region?.type === 'audio' ? 'audio' : 'software'
 }
@@ -1490,6 +1693,7 @@ function pasteMidiRegion({ beat = clampBeat(xToBeat(timelineState.playheadX)), t
     const baseIndex = Math.max(0, tracks.findIndex((track)=>track.id === (trackId || selectedTrackId)))
     const sorted = midiRegionClipboard.regions.slice().sort((a,b)=>a.relativeTrackOffset-b.relativeTrackOffset || a.relativeStartBeat-b.relativeStartBeat)
     const created = []
+    const incoming = []
     sorted.forEach((item) => {
       const sourceRegion = item.region
       const targetTrack = ensurePasteTargetTrack({
@@ -1501,16 +1705,17 @@ function pasteMidiRegion({ beat = clampBeat(xToBeat(timelineState.playheadX)), t
         trackId: targetTrack.id,
         startBeat: startBeat + Number(item.relativeStartBeat || 0)
       })
-      midiRegions.push(copy)
+      incoming.push(copy)
       created.push(copy.id)
     })
+    midiRegions.push(...incoming)
+    applyRegionPlacementWithOverlapResolution(incoming)
     setSelectedRegions(created, { primaryId: created[0] || '' })
     selectedTrackId = tracks.find((track)=>track.id === (trackId || selectedTrackId))?.id || tracks[baseIndex]?.id || selectedTrackId
   })
 }
 function cleanupRegionAfterDelete(regionId) {
-  activePlaybackNotes.forEach((active, key) => { if (active.regionId === regionId) stopPlaybackNote(key) })
-  stopAudioClipPlayback(regionId)
+  stopRegionPlayback(regionId)
   if (midiRollState?.regionId === regionId) {
     midiRollState = null
     midiRollSelectedNoteIndex = null
@@ -1537,15 +1742,18 @@ function duplicateSelectedRegions() {
     const groupEnd = Math.max(...regions.map((region)=>Number(region.endBeat) || ((Number(region.startBeat) || 0) + 1)))
     const offset = Math.max(0.25, groupEnd - groupStart)
     const created = []
+    const incoming = []
     regions.forEach((region) => {
       const copy = cloneRegionForArrangementCopy(region, { startBeat: (Number(region.startBeat) || 0) + offset })
-      midiRegions.push(copy)
+      incoming.push(copy)
       created.push(copy.id)
     })
+    midiRegions.push(...incoming)
+    applyRegionPlacementWithOverlapResolution(incoming)
     setSelectedRegions(created, { primaryId: created[0] || '' })
   })
 }
-function repeatSelectedRegions() {
+function loopSelectedRegions() {
   const regions = getSelectedRegions()
   if (!regions.length) return
   duplicateSelectedRegions()
@@ -1571,68 +1779,18 @@ function makeSplitStretchMetadata(sourceDurationSeconds, targetDurationSeconds) 
   return createPendingStretchMetadata({ sourceDurationSeconds, targetDurationSeconds })
 }
 function splitAudioRegionAtBeat(region, splitBeat) {
-  syncAudioRegionTimeline(region)
-  const startBeat = Number(region.startBeat) || 0
-  const endBeat = Number(region.endBeat) || (startBeat + Math.max(0.25, Number(region.durationBeats) || 0.25))
+  const { startBeat, endBeat } = getRegionBeatRange(region)
   if (splitBeat <= startBeat + 0.05 || splitBeat >= endBeat - 0.05) return []
-  const trimStart = getAudioTrimStartSeconds(region)
-  const trimEnd = getAudioTrimEndSeconds(region)
-  const playbackRate = getAudioRegionPlaybackRate(region)
-  const splitVisibleSeconds = Math.max(minAudioRegionSeconds, beatsToSeconds(splitBeat - startBeat))
-  const sourceSplitSeconds = clamp(trimStart + (splitVisibleSeconds * playbackRate), trimStart + minAudioRegionSeconds, trimEnd - minAudioRegionSeconds)
-  const left = cloneRegionForState(region, { persist: false })
-  const right = cloneRegionForState(region, { persist: false })
-  left.endBeat = splitBeat
-  left.trimStartSeconds = trimStart
-  left.trimEndSeconds = sourceSplitSeconds
-  left.visibleDurationSeconds = beatsToSeconds(splitBeat - startBeat)
-  left.durationSeconds = left.visibleDurationSeconds
-  left.durationBeats = splitBeat - startBeat
-  left.stretch = makeSplitStretchMetadata(Math.max(minAudioRegionSeconds, sourceSplitSeconds - trimStart), left.visibleDurationSeconds)
-  left.stretchRender = null
-  left.renderedWaveform = null
-  right.id = makeInsertId('audio-region')
-  right.startBeat = splitBeat
-  right.timelineStartBeats = splitBeat
-  right.timelineStartSeconds = getTimelineSecondsAtBeat(splitBeat)
-  right.endBeat = endBeat
-  right.trimStartSeconds = sourceSplitSeconds
-  right.trimEndSeconds = trimEnd
-  right.visibleDurationSeconds = beatsToSeconds(endBeat - splitBeat)
-  right.durationSeconds = right.visibleDurationSeconds
-  right.durationBeats = endBeat - splitBeat
-  right.stretch = makeSplitStretchMetadata(Math.max(minAudioRegionSeconds, trimEnd - sourceSplitSeconds), right.visibleDurationSeconds)
-  right.stretchRender = null
-  right.renderedWaveform = null
-  right.clipId = region.clipId || region.audioClip?.audioAssetId || region.audioClip?.id || region.id
-  right.audioClip = { ...(region.audioClip || {}), runtimeId: region.audioClip?.runtimeId || region.id, audioAssetId: region.audioClip?.audioAssetId || region.audioClip?.id || region.clipId || region.id, id: region.audioClip?.id || region.clipId || region.id }
-  syncAudioRegionTimeline(left)
-  syncAudioRegionTimeline(right)
-  return [left, right]
+  const left = makeAudioRegionSlice(region, startBeat, splitBeat, { preserveId: true })
+  const right = makeAudioRegionSlice(region, splitBeat, endBeat)
+  return left && right ? [left, right] : []
 }
 function splitMidiRegionAtBeat(region, splitBeat) {
-  const startBeat = Number(region.startBeat) || 0
-  const endBeat = Math.max(startBeat + 0.25, Number(region.endBeat) || startBeat + 1)
+  const { startBeat, endBeat } = getRegionBeatRange(region)
   if (splitBeat <= startBeat + 0.05 || splitBeat >= endBeat - 0.05) return []
-  const left = cloneRegionForState(region, { persist: false })
-  const right = cloneRegionForState(region, { persist: false })
-  left.endBeat = splitBeat
-  right.id = makeInsertId('midi-region')
-  right.startBeat = splitBeat
-  right.endBeat = endBeat
-  left.notes = []
-  right.notes = []
-  ;(region.notes || []).forEach((note) => {
-    const noteStart = Number(note.startBeat) || startBeat
-    const noteEnd = noteStart + Math.max(0.05, Number(note.durationBeats) || 0.05)
-    if (noteEnd <= splitBeat) left.notes.push({ ...note })
-    else if (noteStart >= splitBeat) right.notes.push({ ...note })
-    else {
-      left.notes.push({ ...note, durationBeats: Math.max(0.05, splitBeat - noteStart) })
-      right.notes.push({ ...note, id: makeInsertId('note'), startBeat: splitBeat, durationBeats: Math.max(0.05, noteEnd - splitBeat) })
-    }
-  })
-  return [left, right]
+  const left = makeMidiRegionSlice(region, startBeat, splitBeat, { preserveId: true })
+  const right = makeMidiRegionSlice(region, splitBeat, endBeat)
+  return left && right ? [left, right] : []
 }
 function splitRegionAtBeat(regionId, beat) {
   const region = midiRegions.find((item)=>item.id === regionId)
@@ -1665,10 +1823,10 @@ function handleRegionToolPointer(event, regionId) {
 function setActiveRegionTool(toolId = 'select') {
   const tool = REGION_TOOL_ITEMS.find((item)=>item.id === toolId && item.enabled && item.mode !== 'action')
   activeRegionTool = tool?.id || 'select'
-  renderEditor()
+  renderEditorPreservingArrangementScroll()
 }
 function runRegionToolAction(toolId) {
-  if (toolId === 'loop') repeatSelectedRegions()
+  if (toolId === 'loop') loopSelectedRegions()
   else if (toolId === 'duplicate') duplicateSelectedRegions()
 }
 const renderTrackRenamePopover = () => renameTrackState ? `<form class="studio-track-popover studio-track-popover--rename" data-track-rename-form style="left:${Math.round(renameTrackState.x)}px;top:${Math.round(renameTrackState.y)}px"><label>Rename Track<input data-track-rename-input value="${(renameTrackState.name || '').replace(/"/g, '&quot;')}" /></label><div><button type="submit">Save</button><button type="button" data-track-rename-cancel>Cancel</button></div></form>` : ''
@@ -2545,7 +2703,7 @@ function renderRegionToolRail() {
     const attrs = tool.enabled
       ? `${isAction ? `data-region-tool-action="${tool.id}"` : `data-region-tool="${tool.id}"`} aria-pressed="${String(active)}"`
       : `disabled aria-disabled="true"`
-    const title = `${tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}${tool.reason ? ` - ${tool.reason}` : ''}`
+    const title = `${tool.title || tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}${tool.reason ? ` - ${tool.reason}` : ''}`
     return `<button type="button" class="studio-region-tool-button ${active ? 'is-active' : ''} ${!tool.enabled ? 'is-disabled' : ''}" ${attrs} title="${esc(title)}"><span>${esc(tool.glyph)}</span><small>${esc(tool.label)}</small></button>`
   }).join('')}</div>`
 }
@@ -3200,6 +3358,14 @@ function restoreArrangementScroll(scroll = null) {
   grid.scrollTop = Math.max(0, Number(scroll.top) || 0)
   syncArrangementRulerScroll(grid.scrollLeft)
 }
+function restoreArrangementScrollSoon(scroll = null) {
+  if (!scroll) return
+  requestAnimationFrame(() => restoreArrangementScroll(scroll))
+}
+function renderEditorPreservingArrangementScroll(scroll = captureArrangementScroll()) {
+  renderEditor()
+  restoreArrangementScrollSoon(scroll)
+}
 function stopTimelineEdgeAutoScroll() {
   if (timelineEdgeScrollRaf) cancelAnimationFrame(timelineEdgeScrollRaf)
   timelineEdgeScrollRaf = 0
@@ -3313,13 +3479,14 @@ function pushHistory(type, before, after) {
   if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
   redoStack.length = 0
 }
-function commitHistoryMutation(type, mutator, { render = true, save = true } = {}) {
+function commitHistoryMutation(type, mutator, { render = true, save = true, preserveScroll = true } = {}) {
+  const scroll = preserveScroll ? captureArrangementScroll() : null
   const before = captureDawSnapshot()
   mutator?.()
   const after = captureDawSnapshot()
   pushHistory(type, before, after)
   if (save) scheduleEditorSave()
-  if (render) renderEditor()
+  if (render) renderEditorPreservingArrangementScroll(scroll)
 }
 function undoDawEdit() {
   const entry = undoStack.pop()
@@ -4123,7 +4290,8 @@ async function renderAudioStretchForRegion(regionId) {
       sourceDurationSeconds: stretchMath.sourceDurationSeconds,
       targetDurationSeconds: stretchMath.targetDurationSeconds,
       sampleRate: runtime.audioBuffer.sampleRate,
-      quality: 'mvp',
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'high',
       onProgress: (progress) => {
         audioStretchRenderState = { ...audioStretchRenderState, progress }
       }
@@ -4168,6 +4336,7 @@ async function renderAudioStretchForRegion(regionId) {
       renderedStoragePath,
       renderedRuntimeId,
       renderedDurationSeconds: result.renderedDurationSeconds,
+      renderedAudio: result.renderedAudio,
       renderedAt: result.createdAt,
       renderedSessionOnly,
       updatedAt: result.createdAt
@@ -4176,6 +4345,7 @@ async function renderAudioStretchForRegion(regionId) {
       implemented: true,
       algorithm: result.algorithm,
       preservesPitch: result.preservesPitch,
+      renderedAudio: result.renderedAudio,
       renderedRuntimeId,
       renderedStoragePath,
       sessionOnly: renderedSessionOnly
@@ -4232,6 +4402,8 @@ async function renderAudioPitchShiftForRegion(regionId) {
       transposeSemitones: edit.transposeSemitones,
       fineTuneCents: edit.fineTuneCents,
       sampleRate: runtime.audioBuffer.sampleRate,
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'high',
       trimStartSeconds: getAudioTrimStartSeconds(region),
       trimEndSeconds: getAudioTrimEndSeconds(region),
       onProgress: (progress) => {
@@ -4273,6 +4445,7 @@ async function renderAudioPitchShiftForRegion(regionId) {
         renderedRuntimeId,
         renderedDurationSeconds: result.renderedDurationSeconds,
         algorithm: result.algorithm,
+        renderedAudio: result.renderedAudio,
         preservesDuration: result.preservesDuration,
         lastError: null,
         renderedAt: result.createdAt
@@ -4324,6 +4497,8 @@ async function renderPitchTraceEditsForRegion(regionId) {
       transposeSemitones: edit.transposeSemitones,
       fineTuneCents: edit.fineTuneCents,
       sampleRate: runtime.audioBuffer.sampleRate,
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'high',
       trimStartSeconds: getAudioTrimStartSeconds(region),
       trimEndSeconds: getAudioTrimEndSeconds(region),
       onProgress: (progress) => {
@@ -4363,6 +4538,7 @@ async function renderPitchTraceEditsForRegion(regionId) {
         renderedRuntimeId,
         renderedDurationSeconds: result.renderedDurationSeconds,
         renderAlgorithm: result.algorithm,
+        renderedAudio: result.renderedAudio,
         preservesDuration: result.preservesDuration,
         lastError: null,
         renderedAt: result.createdAt,
@@ -4415,6 +4591,8 @@ async function renderAudioReverseForRegion(regionId) {
       clipId: region.id,
       trimStartSeconds: getAudioTrimStartSeconds(region),
       trimEndSeconds: getAudioTrimEndSeconds(region),
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'lossless',
       onProgress: (progress) => {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
       }
@@ -4453,6 +4631,7 @@ async function renderAudioReverseForRegion(regionId) {
         renderedRuntimeId,
         renderedDurationSeconds: result.renderedDurationSeconds,
         algorithm: result.algorithm,
+        renderedAudio: result.renderedAudio,
         lastError: null,
         renderedAt: result.createdAt
       }
@@ -5084,6 +5263,7 @@ async function createAudioRegionFromFile({
     })
     syncAudioRegionTimeline(region)
     midiRegions.push(region)
+    applyRegionPlacementWithOverlapResolution([region])
     selectSingleRegion(region.id)
     activeBottomPanel = 'midi-roll'
     recordingStatus = ''
@@ -5308,6 +5488,7 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
   syncAudioRegionTimeline(region)
   region.missingMedia = false
   midiRegions.push(region)
+  applyRegionPlacementWithOverlapResolution([region])
   selectSingleRegion(region.id)
   recordingStatus = uploadError ? 'Audio recorded for this session, but upload failed. It may not play after refresh.' : ''
   pushHistory('record-audio-region', before, captureDawSnapshot())
@@ -5355,7 +5536,12 @@ function finalizeMidiRecording({ keepEmpty = false } = {}) {
     activeRecordingNotes.delete(key)
   })
   const track = tracks.find((item)=>item.id===activeRecording.trackId)
-  if (activeRecording.notes.length || keepEmpty) midiRegions.push({ ...activeRecording, endBeat, color: track?.color || activeRecording.color, name: track?.autoNameRegions === false ? '' : (track?.name || '') })
+  if (activeRecording.notes.length || keepEmpty) {
+    const region = { ...activeRecording, endBeat, color: track?.color || activeRecording.color, name: track?.autoNameRegions === false ? '' : (track?.name || '') }
+    midiRegions.push(region)
+    applyRegionPlacementWithOverlapResolution([region])
+    selectSingleRegion(region.id)
+  }
   activeRecording = null
   recordingStatus = ''
   activeRecordingNotes.clear()
@@ -5506,7 +5692,7 @@ function applyAudioRegionDrag(event, region) {
   } else {
     const dx = event.clientX - drag.startX
     const deltaBeat = regionPixelsToBeats(dx)
-    const snappedDelta = isSnapEnabled ? snapBeat(deltaBeat) : Math.round(deltaBeat * 4) / 4
+    const snappedDelta = isSnapEnabled ? snapBeat(deltaBeat) : deltaBeat
     const originalLength = Math.max(secondsToBeats(minSeconds), drag.endBeat - drag.startBeat)
     const nextStart = Math.max(0, drag.startBeat + snappedDelta)
     region.startBeat = nextStart
@@ -5529,7 +5715,7 @@ function applyMidiRegionDrag(event) {
   if (!midiRegionDrag.hasMoved && Math.hypot(dx, dy) < 4) return
   midiRegionDrag.hasMoved = true
   const deltaBeat = regionPixelsToBeats(dx)
-  const snappedDelta = isSnapEnabled ? snapBeat(deltaBeat) : Math.round(deltaBeat * 4) / 4
+  const snappedDelta = isSnapEnabled ? snapBeat(deltaBeat) : deltaBeat
   const minLength = 0.25
   const originalLength = Math.max(minLength, midiRegionDrag.endBeat - midiRegionDrag.startBeat)
   if (region.type === 'audio') {
@@ -5554,12 +5740,34 @@ function applyMidiRegionDrag(event) {
   }
   refreshMidiRegionDom()
 }
+function scheduleMidiRegionDragFrame(event) {
+  pendingMidiRegionDragEvent = { clientX: event.clientX, clientY: event.clientY }
+  if (midiRegionDragRenderRaf) return
+  midiRegionDragRenderRaf = requestAnimationFrame(() => {
+    midiRegionDragRenderRaf = 0
+    const nextEvent = pendingMidiRegionDragEvent
+    pendingMidiRegionDragEvent = null
+    if (nextEvent) applyMidiRegionDrag(nextEvent)
+  })
+}
+function flushPendingMidiRegionDrag() {
+  if (midiRegionDragRenderRaf) {
+    cancelAnimationFrame(midiRegionDragRenderRaf)
+    midiRegionDragRenderRaf = 0
+  }
+  const nextEvent = pendingMidiRegionDragEvent
+  pendingMidiRegionDragEvent = null
+  if (nextEvent) applyMidiRegionDrag(nextEvent)
+}
 function finishMidiRegionDrag() {
   if (!midiRegionDrag) return
+  flushPendingMidiRegionDrag()
   stopTimelineEdgeAutoScroll()
   const didMove = midiRegionDrag.hasMoved
   const before = midiRegionDrag.before
   const finished = { id: midiRegionDrag.id, editMode: midiRegionDrag.editMode, regionType: midiRegionDrag.regionType, scroll: midiRegionDrag.scroll }
+  const finishedRegion = midiRegions.find((region)=>region.id === midiRegionDrag.id)
+  if (didMove && finishedRegion) applyRegionPlacementWithOverlapResolution([finishedRegion])
   midiRegionDrag = null
   document.body.classList.remove('is-studio-dragging', 'is-midi-region-dragging', 'is-audio-region-stretching')
   if (didMove) {
@@ -7080,7 +7288,7 @@ function bindEditorEvents() {
     }
     if (midiRegionDrag) {
       event.preventDefault()
-      applyMidiRegionDrag(event)
+      scheduleMidiRegionDragFrame(event)
       return
     }
     if (!globalTrackDrag) return
@@ -7389,6 +7597,7 @@ function handleStudioKeydown(event){
   else if(event.code==='KeyS'||event.code==='Digit3'){event.preventDefault(); setActiveRegionTool('split')}
   else if(event.code==='KeyE'||event.code==='Digit4'){event.preventDefault(); setActiveRegionTool('erase')}
   else if(event.code==='KeyM'){event.preventDefault(); toggleSelectedRegionMute()}
+  else if(event.code==='KeyL'){event.preventDefault(); loopSelectedRegions()}
   else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1}
   else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: -1, event })));scheduleEditorSave()}
   else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: 1, event })));scheduleEditorSave()}

@@ -1,5 +1,6 @@
 import {
   audioBufferToWavBlob,
+  createRenderedAudioMetadata,
   createAudioBuffer
 } from './audioStretchRenderService.js'
 
@@ -27,6 +28,8 @@ export async function renderReversedAudio({
   clipId = '',
   trimStartSeconds = 0,
   trimEndSeconds = null,
+  sourceBitDepth = null,
+  quality = 'lossless',
   onProgress = null
 } = {}) {
   if (!audioBuffer?.length) throw new Error('Missing audio buffer')
@@ -34,7 +37,17 @@ export async function renderReversedAudio({
   onProgress?.(0.15)
   const renderedAudioBuffer = copyReverseRange(audioBuffer, trimStartSeconds, trimEndSeconds)
   onProgress?.(0.85)
-  const renderedBlob = audioBufferToWavBlob(renderedAudioBuffer)
+  const createdAt = Date.now()
+  const renderedBlob = audioBufferToWavBlob(renderedAudioBuffer, { bitDepth: sourceBitDepth })
+  const renderedAudio = createRenderedAudioMetadata({
+    sourceBuffer: audioBuffer,
+    renderedBuffer: renderedAudioBuffer,
+    sourceBitDepth,
+    renderedBitDepth: sourceBitDepth,
+    algorithm: 'buffer_reverse_v1',
+    qualityMode: quality,
+    createdAt
+  })
   onProgress?.(1)
   return {
     clipId,
@@ -43,8 +56,9 @@ export async function renderReversedAudio({
     renderedObjectUrl: URL.createObjectURL(renderedBlob),
     renderedDurationSeconds: renderedAudioBuffer.duration,
     algorithm: 'buffer_reverse_v1',
-    quality: 'lossless',
-    createdAt: Date.now(),
+    quality,
+    renderedAudio,
+    createdAt,
     renderTimeMs: Math.round((performance.now?.() || Date.now()) - startedAt)
   }
 }
