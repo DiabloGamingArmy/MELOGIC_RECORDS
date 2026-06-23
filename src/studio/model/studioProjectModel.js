@@ -69,6 +69,8 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
         pitchDriftStartCents: clamp(num(note?.pitchDriftStartCents, 0), -1200, 1200),
         pitchDriftEndCents: clamp(num(note?.pitchDriftEndCents, 0), -1200, 1200),
         vibratoAmount: clamp(num(note?.vibratoAmount, 0), 0, 1),
+        source: note?.source === 'manual' ? 'manual' : 'analysis',
+        lockedToAnalysis: note?.lockedToAnalysis === true,
         muted: note?.muted === true,
         renderStatus: pitchRenderStatuses.includes(note?.renderStatus) ? note.renderStatus : (editedMidiNote !== originalMidiNote ? 'needs_render' : 'idle')
       }
@@ -148,7 +150,9 @@ export function normalizeRegion(region = {}) {
   const fileDurationSeconds = Math.max(0, num(region.fileDurationSeconds ?? region.audioClip?.fileDurationSeconds ?? region.durationSeconds, 0))
   const trimStartSeconds = clamp(num(region.trimStartSeconds, 0), 0, Math.max(0, fileDurationSeconds))
   const trimEndSeconds = region.trimEndSeconds == null ? null : clamp(num(region.trimEndSeconds, fileDurationSeconds), trimStartSeconds, Math.max(trimStartSeconds, fileDurationSeconds))
-  const stretchRatio = clamp(num(region.stretch?.lengthRatio ?? region.stretch?.ratio, 1), 0.01, 32)
+  const rawStretchRatio = num(region.stretch?.lengthRatio ?? region.stretch?.ratio, 1)
+  const corruptTinyStretch = region.stretch?.enabled && rawStretchRatio <= 0.05 && region.stretch?.renderStatus !== 'ready' && !(region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl)
+  const stretchRatio = clamp(corruptTinyStretch ? 1 : rawStretchRatio, 0.01, 32)
   const lengthRatio = stretchRatio
   const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render', 'none'].includes(region.stretch?.renderStatus) ? (region.stretch.renderStatus === 'none' ? 'idle' : region.stretch.renderStatus) : 'idle'
   return {
@@ -175,7 +179,7 @@ export function normalizeRegion(region = {}) {
     visibleDurationSeconds: Math.max(0, num(region.visibleDurationSeconds, region.durationSeconds || 0)),
     playbackRate: Math.max(0.05, num(region.playbackRate, 1)),
     stretch: {
-      enabled: !!region.stretch?.enabled,
+      enabled: !!region.stretch?.enabled && !corruptTinyStretch,
       ratio: stretchRatio,
       lengthRatio,
       speedPercent: 100 / Math.max(0.001, lengthRatio),

@@ -197,12 +197,15 @@ let timelineEdgeScrollRaf = 0
 let timelineEdgeScrollState = null
 let audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
 let audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+let audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
 let stretchPlaybackPrompt = null
 let audioEditPlaybackPrompt = null
 const audioEditPlaybackBypassRegionIds = new Set()
 let pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
 let pitchTraceSelectedNoteId = ''
 let pitchTraceNoteDrag = null
+let pitchTraceTool = 'cursor'
+let pitchTraceNoteDraw = null
 let meterRaf = 0
 let midiRegionMenuState = null
 let midiRegionClipboard = null
@@ -210,6 +213,7 @@ let midiRollState = null
 let midiRollSelectedNoteIndex = null
 let midiRollSelectedNoteIndices = []
 let midiRollStatus = ''
+let midiRollTool = 'cursor'
 let midiRollViewport = { regionId: '', scrollLeft: 0, scrollTop: 0 }
 let pendingMidiRollViewport = null
 let audioRegionToolsViewport = { regionId: '', scrollTop: 0 }
@@ -391,6 +395,8 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
         pitchDriftStartCents: clamp(Number(note?.pitchDriftStartCents) || 0, -1200, 1200),
         pitchDriftEndCents: clamp(Number(note?.pitchDriftEndCents) || 0, -1200, 1200),
         vibratoAmount: clamp(Number(note?.vibratoAmount) || 0, 0, 1),
+        source: note?.source === 'manual' ? 'manual' : 'analysis',
+        lockedToAnalysis: note?.lockedToAnalysis === true,
         muted: note?.muted === true,
         renderStatus: noteRenderStatus
       }
@@ -449,8 +455,24 @@ function normalizeAudioEdit(edit = {}) {
   }
 }
 function getAudioStretchMath(region = {}, targetDuration = null) {
-  const originalDuration = Math.max(minAudioRegionSeconds, getAudioSourceDurationSeconds(region))
-  const target = Math.max(minAudioRegionSeconds, Number.isFinite(Number(targetDuration)) ? Number(targetDuration) : getAudioRegionVisibleDurationSeconds(region))
+  const stretch = normalizeAudioStretch(region.stretch)
+  const originalDurationRaw = getAudioSourceDurationSeconds(region)
+  const originalDuration = Math.max(minAudioRegionSeconds, originalDurationRaw)
+  const defaultTarget = stretch.enabled
+    ? (Number.isFinite(Number(stretch.targetDurationSeconds)) ? Number(stretch.targetDurationSeconds) : getAudioRegionVisibleDurationSeconds(region))
+    : getAudioRegionVisibleDurationSeconds(region)
+  const target = Math.max(minAudioRegionSeconds, Number.isFinite(Number(targetDuration)) ? Number(targetDuration) : defaultTarget)
+  if (!stretch.enabled) {
+    return {
+      originalDurationSeconds: originalDuration,
+      targetDurationSeconds: target,
+      lengthRatio: 1,
+      speedPercent: 100,
+      rawSpeedPercent: 100,
+      supported: Number.isFinite(originalDurationRaw) && originalDurationRaw > 0,
+      error: Number.isFinite(originalDurationRaw) && originalDurationRaw > 0 ? null : 'Original duration unavailable.'
+    }
+  }
   const lengthRatio = target / originalDuration
   const speedPercent = (originalDuration / target) * 100
   const supported = Number.isFinite(speedPercent) && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX
@@ -466,15 +488,19 @@ function getAudioStretchMath(region = {}, targetDuration = null) {
 }
 function normalizeAudioStretch(stretch = {}) {
   const rawRatio = Number(stretch.lengthRatio ?? stretch.ratio)
-  const lengthRatio = clamp(Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 1, 0.01, 32)
+  const requestedEnabled = Boolean(stretch.enabled)
+  const looksCorruptTinyRatio = requestedEnabled && Number.isFinite(rawRatio) && rawRatio <= 0.05 && stretch.renderStatus !== 'ready' && !(stretch.renderedStoragePath || stretch.renderedAudioUrl)
+  const safeRawRatio = looksCorruptTinyRatio ? 1 : rawRatio
+  const lengthRatio = clamp(Number.isFinite(safeRawRatio) && safeRawRatio > 0 ? safeRawRatio : 1, 0.01, 32)
   const ratio = lengthRatio
   const statusValue = stretch.renderStatus === 'none' ? 'idle' : stretch.renderStatus
   const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(statusValue) ? statusValue : (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle')
-  const targetDurationSeconds = Number.isFinite(Number(stretch.targetDurationSeconds)) ? Math.max(minAudioRegionSeconds, Number(stretch.targetDurationSeconds)) : null
+  const rawTargetDuration = Number(stretch.targetDurationSeconds)
+  const targetDurationSeconds = looksCorruptTinyRatio ? null : Number.isFinite(rawTargetDuration) ? Math.max(minAudioRegionSeconds, rawTargetDuration) : null
   const speedPercent = 100 / Math.max(0.001, lengthRatio)
   const outOfRange = Number.isFinite(rawRatio) && (rawRatio < STRETCH_RATIO_MIN || rawRatio > STRETCH_RATIO_MAX)
   return {
-    enabled: Boolean(stretch.enabled) && Math.abs(ratio - 1) > 0.001,
+    enabled: requestedEnabled && !looksCorruptTinyRatio,
     ratio,
     lengthRatio,
     speedPercent,
@@ -489,8 +515,8 @@ function normalizeAudioStretch(stretch = {}) {
     renderedDurationSeconds: Number.isFinite(Number(stretch.renderedDurationSeconds)) ? Number(stretch.renderedDurationSeconds) : null,
     renderedAt: Number.isFinite(Number(stretch.renderedAt)) ? Number(stretch.renderedAt) : null,
     renderedSessionOnly: stretch.renderedSessionOnly === true,
-    renderStatus,
-    renderError: stretch.renderError || (outOfRange ? `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.` : null)
+    renderStatus: looksCorruptTinyRatio ? 'idle' : renderStatus,
+    renderError: looksCorruptTinyRatio ? null : (stretch.renderError || (outOfRange ? `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.` : null))
   }
 }
 function sanitizeStorageFilePart(value = '') {
@@ -789,7 +815,7 @@ function renderPitchTraceView(region, track) {
       note.muted ? 'is-muted' : ''
     ].filter(Boolean).join(' ')
     const deltaLabel = delta ? ` · ${delta > 0 ? '+' : ''}${delta} st` : ''
-    return `<button type="button" class="studio-pitch-trace-note ${stateClass}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(formatMidiNoteName(editedMidi))}${esc(deltaLabel)} · ${Math.round((note.confidence || 0) * 100)}%"><b>${esc(formatMidiNoteName(editedMidi))}</b></button>`
+    return `<button type="button" class="studio-pitch-trace-note ${stateClass}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(formatMidiNoteName(editedMidi))}${esc(deltaLabel)} · ${Math.round((note.confidence || 0) * 100)}%"><span data-pitch-trace-note-handle="left"></span><b>${esc(formatMidiNoteName(editedMidi))}</b><span data-pitch-trace-note-handle="right"></span></button>`
   }).join('')
   const labels = Array.from({ length: rowCount }, (_, index) => {
     const midi = maxNote - index
@@ -803,11 +829,11 @@ function renderPitchTraceView(region, track) {
       : trace.status === 'failed'
         ? `Failed · ${trace.error || 'Try again'}`
         : 'Idle'
-  return `<div class="studio-pitch-trace-view" style="--pitch-row-count:${rowCount}">
+  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount}">
     <div class="studio-pitch-trace-waveform">${renderAudioWaveform(region)}</div>
     <div class="studio-pitch-trace-grid" aria-hidden="true">${beatLines}</div>
     <div class="studio-pitch-trace-labels" aria-hidden="true">${labels}</div>
-    <div class="studio-pitch-trace-notes">${blocks || '<p>No detected notes yet. Click Analyze Audio to create a Pitch Trace.</p>'}</div>
+    <div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks || '<p>No detected notes yet. Click Analyze Audio to create a Pitch Trace.</p>'}</div>
     <small>Pitch Trace: ${esc(status)}</small>
   </div>`
 }
@@ -818,6 +844,37 @@ function getSelectedPitchTraceNote(region) {
   if (!region || region.type !== 'audio' || !pitchTraceSelectedNoteId) return null
   const trace = normalizeAudioEdit(region.audioEdit).pitchTrace
   return (trace.notes || []).find((note)=>note.id === pitchTraceSelectedNoteId) || null
+}
+function renderPitchTraceToolPane(region, missing = false) {
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const trace = edit.pitchTrace
+  const selectedPitchNote = getSelectedPitchTraceNote(region)
+  const editedPitchNoteCount = getPitchTraceEditedNoteCount(trace)
+  const pitchTraceRenderStatus = trace.renderStatus === 'needs_render' ? 'Needs render' : (trace.lastError || trace.renderStatus || 'idle')
+  return `<aside class="studio-midi-roll-tools studio-pitch-trace-tools-pane" data-pitch-trace-scroll>
+    <h3>Pitch Trace</h3>
+    <div class="studio-editor-tool-toggle" role="toolbar" aria-label="Pitch Trace tools">
+      <button type="button" data-pitch-trace-tool="cursor" class="${pitchTraceTool === 'cursor' ? 'is-active' : ''}" aria-pressed="${String(pitchTraceTool === 'cursor')}">Cursor</button>
+      <button type="button" data-pitch-trace-tool="pencil" class="${pitchTraceTool === 'pencil' ? 'is-active' : ''}" aria-pressed="${String(pitchTraceTool === 'pencil')}">Pencil</button>
+    </div>
+    <p>${pitchTraceTool === 'pencil' ? 'Draw Audio Notes on the Pitch Trace grid.' : 'Select, drag, and resize Audio Notes.'}</p>
+    <label><input type="checkbox" data-pitch-trace-enabled ${trace.enabled ? 'checked' : ''}> Pitch Trace enabled</label>
+    <label>Confidence<input type="range" min="0.3" max="0.95" step="0.05" data-pitch-trace-threshold value="${trace.confidenceThreshold}"><small>${Math.round(trace.confidenceThreshold * 100)}%</small></label>
+    <button type="button" data-pitch-trace-analyze ${missing || trace.status === 'analyzing' ? 'disabled' : ''}>${trace.notes.length ? 'Re-analyze Audio' : 'Analyze Audio'}</button>
+    <button type="button" data-pitch-trace-clear ${trace.notes.length || trace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
+    <button type="button" data-pitch-trace-render ${trace.enabled && trace.notes.length && !missing && trace.renderStatus !== 'rendering' ? '' : 'disabled'}>${trace.renderStatus === 'failed' ? 'Retry Pitch Edits' : 'Render Pitch Edits'}</button>
+    ${selectedPitchNote ? `<div class="studio-pitch-trace-note-tools">
+      <strong>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</strong>
+      <span>${selectedPitchNote.source === 'manual' ? 'Manual Audio Note' : 'Analyzed Audio Note'} · Original ${esc(formatMidiNoteName(selectedPitchNote.originalMidiNote))}</span>
+      <label>Start<input type="number" min="0" step="0.01" data-pitch-trace-note-field="startSeconds" value="${Number(selectedPitchNote.startSeconds || 0).toFixed(2)}"></label>
+      <label>Length<input type="number" min="0.03" step="0.01" data-pitch-trace-note-field="durationSeconds" value="${Number(selectedPitchNote.durationSeconds || 0.03).toFixed(2)}"></label>
+      <label>Edited Note<input type="number" min="0" max="127" step="1" data-pitch-trace-note-field="editedMidiNote" value="${Number(selectedPitchNote.editedMidiNote || 60)}"><small>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</small></label>
+      <button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}">Reset Note</button>
+      <button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted ? 'Unmute Note' : 'Mute Note'}</button>
+      <button type="button" data-pitch-trace-note-delete="${esc(selectedPitchNote.id)}">Delete Note</button>
+    </div>` : '<small>Select or draw an Audio Note to edit it.</small>'}
+    <small>Analysis: ${esc(trace.status === 'analyzing' ? 'Analyzing...' : trace.status)} · Render: ${esc(pitchTraceRenderStatus)}${editedPitchNoteCount ? ` · ${editedPitchNoteCount} edit${editedPitchNoteCount === 1 ? '' : 's'}` : ''}</small>
+  </aside>`
 }
 function midiRollPitchRows(region = getMidiRollRegion()) {
   const track = getMidiRegionTrack(region)
@@ -857,7 +914,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${motionClass}" data-audio-region-editor="${esc(region.id)}"${style}>
     <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
-    <div class="studio-bottom-panel-body studio-audio-region-editor-body">
+    <div class="studio-bottom-panel-body studio-audio-region-editor-body ${pitchTrace.enabled ? 'has-pitch-trace-tools' : ''}">
       <section class="studio-audio-region-editor-preview">
         <div class="studio-audio-editor-waveform ${pitchTrace.enabled ? 'has-pitch-trace' : ''}" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${pitchTrace.enabled ? renderPitchTraceView(region, track) : renderAudioWaveform(region)}</div>
         <div class="studio-audio-editor-meta">
@@ -868,6 +925,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         </div>
         ${missing ? `<p class="studio-audio-editor-warning" title="${esc(getAudioOfflineMessage(region))}">${esc(region.audioClip?.loadError || getAudioOfflineMessage(region))}</p>` : ''}
       </section>
+      ${pitchTrace.enabled ? renderPitchTraceToolPane(region, missing) : ''}
       <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
         <h3>${esc(getMidiRegionLabel(region))}</h3>
         <label>Region name<input data-audio-region-name value="${esc(region.name || '')}" placeholder="${esc(track?.name || 'Audio Region')}"></label>
@@ -883,7 +941,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <label>Pitch Source<select data-audio-edit-field="pitchSource" disabled><option>Off</option><option>Region</option><option>Project Key</option></select><small>Coming soon</small></label>
         <hr>
         <div class="studio-pitch-trace-controls">
-          <label><input type="checkbox" data-pitch-trace-enabled ${pitchTrace.enabled ? 'checked' : ''}> Pitch Trace</label>
+          ${pitchTrace.enabled ? '<p>Pitch Trace tools are shown in the dedicated pane beside the editor.</p>' : `<label><input type="checkbox" data-pitch-trace-enabled> Pitch Trace</label>
           <p>Analyze the audio region, then drag detected notes vertically to retune audio segments.</p>
           <label>Confidence<input type="range" min="0.3" max="0.95" step="0.05" data-pitch-trace-threshold value="${pitchTrace.confidenceThreshold}"><small>${Math.round(pitchTrace.confidenceThreshold * 100)}%</small></label>
           <button type="button" data-pitch-trace-analyze ${missing || pitchTrace.status === 'analyzing' ? 'disabled' : ''}>${pitchTrace.notes.length ? 'Re-analyze Audio' : 'Analyze Audio'}</button>
@@ -895,7 +953,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
             <button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}" ${selectedPitchNote.editedMidiNote === selectedPitchNote.originalMidiNote && !selectedPitchNote.muted ? 'disabled' : ''}>Reset Note</button>
             <button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted ? 'Unmute Note' : 'Mute Note'}</button>
           </div>` : '<small>Select and drag a Pitch Trace note to edit pitch.</small>'}
-          <small>Pitch Trace: ${esc(pitchTrace.status === 'analyzing' ? 'Analyzing...' : pitchTrace.status)} · Render: ${esc(pitchTraceRenderStatus)}${editedPitchNoteCount ? ` · ${editedPitchNoteCount} edit${editedPitchNoteCount === 1 ? '' : 's'}` : ''}</small>
+          <small>Pitch Trace: ${esc(pitchTrace.status === 'analyzing' ? 'Analyzing...' : pitchTrace.status)} · Render: ${esc(pitchTraceRenderStatus)}${editedPitchNoteCount ? ` · ${editedPitchNoteCount} edit${editedPitchNoteCount === 1 ? '' : 's'}` : ''}</small>`}
         </div>
         <label>Gain<input type="range" min="-24" max="24" step="0.5" data-audio-edit-field="gainDb" value="${edit.gainDb}"><small>${edit.gainDb.toFixed(1)} dB</small></label>
         <label>Delay<input type="number" min="0" max="2000" step="1" data-audio-edit-field="delayMs" value="${edit.delayMs}"><small>ms</small></label>
@@ -962,6 +1020,10 @@ function renderMidiRollPanel(motionClass = '') {
       </section>
       <aside class="studio-midi-roll-tools">
         <h3>${esc(getMidiRegionLabel(region))}</h3>
+        <div class="studio-editor-tool-toggle" role="toolbar" aria-label="MIDI editor tools">
+          <button type="button" data-midi-roll-tool="cursor" class="${midiRollTool === 'cursor' ? 'is-active' : ''}" aria-pressed="${String(midiRollTool === 'cursor')}">Cursor</button>
+          <button type="button" data-midi-roll-tool="pencil" class="${midiRollTool === 'pencil' ? 'is-active' : ''}" aria-pressed="${String(midiRollTool === 'pencil')}">Pencil</button>
+        </div>
         <p>${selectedNote ? `${esc(formatMidiNoteName(selectedNote.note))} at ${Number(selectedNote.startBeat || 0).toFixed(2)}` : (notes.length ? 'No notes selected. Quantize will apply to the active clip.' : 'No notes available to edit.')}</p>
         ${midiRollStatus ? `<p class="studio-midi-roll-status">${esc(midiRollStatus)}</p>` : ''}
         <label>Velocity<input data-midi-note-velocity type="range" min="1" max="127" value="${Math.round(clamp(Number(selectedNote?.velocity || 0.85), 0, 1) * 127)}" ${selectedNote ? '' : 'disabled'}><small>${Math.round(clamp(Number(selectedNote?.velocity || 0.85), 0, 1) * 127)}</small></label>
@@ -1150,6 +1212,19 @@ function getInstrumentKeys(track = getSelectedTrack()){
   return keys
 }
 function getSelectedTrack(){ return tracks.find((track)=>track.id===selectedTrackId) || tracks[0] }
+function renderAudioEditVisualOverlays(region) {
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
+  const fadeInWidth = clamp((Number(edit.fadeInSeconds) || 0) / visibleDuration, 0, 1) * 100
+  const fadeOutWidth = clamp((Number(edit.fadeOutSeconds) || 0) / visibleDuration, 0, 1) * 100
+  const delayLeft = clamp((Number(edit.delayMs) || 0) / 1000 / visibleDuration, 0, 1) * 100
+  return `<span class="studio-audio-edit-overlays" aria-hidden="true">
+    ${fadeInWidth > 0.25 ? `<i class="studio-audio-fade-overlay studio-audio-fade-overlay--in ${edit.fadeInCurve === 'equal-power' ? 'is-equal-power' : ''}" style="width:${fadeInWidth.toFixed(3)}%"></i>` : ''}
+    ${fadeOutWidth > 0.25 ? `<i class="studio-audio-fade-overlay studio-audio-fade-overlay--out ${edit.fadeOutCurve === 'equal-power' ? 'is-equal-power' : ''}" style="width:${fadeOutWidth.toFixed(3)}%"></i>` : ''}
+    ${Number(edit.delayMs) > 0 ? `<i class="studio-audio-delay-marker" style="left:${delayLeft.toFixed(3)}%"><b>Delay +${Math.round(edit.delayMs)}ms</b></i>` : ''}
+    ${Math.abs(Number(edit.gainDb) || 0) > 0.01 ? `<b class="studio-audio-gain-badge">${edit.gainDb > 0 ? '+' : ''}${Number(edit.gainDb).toFixed(1)} dB</b>` : ''}
+  </span>`
+}
 function renderMidiRegion(region, isRecording = false) {
   const trackIndex = Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))
   const startBeat = Number(region.startBeat) || 0
@@ -1280,7 +1355,8 @@ function renderAudioRegion(region, isRecording = false) {
   const stretchMath = getAudioStretchMath(region)
   const speedLabel = Math.round(stretchMath.speedPercent)
   const stretchLabel = stretching || stretch.enabled ? `<b class="studio-audio-stretch-label">${stretching ? 'Time Stretch' : stretchStatus} ${speedLabel}% speed</b>` : ''
-  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
+  const edit = normalizeAudioEdit(region.audioEdit)
+  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute ? 'is-audio-muted' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
 }
 function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=app.querySelector(`[data-track-volume="${track.id}"]`); if(!input) return; input.value=String(track.volume); input.setAttribute('value', String(track.volume)) }
 function getInstrumentKnobDescriptors(){
@@ -1815,6 +1891,13 @@ function renderAudioPitchRenderModal() {
   const progressLabel = progress == null ? 'Rendering...' : `${Math.round(progress * 100)}%`
   const title = audioPitchRenderState.mode === 'trace' ? 'Rendering Pitch Trace Edits' : audioPitchRenderState.mode === 'reverse' ? 'Rendering Reverse' : 'Rendering Pitch Shift'
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-pitch-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-pitch-render-title">${esc(title)}</h3><p>Soura is rendering edited audio for this region. Playback will use the render when it finishes.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
+}
+function renderAudioPreflightRenderModal() {
+  if (!audioPreflightRenderState.active) return ''
+  const total = Math.max(1, Number(audioPreflightRenderState.total) || 1)
+  const completed = clamp(Number(audioPreflightRenderState.completed) || 0, 0, total)
+  const progress = completed / total
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-preflight-render-title"><section class="studio-audio-render-panel"><span>Preparing audio</span><h3 id="studio-preflight-render-title">Preparing Audio</h3><p>Soura needs to render audio edits before playback.</p><div class="studio-audio-render-progress" aria-label="${Math.round(progress * 100)}%"><i style="width:${Math.round(progress * 100)}%"></i></div><small>${completed}/${total} renders · ${esc(audioPreflightRenderState.currentLabel || 'Queued')}</small>${audioPreflightRenderState.error ? `<p>${esc(audioPreflightRenderState.error)}</p><div class="studio-modal-actions"><button type="button" class="button" data-preflight-retry>Retry Render</button><button type="button" class="button button-muted" data-preflight-play-original>Play Original Where Possible</button><button type="button" class="button button-muted" data-preflight-cancel>Cancel</button></div>` : ''}</section></div>`
 }
 function renderStretchPlaybackPrompt() {
   if (!stretchPlaybackPrompt?.regionId) return ''
@@ -2729,7 +2812,7 @@ function applyStudioGuideTargets() {
 }
 function setPlayhead(x) { timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX()); if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`); updateTransportDisplay(); updateMidiRollPlayheadDom(); if (isPlaying && !isTransportTicking) { stopAllAudioClipPlayback(); updateAudioClipPlayback(clampBeat(xToBeat(timelineState.playheadX))) } }
 function pixelsPerSecond() { const bpm = Number(projectState?.bpm || 140); const bps = bpm / 60; const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
-function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
+function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
 function tickPlayback(now) { if (!isPlaying) return; const delta=(now-lastPlayTimestamp)/1000; lastPlayTimestamp=now; let nextX = timelineState.playheadX + pixelsPerSecond()*delta; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle) { if (nextX >= cycle.end) { stopAllPlaybackNotes(); stopAllAudioClipPlayback(); nextX = cycle.start + ((nextX - cycle.end) % (cycle.end-cycle.start)) } } if (isCountInRunning && countInTargetX != null && nextX >= countInTargetX) { nextX = countInTargetX } isTransportTicking = true; setPlayhead(nextX); isTransportTicking = false; if (isCountInRunning && countInTargetX != null) { const nextRemaining = clamp(Math.ceil((countInTargetX - timelineState.playheadX) / Math.max(1, beatWidth())), 0, 4); if (nextRemaining !== countInBeatsRemaining) { countInBeatsRemaining = nextRemaining; updateEditorTitleStatus() } if (timelineState.playheadX >= countInTargetX - 0.5) { const track = tracks.find((item)=>item.id === countInTargetTrackId) || getRecordingTrack(); isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = ''; if (isAudioTrack(track)) beginAudioRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) }); else beginMidiRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) }); playRaf = requestAnimationFrame(tickPlayback); return } } const currentBeat = clampBeat(xToBeat(timelineState.playheadX)); updateMidiRegionPlayback(currentBeat); updateAudioClipPlayback(currentBeat); lastPlaybackBeat = currentBeat; if(activeRecording) refreshMidiRegionDom(); followPlayheadIfNeeded(); maybeTickMetronome(); if (timelineState.playheadX >= maxTimelineX()) return pausePlayback(); playRaf = requestAnimationFrame(tickPlayback) }
 async function prepareProjectPlayback() {
   const ctx = getAudioContext()
@@ -2754,14 +2837,91 @@ async function prepareProjectPlayback() {
   })
   if (pendingAudio.length) await Promise.allSettled(pendingAudio.map((region)=>hydrateAudioRegionRuntime(region)))
 }
-async function startPlayback() { if (isPlaying || audioStretchRenderState.active || audioPitchRenderState.active) return; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start); recordingStatus = 'Preparing audio...'; updateEditorTitleStatus(); await prepareProjectPlayback(); recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus; prewarmDawAudio().then((engine) => { engine.setBpm(Number(projectState?.bpm || 140)); engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) }) }).catch((err)=>console.warn('[studioProject] audio engine start failed', err)); isPlaying = true; lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX)); lastPlayTimestamp = performance.now(); startTrackMeterLoop(); updateAudioClipPlayback(lastPlaybackBeat); playRaf = requestAnimationFrame(tickPlayback); updateTransportPlaybackUI(); updateEditorTitleStatus() }
+function collectAudioRenderReadinessTasks() {
+  return midiRegions.filter((region)=>region.type === 'audio').map((region)=> {
+    const stretch = normalizeAudioStretch(region.stretch)
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const choice = getAudioPlaybackRenderChoice(region, edit, stretch)
+    if (choice.needsRender) return { regionId: region.id, mode: choice.promptMode, label: getMidiRegionLabel(region) }
+    if (choice.needsStretchRender) return { regionId: region.id, mode: 'stretch', label: getMidiRegionLabel(region) }
+    return null
+  }).filter(Boolean)
+}
+async function runAudioRenderReadinessAudit() {
+  const tasks = collectAudioRenderReadinessTasks()
+  if (!tasks.length) return true
+  audioPreflightRenderState = { active: true, total: tasks.length, completed: 0, currentLabel: 'Queued', error: '', failed: [] }
+  renderEditor()
+  for (let index = 0; index < tasks.length; index += 1) {
+    const task = tasks[index]
+    audioPreflightRenderState = { ...audioPreflightRenderState, completed: index, currentLabel: `${task.label} · ${task.mode}` }
+    renderEditor()
+    const beforeErrors = midiRegions.map((region)=>({ id: region.id, edit: normalizeAudioEdit(region.audioEdit), stretch: normalizeAudioStretch(region.stretch) }))
+    if (task.mode === 'stretch') await renderAudioStretchForRegion(task.regionId)
+    else if (task.mode === 'trace') await renderPitchTraceEditsForRegion(task.regionId)
+    else if (task.mode === 'reverse') await renderAudioReverseForRegion(task.regionId)
+    else await renderAudioPitchShiftForRegion(task.regionId)
+    const region = midiRegions.find((item)=>item.id === task.regionId)
+    const edit = normalizeAudioEdit(region?.audioEdit)
+    const stretch = normalizeAudioStretch(region?.stretch)
+    const failed = task.mode === 'stretch'
+      ? stretch.renderStatus === 'failed'
+      : task.mode === 'trace'
+        ? edit.pitchTrace.renderStatus === 'failed'
+        : task.mode === 'reverse'
+          ? edit.reverse.renderStatus === 'failed'
+          : edit.pitchShift.renderStatus === 'failed'
+    if (failed) {
+      const prior = beforeErrors.find((item)=>item.id === task.regionId)
+      audioPreflightRenderState = { ...audioPreflightRenderState, active: true, error: `Render failed for ${task.label}.`, failed: [{ ...task, prior }] }
+      renderEditor()
+      return false
+    }
+  }
+  audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+  renderEditor()
+  return true
+}
+async function startPlayback({ skipRenderAudit = false } = {}) {
+  if (isPlaying || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active) return
+  const requestedPlayheadX = timelineState.playheadX
+  const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null
+  if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start)
+  const playbackStartX = timelineState.playheadX
+  recordingStatus = 'Preparing audio...'
+  updateEditorTitleStatus()
+  await prepareProjectPlayback()
+  if (!skipRenderAudit) {
+    const ready = await runAudioRenderReadinessAudit()
+    if (!ready) {
+      recordingStatus = 'Audio render failed before playback.'
+      updateEditorTitleStatus()
+      return
+    }
+    setPlayhead(playbackStartX || requestedPlayheadX)
+  }
+  recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus
+  prewarmDawAudio().then((engine) => {
+    engine.setBpm(Number(projectState?.bpm || 140))
+    engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
+    engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) })
+  }).catch((err)=>console.warn('[studioProject] audio engine start failed', err))
+  isPlaying = true
+  lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX))
+  lastPlayTimestamp = performance.now()
+  startTrackMeterLoop()
+  updateAudioClipPlayback(lastPlaybackBeat)
+  playRaf = requestAnimationFrame(tickPlayback)
+  updateTransportPlaybackUI()
+  updateEditorTitleStatus()
+}
 function pausePlayback() { isPlaying = false; stopAllPlaybackNotes(); stopAllAudioClipPlayback(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI() }
 function togglePlayback(){ isPlaying ? pausePlayback() : startPlayback() }
 function stopPlayback() { pausePlayback(); audioEditPlaybackBypassRegionIds.clear(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = '' }
 function getNormalizedCycleRange(){ if(!cycleRange) return null; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return end-start>=cycleMinWidth()?{start,end}:null }
 function hasValidCycleRange(){ return !!getNormalizedCycleRange() }
 function isCycleStripPointerEvent(event, ruler){ const rect = ruler?.getBoundingClientRect?.(); if(!rect) return false; const localY = event.clientY - rect.top; return localY >= 0 && localY <= 22 }
-function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); if (audioStretchRenderState.active || audioPitchRenderState.active) return; if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
+function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); if (audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active) return; if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
 
 function getMusicalTypingTrack() {
   if (activeRecording?.trackId) return tracks.find((track)=>track.id === activeRecording.trackId) || getRecordingTrack()
@@ -3006,7 +3166,7 @@ function createPendingStretchMetadata(ratio) {
   const lengthRatio = clamp(Number.isFinite(rawLengthRatio) && rawLengthRatio > 0 ? rawLengthRatio : 1, 0.01, 32)
   const supported = Number.isFinite(rawLengthRatio) && rawLengthRatio >= STRETCH_RATIO_MIN && rawLengthRatio <= STRETCH_RATIO_MAX
   return {
-    enabled: Math.abs(lengthRatio - 1) > 0.001,
+    enabled: true,
     ratio: lengthRatio,
     lengthRatio,
     speedPercent: 100 / Math.max(0.001, lengthRatio),
@@ -4413,6 +4573,30 @@ function updateAudioRegionStretchTarget(region, targetDurationSeconds) {
   scheduleEditorSave()
   renderEditor()
 }
+function enableAudioRegionStretch(region) {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const sourceDuration = Math.max(minAudioRegionSeconds, getAudioSourceDurationSeconds(region))
+  const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region) || sourceDuration)
+  const ratio = Math.max(0.01, visibleDuration / sourceDuration)
+  const math = getAudioStretchMath({ ...region, stretch: { enabled: true, lengthRatio: ratio, targetDurationSeconds: visibleDuration } }, visibleDuration)
+  region.stretch = {
+    ...createPendingStretchMetadata(ratio),
+    enabled: true,
+    targetDurationSeconds: visibleDuration,
+    sourceDurationSeconds: sourceDuration,
+    lengthRatio: ratio,
+    ratio,
+    speedPercent: math.rawSpeedPercent,
+    renderStatus: math.supported && Math.abs(ratio - 1) > 0.001 ? 'needs_render' : 'idle',
+    renderError: math.supported ? null : math.error
+  }
+  region.stretchRender = null
+  region.renderedWaveform = null
+  pushHistory('enable-audio-stretch', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
 function resetAudioRegionStretch(region) {
   if (!region || region.type !== 'audio') return
   const before = captureDawSnapshot()
@@ -4581,12 +4765,18 @@ function beginPitchTraceNoteDrag(event, regionId, noteId) {
   const noteValues = visibleNotes.map((item)=>Number(item.editedMidiNote ?? item.midiNote)).filter(Number.isFinite)
   const minNote = Math.max(0, Math.min(48, ...(noteValues.length ? noteValues : [48])) - 2)
   const maxNote = Math.min(127, Math.max(72, ...(noteValues.length ? noteValues : [72])) + 2)
+  const handle = event.target.closest('[data-pitch-trace-note-handle]')?.dataset?.pitchTraceNoteHandle || 'pitch'
   pitchTraceNoteDrag = {
     regionId,
     noteId,
+    mode: handle,
     before: captureDawSnapshot(),
+    startX: event.clientX,
     startY: event.clientY,
+    startSeconds: Number(note.startSeconds) || 0,
+    durationSeconds: Math.max(0.03, Number(note.durationSeconds) || 0.03),
     startEditedMidiNote: Number(note.editedMidiNote) || Number(note.midiNote) || 60,
+    visibleDurationSeconds: Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region)),
     minNote,
     maxNote,
     rowCount: Math.max(1, maxNote - minNote + 1),
@@ -4600,12 +4790,35 @@ function applyPitchTraceNoteDrag(event) {
   const region = midiRegions.find((item)=>item.id === pitchTraceNoteDrag.regionId && item.type === 'audio')
   if (!region) return
   const dy = event.clientY - pitchTraceNoteDrag.startY
-  if (!pitchTraceNoteDrag.hasMoved && Math.abs(dy) < 3) return
+  const dx = event.clientX - pitchTraceNoteDrag.startX
+  if (!pitchTraceNoteDrag.hasMoved && Math.hypot(dx, dy) < 3) return
   const pitchDelta = -Math.round(dy / 14)
-  const nextMidi = clamp(pitchTraceNoteDrag.startEditedMidiNote + pitchDelta, 0, 127)
   const edit = normalizeAudioEdit(region.audioEdit)
   const notes = edit.pitchTrace.notes.map((note)=> {
     if (note.id !== pitchTraceNoteDrag.noteId) return note
+    if (pitchTraceNoteDrag.mode === 'left' || pitchTraceNoteDrag.mode === 'right') {
+      const deltaSeconds = (dx / Math.max(1, app.querySelector('[data-pitch-trace-grid]')?.getBoundingClientRect?.()?.width || 1)) * pitchTraceNoteDrag.visibleDurationSeconds
+      if (pitchTraceNoteDrag.mode === 'left') {
+        const nextStart = clamp(pitchTraceNoteDrag.startSeconds + deltaSeconds, 0, pitchTraceNoteDrag.startSeconds + pitchTraceNoteDrag.durationSeconds - 0.03)
+        const nextDuration = Math.max(0.03, pitchTraceNoteDrag.startSeconds + pitchTraceNoteDrag.durationSeconds - nextStart)
+        return {
+          ...note,
+          startSeconds: nextStart,
+          durationSeconds: nextDuration,
+          startBeat: (Number(region.startBeat) || 0) + secondsToBeats(nextStart),
+          durationBeats: secondsToBeats(nextDuration),
+          renderStatus: 'needs_render'
+        }
+      }
+      const nextDuration = Math.max(0.03, pitchTraceNoteDrag.durationSeconds + deltaSeconds)
+      return {
+        ...note,
+        durationSeconds: nextDuration,
+        durationBeats: secondsToBeats(nextDuration),
+        renderStatus: 'needs_render'
+      }
+    }
+    const nextMidi = clamp(pitchTraceNoteDrag.startEditedMidiNote + pitchDelta, 0, 127)
     const edited = {
       ...note,
       editedMidiNote: nextMidi,
@@ -4630,11 +4843,16 @@ function applyPitchTraceNoteDrag(event) {
   pitchTraceNoteDrag.hasMoved = true
   const noteEl = app.querySelector(`[data-pitch-trace-note="${CSS.escape(String(pitchTraceNoteDrag.noteId))}"]`)
   if (noteEl) {
-    const visibleMidi = clamp(nextMidi, pitchTraceNoteDrag.minNote, pitchTraceNoteDrag.maxNote)
-    const row = pitchTraceNoteDrag.maxNote - visibleMidi
-    noteEl.style.top = `${((row / pitchTraceNoteDrag.rowCount) * 100).toFixed(3)}%`
-    noteEl.classList.toggle('is-edited', nextMidi !== (notes.find((note)=>note.id === pitchTraceNoteDrag.noteId)?.originalMidiNote ?? nextMidi))
-    noteEl.querySelector('b')?.replaceChildren(document.createTextNode(formatMidiNoteName(nextMidi)))
+    const editedNote = notes.find((note)=>note.id === pitchTraceNoteDrag.noteId)
+    if (editedNote) {
+      noteEl.style.left = `${(clamp(editedNote.startSeconds / pitchTraceNoteDrag.visibleDurationSeconds, 0, 1) * 100).toFixed(3)}%`
+      noteEl.style.width = `${(clamp(editedNote.durationSeconds / pitchTraceNoteDrag.visibleDurationSeconds, 0.002, 1) * 100).toFixed(3)}%`
+      const visibleMidi = clamp(editedNote.editedMidiNote, pitchTraceNoteDrag.minNote, pitchTraceNoteDrag.maxNote)
+      const row = pitchTraceNoteDrag.maxNote - visibleMidi
+      noteEl.style.top = `${((row / pitchTraceNoteDrag.rowCount) * 100).toFixed(3)}%`
+      noteEl.classList.toggle('is-edited', editedNote.editedMidiNote !== editedNote.originalMidiNote || editedNote.source === 'manual')
+      noteEl.querySelector('b')?.replaceChildren(document.createTextNode(formatMidiNoteName(editedNote.editedMidiNote)))
+    }
   }
 }
 function finishPitchTraceNoteDrag() {
@@ -4682,6 +4900,100 @@ function mutatePitchTraceNote(region, noteId, mutator, historyLabel = 'edit-pitc
   scheduleEditorSave()
   renderEditor()
 }
+function pitchTracePointFromEvent(event) {
+  const grid = event.target.closest('[data-pitch-trace-grid]') || app.querySelector('[data-pitch-trace-grid]')
+  const view = app.querySelector('[data-pitch-trace-view]')
+  const rect = grid?.getBoundingClientRect?.()
+  if (!grid || !view || !rect?.width || !rect?.height) return null
+  const minNote = Number(view.dataset.pitchMin) || 48
+  const maxNote = Number(view.dataset.pitchMax) || 72
+  const visibleDuration = Math.max(minAudioRegionSeconds, Number(view.dataset.pitchDuration) || minAudioRegionSeconds)
+  const xRatio = clamp((event.clientX - rect.left) / rect.width, 0, 1)
+  const yRatio = clamp((event.clientY - rect.top) / rect.height, 0, 1)
+  const midiNote = clamp(Math.round(maxNote - (yRatio * (maxNote - minNote + 1))), 0, 127)
+  let seconds = xRatio * visibleDuration
+  if (isSnapEnabled) seconds = beatsToSeconds(snapBeat(secondsToBeats(seconds), getMidiRollSnapValue()))
+  return { seconds: clamp(seconds, 0, visibleDuration), midiNote, visibleDuration }
+}
+function beginPitchTraceNoteDraw(event) {
+  if (pitchTraceTool !== 'pencil' || event.button !== 0 || event.target.closest('[data-pitch-trace-note]')) return
+  const region = getSelectedAudioRegion()
+  const point = pitchTracePointFromEvent(event)
+  if (!region || !point) return
+  event.preventDefault()
+  event.stopPropagation()
+  const before = captureDawSnapshot()
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const id = makeInsertId('pitch-note')
+  const note = {
+    id,
+    startSeconds: point.seconds,
+    durationSeconds: Math.max(0.12, beatsToSeconds(getMidiRollSnapValue())),
+    startBeat: (Number(region.startBeat) || 0) + secondsToBeats(point.seconds),
+    durationBeats: Math.max(0.001, secondsToBeats(Math.max(0.12, beatsToSeconds(getMidiRollSnapValue())))),
+    originalMidiNote: point.midiNote,
+    editedMidiNote: point.midiNote,
+    originalFrequencyHz: midiNoteToFrequency(point.midiNote),
+    editedFrequencyHz: midiNoteToFrequency(point.midiNote),
+    midiNote: point.midiNote,
+    noteName: formatMidiNoteName(point.midiNote),
+    frequencyHz: midiNoteToFrequency(point.midiNote),
+    confidence: 1,
+    centsOffset: 0,
+    gainDb: 0,
+    pitchDriftStartCents: 0,
+    pitchDriftEndCents: 0,
+    vibratoAmount: 0,
+    source: 'manual',
+    lockedToAnalysis: false,
+    muted: false,
+    renderStatus: 'needs_render'
+  }
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: {
+      ...edit.pitchTrace,
+      enabled: true,
+      status: edit.pitchTrace.status === 'idle' ? 'ready' : edit.pitchTrace.status,
+      renderStatus: 'needs_render',
+      renderedRuntimeId: null,
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      lastError: null,
+      notes: [...edit.pitchTrace.notes, note]
+    }
+  })
+  pitchTraceSelectedNoteId = id
+  pitchTraceNoteDraw = { regionId: region.id, noteId: id, before, startSeconds: point.seconds, visibleDurationSeconds: point.visibleDuration }
+  renderEditor()
+}
+function applyPitchTraceNoteDraw(event) {
+  if (!pitchTraceNoteDraw) return
+  const region = midiRegions.find((item)=>item.id === pitchTraceNoteDraw.regionId && item.type === 'audio')
+  const point = pitchTracePointFromEvent(event)
+  if (!region || !point) return
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const start = Math.min(pitchTraceNoteDraw.startSeconds, point.seconds)
+  const end = Math.max(pitchTraceNoteDraw.startSeconds + 0.03, point.seconds)
+  const notes = edit.pitchTrace.notes.map((note)=>note.id === pitchTraceNoteDraw.noteId ? {
+    ...note,
+    startSeconds: start,
+    durationSeconds: Math.max(0.03, end - start),
+    startBeat: (Number(region.startBeat) || 0) + secondsToBeats(start),
+    durationBeats: secondsToBeats(Math.max(0.03, end - start)),
+    renderStatus: 'needs_render'
+  } : note)
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, notes, renderStatus: 'needs_render' } })
+  renderEditor()
+}
+function finishPitchTraceNoteDraw() {
+  if (!pitchTraceNoteDraw) return
+  const before = pitchTraceNoteDraw.before
+  pitchTraceNoteDraw = null
+  pushHistory('draw-pitch-trace-note', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
 function getMidiRollGridPoint(event) {
   const grid = app.querySelector('[data-midi-roll-grid]')
   const rect = grid?.getBoundingClientRect?.()
@@ -4691,6 +5003,29 @@ function getMidiRollGridPoint(event) {
     y: clamp(event.clientY - rect.top, 0, grid.offsetHeight || 0)
   }
 }
+function drawMidiNoteAtGridPoint(region, point) {
+  if (!region || !point) return
+  const rows = midiRollPitchRows(region)
+  const rowIndex = clamp(Math.floor(point.y / midiRollRowHeight), 0, rows.length - 1)
+  const pitch = rows[rowIndex] ?? 60
+  const snap = getMidiRollSnapValue()
+  const regionStart = Number(region.startBeat) || 0
+  const startBeat = clamp(snapBeat(regionStart + (point.x / midiRollBeatWidth), snap), regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + snap) - 0.05)
+  const before = captureDawSnapshot()
+  region.notes = [...(region.notes || []), {
+    id: makeInsertId('note'),
+    note: pitch,
+    startBeat,
+    durationBeats: Math.max(0.05, snap),
+    velocity: 0.85
+  }]
+  midiRollSelectedNoteIndex = region.notes.length - 1
+  midiRollSelectedNoteIndices = [midiRollSelectedNoteIndex]
+  midiRollStatus = `Drew ${formatMidiNoteName(pitch)}.`
+  pushHistory('draw-midi-note', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
 function beginMidiRollSelection(event) {
   if (event.button !== 0 || event.target.closest('[data-midi-note-index]')) return
   const region = getMidiRollRegion()
@@ -4698,6 +5033,10 @@ function beginMidiRollSelection(event) {
   if (!region || !point) return
   event.preventDefault()
   event.stopPropagation()
+  if (midiRollTool === 'pencil') {
+    drawMidiNoteAtGridPoint(region, point)
+    return
+  }
   midiRollSelectionDrag = { startX: point.x, startY: point.y, currentX: point.x, currentY: point.y, hasMoved: false, additive: !!event.shiftKey, existing: [...midiRollSelectedNoteIndices] }
   if (!event.shiftKey) {
     midiRollSelectedNoteIndex = null
@@ -5045,6 +5384,11 @@ function bindEditorEvents() {
     const region = getSelectedAudioRegion()
     if (region) beginPitchTraceNoteDrag(event, region.id, noteEl.dataset.pitchTraceNote)
   }))
+  app.querySelectorAll('[data-pitch-trace-tool]').forEach((button)=>button.addEventListener('click', () => {
+    pitchTraceTool = button.dataset.pitchTraceTool === 'pencil' ? 'pencil' : 'cursor'
+    renderEditor()
+  }))
+  app.querySelector('[data-pitch-trace-grid]')?.addEventListener('pointerdown', beginPitchTraceNoteDraw)
   app.querySelectorAll('[data-pitch-trace-note-reset]').forEach((button)=>button.addEventListener('click', () => {
     const region = getSelectedAudioRegion()
     if (!region) return
@@ -5060,11 +5404,49 @@ function bindEditorEvents() {
       note.muted = !note.muted
     }, 'mute-pitch-trace-note')
   }))
+  app.querySelectorAll('[data-pitch-trace-note-delete]').forEach((button)=>button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const before = captureDawSnapshot()
+    const edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchTrace: {
+        ...edit.pitchTrace,
+        notes: edit.pitchTrace.notes.filter((note)=>note.id !== button.dataset.pitchTraceNoteDelete),
+        renderStatus: 'needs_render',
+        renderedRuntimeId: null,
+        renderedStoragePath: null,
+        renderedAudioUrl: null
+      }
+    })
+    pitchTraceSelectedNoteId = ''
+    pushHistory('delete-pitch-trace-note', before, captureDawSnapshot())
+    scheduleEditorSave()
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-pitch-trace-note-field]').forEach((input)=>input.addEventListener('change', () => {
+    const region = getSelectedAudioRegion()
+    const noteId = pitchTraceSelectedNoteId
+    if (!region || !noteId) return
+    mutatePitchTraceNote(region, noteId, (note) => {
+      const key = input.dataset.pitchTraceNoteField
+      if (key === 'editedMidiNote') note.editedMidiNote = clamp(Math.round(Number(input.value) || note.editedMidiNote), 0, 127)
+      if (key === 'startSeconds') {
+        note.startSeconds = Math.max(0, Number(input.value) || 0)
+        note.startBeat = (Number(region.startBeat) || 0) + secondsToBeats(note.startSeconds)
+      }
+      if (key === 'durationSeconds') {
+        note.durationSeconds = Math.max(0.03, Number(input.value) || 0.03)
+        note.durationBeats = secondsToBeats(note.durationSeconds)
+      }
+    }, 'edit-pitch-trace-note-field')
+  }))
   app.querySelector('[data-audio-stretch-enabled]')?.addEventListener('change', (event) => {
     const region = getSelectedAudioRegion()
     if (!region) return
     if (!event.target.checked) resetAudioRegionStretch(region)
-    else updateAudioRegionStretchTarget(region, getAudioRegionVisibleDurationSeconds(region))
+    else enableAudioRegionStretch(region)
   })
   app.querySelector('[data-audio-stretch-speed]')?.addEventListener('change', (event) => {
     const region = getSelectedAudioRegion()
@@ -5123,6 +5505,23 @@ function bindEditorEvents() {
   app.querySelector('[data-audio-edit-prompt-cancel]')?.addEventListener('click', () => {
     audioEditPlaybackPrompt = null
     if (isPlaying) pausePlayback()
+    renderEditor()
+  })
+  app.querySelector('[data-preflight-retry]')?.addEventListener('click', () => {
+    audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+    renderEditor()
+    startPlayback()
+  })
+  app.querySelector('[data-preflight-play-original]')?.addEventListener('click', () => {
+    const failed = audioPreflightRenderState.failed || []
+    failed.forEach((task)=>task?.regionId && audioEditPlaybackBypassRegionIds.add(task.regionId))
+    audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+    renderEditor()
+    startPlayback({ skipRenderAudit: true })
+  })
+  app.querySelector('[data-preflight-cancel]')?.addEventListener('click', () => {
+    audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+    recordingStatus = ''
     renderEditor()
   })
   app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
@@ -5396,6 +5795,11 @@ function bindEditorEvents() {
       applyPitchTraceNoteDrag(event)
       return
     }
+    if (pitchTraceNoteDraw) {
+      event.preventDefault()
+      applyPitchTraceNoteDraw(event)
+      return
+    }
     if (midiRegionDrag) {
       event.preventDefault()
       applyMidiRegionDrag(event)
@@ -5430,6 +5834,10 @@ function bindEditorEvents() {
     }
     if (pitchTraceNoteDrag) {
       finishPitchTraceNoteDrag()
+      return
+    }
+    if (pitchTraceNoteDraw) {
+      finishPitchTraceNoteDraw()
       return
     }
     if (midiRegionDrag) {
@@ -5575,6 +5983,10 @@ function bindEditorEvents() {
     midiRollState = { ...(midiRollState || {}), quantize: event.target.value || '0.25' }
     renderEditor()
   })
+  app.querySelectorAll('[data-midi-roll-tool]').forEach((button)=>button.addEventListener('click', () => {
+    midiRollTool = button.dataset.midiRollTool === 'pencil' ? 'pencil' : 'cursor'
+    renderEditor()
+  }))
   app.querySelector('[data-midi-quantize-note]')?.addEventListener('click', () => quantizeSelectedMidiNote())
   app.querySelector('[data-midi-delete-note]')?.addEventListener('click', () => deleteSelectedMidiNote())
   app.querySelectorAll('[data-midi-note-transpose]').forEach((button)=>button.addEventListener('click', () => {
@@ -5608,6 +6020,8 @@ function renderEditor() {
   if (audioRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioRenderModal)
   const audioPitchRenderModal = renderAudioPitchRenderModal()
   if (audioPitchRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioPitchRenderModal)
+  const audioPreflightModal = renderAudioPreflightRenderModal()
+  if (audioPreflightModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioPreflightModal)
   const stretchPromptModal = renderStretchPlaybackPrompt()
   if (stretchPromptModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', stretchPromptModal)
   const audioEditPromptModal = renderAudioEditPlaybackPrompt()
