@@ -91,6 +91,7 @@ const dawWindowManager = new DawWindowManager({
 })
 let isEditorMenuOpen = false
 let selectedTrackId = 'demo-track'
+let isFileMenuOpen = false
 const automationOpenTrackIds = new Set()
 let trackMenuState = null
 let renameTrackState = null
@@ -238,6 +239,9 @@ let lastPlaybackBeat = 0
 let globalTrackDrag = null
 let globalTrackPopover = null
 let midiRegions = []
+let audioImportDrag = null
+const audioImportPreviewCache = new Map()
+let audioImportPreviewRaf = 0
 const activeRecordingNotes = new Map()
 let cycleRange = null
 let cycleDrag = null
@@ -682,7 +686,49 @@ function extensionForAudioType(contentType = '') {
   if (contentType.includes('ogg')) return 'ogg'
   if (contentType.includes('mpeg') || contentType.includes('mp3')) return 'mp3'
   if (contentType.includes('mp4') || contentType.includes('m4a')) return 'm4a'
+  if (contentType.includes('flac')) return 'flac'
   return 'webm'
+}
+function extensionForAudioFile(file = {}) {
+  const name = String(file?.name || '')
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
+  return ext || extensionForAudioType(file?.type || '')
+}
+function isSupportedAudioFile(file = {}) {
+  if (!file) return false
+  if (String(file.type || '').startsWith('audio/')) return true
+  return ['wav', 'mp3', 'm4a', 'aac', 'ogg', 'oga', 'webm', 'flac'].includes(extensionForAudioFile(file))
+}
+function formatFileSize(bytes = 0) {
+  const size = Math.max(0, Number(bytes) || 0)
+  if (size >= 1024 * 1024 * 1024) return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${Math.round(size)} B`
+}
+function formatAudioDuration(seconds = 0) {
+  const value = Math.max(0, Number(seconds) || 0)
+  const minutes = Math.floor(value / 60)
+  const wholeSeconds = Math.floor(value % 60)
+  const ms = Math.round((value % 1) * 1000)
+  return `${minutes}:${String(wholeSeconds).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
+}
+function parseWavBitDepth(arrayBuffer) {
+  try {
+    const view = new DataView(arrayBuffer)
+    const text = (offset, length) => Array.from({ length }, (_, index)=>String.fromCharCode(view.getUint8(offset + index))).join('')
+    if (text(0, 4) !== 'RIFF' || text(8, 4) !== 'WAVE') return { bitDepth: null, bitDepthSource: 'not_applicable' }
+    let offset = 12
+    while (offset + 8 <= view.byteLength) {
+      const chunkId = text(offset, 4)
+      const chunkSize = view.getUint32(offset + 4, true)
+      if (chunkId === 'fmt ' && offset + 24 <= view.byteLength) {
+        return { bitDepth: view.getUint16(offset + 22, true), bitDepthSource: 'wav_header' }
+      }
+      offset += 8 + chunkSize + (chunkSize % 2)
+    }
+  } catch {}
+  return { bitDepth: null, bitDepthSource: 'unknown' }
 }
 function getSouraAudioStoragePath({ clipId, contentType = 'audio/webm', suffix = '' } = {}) {
   const projectId = sanitizeStorageFilePart(projectState?.id || projectIdFromPath() || 'project')
@@ -704,6 +750,47 @@ async function uploadSouraAudioBlob(blob, { clipId, suffix = '' } = {}) {
     }
   })
   return path
+}
+function audioImportCacheKey(file = {}) {
+  return `${file.name || 'audio'}:${file.size || 0}:${file.lastModified || 0}:${file.type || ''}`
+}
+async function decodeAudioFileForImport(file) {
+  if (!isSupportedAudioFile(file)) throw new Error('Unsupported audio file.')
+  const key = audioImportCacheKey(file)
+  const cached = audioImportPreviewCache.get(key)
+  if (cached?.metadata?.audioBuffer) return cached.metadata
+  if (cached?.promise) return cached.promise
+  const promise = (async () => {
+    const arrayBuffer = await file.arrayBuffer()
+    const ctx = getAudioContext()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const wavBitDepth = parseWavBitDepth(arrayBuffer)
+    const ext = extensionForAudioFile(file)
+    const metadata = {
+      audioBuffer,
+      waveform: buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 }),
+      fileName: file.name || `Imported Audio.${ext || 'audio'}`,
+      contentType: file.type || (ext ? `audio/${ext}` : 'audio/*'),
+      fileSizeBytes: Number(file.size) || 0,
+      sampleRate: audioBuffer.sampleRate || null,
+      channelCount: audioBuffer.numberOfChannels || null,
+      fileDurationSeconds: Math.max(minAudioRegionSeconds, audioBuffer.duration || 0),
+      bitDepth: wavBitDepth.bitDepth,
+      bitDepthSource: ext === 'wav' ? wavBitDepth.bitDepthSource : 'not_applicable',
+      fileType: file.type || ext.toUpperCase() || 'audio'
+    }
+    audioImportPreviewCache.set(key, { metadata })
+    return metadata
+  })().catch((error) => {
+    audioImportPreviewCache.delete(key)
+    throw error
+  })
+  audioImportPreviewCache.set(key, { promise })
+  return promise
+}
+function getAudioImportRegionLabel(fileName = '') {
+  const clean = String(fileName || 'Imported Audio').replace(/\.[^.]+$/, '').trim()
+  return clean.slice(0, 80) || 'Imported Audio'
 }
 function parseHexColor(color = '') {
   const normalized = String(color || '').trim()
@@ -1067,6 +1154,37 @@ function formatMidiNoteName(midi = 60) {
   const octave = Math.floor(Number(midi) / 12) - 1
   return `${names[pitch]}${octave}`
 }
+function formatBitDepth(region = {}) {
+  const bitDepth = Number(region.bitDepth ?? region.audioClip?.bitDepth)
+  const source = region.bitDepthSource || region.audioClip?.bitDepthSource || 'unknown'
+  if (Number.isFinite(bitDepth) && bitDepth > 0) return `${bitDepth}-bit`
+  if (source === 'not_applicable') return 'Compressed / not directly available'
+  return 'Unknown'
+}
+function formatStorageStatus(region = {}) {
+  if (region.audioClip?.loadStatus === 'ready' || region.audioClip?.audioReady) return 'Loaded'
+  if (region.audioClip?.loadStatus === 'loading' || region.audioClip?.loadStatus === 'pending') return 'Loading'
+  if (region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed') return 'Offline / missing'
+  return region.audioClip?.storagePath || region.audioClip?.downloadUrl ? 'Pending' : 'Offline / missing'
+}
+function renderAudioSourceInfo(region = {}) {
+  const clip = region.audioClip || {}
+  const sourceLabel = (region.source || clip.source) === 'import' ? 'Imported' : 'Recorded'
+  const sampleRate = Number(region.sampleRate ?? clip.sampleRate ?? region.audioContextSampleRate ?? region.projectSampleRate)
+  const channels = Number(region.channelCount ?? clip.channelCount)
+  const rows = [
+    ['File name', clip.fileName || region.fileName || 'Unknown'],
+    ['File type', clip.contentType || region.contentType || clip.fileType || region.fileType || 'Unknown'],
+    ['Duration', formatAudioDuration(region.fileDurationSeconds || clip.fileDurationSeconds || getAudioFileDurationSeconds(region))],
+    ['Sample rate', Number.isFinite(sampleRate) && sampleRate > 0 ? `${Math.round(sampleRate)} Hz` : 'Unknown'],
+    ['Bit depth', formatBitDepth(region)],
+    ['Channels', Number.isFinite(channels) && channels > 0 ? String(channels) : 'Unknown'],
+    ['File size', clip.fileSizeBytes || region.fileSizeBytes ? formatFileSize(clip.fileSizeBytes || region.fileSizeBytes) : 'Unknown'],
+    ['Source', sourceLabel],
+    ['Storage status', formatStorageStatus(region)]
+  ]
+  return `<section class="studio-audio-file-info"><header><strong>Source Audio</strong><span>Read-only</span></header><dl>${rows.map(([label, value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`
+}
 function renderAudioRegionEditorPanel(region, motionClass = '') {
   const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
   const track = getMidiRegionTrack(region)
@@ -1106,6 +1224,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
       <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
         <h3>${esc(getMidiRegionLabel(region))}</h3>
         <label>Region name<input data-audio-region-name value="${esc(region.name || '')}" placeholder="${esc(track?.name || 'Audio Region')}"></label>
+        ${renderAudioSourceInfo(region)}
         <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="mute" ${edit.mute ? 'checked' : ''}> Mute</label><label><input type="checkbox" data-audio-edit-field="loop" ${edit.loop ? 'checked' : ''}> Loop</label></div>
         <label>Quantize<select data-audio-edit-field="quantize" disabled>${AUDIO_QUANTIZE_OPTIONS.map((value)=>`<option value="${value}" ${edit.quantize===value?'selected':''}>${value === 'off' ? 'Off' : value}</option>`).join('')}</select><small>Coming soon</small></label>
         <label>Q-Swing<input type="range" min="0" max="100" step="1" data-audio-edit-field="qSwing" value="${edit.qSwing}" disabled><small>Coming soon</small></label>
@@ -1282,6 +1401,24 @@ function renderTimelineRegions() {
       : renderMidiRegion({ ...activeRecording, notes: liveNotes, endBeat: Math.max(activeRecording.startBeat + 0.25, clampBeat(xToBeat(timelineState.playheadX))), color: '#ff2d55' }, true)
     : ''
   return `${persisted}${live}`
+}
+function renderAudioImportPreview() {
+  if (!audioImportDrag?.active) return ''
+  const track = tracks.find((item)=>item.id === audioImportDrag.trackId)
+  const color = track?.color || '#58d4ff'
+  const waveformColor = getReadableWaveformColor(color)
+  const duration = Math.max(minAudioRegionSeconds, Number(audioImportDrag.durationSeconds) || minAudioRegionSeconds)
+  const width = Math.max(32, secondsToBeats(duration) * beatWidth())
+  const trackIndex = Math.max(0, tracks.findIndex((item)=>item.id === audioImportDrag.trackId))
+  const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
+  const top = trackIndex * timelineState.trackHeight + inset
+  const height = Math.max(28, timelineState.trackHeight - (inset * 2))
+  const status = audioImportDrag.status === 'loading'
+    ? 'Reading audio...'
+    : audioImportDrag.valid === false
+      ? audioImportDrag.message || 'Drop audio onto an audio track'
+      : `${audioImportDrag.fileName || 'Audio'} · ${formatAudioDuration(duration)}`
+  return `<article class="studio-audio-import-preview ${audioImportDrag.valid === false ? 'is-invalid' : ''} ${audioImportDrag.status === 'loading' ? 'is-loading' : ''}" style="left:${beatToX(audioImportDrag.startBeat || 0)}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};"><strong>${esc(audioImportDrag.fileName || 'Audio import')}</strong><span>${esc(status)}</span></article>`
 }
 function barToX(index){ return barZeroX() + (index * timelineState.pixelsPerBar) }
 function preStartBarCount(){ return Math.floor((timelineState.preStartPixels || 0) / timelineState.pixelsPerBar) }
@@ -2109,6 +2246,7 @@ function renderAudioEditPlaybackPrompt() {
   const error = audioEditPlaybackPrompt.mode === 'trace' ? edit.pitchTrace.lastError : audioEditPlaybackPrompt.mode === 'reverse' ? edit.reverse.lastError : edit.pitchShift.lastError
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-audio-edit-prompt-title"><section class="studio-audio-render-panel"><span>Pitch render required</span><h3 id="studio-audio-edit-prompt-title">Render edited audio?</h3><p>${esc(mode)} must be rendered before playback can use it.</p>${error ? `<small>${esc(error)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-audio-edit-prompt-render>Render Now</button><button type="button" class="button button-muted" data-audio-edit-prompt-original>Play Original</button><button type="button" class="button button-muted" data-audio-edit-prompt-cancel>Cancel</button></div></section></div>`
 }
+function renderFileMenu(){ if(!isFileMenuOpen) return ''; return `<div class="studio-controls-menu studio-file-menu" data-file-menu><button type="button" data-import-audio-selected-track>Import Audio to Selected Track</button><p>Import browser-decodable audio into the selected audio track.</p></div>` }
 function renderControlsMenu(){ if(!isControlsMenuOpen) return ''; return `<div class="studio-controls-menu" data-controls-menu><label><input type="checkbox" data-musical-typing-toggle ${isTypingPianoEnabled ? 'checked' : ''}> Musical Typing</label><p>${isTypingPianoEnabled ? 'Typing keys play the selected instrument.' : 'Typing keys run DAW commands.'}</p></div>` }
 
 function cloneRegionForState(region = {}, { persist = false } = {}) {
@@ -2173,8 +2311,15 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
       id: copy.audioClip?.id || copy.clipId || copy.id,
       audioAssetId: copy.audioClip?.audioAssetId || copy.audioClip?.id || copy.clipId || copy.id,
       runtimeId,
+      source: copy.audioClip?.source || copy.source || 'recording',
       contentType: copy.audioClip?.contentType || copy.contentType || 'audio/webm',
+      fileType: copy.audioClip?.fileType || copy.fileType || copy.audioClip?.contentType || copy.contentType || 'audio/webm',
       fileName: copy.audioClip?.fileName || `${copy.clipId || copy.id}.${extensionForAudioType(copy.audioClip?.contentType || copy.contentType || 'audio/webm')}`,
+      fileSizeBytes: Number(copy.audioClip?.fileSizeBytes ?? copy.fileSizeBytes) || null,
+      sampleRate: Number(copy.audioClip?.sampleRate ?? copy.sampleRate ?? copy.audioContextSampleRate) || null,
+      bitDepth: Number.isFinite(Number(copy.audioClip?.bitDepth ?? copy.bitDepth)) ? Number(copy.audioClip?.bitDepth ?? copy.bitDepth) : null,
+      bitDepthSource: copy.audioClip?.bitDepthSource || copy.bitDepthSource || 'unknown',
+      channelCount: Number(copy.audioClip?.channelCount ?? copy.channelCount) || null,
       fileDurationSeconds,
       storagePath: copy.audioClip?.storagePath || null,
       downloadUrl: copy.audioClip?.downloadUrl || null,
@@ -2241,10 +2386,18 @@ function normalizeLoadedRegion(region = {}) {
         id: region.audioClip?.id || region.clipId || region.id,
         audioAssetId: region.audioClip?.audioAssetId || region.audioClip?.id || region.clipId || region.id,
         runtimeId: region.audioClip?.runtimeId || region.id,
+        source: region.audioClip?.source || region.source || 'recording',
         fileDurationSeconds: Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || null,
         storagePath: region.audioClip?.storagePath || null,
         downloadUrl: region.audioClip?.downloadUrl || null,
+        contentType: region.audioClip?.contentType || region.contentType || 'audio/webm',
+        fileType: region.audioClip?.fileType || region.fileType || region.audioClip?.contentType || region.contentType || 'audio/webm',
         fileName: region.audioClip?.fileName || `${region.id}.${extensionForAudioType(region.audioClip?.contentType || 'audio/webm')}`,
+        fileSizeBytes: Number(region.audioClip?.fileSizeBytes ?? region.fileSizeBytes) || null,
+        sampleRate: Number(region.audioClip?.sampleRate ?? region.sampleRate ?? region.audioContextSampleRate) || null,
+        bitDepth: Number.isFinite(Number(region.audioClip?.bitDepth ?? region.bitDepth)) ? Number(region.audioClip?.bitDepth ?? region.bitDepth) : null,
+        bitDepthSource: region.audioClip?.bitDepthSource || region.bitDepthSource || 'unknown',
+        channelCount: Number(region.audioClip?.channelCount ?? region.channelCount) || null,
         sessionOnly: !hasPersistentMedia,
         missingAfterReload: !hasPersistentMedia,
         audioReady: false,
@@ -4507,6 +4660,227 @@ async function beginAudioRecording(track, { startBeat = null } = {}) {
     renderEditor()
   }
 }
+async function createAudioRegionFromFile({
+  file,
+  trackId = selectedTrackId,
+  timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)),
+  source = 'import'
+} = {}) {
+  const track = tracks.find((item)=>item.id === trackId)
+  if (!track || !isAudioTrack(track)) {
+    recordingStatus = 'Select an audio track to import audio, or create a new audio track.'
+    renderEditor()
+    return null
+  }
+  if (!isSupportedAudioFile(file)) {
+    recordingStatus = 'Unsupported audio file.'
+    renderEditor()
+    return null
+  }
+  const before = captureDawSnapshot()
+  recordingStatus = 'Importing audio...'
+  renderEditor()
+  const clipId = makeInsertId('audio-region')
+  try {
+    const metadata = await decodeAudioFileForImport(file)
+    const fileDurationSeconds = metadata.fileDurationSeconds
+    const durationBeats = Math.max(0.25, secondsToBeats(fileDurationSeconds))
+    const now = Date.now()
+    let storagePath = null
+    try {
+      storagePath = await uploadSouraAudioBlob(file, { clipId, suffix: source === 'import' ? 'import' : '' })
+    } catch (error) {
+      console.warn('[studioProject] audio import upload failed', { message: error?.message })
+      recordingStatus = 'Audio upload failed. Try again.'
+      renderEditor()
+      return null
+    }
+    const region = cloneRegionForState({
+      id: clipId,
+      clipId,
+      type: 'audio',
+      source,
+      trackId: track.id,
+      name: track.autoNameRegions === false ? '' : getAudioImportRegionLabel(metadata.fileName),
+      startBeat: timelineStartBeats,
+      endBeat: timelineStartBeats + durationBeats,
+      timelineStartBeats,
+      timelineStartSeconds: getTimelineSecondsAtBeat(timelineStartBeats),
+      transportBpm: Number(projectState?.bpm || 140),
+      projectSampleRate: Number(projectState?.sampleRate || metadata.sampleRate || 44100),
+      audioContextSampleRate: metadata.sampleRate || getAudioContext().sampleRate,
+      sourceLatencyCompensationSeconds: 0,
+      durationBeats,
+      durationSeconds: fileDurationSeconds,
+      fileDurationSeconds,
+      offsetSeconds: 0,
+      trimStartSeconds: 0,
+      trimEndSeconds: fileDurationSeconds,
+      visibleDurationSeconds: fileDurationSeconds,
+      playbackRate: 1,
+      audioEdit: normalizeAudioEdit(),
+      stretch: makeDefaultAudioStretch(fileDurationSeconds),
+      color: track.color || '#58d4ff',
+      waveform: metadata.waveform,
+      sampleRate: metadata.sampleRate,
+      bitDepth: metadata.bitDepth,
+      bitDepthSource: metadata.bitDepthSource,
+      channelCount: metadata.channelCount,
+      fileName: metadata.fileName,
+      fileType: metadata.fileType,
+      contentType: metadata.contentType,
+      fileSizeBytes: metadata.fileSizeBytes,
+      createdAt: now,
+      updatedAt: now,
+      audioClip: {
+        id: clipId,
+        audioAssetId: clipId,
+        runtimeId: clipId,
+        source,
+        contentType: metadata.contentType,
+        fileType: metadata.fileType,
+        fileName: metadata.fileName,
+        fileSizeBytes: metadata.fileSizeBytes,
+        sampleRate: metadata.sampleRate,
+        bitDepth: metadata.bitDepth,
+        bitDepthSource: metadata.bitDepthSource,
+        channelCount: metadata.channelCount,
+        fileDurationSeconds,
+        storagePath,
+        sessionOnly: false,
+        missingAfterReload: false,
+        uploadError: null,
+        loadStatus: 'ready',
+        audioReady: true,
+        createdAt: now,
+        updatedAt: now
+      },
+      missingMedia: false
+    })
+    audioClipRuntime.set(region.id, {
+      blob: file,
+      url: URL.createObjectURL(file),
+      audioBuffer: metadata.audioBuffer,
+      contentType: metadata.contentType,
+      fileDurationSeconds,
+      waveform: metadata.waveform
+    })
+    syncAudioRegionTimeline(region)
+    midiRegions.push(region)
+    selectedMidiRegionId = region.id
+    activeBottomPanel = 'midi-roll'
+    recordingStatus = ''
+    pushHistory('import-audio-region', before, captureDawSnapshot())
+    scheduleEditorSave()
+    renderEditor()
+    return region
+  } catch (error) {
+    console.warn('[studioProject] audio import failed', { name: error?.name, message: error?.message })
+    recordingStatus = error?.message === 'Unsupported audio file.' ? 'Unsupported audio file.' : 'Could not decode this audio file.'
+    renderEditor()
+    return null
+  }
+}
+function openAudioImportPicker() {
+  const track = getSelectedTrack()
+  if (!track) {
+    recordingStatus = 'Select an audio track first.'
+    renderEditor()
+    return
+  }
+  if (!isAudioTrack(track)) {
+    recordingStatus = 'Select an audio track to import audio, or create a new audio track.'
+    renderEditor()
+    return
+  }
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'audio/*'
+  input.addEventListener('change', () => {
+    const file = input.files?.[0]
+    input.remove()
+    if (file) createAudioRegionFromFile({ file, trackId: track.id, timelineStartBeats: clampBeat(xToBeat(timelineState.playheadX)), source: 'import' })
+  }, { once: true })
+  input.click()
+}
+function getFirstAudioFileFromDataTransfer(dataTransfer) {
+  const files = Array.from(dataTransfer?.files || [])
+  const direct = files.find(isSupportedAudioFile)
+  if (direct) return direct
+  const items = Array.from(dataTransfer?.items || [])
+  return items.map((item)=>item.kind === 'file' ? item.getAsFile?.() : null).find(isSupportedAudioFile) || null
+}
+function getAudioImportPlacement(event, file = null) {
+  const trackIndex = getTrackLaneFromY(event.clientY)
+  const track = tracks[trackIndex] || null
+  const rawBeat = pointerEventToTimelineBeat(event, { snapped: false })
+  const startBeat = clampBeat(isSnapEnabled ? snapBeatToGrid(rawBeat) : rawBeat)
+  const valid = Boolean(track && isAudioTrack(track) && file && isSupportedAudioFile(file))
+  return {
+    track,
+    trackId: track?.id || selectedTrackId,
+    startBeat,
+    valid,
+    message: !file || !isSupportedAudioFile(file)
+      ? 'Unsupported audio file.'
+      : track && !isAudioTrack(track)
+        ? 'Drop audio onto an audio track.'
+        : 'Drop audio onto an audio track.'
+  }
+}
+function scheduleAudioImportPreviewRender() {
+  if (audioImportPreviewRaf) return
+  audioImportPreviewRaf = requestAnimationFrame(() => {
+    audioImportPreviewRaf = 0
+    renderEditor()
+  })
+}
+function updateAudioImportPreview(event) {
+  const file = getFirstAudioFileFromDataTransfer(event.dataTransfer)
+  if (!file) {
+    audioImportDrag = null
+    return false
+  }
+  const placement = getAudioImportPlacement(event, file)
+  const key = audioImportCacheKey(file)
+  const cached = audioImportPreviewCache.get(key)
+  audioImportDrag = {
+    active: true,
+    file,
+    fileKey: key,
+    fileName: file.name || 'Audio',
+    trackId: placement.trackId,
+    startBeat: placement.startBeat,
+    valid: placement.valid,
+    message: placement.message,
+    status: cached?.metadata ? 'ready' : 'loading',
+    durationSeconds: cached?.metadata?.fileDurationSeconds || minAudioRegionSeconds
+  }
+  if (!cached?.metadata && !cached?.promise) {
+    decodeAudioFileForImport(file).then((metadata) => {
+      if (audioImportDrag?.fileKey !== key) return
+      audioImportDrag = { ...audioImportDrag, status: 'ready', durationSeconds: metadata.fileDurationSeconds }
+      scheduleAudioImportPreviewRender()
+    }).catch(() => {
+      if (audioImportDrag?.fileKey !== key) return
+      audioImportDrag = { ...audioImportDrag, status: 'failed', valid: false, message: 'Could not decode this audio file.' }
+      scheduleAudioImportPreviewRender()
+    })
+  }
+  return true
+}
+async function handleAudioImportDrop(event) {
+  const file = getFirstAudioFileFromDataTransfer(event.dataTransfer)
+  audioImportDrag = null
+  if (!file) return
+  const placement = getAudioImportPlacement(event, file)
+  if (!placement.valid) {
+    recordingStatus = placement.message || 'Drop audio onto an audio track.'
+    renderEditor()
+    return
+  }
+  await createAudioRegionFromFile({ file, trackId: placement.track.id, timelineStartBeats: placement.startBeat, source: 'import' })
+}
 function cleanupAudioRecordingController() {
   const controller = audioRecordingController
   if (!controller) return
@@ -5775,11 +6149,38 @@ function bindEditorEvents() {
   const tooltip = app.querySelector('[data-studio-tooltip]')
   app.querySelector('[data-region-editor-scroll]')?.addEventListener('scroll', () => captureAudioRegionToolsViewport(), { passive: true })
   trigger?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); setEditorMenuOpen(!isEditorMenuOpen) })
+  app.querySelector('[data-toggle-file-menu]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); isFileMenuOpen = !isFileMenuOpen; isControlsMenuOpen = false; renderEditor() })
+  app.querySelector('[data-import-audio-selected-track]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); isFileMenuOpen = false; openAudioImportPicker() })
   app.querySelector('[data-toggle-controls-menu]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); isControlsMenuOpen = !isControlsMenuOpen; renderEditor() })
   app.querySelector('[data-musical-typing-toggle]')?.addEventListener('change', (event) => { setMusicalTypingEnabled(event.target.checked); renderEditor() })
-  document.onclick = (event) => { if (event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (!event.target.closest('[data-controls-menu]') && !event.target.closest('[data-toggle-controls-menu]') && isControlsMenuOpen) { isControlsMenuOpen = false; changed = true } if (changed) renderEditor() }
+  document.onclick = (event) => { if (event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-file-menu]') && !event.target.closest('[data-toggle-file-menu]') && isFileMenuOpen) { isFileMenuOpen = false; changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (!event.target.closest('[data-controls-menu]') && !event.target.closest('[data-toggle-controls-menu]') && isControlsMenuOpen) { isControlsMenuOpen = false; changed = true } if (changed) renderEditor() }
   document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (isControlsMenuOpen) { isControlsMenuOpen = false; changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
+  const page = app.querySelector('.studio-editor-page')
+  page?.addEventListener('dragover', (event) => {
+    if (!getFirstAudioFileFromDataTransfer(event.dataTransfer)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    updateAudioImportPreview(event)
+    scheduleAudioImportPreviewRender()
+  })
+  page?.addEventListener('dragenter', (event) => {
+    if (!getFirstAudioFileFromDataTransfer(event.dataTransfer)) return
+    event.preventDefault()
+    updateAudioImportPreview(event)
+    scheduleAudioImportPreviewRender()
+  })
+  page?.addEventListener('drop', (event) => {
+    if (!getFirstAudioFileFromDataTransfer(event.dataTransfer)) return
+    event.preventDefault()
+    handleAudioImportDrop(event)
+  })
+  page?.addEventListener('dragleave', (event) => {
+    if (event.relatedTarget && page.contains(event.relatedTarget)) return
+    if (!audioImportDrag) return
+    audioImportDrag = null
+    scheduleAudioImportPreviewRender()
+  })
   app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
   app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = el.dataset.trackRow; trackMenuState = null; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor(); warmSelectedTrackInstrument('track-select') }))
   app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const nextMenu = el.dataset.toggleInspectorMenu; inspectorMenu = inspectorMenu === nextMenu ? null : nextMenu; inspectorMenuPosition = null; if (inspectorMenu === 'instrument') { const rect = el.getBoundingClientRect(); inspectorMenuPosition = getClampedFloatingPosition(rect.left + rect.width / 2, rect.bottom + 8, 260, 210) } renderEditor() }))
@@ -6571,7 +6972,7 @@ function renderEditor() {
   const showResonaPanel = activeBottomPanel === 'resona'
   const bottomPanelId = activeBottomPanel || closingBottomPanel
   const shouldRenderBottomPanel = Boolean(bottomPanelId && bottomPanelId !== 'resona')
-  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button>File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button type="button" data-toggle-controls-menu class="${isControlsMenuOpen ? 'is-active' : ''}">Controls</button><button>Help</button></nav>${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}</main>`
+  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button type="button" data-toggle-file-menu class="${isFileMenuOpen ? 'is-active' : ''}">File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button type="button" data-toggle-controls-menu class="${isControlsMenuOpen ? 'is-active' : ''}">Controls</button><button>Help</button></nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}</main>`
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   initShellChrome()
   app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
