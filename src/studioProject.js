@@ -194,6 +194,7 @@ let midiRegionDrag = null
 let timelineEdgeScrollRaf = 0
 let timelineEdgeScrollState = null
 let audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
+let stretchPlaybackPrompt = null
 let meterRaf = 0
 let midiRegionMenuState = null
 let midiRegionClipboard = null
@@ -220,6 +221,7 @@ const trackAudioChannels = new Map()
 const activePlaybackNotes = new Map()
 const audioClipRuntime = new Map()
 const activeAudioClipSources = new Map()
+const audioOfflineWarnedRegionIds = new Set()
 let audioRecordingController = null
 let pendingAudioInputStream = null
 let lastPlaybackBeat = 0
@@ -288,6 +290,10 @@ const minAudioRegionSeconds = 0.05
 const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
 const AUDIO_FADE_CURVES = ['linear', 'equal-power']
 const AUDIO_PITCH_SOURCES = ['off', 'region', 'project-key']
+const STRETCH_SPEED_MIN = 10
+const STRETCH_SPEED_MAX = 400
+const STRETCH_RATIO_MIN = 100 / STRETCH_SPEED_MAX
+const STRETCH_RATIO_MAX = 100 / STRETCH_SPEED_MIN
 
 function getTimelineSecondsAtBeat(beat = 0) {
   return beatsToSeconds(clampBeat(Number(beat) || 0))
@@ -327,19 +333,26 @@ function getAudioStretchMath(region = {}, targetDuration = null) {
   const target = Math.max(minAudioRegionSeconds, Number.isFinite(Number(targetDuration)) ? Number(targetDuration) : getAudioRegionVisibleDurationSeconds(region))
   const lengthRatio = target / originalDuration
   const speedPercent = (originalDuration / target) * 100
+  const supported = Number.isFinite(speedPercent) && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX
   return {
     originalDurationSeconds: originalDuration,
     targetDurationSeconds: target,
     lengthRatio,
-    speedPercent
+    speedPercent: clamp(Number.isFinite(speedPercent) ? speedPercent : 100, STRETCH_SPEED_MIN, STRETCH_SPEED_MAX),
+    rawSpeedPercent: speedPercent,
+    supported,
+    error: supported ? null : 'Stretch amount is outside the supported range.'
   }
 }
 function normalizeAudioStretch(stretch = {}) {
-  const ratio = Math.max(0.05, Number(stretch.ratio) || 1)
-  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(stretch.renderStatus) ? stretch.renderStatus : (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle')
+  const rawRatio = Number(stretch.lengthRatio ?? stretch.ratio)
+  const lengthRatio = clamp(Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 1, STRETCH_RATIO_MIN, STRETCH_RATIO_MAX)
+  const ratio = lengthRatio
+  const statusValue = stretch.renderStatus === 'none' ? 'idle' : stretch.renderStatus
+  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(statusValue) ? statusValue : (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle')
   const targetDurationSeconds = Number.isFinite(Number(stretch.targetDurationSeconds)) ? Math.max(minAudioRegionSeconds, Number(stretch.targetDurationSeconds)) : null
-  const lengthRatio = Number.isFinite(Number(stretch.lengthRatio)) ? Math.max(0.05, Number(stretch.lengthRatio)) : ratio
-  const speedPercent = Number.isFinite(Number(stretch.speedPercent)) ? Math.max(0.01, Number(stretch.speedPercent)) : (100 / Math.max(0.05, lengthRatio))
+  const speedPercent = clamp(100 / Math.max(STRETCH_RATIO_MIN, lengthRatio), STRETCH_SPEED_MIN, STRETCH_SPEED_MAX)
+  const outOfRange = Number.isFinite(rawRatio) && (rawRatio < STRETCH_RATIO_MIN || rawRatio > STRETCH_RATIO_MAX)
   return {
     enabled: Boolean(stretch.enabled) && Math.abs(ratio - 1) > 0.001,
     ratio,
@@ -356,8 +369,8 @@ function normalizeAudioStretch(stretch = {}) {
     renderedDurationSeconds: Number.isFinite(Number(stretch.renderedDurationSeconds)) ? Number(stretch.renderedDurationSeconds) : null,
     renderedAt: Number.isFinite(Number(stretch.renderedAt)) ? Number(stretch.renderedAt) : null,
     renderedSessionOnly: stretch.renderedSessionOnly === true,
-    renderStatus,
-    renderError: stretch.renderError || null
+    renderStatus: outOfRange && renderStatus !== 'ready' ? 'failed' : renderStatus,
+    renderError: stretch.renderError || (outOfRange ? 'Stretch amount is outside the supported range.' : null)
   }
 }
 function sanitizeStorageFilePart(value = '') {
@@ -429,6 +442,19 @@ function getReadableWaveformColor(color = '#58d4ff') {
   if (luminance >= 72) return `#${[rgb.r, rgb.g, rgb.b].map((value)=>value.toString(16).padStart(2, '0')).join('')}`
   const hsl = rgbToHsl(rgb)
   return `hsl(${hsl.h} ${Math.max(72, hsl.s)}% ${Math.max(58, hsl.l)}%)`
+}
+function getAudioClipStatusLabel(region = {}) {
+  const status = region.audioClip?.loadStatus || 'idle'
+  if (status === 'loading' || status === 'pending') return 'Loading audio...'
+  if (status === 'ready' || region.audioClip?.audioReady) return 'Audio ready'
+  if (status === 'missing' || status === 'failed' || region.missingMedia) return 'Audio file offline'
+  return region.audioClip?.storagePath || region.audioClip?.downloadUrl ? 'Audio pending' : 'Audio file offline'
+}
+function getAudioOfflineMessage(region = {}) {
+  const reason = region.audioClip?.offlineReason || (region.audioClip?.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
+  if (reason === 'decode_failed') return 'The audio file was found but could not be decoded. Re-upload or re-record the clip.'
+  if (reason === 'storage_fetch_failed') return 'The audio file could not be loaded from storage. Try again, or reconnect the audio.'
+  return 'This region has metadata but no persistent audio file. Re-record or reconnect the audio.'
 }
 function getAudioFileDurationSeconds(region = {}) {
   return Math.max(minAudioRegionSeconds, Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds || region.durationBeats && beatsToSeconds(region.durationBeats) || 0))
@@ -655,9 +681,9 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
           <span>Start ${Number(region.startBeat || 0).toFixed(2)} beats</span>
           <span>Length ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span>
           <span>Speed ${Math.round(stretchMath.speedPercent)}%</span>
-          <span>${missing ? 'Audio file missing or not loaded' : (region.audioClip?.loadStatus === 'ready' ? 'Audio ready' : 'Session audio')}</span>
+          <span>${esc(getAudioClipStatusLabel(region))}</span>
         </div>
-        ${missing ? `<p class="studio-audio-editor-warning">${esc(region.audioClip?.loadError || 'Audio file missing or not loaded. This region needs a persisted audio file before it can play after refresh.')}</p>` : ''}
+        ${missing ? `<p class="studio-audio-editor-warning" title="${esc(getAudioOfflineMessage(region))}">${esc(region.audioClip?.loadError || getAudioOfflineMessage(region))}</p>` : ''}
       </section>
       <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
         <h3>${esc(getMidiRegionLabel(region))}</h3>
@@ -681,10 +707,10 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <hr>
         <div class="studio-audio-stretch-controls">
           <label><input type="checkbox" data-audio-stretch-enabled ${stretch.enabled ? 'checked' : ''}> Stretch enabled</label>
-          <label>Speed %<input type="number" min="1" max="400" step="1" data-audio-stretch-speed value="${Math.round(stretchMath.speedPercent)}"></label>
+          <label>Speed %<input type="number" min="${STRETCH_SPEED_MIN}" max="${STRETCH_SPEED_MAX}" step="1" data-audio-stretch-speed value="${Math.round(stretchMath.speedPercent)}"></label>
           <label>Target Length<input type="number" min="${minAudioRegionSeconds}" step="0.01" data-audio-stretch-length value="${stretchMath.targetDurationSeconds.toFixed(2)}"></label>
-          <p>Stretch Ratio: ${stretchMath.lengthRatio.toFixed(2)}x length · Status: ${esc(renderStatus || 'idle')}</p>
-          <button type="button" data-audio-render-stretch ${stretch.enabled && !missing ? '' : 'disabled'}>Render Stretch</button>
+          <p>Stretch Ratio: ${stretchMath.lengthRatio.toFixed(2)}x length · Status: ${esc(stretch.renderError || renderStatus || 'idle')}</p>
+          <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && stretchMath.supported ? '' : 'disabled'}>${stretch.renderStatus === 'failed' ? 'Retry Render' : 'Render Stretch'}</button>
           <button type="button" data-audio-reset-stretch ${stretch.enabled ? '' : 'disabled'}>Reset Stretch</button>
         </div>
       </aside>
@@ -1030,13 +1056,15 @@ function renderAudioRegion(region, isRecording = false) {
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
   const waveformColor = getReadableWaveformColor(color)
   const selected = !isRecording && selectedMidiRegionId === region.id
-  const missing = Boolean(region.audioClip?.missingAfterReload || region.missingMedia) && !audioClipRuntime.has(region.audioClip?.runtimeId || region.id)
   const stretch = normalizeAudioStretch(region.stretch)
+  const renderedRuntimeReady = stretch.enabled && stretch.renderStatus === 'ready' && stretch.renderedRuntimeId && audioClipRuntime.has(stretch.renderedRuntimeId)
+  const missing = Boolean(region.audioClip?.missingAfterReload || region.missingMedia) && !audioClipRuntime.has(region.audioClip?.runtimeId || region.id) && !renderedRuntimeReady
   const stretching = midiRegionDrag?.id === region.id && midiRegionDrag.editMode === 'stretch'
   const stretchStatus = stretch.renderStatus === 'rendering' ? 'Rendering' : stretch.renderStatus === 'failed' ? 'Render failed' : (stretch.renderStatus === 'ready' ? 'Rendered' : 'Stretch')
   const stretchMath = getAudioStretchMath(region)
-  const stretchLabel = stretching || stretch.enabled ? `<b class="studio-audio-stretch-label">${stretching ? 'Time Stretch' : stretchStatus} ${Math.round(stretchMath.speedPercent)}% speed</b>` : ''
-  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${stretchLabel}${missing ? '<em>Session audio offline</em>' : ''}</article>`
+  const speedLabel = Math.round(stretchMath.speedPercent)
+  const stretchLabel = stretching || stretch.enabled ? `<b class="studio-audio-stretch-label">${stretching ? 'Time Stretch' : stretchStatus} ${speedLabel}% speed</b>` : ''
+  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
 }
 function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=app.querySelector(`[data-track-volume="${track.id}"]`); if(!input) return; input.value=String(track.volume); input.setAttribute('value', String(track.volume)) }
 function getInstrumentKnobDescriptors(){
@@ -1565,6 +1593,13 @@ function renderAudioStretchRenderModal() {
   const progressLabel = progress == null ? 'Rendering...' : `${Math.round(progress * 100)}%`
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-audio-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-audio-render-title">Rendering Audio Stretch</h3><p>Soura is rendering the stretched audio region. This may take a moment.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
 }
+function renderStretchPlaybackPrompt() {
+  if (!stretchPlaybackPrompt?.regionId) return ''
+  const region = midiRegions.find((item)=>item.id === stretchPlaybackPrompt.regionId)
+  if (!region) return ''
+  const stretch = normalizeAudioStretch(region.stretch)
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-stretch-prompt-title"><section class="studio-audio-render-panel"><span>Stretch render required</span><h3 id="studio-stretch-prompt-title">Render stretched audio?</h3><p>This stretched audio region must be rendered before playback.</p>${stretch.renderError ? `<small>${esc(stretch.renderError)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-stretch-prompt-render ${stretch.renderStatus === 'rendering' ? 'disabled' : ''}>Render Now</button><button type="button" class="button button-muted" data-stretch-prompt-cancel>Cancel</button></div></section></div>`
+}
 function renderControlsMenu(){ if(!isControlsMenuOpen) return ''; return `<div class="studio-controls-menu" data-controls-menu><label><input type="checkbox" data-musical-typing-toggle ${isTypingPianoEnabled ? 'checked' : ''}> Musical Typing</label><p>${isTypingPianoEnabled ? 'Typing keys play the selected instrument.' : 'Typing keys run DAW commands.'}</p></div>` }
 
 function cloneRegionForState(region = {}, { persist = false } = {}) {
@@ -1618,8 +1653,11 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
     if (!Array.isArray(copy.waveform.peaks)) copy.waveform.peaks = []
     copy.audioClip = {
       ...(copy.audioClip || {}),
+      id: copy.audioClip?.id || copy.clipId || copy.id,
+      audioAssetId: copy.audioClip?.audioAssetId || copy.audioClip?.id || copy.clipId || copy.id,
       runtimeId,
       contentType: copy.audioClip?.contentType || copy.contentType || 'audio/webm',
+      fileName: copy.audioClip?.fileName || `${copy.clipId || copy.id}.${extensionForAudioType(copy.audioClip?.contentType || copy.contentType || 'audio/webm')}`,
       fileDurationSeconds,
       storagePath: copy.audioClip?.storagePath || null,
       downloadUrl: copy.audioClip?.downloadUrl || null,
@@ -1627,7 +1665,10 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
       missingAfterReload: copy.audioClip?.storagePath || copy.audioClip?.downloadUrl ? false : true,
       audioReady: copy.audioClip?.audioReady === true && !persist,
       loadStatus: copy.audioClip?.loadStatus || 'idle',
-      loadError: copy.audioClip?.loadError || null
+      loadError: copy.audioClip?.loadError || null,
+      offlineReason: copy.audioClip?.offlineReason || (copy.audioClip?.storagePath || copy.audioClip?.downloadUrl ? null : 'missing_storage_path'),
+      createdAt: Number.isFinite(Number(copy.audioClip?.createdAt)) ? Number(copy.audioClip.createdAt) : null,
+      updatedAt: Number.isFinite(Number(copy.audioClip?.updatedAt)) ? Number(copy.audioClip.updatedAt) : null
     }
     delete copy.blob
     delete copy.url
@@ -1660,15 +1701,19 @@ function normalizeLoadedRegion(region = {}) {
     audioClip: type === 'audio'
       ? {
         ...(region.audioClip || {}),
+        id: region.audioClip?.id || region.clipId || region.id,
+        audioAssetId: region.audioClip?.audioAssetId || region.audioClip?.id || region.clipId || region.id,
         runtimeId: region.audioClip?.runtimeId || region.id,
         fileDurationSeconds: Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || null,
         storagePath: region.audioClip?.storagePath || null,
         downloadUrl: region.audioClip?.downloadUrl || null,
+        fileName: region.audioClip?.fileName || `${region.id}.${extensionForAudioType(region.audioClip?.contentType || 'audio/webm')}`,
         sessionOnly: !hasPersistentMedia,
         missingAfterReload: !hasPersistentMedia,
         audioReady: false,
         loadStatus: hasPersistentMedia ? 'pending' : 'missing',
-        loadError: hasPersistentMedia ? null : 'Session-only recording is not available after refresh.'
+        loadError: hasPersistentMedia ? null : 'This region has metadata but no persistent audio file. Re-record or reconnect the audio.',
+        offlineReason: hasPersistentMedia ? null : (region.audioClip?.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
       }
       : undefined,
     missingMedia: type === 'audio' ? !hasPersistentMedia : Boolean(region.missingMedia)
@@ -1780,6 +1825,7 @@ async function hydrateRenderedAudioRegionRuntime(region) {
     region.stretch = { ...stretch, renderedRuntimeId: runtimeId, renderStatus: 'ready', renderedSessionOnly: false, renderError: null }
     return true
   }
+  console.info('[audio-hydration] loading rendered stretch', { clipId: region.id, hasStoragePath: Boolean(stretch.renderedStoragePath) })
   const downloadUrl = stretch.renderedAudioUrl || await getStorageAssetUrl(stretch.renderedStoragePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-rendered-audio', warnOnFail: true })
   if (!downloadUrl) return false
   try {
@@ -1810,9 +1856,10 @@ async function hydrateRenderedAudioRegionRuntime(region) {
       renderStatus: 'ready',
       renderError: null
     }
+    console.info('[audio-hydration] loaded rendered stretch', { clipId: region.id, duration: renderedDurationSeconds })
     return true
   } catch (err) {
-    console.warn('[studioProject] rendered audio hydrate failed', { regionId: region.id, message: err?.message })
+    console.warn('[audio-hydration] rendered stretch failed', { clipId: region.id, reason: err?.message || 'decode_failed' })
     region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Rendered audio file missing or not loaded.' }
     return false
   }
@@ -1820,8 +1867,9 @@ async function hydrateRenderedAudioRegionRuntime(region) {
 async function hydrateAudioRegionRuntime(region) {
   if (!region?.id || region.type !== 'audio') return false
   const audioClip = region.audioClip || {}
+  console.info('[audio-hydration] loading clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, hasStoragePath: Boolean(audioClip.storagePath), contentType: audioClip.contentType || 'audio/*' })
   if (audioClipRuntime.has(audioClip.runtimeId || region.id)) {
-    region.audioClip = { ...audioClip, audioReady: true, loadStatus: 'ready', loadError: null }
+    region.audioClip = { ...audioClip, audioReady: true, loadStatus: 'ready', loadError: null, offlineReason: null }
     region.missingMedia = false
     await hydrateRenderedAudioRegionRuntime(region)
     return true
@@ -1829,11 +1877,13 @@ async function hydrateAudioRegionRuntime(region) {
   const downloadUrl = audioClip.downloadUrl || (audioClip.storagePath ? await getStorageAssetUrl(audioClip.storagePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-audio', warnOnFail: true }) : '')
   if (!downloadUrl) {
     const renderedReady = await hydrateRenderedAudioRegionRuntime(region)
-    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: renderedReady ? 'Original audio file missing; persisted stretch render is available.' : 'Audio file missing or not loaded.' }
+    const reason = audioClip.storagePath ? 'storage_fetch_failed' : (audioClip.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
+    console.info('[audio-hydration] offline clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, reason })
+    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: renderedReady ? 'Original audio file missing; persisted stretch render is available.' : getAudioOfflineMessage({ audioClip: { ...audioClip, offlineReason: reason } }), offlineReason: reason }
     region.missingMedia = !renderedReady
     return renderedReady
   }
-  region.audioClip = { ...audioClip, loadStatus: 'loading', loadError: null }
+  region.audioClip = { ...audioClip, loadStatus: 'loading', loadError: null, offlineReason: null }
   try {
     const response = await fetch(downloadUrl)
     if (!response.ok) throw new Error(`Audio fetch failed (${response.status})`)
@@ -1853,6 +1903,7 @@ async function hydrateAudioRegionRuntime(region) {
       audioReady: true,
       loadStatus: 'ready',
       loadError: null,
+      offlineReason: null,
       sessionOnly: false,
       missingAfterReload: false
     }
@@ -1866,10 +1917,11 @@ async function hydrateAudioRegionRuntime(region) {
       waveform
     })
     await hydrateRenderedAudioRegionRuntime(region)
+    console.info('[audio-hydration] loaded clip', { clipId: region.audioClip.audioAssetId || region.audioClip.id || region.id, duration: fileDurationSeconds })
     return true
   } catch (err) {
-    console.warn('[studioProject] audio asset hydrate failed', { regionId: region.id, message: err?.message })
-    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'failed', loadError: 'Audio file missing or not loaded.' }
+    console.warn('[audio-hydration] failed clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, reason: err?.message || 'decode_failed' })
+    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'failed', loadError: 'The audio file was found but could not be decoded. Re-upload or re-record the clip.', offlineReason: 'decode_failed' }
     region.missingMedia = true
     return false
   }
@@ -2579,12 +2631,14 @@ function stopAllAudioClipPlayback() {
   Array.from(activeAudioClipSources.keys()).forEach((regionId)=>stopAudioClipPlayback(regionId))
 }
 function createPendingStretchMetadata(ratio) {
-  const lengthRatio = Math.max(0.05, Number(ratio) || 1)
+  const rawLengthRatio = Number(ratio)
+  const lengthRatio = clamp(Number.isFinite(rawLengthRatio) && rawLengthRatio > 0 ? rawLengthRatio : 1, STRETCH_RATIO_MIN, STRETCH_RATIO_MAX)
+  const supported = Number.isFinite(rawLengthRatio) && rawLengthRatio >= STRETCH_RATIO_MIN && rawLengthRatio <= STRETCH_RATIO_MAX
   return {
     enabled: Math.abs(lengthRatio - 1) > 0.001,
     ratio: lengthRatio,
     lengthRatio,
-    speedPercent: 100 / lengthRatio,
+    speedPercent: clamp(100 / lengthRatio, STRETCH_SPEED_MIN, STRETCH_SPEED_MAX),
     targetDurationSeconds: null,
     mode: 'offline_render',
     algorithm: 'granular_ola_basic',
@@ -2596,8 +2650,8 @@ function createPendingStretchMetadata(ratio) {
     renderedDurationSeconds: null,
     renderedAt: null,
     renderedSessionOnly: true,
-    renderStatus: 'idle',
-    renderError: null
+    renderStatus: supported ? 'idle' : 'failed',
+    renderError: supported ? null : 'Stretch amount is outside the supported range.'
   }
 }
 async function renderAudioStretchForRegion(regionId) {
@@ -2609,10 +2663,24 @@ async function renderAudioStretchForRegion(regionId) {
     scheduleEditorSave()
     return
   }
-  const runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  const stretchMath = getAudioStretchMath(region)
+  if (!stretchMath.supported) {
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Stretch amount is outside the supported range.' }
+    recordingStatus = 'Stretch amount is outside the supported range.'
+    console.warn('[stretch-render] failed', { clipId: region.id, reason: region.stretch.renderError })
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
   if (!runtime?.audioBuffer) {
-    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Original session audio is not available.' }
-    recordingStatus = 'This stretched audio region must finish rendering before playback.'
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Original audio is offline. Reconnect or re-record before rendering stretch.' }
+    recordingStatus = region.stretch.renderError
+    console.warn('[stretch-render] failed', { clipId: region.id, reason: region.stretch.renderError })
     scheduleEditorSave()
     renderEditor()
     return
@@ -2622,7 +2690,6 @@ async function renderAudioStretchForRegion(regionId) {
   region.stretch = { ...stretch, renderStatus: 'rendering', renderError: null }
   renderEditor()
   try {
-    const stretchMath = getAudioStretchMath(region)
     const result = await renderOfflineStretchedAudioClip({
       originalAudioBuffer: runtime.audioBuffer,
       clipId: region.id,
@@ -2691,7 +2758,7 @@ async function renderAudioStretchForRegion(regionId) {
     recordingStatus = 'Audio stretch rendered.'
     scheduleEditorSave()
   } catch (err) {
-    console.error('[studioProject] audio stretch render failed', err)
+    console.error('[stretch-render] failed', { clipId: region.id, reason: err?.message || 'Audio stretch render failed.' })
     region.stretch = { ...stretch, renderStatus: 'failed', renderError: err?.message || 'Audio stretch render failed.' }
     region.renderedWaveform = null
     region.stretchRender = { implemented: false, reason: region.stretch.renderError, ratio: stretch.ratio }
@@ -2748,7 +2815,10 @@ function updateAudioClipPlayback(currentBeat) {
       if (isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
         recordingStatus = 'This stretched audio region must finish rendering before playback.'
         updateEditorTitleStatus()
-        if (!audioStretchRenderState.active && stretch.renderStatus !== 'rendering') renderAudioStretchForRegion(region.id)
+        if (!audioStretchRenderState.active && stretch.renderStatus !== 'rendering' && stretchPlaybackPrompt?.regionId !== region.id) {
+          stretchPlaybackPrompt = { regionId: region.id }
+          renderEditor()
+        }
       }
       return
     }
@@ -2760,6 +2830,10 @@ function updateAudioClipPlayback(currentBeat) {
       if (!runtime?.audioBuffer && isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
         recordingStatus = 'Audio file missing or not loaded.'
         updateEditorTitleStatus()
+        if (!audioOfflineWarnedRegionIds.has(region.id)) {
+          audioOfflineWarnedRegionIds.add(region.id)
+          console.info('[audio-playback] skipped offline clip', { clipId: region.audioClip?.audioAssetId || region.audioClip?.id || region.id, reason: region.audioClip?.offlineReason || 'buffer_missing' })
+        }
       }
       return
     }
@@ -3110,10 +3184,13 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
     return
   }
   const blob = new Blob(chunks, { type: recording.audioClip?.contentType || chunks[0]?.type || 'audio/webm' })
+  const clipId = recording.id
+  const now = Date.now()
+  const fileName = `${clipId}.${extensionForAudioType(blob.type || 'audio/webm')}`
   let storagePath = null
   let uploadError = ''
   try {
-    storagePath = await uploadSouraAudioBlob(blob, { clipId: recording.id })
+    storagePath = await uploadSouraAudioBlob(blob, { clipId })
   } catch (err) {
     uploadError = err?.message || 'Audio upload failed.'
     console.warn('[studioProject] audio recording upload failed; clip remains session-only', err)
@@ -3126,14 +3203,20 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
     endBeat: Math.max(recording.startBeat + 0.25, recording.endBeat || clampBeat(xToBeat(timelineState.playheadX))),
     audioClip: {
       ...(recording.audioClip || {}),
-      runtimeId: recording.id,
+      id: clipId,
+      audioAssetId: clipId,
+      runtimeId: clipId,
       contentType: blob.type || 'audio/webm',
+      fileName,
       storagePath,
       sessionOnly: !storagePath,
       missingAfterReload: !storagePath,
       uploadError: uploadError || null,
+      offlineReason: storagePath ? null : 'storage_upload_failed',
       loadStatus: 'ready',
-      audioReady: true
+      audioReady: true,
+      createdAt: now,
+      updatedAt: now
     },
     missingMedia: false
   })
@@ -3152,15 +3235,21 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
     region.waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
     region.audioClip = {
       ...(region.audioClip || {}),
+      id: clipId,
+      audioAssetId: clipId,
       fileDurationSeconds,
-      runtimeId: region.id,
+      runtimeId: clipId,
       contentType: blob.type || 'audio/webm',
+      fileName,
       storagePath,
       sessionOnly: !storagePath,
       missingAfterReload: !storagePath,
       audioReady: true,
       loadStatus: 'ready',
-      loadError: uploadError || null
+      loadError: uploadError || null,
+      offlineReason: storagePath ? null : 'storage_upload_failed',
+      createdAt: now,
+      updatedAt: now
     }
     region.playbackRate = 1
     region.stretch = normalizeAudioStretch(region.stretch)
@@ -3435,7 +3524,8 @@ function updateAudioRegionStretchTarget(region, targetDurationSeconds) {
     targetDurationSeconds: math.targetDurationSeconds,
     lengthRatio: math.lengthRatio,
     speedPercent: math.speedPercent,
-    renderStatus: Math.abs(math.lengthRatio - 1) > 0.001 ? 'needs_render' : 'idle'
+    renderStatus: math.supported ? (Math.abs(math.lengthRatio - 1) > 0.001 ? 'needs_render' : 'idle') : 'failed',
+    renderError: math.supported ? null : 'Stretch amount is outside the supported range.'
   }
   region.stretchRender = null
   region.renderedWaveform = null
@@ -3918,7 +4008,7 @@ function bindEditorEvents() {
     const region = getSelectedAudioRegion()
     if (!region) return
     const source = getAudioSourceDurationSeconds(region)
-    const speed = clamp(Number(event.target.value) || 100, 1, 400)
+    const speed = clamp(Number(event.target.value) || 100, STRETCH_SPEED_MIN, STRETCH_SPEED_MAX)
     updateAudioRegionStretchTarget(region, source / (speed / 100))
   })
   app.querySelector('[data-audio-stretch-length]')?.addEventListener('change', (event) => {
@@ -3933,6 +4023,15 @@ function bindEditorEvents() {
   app.querySelector('[data-audio-reset-stretch]')?.addEventListener('click', () => {
     const region = getSelectedAudioRegion()
     if (region) resetAudioRegionStretch(region)
+  })
+  app.querySelector('[data-stretch-prompt-render]')?.addEventListener('click', () => {
+    const regionId = stretchPlaybackPrompt?.regionId
+    stretchPlaybackPrompt = null
+    if (regionId) renderAudioStretchForRegion(regionId)
+  })
+  app.querySelector('[data-stretch-prompt-cancel]')?.addEventListener('click', () => {
+    stretchPlaybackPrompt = null
+    renderEditor()
   })
   app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
@@ -4406,6 +4505,8 @@ function renderEditor() {
   app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
   const audioRenderModal = renderAudioStretchRenderModal()
   if (audioRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioRenderModal)
+  const stretchPromptModal = renderStretchPlaybackPrompt()
+  if (stretchPromptModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', stretchPromptModal)
   applyStudioGuideTargets()
   setEditorMenuOpen(isEditorMenuOpen)
   bindEditorEvents()

@@ -35,9 +35,9 @@ export function normalizeRegion(region = {}) {
   const fileDurationSeconds = Math.max(0, num(region.fileDurationSeconds ?? region.audioClip?.fileDurationSeconds ?? region.durationSeconds, 0))
   const trimStartSeconds = clamp(num(region.trimStartSeconds, 0), 0, Math.max(0, fileDurationSeconds))
   const trimEndSeconds = region.trimEndSeconds == null ? null : clamp(num(region.trimEndSeconds, fileDurationSeconds), trimStartSeconds, Math.max(trimStartSeconds, fileDurationSeconds))
-  const stretchRatio = Math.max(0.05, num(region.stretch?.ratio, 1))
-  const lengthRatio = Math.max(0.05, num(region.stretch?.lengthRatio, stretchRatio))
-  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(region.stretch?.renderStatus) ? region.stretch.renderStatus : 'idle'
+  const stretchRatio = clamp(num(region.stretch?.lengthRatio ?? region.stretch?.ratio, 1), 0.25, 10)
+  const lengthRatio = stretchRatio
+  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render', 'none'].includes(region.stretch?.renderStatus) ? (region.stretch.renderStatus === 'none' ? 'idle' : region.stretch.renderStatus) : 'idle'
   return {
     id: String(region.id || makeId('region')),
     trackId: String(region.trackId || 'demo-track'),
@@ -65,7 +65,7 @@ export function normalizeRegion(region = {}) {
       enabled: !!region.stretch?.enabled,
       ratio: stretchRatio,
       lengthRatio,
-      speedPercent: Math.max(0.01, num(region.stretch?.speedPercent, 100 / lengthRatio)),
+      speedPercent: clamp(100 / lengthRatio, 10, 400),
       targetDurationSeconds: region.stretch?.targetDurationSeconds == null ? null : Math.max(0.0001, num(region.stretch.targetDurationSeconds, 0)),
       mode: String(region.stretch?.mode || 'none'),
       algorithm: String(region.stretch?.algorithm || 'none'),
@@ -93,14 +93,14 @@ export function normalizeRegion(region = {}) {
         pitchSource: String(region.audioEdit?.pitchSource || 'off'),
         flexFollow: region.audioEdit?.flexFollow === 'on' ? 'on' : 'off',
         gainDb: clamp(num(region.audioEdit?.gainDb, 0), -24, 24),
-        delayMs: clamp(num(region.audioEdit?.delayMs, 0), -2000, 2000),
+        delayMs: clamp(num(region.audioEdit?.delayMs, 0), 0, 2000),
         fadeInSeconds: Math.max(0, num(region.audioEdit?.fadeInSeconds, 0)),
         fadeInCurve: String(region.audioEdit?.fadeInCurve || 'linear'),
         fadeOutSeconds: Math.max(0, num(region.audioEdit?.fadeOutSeconds, 0)),
         fadeOutCurve: String(region.audioEdit?.fadeOutCurve || 'linear'),
-        fadeType: String(region.audioEdit?.fadeType || 'out'),
         reverse: region.audioEdit?.reverse === true,
-        phaseInvert: region.audioEdit?.phaseInvert === true
+        reverseRenderStatus: ['idle', 'rendering', 'ready', 'failed'].includes(region.audioEdit?.reverseRenderStatus) ? region.audioEdit.reverseRenderStatus : 'idle',
+        reverseRenderedStoragePath: region.audioEdit?.reverseRenderedStoragePath || null
       }
       : null,
     sourceHash: region.sourceHash ?? null,
@@ -110,7 +110,8 @@ export function normalizeRegion(region = {}) {
         storagePath: region.audioClip.storagePath || null,
         downloadUrl: region.audioClip.downloadUrl || null,
         sessionOnly: region.audioClip.storagePath || region.audioClip.downloadUrl ? false : region.audioClip.sessionOnly !== false,
-        missingAfterReload: region.audioClip.storagePath || region.audioClip.downloadUrl ? false : region.audioClip.missingAfterReload !== false
+        missingAfterReload: region.audioClip.storagePath || region.audioClip.downloadUrl ? false : region.audioClip.missingAfterReload !== false,
+        offlineReason: region.audioClip.storagePath || region.audioClip.downloadUrl ? null : (region.audioClip.offlineReason || 'missing_storage_path')
       }
       : null,
     waveform: type === 'audio' && region.waveform && typeof region.waveform === 'object'
