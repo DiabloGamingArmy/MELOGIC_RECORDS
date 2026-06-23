@@ -92,17 +92,28 @@ function mergeFramesToNotes(frames, { bpm, regionStartBeat, stretchRatio, confid
       const visibleStartSeconds = current.startSeconds * stretchRatio
       const visibleDurationSeconds = durationSeconds * stretchRatio
       const durationBeats = visibleDurationSeconds * (bpm / 60)
+      const frequencyHz = Number((current.frequencySum / Math.max(1, current.count)).toFixed(2))
       notes.push({
         id: `pt-${notes.length + 1}`,
         startSeconds: Number(visibleStartSeconds.toFixed(4)),
         durationSeconds: Number(visibleDurationSeconds.toFixed(4)),
         startBeat: Number((regionStartBeat + (visibleStartSeconds * bpm / 60)).toFixed(4)),
         durationBeats: Number(durationBeats.toFixed(4)),
+        originalMidiNote: current.midiNote,
+        editedMidiNote: current.midiNote,
         midiNote: current.midiNote,
         noteName: midiToName(current.midiNote),
-        frequencyHz: Number((current.frequencySum / Math.max(1, current.count)).toFixed(2)),
+        originalFrequencyHz: frequencyHz,
+        editedFrequencyHz: frequencyHz,
+        frequencyHz,
         confidence: Number(current.confidence.toFixed(3)),
-        centsOffset: Number(current.centsOffset.toFixed(1))
+        centsOffset: Number(current.centsOffset.toFixed(1)),
+        gainDb: 0,
+        pitchDriftStartCents: 0,
+        pitchDriftEndCents: 0,
+        vibratoAmount: 0,
+        muted: false,
+        renderStatus: 'idle'
       })
     }
     current = null

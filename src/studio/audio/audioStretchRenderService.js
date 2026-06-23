@@ -1,6 +1,6 @@
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
-function createAudioBuffer(channelCount, length, sampleRate) {
+export function createAudioBuffer(channelCount, length, sampleRate) {
   const OfflineContext = globalThis.OfflineAudioContext || globalThis.webkitOfflineAudioContext
   if (OfflineContext) {
     const offline = new OfflineContext(Math.max(1, channelCount), Math.max(1, length), sampleRate)
@@ -26,7 +26,7 @@ function writeAscii(view, offset, value) {
   }
 }
 
-function audioBufferToWavBlob(audioBuffer) {
+export function audioBufferToWavBlob(audioBuffer) {
   const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
   const sampleRate = Math.max(1, audioBuffer.sampleRate || 44100)
   const samples = Math.max(1, audioBuffer.length || 1)
