@@ -271,6 +271,7 @@ body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
 .studio-midi-roll-tools label{display:grid;gap:5px;color:#aebfe4;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}.studio-midi-roll-tools input,.studio-midi-roll-tools select{min-width:0;border:1px solid rgba(130,150,210,.28);border-radius:5px;background:#101827;color:#eef4ff;padding:6px}.studio-midi-roll-tools button{min-height:30px;border:1px solid rgba(130,150,210,.28);border-radius:5px;background:rgba(255,255,255,.055);color:#eef4ff;font-weight:800}.studio-midi-roll-tools button:disabled{opacity:.45}.studio-midi-roll-transpose{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
 .studio-region-editor-audio{height:min(68vh,620px);min-height:320px}
 .studio-audio-region-editor-body{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:12px;padding:10px;overflow:hidden}
+.studio-audio-region-editor-body.has-pitch-trace-tools{grid-template-columns:minmax(0,1fr) minmax(220px,260px) 280px}
 .studio-audio-region-editor-preview{min-width:0;display:grid;grid-template-rows:minmax(120px,1fr) auto auto;gap:10px}
 .studio-audio-editor-waveform{position:relative;min-height:150px;border:1px solid rgba(130,150,210,.24);border-radius:8px;background:linear-gradient(180deg,rgba(14,20,32,.92),rgba(8,12,20,.92));overflow:hidden}
 .studio-audio-editor-waveform .studio-audio-waveform,.studio-audio-editor-waveform .studio-audio-waveform-bars{inset:18px 14px;width:calc(100% - 28px);height:calc(100% - 36px)}
@@ -288,6 +289,9 @@ body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
 .studio-pitch-trace-note.is-selected{outline:2px solid #fff;outline-offset:1px;z-index:5}
 .studio-pitch-trace-note.is-edited{box-shadow:0 0 0 1px rgba(255,228,166,.6),0 0 18px color-mix(in srgb,var(--pitch-note-color,#58d4ff) 48%,transparent)}
 .studio-pitch-trace-note.is-muted{opacity:.34!important;filter:saturate(.3)}
+.studio-pitch-trace-note [data-pitch-trace-note-handle]{position:absolute;top:0;bottom:0;width:5px;z-index:2;cursor:ew-resize;background:rgba(255,255,255,.18)}
+.studio-pitch-trace-note [data-pitch-trace-note-handle="left"]{left:0}
+.studio-pitch-trace-note [data-pitch-trace-note-handle="right"]{right:0}
 .studio-pitch-trace-note b{display:block;padding:1px 5px;color:#f9fdff;font-size:10px;line-height:1.2;white-space:nowrap;text-shadow:0 1px 3px rgba(0,0,0,.42)}
 .studio-pitch-trace-view>small{position:absolute;right:12px;bottom:5px;color:#cdd9f5;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
 .studio-audio-editor-meta{display:flex;flex-wrap:wrap;gap:6px;color:#aebfe4;font-size:12px}
@@ -300,9 +304,23 @@ body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
 .studio-pitch-trace-controls label:first-child{display:flex;align-items:center;gap:7px}
 .studio-pitch-trace-controls p{margin:0;color:#91a5cf;font-size:11px;line-height:1.35}
 .studio-pitch-trace-controls button{min-height:30px}
+.studio-pitch-trace-tools-pane{max-height:100%;overflow:auto;border-color:rgba(120,216,255,.2);background:rgba(11,16,27,.7)}
+.studio-editor-tool-toggle{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.studio-editor-tool-toggle button{min-height:30px;border:1px solid rgba(130,150,210,.24);border-radius:8px;background:rgba(255,255,255,.045);color:#dce7ff;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}
+.studio-editor-tool-toggle button.is-active{border-color:rgba(120,216,255,.55);background:rgba(120,216,255,.16);color:#fff;box-shadow:0 0 14px rgba(120,216,255,.12)}
 .studio-pitch-trace-note-tools{display:grid;gap:5px;padding:8px;border:1px solid rgba(255,228,166,.22);border-radius:8px;background:rgba(255,228,166,.07)}
 .studio-pitch-trace-note-tools strong{color:#fff;font-size:13px}
 .studio-pitch-trace-note-tools span{color:#aebde2;font-size:11px}
+.studio-audio-edit-overlays{position:absolute;inset:0;z-index:3;pointer-events:none;border-radius:inherit;overflow:hidden}
+.studio-audio-fade-overlay{position:absolute;top:0;bottom:0;background:linear-gradient(90deg,rgba(255,228,166,.34),rgba(255,228,166,0));mix-blend-mode:screen}
+.studio-audio-fade-overlay--in{left:0;clip-path:polygon(0 100%,100% 0,100% 100%)}
+.studio-audio-fade-overlay--out{right:0;transform:scaleX(-1);clip-path:polygon(0 100%,100% 0,100% 100%)}
+.studio-audio-fade-overlay.is-equal-power{filter:saturate(1.3) brightness(1.12)}
+.studio-audio-delay-marker{position:absolute;top:4px;bottom:4px;width:2px;background:#ffe4a6;box-shadow:0 0 12px rgba(255,228,166,.55)}
+.studio-audio-delay-marker b{position:absolute;left:5px;top:0;padding:2px 5px;border-radius:999px;background:rgba(7,10,18,.78);color:#ffe4a6;font-size:9px;white-space:nowrap}
+.studio-audio-gain-badge{position:absolute;left:8px;bottom:7px;padding:2px 6px;border-radius:999px;background:rgba(7,10,18,.72);color:#dce7ff;font-size:10px}
+.studio-audio-region.is-audio-muted{opacity:.58;filter:saturate(.55)}
+.studio-audio-region.is-audio-muted::after{content:"";position:absolute;inset:0;z-index:4;background:repeating-linear-gradient(135deg,rgba(255,255,255,.08) 0 4px,transparent 4px 10px);pointer-events:none}
 .studio-audio-region-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
 .studio-audio-region-checks label{display:flex;align-items:center;gap:6px;min-height:28px;padding:5px 7px;border:1px solid rgba(130,150,210,.18);border-radius:6px;background:rgba(255,255,255,.035)}
 .studio-audio-region-checks input{width:auto!important;min-width:auto!important}
@@ -310,7 +328,7 @@ body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
 .studio-audio-stretch-controls label{display:grid;gap:5px}
 .studio-audio-stretch-controls label:first-child{display:flex;align-items:center;gap:7px}
 .studio-audio-stretch-controls p{color:#ffe4a6!important;font-weight:800}
-@media(max-width:900px){.studio-audio-region-editor-body{grid-template-columns:1fr}.studio-audio-region-tools{max-height:260px}}
+@media(max-width:1100px){.studio-audio-region-editor-body{grid-template-columns:1fr}.studio-audio-region-tools,.studio-pitch-trace-tools-pane{max-height:260px}}
 @keyframes studio-record-pulse{50%{box-shadow:inset 0 0 0 1px rgba(255,255,255,.1),0 0 20px rgba(255,45,85,.42)}}
 .studio-grid-line{position:absolute;top:0;bottom:0;pointer-events:none}
 .studio-grid-line--bar{width:2px;background:rgba(255,255,255,.22)}
