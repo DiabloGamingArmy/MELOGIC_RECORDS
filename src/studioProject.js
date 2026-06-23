@@ -195,6 +195,7 @@ let timelineEdgeScrollRaf = 0
 let timelineEdgeScrollState = null
 let audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
 let stretchPlaybackPrompt = null
+let pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
 let meterRaf = 0
 let midiRegionMenuState = null
 let midiRegionClipboard = null
@@ -294,12 +295,43 @@ const STRETCH_SPEED_MIN = 10
 const STRETCH_SPEED_MAX = 400
 const STRETCH_RATIO_MIN = 100 / STRETCH_SPEED_MAX
 const STRETCH_RATIO_MAX = 100 / STRETCH_SPEED_MIN
+const PITCH_TRACE_VERSION = 'pitch-trace-v1'
+const PITCH_TRACE_ALGORITHM = 'yin-js-worker-v1'
 
 function getTimelineSecondsAtBeat(beat = 0) {
   return beatsToSeconds(clampBeat(Number(beat) || 0))
 }
 function getTimelineSecondsAtPlayhead() {
   return getTimelineSecondsAtBeat(xToBeat(timelineState.playheadX))
+}
+function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
+  const source = trace && typeof trace === 'object' ? trace : {}
+  const status = ['idle', 'analyzing', 'ready', 'failed'].includes(source.status) ? source.status : 'idle'
+  const notes = Array.isArray(source.notes)
+    ? source.notes.slice(0, 512).map((note, index)=>({
+      id: String(note?.id || `pt-${index + 1}`),
+      startSeconds: Math.max(0, Number(note?.startSeconds) || 0),
+      durationSeconds: Math.max(0.01, Number(note?.durationSeconds) || 0.01),
+      startBeat: Math.max(0, Number(note?.startBeat) || 0),
+      durationBeats: Math.max(0.001, Number(note?.durationBeats) || 0.001),
+      midiNote: clamp(Math.round(Number(note?.midiNote) || 60), 0, 127),
+      noteName: String(note?.noteName || formatMidiNoteName(clamp(Math.round(Number(note?.midiNote) || 60), 0, 127))),
+      frequencyHz: Math.max(0, Number(note?.frequencyHz) || 0),
+      confidence: clamp(Number(note?.confidence) || 0, 0, 1),
+      centsOffset: clamp(Number(note?.centsOffset) || 0, -50, 50)
+    })).filter((note)=>note.durationSeconds > 0)
+    : []
+  return {
+    enabled: source.enabled === true || legacyFlexFollow === 'on',
+    status: notes.length && status === 'idle' ? 'ready' : status,
+    algorithm: source.algorithm || (notes.length ? PITCH_TRACE_ALGORITHM : null),
+    analysisVersion: source.analysisVersion || PITCH_TRACE_VERSION,
+    analyzedAt: Number.isFinite(Number(source.analyzedAt)) ? Number(source.analyzedAt) : null,
+    confidenceThreshold: clamp(Number(source.confidenceThreshold ?? 0.65), 0.1, 0.98),
+    progress: 0,
+    error: source.error || null,
+    notes
+  }
 }
 function normalizeAudioEdit(edit = {}) {
   const quantize = AUDIO_QUANTIZE_OPTIONS.includes(String(edit.quantize || '').toLowerCase()) ? String(edit.quantize).toLowerCase() : 'off'
@@ -316,7 +348,7 @@ function normalizeAudioEdit(edit = {}) {
     transposeSemitones: clamp(Number(edit.transposeSemitones) || 0, -48, 48),
     fineTuneCents: clamp(Number(edit.fineTuneCents) || 0, -100, 100),
     pitchSource,
-    flexFollow: edit.flexFollow === 'on' ? 'on' : 'off',
+    pitchTrace: normalizePitchTrace(edit.pitchTrace, edit.flexFollow === 'on' ? 'on' : 'off'),
     gainDb: clamp(Number(edit.gainDb) || 0, -24, 24),
     delayMs: clamp(Number(edit.delayMs) || 0, 0, 2000),
     fadeInSeconds: Math.max(0, Number(edit.fadeInSeconds) || 0),
@@ -643,6 +675,46 @@ function renderMidiRegionRenamePopover() {
 function renderMidiRollModal() {
   return ''
 }
+function renderPitchTraceView(region, track) {
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const trace = edit.pitchTrace
+  const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
+  const notes = (trace.notes || []).filter((note)=>note.confidence >= trace.confidenceThreshold)
+  const noteValues = notes.map((note)=>Number(note.midiNote)).filter(Number.isFinite)
+  const minNote = Math.max(0, Math.min(48, ...(noteValues.length ? noteValues : [48])) - 2)
+  const maxNote = Math.min(127, Math.max(72, ...(noteValues.length ? noteValues : [72])) + 2)
+  const rowCount = Math.max(1, maxNote - minNote + 1)
+  const beatCount = Math.max(1, Math.ceil(secondsToBeats(visibleDuration)))
+  const color = getReadableWaveformColor(region.color || track?.color || '#58d4ff')
+  const blocks = notes.map((note)=> {
+    const left = clamp((Number(note.startSeconds) || 0) / visibleDuration, 0, 1) * 100
+    const width = clamp((Number(note.durationSeconds) || 0.01) / visibleDuration, 0.002, 1) * 100
+    const row = maxNote - clamp(Math.round(Number(note.midiNote) || 60), minNote, maxNote)
+    const top = (row / rowCount) * 100
+    const height = Math.max(6, (1 / rowCount) * 100)
+    const opacity = clamp(0.35 + ((Number(note.confidence) || 0) * 0.55), 0.35, 0.92)
+    return `<span class="studio-pitch-trace-note" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(note.noteName)} · ${Math.round((note.confidence || 0) * 100)}%"><b>${esc(note.noteName)}</b></span>`
+  }).join('')
+  const labels = Array.from({ length: rowCount }, (_, index) => {
+    const midi = maxNote - index
+    return midi % 12 === 0 ? `<span style="top:${((index / rowCount) * 100).toFixed(3)}%">${esc(formatMidiNoteName(midi))}</span>` : ''
+  }).join('')
+  const beatLines = Array.from({ length: beatCount + 1 }, (_, index)=>`<i style="left:${((index / beatCount) * 100).toFixed(3)}%"></i>`).join('')
+  const status = trace.status === 'analyzing'
+    ? `Analyzing${trace.progress ? ` ${Math.round(trace.progress * 100)}%` : '...'}`
+    : trace.status === 'ready'
+      ? `Ready · ${notes.length} note${notes.length === 1 ? '' : 's'}`
+      : trace.status === 'failed'
+        ? `Failed · ${trace.error || 'Try again'}`
+        : 'Idle'
+  return `<div class="studio-pitch-trace-view" style="--pitch-row-count:${rowCount}">
+    <div class="studio-pitch-trace-waveform">${renderAudioWaveform(region)}</div>
+    <div class="studio-pitch-trace-grid" aria-hidden="true">${beatLines}</div>
+    <div class="studio-pitch-trace-labels" aria-hidden="true">${labels}</div>
+    <div class="studio-pitch-trace-notes">${blocks || '<p>No detected notes yet. Click Analyze Audio to create a Pitch Trace.</p>'}</div>
+    <small>Pitch Trace: ${esc(status)}</small>
+  </div>`
+}
 function midiRollPitchRows(region = getMidiRollRegion()) {
   const track = getMidiRegionTrack(region)
   const playable = getInstrumentPlayableRange(track)
@@ -665,6 +737,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
   const track = getMidiRegionTrack(region)
   const edit = normalizeAudioEdit(region.audioEdit)
+  const pitchTrace = edit.pitchTrace
   const stretch = normalizeAudioStretch(region.stretch)
   const stretchMath = getAudioStretchMath(region)
   const missing = Boolean(region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed')
@@ -676,7 +749,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
     <div class="studio-bottom-panel-body studio-audio-region-editor-body">
       <section class="studio-audio-region-editor-preview">
-        <div class="studio-audio-editor-waveform" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${renderAudioWaveform(region)}</div>
+        <div class="studio-audio-editor-waveform ${pitchTrace.enabled ? 'has-pitch-trace' : ''}" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${pitchTrace.enabled ? renderPitchTraceView(region, track) : renderAudioWaveform(region)}</div>
         <div class="studio-audio-editor-meta">
           <span>Start ${Number(region.startBeat || 0).toFixed(2)} beats</span>
           <span>Length ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span>
@@ -695,8 +768,17 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <label>Q-Strength<input type="range" min="0" max="100" step="1" data-audio-edit-field="qStrength" value="${edit.qStrength}" disabled><small>Coming soon</small></label>
         <label>Transpose<input type="number" min="-48" max="48" step="1" data-audio-edit-field="transposeSemitones" value="${edit.transposeSemitones}" disabled><small>Coming soon</small></label>
         <label>Fine Tune<input type="number" min="-100" max="100" step="1" data-audio-edit-field="fineTuneCents" value="${edit.fineTuneCents}" disabled><small>Coming soon</small></label>
+        <button type="button" disabled>Render Pitch Shift</button>
         <label>Pitch Source<select data-audio-edit-field="pitchSource" disabled><option>Off</option><option>Region</option><option>Project Key</option></select><small>Coming soon</small></label>
-        <label>Flex &amp; Follow<select data-audio-edit-field="flexFollow" disabled><option>Off</option><option>On</option></select><small>Coming soon</small></label>
+        <hr>
+        <div class="studio-pitch-trace-controls">
+          <label><input type="checkbox" data-pitch-trace-enabled ${pitchTrace.enabled ? 'checked' : ''}> Pitch Trace</label>
+          <p>Analyze the audio region and display detected notes over the waveform.</p>
+          <label>Confidence<input type="range" min="0.3" max="0.95" step="0.05" data-pitch-trace-threshold value="${pitchTrace.confidenceThreshold}"><small>${Math.round(pitchTrace.confidenceThreshold * 100)}%</small></label>
+          <button type="button" data-pitch-trace-analyze ${missing || pitchTrace.status === 'analyzing' ? 'disabled' : ''}>${pitchTrace.notes.length ? 'Re-analyze Audio' : 'Analyze Audio'}</button>
+          <button type="button" data-pitch-trace-clear ${pitchTrace.notes.length || pitchTrace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
+          <small>Pitch Trace: ${esc(pitchTrace.status === 'analyzing' ? 'Analyzing...' : pitchTrace.status)}</small>
+        </div>
         <label>Gain<input type="range" min="-24" max="24" step="0.5" data-audio-edit-field="gainDb" value="${edit.gainDb}"><small>${edit.gainDb.toFixed(1)} dB</small></label>
         <label>Delay<input type="number" min="0" max="2000" step="1" data-audio-edit-field="delayMs" value="${edit.delayMs}"><small>ms</small></label>
         <label>Fade-In<input type="number" min="0" step="0.01" data-audio-edit-field="fadeInSeconds" value="${edit.fadeInSeconds}"><small>seconds</small></label>
@@ -1647,6 +1729,10 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
     copy.visibleDurationSeconds = visibleDurationSeconds
     copy.playbackRate = Number(copy.playbackRate) || 1
     copy.audioEdit = normalizeAudioEdit(copy.audioEdit)
+    if (persist && copy.audioEdit?.pitchTrace?.status === 'analyzing') {
+      copy.audioEdit.pitchTrace.status = copy.audioEdit.pitchTrace.notes.length ? 'ready' : 'idle'
+      copy.audioEdit.pitchTrace.progress = 0
+    }
     copy.stretch = normalizeAudioStretch(copy.stretch)
     if (persist) copy.stretch.renderedObjectUrl = null
     if (!copy.waveform) copy.waveform = { peaks: [], resolution: 'none', durationSeconds: fileDurationSeconds, generatedAt: null }
@@ -2191,6 +2277,23 @@ function beatToX(beat = 0) { const metrics = getTimelineMetrics(); return metric
 function xToBeat(x = 0) { const metrics = getTimelineMetrics(); return (Number(x || 0) - metrics.zeroX) / metrics.pixelsPerBeat }
 function snapBeat(beat = 0, snapValue = 1) { const value = Number(snapValue) || 1; return Math.round(Number(beat || 0) / value) * value }
 function clampBeat(beat = 0) { const metrics = getTimelineMetrics(); return clamp(Number(beat) || 0, metrics.minBeat, metrics.maxBeat) }
+function getSnapStepBeats() {
+  return 1
+}
+function snapBeatToGrid(beat = 0, stepBeats = getSnapStepBeats(), direction = 'nearest') {
+  const step = Math.max(0.03125, Number(stepBeats) || 1)
+  const value = Number(beat) || 0
+  const epsilon = 1e-7
+  if (direction === 'right') return Math.ceil((value + epsilon) / step) * step
+  if (direction === 'left') return Math.floor((value - epsilon) / step) * step
+  return Math.round(value / step) * step
+}
+function movePlayheadByKeyboard({ currentBeat = 0, direction = 1, snapEnabled = isSnapEnabled, stepBeats = getSnapStepBeats(), event = null } = {}) {
+  const dir = direction < 0 ? -1 : 1
+  if (snapEnabled) return clampBeat(snapBeatToGrid(currentBeat, stepBeats, dir > 0 ? 'right' : 'left'))
+  const modifierStep = event?.shiftKey ? 1 : (event?.altKey ? 1 / 16 : 1 / 8)
+  return clampBeat((Number(currentBeat) || 0) + (dir * modifierStep))
+}
 function pointerEventToTimelineX(event) {
   const gridEl = app.querySelector('[data-arrangement-grid]')
   const rect = gridEl?.getBoundingClientRect?.()
@@ -2247,7 +2350,6 @@ function detachBottomPanel(panelId = activeBottomPanel) {
   popup.document.write(`<!doctype html><html><head><title>${esc(title)} | Melogic DAW</title><style>body{margin:0;background:#0b111d;color:#eef4ff;font-family:Inter,system-ui,sans-serif}.studio-bottom-panel{position:static!important;inset:auto!important;width:100vw!important;height:100vh!important;max-height:none!important;border:0!important}.studio-bottom-panel-resize,.studio-bottom-panel-close,[data-detach-bottom-panel]{display:none!important}</style><link rel="stylesheet" href="/src/styles/base.css"><link rel="stylesheet" href="/src/styles/studio.css"></head><body>${body}<script>document.querySelectorAll('button,input,select,textarea').forEach((el)=>{ el.disabled=true })</script></body></html>`)
   popup.document.close()
 }
-function snapBeatToGrid(beat){ return Math.round(beat) }
 function xToSnappedBeat(x){ const beat=xToBeatsFromBarZero(x); return isSnapEnabled ? snapBeatToGrid(beat) : beat }
 function snapXToBeat(x) { return isSnapEnabled ? beatsFromBarZeroToX(snapBeatToGrid(xToBeatsFromBarZero(x))) : x }
 function maxTimelineX() { return timelineEndX() }
@@ -3504,12 +3606,159 @@ function updateAudioRegionEditField(region, key, rawValue) {
   if (key === 'mute' || key === 'loop') edit[key] = rawValue === true
   else if (['qSwing','qStrength','transposeSemitones','fineTuneCents','gainDb','delayMs','fadeInSeconds','fadeOutSeconds'].includes(key)) edit[key] = Number(rawValue) || 0
   else if (key === 'qRange') edit[key] = rawValue === '' ? null : Number(rawValue)
-  else if (['quantize','pitchSource','flexFollow','fadeInCurve','fadeOutCurve'].includes(key)) edit[key] = String(rawValue || '')
+  else if (['quantize','pitchSource','fadeInCurve','fadeOutCurve'].includes(key)) edit[key] = String(rawValue || '')
   else if (key === 'reverse') edit[key] = rawValue === true
   region.audioEdit = normalizeAudioEdit(edit)
   pushHistory('edit-audio-region', before, captureDawSnapshot())
   scheduleEditorSave()
   renderEditor()
+}
+function setAudioRegionPitchTrace(region, patch = {}, historyLabel = 'edit-pitch-trace') {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const edit = normalizeAudioEdit(region.audioEdit)
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: normalizePitchTrace({
+      ...edit.pitchTrace,
+      ...patch,
+      notes: patch.notes || edit.pitchTrace.notes || []
+    })
+  })
+  pushHistory(historyLabel, before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function getAudioBufferSamplesForPitchTrace(audioBuffer, region) {
+  const trimStart = getAudioTrimStartSeconds(region)
+  const trimEnd = getAudioTrimEndSeconds(region)
+  const sampleRate = audioBuffer.sampleRate || 44100
+  const startSample = clamp(Math.floor(trimStart * sampleRate), 0, audioBuffer.length)
+  const endSample = clamp(Math.ceil(trimEnd * sampleRate), startSample + 1, audioBuffer.length)
+  const length = Math.max(1, endSample - startSample)
+  const samples = new Float32Array(length)
+  const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
+  for (let channelIndex = 0; channelIndex < channels; channelIndex += 1) {
+    const channel = audioBuffer.getChannelData(channelIndex)
+    for (let index = 0; index < length; index += 1) samples[index] += (channel[startSample + index] || 0) / channels
+  }
+  return samples
+}
+async function analyzePitchTraceForRegion(regionId) {
+  if (pitchTraceAnalysis.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) {
+    setAudioRegionPitchTrace(region, {
+      enabled: true,
+      status: 'failed',
+      error: 'Audio must be loaded before Pitch Trace analysis can run.'
+    }, 'pitch-trace-failed')
+    return
+  }
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const requestId = `${region.id}:${Date.now()}`
+  const worker = new Worker(new URL('./studio/audio/pitchTraceWorker.js', import.meta.url), { type: 'module' })
+  pitchTraceAnalysis = { active: true, regionId: region.id, requestId, worker }
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: {
+      ...edit.pitchTrace,
+      enabled: true,
+      status: 'analyzing',
+      progress: 0,
+      error: null,
+      algorithm: PITCH_TRACE_ALGORITHM,
+      analysisVersion: PITCH_TRACE_VERSION
+    }
+  })
+  renderEditor()
+  try {
+    const samples = getAudioBufferSamplesForPitchTrace(runtime.audioBuffer, region)
+    worker.onmessage = (event) => {
+      const message = event.data || {}
+      if (message.requestId !== requestId) return
+      const target = midiRegions.find((item)=>item.id === region.id && item.type === 'audio')
+      if (!target) return
+      const currentEdit = normalizeAudioEdit(target.audioEdit)
+      if (message.type === 'progress') {
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: { ...currentEdit.pitchTrace, enabled: true, status: 'analyzing', progress: Number(message.progress) || 0 }
+        })
+        renderEditor()
+        return
+      }
+      if (message.type === 'complete') {
+        worker.terminate()
+        pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: {
+            ...currentEdit.pitchTrace,
+            enabled: true,
+            status: 'ready',
+            algorithm: message.algorithm || PITCH_TRACE_ALGORITHM,
+            analysisVersion: PITCH_TRACE_VERSION,
+            analyzedAt: Date.now(),
+            progress: 1,
+            error: null,
+            notes: Array.isArray(message.notes) ? message.notes : []
+          }
+        })
+        scheduleEditorSave()
+        renderEditor()
+        return
+      }
+      if (message.type === 'error') {
+        worker.terminate()
+        pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: { ...currentEdit.pitchTrace, enabled: true, status: 'failed', error: message.error || 'Pitch analysis failed.', progress: 0 }
+        })
+        scheduleEditorSave()
+        renderEditor()
+      }
+    }
+    worker.onerror = (error) => {
+      worker.terminate()
+      pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+      const target = midiRegions.find((item)=>item.id === region.id && item.type === 'audio')
+      if (target) {
+        const currentEdit = normalizeAudioEdit(target.audioEdit)
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: { ...currentEdit.pitchTrace, enabled: true, status: 'failed', error: error?.message || 'Pitch analysis failed.', progress: 0 }
+        })
+        scheduleEditorSave()
+        renderEditor()
+      }
+    }
+    worker.postMessage({
+      type: 'analyze',
+      requestId,
+      samples: samples.buffer,
+      sampleRate: runtime.audioBuffer.sampleRate || 44100,
+      bpm: Number(projectState?.bpm || 140),
+      regionStartBeat: Number(region.startBeat || 0),
+      stretchRatio: getAudioStretchRatio(region),
+      confidenceThreshold: edit.pitchTrace.confidenceThreshold
+    }, [samples.buffer])
+  } catch (error) {
+    worker.terminate()
+    pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+    setAudioRegionPitchTrace(region, {
+      enabled: true,
+      status: 'failed',
+      error: error?.message || 'Pitch analysis failed.'
+    }, 'pitch-trace-failed')
+  }
 }
 function updateAudioRegionStretchTarget(region, targetDurationSeconds) {
   if (!region || region.type !== 'audio') return
@@ -3998,6 +4247,47 @@ function bindEditorEvents() {
     const value = input.type === 'checkbox' ? input.checked : input.value
     updateAudioRegionEditField(region, input.dataset.audioEditField, value)
   }))
+  app.querySelector('[data-pitch-trace-enabled]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const trace = normalizeAudioEdit(region.audioEdit).pitchTrace
+    setAudioRegionPitchTrace(region, {
+      ...trace,
+      enabled: event.target.checked,
+      status: event.target.checked && trace.notes.length ? 'ready' : trace.status
+    }, 'toggle-pitch-trace')
+  })
+  app.querySelector('[data-pitch-trace-threshold]')?.addEventListener('input', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchTrace: {
+        ...edit.pitchTrace,
+        confidenceThreshold: Number(event.target.value) || 0.65
+      }
+    })
+    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round((Number(event.target.value) || 0.65) * 100)}%`
+  })
+  app.querySelector('[data-pitch-trace-threshold]')?.addEventListener('change', () => { scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-pitch-trace-analyze]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) analyzePitchTraceForRegion(region.id)
+  })
+  app.querySelector('[data-pitch-trace-clear]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    setAudioRegionPitchTrace(region, {
+      enabled: true,
+      status: 'idle',
+      algorithm: null,
+      analyzedAt: null,
+      error: null,
+      progress: 0,
+      notes: []
+    }, 'clear-pitch-trace')
+  })
   app.querySelector('[data-audio-stretch-enabled]')?.addEventListener('change', (event) => {
     const region = getSelectedAudioRegion()
     if (!region) return
@@ -4541,7 +4831,7 @@ function handleStudioKeydown(event){
     }
     return
   }
-  if(event.altKey) return
+  if(event.altKey && !['ArrowLeft','ArrowRight'].includes(event.code)) return
   if(event.code==='Space'){handleSpaceTransport(event); return}
   if(event.code==='KeyR'){
     event.preventDefault()
@@ -4554,11 +4844,10 @@ function handleStudioKeydown(event){
     if(['Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','KeyC','KeyK'].includes(event.code)) event.preventDefault()
     return
   }
-  const step=timelineState.pixelsPerBar/timelineState.beatsPerBar
   if(event.code==='Delete'||event.code==='Backspace'){event.preventDefault(); if(activeBottomPanel==='midi-roll'&&deleteSelectedMidiNote()) return; if(selectedMidiRegionId) deleteMidiRegion(selectedMidiRegionId)}
   else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1}
-  else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(timelineState.playheadX-step)}
-  else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(timelineState.playheadX+step)}
+  else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: -1, event })));scheduleEditorSave()}
+  else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: 1, event })));scheduleEditorSave()}
   else if(event.code==='KeyC'){event.preventDefault(); isCycleEnabled=!isCycleEnabled; renderEditor()}
   else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); renderEditor()}
 }
@@ -4580,7 +4869,7 @@ if(!window.__melogicDawAudioPrewarmBound){
   window.addEventListener('pointerdown', () => prewarmDawAudio().catch(()=>{}), { once:true, capture:true })
   window.addEventListener('keydown', () => prewarmDawAudio().catch(()=>{}), { once:true, capture:true })
 }
-if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
+if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
 async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor(); hydrateProjectAudioAssets().catch((err)=>console.warn('[studioProject] audio hydration failed', err)) }
 init()

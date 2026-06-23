@@ -1,5 +1,6 @@
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d)
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
+const pitchTraceVersion = 'pitch-trace-v1'
 
 function makeId(prefix) {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
@@ -27,6 +28,36 @@ export function normalizeMidiNote(note = {}) {
     startBeat: num(note.startBeat, 0),
     durationBeats: Math.max(0.0001, num(note.durationBeats, 1)),
     velocity: clamp(num(note.velocity, 0.8), 0, 1)
+  }
+}
+
+function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
+  const source = trace && typeof trace === 'object' ? trace : {}
+  const notes = Array.isArray(source.notes)
+    ? source.notes.slice(0, 512).map((note, index) => ({
+      id: String(note?.id || `pt-${index + 1}`),
+      startSeconds: Math.max(0, num(note?.startSeconds, 0)),
+      durationSeconds: Math.max(0.01, num(note?.durationSeconds, 0.01)),
+      startBeat: Math.max(0, num(note?.startBeat, 0)),
+      durationBeats: Math.max(0.001, num(note?.durationBeats, 0.001)),
+      midiNote: clamp(Math.round(num(note?.midiNote, 60)), 0, 127),
+      noteName: String(note?.noteName || ''),
+      frequencyHz: Math.max(0, num(note?.frequencyHz, 0)),
+      confidence: clamp(num(note?.confidence, 0), 0, 1),
+      centsOffset: clamp(num(note?.centsOffset, 0), -50, 50)
+    }))
+    : []
+  const status = ['idle', 'analyzing', 'ready', 'failed'].includes(source.status) ? source.status : 'idle'
+  return {
+    enabled: source.enabled === true || legacyFlexFollow === 'on',
+    status: status === 'analyzing' ? 'idle' : (notes.length && status === 'idle' ? 'ready' : status),
+    algorithm: source.algorithm || (notes.length ? 'yin-js-worker-v1' : null),
+    analysisVersion: source.analysisVersion || pitchTraceVersion,
+    analyzedAt: source.analyzedAt == null ? null : num(source.analyzedAt, 0),
+    confidenceThreshold: clamp(num(source.confidenceThreshold, 0.65), 0.1, 0.98),
+    progress: 0,
+    error: source.error || null,
+    notes
   }
 }
 
@@ -91,7 +122,7 @@ export function normalizeRegion(region = {}) {
         transposeSemitones: clamp(num(region.audioEdit?.transposeSemitones, 0), -48, 48),
         fineTuneCents: clamp(num(region.audioEdit?.fineTuneCents, 0), -100, 100),
         pitchSource: String(region.audioEdit?.pitchSource || 'off'),
-        flexFollow: region.audioEdit?.flexFollow === 'on' ? 'on' : 'off',
+        pitchTrace: normalizePitchTrace(region.audioEdit?.pitchTrace, region.audioEdit?.flexFollow === 'on' ? 'on' : 'off'),
         gainDb: clamp(num(region.audioEdit?.gainDb, 0), -24, 24),
         delayMs: clamp(num(region.audioEdit?.delayMs, 0), 0, 2000),
         fadeInSeconds: Math.max(0, num(region.audioEdit?.fadeInSeconds, 0)),
