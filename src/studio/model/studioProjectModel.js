@@ -126,12 +126,29 @@ function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCe
   }
 }
 
+function normalizeReverseEdit(reverse = {}, legacyStatus = 'idle', legacyStoragePath = null) {
+  const source = reverse && typeof reverse === 'object' ? reverse : {}
+  const enabled = reverse === true || source.enabled === true
+  const statusValue = source.renderStatus || legacyStatus
+  return {
+    enabled,
+    renderStatus: pitchRenderStatuses.includes(statusValue) ? statusValue : (enabled ? 'needs_render' : 'idle'),
+    renderedStoragePath: source.renderedStoragePath || legacyStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
+    algorithm: source.algorithm || null,
+    lastError: source.lastError || null,
+    renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0)
+  }
+}
+
 export function normalizeRegion(region = {}) {
   const type = region.type === 'audio' ? 'audio' : 'midi'
   const fileDurationSeconds = Math.max(0, num(region.fileDurationSeconds ?? region.audioClip?.fileDurationSeconds ?? region.durationSeconds, 0))
   const trimStartSeconds = clamp(num(region.trimStartSeconds, 0), 0, Math.max(0, fileDurationSeconds))
   const trimEndSeconds = region.trimEndSeconds == null ? null : clamp(num(region.trimEndSeconds, fileDurationSeconds), trimStartSeconds, Math.max(trimStartSeconds, fileDurationSeconds))
-  const stretchRatio = clamp(num(region.stretch?.lengthRatio ?? region.stretch?.ratio, 1), 0.25, 10)
+  const stretchRatio = clamp(num(region.stretch?.lengthRatio ?? region.stretch?.ratio, 1), 0.01, 32)
   const lengthRatio = stretchRatio
   const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render', 'none'].includes(region.stretch?.renderStatus) ? (region.stretch.renderStatus === 'none' ? 'idle' : region.stretch.renderStatus) : 'idle'
   return {
@@ -161,10 +178,10 @@ export function normalizeRegion(region = {}) {
       enabled: !!region.stretch?.enabled,
       ratio: stretchRatio,
       lengthRatio,
-      speedPercent: clamp(100 / lengthRatio, 10, 400),
+      speedPercent: 100 / Math.max(0.001, lengthRatio),
       targetDurationSeconds: region.stretch?.targetDurationSeconds == null ? null : Math.max(0.0001, num(region.stretch.targetDurationSeconds, 0)),
       mode: String(region.stretch?.mode || 'none'),
-      algorithm: String(region.stretch?.algorithm || 'none'),
+      algorithm: String(region.stretch?.algorithm || (region.stretch?.enabled ? 'wsola_phase_vocoder_v1' : 'none')),
       preservesPitch: !!region.stretch?.preservesPitch,
       renderedObjectUrl: null,
       renderedAudioUrl: region.stretch?.renderedAudioUrl || null,
@@ -195,9 +212,7 @@ export function normalizeRegion(region = {}) {
         fadeInCurve: String(region.audioEdit?.fadeInCurve || 'linear'),
         fadeOutSeconds: Math.max(0, num(region.audioEdit?.fadeOutSeconds, 0)),
         fadeOutCurve: String(region.audioEdit?.fadeOutCurve || 'linear'),
-        reverse: region.audioEdit?.reverse === true,
-        reverseRenderStatus: ['idle', 'rendering', 'ready', 'failed'].includes(region.audioEdit?.reverseRenderStatus) ? region.audioEdit.reverseRenderStatus : 'idle',
-        reverseRenderedStoragePath: region.audioEdit?.reverseRenderedStoragePath || null
+        reverse: normalizeReverseEdit(region.audioEdit?.reverse, region.audioEdit?.reverseRenderStatus, region.audioEdit?.reverseRenderedStoragePath)
       }
       : null,
     sourceHash: region.sourceHash ?? null,

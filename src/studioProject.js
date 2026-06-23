@@ -20,6 +20,7 @@ import { storage as firebaseStorage } from './firebase/storage.js'
 import { ref as storageRef, uploadBytes } from 'firebase/storage'
 import { renderStretchedAudioClip as renderOfflineStretchedAudioClip } from './studio/audio/audioStretchRenderService.js'
 import { renderPitchShiftedAudio, renderPitchTraceEdits } from './studio/audio/audioPitchRenderService.js'
+import { renderReversedAudio } from './studio/audio/audioReverseRenderService.js'
 import {
   findFolderByPath,
   flattenLibraryFolders,
@@ -297,7 +298,7 @@ const minAudioRegionSeconds = 0.05
 const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
 const AUDIO_FADE_CURVES = ['linear', 'equal-power']
 const AUDIO_PITCH_SOURCES = ['off', 'region', 'project-key']
-const STRETCH_SPEED_MIN = 10
+const STRETCH_SPEED_MIN = 25
 const STRETCH_SPEED_MAX = 400
 const STRETCH_RATIO_MIN = 100 / STRETCH_SPEED_MAX
 const STRETCH_RATIO_MAX = 100 / STRETCH_SPEED_MIN
@@ -341,6 +342,22 @@ function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCe
     renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
     algorithm: source.algorithm || null,
     preservesDuration: source.preservesDuration !== false,
+    lastError: source.lastError || null,
+    renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null
+  }
+}
+function normalizeReverseEdit(reverse = {}, legacyStatus = 'idle', legacyStoragePath = null) {
+  const source = reverse && typeof reverse === 'object' ? reverse : {}
+  const enabled = reverse === true || source.enabled === true
+  const statusValue = source.renderStatus || legacyStatus
+  return {
+    enabled,
+    renderStatus: PITCH_RENDER_STATUSES.includes(statusValue) ? statusValue : (enabled ? 'needs_render' : 'idle'),
+    renderedStoragePath: source.renderedStoragePath || legacyStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
+    algorithm: source.algorithm || null,
     lastError: source.lastError || null,
     renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null
   }
@@ -428,9 +445,7 @@ function normalizeAudioEdit(edit = {}) {
     fadeInCurve,
     fadeOutSeconds: Math.max(0, Number(edit.fadeOutSeconds) || 0),
     fadeOutCurve,
-    reverse: edit.reverse === true,
-    reverseRenderStatus: ['idle', 'rendering', 'ready', 'failed'].includes(edit.reverseRenderStatus) ? edit.reverseRenderStatus : 'idle',
-    reverseRenderedStoragePath: edit.reverseRenderedStoragePath || null
+    reverse: normalizeReverseEdit(edit.reverse, edit.reverseRenderStatus, edit.reverseRenderedStoragePath)
   }
 }
 function getAudioStretchMath(region = {}, targetDuration = null) {
@@ -443,20 +458,20 @@ function getAudioStretchMath(region = {}, targetDuration = null) {
     originalDurationSeconds: originalDuration,
     targetDurationSeconds: target,
     lengthRatio,
-    speedPercent: clamp(Number.isFinite(speedPercent) ? speedPercent : 100, STRETCH_SPEED_MIN, STRETCH_SPEED_MAX),
+    speedPercent: Number.isFinite(speedPercent) ? speedPercent : 100,
     rawSpeedPercent: speedPercent,
     supported,
-    error: supported ? null : 'Stretch amount is outside the supported range.'
+    error: supported ? null : `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.`
   }
 }
 function normalizeAudioStretch(stretch = {}) {
   const rawRatio = Number(stretch.lengthRatio ?? stretch.ratio)
-  const lengthRatio = clamp(Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 1, STRETCH_RATIO_MIN, STRETCH_RATIO_MAX)
+  const lengthRatio = clamp(Number.isFinite(rawRatio) && rawRatio > 0 ? rawRatio : 1, 0.01, 32)
   const ratio = lengthRatio
   const statusValue = stretch.renderStatus === 'none' ? 'idle' : stretch.renderStatus
   const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(statusValue) ? statusValue : (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle')
   const targetDurationSeconds = Number.isFinite(Number(stretch.targetDurationSeconds)) ? Math.max(minAudioRegionSeconds, Number(stretch.targetDurationSeconds)) : null
-  const speedPercent = clamp(100 / Math.max(STRETCH_RATIO_MIN, lengthRatio), STRETCH_SPEED_MIN, STRETCH_SPEED_MAX)
+  const speedPercent = 100 / Math.max(0.001, lengthRatio)
   const outOfRange = Number.isFinite(rawRatio) && (rawRatio < STRETCH_RATIO_MIN || rawRatio > STRETCH_RATIO_MAX)
   return {
     enabled: Boolean(stretch.enabled) && Math.abs(ratio - 1) > 0.001,
@@ -465,7 +480,7 @@ function normalizeAudioStretch(stretch = {}) {
     speedPercent,
     targetDurationSeconds,
     mode: stretch.mode || (stretch.enabled ? 'offline_render' : 'none'),
-    algorithm: stretch.algorithm || (stretch.enabled ? 'granular_ola_basic' : 'none'),
+    algorithm: stretch.algorithm || (stretch.enabled ? 'wsola_phase_vocoder_v1' : 'none'),
     preservesPitch: Boolean(stretch.preservesPitch),
     renderedObjectUrl: stretch.renderedObjectUrl || null,
     renderedAudioUrl: stretch.renderedAudioUrl || null,
@@ -474,8 +489,8 @@ function normalizeAudioStretch(stretch = {}) {
     renderedDurationSeconds: Number.isFinite(Number(stretch.renderedDurationSeconds)) ? Number(stretch.renderedDurationSeconds) : null,
     renderedAt: Number.isFinite(Number(stretch.renderedAt)) ? Number(stretch.renderedAt) : null,
     renderedSessionOnly: stretch.renderedSessionOnly === true,
-    renderStatus: outOfRange && renderStatus !== 'ready' ? 'failed' : renderStatus,
-    renderError: stretch.renderError || (outOfRange ? 'Stretch amount is outside the supported range.' : null)
+    renderStatus,
+    renderError: stretch.renderError || (outOfRange ? `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.` : null)
   }
 }
 function sanitizeStorageFilePart(value = '') {
@@ -888,12 +903,15 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <label>Fade-In Curve<select data-audio-edit-field="fadeInCurve">${AUDIO_FADE_CURVES.map((value)=>`<option value="${value}" ${edit.fadeInCurve===value?'selected':''}>${value}</option>`).join('')}</select></label>
         <label>Fade-Out<input type="number" min="0" step="0.01" data-audio-edit-field="fadeOutSeconds" value="${edit.fadeOutSeconds}"><small>seconds</small></label>
         <label>Fade-Out Curve<select data-audio-edit-field="fadeOutCurve">${AUDIO_FADE_CURVES.map((value)=>`<option value="${value}" ${edit.fadeOutCurve===value?'selected':''}>${value}</option>`).join('')}</select></label>
-        <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="reverse" ${edit.reverse ? 'checked' : ''} disabled> Reverse <small>Coming soon</small></label></div>
+        <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="reverse" ${edit.reverse.enabled ? 'checked' : ''}> Reverse</label></div>
+        <button type="button" data-audio-render-reverse ${edit.reverse.enabled && !missing && edit.reverse.renderStatus !== 'rendering' ? '' : 'disabled'}>${edit.reverse.renderStatus === 'failed' ? 'Retry Reverse Render' : 'Render Reverse'}</button>
+        <small>Reverse: ${esc(edit.reverse.lastError || (edit.reverse.renderStatus === 'needs_render' ? 'Needs render' : edit.reverse.renderStatus || 'idle'))}</small>
         <hr>
         <div class="studio-audio-stretch-controls">
           <label><input type="checkbox" data-audio-stretch-enabled ${stretch.enabled ? 'checked' : ''}> Stretch enabled</label>
           <label>Speed %<input type="number" min="${STRETCH_SPEED_MIN}" max="${STRETCH_SPEED_MAX}" step="1" data-audio-stretch-speed value="${Math.round(stretchMath.speedPercent)}"></label>
           <label>Target Length<input type="number" min="${minAudioRegionSeconds}" step="0.01" data-audio-stretch-length value="${stretchMath.targetDurationSeconds.toFixed(2)}"></label>
+          <label>Length Ratio<input type="number" min="${STRETCH_RATIO_MIN}" max="${STRETCH_RATIO_MAX}" step="0.01" data-audio-stretch-ratio value="${stretchMath.lengthRatio.toFixed(2)}"></label>
           <p>Stretch Ratio: ${stretchMath.lengthRatio.toFixed(2)}x length · Status: ${esc(stretch.renderError || renderStatus || 'idle')}</p>
           <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && stretchMath.supported ? '' : 'disabled'}>${stretch.renderStatus === 'failed' ? 'Retry Render' : 'Render Stretch'}</button>
           <button type="button" data-audio-reset-stretch ${stretch.enabled ? '' : 'disabled'}>Reset Stretch</button>
@@ -1167,7 +1185,14 @@ function buildFallbackWaveform(region) {
 }
 function getWaveformChunks(region = {}) {
   const stretch = normalizeAudioStretch(region.stretch)
-  const waveform = stretch.enabled && stretch.renderStatus === 'ready' && region.renderedWaveform ? region.renderedWaveform : (region.waveform || {})
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const hasRenderedEditWaveform = region.renderedWaveform && (
+    (edit.pitchTrace.enabled && edit.pitchTrace.renderStatus === 'ready') ||
+    (edit.pitchShift.enabled && edit.pitchShift.renderStatus === 'ready') ||
+    (stretch.enabled && stretch.renderStatus === 'ready') ||
+    (edit.reverse.enabled && edit.reverse.renderStatus === 'ready')
+  )
+  const waveform = hasRenderedEditWaveform ? region.renderedWaveform : (region.waveform || {})
   if (Array.isArray(waveform.chunks) && waveform.chunks.length) return waveform.chunks.map((chunk) => ({ ...normalizeWaveformPeak(chunk), t0Seconds: Number(chunk.t0Seconds) || 0, t1Seconds: Number(chunk.t1Seconds) || ((Number(chunk.t0Seconds) || 0) + (Number(waveform.sampleWindowSeconds) || waveformWindowSeconds)) }))
   const peaks = Array.isArray(waveform.peaks) ? waveform.peaks : []
   if (!peaks.length) return buildFallbackWaveform(region)
@@ -1205,13 +1230,19 @@ function buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks = 1200 } = {}) {
 function renderAudioWaveform(region) {
   const chunks = getWaveformChunks(region)
   const stretch = normalizeAudioStretch(region.stretch)
-  const hasRenderedStretchWaveform = stretch.enabled && stretch.renderStatus === 'ready' && region.renderedWaveform
-  const trimStart = hasRenderedStretchWaveform ? 0 : getAudioTrimStartSeconds(region)
-  const trimEnd = hasRenderedStretchWaveform ? getAudioRegionVisibleDurationSeconds(region) : getAudioTrimEndSeconds(region)
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const hasRenderedWaveform = region.renderedWaveform && (
+    (edit.pitchTrace.enabled && edit.pitchTrace.renderStatus === 'ready') ||
+    (edit.pitchShift.enabled && edit.pitchShift.renderStatus === 'ready') ||
+    (stretch.enabled && stretch.renderStatus === 'ready') ||
+    (edit.reverse.enabled && edit.reverse.renderStatus === 'ready')
+  )
+  const trimStart = hasRenderedWaveform ? 0 : getAudioTrimStartSeconds(region)
+  const trimEnd = hasRenderedWaveform ? getAudioRegionVisibleDurationSeconds(region) : getAudioTrimEndSeconds(region)
   const sourceDuration = getAudioSourceDurationSeconds(region)
   const visibleDuration = getAudioRegionVisibleDurationSeconds(region)
-  const stretchRatio = hasRenderedStretchWaveform ? 1 : getAudioStretchRatio(region)
-  const viewDuration = stretch.enabled ? visibleDuration : sourceDuration
+  const stretchRatio = hasRenderedWaveform ? 1 : getAudioStretchRatio(region)
+  const viewDuration = hasRenderedWaveform ? visibleDuration : stretch.enabled ? visibleDuration : sourceDuration
   const visibleChunks = chunks
     .filter((chunk) => chunk.t1Seconds >= trimStart && chunk.t0Seconds <= trimEnd)
     .map((chunk) => {
@@ -1782,7 +1813,7 @@ function renderAudioPitchRenderModal() {
   if (!audioPitchRenderState.active) return ''
   const progress = Number.isFinite(Number(audioPitchRenderState.progress)) ? clamp(Number(audioPitchRenderState.progress), 0, 1) : null
   const progressLabel = progress == null ? 'Rendering...' : `${Math.round(progress * 100)}%`
-  const title = audioPitchRenderState.mode === 'trace' ? 'Rendering Pitch Trace Edits' : 'Rendering Pitch Shift'
+  const title = audioPitchRenderState.mode === 'trace' ? 'Rendering Pitch Trace Edits' : audioPitchRenderState.mode === 'reverse' ? 'Rendering Reverse' : 'Rendering Pitch Shift'
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-pitch-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-pitch-render-title">${esc(title)}</h3><p>Soura is rendering edited audio for this region. Playback will use the render when it finishes.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
 }
 function renderStretchPlaybackPrompt() {
@@ -1796,9 +1827,9 @@ function renderAudioEditPlaybackPrompt() {
   if (!audioEditPlaybackPrompt?.regionId) return ''
   const region = midiRegions.find((item)=>item.id === audioEditPlaybackPrompt.regionId)
   if (!region) return ''
-  const mode = audioEditPlaybackPrompt.mode === 'trace' ? 'Pitch Trace edits' : 'Pitch Shift'
+  const mode = audioEditPlaybackPrompt.mode === 'trace' ? 'Pitch Trace edits' : audioEditPlaybackPrompt.mode === 'reverse' ? 'Reverse' : 'Pitch Shift'
   const edit = normalizeAudioEdit(region.audioEdit)
-  const error = audioEditPlaybackPrompt.mode === 'trace' ? edit.pitchTrace.lastError : edit.pitchShift.lastError
+  const error = audioEditPlaybackPrompt.mode === 'trace' ? edit.pitchTrace.lastError : audioEditPlaybackPrompt.mode === 'reverse' ? edit.reverse.lastError : edit.pitchShift.lastError
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-audio-edit-prompt-title"><section class="studio-audio-render-panel"><span>Pitch render required</span><h3 id="studio-audio-edit-prompt-title">Render edited audio?</h3><p>${esc(mode)} must be rendered before playback can use it.</p>${error ? `<small>${esc(error)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-audio-edit-prompt-render>Render Now</button><button type="button" class="button button-muted" data-audio-edit-prompt-original>Play Original</button><button type="button" class="button button-muted" data-audio-edit-prompt-cancel>Cancel</button></div></section></div>`
 }
 function renderControlsMenu(){ if(!isControlsMenuOpen) return ''; return `<div class="studio-controls-menu" data-controls-menu><label><input type="checkbox" data-musical-typing-toggle ${isTypingPianoEnabled ? 'checked' : ''}> Musical Typing</label><p>${isTypingPianoEnabled ? 'Typing keys play the selected instrument.' : 'Typing keys run DAW commands.'}</p></div>` }
@@ -1896,6 +1927,9 @@ function normalizeLoadedRegion(region = {}) {
   }
   if (loadedAudioEdit?.pitchTrace?.renderStatus === 'ready' && !(loadedAudioEdit.pitchTrace.renderedStoragePath || loadedAudioEdit.pitchTrace.renderedAudioUrl)) {
     loadedAudioEdit.pitchTrace = { ...loadedAudioEdit.pitchTrace, renderedRuntimeId: null, renderStatus: getPitchTraceEditedNoteCount(loadedAudioEdit.pitchTrace) ? 'needs_render' : 'idle', lastError: null }
+  }
+  if (loadedAudioEdit?.reverse?.renderStatus === 'ready' && !(loadedAudioEdit.reverse.renderedStoragePath || loadedAudioEdit.reverse.renderedAudioUrl)) {
+    loadedAudioEdit.reverse = { ...loadedAudioEdit.reverse, renderedRuntimeId: null, renderStatus: loadedAudioEdit.reverse.enabled ? 'needs_render' : 'idle', lastError: null }
   }
   const hasPersistentMedia = !!(region.audioClip?.storagePath || region.audioClip?.downloadUrl)
   const normalized = cloneRegionForState({
@@ -2079,11 +2113,12 @@ async function hydrateRenderedAudioRegionRuntime(region) {
 async function hydrateAudioEditRenderRuntime(region, mode = 'pitchShift') {
   if (!region?.id || region.type !== 'audio') return false
   const edit = normalizeAudioEdit(region.audioEdit)
-  const render = mode === 'pitchTrace' ? edit.pitchTrace : edit.pitchShift
+  const render = mode === 'pitchTrace' ? edit.pitchTrace : mode === 'reverse' ? edit.reverse : edit.pitchShift
   if (!(render?.renderedStoragePath || render?.renderedAudioUrl)) return false
   const runtimeId = render.renderedRuntimeId || `${region.id}:${mode}:persisted`
   if (audioClipRuntime.has(runtimeId)) {
     if (mode === 'pitchTrace') edit.pitchTrace = { ...edit.pitchTrace, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
+    else if (mode === 'reverse') edit.reverse = { ...edit.reverse, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
     else edit.pitchShift = { ...edit.pitchShift, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
     region.audioEdit = normalizeAudioEdit(edit)
     return true
@@ -2119,6 +2154,15 @@ async function hydrateAudioEditRenderRuntime(region, mode = 'pitchShift') {
         renderStatus: 'ready',
         lastError: null
       }
+    } else if (mode === 'reverse') {
+      edit.reverse = {
+        ...edit.reverse,
+        renderedRuntimeId: runtimeId,
+        renderedAudioUrl: edit.reverse.renderedAudioUrl || downloadUrl,
+        renderedDurationSeconds,
+        renderStatus: 'ready',
+        lastError: null
+      }
     } else {
       edit.pitchShift = {
         ...edit.pitchShift,
@@ -2135,6 +2179,7 @@ async function hydrateAudioEditRenderRuntime(region, mode = 'pitchShift') {
   } catch (err) {
     console.warn('[audio-hydration] rendered pitch audio failed', { clipId: region.id, mode, reason: err?.message || 'decode_failed' })
     if (mode === 'pitchTrace') edit.pitchTrace = { ...edit.pitchTrace, renderStatus: 'failed', lastError: 'Rendered pitch trace audio file missing or not loaded.' }
+    else if (mode === 'reverse') edit.reverse = { ...edit.reverse, renderStatus: 'failed', lastError: 'Rendered reverse audio file missing or not loaded.' }
     else edit.pitchShift = { ...edit.pitchShift, renderStatus: 'failed', lastError: 'Rendered pitch shift audio file missing or not loaded.' }
     region.audioEdit = normalizeAudioEdit(edit)
     return false
@@ -2150,13 +2195,15 @@ async function hydrateAudioRegionRuntime(region) {
     await hydrateRenderedAudioRegionRuntime(region)
     await hydrateAudioEditRenderRuntime(region, 'pitchShift')
     await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
+    await hydrateAudioEditRenderRuntime(region, 'reverse')
     return true
   }
   const downloadUrl = audioClip.downloadUrl || (audioClip.storagePath ? await getStorageAssetUrl(audioClip.storagePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-audio', warnOnFail: true }) : '')
   if (!downloadUrl) {
     const pitchTraceReady = await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
     const pitchShiftReady = await hydrateAudioEditRenderRuntime(region, 'pitchShift')
-    const renderedReady = pitchTraceReady || pitchShiftReady || await hydrateRenderedAudioRegionRuntime(region)
+    const reverseReady = await hydrateAudioEditRenderRuntime(region, 'reverse')
+    const renderedReady = pitchTraceReady || pitchShiftReady || reverseReady || await hydrateRenderedAudioRegionRuntime(region)
     const reason = audioClip.storagePath ? 'storage_fetch_failed' : (audioClip.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
     console.info('[audio-hydration] offline clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, reason })
     region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: renderedReady ? 'Original audio file missing; persisted rendered audio is available.' : getAudioOfflineMessage({ audioClip: { ...audioClip, offlineReason: reason } }), offlineReason: reason }
@@ -2199,6 +2246,7 @@ async function hydrateAudioRegionRuntime(region) {
     await hydrateRenderedAudioRegionRuntime(region)
     await hydrateAudioEditRenderRuntime(region, 'pitchShift')
     await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
+    await hydrateAudioEditRenderRuntime(region, 'reverse')
     console.info('[audio-hydration] loaded clip', { clipId: region.audioClip.audioAssetId || region.audioClip.id || region.id, duration: fileDurationSeconds })
     return true
   } catch (err) {
@@ -2215,7 +2263,8 @@ async function hydrateProjectAudioAssets() {
       region.audioClip?.storagePath || region.audioClip?.downloadUrl ||
       region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl ||
       edit.pitchShift?.renderedStoragePath || edit.pitchShift?.renderedAudioUrl ||
-      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl
+      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl ||
+      edit.reverse?.renderedStoragePath || edit.reverse?.renderedAudioUrl
     )
   })
   if (!regions.length) return
@@ -2693,12 +2742,14 @@ async function prepareProjectPlayback() {
       region.audioClip?.loadStatus === 'failed' ||
       region.stretch?.renderStatus === 'needs_render' ||
       edit.pitchShift?.renderStatus === 'needs_render' ||
-      edit.pitchTrace?.renderStatus === 'needs_render'
+      edit.pitchTrace?.renderStatus === 'needs_render' ||
+      edit.reverse?.renderStatus === 'needs_render'
     ) && (
       region.audioClip?.storagePath || region.audioClip?.downloadUrl ||
       region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl ||
       edit.pitchShift?.renderedStoragePath || edit.pitchShift?.renderedAudioUrl ||
-      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl
+      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl ||
+      edit.reverse?.renderedStoragePath || edit.reverse?.renderedAudioUrl
     )
   })
   if (pendingAudio.length) await Promise.allSettled(pendingAudio.map((region)=>hydrateAudioRegionRuntime(region)))
@@ -2952,16 +3003,16 @@ function stopAllAudioClipPlayback() {
 }
 function createPendingStretchMetadata(ratio) {
   const rawLengthRatio = Number(ratio)
-  const lengthRatio = clamp(Number.isFinite(rawLengthRatio) && rawLengthRatio > 0 ? rawLengthRatio : 1, STRETCH_RATIO_MIN, STRETCH_RATIO_MAX)
+  const lengthRatio = clamp(Number.isFinite(rawLengthRatio) && rawLengthRatio > 0 ? rawLengthRatio : 1, 0.01, 32)
   const supported = Number.isFinite(rawLengthRatio) && rawLengthRatio >= STRETCH_RATIO_MIN && rawLengthRatio <= STRETCH_RATIO_MAX
   return {
     enabled: Math.abs(lengthRatio - 1) > 0.001,
     ratio: lengthRatio,
     lengthRatio,
-    speedPercent: clamp(100 / lengthRatio, STRETCH_SPEED_MIN, STRETCH_SPEED_MAX),
+    speedPercent: 100 / Math.max(0.001, lengthRatio),
     targetDurationSeconds: null,
     mode: 'offline_render',
-    algorithm: 'granular_ola_basic',
+    algorithm: 'wsola_phase_vocoder_v1',
     preservesPitch: true,
     renderedObjectUrl: null,
     renderedAudioUrl: null,
@@ -2970,8 +3021,8 @@ function createPendingStretchMetadata(ratio) {
     renderedDurationSeconds: null,
     renderedAt: null,
     renderedSessionOnly: true,
-    renderStatus: supported ? 'idle' : 'failed',
-    renderError: supported ? null : 'Stretch amount is outside the supported range.'
+    renderStatus: supported ? 'needs_render' : 'failed',
+    renderError: supported ? null : `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.`
   }
 }
 async function renderAudioStretchForRegion(regionId) {
@@ -2985,8 +3036,8 @@ async function renderAudioStretchForRegion(regionId) {
   }
   const stretchMath = getAudioStretchMath(region)
   if (!stretchMath.supported) {
-    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Stretch amount is outside the supported range.' }
-    recordingStatus = 'Stretch amount is outside the supported range.'
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: stretchMath.error }
+    recordingStatus = stretchMath.error
     console.warn('[stretch-render] failed', { clipId: region.id, reason: region.stretch.renderError })
     scheduleEditorSave()
     renderEditor()
@@ -3014,6 +3065,9 @@ async function renderAudioStretchForRegion(regionId) {
       originalAudioBuffer: runtime.audioBuffer,
       clipId: region.id,
       stretchRatio: stretch.ratio,
+      sourceStartSeconds: getAudioTrimStartSeconds(region),
+      sourceDurationSeconds: Math.max(minAudioRegionSeconds, getAudioTrimEndSeconds(region) - getAudioTrimStartSeconds(region)),
+      targetDurationSeconds: stretchMath.targetDurationSeconds,
       sampleRate: runtime.audioBuffer.sampleRate,
       preservesPitchPreferred: true,
       onProgress: (progress) => {
@@ -3054,7 +3108,7 @@ async function renderAudioStretchForRegion(regionId) {
       algorithm: result.algorithm,
       preservesPitch: result.preservesPitch,
       lengthRatio: stretchMath.lengthRatio,
-      speedPercent: stretchMath.speedPercent,
+      speedPercent: stretchMath.rawSpeedPercent,
       targetDurationSeconds: stretchMath.targetDurationSeconds,
       renderedObjectUrl: null,
       renderedAudioUrl: null,
@@ -3276,6 +3330,92 @@ async function renderPitchTraceEditsForRegion(regionId) {
     renderEditor()
   }
 }
+async function renderAudioReverseForRegion(regionId) {
+  if (audioPitchRenderState.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  let edit = normalizeAudioEdit(region.audioEdit)
+  if (!edit.reverse.enabled) {
+    scheduleEditorSave()
+    return
+  }
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, reverse: { ...edit.reverse, renderStatus: 'failed', lastError: 'Original audio is offline. Reconnect or re-record before rendering reverse.' } })
+    recordingStatus = region.audioEdit.reverse.lastError
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  stopPlayback()
+  audioPitchRenderState = { active: true, regionId, mode: 'reverse', progress: null, error: '' }
+  region.audioEdit = normalizeAudioEdit({ ...edit, reverse: { ...edit.reverse, renderStatus: 'rendering', lastError: null } })
+  renderEditor()
+  try {
+    const result = await renderReversedAudio({
+      audioBuffer: runtime.audioBuffer,
+      clipId: region.id,
+      trimStartSeconds: getAudioTrimStartSeconds(region),
+      trimEndSeconds: getAudioTrimEndSeconds(region),
+      onProgress: (progress) => {
+        audioPitchRenderState = { ...audioPitchRenderState, progress }
+      }
+    })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
+    const renderedRuntimeId = `${region.id}:reverse:${result.createdAt}`
+    let renderedStoragePath = null
+    try {
+      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
+        clipId: region.id,
+        suffix: `reverse-${result.createdAt}`
+      })
+    } catch (uploadErr) {
+      console.warn('[studioProject] rendered reverse upload failed; using session render only', uploadErr)
+    }
+    audioClipRuntime.set(renderedRuntimeId, {
+      blob: result.renderedBlob,
+      url: result.renderedObjectUrl,
+      audioBuffer: result.renderedAudioBuffer,
+      contentType: result.renderedBlob?.type || 'audio/wav',
+      fileDurationSeconds: result.renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: !renderedStoragePath
+    })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.renderedWaveform = waveform
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      reverse: {
+        ...edit.reverse,
+        enabled: true,
+        renderStatus: 'ready',
+        renderedStoragePath,
+        renderedAudioUrl: null,
+        renderedRuntimeId,
+        renderedDurationSeconds: result.renderedDurationSeconds,
+        algorithm: result.algorithm,
+        lastError: null,
+        renderedAt: result.createdAt
+      }
+    })
+    recordingStatus = 'Reverse rendered.'
+    scheduleEditorSave()
+  } catch (err) {
+    console.error('[reverse-render] failed', { clipId: region.id, reason: err?.message || 'Reverse render failed.' })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, reverse: { ...edit.reverse, renderStatus: 'failed', lastError: err?.message || 'Reverse render failed.' } })
+    recordingStatus = 'Reverse render failed. The original audio was not changed.'
+    scheduleEditorSave()
+  } finally {
+    audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+    renderEditor()
+  }
+}
 function startStretchedAudioElement(region, runtime, track, sourceOffsetSeconds, remainingVisibleSeconds) {
   if (!runtime?.url) return false
   try {
@@ -3307,6 +3447,7 @@ function getAudioPlaybackRenderChoice(region, edit, stretch) {
   const bypassEdits = audioEditPlaybackBypassRegionIds.has(region.id)
   const trace = edit.pitchTrace || {}
   const pitchShift = edit.pitchShift || {}
+  const reverse = edit.reverse || {}
   const traceHasEdits = trace.enabled && trace.notes?.length && (getPitchTraceEditedNoteCount(trace) > 0 || Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001)
   const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
   if (!bypassEdits) {
@@ -3328,6 +3469,12 @@ function getAudioPlaybackRenderChoice(region, edit, stretch) {
   }
   if (!bypassEdits && stretch.enabled && stretch.renderStatus !== 'ready') {
     return { needsStretchRender: true }
+  }
+  if (!bypassEdits && reverse.enabled) {
+    if (reverse.renderStatus === 'ready' && reverse.renderedRuntimeId && audioClipRuntime.has(reverse.renderedRuntimeId)) {
+      return { runtimeId: reverse.renderedRuntimeId, mode: 'reverse' }
+    }
+    return { needsRender: true, promptMode: 'reverse', message: 'Reverse must be rendered before playback.' }
   }
   return { runtimeId: region.audioClip?.runtimeId || region.id, mode: 'original' }
 }
@@ -3392,7 +3539,7 @@ function updateAudioClipPlayback(currentBeat) {
       const elapsedVisibleSeconds = Math.max(0, playheadSeconds - clipStartSeconds)
       const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
       if (elapsedVisibleSeconds >= visibleDurationSeconds) return
-      const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch'
+      const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch' || playbackChoice.mode === 'reverse'
       const playbackRate = renderedMode ? 1 : getAudioRegionPlaybackRate(region)
       const sourceOffsetSeconds = renderedMode ? elapsedVisibleSeconds : getAudioTrimStartSeconds(region) + (elapsedVisibleSeconds * playbackRate)
       const trimEndSeconds = renderedMode ? runtime.audioBuffer.duration : getAudioTrimEndSeconds(region)
@@ -4030,8 +4177,7 @@ function finishMidiRegionDrag() {
   document.body.classList.remove('is-studio-dragging', 'is-midi-region-dragging', 'is-audio-region-stretching')
   if (didMove) {
     pushHistory('edit-midi-region', before, captureDawSnapshot())
-    if (finished.regionType === 'audio' && finished.editMode === 'stretch') renderAudioStretchForRegion(finished.id)
-    else scheduleEditorSave()
+    scheduleEditorSave()
   }
   renderEditor()
   requestAnimationFrame(() => restoreArrangementScroll(finished.scroll))
@@ -4057,7 +4203,18 @@ function updateAudioRegionEditField(region, key, rawValue) {
   else if (['qSwing','qStrength','transposeSemitones','fineTuneCents','gainDb','delayMs','fadeInSeconds','fadeOutSeconds'].includes(key)) edit[key] = Number(rawValue) || 0
   else if (key === 'qRange') edit[key] = rawValue === '' ? null : Number(rawValue)
   else if (['quantize','pitchSource','fadeInCurve','fadeOutCurve'].includes(key)) edit[key] = String(rawValue || '')
-  else if (key === 'reverse') edit[key] = rawValue === true
+  else if (key === 'reverse') {
+    edit.reverse = {
+      ...edit.reverse,
+      enabled: rawValue === true,
+      renderStatus: rawValue === true ? 'needs_render' : 'idle',
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      renderedRuntimeId: null,
+      renderedDurationSeconds: null,
+      lastError: null
+    }
+  }
   if (key === 'transposeSemitones' || key === 'fineTuneCents') {
     const totalSemitones = getAudioPitchShiftTotal(edit.transposeSemitones, edit.fineTuneCents)
     edit.pitchShift = {
@@ -4245,9 +4402,9 @@ function updateAudioRegionStretchTarget(region, targetDurationSeconds) {
     ...createPendingStretchMetadata(math.lengthRatio),
     targetDurationSeconds: math.targetDurationSeconds,
     lengthRatio: math.lengthRatio,
-    speedPercent: math.speedPercent,
+    speedPercent: math.rawSpeedPercent,
     renderStatus: math.supported ? (Math.abs(math.lengthRatio - 1) > 0.001 ? 'needs_render' : 'idle') : 'failed',
-    renderError: math.supported ? null : 'Stretch amount is outside the supported range.'
+    renderError: math.supported ? null : math.error
   }
   region.stretchRender = null
   region.renderedWaveform = null
@@ -4913,7 +5070,7 @@ function bindEditorEvents() {
     const region = getSelectedAudioRegion()
     if (!region) return
     const source = getAudioSourceDurationSeconds(region)
-    const speed = clamp(Number(event.target.value) || 100, STRETCH_SPEED_MIN, STRETCH_SPEED_MAX)
+    const speed = Number(event.target.value) || 100
     updateAudioRegionStretchTarget(region, source / (speed / 100))
   })
   app.querySelector('[data-audio-stretch-length]')?.addEventListener('change', (event) => {
@@ -4921,9 +5078,19 @@ function bindEditorEvents() {
     if (!region) return
     updateAudioRegionStretchTarget(region, Math.max(minAudioRegionSeconds, Number(event.target.value) || getAudioSourceDurationSeconds(region)))
   })
+  app.querySelector('[data-audio-stretch-ratio]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const source = getAudioSourceDurationSeconds(region)
+    updateAudioRegionStretchTarget(region, source * Math.max(0.01, Number(event.target.value) || 1))
+  })
   app.querySelector('[data-audio-render-stretch]')?.addEventListener('click', () => {
     const region = getSelectedAudioRegion()
     if (region) renderAudioStretchForRegion(region.id)
+  })
+  app.querySelector('[data-audio-render-reverse]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) renderAudioReverseForRegion(region.id)
   })
   app.querySelector('[data-audio-reset-stretch]')?.addEventListener('click', () => {
     const region = getSelectedAudioRegion()
@@ -4943,6 +5110,7 @@ function bindEditorEvents() {
     audioEditPlaybackPrompt = null
     if (!prompt?.regionId) return renderEditor()
     if (prompt.mode === 'trace') renderPitchTraceEditsForRegion(prompt.regionId)
+    else if (prompt.mode === 'reverse') renderAudioReverseForRegion(prompt.regionId)
     else renderAudioPitchShiftForRegion(prompt.regionId)
   })
   app.querySelector('[data-audio-edit-prompt-original]')?.addEventListener('click', () => {
