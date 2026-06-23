@@ -1,6 +1,19 @@
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d)
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 const pitchTraceVersion = 'pitch-trace-v1'
+const pitchRenderStatuses = ['idle', 'rendering', 'ready', 'failed', 'needs_render']
+const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+
+function midiToName(midi = 60) {
+  const note = Math.round(num(midi, 60))
+  const pitch = ((note % 12) + 12) % 12
+  const octave = Math.floor(note / 12) - 1
+  return `${noteNames[pitch]}${octave}`
+}
+
+function midiToFrequency(midi = 60) {
+  return Number((440 * (2 ** ((num(midi, 60) - 69) / 12))).toFixed(3))
+}
 
 function makeId(prefix) {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
@@ -34,20 +47,36 @@ export function normalizeMidiNote(note = {}) {
 function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
   const source = trace && typeof trace === 'object' ? trace : {}
   const notes = Array.isArray(source.notes)
-    ? source.notes.slice(0, 512).map((note, index) => ({
-      id: String(note?.id || `pt-${index + 1}`),
-      startSeconds: Math.max(0, num(note?.startSeconds, 0)),
-      durationSeconds: Math.max(0.01, num(note?.durationSeconds, 0.01)),
-      startBeat: Math.max(0, num(note?.startBeat, 0)),
-      durationBeats: Math.max(0.001, num(note?.durationBeats, 0.001)),
-      midiNote: clamp(Math.round(num(note?.midiNote, 60)), 0, 127),
-      noteName: String(note?.noteName || ''),
-      frequencyHz: Math.max(0, num(note?.frequencyHz, 0)),
-      confidence: clamp(num(note?.confidence, 0), 0, 1),
-      centsOffset: clamp(num(note?.centsOffset, 0), -50, 50)
-    }))
+    ? source.notes.slice(0, 512).map((note, index) => {
+      const originalMidiNote = clamp(Math.round(num(note?.originalMidiNote ?? note?.midiNote, 60)), 0, 127)
+      const editedMidiNote = clamp(Math.round(num(note?.editedMidiNote ?? note?.midiNote ?? originalMidiNote, originalMidiNote)), 0, 127)
+      return {
+        id: String(note?.id || `pt-${index + 1}`),
+        startSeconds: Math.max(0, num(note?.startSeconds, 0)),
+        durationSeconds: Math.max(0.01, num(note?.durationSeconds, 0.01)),
+        startBeat: Math.max(0, num(note?.startBeat, 0)),
+        durationBeats: Math.max(0.001, num(note?.durationBeats, 0.001)),
+        originalMidiNote,
+        editedMidiNote,
+        midiNote: editedMidiNote,
+        noteName: midiToName(editedMidiNote),
+        originalFrequencyHz: Math.max(0, num(note?.originalFrequencyHz ?? note?.frequencyHz, midiToFrequency(originalMidiNote))),
+        editedFrequencyHz: Math.max(0, num(note?.editedFrequencyHz, midiToFrequency(editedMidiNote))),
+        frequencyHz: Math.max(0, num(note?.editedFrequencyHz ?? note?.frequencyHz, midiToFrequency(editedMidiNote))),
+        confidence: clamp(num(note?.confidence, 0), 0, 1),
+        centsOffset: clamp(num(note?.centsOffset, 0), -50, 50),
+        gainDb: clamp(num(note?.gainDb, 0), -24, 24),
+        pitchDriftStartCents: clamp(num(note?.pitchDriftStartCents, 0), -1200, 1200),
+        pitchDriftEndCents: clamp(num(note?.pitchDriftEndCents, 0), -1200, 1200),
+        vibratoAmount: clamp(num(note?.vibratoAmount, 0), 0, 1),
+        muted: note?.muted === true,
+        renderStatus: pitchRenderStatuses.includes(note?.renderStatus) ? note.renderStatus : (editedMidiNote !== originalMidiNote ? 'needs_render' : 'idle')
+      }
+    })
     : []
   const status = ['idle', 'analyzing', 'ready', 'failed'].includes(source.status) ? source.status : 'idle'
+  const hasEditedNotes = notes.some((note) => note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(num(note.gainDb, 0)) > 0.001)
+  const priorRenderStatus = pitchRenderStatuses.includes(source.renderStatus) ? source.renderStatus : 'idle'
   return {
     enabled: source.enabled === true || legacyFlexFollow === 'on',
     status: status === 'analyzing' ? 'idle' : (notes.length && status === 'idle' ? 'ready' : status),
@@ -57,7 +86,43 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
     confidenceThreshold: clamp(num(source.confidenceThreshold, 0.65), 0.1, 0.98),
     progress: 0,
     error: source.error || null,
+    renderStatus: hasEditedNotes && priorRenderStatus === 'idle' ? 'needs_render' : priorRenderStatus,
+    renderedStoragePath: source.renderedStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
+    renderAlgorithm: source.renderAlgorithm || null,
+    preservesDuration: source.preservesDuration !== false,
+    lastError: source.lastError || null,
+    renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0),
     notes
+  }
+}
+
+function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCents = 0) {
+  const source = pitchShift && typeof pitchShift === 'object' ? pitchShift : {}
+  const transpose = clamp(num(transposeSemitones, 0), -48, 48)
+  const fine = clamp(num(fineTuneCents, 0), -100, 100)
+  const totalSemitones = transpose + (fine / 100)
+  const priorStatus = pitchRenderStatuses.includes(source.renderStatus) ? source.renderStatus : 'idle'
+  const sourceTotal = Number.isFinite(Number(source.totalSemitones)) ? Number(source.totalSemitones) : totalSemitones
+  const renderStatus = Math.abs(totalSemitones) <= 0.001
+    ? 'idle'
+    : (priorStatus === 'ready' && Math.abs(sourceTotal - totalSemitones) > 0.001 ? 'needs_render' : priorStatus === 'idle' ? 'needs_render' : priorStatus)
+  return {
+    enabled: Math.abs(totalSemitones) > 0.001 || source.enabled === true,
+    transposeSemitones: transpose,
+    fineTuneCents: fine,
+    totalSemitones,
+    renderStatus,
+    renderedStoragePath: source.renderedStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
+    algorithm: source.algorithm || null,
+    preservesDuration: source.preservesDuration !== false,
+    lastError: source.lastError || null,
+    renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0)
   }
 }
 
@@ -121,6 +186,7 @@ export function normalizeRegion(region = {}) {
         qStrength: clamp(num(region.audioEdit?.qStrength, 100), 0, 100),
         transposeSemitones: clamp(num(region.audioEdit?.transposeSemitones, 0), -48, 48),
         fineTuneCents: clamp(num(region.audioEdit?.fineTuneCents, 0), -100, 100),
+        pitchShift: normalizePitchShift(region.audioEdit?.pitchShift, region.audioEdit?.transposeSemitones, region.audioEdit?.fineTuneCents),
         pitchSource: String(region.audioEdit?.pitchSource || 'off'),
         pitchTrace: normalizePitchTrace(region.audioEdit?.pitchTrace, region.audioEdit?.flexFollow === 'on' ? 'on' : 'off'),
         gainDb: clamp(num(region.audioEdit?.gainDb, 0), -24, 24),

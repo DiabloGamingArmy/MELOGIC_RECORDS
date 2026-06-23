@@ -19,6 +19,7 @@ import { getStorageAssetUrl } from './firebase/storageAssets.js'
 import { storage as firebaseStorage } from './firebase/storage.js'
 import { ref as storageRef, uploadBytes } from 'firebase/storage'
 import { renderStretchedAudioClip as renderOfflineStretchedAudioClip } from './studio/audio/audioStretchRenderService.js'
+import { renderPitchShiftedAudio, renderPitchTraceEdits } from './studio/audio/audioPitchRenderService.js'
 import {
   findFolderByPath,
   flattenLibraryFolders,
@@ -194,8 +195,13 @@ let midiRegionDrag = null
 let timelineEdgeScrollRaf = 0
 let timelineEdgeScrollState = null
 let audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
+let audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
 let stretchPlaybackPrompt = null
+let audioEditPlaybackPrompt = null
+const audioEditPlaybackBypassRegionIds = new Set()
 let pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+let pitchTraceSelectedNoteId = ''
+let pitchTraceNoteDrag = null
 let meterRaf = 0
 let midiRegionMenuState = null
 let midiRegionClipboard = null
@@ -297,6 +303,7 @@ const STRETCH_RATIO_MIN = 100 / STRETCH_SPEED_MAX
 const STRETCH_RATIO_MAX = 100 / STRETCH_SPEED_MIN
 const PITCH_TRACE_VERSION = 'pitch-trace-v1'
 const PITCH_TRACE_ALGORITHM = 'yin-js-worker-v1'
+const PITCH_RENDER_STATUSES = ['idle', 'rendering', 'ready', 'failed', 'needs_render']
 
 function getTimelineSecondsAtBeat(beat = 0) {
   return beatsToSeconds(clampBeat(Number(beat) || 0))
@@ -304,23 +311,77 @@ function getTimelineSecondsAtBeat(beat = 0) {
 function getTimelineSecondsAtPlayhead() {
   return getTimelineSecondsAtBeat(xToBeat(timelineState.playheadX))
 }
+function midiNoteToFrequency(midi = 60) {
+  return Number((440 * (2 ** ((Number(midi) - 69) / 12))).toFixed(3))
+}
+function getAudioPitchShiftTotal(transposeSemitones = 0, fineTuneCents = 0) {
+  return (Number(transposeSemitones) || 0) + ((Number(fineTuneCents) || 0) / 100)
+}
+function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCents = 0) {
+  const source = pitchShift && typeof pitchShift === 'object' ? pitchShift : {}
+  const transpose = clamp(Number(transposeSemitones) || 0, -48, 48)
+  const fine = clamp(Number(fineTuneCents) || 0, -100, 100)
+  const totalSemitones = getAudioPitchShiftTotal(transpose, fine)
+  const hasShift = Math.abs(totalSemitones) > 0.001
+  const priorStatus = PITCH_RENDER_STATUSES.includes(source.renderStatus) ? source.renderStatus : 'idle'
+  const sourceTotal = Number.isFinite(Number(source.totalSemitones)) ? Number(source.totalSemitones) : totalSemitones
+  const valueChanged = Math.abs(sourceTotal - totalSemitones) > 0.001
+  const renderStatus = !hasShift
+    ? 'idle'
+    : (priorStatus === 'ready' && valueChanged ? 'needs_render' : priorStatus === 'idle' ? 'needs_render' : priorStatus)
+  return {
+    enabled: hasShift || source.enabled === true,
+    transposeSemitones: transpose,
+    fineTuneCents: fine,
+    totalSemitones,
+    renderStatus,
+    renderedStoragePath: source.renderedStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
+    algorithm: source.algorithm || null,
+    preservesDuration: source.preservesDuration !== false,
+    lastError: source.lastError || null,
+    renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null
+  }
+}
 function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
   const source = trace && typeof trace === 'object' ? trace : {}
   const status = ['idle', 'analyzing', 'ready', 'failed'].includes(source.status) ? source.status : 'idle'
   const notes = Array.isArray(source.notes)
-    ? source.notes.slice(0, 512).map((note, index)=>({
-      id: String(note?.id || `pt-${index + 1}`),
-      startSeconds: Math.max(0, Number(note?.startSeconds) || 0),
-      durationSeconds: Math.max(0.01, Number(note?.durationSeconds) || 0.01),
-      startBeat: Math.max(0, Number(note?.startBeat) || 0),
-      durationBeats: Math.max(0.001, Number(note?.durationBeats) || 0.001),
-      midiNote: clamp(Math.round(Number(note?.midiNote) || 60), 0, 127),
-      noteName: String(note?.noteName || formatMidiNoteName(clamp(Math.round(Number(note?.midiNote) || 60), 0, 127))),
-      frequencyHz: Math.max(0, Number(note?.frequencyHz) || 0),
-      confidence: clamp(Number(note?.confidence) || 0, 0, 1),
-      centsOffset: clamp(Number(note?.centsOffset) || 0, -50, 50)
-    })).filter((note)=>note.durationSeconds > 0)
+    ? source.notes.slice(0, 512).map((note, index)=>{
+      const originalMidiNote = clamp(Math.round(Number(note?.originalMidiNote ?? note?.midiNote) || 60), 0, 127)
+      const editedMidiNote = clamp(Math.round(Number(note?.editedMidiNote ?? note?.midiNote ?? originalMidiNote) || originalMidiNote), 0, 127)
+      const originalFrequencyHz = Math.max(0, Number(note?.originalFrequencyHz ?? note?.frequencyHz) || midiNoteToFrequency(originalMidiNote))
+      const editedFrequencyHz = Math.max(0, Number(note?.editedFrequencyHz) || midiNoteToFrequency(editedMidiNote))
+      const noteRenderStatus = PITCH_RENDER_STATUSES.includes(note?.renderStatus) ? note.renderStatus : (editedMidiNote !== originalMidiNote ? 'needs_render' : 'idle')
+      return {
+        id: String(note?.id || `pt-${index + 1}`),
+        startSeconds: Math.max(0, Number(note?.startSeconds) || 0),
+        durationSeconds: Math.max(0.01, Number(note?.durationSeconds) || 0.01),
+        startBeat: Math.max(0, Number(note?.startBeat) || 0),
+        durationBeats: Math.max(0.001, Number(note?.durationBeats) || 0.001),
+        originalMidiNote,
+        editedMidiNote,
+        midiNote: editedMidiNote,
+        noteName: formatMidiNoteName(editedMidiNote),
+        originalFrequencyHz,
+        editedFrequencyHz,
+        frequencyHz: editedFrequencyHz,
+        confidence: clamp(Number(note?.confidence) || 0, 0, 1),
+        centsOffset: clamp(Number(note?.centsOffset) || 0, -50, 50),
+        gainDb: clamp(Number(note?.gainDb) || 0, -24, 24),
+        pitchDriftStartCents: clamp(Number(note?.pitchDriftStartCents) || 0, -1200, 1200),
+        pitchDriftEndCents: clamp(Number(note?.pitchDriftEndCents) || 0, -1200, 1200),
+        vibratoAmount: clamp(Number(note?.vibratoAmount) || 0, 0, 1),
+        muted: note?.muted === true,
+        renderStatus: noteRenderStatus
+      }
+    }).filter((note)=>note.durationSeconds > 0)
     : []
+  const hasEditedNotes = notes.some((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.gainDb) || 0) > 0.001)
+  const priorRenderStatus = PITCH_RENDER_STATUSES.includes(source.renderStatus) ? source.renderStatus : 'idle'
+  const renderStatus = hasEditedNotes && priorRenderStatus === 'idle' ? 'needs_render' : priorRenderStatus
   return {
     enabled: source.enabled === true || legacyFlexFollow === 'on',
     status: notes.length && status === 'idle' ? 'ready' : status,
@@ -330,6 +391,15 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
     confidenceThreshold: clamp(Number(source.confidenceThreshold ?? 0.65), 0.1, 0.98),
     progress: 0,
     error: source.error || null,
+    renderStatus,
+    renderedStoragePath: source.renderedStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
+    renderAlgorithm: source.renderAlgorithm || null,
+    preservesDuration: source.preservesDuration !== false,
+    lastError: source.lastError || null,
+    renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null,
     notes
   }
 }
@@ -338,6 +408,8 @@ function normalizeAudioEdit(edit = {}) {
   const fadeInCurve = AUDIO_FADE_CURVES.includes(edit.fadeInCurve) ? edit.fadeInCurve : 'linear'
   const fadeOutCurve = AUDIO_FADE_CURVES.includes(edit.fadeOutCurve) ? edit.fadeOutCurve : 'linear'
   const pitchSource = AUDIO_PITCH_SOURCES.includes(edit.pitchSource) ? edit.pitchSource : 'off'
+  const transposeSemitones = clamp(Number(edit.transposeSemitones) || 0, -48, 48)
+  const fineTuneCents = clamp(Number(edit.fineTuneCents) || 0, -100, 100)
   return {
     mute: edit.mute === true,
     loop: edit.loop === true,
@@ -345,8 +417,9 @@ function normalizeAudioEdit(edit = {}) {
     qSwing: clamp(Number(edit.qSwing) || 0, 0, 100),
     qRange: Number.isFinite(Number(edit.qRange)) ? Number(edit.qRange) : null,
     qStrength: clamp(Number(edit.qStrength ?? 100), 0, 100),
-    transposeSemitones: clamp(Number(edit.transposeSemitones) || 0, -48, 48),
-    fineTuneCents: clamp(Number(edit.fineTuneCents) || 0, -100, 100),
+    transposeSemitones,
+    fineTuneCents,
+    pitchShift: normalizePitchShift(edit.pitchShift, transposeSemitones, fineTuneCents),
     pitchSource,
     pitchTrace: normalizePitchTrace(edit.pitchTrace, edit.flexFollow === 'on' ? 'on' : 'off'),
     gainDb: clamp(Number(edit.gainDb) || 0, -24, 24),
@@ -680,7 +753,7 @@ function renderPitchTraceView(region, track) {
   const trace = edit.pitchTrace
   const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
   const notes = (trace.notes || []).filter((note)=>note.confidence >= trace.confidenceThreshold)
-  const noteValues = notes.map((note)=>Number(note.midiNote)).filter(Number.isFinite)
+  const noteValues = notes.map((note)=>Number(note.editedMidiNote ?? note.midiNote)).filter(Number.isFinite)
   const minNote = Math.max(0, Math.min(48, ...(noteValues.length ? noteValues : [48])) - 2)
   const maxNote = Math.min(127, Math.max(72, ...(noteValues.length ? noteValues : [72])) + 2)
   const rowCount = Math.max(1, maxNote - minNote + 1)
@@ -689,11 +762,19 @@ function renderPitchTraceView(region, track) {
   const blocks = notes.map((note)=> {
     const left = clamp((Number(note.startSeconds) || 0) / visibleDuration, 0, 1) * 100
     const width = clamp((Number(note.durationSeconds) || 0.01) / visibleDuration, 0.002, 1) * 100
-    const row = maxNote - clamp(Math.round(Number(note.midiNote) || 60), minNote, maxNote)
+    const editedMidi = clamp(Math.round(Number(note.editedMidiNote ?? note.midiNote) || 60), minNote, maxNote)
+    const row = maxNote - editedMidi
     const top = (row / rowCount) * 100
     const height = Math.max(6, (1 / rowCount) * 100)
     const opacity = clamp(0.35 + ((Number(note.confidence) || 0) * 0.55), 0.35, 0.92)
-    return `<span class="studio-pitch-trace-note" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(note.noteName)} · ${Math.round((note.confidence || 0) * 100)}%"><b>${esc(note.noteName)}</b></span>`
+    const delta = editedMidi - (Number(note.originalMidiNote) || editedMidi)
+    const stateClass = [
+      pitchTraceSelectedNoteId === note.id ? 'is-selected' : '',
+      delta ? 'is-edited' : '',
+      note.muted ? 'is-muted' : ''
+    ].filter(Boolean).join(' ')
+    const deltaLabel = delta ? ` · ${delta > 0 ? '+' : ''}${delta} st` : ''
+    return `<button type="button" class="studio-pitch-trace-note ${stateClass}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(formatMidiNoteName(editedMidi))}${esc(deltaLabel)} · ${Math.round((note.confidence || 0) * 100)}%"><b>${esc(formatMidiNoteName(editedMidi))}</b></button>`
   }).join('')
   const labels = Array.from({ length: rowCount }, (_, index) => {
     const midi = maxNote - index
@@ -714,6 +795,14 @@ function renderPitchTraceView(region, track) {
     <div class="studio-pitch-trace-notes">${blocks || '<p>No detected notes yet. Click Analyze Audio to create a Pitch Trace.</p>'}</div>
     <small>Pitch Trace: ${esc(status)}</small>
   </div>`
+}
+function getPitchTraceEditedNoteCount(trace = {}) {
+  return (trace.notes || []).filter((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.gainDb) || 0) > 0.001).length
+}
+function getSelectedPitchTraceNote(region) {
+  if (!region || region.type !== 'audio' || !pitchTraceSelectedNoteId) return null
+  const trace = normalizeAudioEdit(region.audioEdit).pitchTrace
+  return (trace.notes || []).find((note)=>note.id === pitchTraceSelectedNoteId) || null
 }
 function midiRollPitchRows(region = getMidiRollRegion()) {
   const track = getMidiRegionTrack(region)
@@ -738,6 +827,12 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const track = getMidiRegionTrack(region)
   const edit = normalizeAudioEdit(region.audioEdit)
   const pitchTrace = edit.pitchTrace
+  const pitchShift = edit.pitchShift
+  const selectedPitchNote = getSelectedPitchTraceNote(region)
+  const editedPitchNoteCount = getPitchTraceEditedNoteCount(pitchTrace)
+  const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const pitchShiftStatus = pitchShift.renderStatus === 'needs_render' ? 'Needs render' : (pitchShift.lastError || pitchShift.renderStatus || 'idle')
+  const pitchTraceRenderStatus = pitchTrace.renderStatus === 'needs_render' ? 'Needs render' : (pitchTrace.lastError || pitchTrace.renderStatus || 'idle')
   const stretch = normalizeAudioStretch(region.stretch)
   const stretchMath = getAudioStretchMath(region)
   const missing = Boolean(region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed')
@@ -766,18 +861,26 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <label>Q-Swing<input type="range" min="0" max="100" step="1" data-audio-edit-field="qSwing" value="${edit.qSwing}" disabled><small>Coming soon</small></label>
         <label>Q-Range<input type="number" step="0.1" data-audio-edit-field="qRange" value="${edit.qRange ?? ''}" placeholder="Coming soon" disabled></label>
         <label>Q-Strength<input type="range" min="0" max="100" step="1" data-audio-edit-field="qStrength" value="${edit.qStrength}" disabled><small>Coming soon</small></label>
-        <label>Transpose<input type="number" min="-48" max="48" step="1" data-audio-edit-field="transposeSemitones" value="${edit.transposeSemitones}" disabled><small>Coming soon</small></label>
-        <label>Fine Tune<input type="number" min="-100" max="100" step="1" data-audio-edit-field="fineTuneCents" value="${edit.fineTuneCents}" disabled><small>Coming soon</small></label>
-        <button type="button" disabled>Render Pitch Shift</button>
+        <label>Transpose<input type="number" min="-48" max="48" step="1" data-audio-edit-field="transposeSemitones" value="${edit.transposeSemitones}"><small>semitones</small></label>
+        <label>Fine Tune<input type="number" min="-100" max="100" step="1" data-audio-edit-field="fineTuneCents" value="${edit.fineTuneCents}"><small>cents</small></label>
+        <button type="button" data-audio-render-pitch-shift ${pitchShiftActive && !missing && pitchShift.renderStatus !== 'rendering' ? '' : 'disabled'}>${pitchShift.renderStatus === 'failed' ? 'Retry Pitch Shift' : 'Render Pitch Shift'}</button>
+        <small>Pitch Shift: ${esc(pitchShiftStatus)}${pitchShiftActive ? ` · ${Number(pitchShift.totalSemitones).toFixed(2)} st` : ''}</small>
         <label>Pitch Source<select data-audio-edit-field="pitchSource" disabled><option>Off</option><option>Region</option><option>Project Key</option></select><small>Coming soon</small></label>
         <hr>
         <div class="studio-pitch-trace-controls">
           <label><input type="checkbox" data-pitch-trace-enabled ${pitchTrace.enabled ? 'checked' : ''}> Pitch Trace</label>
-          <p>Analyze the audio region and display detected notes over the waveform.</p>
+          <p>Analyze the audio region, then drag detected notes vertically to retune audio segments.</p>
           <label>Confidence<input type="range" min="0.3" max="0.95" step="0.05" data-pitch-trace-threshold value="${pitchTrace.confidenceThreshold}"><small>${Math.round(pitchTrace.confidenceThreshold * 100)}%</small></label>
           <button type="button" data-pitch-trace-analyze ${missing || pitchTrace.status === 'analyzing' ? 'disabled' : ''}>${pitchTrace.notes.length ? 'Re-analyze Audio' : 'Analyze Audio'}</button>
           <button type="button" data-pitch-trace-clear ${pitchTrace.notes.length || pitchTrace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
-          <small>Pitch Trace: ${esc(pitchTrace.status === 'analyzing' ? 'Analyzing...' : pitchTrace.status)}</small>
+          <button type="button" data-pitch-trace-render ${pitchTrace.enabled && pitchTrace.notes.length && !missing && pitchTrace.renderStatus !== 'rendering' ? '' : 'disabled'}>${pitchTrace.renderStatus === 'failed' ? 'Retry Pitch Trace Render' : 'Render Pitch Trace'}</button>
+          ${selectedPitchNote ? `<div class="studio-pitch-trace-note-tools">
+            <strong>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</strong>
+            <span>Original ${esc(formatMidiNoteName(selectedPitchNote.originalMidiNote))} · ${selectedPitchNote.editedMidiNote - selectedPitchNote.originalMidiNote > 0 ? '+' : ''}${selectedPitchNote.editedMidiNote - selectedPitchNote.originalMidiNote} st</span>
+            <button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}" ${selectedPitchNote.editedMidiNote === selectedPitchNote.originalMidiNote && !selectedPitchNote.muted ? 'disabled' : ''}>Reset Note</button>
+            <button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted ? 'Unmute Note' : 'Mute Note'}</button>
+          </div>` : '<small>Select and drag a Pitch Trace note to edit pitch.</small>'}
+          <small>Pitch Trace: ${esc(pitchTrace.status === 'analyzing' ? 'Analyzing...' : pitchTrace.status)} · Render: ${esc(pitchTraceRenderStatus)}${editedPitchNoteCount ? ` · ${editedPitchNoteCount} edit${editedPitchNoteCount === 1 ? '' : 's'}` : ''}</small>
         </div>
         <label>Gain<input type="range" min="-24" max="24" step="0.5" data-audio-edit-field="gainDb" value="${edit.gainDb}"><small>${edit.gainDb.toFixed(1)} dB</small></label>
         <label>Delay<input type="number" min="0" max="2000" step="1" data-audio-edit-field="delayMs" value="${edit.delayMs}"><small>ms</small></label>
@@ -1675,12 +1778,28 @@ function renderAudioStretchRenderModal() {
   const progressLabel = progress == null ? 'Rendering...' : `${Math.round(progress * 100)}%`
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-audio-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-audio-render-title">Rendering Audio Stretch</h3><p>Soura is rendering the stretched audio region. This may take a moment.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
 }
+function renderAudioPitchRenderModal() {
+  if (!audioPitchRenderState.active) return ''
+  const progress = Number.isFinite(Number(audioPitchRenderState.progress)) ? clamp(Number(audioPitchRenderState.progress), 0, 1) : null
+  const progressLabel = progress == null ? 'Rendering...' : `${Math.round(progress * 100)}%`
+  const title = audioPitchRenderState.mode === 'trace' ? 'Rendering Pitch Trace Edits' : 'Rendering Pitch Shift'
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-pitch-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-pitch-render-title">${esc(title)}</h3><p>Soura is rendering edited audio for this region. Playback will use the render when it finishes.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
+}
 function renderStretchPlaybackPrompt() {
   if (!stretchPlaybackPrompt?.regionId) return ''
   const region = midiRegions.find((item)=>item.id === stretchPlaybackPrompt.regionId)
   if (!region) return ''
   const stretch = normalizeAudioStretch(region.stretch)
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-stretch-prompt-title"><section class="studio-audio-render-panel"><span>Stretch render required</span><h3 id="studio-stretch-prompt-title">Render stretched audio?</h3><p>This stretched audio region must be rendered before playback.</p>${stretch.renderError ? `<small>${esc(stretch.renderError)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-stretch-prompt-render ${stretch.renderStatus === 'rendering' ? 'disabled' : ''}>Render Now</button><button type="button" class="button button-muted" data-stretch-prompt-cancel>Cancel</button></div></section></div>`
+}
+function renderAudioEditPlaybackPrompt() {
+  if (!audioEditPlaybackPrompt?.regionId) return ''
+  const region = midiRegions.find((item)=>item.id === audioEditPlaybackPrompt.regionId)
+  if (!region) return ''
+  const mode = audioEditPlaybackPrompt.mode === 'trace' ? 'Pitch Trace edits' : 'Pitch Shift'
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const error = audioEditPlaybackPrompt.mode === 'trace' ? edit.pitchTrace.lastError : edit.pitchShift.lastError
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-audio-edit-prompt-title"><section class="studio-audio-render-panel"><span>Pitch render required</span><h3 id="studio-audio-edit-prompt-title">Render edited audio?</h3><p>${esc(mode)} must be rendered before playback can use it.</p>${error ? `<small>${esc(error)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-audio-edit-prompt-render>Render Now</button><button type="button" class="button button-muted" data-audio-edit-prompt-original>Play Original</button><button type="button" class="button button-muted" data-audio-edit-prompt-cancel>Cancel</button></div></section></div>`
 }
 function renderControlsMenu(){ if(!isControlsMenuOpen) return ''; return `<div class="studio-controls-menu" data-controls-menu><label><input type="checkbox" data-musical-typing-toggle ${isTypingPianoEnabled ? 'checked' : ''}> Musical Typing</label><p>${isTypingPianoEnabled ? 'Typing keys play the selected instrument.' : 'Typing keys run DAW commands.'}</p></div>` }
 
@@ -1771,6 +1890,13 @@ function normalizeLoadedRegion(region = {}) {
   const stretch = loadedStretch.enabled && loadedStretch.renderStatus === 'ready' && !hasPersistedStretchRender
     ? { ...loadedStretch, renderedRuntimeId: null, renderedObjectUrl: null, renderStatus: 'needs_render', renderError: null, renderedSessionOnly: true }
     : loadedStretch
+  const loadedAudioEdit = type === 'audio' ? normalizeAudioEdit(region.audioEdit) : undefined
+  if (loadedAudioEdit?.pitchShift?.renderStatus === 'ready' && !(loadedAudioEdit.pitchShift.renderedStoragePath || loadedAudioEdit.pitchShift.renderedAudioUrl)) {
+    loadedAudioEdit.pitchShift = { ...loadedAudioEdit.pitchShift, renderedRuntimeId: null, renderStatus: 'needs_render', lastError: null }
+  }
+  if (loadedAudioEdit?.pitchTrace?.renderStatus === 'ready' && !(loadedAudioEdit.pitchTrace.renderedStoragePath || loadedAudioEdit.pitchTrace.renderedAudioUrl)) {
+    loadedAudioEdit.pitchTrace = { ...loadedAudioEdit.pitchTrace, renderedRuntimeId: null, renderStatus: getPitchTraceEditedNoteCount(loadedAudioEdit.pitchTrace) ? 'needs_render' : 'idle', lastError: null }
+  }
   const hasPersistentMedia = !!(region.audioClip?.storagePath || region.audioClip?.downloadUrl)
   const normalized = cloneRegionForState({
     ...region,
@@ -1782,7 +1908,7 @@ function normalizeLoadedRegion(region = {}) {
     fileDurationSeconds: Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || null,
     playbackRate: Number(region.playbackRate) || 1,
     offsetSeconds: Number(region.offsetSeconds) || 0,
-    audioEdit: type === 'audio' ? normalizeAudioEdit(region.audioEdit) : undefined,
+    audioEdit: loadedAudioEdit,
     stretch,
     audioClip: type === 'audio'
       ? {
@@ -1950,6 +2076,70 @@ async function hydrateRenderedAudioRegionRuntime(region) {
     return false
   }
 }
+async function hydrateAudioEditRenderRuntime(region, mode = 'pitchShift') {
+  if (!region?.id || region.type !== 'audio') return false
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const render = mode === 'pitchTrace' ? edit.pitchTrace : edit.pitchShift
+  if (!(render?.renderedStoragePath || render?.renderedAudioUrl)) return false
+  const runtimeId = render.renderedRuntimeId || `${region.id}:${mode}:persisted`
+  if (audioClipRuntime.has(runtimeId)) {
+    if (mode === 'pitchTrace') edit.pitchTrace = { ...edit.pitchTrace, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
+    else edit.pitchShift = { ...edit.pitchShift, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
+    region.audioEdit = normalizeAudioEdit(edit)
+    return true
+  }
+  console.info('[audio-hydration] loading rendered pitch audio', { clipId: region.id, mode, hasStoragePath: Boolean(render.renderedStoragePath) })
+  const downloadUrl = render.renderedAudioUrl || await getStorageAssetUrl(render.renderedStoragePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-rendered-audio', warnOnFail: true })
+  if (!downloadUrl) return false
+  try {
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`Rendered pitch audio fetch failed (${response.status})`)
+    const arrayBuffer = await response.arrayBuffer()
+    const ctx = getAudioContext()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
+    const renderedDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
+    audioClipRuntime.set(runtimeId, {
+      blob: null,
+      url: downloadUrl,
+      audioBuffer,
+      contentType: 'audio/*',
+      fileDurationSeconds: renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: false
+    })
+    region.renderedWaveform = waveform
+    if (mode === 'pitchTrace') {
+      edit.pitchTrace = {
+        ...edit.pitchTrace,
+        renderedRuntimeId: runtimeId,
+        renderedAudioUrl: edit.pitchTrace.renderedAudioUrl || downloadUrl,
+        renderedDurationSeconds,
+        renderStatus: 'ready',
+        lastError: null
+      }
+    } else {
+      edit.pitchShift = {
+        ...edit.pitchShift,
+        renderedRuntimeId: runtimeId,
+        renderedAudioUrl: edit.pitchShift.renderedAudioUrl || downloadUrl,
+        renderedDurationSeconds,
+        renderStatus: 'ready',
+        lastError: null
+      }
+    }
+    region.audioEdit = normalizeAudioEdit(edit)
+    console.info('[audio-hydration] loaded rendered pitch audio', { clipId: region.id, mode, duration: renderedDurationSeconds })
+    return true
+  } catch (err) {
+    console.warn('[audio-hydration] rendered pitch audio failed', { clipId: region.id, mode, reason: err?.message || 'decode_failed' })
+    if (mode === 'pitchTrace') edit.pitchTrace = { ...edit.pitchTrace, renderStatus: 'failed', lastError: 'Rendered pitch trace audio file missing or not loaded.' }
+    else edit.pitchShift = { ...edit.pitchShift, renderStatus: 'failed', lastError: 'Rendered pitch shift audio file missing or not loaded.' }
+    region.audioEdit = normalizeAudioEdit(edit)
+    return false
+  }
+}
 async function hydrateAudioRegionRuntime(region) {
   if (!region?.id || region.type !== 'audio') return false
   const audioClip = region.audioClip || {}
@@ -1958,14 +2148,18 @@ async function hydrateAudioRegionRuntime(region) {
     region.audioClip = { ...audioClip, audioReady: true, loadStatus: 'ready', loadError: null, offlineReason: null }
     region.missingMedia = false
     await hydrateRenderedAudioRegionRuntime(region)
+    await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+    await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
     return true
   }
   const downloadUrl = audioClip.downloadUrl || (audioClip.storagePath ? await getStorageAssetUrl(audioClip.storagePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-audio', warnOnFail: true }) : '')
   if (!downloadUrl) {
-    const renderedReady = await hydrateRenderedAudioRegionRuntime(region)
+    const pitchTraceReady = await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
+    const pitchShiftReady = await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+    const renderedReady = pitchTraceReady || pitchShiftReady || await hydrateRenderedAudioRegionRuntime(region)
     const reason = audioClip.storagePath ? 'storage_fetch_failed' : (audioClip.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
     console.info('[audio-hydration] offline clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, reason })
-    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: renderedReady ? 'Original audio file missing; persisted stretch render is available.' : getAudioOfflineMessage({ audioClip: { ...audioClip, offlineReason: reason } }), offlineReason: reason }
+    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: renderedReady ? 'Original audio file missing; persisted rendered audio is available.' : getAudioOfflineMessage({ audioClip: { ...audioClip, offlineReason: reason } }), offlineReason: reason }
     region.missingMedia = !renderedReady
     return renderedReady
   }
@@ -2003,6 +2197,8 @@ async function hydrateAudioRegionRuntime(region) {
       waveform
     })
     await hydrateRenderedAudioRegionRuntime(region)
+    await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+    await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
     console.info('[audio-hydration] loaded clip', { clipId: region.audioClip.audioAssetId || region.audioClip.id || region.id, duration: fileDurationSeconds })
     return true
   } catch (err) {
@@ -2013,7 +2209,15 @@ async function hydrateAudioRegionRuntime(region) {
   }
 }
 async function hydrateProjectAudioAssets() {
-  const regions = midiRegions.filter((region)=>region.type === 'audio' && (region.audioClip?.storagePath || region.audioClip?.downloadUrl || region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl))
+  const regions = midiRegions.filter((region)=>{
+    const edit = normalizeAudioEdit(region.audioEdit)
+    return region.type === 'audio' && (
+      region.audioClip?.storagePath || region.audioClip?.downloadUrl ||
+      region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl ||
+      edit.pitchShift?.renderedStoragePath || edit.pitchShift?.renderedAudioUrl ||
+      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl
+    )
+  })
   if (!regions.length) return
   recordingStatus = 'Preparing audio...'
   updateEditorTitleStatus()
@@ -2476,23 +2680,37 @@ function applyStudioGuideTargets() {
 }
 function setPlayhead(x) { timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX()); if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`); updateTransportDisplay(); updateMidiRollPlayheadDom(); if (isPlaying && !isTransportTicking) { stopAllAudioClipPlayback(); updateAudioClipPlayback(clampBeat(xToBeat(timelineState.playheadX))) } }
 function pixelsPerSecond() { const bpm = Number(projectState?.bpm || 140); const bps = bpm / 60; const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
-function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
+function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
 function tickPlayback(now) { if (!isPlaying) return; const delta=(now-lastPlayTimestamp)/1000; lastPlayTimestamp=now; let nextX = timelineState.playheadX + pixelsPerSecond()*delta; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle) { if (nextX >= cycle.end) { stopAllPlaybackNotes(); stopAllAudioClipPlayback(); nextX = cycle.start + ((nextX - cycle.end) % (cycle.end-cycle.start)) } } if (isCountInRunning && countInTargetX != null && nextX >= countInTargetX) { nextX = countInTargetX } isTransportTicking = true; setPlayhead(nextX); isTransportTicking = false; if (isCountInRunning && countInTargetX != null) { const nextRemaining = clamp(Math.ceil((countInTargetX - timelineState.playheadX) / Math.max(1, beatWidth())), 0, 4); if (nextRemaining !== countInBeatsRemaining) { countInBeatsRemaining = nextRemaining; updateEditorTitleStatus() } if (timelineState.playheadX >= countInTargetX - 0.5) { const track = tracks.find((item)=>item.id === countInTargetTrackId) || getRecordingTrack(); isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = ''; if (isAudioTrack(track)) beginAudioRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) }); else beginMidiRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) }); playRaf = requestAnimationFrame(tickPlayback); return } } const currentBeat = clampBeat(xToBeat(timelineState.playheadX)); updateMidiRegionPlayback(currentBeat); updateAudioClipPlayback(currentBeat); lastPlaybackBeat = currentBeat; if(activeRecording) refreshMidiRegionDom(); followPlayheadIfNeeded(); maybeTickMetronome(); if (timelineState.playheadX >= maxTimelineX()) return pausePlayback(); playRaf = requestAnimationFrame(tickPlayback) }
 async function prepareProjectPlayback() {
   const ctx = getAudioContext()
   if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
   tracks.filter(isSoftwareTrack).forEach((track)=>ensureTrackInstrumentInstance(track))
-  const pendingAudio = midiRegions.filter((region)=>region.type === 'audio' && (region.audioClip?.loadStatus === 'pending' || region.audioClip?.loadStatus === 'failed' || region.stretch?.renderStatus === 'needs_render') && (region.audioClip?.storagePath || region.audioClip?.downloadUrl || region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl))
+  const pendingAudio = midiRegions.filter((region)=>{
+    const edit = normalizeAudioEdit(region.audioEdit)
+    return region.type === 'audio' && (
+      region.audioClip?.loadStatus === 'pending' ||
+      region.audioClip?.loadStatus === 'failed' ||
+      region.stretch?.renderStatus === 'needs_render' ||
+      edit.pitchShift?.renderStatus === 'needs_render' ||
+      edit.pitchTrace?.renderStatus === 'needs_render'
+    ) && (
+      region.audioClip?.storagePath || region.audioClip?.downloadUrl ||
+      region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl ||
+      edit.pitchShift?.renderedStoragePath || edit.pitchShift?.renderedAudioUrl ||
+      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl
+    )
+  })
   if (pendingAudio.length) await Promise.allSettled(pendingAudio.map((region)=>hydrateAudioRegionRuntime(region)))
 }
-async function startPlayback() { if (isPlaying || audioStretchRenderState.active) return; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start); recordingStatus = 'Preparing audio...'; updateEditorTitleStatus(); await prepareProjectPlayback(); recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus; prewarmDawAudio().then((engine) => { engine.setBpm(Number(projectState?.bpm || 140)); engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) }) }).catch((err)=>console.warn('[studioProject] audio engine start failed', err)); isPlaying = true; lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX)); lastPlayTimestamp = performance.now(); startTrackMeterLoop(); updateAudioClipPlayback(lastPlaybackBeat); playRaf = requestAnimationFrame(tickPlayback); updateTransportPlaybackUI(); updateEditorTitleStatus() }
+async function startPlayback() { if (isPlaying || audioStretchRenderState.active || audioPitchRenderState.active) return; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start); recordingStatus = 'Preparing audio...'; updateEditorTitleStatus(); await prepareProjectPlayback(); recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus; prewarmDawAudio().then((engine) => { engine.setBpm(Number(projectState?.bpm || 140)); engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) }) }).catch((err)=>console.warn('[studioProject] audio engine start failed', err)); isPlaying = true; lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX)); lastPlayTimestamp = performance.now(); startTrackMeterLoop(); updateAudioClipPlayback(lastPlaybackBeat); playRaf = requestAnimationFrame(tickPlayback); updateTransportPlaybackUI(); updateEditorTitleStatus() }
 function pausePlayback() { isPlaying = false; stopAllPlaybackNotes(); stopAllAudioClipPlayback(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI() }
 function togglePlayback(){ isPlaying ? pausePlayback() : startPlayback() }
-function stopPlayback() { pausePlayback(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = '' }
+function stopPlayback() { pausePlayback(); audioEditPlaybackBypassRegionIds.clear(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = '' }
 function getNormalizedCycleRange(){ if(!cycleRange) return null; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return end-start>=cycleMinWidth()?{start,end}:null }
 function hasValidCycleRange(){ return !!getNormalizedCycleRange() }
 function isCycleStripPointerEvent(event, ruler){ const rect = ruler?.getBoundingClientRect?.(); if(!rect) return false; const localY = event.clientY - rect.top; return localY >= 0 && localY <= 22 }
-function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); if (audioStretchRenderState.active) return; if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
+function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); if (audioStretchRenderState.active || audioPitchRenderState.active) return; if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
 
 function getMusicalTypingTrack() {
   if (activeRecording?.trackId) return tracks.find((track)=>track.id === activeRecording.trackId) || getRecordingTrack()
@@ -2871,6 +3089,193 @@ async function renderAudioStretchForRegion(regionId) {
     renderEditor()
   }
 }
+async function renderAudioPitchShiftForRegion(regionId) {
+  if (audioPitchRenderState.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  let edit = normalizeAudioEdit(region.audioEdit)
+  const pitchShift = edit.pitchShift
+  if (Math.abs(Number(pitchShift.totalSemitones) || 0) <= 0.001) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...pitchShift, renderStatus: 'idle', lastError: null } })
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...pitchShift, renderStatus: 'failed', lastError: 'Original audio is offline. Reconnect or re-record before rendering pitch shift.' } })
+    recordingStatus = region.audioEdit.pitchShift.lastError
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  stopPlayback()
+  audioPitchRenderState = { active: true, regionId, mode: 'pitchShift', progress: null, error: '' }
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...pitchShift, renderStatus: 'rendering', lastError: null } })
+  renderEditor()
+  try {
+    const result = await renderPitchShiftedAudio({
+      audioBuffer: runtime.audioBuffer,
+      clipId: region.id,
+      transposeSemitones: edit.transposeSemitones,
+      fineTuneCents: edit.fineTuneCents,
+      sampleRate: runtime.audioBuffer.sampleRate,
+      trimStartSeconds: getAudioTrimStartSeconds(region),
+      trimEndSeconds: getAudioTrimEndSeconds(region),
+      onProgress: (progress) => {
+        audioPitchRenderState = { ...audioPitchRenderState, progress }
+      }
+    })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
+    const renderedRuntimeId = `${region.id}:pitch-shift:${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}:${result.createdAt}`
+    let renderedStoragePath = null
+    try {
+      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
+        clipId: region.id,
+        suffix: `pitch-shift-${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}`
+      })
+    } catch (uploadErr) {
+      console.warn('[studioProject] rendered pitch shift upload failed; using session render only', uploadErr)
+    }
+    audioClipRuntime.set(renderedRuntimeId, {
+      blob: result.renderedBlob,
+      url: result.renderedObjectUrl,
+      audioBuffer: result.renderedAudioBuffer,
+      contentType: result.renderedBlob?.type || 'audio/wav',
+      fileDurationSeconds: result.renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: !renderedStoragePath
+    })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.renderedWaveform = waveform
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchShift: {
+        ...edit.pitchShift,
+        enabled: true,
+        totalSemitones: result.totalSemitones ?? pitchShift.totalSemitones,
+        renderStatus: 'ready',
+        renderedStoragePath,
+        renderedAudioUrl: null,
+        renderedRuntimeId,
+        renderedDurationSeconds: result.renderedDurationSeconds,
+        algorithm: result.algorithm,
+        preservesDuration: result.preservesDuration,
+        lastError: null,
+        renderedAt: result.createdAt
+      }
+    })
+    audioEditPlaybackPrompt = null
+    audioEditPlaybackBypassRegionIds.delete(region.id)
+    recordingStatus = 'Pitch shift rendered.'
+    scheduleEditorSave()
+  } catch (err) {
+    console.error('[pitch-render] pitch shift failed', { clipId: region.id, reason: err?.message || 'Pitch shift render failed.' })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...edit.pitchShift, renderStatus: 'failed', lastError: err?.message || 'Pitch shift render failed.' } })
+    recordingStatus = 'Pitch shift render failed. The original audio was not changed.'
+    scheduleEditorSave()
+  } finally {
+    audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+    renderEditor()
+  }
+}
+async function renderPitchTraceEditsForRegion(regionId) {
+  if (audioPitchRenderState.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  let edit = normalizeAudioEdit(region.audioEdit)
+  const trace = edit.pitchTrace
+  if (!trace.enabled || !trace.notes.length) return
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...trace, renderStatus: 'failed', lastError: 'Original audio is offline. Reconnect or re-record before rendering Pitch Trace edits.' } })
+    recordingStatus = region.audioEdit.pitchTrace.lastError
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  stopPlayback()
+  audioPitchRenderState = { active: true, regionId, mode: 'trace', progress: null, error: '' }
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...trace, renderStatus: 'rendering', lastError: null } })
+  renderEditor()
+  try {
+    const result = await renderPitchTraceEdits({
+      audioBuffer: runtime.audioBuffer,
+      clipId: region.id,
+      notes: trace.notes,
+      transposeSemitones: edit.transposeSemitones,
+      fineTuneCents: edit.fineTuneCents,
+      sampleRate: runtime.audioBuffer.sampleRate,
+      trimStartSeconds: getAudioTrimStartSeconds(region),
+      trimEndSeconds: getAudioTrimEndSeconds(region),
+      onProgress: (progress) => {
+        audioPitchRenderState = { ...audioPitchRenderState, progress }
+      }
+    })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
+    const renderedRuntimeId = `${region.id}:pitch-trace:${result.createdAt}`
+    let renderedStoragePath = null
+    try {
+      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
+        clipId: region.id,
+        suffix: `pitch-trace-${result.createdAt}`
+      })
+    } catch (uploadErr) {
+      console.warn('[studioProject] rendered pitch trace upload failed; using session render only', uploadErr)
+    }
+    audioClipRuntime.set(renderedRuntimeId, {
+      blob: result.renderedBlob,
+      url: result.renderedObjectUrl,
+      audioBuffer: result.renderedAudioBuffer,
+      contentType: result.renderedBlob?.type || 'audio/wav',
+      fileDurationSeconds: result.renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: !renderedStoragePath
+    })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.renderedWaveform = waveform
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchTrace: {
+        ...edit.pitchTrace,
+        renderStatus: 'ready',
+        renderedStoragePath,
+        renderedAudioUrl: null,
+        renderedRuntimeId,
+        renderedDurationSeconds: result.renderedDurationSeconds,
+        renderAlgorithm: result.algorithm,
+        preservesDuration: result.preservesDuration,
+        lastError: null,
+        renderedAt: result.createdAt,
+        notes: edit.pitchTrace.notes.map((note)=>({ ...note, renderStatus: 'ready' }))
+      }
+    })
+    audioEditPlaybackPrompt = null
+    audioEditPlaybackBypassRegionIds.delete(region.id)
+    recordingStatus = 'Pitch Trace edits rendered.'
+    scheduleEditorSave()
+  } catch (err) {
+    console.error('[pitch-render] pitch trace failed', { clipId: region.id, reason: err?.message || 'Pitch Trace render failed.' })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, renderStatus: 'failed', lastError: err?.message || 'Pitch Trace render failed.' } })
+    recordingStatus = 'Pitch Trace render failed. The original audio was not changed.'
+    scheduleEditorSave()
+  } finally {
+    audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+    renderEditor()
+  }
+}
 function startStretchedAudioElement(region, runtime, track, sourceOffsetSeconds, remainingVisibleSeconds) {
   if (!runtime?.url) return false
   try {
@@ -2898,6 +3303,34 @@ function startStretchedAudioElement(region, runtime, track, sourceOffsetSeconds,
     return false
   }
 }
+function getAudioPlaybackRenderChoice(region, edit, stretch) {
+  const bypassEdits = audioEditPlaybackBypassRegionIds.has(region.id)
+  const trace = edit.pitchTrace || {}
+  const pitchShift = edit.pitchShift || {}
+  const traceHasEdits = trace.enabled && trace.notes?.length && (getPitchTraceEditedNoteCount(trace) > 0 || Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001)
+  const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  if (!bypassEdits) {
+    if (traceHasEdits) {
+      if (trace.renderStatus === 'ready' && trace.renderedRuntimeId && audioClipRuntime.has(trace.renderedRuntimeId)) {
+        return { runtimeId: trace.renderedRuntimeId, mode: 'pitchTrace' }
+      }
+      return { needsRender: true, promptMode: 'trace', message: 'Pitch Trace edits must be rendered before playback.' }
+    }
+    if (pitchShiftActive) {
+      if (pitchShift.renderStatus === 'ready' && pitchShift.renderedRuntimeId && audioClipRuntime.has(pitchShift.renderedRuntimeId)) {
+        return { runtimeId: pitchShift.renderedRuntimeId, mode: 'pitchShift' }
+      }
+      return { needsRender: true, promptMode: 'pitchShift', message: 'Pitch Shift must be rendered before playback.' }
+    }
+  }
+  if (!bypassEdits && stretch.enabled && stretch.renderStatus === 'ready' && stretch.renderedRuntimeId) {
+    return { runtimeId: stretch.renderedRuntimeId, mode: 'stretch' }
+  }
+  if (!bypassEdits && stretch.enabled && stretch.renderStatus !== 'ready') {
+    return { needsStretchRender: true }
+  }
+  return { runtimeId: region.audioClip?.runtimeId || region.id, mode: 'original' }
+}
 function updateAudioClipPlayback(currentBeat) {
   const beat = clampBeat(currentBeat)
   midiRegions.filter((region)=>region.type === 'audio').forEach((region) => {
@@ -2912,7 +3345,20 @@ function updateAudioClipPlayback(currentBeat) {
       if (active) stopAudioClipPlayback(region.id)
       return
     }
-    if (stretch.enabled && stretch.renderStatus !== 'ready') {
+    const playbackChoice = getAudioPlaybackRenderChoice(region, edit, stretch)
+    if (playbackChoice.needsRender) {
+      if (active) stopAudioClipPlayback(region.id)
+      if (isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
+        recordingStatus = playbackChoice.message
+        updateEditorTitleStatus()
+        if (!audioPitchRenderState.active && audioEditPlaybackPrompt?.regionId !== region.id) {
+          audioEditPlaybackPrompt = { regionId: region.id, mode: playbackChoice.promptMode }
+          renderEditor()
+        }
+      }
+      return
+    }
+    if (playbackChoice.needsStretchRender) {
       if (active) stopAudioClipPlayback(region.id)
       if (isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
         recordingStatus = 'This stretched audio region must finish rendering before playback.'
@@ -2924,8 +3370,7 @@ function updateAudioClipPlayback(currentBeat) {
       }
       return
     }
-    const runtimeId = stretch.enabled && stretch.renderStatus === 'ready' && stretch.renderedRuntimeId ? stretch.renderedRuntimeId : (region.audioClip?.runtimeId || region.id)
-    const runtime = audioClipRuntime.get(runtimeId)
+    const runtime = audioClipRuntime.get(playbackChoice.runtimeId)
     const shouldPlay = runtime?.audioBuffer && isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat
     if (!shouldPlay) {
       if (active) stopAudioClipPlayback(region.id)
@@ -2947,14 +3392,19 @@ function updateAudioClipPlayback(currentBeat) {
       const elapsedVisibleSeconds = Math.max(0, playheadSeconds - clipStartSeconds)
       const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
       if (elapsedVisibleSeconds >= visibleDurationSeconds) return
-      const playbackRate = stretch.enabled ? 1 : getAudioRegionPlaybackRate(region)
-      const sourceOffsetSeconds = stretch.enabled ? elapsedVisibleSeconds : getAudioTrimStartSeconds(region) + (elapsedVisibleSeconds * playbackRate)
-      const trimEndSeconds = stretch.enabled ? runtime.audioBuffer.duration : getAudioTrimEndSeconds(region)
+      const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch'
+      const playbackRate = renderedMode ? 1 : getAudioRegionPlaybackRate(region)
+      const sourceOffsetSeconds = renderedMode ? elapsedVisibleSeconds : getAudioTrimStartSeconds(region) + (elapsedVisibleSeconds * playbackRate)
+      const trimEndSeconds = renderedMode ? runtime.audioBuffer.duration : getAudioTrimEndSeconds(region)
       const remainingVisibleSeconds = Math.max(0.01, visibleDurationSeconds - elapsedVisibleSeconds)
       const source = ctx.createBufferSource()
       source.buffer = runtime.audioBuffer
       source.playbackRate.value = playbackRate
-      if (edit.loop && !stretch.enabled) {
+      if (edit.loop && renderedMode) {
+        source.loop = true
+        source.loopStart = 0
+        source.loopEnd = runtime.audioBuffer.duration
+      } else if (edit.loop) {
         source.loop = true
         source.loopStart = getAudioTrimStartSeconds(region)
         source.loopEnd = getAudioTrimEndSeconds(region)
@@ -3608,6 +4058,22 @@ function updateAudioRegionEditField(region, key, rawValue) {
   else if (key === 'qRange') edit[key] = rawValue === '' ? null : Number(rawValue)
   else if (['quantize','pitchSource','fadeInCurve','fadeOutCurve'].includes(key)) edit[key] = String(rawValue || '')
   else if (key === 'reverse') edit[key] = rawValue === true
+  if (key === 'transposeSemitones' || key === 'fineTuneCents') {
+    const totalSemitones = getAudioPitchShiftTotal(edit.transposeSemitones, edit.fineTuneCents)
+    edit.pitchShift = {
+      ...edit.pitchShift,
+      enabled: Math.abs(totalSemitones) > 0.001,
+      totalSemitones,
+      renderStatus: Math.abs(totalSemitones) > 0.001 ? 'needs_render' : 'idle',
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      renderedRuntimeId: null,
+      lastError: null
+    }
+    if (edit.pitchTrace?.renderStatus === 'ready' && edit.pitchTrace.notes?.length) {
+      edit.pitchTrace = { ...edit.pitchTrace, renderStatus: 'needs_render', renderedRuntimeId: null, renderedStoragePath: null, renderedAudioUrl: null, lastError: null }
+    }
+  }
   region.audioEdit = normalizeAudioEdit(edit)
   pushHistory('edit-audio-region', before, captureDawSnapshot())
   scheduleEditorSave()
@@ -3708,6 +4174,13 @@ async function analyzePitchTraceForRegion(regionId) {
             analyzedAt: Date.now(),
             progress: 1,
             error: null,
+            renderStatus: 'idle',
+            renderedStoragePath: null,
+            renderedAudioUrl: null,
+            renderedRuntimeId: null,
+            renderedDurationSeconds: null,
+            renderAlgorithm: null,
+            lastError: null,
             notes: Array.isArray(message.notes) ? message.notes : []
           }
         })
@@ -3936,6 +4409,120 @@ function finishMidiNoteDrag() {
     pushHistory('edit-midi-note', before, captureDawSnapshot())
     scheduleEditorSave()
   }
+  renderEditor()
+}
+function beginPitchTraceNoteDrag(event, regionId, noteId) {
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  const edit = normalizeAudioEdit(region?.audioEdit)
+  const note = edit.pitchTrace.notes.find((item)=>item.id === noteId)
+  if (!region || !note) return
+  event.preventDefault()
+  event.stopPropagation()
+  selectedMidiRegionId = regionId
+  pitchTraceSelectedNoteId = noteId
+  const visibleNotes = edit.pitchTrace.notes.filter((item)=>item.confidence >= edit.pitchTrace.confidenceThreshold)
+  const noteValues = visibleNotes.map((item)=>Number(item.editedMidiNote ?? item.midiNote)).filter(Number.isFinite)
+  const minNote = Math.max(0, Math.min(48, ...(noteValues.length ? noteValues : [48])) - 2)
+  const maxNote = Math.min(127, Math.max(72, ...(noteValues.length ? noteValues : [72])) + 2)
+  pitchTraceNoteDrag = {
+    regionId,
+    noteId,
+    before: captureDawSnapshot(),
+    startY: event.clientY,
+    startEditedMidiNote: Number(note.editedMidiNote) || Number(note.midiNote) || 60,
+    minNote,
+    maxNote,
+    rowCount: Math.max(1, maxNote - minNote + 1),
+    hasMoved: false
+  }
+  document.body.classList.add('is-studio-dragging', 'is-pitch-trace-note-dragging')
+  app.querySelectorAll('[data-pitch-trace-note]').forEach((node)=>node.classList.toggle('is-selected', node.dataset.pitchTraceNote === noteId))
+}
+function applyPitchTraceNoteDrag(event) {
+  if (!pitchTraceNoteDrag) return
+  const region = midiRegions.find((item)=>item.id === pitchTraceNoteDrag.regionId && item.type === 'audio')
+  if (!region) return
+  const dy = event.clientY - pitchTraceNoteDrag.startY
+  if (!pitchTraceNoteDrag.hasMoved && Math.abs(dy) < 3) return
+  const pitchDelta = -Math.round(dy / 14)
+  const nextMidi = clamp(pitchTraceNoteDrag.startEditedMidiNote + pitchDelta, 0, 127)
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const notes = edit.pitchTrace.notes.map((note)=> {
+    if (note.id !== pitchTraceNoteDrag.noteId) return note
+    const edited = {
+      ...note,
+      editedMidiNote: nextMidi,
+      midiNote: nextMidi,
+      noteName: formatMidiNoteName(nextMidi),
+      editedFrequencyHz: midiNoteToFrequency(nextMidi),
+      frequencyHz: midiNoteToFrequency(nextMidi),
+      renderStatus: nextMidi === note.originalMidiNote && !note.muted ? 'idle' : 'needs_render'
+    }
+    return edited
+  })
+  const nextTrace = normalizePitchTrace({
+    ...edit.pitchTrace,
+    notes,
+    renderStatus: getPitchTraceEditedNoteCount({ notes }) ? 'needs_render' : 'idle',
+    renderedRuntimeId: null,
+    renderedStoragePath: null,
+    renderedAudioUrl: null,
+    lastError: null
+  })
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: nextTrace })
+  pitchTraceNoteDrag.hasMoved = true
+  const noteEl = app.querySelector(`[data-pitch-trace-note="${CSS.escape(String(pitchTraceNoteDrag.noteId))}"]`)
+  if (noteEl) {
+    const visibleMidi = clamp(nextMidi, pitchTraceNoteDrag.minNote, pitchTraceNoteDrag.maxNote)
+    const row = pitchTraceNoteDrag.maxNote - visibleMidi
+    noteEl.style.top = `${((row / pitchTraceNoteDrag.rowCount) * 100).toFixed(3)}%`
+    noteEl.classList.toggle('is-edited', nextMidi !== (notes.find((note)=>note.id === pitchTraceNoteDrag.noteId)?.originalMidiNote ?? nextMidi))
+    noteEl.querySelector('b')?.replaceChildren(document.createTextNode(formatMidiNoteName(nextMidi)))
+  }
+}
+function finishPitchTraceNoteDrag() {
+  if (!pitchTraceNoteDrag) return
+  const didMove = pitchTraceNoteDrag.hasMoved
+  const before = pitchTraceNoteDrag.before
+  pitchTraceNoteDrag = null
+  document.body.classList.remove('is-studio-dragging', 'is-pitch-trace-note-dragging')
+  if (didMove) {
+    pushHistory('edit-pitch-trace-note', before, captureDawSnapshot())
+    scheduleEditorSave()
+  }
+  renderEditor()
+}
+function mutatePitchTraceNote(region, noteId, mutator, historyLabel = 'edit-pitch-trace-note') {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const notes = edit.pitchTrace.notes.map((note)=> {
+    if (note.id !== noteId) return note
+    const next = { ...note }
+    mutator?.(next)
+    next.editedMidiNote = clamp(Math.round(Number(next.editedMidiNote ?? next.midiNote ?? next.originalMidiNote) || 60), 0, 127)
+    next.midiNote = next.editedMidiNote
+    next.noteName = formatMidiNoteName(next.editedMidiNote)
+    next.editedFrequencyHz = midiNoteToFrequency(next.editedMidiNote)
+    next.frequencyHz = next.editedFrequencyHz
+    next.renderStatus = next.editedMidiNote === next.originalMidiNote && !next.muted ? 'idle' : 'needs_render'
+    return next
+  })
+  const renderStatus = getPitchTraceEditedNoteCount({ notes }) ? 'needs_render' : 'idle'
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: {
+      ...edit.pitchTrace,
+      notes,
+      renderStatus,
+      renderedRuntimeId: null,
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      lastError: null
+    }
+  })
+  pushHistory(historyLabel, before, captureDawSnapshot())
+  scheduleEditorSave()
   renderEditor()
 }
 function getMidiRollGridPoint(event) {
@@ -4278,6 +4865,7 @@ function bindEditorEvents() {
   app.querySelector('[data-pitch-trace-clear]')?.addEventListener('click', () => {
     const region = getSelectedAudioRegion()
     if (!region) return
+    pitchTraceSelectedNoteId = ''
     setAudioRegionPitchTrace(region, {
       enabled: true,
       status: 'idle',
@@ -4288,6 +4876,33 @@ function bindEditorEvents() {
       notes: []
     }, 'clear-pitch-trace')
   })
+  app.querySelector('[data-audio-render-pitch-shift]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) renderAudioPitchShiftForRegion(region.id)
+  })
+  app.querySelector('[data-pitch-trace-render]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) renderPitchTraceEditsForRegion(region.id)
+  })
+  app.querySelectorAll('[data-pitch-trace-note]').forEach((noteEl)=>noteEl.addEventListener('pointerdown', (event) => {
+    const region = getSelectedAudioRegion()
+    if (region) beginPitchTraceNoteDrag(event, region.id, noteEl.dataset.pitchTraceNote)
+  }))
+  app.querySelectorAll('[data-pitch-trace-note-reset]').forEach((button)=>button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    mutatePitchTraceNote(region, button.dataset.pitchTraceNoteReset, (note) => {
+      note.editedMidiNote = note.originalMidiNote
+      note.muted = false
+    }, 'reset-pitch-trace-note')
+  }))
+  app.querySelectorAll('[data-pitch-trace-note-mute]').forEach((button)=>button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    mutatePitchTraceNote(region, button.dataset.pitchTraceNoteMute, (note) => {
+      note.muted = !note.muted
+    }, 'mute-pitch-trace-note')
+  }))
   app.querySelector('[data-audio-stretch-enabled]')?.addEventListener('change', (event) => {
     const region = getSelectedAudioRegion()
     if (!region) return
@@ -4321,6 +4936,25 @@ function bindEditorEvents() {
   })
   app.querySelector('[data-stretch-prompt-cancel]')?.addEventListener('click', () => {
     stretchPlaybackPrompt = null
+    renderEditor()
+  })
+  app.querySelector('[data-audio-edit-prompt-render]')?.addEventListener('click', () => {
+    const prompt = audioEditPlaybackPrompt
+    audioEditPlaybackPrompt = null
+    if (!prompt?.regionId) return renderEditor()
+    if (prompt.mode === 'trace') renderPitchTraceEditsForRegion(prompt.regionId)
+    else renderAudioPitchShiftForRegion(prompt.regionId)
+  })
+  app.querySelector('[data-audio-edit-prompt-original]')?.addEventListener('click', () => {
+    const regionId = audioEditPlaybackPrompt?.regionId
+    audioEditPlaybackPrompt = null
+    if (regionId) audioEditPlaybackBypassRegionIds.add(regionId)
+    renderEditor()
+    if (isPlaying) updateAudioClipPlayback(clampBeat(xToBeat(timelineState.playheadX)))
+  })
+  app.querySelector('[data-audio-edit-prompt-cancel]')?.addEventListener('click', () => {
+    audioEditPlaybackPrompt = null
+    if (isPlaying) pausePlayback()
     renderEditor()
   })
   app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
@@ -4589,6 +5223,11 @@ function bindEditorEvents() {
       applyMidiNoteDrag(event)
       return
     }
+    if (pitchTraceNoteDrag) {
+      event.preventDefault()
+      applyPitchTraceNoteDrag(event)
+      return
+    }
     if (midiRegionDrag) {
       event.preventDefault()
       applyMidiRegionDrag(event)
@@ -4619,6 +5258,10 @@ function bindEditorEvents() {
     }
     if (midiNoteDrag) {
       finishMidiNoteDrag()
+      return
+    }
+    if (pitchTraceNoteDrag) {
+      finishPitchTraceNoteDrag()
       return
     }
     if (midiRegionDrag) {
@@ -4795,8 +5438,12 @@ function renderEditor() {
   app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
   const audioRenderModal = renderAudioStretchRenderModal()
   if (audioRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioRenderModal)
+  const audioPitchRenderModal = renderAudioPitchRenderModal()
+  if (audioPitchRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioPitchRenderModal)
   const stretchPromptModal = renderStretchPlaybackPrompt()
   if (stretchPromptModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', stretchPromptModal)
+  const audioEditPromptModal = renderAudioEditPlaybackPrompt()
+  if (audioEditPromptModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioEditPromptModal)
   applyStudioGuideTargets()
   setEditorMenuOpen(isEditorMenuOpen)
   bindEditorEvents()
