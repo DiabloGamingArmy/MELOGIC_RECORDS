@@ -16,6 +16,8 @@ import { MIDI_EFFECT_MANIFESTS } from './daw/midiEffects/catalog.js'
 import { AUDIO_EFFECT_MANIFESTS } from './daw/audioEffects/catalog.js'
 import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 import { getStorageAssetUrl } from './firebase/storageAssets.js'
+import { storage as firebaseStorage } from './firebase/storage.js'
+import { ref as storageRef, uploadBytes } from 'firebase/storage'
 import { renderStretchedAudioClip as renderOfflineStretchedAudioClip } from './studio/audio/audioStretchRenderService.js'
 import {
   findFolderByPath,
@@ -201,6 +203,7 @@ let midiRollSelectedNoteIndices = []
 let midiRollStatus = ''
 let midiRollViewport = { regionId: '', scrollLeft: 0, scrollTop: 0 }
 let pendingMidiRollViewport = null
+let audioRegionToolsViewport = { regionId: '', scrollTop: 0 }
 let midiRollBeatWidth = 64
 let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
@@ -284,7 +287,6 @@ const waveformWindowSeconds = 0.1
 const minAudioRegionSeconds = 0.05
 const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
 const AUDIO_FADE_CURVES = ['linear', 'equal-power']
-const AUDIO_FADE_TYPES = ['out', 'in', 'equal-power', 'linear']
 const AUDIO_PITCH_SOURCES = ['off', 'region', 'project-key']
 
 function getTimelineSecondsAtBeat(beat = 0) {
@@ -297,7 +299,6 @@ function normalizeAudioEdit(edit = {}) {
   const quantize = AUDIO_QUANTIZE_OPTIONS.includes(String(edit.quantize || '').toLowerCase()) ? String(edit.quantize).toLowerCase() : 'off'
   const fadeInCurve = AUDIO_FADE_CURVES.includes(edit.fadeInCurve) ? edit.fadeInCurve : 'linear'
   const fadeOutCurve = AUDIO_FADE_CURVES.includes(edit.fadeOutCurve) ? edit.fadeOutCurve : 'linear'
-  const fadeType = AUDIO_FADE_TYPES.includes(edit.fadeType) ? edit.fadeType : 'out'
   const pitchSource = AUDIO_PITCH_SOURCES.includes(edit.pitchSource) ? edit.pitchSource : 'off'
   return {
     mute: edit.mute === true,
@@ -311,14 +312,14 @@ function normalizeAudioEdit(edit = {}) {
     pitchSource,
     flexFollow: edit.flexFollow === 'on' ? 'on' : 'off',
     gainDb: clamp(Number(edit.gainDb) || 0, -24, 24),
-    delayMs: clamp(Number(edit.delayMs) || 0, -2000, 2000),
+    delayMs: clamp(Number(edit.delayMs) || 0, 0, 2000),
     fadeInSeconds: Math.max(0, Number(edit.fadeInSeconds) || 0),
     fadeInCurve,
     fadeOutSeconds: Math.max(0, Number(edit.fadeOutSeconds) || 0),
     fadeOutCurve,
-    fadeType,
     reverse: edit.reverse === true,
-    phaseInvert: edit.phaseInvert === true
+    reverseRenderStatus: ['idle', 'rendering', 'ready', 'failed'].includes(edit.reverseRenderStatus) ? edit.reverseRenderStatus : 'idle',
+    reverseRenderedStoragePath: edit.reverseRenderedStoragePath || null
   }
 }
 function getAudioStretchMath(region = {}, targetDuration = null) {
@@ -335,7 +336,7 @@ function getAudioStretchMath(region = {}, targetDuration = null) {
 }
 function normalizeAudioStretch(stretch = {}) {
   const ratio = Math.max(0.05, Number(stretch.ratio) || 1)
-  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(stretch.renderStatus) ? stretch.renderStatus : (stretch.renderedRuntimeId ? 'ready' : 'idle')
+  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(stretch.renderStatus) ? stretch.renderStatus : (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle')
   const targetDurationSeconds = Number.isFinite(Number(stretch.targetDurationSeconds)) ? Math.max(minAudioRegionSeconds, Number(stretch.targetDurationSeconds)) : null
   const lengthRatio = Number.isFinite(Number(stretch.lengthRatio)) ? Math.max(0.05, Number(stretch.lengthRatio)) : ratio
   const speedPercent = Number.isFinite(Number(stretch.speedPercent)) ? Math.max(0.01, Number(stretch.speedPercent)) : (100 / Math.max(0.05, lengthRatio))
@@ -358,6 +359,76 @@ function normalizeAudioStretch(stretch = {}) {
     renderStatus,
     renderError: stretch.renderError || null
   }
+}
+function sanitizeStorageFilePart(value = '') {
+  return String(value || 'asset').trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'asset'
+}
+function extensionForAudioType(contentType = '') {
+  if (contentType.includes('wav')) return 'wav'
+  if (contentType.includes('ogg')) return 'ogg'
+  if (contentType.includes('mpeg') || contentType.includes('mp3')) return 'mp3'
+  if (contentType.includes('mp4') || contentType.includes('m4a')) return 'm4a'
+  return 'webm'
+}
+function getSouraAudioStoragePath({ clipId, contentType = 'audio/webm', suffix = '' } = {}) {
+  const projectId = sanitizeStorageFilePart(projectState?.id || projectIdFromPath() || 'project')
+  const safeClipId = sanitizeStorageFilePart(clipId || makeInsertId('audio'))
+  const safeSuffix = suffix ? `-${sanitizeStorageFilePart(suffix)}` : ''
+  return `studioProjects/${projectId}/audio/${safeClipId}${safeSuffix}.${extensionForAudioType(contentType)}`
+}
+async function uploadSouraAudioBlob(blob, { clipId, suffix = '' } = {}) {
+  if (!blob?.size) return null
+  if (!firebaseStorage) throw new Error('Firebase Storage is not initialized.')
+  const contentType = blob.type || 'audio/webm'
+  const path = getSouraAudioStoragePath({ clipId, contentType, suffix })
+  await uploadBytes(storageRef(firebaseStorage, path), blob, {
+    contentType,
+    customMetadata: {
+      projectId: String(projectState?.id || ''),
+      clipId: String(clipId || ''),
+      source: 'soura'
+    }
+  })
+  return path
+}
+function parseHexColor(color = '') {
+  const normalized = String(color || '').trim()
+  const match = normalized.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (!match) return null
+  const hex = match[1].length === 3 ? match[1].split('').map((char)=>char + char).join('') : match[1]
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16)
+  }
+}
+function rgbToHsl({ r, g, b }) {
+  const nr = r / 255
+  const ng = g / 255
+  const nb = b / 255
+  const max = Math.max(nr, ng, nb)
+  const min = Math.min(nr, ng, nb)
+  let h = 0
+  let s = 0
+  const l = (max + min) / 2
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    if (max === nr) h = ((ng - nb) / d) + (ng < nb ? 6 : 0)
+    else if (max === ng) h = ((nb - nr) / d) + 2
+    else h = ((nr - ng) / d) + 4
+    h /= 6
+  }
+  return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) }
+}
+function getReadableWaveformColor(color = '#58d4ff') {
+  const rgb = parseHexColor(color)
+  if (!rgb) return color || '#58d4ff'
+  const luminance = (0.2126 * rgb.r) + (0.7152 * rgb.g) + (0.0722 * rgb.b)
+  if (luminance < 14) return '#ffffff'
+  if (luminance >= 72) return `#${[rgb.r, rgb.g, rgb.b].map((value)=>value.toString(16).padStart(2, '0')).join('')}`
+  const hsl = rgbToHsl(rgb)
+  return `hsl(${hsl.h} ${Math.max(72, hsl.s)}% ${Math.max(58, hsl.l)}%)`
 }
 function getAudioFileDurationSeconds(region = {}) {
   return Math.max(minAudioRegionSeconds, Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds || region.durationBeats && beatsToSeconds(region.durationBeats) || 0))
@@ -572,39 +643,40 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const stretchMath = getAudioStretchMath(region)
   const missing = Boolean(region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed')
   const renderStatus = stretch.renderStatus === 'needs_render' ? 'Needs render' : stretch.renderStatus
+  const color = region.color || track?.color || '#58d4ff'
+  const waveformColor = getReadableWaveformColor(color)
   return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${motionClass}" data-audio-region-editor="${esc(region.id)}"${style}>
     <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
     <div class="studio-bottom-panel-body studio-audio-region-editor-body">
       <section class="studio-audio-region-editor-preview">
-        <div class="studio-audio-editor-waveform">${renderAudioWaveform(region)}</div>
+        <div class="studio-audio-editor-waveform" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${renderAudioWaveform(region)}</div>
         <div class="studio-audio-editor-meta">
           <span>Start ${Number(region.startBeat || 0).toFixed(2)} beats</span>
           <span>Length ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span>
           <span>Speed ${Math.round(stretchMath.speedPercent)}%</span>
           <span>${missing ? 'Audio file missing or not loaded' : (region.audioClip?.loadStatus === 'ready' ? 'Audio ready' : 'Session audio')}</span>
         </div>
-        ${missing ? '<p class="studio-audio-editor-warning">Audio file missing or not loaded. Session-only recordings cannot play after refresh until persistent audio upload is implemented.</p>' : ''}
+        ${missing ? `<p class="studio-audio-editor-warning">${esc(region.audioClip?.loadError || 'Audio file missing or not loaded. This region needs a persisted audio file before it can play after refresh.')}</p>` : ''}
       </section>
-      <aside class="studio-midi-roll-tools studio-audio-region-tools">
+      <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
         <h3>${esc(getMidiRegionLabel(region))}</h3>
         <label>Region name<input data-audio-region-name value="${esc(region.name || '')}" placeholder="${esc(track?.name || 'Audio Region')}"></label>
         <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="mute" ${edit.mute ? 'checked' : ''}> Mute</label><label><input type="checkbox" data-audio-edit-field="loop" ${edit.loop ? 'checked' : ''}> Loop</label></div>
-        <label>Quantize<select data-audio-edit-field="quantize">${AUDIO_QUANTIZE_OPTIONS.map((value)=>`<option value="${value}" ${edit.quantize===value?'selected':''}>${value === 'off' ? 'Off' : value}</option>`).join('')}</select></label>
-        <label>Q-Swing<input type="range" min="0" max="100" step="1" data-audio-edit-field="qSwing" value="${edit.qSwing}" ${edit.quantize === 'off' ? 'disabled' : ''}><small>${Math.round(edit.qSwing)}%</small></label>
+        <label>Quantize<select data-audio-edit-field="quantize" disabled>${AUDIO_QUANTIZE_OPTIONS.map((value)=>`<option value="${value}" ${edit.quantize===value?'selected':''}>${value === 'off' ? 'Off' : value}</option>`).join('')}</select><small>Coming soon</small></label>
+        <label>Q-Swing<input type="range" min="0" max="100" step="1" data-audio-edit-field="qSwing" value="${edit.qSwing}" disabled><small>Coming soon</small></label>
         <label>Q-Range<input type="number" step="0.1" data-audio-edit-field="qRange" value="${edit.qRange ?? ''}" placeholder="Coming soon" disabled></label>
-        <label>Q-Strength<input type="range" min="0" max="100" step="1" data-audio-edit-field="qStrength" value="${edit.qStrength}" ${edit.quantize === 'off' ? 'disabled' : ''}><small>${Math.round(edit.qStrength)}%</small></label>
+        <label>Q-Strength<input type="range" min="0" max="100" step="1" data-audio-edit-field="qStrength" value="${edit.qStrength}" disabled><small>Coming soon</small></label>
         <label>Transpose<input type="number" min="-48" max="48" step="1" data-audio-edit-field="transposeSemitones" value="${edit.transposeSemitones}" disabled><small>Coming soon</small></label>
         <label>Fine Tune<input type="number" min="-100" max="100" step="1" data-audio-edit-field="fineTuneCents" value="${edit.fineTuneCents}" disabled><small>Coming soon</small></label>
         <label>Pitch Source<select data-audio-edit-field="pitchSource" disabled><option>Off</option><option>Region</option><option>Project Key</option></select><small>Coming soon</small></label>
         <label>Flex &amp; Follow<select data-audio-edit-field="flexFollow" disabled><option>Off</option><option>On</option></select><small>Coming soon</small></label>
         <label>Gain<input type="range" min="-24" max="24" step="0.5" data-audio-edit-field="gainDb" value="${edit.gainDb}"><small>${edit.gainDb.toFixed(1)} dB</small></label>
-        <label>Delay<input type="number" step="1" data-audio-edit-field="delayMs" value="${edit.delayMs}"><small>ms</small></label>
+        <label>Delay<input type="number" min="0" max="2000" step="1" data-audio-edit-field="delayMs" value="${edit.delayMs}"><small>ms</small></label>
         <label>Fade-In<input type="number" min="0" step="0.01" data-audio-edit-field="fadeInSeconds" value="${edit.fadeInSeconds}"><small>seconds</small></label>
         <label>Fade-In Curve<select data-audio-edit-field="fadeInCurve">${AUDIO_FADE_CURVES.map((value)=>`<option value="${value}" ${edit.fadeInCurve===value?'selected':''}>${value}</option>`).join('')}</select></label>
         <label>Fade-Out<input type="number" min="0" step="0.01" data-audio-edit-field="fadeOutSeconds" value="${edit.fadeOutSeconds}"><small>seconds</small></label>
         <label>Fade-Out Curve<select data-audio-edit-field="fadeOutCurve">${AUDIO_FADE_CURVES.map((value)=>`<option value="${value}" ${edit.fadeOutCurve===value?'selected':''}>${value}</option>`).join('')}</select></label>
-        <label>Type<select data-audio-edit-field="fadeType">${AUDIO_FADE_TYPES.map((value)=>`<option value="${value}" ${edit.fadeType===value?'selected':''}>${value}</option>`).join('')}</select></label>
         <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="reverse" ${edit.reverse ? 'checked' : ''} disabled> Reverse <small>Coming soon</small></label></div>
         <hr>
         <div class="studio-audio-stretch-controls">
@@ -949,13 +1021,14 @@ function renderAudioRegion(region, isRecording = false) {
   const trackIndex = Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))
   const startBeat = Number(region.startBeat) || 0
   const endBeat = Math.max(startBeat + 0.15, Number(region.endBeat) || startBeat + Math.max(0.25, Number(region.durationBeats) || 0.25))
-  const left = beatsFromBarZeroToX(startBeat)
-  const width = Math.max(18, (endBeat - startBeat) * beatWidth())
+  const left = isRecording && Number.isFinite(Number(region.recordingStartPixelX)) ? Number(region.recordingStartPixelX) : beatsFromBarZeroToX(startBeat)
+  const width = Math.max(isRecording ? 1 : 18, (endBeat - startBeat) * beatWidth())
   const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
   const top = trackIndex * timelineState.trackHeight + inset
   const height = Math.max(28, timelineState.trackHeight - (inset * 2))
   const track = tracks[trackIndex] || getSelectedTrack()
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
+  const waveformColor = getReadableWaveformColor(color)
   const selected = !isRecording && selectedMidiRegionId === region.id
   const missing = Boolean(region.audioClip?.missingAfterReload || region.missingMedia) && !audioClipRuntime.has(region.audioClip?.runtimeId || region.id)
   const stretch = normalizeAudioStretch(region.stretch)
@@ -963,7 +1036,7 @@ function renderAudioRegion(region, isRecording = false) {
   const stretchStatus = stretch.renderStatus === 'rendering' ? 'Rendering' : stretch.renderStatus === 'failed' ? 'Render failed' : (stretch.renderStatus === 'ready' ? 'Rendered' : 'Stretch')
   const stretchMath = getAudioStretchMath(region)
   const stretchLabel = stretching || stretch.enabled ? `<b class="studio-audio-stretch-label">${stretching ? 'Time Stretch' : stretchStatus} ${Math.round(stretchMath.speedPercent)}% speed</b>` : ''
-  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${color};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${stretchLabel}${missing ? '<em>Session audio offline</em>' : ''}</article>`
+  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${stretchLabel}${missing ? '<em>Session audio offline</em>' : ''}</article>`
 }
 function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=app.querySelector(`[data-track-volume="${track.id}"]`); if(!input) return; input.value=String(track.volume); input.setAttribute('value', String(track.volume)) }
 function getInstrumentKnobDescriptors(){
@@ -1559,6 +1632,7 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
     delete copy.blob
     delete copy.url
     delete copy.audioBuffer
+    delete copy.recordingStartPixelX
     if (persist) copy.missingMedia = !(copy.audioClip.storagePath || copy.audioClip.downloadUrl)
   }
   return copy
@@ -1697,19 +1771,67 @@ function applyLoadedEditorState(editorState) {
 }
 function scheduleEditorSave(){ if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } renderEditor() },800) }
 
+async function hydrateRenderedAudioRegionRuntime(region) {
+  if (!region?.id || region.type !== 'audio') return false
+  const stretch = normalizeAudioStretch(region.stretch)
+  if (!stretch.enabled || !(stretch.renderedStoragePath || stretch.renderedAudioUrl)) return false
+  const runtimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
+  if (audioClipRuntime.has(runtimeId)) {
+    region.stretch = { ...stretch, renderedRuntimeId: runtimeId, renderStatus: 'ready', renderedSessionOnly: false, renderError: null }
+    return true
+  }
+  const downloadUrl = stretch.renderedAudioUrl || await getStorageAssetUrl(stretch.renderedStoragePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-rendered-audio', warnOnFail: true })
+  if (!downloadUrl) return false
+  try {
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`Rendered audio fetch failed (${response.status})`)
+    const arrayBuffer = await response.arrayBuffer()
+    const ctx = getAudioContext()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
+    const renderedDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
+    audioClipRuntime.set(runtimeId, {
+      blob: null,
+      url: downloadUrl,
+      audioBuffer,
+      contentType: 'audio/*',
+      fileDurationSeconds: renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: false
+    })
+    region.renderedWaveform = waveform
+    region.stretch = {
+      ...stretch,
+      renderedRuntimeId: runtimeId,
+      renderedAudioUrl: stretch.renderedAudioUrl || downloadUrl,
+      renderedDurationSeconds,
+      renderedSessionOnly: false,
+      renderStatus: 'ready',
+      renderError: null
+    }
+    return true
+  } catch (err) {
+    console.warn('[studioProject] rendered audio hydrate failed', { regionId: region.id, message: err?.message })
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Rendered audio file missing or not loaded.' }
+    return false
+  }
+}
 async function hydrateAudioRegionRuntime(region) {
   if (!region?.id || region.type !== 'audio') return false
   const audioClip = region.audioClip || {}
   if (audioClipRuntime.has(audioClip.runtimeId || region.id)) {
     region.audioClip = { ...audioClip, audioReady: true, loadStatus: 'ready', loadError: null }
     region.missingMedia = false
+    await hydrateRenderedAudioRegionRuntime(region)
     return true
   }
   const downloadUrl = audioClip.downloadUrl || (audioClip.storagePath ? await getStorageAssetUrl(audioClip.storagePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-audio', warnOnFail: true }) : '')
   if (!downloadUrl) {
-    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: 'Audio file missing or not loaded.' }
-    region.missingMedia = true
-    return false
+    const renderedReady = await hydrateRenderedAudioRegionRuntime(region)
+    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: renderedReady ? 'Original audio file missing; persisted stretch render is available.' : 'Audio file missing or not loaded.' }
+    region.missingMedia = !renderedReady
+    return renderedReady
   }
   region.audioClip = { ...audioClip, loadStatus: 'loading', loadError: null }
   try {
@@ -1743,6 +1865,7 @@ async function hydrateAudioRegionRuntime(region) {
       fileDurationSeconds,
       waveform
     })
+    await hydrateRenderedAudioRegionRuntime(region)
     return true
   } catch (err) {
     console.warn('[studioProject] audio asset hydrate failed', { regionId: region.id, message: err?.message })
@@ -1752,7 +1875,7 @@ async function hydrateAudioRegionRuntime(region) {
   }
 }
 async function hydrateProjectAudioAssets() {
-  const regions = midiRegions.filter((region)=>region.type === 'audio' && (region.audioClip?.storagePath || region.audioClip?.downloadUrl))
+  const regions = midiRegions.filter((region)=>region.type === 'audio' && (region.audioClip?.storagePath || region.audioClip?.downloadUrl || region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl))
   if (!regions.length) return
   recordingStatus = 'Preparing audio...'
   updateEditorTitleStatus()
@@ -2100,6 +2223,22 @@ function restoreMidiRollViewport() {
   scroll.scrollLeft = midiRollViewport.scrollLeft || 0
   scroll.scrollTop = midiRollViewport.scrollTop || 0
 }
+function captureAudioRegionToolsViewport() {
+  const scroll = app.querySelector('[data-region-editor-scroll]')
+  const region = getSelectedAudioRegion()
+  if (!scroll || !region) return audioRegionToolsViewport
+  audioRegionToolsViewport = {
+    regionId: region.id,
+    scrollTop: scroll.scrollTop || 0
+  }
+  return audioRegionToolsViewport
+}
+function restoreAudioRegionToolsViewport(viewport = audioRegionToolsViewport) {
+  const scroll = app.querySelector('[data-region-editor-scroll]')
+  const region = getSelectedAudioRegion()
+  if (!scroll || !region || viewport?.regionId !== region.id) return
+  scroll.scrollTop = viewport.scrollTop || 0
+}
 
 function studioResonaContext() {
   const track = getSelectedTrack()
@@ -2189,7 +2328,7 @@ async function prepareProjectPlayback() {
   const ctx = getAudioContext()
   if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
   tracks.filter(isSoftwareTrack).forEach((track)=>ensureTrackInstrumentInstance(track))
-  const pendingAudio = midiRegions.filter((region)=>region.type === 'audio' && (region.audioClip?.loadStatus === 'pending' || region.audioClip?.loadStatus === 'failed') && (region.audioClip?.storagePath || region.audioClip?.downloadUrl))
+  const pendingAudio = midiRegions.filter((region)=>region.type === 'audio' && (region.audioClip?.loadStatus === 'pending' || region.audioClip?.loadStatus === 'failed' || region.stretch?.renderStatus === 'needs_render') && (region.audioClip?.storagePath || region.audioClip?.downloadUrl || region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl))
   if (pendingAudio.length) await Promise.allSettled(pendingAudio.map((region)=>hydrateAudioRegionRuntime(region)))
 }
 async function startPlayback() { if (isPlaying || audioStretchRenderState.active) return; const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null; if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start); recordingStatus = 'Preparing audio...'; updateEditorTitleStatus(); await prepareProjectPlayback(); recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus; prewarmDawAudio().then((engine) => { engine.setBpm(Number(projectState?.bpm || 140)); engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX)); engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) }) }).catch((err)=>console.warn('[studioProject] audio engine start failed', err)); isPlaying = true; lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX)); lastPlayTimestamp = performance.now(); startTrackMeterLoop(); updateAudioClipPlayback(lastPlaybackBeat); playRaf = requestAnimationFrame(tickPlayback); updateTransportPlaybackUI(); updateEditorTitleStatus() }
@@ -2420,6 +2559,22 @@ function stopAudioClipPlayback(regionId = '') {
 function dbToGain(db = 0) {
   return 10 ** ((Number(db) || 0) / 20)
 }
+function fadeGainValue(progress = 0, curve = 'linear', direction = 'in') {
+  const t = clamp(progress, 0, 1)
+  if (curve === 'equal-power') {
+    return direction === 'out' ? Math.cos(t * Math.PI / 2) : Math.sin(t * Math.PI / 2)
+  }
+  return direction === 'out' ? 1 - t : t
+}
+function makeFadeGainCurve({ baseGain, fromProgress = 0, toProgress = 1, curve = 'linear', direction = 'in', steps = 64 } = {}) {
+  const values = new Float32Array(steps)
+  for (let index = 0; index < steps; index += 1) {
+    const amount = steps <= 1 ? 1 : index / (steps - 1)
+    const progress = fromProgress + ((toProgress - fromProgress) * amount)
+    values[index] = Math.max(0.0001, baseGain * fadeGainValue(progress, curve, direction))
+  }
+  return values
+}
 function stopAllAudioClipPlayback() {
   Array.from(activeAudioClipSources.keys()).forEach((regionId)=>stopAudioClipPlayback(regionId))
 }
@@ -2480,6 +2635,17 @@ async function renderAudioStretchForRegion(regionId) {
     })
     const renderedWaveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
     const renderedRuntimeId = `${region.id}:stretch:${Math.round(stretch.ratio * 1000)}:${result.createdAt}`
+    let renderedStoragePath = null
+    let renderedSessionOnly = true
+    try {
+      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
+        clipId: region.id,
+        suffix: `stretch-${Math.round(stretch.ratio * 1000)}`
+      })
+      renderedSessionOnly = !renderedStoragePath
+    } catch (uploadErr) {
+      console.warn('[studioProject] rendered stretch upload failed; using session render only', uploadErr)
+    }
     audioClipRuntime.set(renderedRuntimeId, {
       blob: result.renderedBlob,
       url: result.renderedObjectUrl,
@@ -2488,7 +2654,7 @@ async function renderAudioStretchForRegion(regionId) {
       fileDurationSeconds: result.renderedDurationSeconds,
       waveform: renderedWaveform,
       sourceRuntimeId: region.audioClip?.runtimeId || region.id,
-      sessionOnly: true
+      sessionOnly: renderedSessionOnly
     })
     region.visibleDurationSeconds = Math.max(minAudioRegionSeconds, result.renderedDurationSeconds)
     region.durationSeconds = region.visibleDurationSeconds
@@ -2505,11 +2671,11 @@ async function renderAudioStretchForRegion(regionId) {
       targetDurationSeconds: stretchMath.targetDurationSeconds,
       renderedObjectUrl: null,
       renderedAudioUrl: null,
-      renderedStoragePath: null,
+      renderedStoragePath,
       renderedRuntimeId,
       renderedDurationSeconds: result.renderedDurationSeconds,
       renderedAt: result.createdAt,
-      renderedSessionOnly: true,
+      renderedSessionOnly,
       renderStatus: 'ready',
       renderError: null
     }
@@ -2518,7 +2684,8 @@ async function renderAudioStretchForRegion(regionId) {
       algorithm: result.algorithm,
       preservesPitch: result.preservesPitch,
       renderedRuntimeId,
-      sessionOnly: true
+      renderedStoragePath,
+      sessionOnly: renderedSessionOnly
     }
     syncAudioRegionTimeline(region)
     recordingStatus = 'Audio stretch rendered.'
@@ -2623,19 +2790,42 @@ function updateAudioClipPlayback(currentBeat) {
       const offsetSeconds = Math.min(runtime.audioBuffer.duration - 0.01, sourceOffsetSeconds)
       const remainingBufferSeconds = Math.max(0.01, trimEndSeconds - offsetSeconds)
       const playDuration = Math.max(0.01, Math.min(remainingBufferSeconds, remainingVisibleSeconds * playbackRate))
-      const fadeIn = Math.min(Math.max(0, edit.fadeInSeconds), playDuration)
-      const fadeOut = Math.min(Math.max(0, edit.fadeOutSeconds), playDuration)
+      let fadeIn = Math.min(Math.max(0, edit.fadeInSeconds), playDuration)
+      let fadeOut = Math.min(Math.max(0, edit.fadeOutSeconds), playDuration)
+      if (fadeIn + fadeOut > playDuration) {
+        const scale = playDuration / Math.max(0.01, fadeIn + fadeOut)
+        fadeIn *= scale
+        fadeOut *= scale
+      }
       if (fadeIn > 0 && elapsedVisibleSeconds < fadeIn) {
         const fadeProgress = clamp(elapsedVisibleSeconds / fadeIn, 0, 1)
-        gainNode.gain.setValueAtTime(baseGain * fadeProgress, ctx.currentTime)
-        gainNode.gain.linearRampToValueAtTime(baseGain, ctx.currentTime + Math.max(0.01, fadeIn * (1 - fadeProgress)))
+        gainNode.gain.setValueAtTime(Math.max(0.0001, baseGain * fadeGainValue(fadeProgress, edit.fadeInCurve, 'in')), ctx.currentTime)
+        gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
+          baseGain,
+          fromProgress: fadeProgress,
+          toProgress: 1,
+          curve: edit.fadeInCurve,
+          direction: 'in'
+        }), ctx.currentTime, Math.max(0.01, fadeIn * (1 - fadeProgress)))
       }
       if (fadeOut > 0 && remainingVisibleSeconds <= fadeOut) {
-        gainNode.gain.setValueAtTime(gainNode.gain.value || baseGain, ctx.currentTime)
-        gainNode.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + Math.max(0.01, remainingVisibleSeconds))
+        const fadeProgress = clamp((fadeOut - remainingVisibleSeconds) / fadeOut, 0, 1)
+        gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
+          baseGain,
+          fromProgress: fadeProgress,
+          toProgress: 1,
+          curve: edit.fadeOutCurve,
+          direction: 'out'
+        }), ctx.currentTime, Math.max(0.01, remainingVisibleSeconds))
       } else if (fadeOut > 0 && playDuration > fadeOut) {
         gainNode.gain.setValueAtTime(baseGain, ctx.currentTime + Math.max(0.01, playDuration - fadeOut))
-        gainNode.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + playDuration)
+        gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
+          baseGain,
+          fromProgress: 0,
+          toProgress: 1,
+          curve: edit.fadeOutCurve,
+          direction: 'out'
+        }), ctx.currentTime + Math.max(0.01, playDuration - fadeOut), Math.max(0.01, fadeOut))
       }
       source.connect(gainNode)
       gainNode.connect(channel.input)
@@ -2812,6 +3002,7 @@ async function beginAudioRecording(track, { startBeat = null } = {}) {
       name: track?.autoNameRegions === false ? '' : `${track.name} Take`,
       startBeat: recordStartBeat,
       endBeat: recordStartBeat,
+      recordingStartPixelX: beatsFromBarZeroToX(recordStartBeat),
       timelineStartBeats: recordStartBeat,
       timelineStartSeconds: recordStartSeconds,
       transportBpm: Number(projectState?.bpm || 140),
@@ -2829,6 +3020,7 @@ async function beginAudioRecording(track, { startBeat = null } = {}) {
       trimEndSeconds: null,
       visibleDurationSeconds: 0,
       playbackRate: 1,
+      audioEdit: normalizeAudioEdit(),
       stretch: { enabled: false, ratio: 1, mode: 'none', algorithm: 'none', preservesPitch: false, renderedAudioUrl: null, renderedStoragePath: null },
       color: '#ff2d55',
       waveform: { peaks: [], chunks: [], sampleWindowSeconds: waveformWindowSeconds, sampleWindowMs: waveformWindowSeconds * 1000, renderStyle: 'low-poly', durationSeconds: 0, resolution: 'live' },
@@ -2918,13 +3110,31 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
     return
   }
   const blob = new Blob(chunks, { type: recording.audioClip?.contentType || chunks[0]?.type || 'audio/webm' })
+  let storagePath = null
+  let uploadError = ''
+  try {
+    storagePath = await uploadSouraAudioBlob(blob, { clipId: recording.id })
+  } catch (err) {
+    uploadError = err?.message || 'Audio upload failed.'
+    console.warn('[studioProject] audio recording upload failed; clip remains session-only', err)
+  }
   const track = tracks.find((item)=>item.id === recording.trackId)
   const region = cloneRegionForState({
     ...recording,
     color: track?.color || recording.color,
     name: track?.autoNameRegions === false ? '' : (recording.name || `${track?.name || 'Audio'} Take`),
     endBeat: Math.max(recording.startBeat + 0.25, recording.endBeat || clampBeat(xToBeat(timelineState.playheadX))),
-    audioClip: { ...(recording.audioClip || {}), runtimeId: recording.id, contentType: blob.type || 'audio/webm', sessionOnly: true, missingAfterReload: true },
+    audioClip: {
+      ...(recording.audioClip || {}),
+      runtimeId: recording.id,
+      contentType: blob.type || 'audio/webm',
+      storagePath,
+      sessionOnly: !storagePath,
+      missingAfterReload: !storagePath,
+      uploadError: uploadError || null,
+      loadStatus: 'ready',
+      audioReady: true
+    },
     missingMedia: false
   })
   try {
@@ -2940,7 +3150,18 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
     region.durationBeats = Math.max(0.25, secondsToBeats(fileDurationSeconds))
     region.endBeat = region.startBeat + region.durationBeats
     region.waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
-    region.audioClip = { ...(region.audioClip || {}), fileDurationSeconds, runtimeId: region.id, contentType: blob.type || 'audio/webm', sessionOnly: true, missingAfterReload: true }
+    region.audioClip = {
+      ...(region.audioClip || {}),
+      fileDurationSeconds,
+      runtimeId: region.id,
+      contentType: blob.type || 'audio/webm',
+      storagePath,
+      sessionOnly: !storagePath,
+      missingAfterReload: !storagePath,
+      audioReady: true,
+      loadStatus: 'ready',
+      loadError: uploadError || null
+    }
     region.playbackRate = 1
     region.stretch = normalizeAudioStretch(region.stretch)
     const url = URL.createObjectURL(blob)
@@ -2952,7 +3173,7 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
   region.missingMedia = false
   midiRegions.push(region)
   selectedMidiRegionId = region.id
-  recordingStatus = ''
+  recordingStatus = uploadError ? 'Audio recorded for this session, but upload failed. It may not play after refresh.' : ''
   pushHistory('record-audio-region', before, captureDawSnapshot())
   scheduleEditorSave()
   renderEditor()
@@ -3194,8 +3415,8 @@ function updateAudioRegionEditField(region, key, rawValue) {
   if (key === 'mute' || key === 'loop') edit[key] = rawValue === true
   else if (['qSwing','qStrength','transposeSemitones','fineTuneCents','gainDb','delayMs','fadeInSeconds','fadeOutSeconds'].includes(key)) edit[key] = Number(rawValue) || 0
   else if (key === 'qRange') edit[key] = rawValue === '' ? null : Number(rawValue)
-  else if (['quantize','pitchSource','flexFollow','fadeInCurve','fadeOutCurve','fadeType'].includes(key)) edit[key] = String(rawValue || '')
-  else if (key === 'reverse' || key === 'phaseInvert') edit[key] = rawValue === true
+  else if (['quantize','pitchSource','flexFollow','fadeInCurve','fadeOutCurve'].includes(key)) edit[key] = String(rawValue || '')
+  else if (key === 'reverse') edit[key] = rawValue === true
   region.audioEdit = normalizeAudioEdit(edit)
   pushHistory('edit-audio-region', before, captureDawSnapshot())
   scheduleEditorSave()
@@ -3579,6 +3800,7 @@ function bindEditorEvents() {
   const grid = app.querySelector('[data-arrangement-grid]')
   const selectionBox = app.querySelector('[data-selection-box]')
   const tooltip = app.querySelector('[data-studio-tooltip]')
+  app.querySelector('[data-region-editor-scroll]')?.addEventListener('scroll', () => captureAudioRegionToolsViewport(), { passive: true })
   trigger?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); setEditorMenuOpen(!isEditorMenuOpen) })
   app.querySelector('[data-toggle-controls-menu]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); isControlsMenuOpen = !isControlsMenuOpen; renderEditor() })
   app.querySelector('[data-musical-typing-toggle]')?.addEventListener('change', (event) => { setMusicalTypingEnabled(event.target.checked); renderEditor() })
@@ -4171,6 +4393,7 @@ function renderEditor() {
   } else {
     captureMidiRollViewport()
   }
+  const pendingAudioRegionToolsViewport = captureAudioRegionToolsViewport()
   const project = projectState
   if (studioAudioEngine) studioAudioEngine.setBpm(Number(project?.bpm || 140))
   document.body.classList.add('is-studio-editor')
@@ -4188,6 +4411,7 @@ function renderEditor() {
   bindEditorEvents()
   dawWindowManager.bind(app)
   restoreMidiRollViewport()
+  restoreAudioRegionToolsViewport(pendingAudioRegionToolsViewport)
   mountStudioResonaPanel()
   applyStudioGuideTargets()
   updateTransportPlaybackUI()
