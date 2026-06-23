@@ -6,8 +6,9 @@ export class StudioAudioEngine {
     this.audioContext = null
     this.workletNode = null
     this.isWorkletLoaded = false
-    // Vite resolves this URL for both dev and production builds, including hashed asset output.
-    this.workletModuleUrl = new URL('./worklets/melogic-audio-processor.js', import.meta.url)
+    // Keep the AudioWorklet same-origin and CSP-safe. Vite can inline small `new URL()`
+    // assets as data: URLs, which breaks stricter CSP policies for worklets.
+    this.workletModuleUrl = '/worklets/melogic-audio-processor.js'
     this.state = {
       isReady: false,
       isRunning: false,
@@ -38,6 +39,7 @@ export class StudioAudioEngine {
 
   async loadWorklet() {
     if (!this.audioContext || this.isWorkletLoaded) return
+    console.info('[worklet] loading from', this.workletModuleUrl)
     await this.audioContext.audioWorklet.addModule(this.workletModuleUrl)
     this.workletNode = new AudioWorkletNode(this.audioContext, 'melogic-audio-processor', {
       numberOfInputs: 0,
