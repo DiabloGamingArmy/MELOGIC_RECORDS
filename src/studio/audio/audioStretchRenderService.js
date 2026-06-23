@@ -183,8 +183,9 @@ export async function renderStretchedAudioClip({
 } = {}) {
   if (!originalAudioBuffer?.length) throw new Error('Missing original audio buffer')
 
+  const startedAt = globalThis.performance?.now?.() || Date.now()
   const source = copyAudioRange(originalAudioBuffer, sourceStartSeconds, sourceDurationSeconds, sampleRate)
-  const ratio = clamp(Number(stretchRatio) || (targetDurationSeconds ? targetDurationSeconds / source.duration : 1), 0.05, 32)
+  const ratio = clamp(Number(stretchRatio) || (targetDurationSeconds ? targetDurationSeconds / source.duration : 1), 0.25, 4)
   const inputLength = Math.max(1, source.length || 1)
   const renderSampleRate = Math.max(1, Number(sampleRate) || originalAudioBuffer.sampleRate || 44100)
   const outputLength = Math.max(1, Math.round((Number(targetDurationSeconds) > 0 ? Number(targetDurationSeconds) : source.duration * ratio) * renderSampleRate))
@@ -201,10 +202,31 @@ export async function renderStretchedAudioClip({
     renderedBlob,
     renderedObjectUrl,
     renderedDurationSeconds: outputBuffer.duration,
-    algorithm: preservesPitchPreferred ? 'wsola_phase_vocoder_v1' : 'wsola_phase_vocoder_resample_stage_v1',
-    quality: 'high',
+    algorithm: preservesPitchPreferred ? 'wsola_overlap_add_mvp_v1' : 'resample_mvp_v1',
+    quality: 'mvp',
     preservesPitch: Boolean(preservesPitchPreferred),
-    renderTimeMs: 0,
+    renderTimeMs: Math.max(0, Math.round((globalThis.performance?.now?.() || Date.now()) - startedAt)),
     createdAt: Date.now()
   }
+}
+
+export async function renderTimeStretch({
+  sourceBuffer,
+  sourceStartSeconds = 0,
+  sourceDurationSeconds = null,
+  targetDurationSeconds = null,
+  sampleRate = sourceBuffer?.sampleRate || 44100,
+  quality = 'mvp',
+  onProgress = null
+} = {}) {
+  return renderStretchedAudioClip({
+    originalAudioBuffer: sourceBuffer,
+    stretchRatio: targetDurationSeconds && sourceDurationSeconds ? targetDurationSeconds / sourceDurationSeconds : 1,
+    sourceStartSeconds,
+    sourceDurationSeconds,
+    targetDurationSeconds,
+    sampleRate,
+    preservesPitchPreferred: quality !== 'resample',
+    onProgress
+  })
 }

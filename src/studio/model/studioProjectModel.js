@@ -2,6 +2,10 @@ const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d)
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 const pitchTraceVersion = 'pitch-trace-v1'
 const pitchRenderStatuses = ['idle', 'rendering', 'ready', 'failed', 'needs_render']
+const stretchSpeedMin = 25
+const stretchSpeedMax = 400
+const stretchRatioMin = 100 / stretchSpeedMax
+const stretchRatioMax = 100 / stretchSpeedMin
 const noteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
 
 function midiToName(midi = 60) {
@@ -145,16 +149,81 @@ function normalizeReverseEdit(reverse = {}, legacyStatus = 'idle', legacyStorage
   }
 }
 
+function normalizeStretchEdit(region = {}, sourceDurationSeconds = 0, visibleDurationSeconds = 0) {
+  const source = region.stretch && typeof region.stretch === 'object' ? region.stretch : {}
+  const statusValue = source.renderStatus === 'none' ? 'idle' : source.renderStatus
+  const renderStatus = pitchRenderStatuses.includes(statusValue) ? statusValue : (source.renderedStoragePath || source.renderedAudioUrl ? 'ready' : 'idle')
+  const enabled = source.enabled === true
+  const knownGood = renderStatus === 'ready' && !!(source.renderedStoragePath || source.renderedAudioUrl || source.renderedRuntimeId)
+  const safeSourceDuration = Math.max(0.0001, num(source.sourceDurationSeconds, sourceDurationSeconds || visibleDurationSeconds || 0.0001))
+  const rawTarget = source.targetDurationSeconds == null ? null : num(source.targetDurationSeconds, 0)
+  const rawRatio = source.lengthRatio == null && source.ratio == null ? null : num(source.lengthRatio ?? source.ratio, 0)
+  const rawSpeed = source.speedPercent == null ? null : num(source.speedPercent, 0)
+  const targetFromRatio = rawRatio > 0 ? safeSourceDuration * rawRatio : null
+  const targetFromSpeed = rawSpeed > 0 ? safeSourceDuration / (rawSpeed / 100) : null
+  const safeTargetDuration = Math.max(0.0001, rawTarget > 0 ? rawTarget : (enabled ? (targetFromRatio || targetFromSpeed || visibleDurationSeconds || safeSourceDuration) : safeSourceDuration))
+  const lengthRatio = safeTargetDuration / safeSourceDuration
+  const speedPercent = (safeSourceDuration / safeTargetDuration) * 100
+  const outOfRange = speedPercent < stretchSpeedMin || speedPercent > stretchSpeedMax || lengthRatio < stretchRatioMin || lengthRatio > stretchRatioMax
+  const suspiciousTinyTarget = enabled && safeTargetDuration <= Math.max(0.055, safeSourceDuration * 0.08) && safeSourceDuration > safeTargetDuration * 4 && !knownGood
+  const invalid = !Number.isFinite(lengthRatio) || !Number.isFinite(speedPercent) || lengthRatio <= 0 || speedPercent <= 0 || suspiciousTinyTarget || outOfRange
+  if (!enabled || (invalid && !knownGood)) {
+    const resetDuration = Math.max(0.0001, sourceDurationSeconds || visibleDurationSeconds || safeSourceDuration)
+    return {
+      enabled: false,
+      sourceDurationSeconds: resetDuration,
+      targetDurationSeconds: resetDuration,
+      ratio: 1,
+      lengthRatio: 1,
+      speedPercent: 100,
+      mode: 'none',
+      algorithm: null,
+      preservesPitch: false,
+      renderedObjectUrl: null,
+      renderedAudioUrl: null,
+      renderedStoragePath: null,
+      renderedRuntimeId: null,
+      renderedDurationSeconds: null,
+      renderedAt: null,
+      renderedSessionOnly: false,
+      renderStatus: 'idle',
+      lastError: null,
+      renderError: null,
+      updatedAt: source.updatedAt == null ? null : num(source.updatedAt, 0)
+    }
+  }
+  return {
+    enabled: true,
+    sourceDurationSeconds: safeSourceDuration,
+    targetDurationSeconds: safeTargetDuration,
+    ratio: lengthRatio,
+    lengthRatio,
+    speedPercent,
+    mode: String(source.mode || 'offline_render'),
+    algorithm: String(source.algorithm || 'wsola_phase_vocoder_v1'),
+    preservesPitch: source.preservesPitch !== false,
+    renderedObjectUrl: null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedStoragePath: source.renderedStoragePath || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: source.renderedDurationSeconds == null ? null : Math.max(0, num(source.renderedDurationSeconds, 0)),
+    renderedAt: source.renderedAt == null ? null : num(source.renderedAt, 0),
+    renderedSessionOnly: source.renderedSessionOnly === true,
+    renderStatus,
+    lastError: source.lastError || source.renderError || (outOfRange ? `Stretch speed must be between ${stretchSpeedMin}% and ${stretchSpeedMax}%.` : null),
+    renderError: source.renderError || source.lastError || (outOfRange ? `Stretch speed must be between ${stretchSpeedMin}% and ${stretchSpeedMax}%.` : null),
+    updatedAt: source.updatedAt == null ? null : num(source.updatedAt, 0)
+  }
+}
+
 export function normalizeRegion(region = {}) {
   const type = region.type === 'audio' ? 'audio' : 'midi'
   const fileDurationSeconds = Math.max(0, num(region.fileDurationSeconds ?? region.audioClip?.fileDurationSeconds ?? region.durationSeconds, 0))
   const trimStartSeconds = clamp(num(region.trimStartSeconds, 0), 0, Math.max(0, fileDurationSeconds))
   const trimEndSeconds = region.trimEndSeconds == null ? null : clamp(num(region.trimEndSeconds, fileDurationSeconds), trimStartSeconds, Math.max(trimStartSeconds, fileDurationSeconds))
-  const rawStretchRatio = num(region.stretch?.lengthRatio ?? region.stretch?.ratio, 1)
-  const corruptTinyStretch = region.stretch?.enabled && rawStretchRatio <= 0.05 && region.stretch?.renderStatus !== 'ready' && !(region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl)
-  const stretchRatio = clamp(corruptTinyStretch ? 1 : rawStretchRatio, 0.01, 32)
-  const lengthRatio = stretchRatio
-  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render', 'none'].includes(region.stretch?.renderStatus) ? (region.stretch.renderStatus === 'none' ? 'idle' : region.stretch.renderStatus) : 'idle'
+  const visibleDurationSeconds = Math.max(0, num(region.visibleDurationSeconds, region.durationSeconds || 0))
+  const sourceDurationSeconds = Math.max(0.0001, (trimEndSeconds == null ? fileDurationSeconds : trimEndSeconds) - trimStartSeconds)
+  const stretch = normalizeStretchEdit(region, sourceDurationSeconds, visibleDurationSeconds)
   return {
     id: String(region.id || makeId('region')),
     trackId: String(region.trackId || 'demo-track'),
@@ -176,27 +245,9 @@ export function normalizeRegion(region = {}) {
     offsetSeconds: Math.max(0, num(region.offsetSeconds, 0)),
     trimStartSeconds,
     trimEndSeconds,
-    visibleDurationSeconds: Math.max(0, num(region.visibleDurationSeconds, region.durationSeconds || 0)),
+    visibleDurationSeconds,
     playbackRate: Math.max(0.05, num(region.playbackRate, 1)),
-    stretch: {
-      enabled: !!region.stretch?.enabled && !corruptTinyStretch,
-      ratio: stretchRatio,
-      lengthRatio,
-      speedPercent: 100 / Math.max(0.001, lengthRatio),
-      targetDurationSeconds: region.stretch?.targetDurationSeconds == null ? null : Math.max(0.0001, num(region.stretch.targetDurationSeconds, 0)),
-      mode: String(region.stretch?.mode || 'none'),
-      algorithm: String(region.stretch?.algorithm || (region.stretch?.enabled ? 'wsola_phase_vocoder_v1' : 'none')),
-      preservesPitch: !!region.stretch?.preservesPitch,
-      renderedObjectUrl: null,
-      renderedAudioUrl: region.stretch?.renderedAudioUrl || null,
-      renderedStoragePath: region.stretch?.renderedStoragePath || null,
-      renderedRuntimeId: region.stretch?.renderedRuntimeId || null,
-      renderedDurationSeconds: region.stretch?.renderedDurationSeconds == null ? null : Math.max(0, num(region.stretch.renderedDurationSeconds, 0)),
-      renderedAt: region.stretch?.renderedAt == null ? null : num(region.stretch.renderedAt, 0),
-      renderedSessionOnly: region.stretch?.renderedSessionOnly === true,
-      renderStatus,
-      renderError: region.stretch?.renderError || null
-    },
+    stretch,
     audioEdit: type === 'audio'
       ? {
         mute: region.audioEdit?.mute === true,

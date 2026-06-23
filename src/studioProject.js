@@ -18,7 +18,7 @@ import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 import { getStorageAssetUrl } from './firebase/storageAssets.js'
 import { storage as firebaseStorage } from './firebase/storage.js'
 import { ref as storageRef, uploadBytes } from 'firebase/storage'
-import { renderStretchedAudioClip as renderOfflineStretchedAudioClip } from './studio/audio/audioStretchRenderService.js'
+import { renderTimeStretch as renderOfflineStretchedAudioClip } from './studio/audio/audioStretchRenderService.js'
 import { renderPitchShiftedAudio, renderPitchTraceEdits } from './studio/audio/audioPitchRenderService.js'
 import { renderReversedAudio } from './studio/audio/audioReverseRenderService.js'
 import {
@@ -454,69 +454,216 @@ function normalizeAudioEdit(edit = {}) {
     reverse: normalizeReverseEdit(edit.reverse, edit.reverseRenderStatus, edit.reverseRenderedStoragePath)
   }
 }
-function getAudioStretchMath(region = {}, targetDuration = null) {
-  const stretch = normalizeAudioStretch(region.stretch)
-  const originalDurationRaw = getAudioSourceDurationSeconds(region)
-  const originalDuration = Math.max(minAudioRegionSeconds, originalDurationRaw)
-  const defaultTarget = stretch.enabled
-    ? (Number.isFinite(Number(stretch.targetDurationSeconds)) ? Number(stretch.targetDurationSeconds) : getAudioRegionVisibleDurationSeconds(region))
-    : getAudioRegionVisibleDurationSeconds(region)
-  const target = Math.max(minAudioRegionSeconds, Number.isFinite(Number(targetDuration)) ? Number(targetDuration) : defaultTarget)
-  if (!stretch.enabled) {
+function finitePositiveNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+function getStretchStatus(value) {
+  const status = value === 'none' ? 'idle' : value
+  return ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(status) ? status : 'idle'
+}
+function getRawAudioRegionVisibleDurationSeconds(region = {}) {
+  const visible = finitePositiveNumber(region.visibleDurationSeconds)
+  if (visible) return visible
+  const duration = finitePositiveNumber(region.durationSeconds)
+  if (duration) return duration
+  const beats = finitePositiveNumber(region.durationBeats)
+  if (beats) return Math.max(minAudioRegionSeconds, beatsToSeconds(beats))
+  return null
+}
+function stretchErrorMessage() {
+  return `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.`
+}
+function isKnownGoodStretchRender(stretch = {}, status = stretch.renderStatus) {
+  return status === 'ready' && Boolean(stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl)
+}
+function logStretchDebug(action, regionOrId, payload = {}) {
+  const clipId = typeof regionOrId === 'string' ? regionOrId : (regionOrId?.id || regionOrId?.audioClip?.audioAssetId || '')
+  const stretch = typeof regionOrId === 'object' ? normalizeAudioStretch(regionOrId.stretch, {
+    sourceDurationSeconds: getAudioSourceDurationSeconds(regionOrId),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(regionOrId)
+  }) : null
+  console.info(`[stretch] ${action}`, {
+    clipId,
+    sourceDurationSeconds: payload.sourceDurationSeconds ?? stretch?.sourceDurationSeconds ?? null,
+    targetDurationSeconds: payload.targetDurationSeconds ?? stretch?.targetDurationSeconds ?? null,
+    speedPercent: payload.speedPercent ?? stretch?.speedPercent ?? null,
+    lengthRatio: payload.lengthRatio ?? stretch?.lengthRatio ?? null,
+    renderStatus: payload.renderStatus ?? stretch?.renderStatus ?? null,
+    reason: payload.reason || null
+  })
+}
+function makeDefaultAudioStretch(sourceDurationSeconds = null, overrides = {}) {
+  const source = finitePositiveNumber(sourceDurationSeconds)
+  const target = finitePositiveNumber(overrides.targetDurationSeconds) || source
+  return {
+    enabled: false,
+    sourceDurationSeconds: source,
+    targetDurationSeconds: target,
+    ratio: 1,
+    lengthRatio: 1,
+    speedPercent: 100,
+    mode: 'none',
+    algorithm: null,
+    preservesPitch: false,
+    renderedObjectUrl: null,
+    renderedAudioUrl: null,
+    renderedStoragePath: null,
+    renderedRuntimeId: null,
+    renderedDurationSeconds: null,
+    renderedAt: null,
+    renderedSessionOnly: false,
+    renderStatus: 'idle',
+    lastError: null,
+    renderError: null,
+    updatedAt: overrides.updatedAt || null
+  }
+}
+function buildCanonicalStretch({
+  enabled = false,
+  sourceDurationSeconds = null,
+  targetDurationSeconds = null,
+  renderStatus = 'idle',
+  renderError = null,
+  renderedObjectUrl = null,
+  renderedAudioUrl = null,
+  renderedStoragePath = null,
+  renderedRuntimeId = null,
+  renderedDurationSeconds = null,
+  renderedAt = null,
+  renderedSessionOnly = false,
+  algorithm = null,
+  preservesPitch = true,
+  updatedAt = Date.now()
+} = {}) {
+  const source = finitePositiveNumber(sourceDurationSeconds)
+  const target = finitePositiveNumber(targetDurationSeconds)
+  if (!source || !target) {
     return {
-      originalDurationSeconds: originalDuration,
+      ...makeDefaultAudioStretch(source, { targetDurationSeconds: target || source, updatedAt }),
+      renderError: 'Duration unavailable.',
+      lastError: 'Duration unavailable.'
+    }
+  }
+  const lengthRatio = target / source
+  const speedPercent = (source / target) * 100
+  const supported = Number.isFinite(lengthRatio) && Number.isFinite(speedPercent) && lengthRatio >= STRETCH_RATIO_MIN && lengthRatio <= STRETCH_RATIO_MAX && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX
+  return {
+    enabled: Boolean(enabled),
+    sourceDurationSeconds: source,
+    targetDurationSeconds: target,
+    ratio: lengthRatio,
+    lengthRatio,
+    speedPercent,
+    mode: enabled ? 'offline_render' : 'none',
+    algorithm: algorithm || (enabled ? 'wsola_phase_vocoder_v1' : null),
+    preservesPitch: Boolean(enabled && preservesPitch),
+    renderedObjectUrl: renderedObjectUrl || null,
+    renderedAudioUrl: renderedAudioUrl || null,
+    renderedStoragePath: renderedStoragePath || null,
+    renderedRuntimeId: renderedRuntimeId || null,
+    renderedDurationSeconds: finitePositiveNumber(renderedDurationSeconds),
+    renderedAt: Number.isFinite(Number(renderedAt)) ? Number(renderedAt) : null,
+    renderedSessionOnly: renderedSessionOnly === true,
+    renderStatus: getStretchStatus(renderStatus),
+    lastError: renderError || (supported ? null : stretchErrorMessage()),
+    renderError: renderError || (supported ? null : stretchErrorMessage()),
+    updatedAt
+  }
+}
+function normalizeAudioStretch(stretch = {}, context = {}) {
+  const source = finitePositiveNumber(stretch.sourceDurationSeconds) || finitePositiveNumber(context.sourceDurationSeconds)
+  const visible = finitePositiveNumber(context.visibleDurationSeconds)
+  const status = getStretchStatus(stretch.renderStatus || (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle'))
+  const requestedEnabled = stretch.enabled === true
+  const rawTarget = finitePositiveNumber(stretch.targetDurationSeconds)
+  const rawRatio = finitePositiveNumber(stretch.lengthRatio ?? stretch.ratio)
+  const rawSpeed = finitePositiveNumber(stretch.speedPercent)
+  const targetFromRatio = source && rawRatio ? source * rawRatio : null
+  const targetFromSpeed = source && rawSpeed ? source / (rawSpeed / 100) : null
+  const target = rawTarget || (requestedEnabled ? (targetFromRatio || targetFromSpeed || visible || source) : source)
+  const lengthRatio = source && target ? target / source : (rawRatio || 1)
+  const speedPercent = source && target ? (source / target) * 100 : (rawSpeed || (100 / Math.max(0.001, lengthRatio)))
+  const knownGood = isKnownGoodStretchRender(stretch, status)
+  const outOfRange = speedPercent < STRETCH_SPEED_MIN || speedPercent > STRETCH_SPEED_MAX || lengthRatio < STRETCH_RATIO_MIN || lengthRatio > STRETCH_RATIO_MAX
+  const suspiciousTinyTarget = requestedEnabled && target && source && target <= Math.max(minAudioRegionSeconds * 1.1, source * 0.08) && source > target * 4 && !knownGood
+  const structurallyInvalid = !source || !target || !Number.isFinite(lengthRatio) || !Number.isFinite(speedPercent) || lengthRatio <= 0 || target <= 0 || source <= 0 || suspiciousTinyTarget
+  if (requestedEnabled && (structurallyInvalid || (context.migrateCorrupt === true && outOfRange)) && !knownGood) {
+    const safeDuration = source || visible || minAudioRegionSeconds
+    logStretchDebug('normalize', context.clipId || '', {
+      sourceDurationSeconds: source,
       targetDurationSeconds: target,
+      speedPercent,
+      lengthRatio,
+      renderStatus: status,
+      reason: suspiciousTinyTarget ? 'corrupt_tiny_target' : 'invalid_or_out_of_range'
+    })
+    return makeDefaultAudioStretch(safeDuration)
+  }
+  if (!requestedEnabled) return makeDefaultAudioStretch(source || visible || null)
+  return buildCanonicalStretch({
+    enabled: true,
+    sourceDurationSeconds: source,
+    targetDurationSeconds: target,
+    renderStatus: status,
+    renderError: stretch.renderError || stretch.lastError || null,
+    renderedObjectUrl: stretch.renderedObjectUrl,
+    renderedAudioUrl: stretch.renderedAudioUrl,
+    renderedStoragePath: stretch.renderedStoragePath,
+    renderedRuntimeId: stretch.renderedRuntimeId,
+    renderedDurationSeconds: stretch.renderedDurationSeconds,
+    renderedAt: stretch.renderedAt,
+    renderedSessionOnly: stretch.renderedSessionOnly,
+    algorithm: stretch.algorithm,
+    preservesPitch: stretch.preservesPitch !== false,
+    updatedAt: stretch.updatedAt || null
+  })
+}
+function getAudioStretchMath(region = {}, targetDuration = null) {
+  const sourceRaw = getAudioSourceDurationSeconds(region)
+  const source = finitePositiveNumber(sourceRaw)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: source,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const target = finitePositiveNumber(targetDuration) || (stretch.enabled ? stretch.targetDurationSeconds : source)
+  if (!source || !target) {
+    return {
+      originalDurationSeconds: source || null,
+      sourceDurationSeconds: source || null,
+      targetDurationSeconds: target || null,
       lengthRatio: 1,
       speedPercent: 100,
       rawSpeedPercent: 100,
-      supported: Number.isFinite(originalDurationRaw) && originalDurationRaw > 0,
-      error: Number.isFinite(originalDurationRaw) && originalDurationRaw > 0 ? null : 'Original duration unavailable.'
+      supported: false,
+      error: 'Duration unavailable.'
     }
   }
-  const lengthRatio = target / originalDuration
-  const speedPercent = (originalDuration / target) * 100
-  const supported = Number.isFinite(speedPercent) && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX
+  if (!stretch.enabled && targetDuration == null) {
+    return {
+      originalDurationSeconds: source,
+      sourceDurationSeconds: source,
+      targetDurationSeconds: source,
+      lengthRatio: 1,
+      speedPercent: 100,
+      rawSpeedPercent: 100,
+      supported: true,
+      error: null
+    }
+  }
+  const lengthRatio = target / source
+  const speedPercent = (source / target) * 100
+  const supported = Number.isFinite(speedPercent) && Number.isFinite(lengthRatio) && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX && lengthRatio >= STRETCH_RATIO_MIN && lengthRatio <= STRETCH_RATIO_MAX
   return {
-    originalDurationSeconds: originalDuration,
+    originalDurationSeconds: source,
+    sourceDurationSeconds: source,
     targetDurationSeconds: target,
     lengthRatio,
     speedPercent: Number.isFinite(speedPercent) ? speedPercent : 100,
     rawSpeedPercent: speedPercent,
     supported,
-    error: supported ? null : `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.`
-  }
-}
-function normalizeAudioStretch(stretch = {}) {
-  const rawRatio = Number(stretch.lengthRatio ?? stretch.ratio)
-  const requestedEnabled = Boolean(stretch.enabled)
-  const looksCorruptTinyRatio = requestedEnabled && Number.isFinite(rawRatio) && rawRatio <= 0.05 && stretch.renderStatus !== 'ready' && !(stretch.renderedStoragePath || stretch.renderedAudioUrl)
-  const safeRawRatio = looksCorruptTinyRatio ? 1 : rawRatio
-  const lengthRatio = clamp(Number.isFinite(safeRawRatio) && safeRawRatio > 0 ? safeRawRatio : 1, 0.01, 32)
-  const ratio = lengthRatio
-  const statusValue = stretch.renderStatus === 'none' ? 'idle' : stretch.renderStatus
-  const renderStatus = ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(statusValue) ? statusValue : (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle')
-  const rawTargetDuration = Number(stretch.targetDurationSeconds)
-  const targetDurationSeconds = looksCorruptTinyRatio ? null : Number.isFinite(rawTargetDuration) ? Math.max(minAudioRegionSeconds, rawTargetDuration) : null
-  const speedPercent = 100 / Math.max(0.001, lengthRatio)
-  const outOfRange = Number.isFinite(rawRatio) && (rawRatio < STRETCH_RATIO_MIN || rawRatio > STRETCH_RATIO_MAX)
-  return {
-    enabled: requestedEnabled && !looksCorruptTinyRatio,
-    ratio,
-    lengthRatio,
-    speedPercent,
-    targetDurationSeconds,
-    mode: stretch.mode || (stretch.enabled ? 'offline_render' : 'none'),
-    algorithm: stretch.algorithm || (stretch.enabled ? 'wsola_phase_vocoder_v1' : 'none'),
-    preservesPitch: Boolean(stretch.preservesPitch),
-    renderedObjectUrl: stretch.renderedObjectUrl || null,
-    renderedAudioUrl: stretch.renderedAudioUrl || null,
-    renderedStoragePath: stretch.renderedStoragePath || null,
-    renderedRuntimeId: stretch.renderedRuntimeId || null,
-    renderedDurationSeconds: Number.isFinite(Number(stretch.renderedDurationSeconds)) ? Number(stretch.renderedDurationSeconds) : null,
-    renderedAt: Number.isFinite(Number(stretch.renderedAt)) ? Number(stretch.renderedAt) : null,
-    renderedSessionOnly: stretch.renderedSessionOnly === true,
-    renderStatus: looksCorruptTinyRatio ? 'idle' : renderStatus,
-    renderError: looksCorruptTinyRatio ? null : (stretch.renderError || (outOfRange ? `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.` : null))
+    error: supported ? null : stretchErrorMessage()
   }
 }
 function sanitizeStorageFilePart(value = '') {
@@ -618,10 +765,22 @@ function getAudioSourceDurationSeconds(region = {}) {
   return Math.max(minAudioRegionSeconds, getAudioTrimEndSeconds(region) - getAudioTrimStartSeconds(region))
 }
 function getAudioStretchRatio(region = {}) {
-  return normalizeAudioStretch(region.stretch).enabled ? normalizeAudioStretch(region.stretch).ratio : 1
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  return stretch.enabled ? stretch.lengthRatio : 1
 }
 function getAudioRegionVisibleDurationSeconds(region = {}) {
-  return Math.max(minAudioRegionSeconds, Number(region.visibleDurationSeconds) || (getAudioSourceDurationSeconds(region) * getAudioStretchRatio(region)))
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  return Math.max(minAudioRegionSeconds, stretch.enabled ? (stretch.targetDurationSeconds || sourceDurationSeconds) : sourceDurationSeconds)
 }
 function getAudioRegionPlaybackRate(region = {}) {
   return clamp(getAudioSourceDurationSeconds(region) / getAudioRegionVisibleDurationSeconds(region), 0.05, 4)
@@ -629,7 +788,13 @@ function getAudioRegionPlaybackRate(region = {}) {
 function syncAudioRegionTimeline(region = {}) {
   if (region.type !== 'audio') return region
   const startBeat = Number(region.startBeat) || Number(region.timelineStartBeats) || 0
-  const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const visibleDurationSeconds = Math.max(minAudioRegionSeconds, stretch.enabled ? (stretch.targetDurationSeconds || sourceDurationSeconds) : sourceDurationSeconds)
   region.startBeat = startBeat
   region.timelineStartBeats = startBeat
   region.timelineStartSeconds = getTimelineSecondsAtBeat(startBeat)
@@ -638,7 +803,7 @@ function syncAudioRegionTimeline(region = {}) {
   region.durationBeats = secondsToBeats(visibleDurationSeconds)
   region.endBeat = startBeat + region.durationBeats
   region.playbackRate = getAudioRegionPlaybackRate(region)
-  region.stretch = normalizeAudioStretch(region.stretch)
+  region.stretch = stretch
   return region
 }
 
@@ -905,7 +1070,11 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
   const pitchShiftStatus = pitchShift.renderStatus === 'needs_render' ? 'Needs render' : (pitchShift.lastError || pitchShift.renderStatus || 'idle')
   const pitchTraceRenderStatus = pitchTrace.renderStatus === 'needs_render' ? 'Needs render' : (pitchTrace.lastError || pitchTrace.renderStatus || 'idle')
-  const stretch = normalizeAudioStretch(region.stretch)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
   const stretchMath = getAudioStretchMath(region)
   const missing = Boolean(region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed')
   const renderStatus = stretch.renderStatus === 'needs_render' ? 'Needs render' : stretch.renderStatus
@@ -1259,7 +1428,11 @@ function buildFallbackWaveform(region) {
   }))
 }
 function getWaveformChunks(region = {}) {
-  const stretch = normalizeAudioStretch(region.stretch)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
   const edit = normalizeAudioEdit(region.audioEdit)
   const hasRenderedEditWaveform = region.renderedWaveform && (
     (edit.pitchTrace.enabled && edit.pitchTrace.renderStatus === 'ready') ||
@@ -1304,7 +1477,11 @@ function buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks = 1200 } = {}) {
 }
 function renderAudioWaveform(region) {
   const chunks = getWaveformChunks(region)
-  const stretch = normalizeAudioStretch(region.stretch)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
   const edit = normalizeAudioEdit(region.audioEdit)
   const hasRenderedWaveform = region.renderedWaveform && (
     (edit.pitchTrace.enabled && edit.pitchTrace.renderStatus === 'ready') ||
@@ -1347,7 +1524,11 @@ function renderAudioRegion(region, isRecording = false) {
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
   const waveformColor = getReadableWaveformColor(color)
   const selected = !isRecording && selectedMidiRegionId === region.id
-  const stretch = normalizeAudioStretch(region.stretch)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
   const renderedRuntimeReady = stretch.enabled && stretch.renderStatus === 'ready' && stretch.renderedRuntimeId && audioClipRuntime.has(stretch.renderedRuntimeId)
   const missing = Boolean(region.audioClip?.missingAfterReload || region.missingMedia) && !audioClipRuntime.has(region.audioClip?.runtimeId || region.id) && !renderedRuntimeReady
   const stretching = midiRegionDrag?.id === region.id && midiRegionDrag.editMode === 'stretch'
@@ -1903,8 +2084,12 @@ function renderStretchPlaybackPrompt() {
   if (!stretchPlaybackPrompt?.regionId) return ''
   const region = midiRegions.find((item)=>item.id === stretchPlaybackPrompt.regionId)
   if (!region) return ''
-  const stretch = normalizeAudioStretch(region.stretch)
-  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-stretch-prompt-title"><section class="studio-audio-render-panel"><span>Stretch render required</span><h3 id="studio-stretch-prompt-title">Render stretched audio?</h3><p>This stretched audio region must be rendered before playback.</p>${stretch.renderError ? `<small>${esc(stretch.renderError)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-stretch-prompt-render ${stretch.renderStatus === 'rendering' ? 'disabled' : ''}>Render Now</button><button type="button" class="button button-muted" data-stretch-prompt-cancel>Cancel</button></div></section></div>`
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-stretch-prompt-title"><section class="studio-audio-render-panel"><span>Stretch render required</span><h3 id="studio-stretch-prompt-title">Render stretched audio?</h3><p>This stretched audio region must be rendered before playback.</p>${stretch.renderError ? `<small>${esc(stretch.renderError)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-stretch-prompt-render ${stretch.renderStatus === 'rendering' ? 'disabled' : ''}>${stretch.renderStatus === 'failed' ? 'Retry Render' : 'Render Now'}</button><button type="button" class="button button-muted" data-stretch-prompt-play-original>Play Original</button><button type="button" class="button button-muted" data-stretch-prompt-cancel>Cancel</button></div></section></div>`
 }
 function renderAudioEditPlaybackPrompt() {
   if (!audioEditPlaybackPrompt?.regionId) return ''
@@ -1966,7 +2151,11 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
       copy.audioEdit.pitchTrace.status = copy.audioEdit.pitchTrace.notes.length ? 'ready' : 'idle'
       copy.audioEdit.pitchTrace.progress = 0
     }
-    copy.stretch = normalizeAudioStretch(copy.stretch)
+    copy.stretch = normalizeAudioStretch(copy.stretch, {
+      clipId: copy.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(copy),
+      visibleDurationSeconds
+    })
     if (persist) copy.stretch.renderedObjectUrl = null
     if (!copy.waveform) copy.waveform = { peaks: [], resolution: 'none', durationSeconds: fileDurationSeconds, generatedAt: null }
     if (!Array.isArray(copy.waveform.peaks)) copy.waveform.peaks = []
@@ -1999,7 +2188,17 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
 }
 function normalizeLoadedRegion(region = {}) {
   const type = region.type === 'audio' ? 'audio' : 'midi'
-  const loadedStretch = normalizeAudioStretch(region.stretch)
+  const rawFileDuration = Math.max(minAudioRegionSeconds, Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || minAudioRegionSeconds)
+  const rawTrimStart = clamp(Number(region.trimStartSeconds) || 0, 0, Math.max(0, rawFileDuration - minAudioRegionSeconds))
+  const rawTrimEnd = Number.isFinite(Number(region.trimEndSeconds)) ? clamp(Number(region.trimEndSeconds), rawTrimStart + minAudioRegionSeconds, rawFileDuration) : rawFileDuration
+  const rawSourceDuration = Math.max(minAudioRegionSeconds, rawTrimEnd - rawTrimStart)
+  const rawVisibleDuration = getRawAudioRegionVisibleDurationSeconds(region) || rawSourceDuration
+  const loadedStretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: rawSourceDuration,
+    visibleDurationSeconds: rawVisibleDuration,
+    migrateCorrupt: true
+  })
   const hasPersistedStretchRender = !!loadedStretch.renderedStoragePath || !!loadedStretch.renderedAudioUrl
   const stretch = loadedStretch.enabled && loadedStretch.renderStatus === 'ready' && !hasPersistedStretchRender
     ? { ...loadedStretch, renderedRuntimeId: null, renderedObjectUrl: null, renderStatus: 'needs_render', renderError: null, renderedSessionOnly: true }
@@ -2147,7 +2346,11 @@ function scheduleEditorSave(){ if(!isEditorLoaded||!projectState?.id) return; sa
 
 async function hydrateRenderedAudioRegionRuntime(region) {
   if (!region?.id || region.type !== 'audio') return false
-  const stretch = normalizeAudioStretch(region.stretch)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
   if (!stretch.enabled || !(stretch.renderedStoragePath || stretch.renderedAudioUrl)) return false
   const runtimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
   if (audioClipRuntime.has(runtimeId)) {
@@ -2647,6 +2850,7 @@ function getTrackLaneFromY(clientY = 0) {
   return clamp(Math.floor((clientY - rect.top + (gridEl.scrollTop || 0)) / Math.max(1, timelineState.trackHeight)), 0, Math.max(0, tracks.length - 1))
 }
 function regionPixelsToBeats(pixels = 0) { return Number(pixels || 0) / beatWidth() }
+function regionPixelsToSeconds(pixels = 0) { return beatsToSeconds(regionPixelsToBeats(pixels)) }
 function xToBeatsFromBarZero(x) { return xToBeat(x) }
 function beatsFromBarZeroToX(beats) { return beatToX(beats) }
 function xToBeatsFromBarOne(x) { return xToBeatsFromBarZero(x) }
@@ -2820,10 +3024,17 @@ async function prepareProjectPlayback() {
   tracks.filter(isSoftwareTrack).forEach((track)=>ensureTrackInstrumentInstance(track))
   const pendingAudio = midiRegions.filter((region)=>{
     const edit = normalizeAudioEdit(region.audioEdit)
+    const stretch = normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+      visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+    })
+    const stretchRuntimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
     return region.type === 'audio' && (
       region.audioClip?.loadStatus === 'pending' ||
       region.audioClip?.loadStatus === 'failed' ||
-      region.stretch?.renderStatus === 'needs_render' ||
+      stretch.renderStatus === 'needs_render' ||
+      (stretch.enabled && stretch.renderStatus === 'ready' && (stretch.renderedStoragePath || stretch.renderedAudioUrl) && !audioClipRuntime.has(stretchRuntimeId)) ||
       edit.pitchShift?.renderStatus === 'needs_render' ||
       edit.pitchTrace?.renderStatus === 'needs_render' ||
       edit.reverse?.renderStatus === 'needs_render'
@@ -2839,7 +3050,11 @@ async function prepareProjectPlayback() {
 }
 function collectAudioRenderReadinessTasks() {
   return midiRegions.filter((region)=>region.type === 'audio').map((region)=> {
-    const stretch = normalizeAudioStretch(region.stretch)
+    const stretch = normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+      visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+    })
     const edit = normalizeAudioEdit(region.audioEdit)
     const choice = getAudioPlaybackRenderChoice(region, edit, stretch)
     if (choice.needsRender) return { regionId: region.id, mode: choice.promptMode, label: getMidiRegionLabel(region) }
@@ -2856,14 +3071,22 @@ async function runAudioRenderReadinessAudit() {
     const task = tasks[index]
     audioPreflightRenderState = { ...audioPreflightRenderState, completed: index, currentLabel: `${task.label} · ${task.mode}` }
     renderEditor()
-    const beforeErrors = midiRegions.map((region)=>({ id: region.id, edit: normalizeAudioEdit(region.audioEdit), stretch: normalizeAudioStretch(region.stretch) }))
+    const beforeErrors = midiRegions.map((region)=>({ id: region.id, edit: normalizeAudioEdit(region.audioEdit), stretch: normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: region.type === 'audio' ? getAudioSourceDurationSeconds(region) : null,
+      visibleDurationSeconds: region.type === 'audio' ? getRawAudioRegionVisibleDurationSeconds(region) : null
+    }) }))
     if (task.mode === 'stretch') await renderAudioStretchForRegion(task.regionId)
     else if (task.mode === 'trace') await renderPitchTraceEditsForRegion(task.regionId)
     else if (task.mode === 'reverse') await renderAudioReverseForRegion(task.regionId)
     else await renderAudioPitchShiftForRegion(task.regionId)
     const region = midiRegions.find((item)=>item.id === task.regionId)
     const edit = normalizeAudioEdit(region?.audioEdit)
-    const stretch = normalizeAudioStretch(region?.stretch)
+    const stretch = normalizeAudioStretch(region?.stretch, {
+      clipId: region?.id,
+      sourceDurationSeconds: region ? getAudioSourceDurationSeconds(region) : null,
+      visibleDurationSeconds: region ? getRawAudioRegionVisibleDurationSeconds(region) : null
+    })
     const failed = task.mode === 'stretch'
       ? stretch.renderStatus === 'failed'
       : task.mode === 'trace'
@@ -3161,44 +3384,41 @@ function makeFadeGainCurve({ baseGain, fromProgress = 0, toProgress = 1, curve =
 function stopAllAudioClipPlayback() {
   Array.from(activeAudioClipSources.keys()).forEach((regionId)=>stopAudioClipPlayback(regionId))
 }
-function createPendingStretchMetadata(ratio) {
-  const rawLengthRatio = Number(ratio)
-  const lengthRatio = clamp(Number.isFinite(rawLengthRatio) && rawLengthRatio > 0 ? rawLengthRatio : 1, 0.01, 32)
-  const supported = Number.isFinite(rawLengthRatio) && rawLengthRatio >= STRETCH_RATIO_MIN && rawLengthRatio <= STRETCH_RATIO_MAX
-  return {
+function createPendingStretchMetadata(input = {}) {
+  const sourceDurationSeconds = finitePositiveNumber(input.sourceDurationSeconds)
+  const targetDurationSeconds = finitePositiveNumber(input.targetDurationSeconds)
+  const lengthRatio = sourceDurationSeconds && targetDurationSeconds ? targetDurationSeconds / sourceDurationSeconds : 1
+  const speedPercent = sourceDurationSeconds && targetDurationSeconds ? (sourceDurationSeconds / targetDurationSeconds) * 100 : 100
+  const supported = Number.isFinite(lengthRatio) && Number.isFinite(speedPercent) && lengthRatio >= STRETCH_RATIO_MIN && lengthRatio <= STRETCH_RATIO_MAX && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX
+  return buildCanonicalStretch({
     enabled: true,
-    ratio: lengthRatio,
-    lengthRatio,
-    speedPercent: 100 / Math.max(0.001, lengthRatio),
-    targetDurationSeconds: null,
-    mode: 'offline_render',
-    algorithm: 'wsola_phase_vocoder_v1',
-    preservesPitch: true,
-    renderedObjectUrl: null,
-    renderedAudioUrl: null,
-    renderedStoragePath: null,
-    renderedRuntimeId: null,
-    renderedDurationSeconds: null,
-    renderedAt: null,
+    sourceDurationSeconds,
+    targetDurationSeconds,
+    renderStatus: Math.abs(lengthRatio - 1) <= 0.001 ? 'idle' : 'needs_render',
+    renderError: supported ? null : stretchErrorMessage(),
     renderedSessionOnly: true,
-    renderStatus: supported ? 'needs_render' : 'failed',
-    renderError: supported ? null : `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.`
-  }
+    algorithm: 'wsola_phase_vocoder_v1',
+    preservesPitch: true
+  })
 }
 async function renderAudioStretchForRegion(regionId) {
   if (audioStretchRenderState.active) return
   const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
   if (!region) return
-  const stretch = normalizeAudioStretch(region.stretch)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
   if (!stretch.enabled) {
     scheduleEditorSave()
     return
   }
   const stretchMath = getAudioStretchMath(region)
   if (!stretchMath.supported) {
-    region.stretch = { ...stretch, renderStatus: 'failed', renderError: stretchMath.error }
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: stretchMath.error, lastError: stretchMath.error }
     recordingStatus = stretchMath.error
-    console.warn('[stretch-render] failed', { clipId: region.id, reason: region.stretch.renderError })
+    logStretchDebug('render failed', region.id, { ...stretchMath, renderStatus: 'failed', reason: stretchMath.error })
     scheduleEditorSave()
     renderEditor()
     return
@@ -3209,9 +3429,9 @@ async function renderAudioStretchForRegion(regionId) {
     runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
   }
   if (!runtime?.audioBuffer) {
-    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Original audio is offline. Reconnect or re-record before rendering stretch.' }
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Original audio is offline. Reconnect or re-record before rendering stretch.', lastError: 'Original audio is offline. Reconnect or re-record before rendering stretch.' }
     recordingStatus = region.stretch.renderError
-    console.warn('[stretch-render] failed', { clipId: region.id, reason: region.stretch.renderError })
+    logStretchDebug('render failed', region.id, { ...stretchMath, renderStatus: 'failed', reason: region.stretch.renderError })
     scheduleEditorSave()
     renderEditor()
     return
@@ -3219,29 +3439,28 @@ async function renderAudioStretchForRegion(regionId) {
   stopPlayback()
   audioStretchRenderState = { active: true, regionId, progress: null, error: '' }
   region.stretch = { ...stretch, renderStatus: 'rendering', renderError: null }
+  logStretchDebug('render start', region.id, { ...stretchMath, renderStatus: 'rendering' })
   renderEditor()
   try {
     const result = await renderOfflineStretchedAudioClip({
-      originalAudioBuffer: runtime.audioBuffer,
-      clipId: region.id,
-      stretchRatio: stretch.ratio,
+      sourceBuffer: runtime.audioBuffer,
       sourceStartSeconds: getAudioTrimStartSeconds(region),
-      sourceDurationSeconds: Math.max(minAudioRegionSeconds, getAudioTrimEndSeconds(region) - getAudioTrimStartSeconds(region)),
+      sourceDurationSeconds: stretchMath.sourceDurationSeconds,
       targetDurationSeconds: stretchMath.targetDurationSeconds,
       sampleRate: runtime.audioBuffer.sampleRate,
-      preservesPitchPreferred: true,
+      quality: 'mvp',
       onProgress: (progress) => {
         audioStretchRenderState = { ...audioStretchRenderState, progress }
       }
     })
     const renderedWaveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
-    const renderedRuntimeId = `${region.id}:stretch:${Math.round(stretch.ratio * 1000)}:${result.createdAt}`
+    const renderedRuntimeId = `${region.id}:stretch:${Math.round(stretchMath.lengthRatio * 1000)}:${result.createdAt}`
     let renderedStoragePath = null
     let renderedSessionOnly = true
     try {
       renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
         clipId: region.id,
-        suffix: `stretch-${Math.round(stretch.ratio * 1000)}`
+        suffix: `stretch-${Math.round(stretchMath.lengthRatio * 1000)}`
       })
       renderedSessionOnly = !renderedStoragePath
     } catch (uploadErr) {
@@ -3262,14 +3481,13 @@ async function renderAudioStretchForRegion(regionId) {
     region.durationBeats = secondsToBeats(region.visibleDurationSeconds)
     region.endBeat = Number(region.startBeat || 0) + region.durationBeats
     region.renderedWaveform = renderedWaveform
-    region.stretch = {
-      ...stretch,
-      mode: 'offline_rendered',
+    region.stretch = buildCanonicalStretch({
+      enabled: true,
+      sourceDurationSeconds: stretchMath.sourceDurationSeconds,
+      targetDurationSeconds: stretchMath.targetDurationSeconds,
+      renderStatus: 'ready',
       algorithm: result.algorithm,
       preservesPitch: result.preservesPitch,
-      lengthRatio: stretchMath.lengthRatio,
-      speedPercent: stretchMath.rawSpeedPercent,
-      targetDurationSeconds: stretchMath.targetDurationSeconds,
       renderedObjectUrl: null,
       renderedAudioUrl: null,
       renderedStoragePath,
@@ -3277,9 +3495,8 @@ async function renderAudioStretchForRegion(regionId) {
       renderedDurationSeconds: result.renderedDurationSeconds,
       renderedAt: result.createdAt,
       renderedSessionOnly,
-      renderStatus: 'ready',
-      renderError: null
-    }
+      updatedAt: result.createdAt
+    })
     region.stretchRender = {
       implemented: true,
       algorithm: result.algorithm,
@@ -3290,13 +3507,15 @@ async function renderAudioStretchForRegion(regionId) {
     }
     syncAudioRegionTimeline(region)
     recordingStatus = 'Audio stretch rendered.'
+    logStretchDebug('render success', region.id, { ...stretchMath, renderStatus: 'ready' })
     scheduleEditorSave()
   } catch (err) {
     console.error('[stretch-render] failed', { clipId: region.id, reason: err?.message || 'Audio stretch render failed.' })
-    region.stretch = { ...stretch, renderStatus: 'failed', renderError: err?.message || 'Audio stretch render failed.' }
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: err?.message || 'Audio stretch render failed.', lastError: err?.message || 'Audio stretch render failed.' }
     region.renderedWaveform = null
-    region.stretchRender = { implemented: false, reason: region.stretch.renderError, ratio: stretch.ratio }
+    region.stretchRender = { implemented: false, reason: region.stretch.renderError, ratio: stretchMath.lengthRatio }
     recordingStatus = 'Audio stretch render failed. The original audio was not changed.'
+    logStretchDebug('render failed', region.id, { ...stretchMath, renderStatus: 'failed', reason: region.stretch.renderError })
     scheduleEditorSave()
   } finally {
     audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
@@ -3624,11 +3843,14 @@ function getAudioPlaybackRenderChoice(region, edit, stretch) {
       return { needsRender: true, promptMode: 'pitchShift', message: 'Pitch Shift must be rendered before playback.' }
     }
   }
-  if (!bypassEdits && stretch.enabled && stretch.renderStatus === 'ready' && stretch.renderedRuntimeId) {
-    return { runtimeId: stretch.renderedRuntimeId, mode: 'stretch' }
+  if (!bypassEdits && stretch.enabled && stretch.renderStatus === 'ready') {
+    const runtimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
+    if (runtimeId && audioClipRuntime.has(runtimeId)) return { runtimeId, mode: 'stretch' }
+    if (stretch.renderedStoragePath || stretch.renderedAudioUrl) return { needsStretchRender: true, message: 'Rendered stretch audio is not loaded yet.' }
+    return { needsStretchRender: true, message: 'Stretch render is missing its audio buffer.' }
   }
   if (!bypassEdits && stretch.enabled && stretch.renderStatus !== 'ready') {
-    return { needsStretchRender: true }
+    return { needsStretchRender: true, message: 'This stretched audio region must finish rendering before playback.' }
   }
   if (!bypassEdits && reverse.enabled) {
     if (reverse.renderStatus === 'ready' && reverse.renderedRuntimeId && audioClipRuntime.has(reverse.renderedRuntimeId)) {
@@ -3645,7 +3867,11 @@ function updateAudioClipPlayback(currentBeat) {
     const startBeat = Number(region.startBeat) || 0
     const endBeat = Number(region.endBeat) || (startBeat + secondsToBeats(getAudioRegionVisibleDurationSeconds(region)))
     const track = tracks.find((item)=>item.id === region.trackId)
-    const stretch = normalizeAudioStretch(region.stretch)
+    const stretch = normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+      visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+    })
     const edit = normalizeAudioEdit(region.audioEdit)
     const active = activeAudioClipSources.get(region.id)
     if (edit.mute) {
@@ -3668,7 +3894,7 @@ function updateAudioClipPlayback(currentBeat) {
     if (playbackChoice.needsStretchRender) {
       if (active) stopAudioClipPlayback(region.id)
       if (isTrackOutputAudible(track) && beat >= startBeat && beat < endBeat) {
-        recordingStatus = 'This stretched audio region must finish rendering before playback.'
+        recordingStatus = playbackChoice.message || 'This stretched audio region must finish rendering before playback.'
         updateEditorTitleStatus()
         if (!audioStretchRenderState.active && stretch.renderStatus !== 'rendering' && stretchPlaybackPrompt?.regionId !== region.id) {
           stretchPlaybackPrompt = { regionId: region.id }
@@ -3700,6 +3926,16 @@ function updateAudioClipPlayback(currentBeat) {
       const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
       if (elapsedVisibleSeconds >= visibleDurationSeconds) return
       const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch' || playbackChoice.mode === 'reverse'
+      if (playbackChoice.mode === 'stretch') {
+        logStretchDebug('playback source', region.id, {
+          sourceDurationSeconds: stretch.sourceDurationSeconds,
+          targetDurationSeconds: stretch.targetDurationSeconds,
+          speedPercent: stretch.speedPercent,
+          lengthRatio: stretch.lengthRatio,
+          renderStatus: stretch.renderStatus,
+          reason: playbackChoice.runtimeId
+        })
+      }
       const playbackRate = renderedMode ? 1 : getAudioRegionPlaybackRate(region)
       const sourceOffsetSeconds = renderedMode ? elapsedVisibleSeconds : getAudioTrimStartSeconds(region) + (elapsedVisibleSeconds * playbackRate)
       const trimEndSeconds = renderedMode ? runtime.audioBuffer.duration : getAudioTrimEndSeconds(region)
@@ -4111,7 +4347,7 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
       updatedAt: now
     }
     region.playbackRate = 1
-    region.stretch = normalizeAudioStretch(region.stretch)
+    region.stretch = makeDefaultAudioStretch(fileDurationSeconds)
     const url = URL.createObjectURL(blob)
     audioClipRuntime.set(region.id, { blob, url, audioBuffer, contentType: blob.type || 'audio/webm', fileDurationSeconds, waveform: region.waveform })
   } catch (err) {
@@ -4203,7 +4439,15 @@ function startMidiRegionDrag(event, regionId) {
   const handle = event.target.closest('[data-midi-region-handle]')?.dataset?.midiRegionHandle || 'move'
   const isAudioRegion = region.type === 'audio'
   if (isAudioRegion) syncAudioRegionTimeline(region)
-  const editMode = isAudioRegion && ['left', 'right'].includes(handle) && (event.altKey || event.metaKey) ? 'stretch' : (isAudioRegion && ['left', 'right'].includes(handle) ? 'trim' : 'move')
+  const altStretch = event.altKey === true || event.getModifierState?.('Alt') === true
+  const editMode = isAudioRegion && ['left', 'right'].includes(handle) && altStretch ? 'stretch' : (isAudioRegion && ['left', 'right'].includes(handle) ? 'trim' : 'move')
+  const originalSourceDurationSeconds = isAudioRegion ? getAudioSourceDurationSeconds(region) : 0
+  const originalStretch = isAudioRegion ? normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: originalSourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  }) : null
+  const originalVisibleDurationSeconds = isAudioRegion ? getAudioRegionVisibleDurationSeconds(region) : 0
   midiRegionDrag = {
     id: region.id,
     mode: handle,
@@ -4220,10 +4464,20 @@ function startMidiRegionDrag(event, regionId) {
     originalNotes: (region.notes || []).map((note)=>({ ...note })),
     originalTrimStartSeconds: getAudioTrimStartSeconds(region),
     originalTrimEndSeconds: getAudioTrimEndSeconds(region),
-    originalVisibleDurationSeconds: getAudioRegionVisibleDurationSeconds(region),
-    originalSourceDurationSeconds: getAudioSourceDurationSeconds(region),
-    originalStretch: normalizeAudioStretch(region.stretch)
+    originalVisibleDurationSeconds,
+    originalSourceDurationSeconds,
+    originalTargetDurationSeconds: originalStretch?.enabled ? (originalStretch.targetDurationSeconds || originalVisibleDurationSeconds) : originalVisibleDurationSeconds,
+    timelineSecondsPerPixel: Math.max(0.000001, regionPixelsToSeconds(1)),
+    originalStretch
   }
+  if (editMode === 'stretch') logStretchDebug('pointerdown mode', region.id, {
+    sourceDurationSeconds: originalSourceDurationSeconds,
+    targetDurationSeconds: midiRegionDrag.originalTargetDurationSeconds,
+    speedPercent: originalStretch?.speedPercent || 100,
+    lengthRatio: originalStretch?.lengthRatio || 1,
+    renderStatus: originalStretch?.renderStatus || 'idle',
+    reason: `handle_${handle}`
+  })
   document.body.classList.add('is-studio-dragging', 'is-midi-region-dragging')
   if (editMode === 'stretch') document.body.classList.add('is-audio-region-stretching')
   renderEditor()
@@ -4237,15 +4491,25 @@ function applyAudioRegionDrag(event, region) {
   if (drag.mode === 'left') {
     if (drag.editMode === 'stretch') {
       const fixedEndBeat = drag.endBeat
-      const nextStartBeat = clamp(pointerBeat, 0, fixedEndBeat - secondsToBeats(minSeconds))
-      const visibleSeconds = Math.max(minSeconds, beatsToSeconds(fixedEndBeat - nextStartBeat))
-      const ratio = visibleSeconds / Math.max(minSeconds, drag.originalSourceDurationSeconds)
+      const deltaSeconds = (event.clientX - drag.startX) * drag.timelineSecondsPerPixel
+      const minTargetSeconds = Math.max(minSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MIN)
+      const maxTargetSeconds = Math.max(minTargetSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MAX)
+      let visibleSeconds = clamp(drag.originalTargetDurationSeconds - deltaSeconds, minTargetSeconds, maxTargetSeconds)
+      const nextStartBeat = Math.max(0, fixedEndBeat - secondsToBeats(visibleSeconds))
+      visibleSeconds = Math.max(minSeconds, beatsToSeconds(fixedEndBeat - nextStartBeat))
       region.startBeat = nextStartBeat
-      region.stretch = createPendingStretchMetadata(ratio)
-      region.stretch.targetDurationSeconds = visibleSeconds
+      region.stretch = createPendingStretchMetadata({ sourceDurationSeconds: drag.originalSourceDurationSeconds, targetDurationSeconds: visibleSeconds })
       region.stretchRender = null
       region.renderedWaveform = null
       region.visibleDurationSeconds = visibleSeconds
+      logStretchDebug('pointermove', region.id, {
+        sourceDurationSeconds: drag.originalSourceDurationSeconds,
+        targetDurationSeconds: visibleSeconds,
+        speedPercent: region.stretch.speedPercent,
+        lengthRatio: region.stretch.lengthRatio,
+        renderStatus: region.stretch.renderStatus,
+        reason: 'left_edge'
+      })
     } else {
       const nextStartBeat = clamp(pointerBeat, drag.startBeat - secondsToBeats(drag.originalTrimStartSeconds), drag.endBeat - secondsToBeats(minSeconds))
       const deltaSeconds = beatsToSeconds(nextStartBeat - drag.startBeat)
@@ -4253,26 +4517,36 @@ function applyAudioRegionDrag(event, region) {
       region.startBeat = nextStartBeat
       region.trimStartSeconds = nextTrimStart
       region.trimEndSeconds = drag.originalTrimEndSeconds
-      region.stretch = normalizeAudioStretch({ enabled: false, ratio: 1 })
       region.stretchRender = null
       region.renderedWaveform = null
       region.visibleDurationSeconds = Math.max(minSeconds, region.trimEndSeconds - region.trimStartSeconds)
+      region.stretch = makeDefaultAudioStretch(region.visibleDurationSeconds)
     }
   } else if (drag.mode === 'right') {
     const visibleSeconds = Math.max(minSeconds, beatsToSeconds(pointerBeat - drag.startBeat))
     if (drag.editMode === 'stretch') {
-      const ratio = visibleSeconds / Math.max(minSeconds, drag.originalSourceDurationSeconds)
-      region.visibleDurationSeconds = visibleSeconds
-      region.stretch = createPendingStretchMetadata(ratio)
-      region.stretch.targetDurationSeconds = visibleSeconds
+      const deltaSeconds = (event.clientX - drag.startX) * drag.timelineSecondsPerPixel
+      const minTargetSeconds = Math.max(minSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MIN)
+      const maxTargetSeconds = Math.max(minTargetSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MAX)
+      const targetSeconds = clamp(drag.originalTargetDurationSeconds + deltaSeconds, minTargetSeconds, maxTargetSeconds)
+      region.visibleDurationSeconds = targetSeconds
+      region.stretch = createPendingStretchMetadata({ sourceDurationSeconds: drag.originalSourceDurationSeconds, targetDurationSeconds: targetSeconds })
       region.stretchRender = null
       region.renderedWaveform = null
+      logStretchDebug('pointermove', region.id, {
+        sourceDurationSeconds: drag.originalSourceDurationSeconds,
+        targetDurationSeconds: targetSeconds,
+        speedPercent: region.stretch.speedPercent,
+        lengthRatio: region.stretch.lengthRatio,
+        renderStatus: region.stretch.renderStatus,
+        reason: 'right_edge'
+      })
     } else {
       const maxVisibleSeconds = Math.max(minSeconds, fileDuration - drag.originalTrimStartSeconds)
       region.trimStartSeconds = drag.originalTrimStartSeconds
       region.trimEndSeconds = clamp(drag.originalTrimStartSeconds + visibleSeconds, drag.originalTrimStartSeconds + minSeconds, fileDuration)
       region.visibleDurationSeconds = Math.min(maxVisibleSeconds, region.trimEndSeconds - region.trimStartSeconds)
-      region.stretch = normalizeAudioStretch({ enabled: false, ratio: 1 })
+      region.stretch = makeDefaultAudioStretch(region.visibleDurationSeconds)
       region.stretchRender = null
       region.renderedWaveform = null
     }
@@ -4338,6 +4612,10 @@ function finishMidiRegionDrag() {
   if (didMove) {
     pushHistory('edit-midi-region', before, captureDawSnapshot())
     scheduleEditorSave()
+    if (finished.editMode === 'stretch') {
+      const region = midiRegions.find((item)=>item.id === finished.id && item.type === 'audio')
+      if (region) logStretchDebug('commit', region, { reason: 'pointerup' })
+    }
   }
   renderEditor()
   requestAnimationFrame(() => restoreArrangementScroll(finished.scroll))
@@ -4553,22 +4831,25 @@ async function analyzePitchTraceForRegion(regionId) {
 function updateAudioRegionStretchTarget(region, targetDurationSeconds) {
   if (!region || region.type !== 'audio') return
   const before = captureDawSnapshot()
-  const math = getAudioStretchMath(region, targetDurationSeconds)
-  region.visibleDurationSeconds = math.targetDurationSeconds
-  region.durationSeconds = math.targetDurationSeconds
-  region.durationBeats = secondsToBeats(math.targetDurationSeconds)
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const target = Math.max(minAudioRegionSeconds, Number(targetDurationSeconds) || sourceDurationSeconds)
+  const math = getAudioStretchMath({ ...region, stretch: { ...region.stretch, enabled: true, sourceDurationSeconds, targetDurationSeconds: target } }, target)
+  region.visibleDurationSeconds = target
+  region.durationSeconds = target
+  region.durationBeats = secondsToBeats(target)
   region.endBeat = Number(region.startBeat || 0) + region.durationBeats
-  region.stretch = {
-    ...createPendingStretchMetadata(math.lengthRatio),
-    targetDurationSeconds: math.targetDurationSeconds,
-    lengthRatio: math.lengthRatio,
-    speedPercent: math.rawSpeedPercent,
-    renderStatus: math.supported ? (Math.abs(math.lengthRatio - 1) > 0.001 ? 'needs_render' : 'idle') : 'failed',
-    renderError: math.supported ? null : math.error
-  }
+  region.stretch = createPendingStretchMetadata({ sourceDurationSeconds, targetDurationSeconds: target })
   region.stretchRender = null
   region.renderedWaveform = null
   syncAudioRegionTimeline(region)
+  logStretchDebug('control change', region.id, {
+    sourceDurationSeconds,
+    targetDurationSeconds: target,
+    speedPercent: math.speedPercent,
+    lengthRatio: math.lengthRatio,
+    renderStatus: region.stretch.renderStatus,
+    reason: math.supported ? 'target_update' : 'validation_error'
+  })
   pushHistory('stretch-audio-region', before, captureDawSnapshot())
   scheduleEditorSave()
   renderEditor()
@@ -4577,22 +4858,23 @@ function enableAudioRegionStretch(region) {
   if (!region || region.type !== 'audio') return
   const before = captureDawSnapshot()
   const sourceDuration = Math.max(minAudioRegionSeconds, getAudioSourceDurationSeconds(region))
-  const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region) || sourceDuration)
-  const ratio = Math.max(0.01, visibleDuration / sourceDuration)
-  const math = getAudioStretchMath({ ...region, stretch: { enabled: true, lengthRatio: ratio, targetDurationSeconds: visibleDuration } }, visibleDuration)
-  region.stretch = {
-    ...createPendingStretchMetadata(ratio),
-    enabled: true,
-    targetDurationSeconds: visibleDuration,
-    sourceDurationSeconds: sourceDuration,
-    lengthRatio: ratio,
-    ratio,
-    speedPercent: math.rawSpeedPercent,
-    renderStatus: math.supported && Math.abs(ratio - 1) > 0.001 ? 'needs_render' : 'idle',
-    renderError: math.supported ? null : math.error
-  }
+  const visibleDuration = Math.max(minAudioRegionSeconds, getRawAudioRegionVisibleDurationSeconds(region) || sourceDuration)
+  region.visibleDurationSeconds = visibleDuration
+  region.durationSeconds = visibleDuration
+  region.durationBeats = secondsToBeats(visibleDuration)
+  region.endBeat = Number(region.startBeat || 0) + region.durationBeats
+  region.stretch = createPendingStretchMetadata({ sourceDurationSeconds: sourceDuration, targetDurationSeconds: visibleDuration })
   region.stretchRender = null
   region.renderedWaveform = null
+  syncAudioRegionTimeline(region)
+  logStretchDebug('control change', region.id, {
+    sourceDurationSeconds: sourceDuration,
+    targetDurationSeconds: visibleDuration,
+    speedPercent: region.stretch.speedPercent,
+    lengthRatio: region.stretch.lengthRatio,
+    renderStatus: region.stretch.renderStatus,
+    reason: 'enable'
+  })
   pushHistory('enable-audio-stretch', before, captureDawSnapshot())
   scheduleEditorSave()
   renderEditor()
@@ -4605,10 +4887,18 @@ function resetAudioRegionStretch(region) {
   region.durationSeconds = sourceDuration
   region.durationBeats = secondsToBeats(sourceDuration)
   region.endBeat = Number(region.startBeat || 0) + region.durationBeats
-  region.stretch = normalizeAudioStretch({ enabled: false, ratio: 1 })
+  region.stretch = makeDefaultAudioStretch(sourceDuration)
   region.stretchRender = null
   region.renderedWaveform = null
   syncAudioRegionTimeline(region)
+  logStretchDebug('control change', region.id, {
+    sourceDurationSeconds: sourceDuration,
+    targetDurationSeconds: sourceDuration,
+    speedPercent: 100,
+    lengthRatio: 1,
+    renderStatus: 'idle',
+    reason: 'reset'
+  })
   pushHistory('reset-audio-stretch', before, captureDawSnapshot())
   scheduleEditorSave()
   renderEditor()
@@ -5486,6 +5776,13 @@ function bindEditorEvents() {
   app.querySelector('[data-stretch-prompt-cancel]')?.addEventListener('click', () => {
     stretchPlaybackPrompt = null
     renderEditor()
+  })
+  app.querySelector('[data-stretch-prompt-play-original]')?.addEventListener('click', () => {
+    const regionId = stretchPlaybackPrompt?.regionId
+    stretchPlaybackPrompt = null
+    if (regionId) audioEditPlaybackBypassRegionIds.add(regionId)
+    renderEditor()
+    if (isPlaying) updateAudioClipPlayback(clampBeat(xToBeat(timelineState.playheadX)))
   })
   app.querySelector('[data-audio-edit-prompt-render]')?.addEventListener('click', () => {
     const prompt = audioEditPlaybackPrompt
