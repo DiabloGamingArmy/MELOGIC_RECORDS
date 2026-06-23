@@ -138,7 +138,7 @@ export class LibrarySamplerInstrument {
     return selectLibrarySample(this.samples, note, this.samplePlaybackMode)
   }
 
-  async noteOn(note, velocity = 0.8, { startTime = null, stopTime = null } = {}) {
+  async noteOn(note, velocity = 0.8, { startTime = null, stopTime = null, onScheduled = null, onTriggered = null } = {}) {
     const midi = Number(note)
     if (!Number.isFinite(midi)) return
     this.noteOff(midi, { immediate: true })
@@ -172,6 +172,8 @@ export class LibrarySamplerInstrument {
     this.voices.set(midi, voice)
     source.onended = () => this.cleanupVoice(midi, voice)
     source.start(startAt)
+    onScheduled?.({ note: midi, scheduledAudioTime: startAt, audioContextCurrentTime: this.audioContext.currentTime })
+    onTriggered?.({ note: midi, scheduledAudioTime: startAt, audioContextCurrentTime: this.audioContext.currentTime })
     if (Number.isFinite(Number(stopTime)) && Number(stopTime) > startAt) {
       this.noteOff(midi, { stopTime: Number(stopTime) })
     }

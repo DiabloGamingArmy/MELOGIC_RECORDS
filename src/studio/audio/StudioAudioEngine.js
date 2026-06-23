@@ -23,7 +23,11 @@ export class StudioAudioEngine {
     const Ctx = window.AudioContext || window.webkitAudioContext
     if (!Ctx) throw new Error('Web Audio API is not supported in this browser.')
     if (!this.audioContext) {
-      this.audioContext = new Ctx()
+      try {
+        this.audioContext = new Ctx({ latencyHint: 'interactive' })
+      } catch {
+        this.audioContext = new Ctx()
+      }
       this.state.sampleRate = this.audioContext.sampleRate || this.state.sampleRate
     }
     await this.loadWorklet()

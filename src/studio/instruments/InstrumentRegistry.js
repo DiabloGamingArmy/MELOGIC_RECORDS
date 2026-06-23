@@ -45,7 +45,42 @@ export class InstrumentRegistry {
 
   noteOn(id, note, velocity = 0.85, options = {}) {
     const instrument = this.get(id)
-    Promise.resolve(instrument?.ensureRunning?.()).then(() => instrument?.noteOn(note, velocity, options)).catch((error) => {
+    if (!instrument) return
+    const runNoteOn = () => {
+      const audioContext = instrument.audioContext
+      const startOffsetSeconds = options.live ? Math.max(0, Math.min(0.005, Number(options.startOffsetSeconds) || 0)) : 0
+      const startTime = options.live && audioContext
+        ? audioContext.currentTime + startOffsetSeconds
+        : options.startTime
+      const liveOptions = options.live
+        ? {
+            ...options,
+            startTime,
+            onScheduled: ({ scheduledAudioTime, audioContextCurrentTime } = {}) => {
+              console.info('[live-note] scheduled', {
+                note,
+                scheduledAudioTime,
+                audioContextCurrentTime,
+                scheduleDeltaMs: Math.round(((Number(scheduledAudioTime) || 0) - (Number(audioContextCurrentTime) || 0)) * 1000),
+                selectedTrackId: options.selectedTrackId,
+                instrumentId: id,
+                source: options.source || 'live'
+              })
+            },
+            onTriggered: ({ scheduledAudioTime, audioContextCurrentTime } = {}) => {
+              console.info('[live-note] triggered', {
+                note,
+                scheduleDeltaMs: Math.round(((Number(scheduledAudioTime) || 0) - (Number(audioContextCurrentTime) || 0)) * 1000),
+                instrumentId: id,
+                source: options.source || 'live'
+              })
+            }
+          }
+        : options
+      return instrument.noteOn(note, velocity, liveOptions)
+    }
+    const ensureRunning = instrument?.ensureRunning?.()
+    Promise.resolve(ensureRunning).then(runNoteOn).catch((error) => {
       console.warn('[InstrumentRegistry] noteOn failed', { id, message: error?.message })
     })
   }

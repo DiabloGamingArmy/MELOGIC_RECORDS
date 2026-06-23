@@ -80,16 +80,12 @@ const dawWindowManager = new DawWindowManager({
   onNoteOn: (pluginInstanceId, note, velocity) => {
     const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
     if (track?.instrument?.enabled === false) return
-    dawInstrumentRegistry.noteOn(pluginInstanceId, note, velocity)
+    triggerLiveInstrumentNote(track, note, velocity, { source: 'plugin', activeKey: `plugin:${pluginInstanceId}:${note}` })
     startTrackMeterLoop()
-    setTrackKeyboardNoteActive(track?.id || selectedTrackId, note, `plugin:${pluginInstanceId}:${note}`, true)
-    recordMidiNoteOn(track?.id || selectedTrackId, note, velocity)
   },
   onNoteOff: (pluginInstanceId, note) => {
-    dawInstrumentRegistry.noteOff(pluginInstanceId, note)
     const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
-    setTrackKeyboardNoteActive(track?.id || selectedTrackId, note, `plugin:${pluginInstanceId}:${note}`, false)
-    recordMidiNoteOff(track?.id || selectedTrackId, note)
+    stopLiveInstrumentNote(track, note, { activeKey: `plugin:${pluginInstanceId}:${note}` })
   },
   onChange: () => renderEditor()
 })
@@ -311,6 +307,7 @@ const STRETCH_RATIO_MAX = 100 / STRETCH_SPEED_MIN
 const TRANSPORT_SCHEDULER_START_DELAY_SECONDS = 0.08
 const TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS = 0.16
 const PLAYBACK_LATENCY_COMPENSATION_SECONDS = 0
+const LIVE_NOTE_SAFETY_OFFSET_SECONDS = 0.003
 const PITCH_TRACE_VERSION = 'pitch-trace-v1'
 const PITCH_TRACE_ALGORITHM = 'yin-js-worker-v1'
 const PITCH_RENDER_STATUSES = ['idle', 'rendering', 'ready', 'failed', 'needs_render']
@@ -1696,6 +1693,7 @@ function addTrack({ sourceTrack = null, trackType = 'software' } = {}) {
   }
   tracks.push(track)
   selectedTrackId = id
+  warmTrackInstrument(track, { reason: sourceTrack ? 'duplicate-track' : 'add-track' })
   activeLeftPanel = 'inspector'
   inspectorMenu = null
   trackMenuState = null
@@ -2574,8 +2572,17 @@ async function hydrateProjectAudioAssets() {
 }
 
 function isTextEntryTarget(target){ return target?.matches?.('input, textarea, select, [contenteditable="true"]') || !!target?.closest?.('input, textarea, select, [contenteditable="true"], .studio-notes-modal, .studio-inspector-menu, .daw-plugin-window, .daw-plugin-host-page') }
+function createInteractiveAudioContext() {
+  const Ctx = window.AudioContext || window.webkitAudioContext
+  if (!Ctx) throw new Error('Web Audio API is not supported in this browser.')
+  try {
+    return new Ctx({ latencyHint: 'interactive' })
+  } catch {
+    return new Ctx()
+  }
+}
 async function getStudioAudioEngine() { if (!studioAudioEngine) { studioAudioEngine = new StudioAudioEngine(); await studioAudioEngine.init() } return studioAudioEngine }
-function getAudioContext(){ if(!audioContext){ audioContext = new (window.AudioContext || window.webkitAudioContext)() } if(audioContext.state==='suspended') audioContext.resume().catch((err)=>console.warn('[studioProject] metronome context resume failed', err)); return audioContext }
+function getAudioContext(){ if(!audioContext){ audioContext = createInteractiveAudioContext() } if(audioContext.state==='suspended') audioContext.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err)); return audioContext }
 function prewarmDawAudio() {
   try { getAudioContext() } catch (err) { console.warn('[studioProject] audio context prewarm failed', err) }
   if (!audioEnginePrewarmPromise) {
@@ -3450,7 +3457,7 @@ function startTrackMeterLoop() {
   meterRaf = requestAnimationFrame(tick)
 }
 function midiToFrequency(midi){ return 440 * (2 ** ((midi - 69) / 12)) }
-async function ensureInstrumentAudio(){ if(!instrumentAudioContext){ instrumentAudioContext = new (window.AudioContext || window.webkitAudioContext)(); instrumentMasterGain = instrumentAudioContext.createGain(); instrumentPanNode = instrumentAudioContext.createStereoPanner(); instrumentMasterGain.gain.value=instrumentVolume; instrumentPanNode.pan.value=instrumentPan; instrumentPanNode.connect(instrumentMasterGain); instrumentMasterGain.connect(instrumentAudioContext.destination) } if(instrumentAudioContext.state==='suspended') await instrumentAudioContext.resume(); }
+async function ensureInstrumentAudio(){ if(!instrumentAudioContext){ instrumentAudioContext = createInteractiveAudioContext(); instrumentMasterGain = instrumentAudioContext.createGain(); instrumentPanNode = instrumentAudioContext.createStereoPanner(); instrumentMasterGain.gain.value=instrumentVolume; instrumentPanNode.pan.value=instrumentPan; instrumentPanNode.connect(instrumentMasterGain); instrumentMasterGain.connect(instrumentAudioContext.destination) } if(instrumentAudioContext.state==='suspended') await instrumentAudioContext.resume(); }
 async function startInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(activeInstrumentNotes.has(shifted)) return; try{ await ensureInstrumentAudio(); const osc=instrumentAudioContext.createOscillator(); const gain=instrumentAudioContext.createGain(); osc.type='triangle'; osc.frequency.value=midiToFrequency(shifted); gain.gain.setValueAtTime(0.0001,instrumentAudioContext.currentTime); gain.gain.exponentialRampToValueAtTime(0.16*instrumentVolume,instrumentAudioContext.currentTime+0.02); osc.connect(gain); gain.connect(instrumentPanNode); osc.start(); activeInstrumentNotes.set(shifted,{osc,gain,midi:shifted}); setTrackKeyboardNoteActive(selectedTrackId, shifted, `legacy:${shifted}`, true) }catch(err){ console.warn('[studioProject] instrument note start failed',err) } }
 function stopInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(isSustainEnabled) return; const voice=activeInstrumentNotes.get(shifted); if(!voice||!instrumentAudioContext) return; voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.08); voice.osc.stop(instrumentAudioContext.currentTime+0.1); activeInstrumentNotes.delete(shifted); setTrackKeyboardNoteActive(selectedTrackId, shifted, `legacy:${shifted}`, false) }
 function stopAllInstrumentNotes(){ if(!instrumentAudioContext) { activeInstrumentNotes.clear(); return } for(const [m,voice] of activeInstrumentNotes){ voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.05); voice.osc.stop(instrumentAudioContext.currentTime+0.08); activeInstrumentNotes.delete(m); setTrackKeyboardNoteActive(selectedTrackId, voice.midi, `legacy:${voice.midi}`, false) } }
@@ -3472,19 +3479,66 @@ function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
       : null
   })
 }
-function playTrackMidiNote(track, note, velocity = 0.85) {
+function warmTrackInstrument(track = getSelectedTrack(), { reason = 'selection' } = {}) {
+  const instrument = ensureTrackInstrumentInstance(track)
+  if (!instrument?.preload) return
+  const status = instrument.getStatus?.().status || ''
+  if (status !== 'loaded') {
+    console.info('[live-note] instrument loading', {
+      instrumentId: track?.instrument?.pluginInstanceId || instrument.id,
+      reason
+    })
+  }
+  instrument.preload().catch((error) => {
+    console.warn('[live-note] instrument preload failed', {
+      instrumentId: track?.instrument?.pluginInstanceId || instrument.id,
+      message: error?.message
+    })
+  })
+}
+function warmSelectedTrackInstrument(reason = 'selection') {
+  warmTrackInstrument(getSelectedTrack(), { reason })
+}
+function triggerLiveInstrumentNote(track, note, velocity = 0.85, { source = 'live', activeKey = '' } = {}) {
   if (!track?.instrument || track.instrument.enabled === false) return
-  ensureTrackInstrumentInstance(track)
-  dawInstrumentRegistry.noteOn(track.instrument.pluginInstanceId, note, velocity)
+  const inputPerformanceTime = performance.now()
+  const instrument = ensureTrackInstrumentInstance(track)
+  if (!instrument) return
+  const ctx = getAudioContext()
+  const instrumentId = track.instrument.pluginInstanceId
+  console.info('[live-note] input', {
+    note,
+    inputPerformanceTime,
+    audioContextCurrentTime: ctx.currentTime,
+    selectedTrackId: track.id,
+    instrumentId,
+    source
+  })
+  if (instrument?.preload && instrument.getStatus?.().status !== 'loaded') {
+    console.info('[live-note] instrument loading', { instrumentId, source })
+  }
+  dawInstrumentRegistry.noteOn(instrumentId, note, velocity, {
+    live: true,
+    startOffsetSeconds: LIVE_NOTE_SAFETY_OFFSET_SECONDS,
+    inputPerformanceTime,
+    selectedTrackId: track.id,
+    source
+  })
   startTrackMeterLoop()
-  setTrackKeyboardNoteActive(track.id, note, `live:${track.id}:${note}`, true)
+  setTrackKeyboardNoteActive(track.id, note, activeKey || `live:${track.id}:${note}`, true)
   recordMidiNoteOn(track.id, note, velocity)
 }
-function stopTrackMidiNote(track, note) {
+function stopLiveInstrumentNote(track, note, { activeKey = '' } = {}) {
   if (!track?.instrument) return
-  dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note)
-  setTrackKeyboardNoteActive(track.id, note, `live:${track.id}:${note}`, false)
+  dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note, { live: true })
+  setTrackKeyboardNoteActive(track.id, note, activeKey || `live:${track.id}:${note}`, false)
   recordMidiNoteOff(track.id, note)
+}
+function playTrackMidiNote(track, note, velocity = 0.85) {
+  triggerLiveInstrumentNote(track, note, velocity)
+}
+function stopTrackMidiNote(track, note) {
+  stopLiveInstrumentNote(track, note)
 }
 function hasSoloedTracks() { return tracks.some((track)=>track.soloed) }
 function isTrackOutputAudible(track) {
@@ -4620,11 +4674,11 @@ function finalizeMidiRecording({ keepEmpty = false } = {}) {
 function stopAllTrackInstrumentNotes() {
   activeRecordingNotes.forEach((started)=> {
     const track = tracks.find((item)=>item.id===activeRecording?.trackId)
-    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, started.note)
+    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, started.note, { immediate: true, live: true })
   })
   pressedDawMidiKeys.forEach(({ trackId, note }) => {
     const track = tracks.find((item)=>item.id===trackId)
-    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note)
+    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note, { immediate: true, live: true })
   })
   pressedDawMidiKeys.clear()
   typingPitchTrigger = 0
@@ -5727,7 +5781,7 @@ function bindEditorEvents() {
   document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (isControlsMenuOpen) { isControlsMenuOpen = false; changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
   app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
-  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = el.dataset.trackRow; trackMenuState = null; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }))
+  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = el.dataset.trackRow; trackMenuState = null; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor(); warmSelectedTrackInstrument('track-select') }))
   app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const nextMenu = el.dataset.toggleInspectorMenu; inspectorMenu = inspectorMenu === nextMenu ? null : nextMenu; inspectorMenuPosition = null; if (inspectorMenu === 'instrument') { const rect = el.getBoundingClientRect(); inspectorMenuPosition = getClampedFloatingPosition(rect.left + rect.width / 2, rect.bottom + 8, 260, 210) } renderEditor() }))
   app.querySelectorAll('[data-inspector-menu-choice]').forEach((el) => el.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -6049,6 +6103,7 @@ function bindEditorEvents() {
     activeLeftPanel = 'inspector'
     inspectorMenu = null
     renderEditor()
+    warmSelectedTrackInstrument('track-options')
   }))
   app.querySelector('[data-add-track]')?.addEventListener('click', (event) => { event.stopPropagation(); openAddTrackModal() })
   app.querySelector('[data-close-add-track]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); closeAddTrackModal() })
@@ -6604,5 +6659,5 @@ if(!window.__melogicDawAudioPrewarmBound){
 }
 if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
-async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor(); hydrateProjectAudioAssets().catch((err)=>console.warn('[studioProject] audio hydration failed', err)) }
+async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor(); warmSelectedTrackInstrument('project-open'); hydrateProjectAudioAssets().catch((err)=>console.warn('[studioProject] audio hydration failed', err)) }
 init()

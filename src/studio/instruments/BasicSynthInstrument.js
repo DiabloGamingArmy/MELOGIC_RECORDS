@@ -130,7 +130,7 @@ export class BasicSynthInstrument {
     return wave
   }
 
-  noteOn(note, velocity = 0.8, { startTime = null, stopTime = null } = {}) {
+  noteOn(note, velocity = 0.8, { startTime = null, stopTime = null, onScheduled = null, onTriggered = null } = {}) {
     const midi = Number(note)
     if (!Number.isFinite(midi)) return
     if (!this.params.oscEnabled) return
@@ -177,6 +177,8 @@ export class BasicSynthInstrument {
     lfo?.oscillator.start(startAt)
     const voice = { midi, oscillators, envelope, filter, voiceGain, lfo, startTime: startAt }
     this.voices.set(midi, voice)
+    onScheduled?.({ note: midi, scheduledAudioTime: startAt, audioContextCurrentTime: this.audioContext.currentTime })
+    onTriggered?.({ note: midi, scheduledAudioTime: startAt, audioContextCurrentTime: this.audioContext.currentTime })
     if (Number.isFinite(Number(stopTime)) && Number(stopTime) > startAt) {
       this.noteOff(midi, { stopTime: Number(stopTime) })
     }
