@@ -27,6 +27,11 @@ import { getStorageAssetUrl } from './firebase/storageAssets.js'
 import { storage as firebaseStorage } from './firebase/storage.js'
 import { ref as storageRef, uploadBytes } from 'firebase/storage'
 import { renderAudioDsp, SOURA_AUDIO_DSP_OPERATIONS } from './studio/audio/dsp/audioDspRenderService.js'
+import {
+  getSouraWasmDspStatusSnapshot,
+  isLegacyJsDspFallbackEnabled,
+  preloadSouraWasmDsp
+} from './studio/audio/dsp/wasm/souraWasmDspClient.js'
 import { renderReversedAudio } from './studio/audio/audioReverseRenderService.js'
 import {
   findFolderByPath,
@@ -386,6 +391,7 @@ function normalizeRenderedAudioMetadata(metadata = null) {
     algorithm: metadata.algorithm || null,
     engine: metadata.engine || null,
     engineLabel: metadata.engineLabel || null,
+    engineType: metadata.engineType || null,
     operation: metadata.operation || null,
     quality: metadata.quality || null,
     qualityMode: metadata.qualityMode || null,
@@ -632,7 +638,7 @@ function buildCanonicalStretch({
     lengthRatio,
     speedPercent,
     mode: enabled ? 'offline_render' : 'none',
-    algorithm: algorithm || (enabled ? 'wsola_phase_vocoder_v1' : null),
+    algorithm: algorithm || (enabled ? 'signalsmith_wasm_time_stretch_v1' : null),
     preservesPitch: Boolean(enabled && preservesPitch),
     renderedObjectUrl: renderedObjectUrl || null,
     renderedAudioUrl: renderedAudioUrl || null,
@@ -1256,6 +1262,28 @@ function formatStorageStatus(region = {}) {
   if (region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed') return 'Offline / missing'
   return region.audioClip?.storagePath || region.audioClip?.downloadUrl ? 'Pending' : 'Offline / missing'
 }
+function getSouraDspStatusLabel(status = getSouraWasmDspStatusSnapshot()) {
+  if (status.status === 'loaded') return 'Loaded'
+  if (status.status === 'loading') return 'Loading'
+  if (status.status === 'failed') return 'Failed'
+  return 'Not loaded'
+}
+function isSouraDspRenderBlocked() {
+  return getSouraWasmDspStatusSnapshot().status === 'failed'
+}
+function renderSouraDspStatus() {
+  const status = getSouraWasmDspStatusSnapshot()
+  const failed = status.status === 'failed'
+  const legacy = isLegacyJsDspFallbackEnabled()
+  return `<section class="studio-audio-dsp-status ${failed ? 'is-failed' : ''} ${legacy ? 'is-legacy' : ''}">
+    <strong>DSP Engine</strong>
+    <span>Engine: ${esc(status.engineLabel || 'Soura WASM DSP: Signalsmith Stretch')}</span>
+    <span>Status: ${esc(getSouraDspStatusLabel(status))}</span>
+    <span>Quality: ${esc(status.quality || 'High')}</span>
+    ${failed ? `<em>WASM DSP engine is required for pitch/stretch rendering and failed to load.${status.error ? ` ${esc(status.error)}` : ''}</em>` : ''}
+    ${legacy ? '<em>Legacy JavaScript DSP fallback is active. Audio quality is reduced.</em>' : ''}
+  </section>`
+}
 function renderAudioSourceInfo(region = {}) {
   const clip = region.audioClip || {}
   const sourceLabel = (region.source || clip.source) === 'import' ? 'Imported' : 'Recorded'
@@ -1277,11 +1305,13 @@ function renderAudioSourceInfo(region = {}) {
     rows.push(
       ['Rendered sample rate', renderedAudio.renderedSampleRate ? `${Math.round(renderedAudio.renderedSampleRate)} Hz` : 'Unknown'],
       ['Rendered bit depth', `${formatRenderedBitDepth(renderedAudio.renderedBitDepth)}${renderedAudio.bitDepthPreserved ? ' (preserved)' : renderedAudio.sourceBitDepth ? ' (changed)' : ' (source unknown)'}`],
+      ['Render engine', renderedAudio.engineLabel || renderedAudio.engine || 'Unknown'],
+      ['Render engine type', renderedAudio.engineType || 'Unknown'],
       ['Render algorithm', renderedAudio.algorithm || 'Unknown'],
       ['Render quality', renderedAudio.qualityMode || 'Unknown']
     )
   }
-  return `<section class="studio-audio-file-info"><header><strong>Source Audio</strong><span>Read-only</span></header><dl>${rows.map(([label, value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`
+  return `<section class="studio-audio-file-info"><header><strong>Source Audio</strong><span>Read-only</span></header><dl>${rows.map(([label, value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${renderSouraDspStatus()}</section>`
 }
 function renderAudioRegionEditorPanel(region, motionClass = '') {
   const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
@@ -1301,6 +1331,8 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   })
   const stretchMath = getAudioStretchMath(region)
   const missing = Boolean(region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed')
+  const dspBlocked = isSouraDspRenderBlocked()
+  const dspBlockedTitle = dspBlocked ? 'title="WASM DSP engine is required for pitch/stretch rendering and failed to load."' : ''
   const renderStatus = stretch.renderStatus === 'needs_render' ? 'Needs render' : stretch.renderStatus
   const color = region.color || track?.color || '#58d4ff'
   const waveformColor = getReadableWaveformColor(color)
@@ -1330,7 +1362,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <label>Q-Strength<input type="range" min="0" max="100" step="1" data-audio-edit-field="qStrength" value="${edit.qStrength}" disabled><small>Coming soon</small></label>
         <label>Transpose<input type="number" min="-48" max="48" step="1" data-audio-edit-field="transposeSemitones" value="${edit.transposeSemitones}"><small>semitones</small></label>
         <label>Fine Tune<input type="number" min="-100" max="100" step="1" data-audio-edit-field="fineTuneCents" value="${edit.fineTuneCents}"><small>cents</small></label>
-        <button type="button" data-audio-render-pitch-shift ${pitchShiftActive && !missing && pitchShift.renderStatus !== 'rendering' ? '' : 'disabled'}>${pitchShift.renderStatus === 'failed' ? 'Retry Pitch Shift' : 'Render Pitch Shift'}</button>
+        <button type="button" data-audio-render-pitch-shift ${pitchShiftActive && !missing && !dspBlocked && pitchShift.renderStatus !== 'rendering' ? '' : 'disabled'} ${dspBlockedTitle}>${pitchShift.renderStatus === 'failed' ? 'Retry Pitch Shift' : 'Render Pitch Shift'}</button>
         <small>Pitch Shift: ${esc(pitchShiftStatus)}${pitchShiftActive ? ` · ${Number(pitchShift.totalSemitones).toFixed(2)} st` : ''}</small>
         <label>Pitch Source<select data-audio-edit-field="pitchSource" disabled><option>Off</option><option>Region</option><option>Project Key</option></select><small>Coming soon</small></label>
         <hr>
@@ -1340,7 +1372,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
           <label>Confidence<input type="range" min="0.3" max="0.95" step="0.05" data-pitch-trace-threshold value="${pitchTrace.confidenceThreshold}"><small>${Math.round(pitchTrace.confidenceThreshold * 100)}%</small></label>
           <button type="button" data-pitch-trace-analyze ${missing || pitchTrace.status === 'analyzing' ? 'disabled' : ''}>${pitchTrace.notes.length ? 'Re-analyze Audio' : 'Analyze Audio'}</button>
           <button type="button" data-pitch-trace-clear ${pitchTrace.notes.length || pitchTrace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
-          <button type="button" data-pitch-trace-render ${pitchTrace.enabled && pitchTrace.notes.length && !missing && pitchTrace.renderStatus !== 'rendering' ? '' : 'disabled'}>${pitchTrace.renderStatus === 'failed' ? 'Retry Pitch Trace Render' : 'Render Pitch Trace'}</button>
+          <button type="button" data-pitch-trace-render ${pitchTrace.enabled && pitchTrace.notes.length && !missing && !dspBlocked && pitchTrace.renderStatus !== 'rendering' ? '' : 'disabled'} ${dspBlockedTitle}>${pitchTrace.renderStatus === 'failed' ? 'Retry Pitch Trace Render' : 'Render Pitch Trace'}</button>
           ${selectedPitchNote ? `<div class="studio-pitch-trace-note-tools">
             <strong>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</strong>
             <span>Original ${esc(formatMidiNoteName(selectedPitchNote.originalMidiNote))} · ${selectedPitchNote.editedMidiNote - selectedPitchNote.originalMidiNote > 0 ? '+' : ''}${selectedPitchNote.editedMidiNote - selectedPitchNote.originalMidiNote} st</span>
@@ -1365,7 +1397,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
           <label>Target Length<input type="number" min="${minAudioRegionSeconds}" step="0.01" data-audio-stretch-length value="${stretchMath.targetDurationSeconds.toFixed(2)}"></label>
           <label>Length Ratio<input type="number" min="${STRETCH_RATIO_MIN}" max="${STRETCH_RATIO_MAX}" step="0.01" data-audio-stretch-ratio value="${stretchMath.lengthRatio.toFixed(2)}"></label>
           <p>Stretch Ratio: ${stretchMath.lengthRatio.toFixed(2)}x length · Status: ${esc(stretch.renderError || renderStatus || 'idle')}</p>
-          <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && stretchMath.supported ? '' : 'disabled'}>${stretch.renderStatus === 'failed' ? 'Retry Render' : 'Render Stretch'}</button>
+          <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && !dspBlocked && stretchMath.supported ? '' : 'disabled'} ${dspBlockedTitle}>${stretch.renderStatus === 'failed' ? 'Retry Render' : 'Render Stretch'}</button>
           <button type="button" data-audio-reset-stretch ${stretch.enabled ? '' : 'disabled'}>Reset Stretch</button>
         </div>
       </aside>
@@ -4471,7 +4503,7 @@ function createPendingStretchMetadata(input = {}) {
     renderStatus: Math.abs(lengthRatio - 1) <= 0.001 ? 'idle' : 'needs_render',
     renderError: supported ? null : stretchErrorMessage(),
     renderedSessionOnly: true,
-    algorithm: 'wsola_phase_vocoder_v1',
+    algorithm: 'signalsmith_wasm_time_stretch_v1',
     preservesPitch: true
   })
 }
@@ -7859,5 +7891,5 @@ if(!window.__melogicDawAudioPrewarmBound){
 }
 if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
-async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor(); warmSelectedTrackInstrument('project-open'); hydrateProjectAudioAssets().catch((err)=>console.warn('[studioProject] audio hydration failed', err)) }
+async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor(); preloadSouraWasmDsp().then(()=>renderEditor()).catch((err)=>{ console.error('[soura-dsp] preload failed', err); renderEditor() }); warmSelectedTrackInstrument('project-open'); hydrateProjectAudioAssets().catch((err)=>console.warn('[studioProject] audio hydration failed', err)) }
 init()
