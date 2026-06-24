@@ -19,7 +19,13 @@ function normalizeRenderedAudioMetadata(metadata = null) {
     bitDepthPreserved: metadata.bitDepthPreserved === true,
     sourceChannelCount: numOrNull(metadata.sourceChannelCount),
     renderedChannelCount: numOrNull(metadata.renderedChannelCount),
+    sampleRatePreserved: metadata.sampleRatePreserved === true,
+    channelCountPreserved: metadata.channelCountPreserved === true,
     algorithm: metadata.algorithm || null,
+    engine: metadata.engine || null,
+    engineLabel: metadata.engineLabel || null,
+    operation: metadata.operation || null,
+    quality: metadata.quality || null,
     qualityMode: metadata.qualityMode || null,
     renderedDurationSeconds: numOrNull(metadata.renderedDurationSeconds),
     renderCreatedAt: numOrNull(metadata.renderCreatedAt)

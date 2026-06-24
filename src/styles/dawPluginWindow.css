@@ -137,6 +137,114 @@
   color: #e9efff;
 }
 
+.soura-fx-shell {
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: auto;
+  background:
+    radial-gradient(circle at 16% 0%, rgba(100, 218, 255, 0.12), transparent 32%),
+    linear-gradient(180deg, rgba(18, 26, 41, 0.98), rgba(8, 12, 20, 0.98));
+}
+
+.soura-fx-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(126, 147, 191, 0.22);
+}
+
+.soura-fx-header span,
+.soura-fx-header strong {
+  color: #8fa1c6;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.soura-fx-header h2 {
+  margin: 2px 0 0;
+  color: #f3f8ff;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.soura-fx-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+
+.soura-fx-band,
+.soura-fx-control,
+.soura-fx-toggle {
+  border: 1px solid rgba(126, 147, 191, 0.18);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.soura-fx-band {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.soura-fx-control,
+.soura-fx-toggle {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+}
+
+.soura-fx-control.is-wide {
+  grid-column: span 1;
+}
+
+.soura-fx-control span,
+.soura-fx-toggle span {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  color: #d9e5fb;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.soura-fx-control b {
+  margin-left: auto;
+  color: #85dcff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.soura-fx-control em {
+  color: #7083a8;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.soura-fx-control input[type='range'] {
+  width: 100%;
+  accent-color: #78d9ff;
+}
+
+.soura-fx-toggle {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.soura-fx-toggle input {
+  accent-color: #78d9ff;
+}
+
+@media (max-width: 760px) {
+  .soura-fx-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .melogic-plugin-fixed-frame {
   width: calc(1100px * var(--plugin-scale, 1));
   height: calc(720px * var(--plugin-scale, 1));

@@ -11,15 +11,22 @@ import { InstrumentRegistry } from './studio/instruments/InstrumentRegistry.js'
 import { DawWindowManager } from './studio/plugins/DawWindowManager.js'
 import { DAW_PLUGIN_TYPES } from './studio/plugins/pluginCatalog.js'
 import { renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
+import { isSouraAudioEffectPlugin, renderSouraAudioEffectShell } from './studio/plugins/SouraAudioEffectShell.js'
 import { getDawPluginManifest, listDawInstruments } from './daw/pluginHost/pluginRegistry.js'
 import { MIDI_EFFECT_MANIFESTS } from './daw/midiEffects/catalog.js'
-import { AUDIO_EFFECT_MANIFESTS } from './daw/audioEffects/catalog.js'
+import {
+  AUDIO_EFFECT_MANIFESTS,
+  getAudioEffectDefaultParams,
+  getAudioEffectManifest,
+  getAudioEffectPluginType,
+  getAudioEffectTypeFromPlugin,
+  isImplementedAudioEffect
+} from './daw/audioEffects/catalog.js'
 import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 import { getStorageAssetUrl } from './firebase/storageAssets.js'
 import { storage as firebaseStorage } from './firebase/storage.js'
 import { ref as storageRef, uploadBytes } from 'firebase/storage'
-import { renderTimeStretch as renderOfflineStretchedAudioClip } from './studio/audio/audioStretchRenderService.js'
-import { renderPitchShiftedAudio, renderPitchTraceEdits } from './studio/audio/audioPitchRenderService.js'
+import { renderAudioDsp, SOURA_AUDIO_DSP_OPERATIONS } from './studio/audio/dsp/audioDspRenderService.js'
 import { renderReversedAudio } from './studio/audio/audioReverseRenderService.js'
 import {
   findFolderByPath,
@@ -69,7 +76,9 @@ const dawInstrumentRegistry = new InstrumentRegistry({
   resolveLibraryInstrument: (instrumentId) => resolveStudioLibraryInstrument(instrumentId)
 })
 const dawWindowManager = new DawWindowManager({
-  renderContent: (pluginWindow) => renderPluginShell(pluginWindow, { hostMode: 'inline' }),
+  renderContent: (pluginWindow) => isSouraAudioEffectPlugin(pluginWindow?.pluginType)
+    ? renderSouraAudioEffectShell(pluginWindow)
+    : renderPluginShell(pluginWindow, { hostMode: 'inline' }),
   getHostUrl: (pluginWindow) => {
     const params = new URLSearchParams({
       pluginInstanceId: pluginWindow.pluginInstanceId,
@@ -79,6 +88,7 @@ const dawWindowManager = new DawWindowManager({
     return `${ROUTES.studioInstrumentHost}?${params.toString()}`
   },
   onOpen: (pluginWindow) => {
+    if (isSouraAudioEffectPlugin(pluginWindow?.pluginType)) return
     dawInstrumentRegistry.createOrGet({
       id: pluginWindow.pluginInstanceId,
       type: pluginWindow.pluginType,
@@ -90,6 +100,11 @@ const dawWindowManager = new DawWindowManager({
     // Closing a plugin window hides the UI; the track-owned instrument can keep sounding/recording.
   },
   onParamChange: (pluginInstanceId, param, value) => {
+    const pluginWindow = dawWindowManager.windows.get(pluginInstanceId)
+    if (isSouraAudioEffectPlugin(pluginWindow?.pluginType)) {
+      updateAudioEffectParamFromWindow(pluginWindow, param, value)
+      return
+    }
     dawInstrumentRegistry.setParam(pluginInstanceId, param, value)
     const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
     if (track?.instrument) track.instrument.params = { ...(track.instrument.params || {}), [param]: value }
@@ -366,7 +381,13 @@ function normalizeRenderedAudioMetadata(metadata = null) {
     bitDepthPreserved: metadata.bitDepthPreserved === true,
     sourceChannelCount: numOrNull(metadata.sourceChannelCount),
     renderedChannelCount: numOrNull(metadata.renderedChannelCount),
+    sampleRatePreserved: metadata.sampleRatePreserved === true,
+    channelCountPreserved: metadata.channelCountPreserved === true,
     algorithm: metadata.algorithm || null,
+    engine: metadata.engine || null,
+    engineLabel: metadata.engineLabel || null,
+    operation: metadata.operation || null,
+    quality: metadata.quality || null,
     qualityMode: metadata.qualityMode || null,
     renderedDurationSeconds: numOrNull(metadata.renderedDurationSeconds),
     renderCreatedAt: numOrNull(metadata.renderCreatedAt)
@@ -969,7 +990,9 @@ const tracks = [
 ]
 
 const MIDI_EFFECT_TYPES = MIDI_EFFECT_MANIFESTS.map(({ id, name }) => ({ type: id, name }))
-const AUDIO_EFFECT_TYPES = AUDIO_EFFECT_MANIFESTS.map(({ id, name }) => ({ type: id, name }))
+const AUDIO_EFFECT_TYPES = AUDIO_EFFECT_MANIFESTS
+  .filter((manifest) => manifest.implemented)
+  .map(({ id, name }) => ({ type: id, name }))
 
 const studioProjectModel = normalizeStudioProjectModel({ tracks, regions: timelineRegions })
 
@@ -2216,6 +2239,30 @@ function renderBottomPanel(panel,motionClass=''){
 
 function makeInsertId(prefix = 'insert') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}` }
 function makeTrackId() { return makeInsertId('track') }
+function normalizeAudioEffectInsert(insert = {}) {
+  const type = String(insert?.type || '')
+  const manifest = getAudioEffectManifest(type)
+  if (!manifest) return null
+  return {
+    id: String(insert.id || makeInsertId(type)),
+    type,
+    name: insert.name || manifest.name,
+    enabled: insert.enabled !== false,
+    params: { ...getAudioEffectDefaultParams(type), ...(insert.params || {}) }
+  }
+}
+function serializeAudioEffects(list = []) {
+  return (Array.isArray(list) ? list : [])
+    .map(normalizeAudioEffectInsert)
+    .filter(Boolean)
+    .map((insert) => ({
+      id: insert.id,
+      type: insert.type,
+      name: insert.name,
+      enabled: insert.enabled !== false,
+      params: { ...(insert.params || {}) }
+    }))
+}
 function cloneInsertList(list = []) {
   return Array.isArray(list) ? list.map((item)=>({ ...item, id: makeInsertId(item.type || 'insert'), params: { ...(item.params || {}) } })) : []
 }
@@ -2229,6 +2276,7 @@ function ensureTrackInsertState(track) {
   }
   if (!Array.isArray(track.midiEffects)) track.midiEffects = []
   if (!Array.isArray(track.audioEffects)) track.audioEffects = []
+  track.audioEffects = track.audioEffects.map(normalizeAudioEffectInsert).filter(Boolean)
   if (track.instrument && typeof track.instrument !== 'object') track.instrument = null
   return track
 }
@@ -2299,6 +2347,7 @@ function deleteSelectedTrack() {
   const before = captureDawSnapshot()
   const [removed] = tracks.splice(index, 1)
   if (removed?.instrument?.pluginInstanceId) dawWindowManager.closeWindow(removed.instrument.pluginInstanceId)
+  ;(removed?.audioEffects || []).forEach((insert) => dawWindowManager.closeWindow(getAudioEffectWindowInstanceId(removed.id, insert.id)))
   disposeTrackAudioChannel(removed.id)
   midiRegions = midiRegions.filter((region)=>region.trackId !== removed.id)
   selectedTrackId = tracks[Math.max(0, index - 1)]?.id || tracks[0]?.id || ''
@@ -2353,7 +2402,8 @@ function getClampedTrackMenuPosition(clientX = 0, clientY = 0) {
 }
 function createInsert(type, catalog = []) {
   const item = catalog.find((entry) => entry.type === type) || catalog[0]
-  return item ? { id: makeInsertId(item.type), type: item.type, name: item.name, enabled: true, params: {} } : null
+  const params = catalog === AUDIO_EFFECT_TYPES ? getAudioEffectDefaultParams(item?.type) : {}
+  return item ? { id: makeInsertId(item.type), type: item.type, name: item.name, enabled: true, params } : null
 }
 function createTrackInstrument(pluginType = DAW_PLUGIN_TYPES.melogicWavetable, trackId = selectedTrackId) {
   const manifest = getDawPluginManifest(pluginType)
@@ -2366,6 +2416,47 @@ function createTrackInstrument(pluginType = DAW_PLUGIN_TYPES.melogicWavetable, t
     params: {}
   }
 }
+function getAudioEffectWindowInstanceId(trackId = '', insertId = '') {
+  return `audio-effect:${trackId || 'track'}:${insertId || 'insert'}`
+}
+function getAudioEffectInsertFromWindow(pluginWindow = {}) {
+  const track = ensureTrackInsertState(tracks.find((item)=>item.id === pluginWindow.trackId))
+  const insertId = String(pluginWindow.pluginInstanceId || '').split(':').pop()
+  const insert = track?.audioEffects?.find((item)=>item.id === insertId)
+  return { track, insert }
+}
+function coerceAudioEffectParam(effectType = '', param = '', value = null) {
+  const defaults = getAudioEffectDefaultParams(effectType)
+  if (typeof defaults[param] === 'boolean') return value === true || value === 'true' || value === '1'
+  if (typeof defaults[param] === 'number') return Number.isFinite(Number(value)) ? Number(value) : defaults[param]
+  return value
+}
+function updateAudioEffectParamFromWindow(pluginWindow = {}, param = '', value = null) {
+  const effectType = getAudioEffectTypeFromPlugin(pluginWindow.pluginType)
+  const { track, insert } = getAudioEffectInsertFromWindow(pluginWindow)
+  if (!track || !insert || !effectType || !param) return
+  insert.params = {
+    ...getAudioEffectDefaultParams(effectType),
+    ...(insert.params || {}),
+    [param]: coerceAudioEffectParam(effectType, param, value)
+  }
+  rebuildTrackAudioEffectsChain(track.id)
+  scheduleEditorSave()
+}
+function openAudioEffectWindow(track = getSelectedTrack(), insertId = '') {
+  const target = ensureTrackInsertState(track)
+  const insert = target?.audioEffects?.find((item)=>item.id === insertId)
+  const pluginType = getAudioEffectPluginType(insert?.type)
+  if (!target || !insert || !pluginType) return
+  insert.params = { ...getAudioEffectDefaultParams(insert.type), ...(insert.params || {}) }
+  dawWindowManager.openPlugin({
+    pluginType,
+    trackId: target.id,
+    instanceId: getAudioEffectWindowInstanceId(target.id, insert.id),
+    params: insert.params,
+    forceCenter: true
+  })
+}
 function renderInsertMenu({ menuId, items, action }) {
   if (inspectorMenu !== menuId) return ''
   const floating = menuId === 'instrument'
@@ -2374,11 +2465,12 @@ function renderInsertMenu({ menuId, items, action }) {
   return `<div class="studio-inspector-menu ${floating ? 'studio-inspector-menu--floating' : ''}" data-inspector-menu="${menuId}"${style}>${items.map((item)=>`<button type="button" data-inspector-menu-choice="${action}" data-insert-type="${item.type}">${item.name}</button>`).join('')}${floating ? '<button type="button" data-inspector-menu-choice="instrument-empty" data-insert-type="">No Instrument</button>' : ''}</div>`
 }
 function renderInsertSlot(insert, section) {
+  const canEdit = section === 'midi' || (section === 'audio' && isImplementedAudioEffect(insert.type))
   return `<article class="studio-insert-slot ${insert.enabled ? 'is-enabled' : 'is-disabled'}">
     <div class="studio-insert-slot-label"><strong>${esc(insert.name)}</strong><span>${insert.enabled ? 'Enabled' : 'Disabled'}</span></div>
     <div class="studio-insert-slot-actions">
       <button type="button" class="studio-insert-power ${insert.enabled ? 'is-active' : ''}" data-toggle-insert="${section}" data-insert-id="${insert.id}" aria-label="Toggle ${esc(insert.name)}">${insert.enabled ? 'On' : 'Off'}</button>
-      <button type="button" data-edit-insert="${section}" data-insert-id="${insert.id}">Edit</button>
+      <button type="button" data-edit-insert="${section}" data-insert-id="${insert.id}" ${canEdit ? '' : 'disabled'}>${section === 'audio' ? 'Open' : 'Edit'}</button>
       <button type="button" data-toggle-inspector-menu="${section === 'midi' ? 'midi-effects' : 'audio-effects'}">Change</button>
       <button type="button" data-remove-insert="${section}" data-insert-id="${insert.id}">Remove</button>
     </div>
@@ -2869,7 +2961,7 @@ function normalizeLoadedRegion(region = {}) {
   })
   return type === 'audio' ? syncAudioRegionTimeline(normalized) : normalized
 }
-function buildEditorStateForSave(){ return { version:3, timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null }, globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] }, regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })), notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId }, tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:audioEffects.map((fx)=>({...fx,params:{...(fx.params||{})}}))} }), toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled } } }
+function buildEditorStateForSave(){ return { version:3, timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null }, globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] }, regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })), notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId }, tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:serializeAudioEffects(audioEffects)} }), toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled } } }
 function applyLoadedEditorState(editorState) {
   if (!editorState || typeof editorState !== 'object') return
   const tl = editorState.timeline || {}
@@ -2954,7 +3046,7 @@ function applyLoadedEditorState(editorState) {
         outputLevel: Number.isFinite(Number(saved.outputLevel)) ? Number(saved.outputLevel) : t.outputLevel,
         midiEffects: savedType === 'software' && Array.isArray(saved.midiEffects) ? saved.midiEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : [],
         instrument: savedType === 'software' && saved.instrument && typeof saved.instrument === 'object' ? { ...saved.instrument, params: { ...(saved.instrument.params || {}) } } : null,
-        audioEffects: Array.isArray(saved.audioEffects) ? saved.audioEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : []
+        audioEffects: serializeAudioEffects(saved.audioEffects)
       })
       if (saved.channelSettings && typeof saved.channelSettings === 'object') Object.assign(t, saved.channelSettings)
       ensureTrackInsertState(t)
@@ -3204,30 +3296,170 @@ function prewarmDawAudio() {
   }
   return audioEnginePrewarmPromise
 }
+function effectDbToGain(db = 0) {
+  return 10 ** (clamp(Number(db) || 0, -80, 24) / 20)
+}
+function setAudioParam(param, value, fallback = 0) {
+  if (!param) return
+  const next = Number.isFinite(Number(value)) ? Number(value) : fallback
+  try {
+    param.setTargetAtTime(next, audioContext?.currentTime || 0, 0.015)
+  } catch {
+    param.value = next
+  }
+}
+function createImpulseBuffer(ctx, params = {}) {
+  const duration = clamp(Number(params.decay) || 2.4, 0.2, 8)
+  const size = clamp(Number(params.size) || 0.62, 0.1, 1)
+  const length = Math.max(1, Math.round(ctx.sampleRate * duration))
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate)
+  for (let channelIndex = 0; channelIndex < impulse.numberOfChannels; channelIndex += 1) {
+    const data = impulse.getChannelData(channelIndex)
+    for (let index = 0; index < length; index += 1) {
+      const t = index / Math.max(1, length - 1)
+      const decay = (1 - t) ** (1.8 + (size * 3.2))
+      data[index] = (Math.random() * 2 - 1) * decay
+    }
+  }
+  return impulse
+}
+function connectSerial(nodes = []) {
+  for (let index = 0; index < nodes.length - 1; index += 1) nodes[index]?.connect?.(nodes[index + 1])
+}
+function createEqEffectNodes(ctx, params = {}) {
+  const nodes = []
+  const addFilter = (type, frequency, q = 1, gain = 0) => {
+    const filter = ctx.createBiquadFilter()
+    filter.type = type
+    filter.frequency.value = clamp(Number(frequency) || 1000, 20, 20000)
+    if ('Q' in filter) filter.Q.value = clamp(Number(q) || 1, 0.1, 18)
+    if ('gain' in filter) filter.gain.value = clamp(Number(gain) || 0, -24, 24)
+    nodes.push(filter)
+  }
+  if (params.hpEnabled) addFilter('highpass', params.hpFrequency, params.hpQ)
+  if (params.lowShelfEnabled !== false) addFilter('lowshelf', params.lowShelfFrequency, 1, params.lowShelfGain)
+  if (params.bell1Enabled !== false) addFilter('peaking', params.bell1Frequency, params.bell1Q, params.bell1Gain)
+  if (params.bell2Enabled !== false) addFilter('peaking', params.bell2Frequency, params.bell2Q, params.bell2Gain)
+  if (params.highShelfEnabled !== false) addFilter('highshelf', params.highShelfFrequency, 1, params.highShelfGain)
+  if (params.lpEnabled) addFilter('lowpass', params.lpFrequency, params.lpQ)
+  const output = ctx.createGain()
+  output.gain.value = effectDbToGain(params.outputGain)
+  nodes.push(output)
+  connectSerial(nodes)
+  return { input: nodes[0], output, nodes }
+}
+function createReverbEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const preDelay = ctx.createDelay(0.5)
+  const convolver = ctx.createConvolver()
+  const damping = ctx.createBiquadFilter()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  preDelay.delayTime.value = clamp(Number(params.preDelay) || 0, 0, 0.25)
+  convolver.buffer = createImpulseBuffer(ctx, params)
+  damping.type = 'lowpass'
+  damping.frequency.value = clamp(Number(params.damping) || 6800, 800, 18000)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, preDelay, convolver, damping, wet, output, gain])
+  return { input, output: gain, nodes: [input, dry, wet, preDelay, convolver, damping, output, gain] }
+}
+function createDelayEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const lowCut = ctx.createBiquadFilter()
+  const highCut = ctx.createBiquadFilter()
+  const delay = ctx.createDelay(2)
+  const feedback = ctx.createGain()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  lowCut.type = 'highpass'
+  lowCut.frequency.value = clamp(Number(params.lowCut) || 120, 20, 1000)
+  highCut.type = 'lowpass'
+  highCut.frequency.value = clamp(Number(params.highCut) || 7200, 1000, 18000)
+  delay.delayTime.value = clamp(Number(params.time) || 0.28, 0.03, 1.5)
+  feedback.gain.value = clamp(Number(params.feedback) || 0, 0, 0.85)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, lowCut, highCut, delay, wet, output, gain])
+  delay.connect(feedback)
+  feedback.connect(delay)
+  return { input, output: gain, nodes: [input, dry, wet, lowCut, highCut, delay, feedback, output, gain] }
+}
+function createAudioEffectNodes(ctx, insert = {}) {
+  const params = { ...getAudioEffectDefaultParams(insert.type), ...(insert.params || {}) }
+  if (insert.type === 'eq') return createEqEffectNodes(ctx, params)
+  if (insert.type === 'reverb') return createReverbEffectNodes(ctx, params)
+  if (insert.type === 'delay') return createDelayEffectNodes(ctx, params)
+  return null
+}
+function setTrackChannelVolume(track = {}) {
+  const channel = trackAudioChannels.get(track?.id)
+  if (!channel?.volumeGain || !audioContext) return
+  setAudioParam(channel.volumeGain.gain, clamp((Number(track.volume) || 0) / 100, 0, 1), 0)
+}
+function rebuildTrackAudioEffectsChain(trackId = '') {
+  const channel = trackAudioChannels.get(trackId)
+  if (!channel) return
+  const ctx = getAudioContext()
+  try { channel.input.disconnect() } catch {}
+  ;(channel.effectNodes || []).forEach((node) => {
+    try { node.disconnect?.() } catch {}
+  })
+  channel.effectNodes = []
+  let current = channel.input
+  const track = ensureTrackInsertState(tracks.find((item)=>item.id === trackId))
+  const inserts = (track?.audioEffects || []).filter((insert) => insert.enabled !== false && isImplementedAudioEffect(insert.type))
+  inserts.forEach((insert) => {
+    const effect = createAudioEffectNodes(ctx, insert)
+    if (!effect?.input || !effect?.output) return
+    current.connect(effect.input)
+    current = effect.output
+    channel.effectNodes.push(...(effect.nodes || []))
+  })
+  current.connect(channel.volumeGain)
+  setTrackChannelVolume(track)
+}
 function getTrackAudioChannel(trackId = selectedTrackId) {
   const id = trackId || selectedTrackId || 'master'
   const existing = trackAudioChannels.get(id)
   if (existing) return existing
   const ctx = getAudioContext()
   const input = ctx.createGain()
+  const volumeGain = ctx.createGain()
   const panner = ctx.createStereoPanner()
   const analyser = ctx.createAnalyser()
   analyser.fftSize = 512
   analyser.smoothingTimeConstant = 0.72
   const track = tracks.find((item)=>item.id === id)
-  input.gain.value = clamp((Number(track?.volume) || 0) / 100, 0, 1)
+  input.gain.value = 1
+  volumeGain.gain.value = clamp((Number(track?.volume) || 0) / 100, 0, 1)
   panner.pan.value = clamp((Number(track?.pan) || 0) / 100, -1, 1)
-  input.connect(panner)
+  volumeGain.connect(panner)
   panner.connect(analyser)
   analyser.connect(ctx.destination)
-  const channel = { input, panner, analyser, data: new Float32Array(analyser.fftSize), level: 0, peak: 0 }
+  const channel = { input, volumeGain, panner, analyser, effectNodes: [], data: new Float32Array(analyser.fftSize), level: 0, peak: 0 }
   trackAudioChannels.set(id, channel)
+  rebuildTrackAudioEffectsChain(id)
   return channel
 }
 function disposeTrackAudioChannel(trackId = '') {
   const channel = trackAudioChannels.get(trackId)
   if (!channel) return
   try { channel.input.disconnect() } catch {}
+  ;(channel.effectNodes || []).forEach((node) => { try { node.disconnect?.() } catch {} })
+  try { channel.volumeGain?.disconnect() } catch {}
   try { channel.panner.disconnect() } catch {}
   try { channel.analyser.disconnect() } catch {}
   trackAudioChannels.delete(trackId)
@@ -4090,7 +4322,7 @@ function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
   if (!target?.instrument) return null
   if (!target.instrument.pluginInstanceId) target.instrument.pluginInstanceId = `${target.instrument.type}:${target.id}`
   const channel = getTrackAudioChannel(target.id)
-  if (channel?.input && audioContext) channel.input.gain.setTargetAtTime(clamp((Number(target.volume) || 0) / 100, 0, 1), audioContext.currentTime, 0.015)
+  setTrackChannelVolume(target)
   if (channel?.panner && audioContext) channel.panner.pan.setTargetAtTime(clamp((Number(target.pan) || 0) / 100, -1, 1), audioContext.currentTime, 0.015)
   return dawInstrumentRegistry.createOrGet({
     id: target.instrument.pluginInstanceId,
@@ -4284,7 +4516,7 @@ async function renderAudioStretchForRegion(regionId) {
   logStretchDebug('render start', region.id, { ...stretchMath, renderStatus: 'rendering' })
   renderEditor()
   try {
-    const result = await renderOfflineStretchedAudioClip({
+    const result = await renderAudioDsp(SOURA_AUDIO_DSP_OPERATIONS.timeStretch, {
       sourceBuffer: runtime.audioBuffer,
       sourceStartSeconds: getAudioTrimStartSeconds(region),
       sourceDurationSeconds: stretchMath.sourceDurationSeconds,
@@ -4396,7 +4628,7 @@ async function renderAudioPitchShiftForRegion(regionId) {
   region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...pitchShift, renderStatus: 'rendering', lastError: null } })
   renderEditor()
   try {
-    const result = await renderPitchShiftedAudio({
+    const result = await renderAudioDsp(SOURA_AUDIO_DSP_OPERATIONS.pitchShift, {
       audioBuffer: runtime.audioBuffer,
       clipId: region.id,
       transposeSemitones: edit.transposeSemitones,
@@ -4490,7 +4722,7 @@ async function renderPitchTraceEditsForRegion(regionId) {
   region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...trace, renderStatus: 'rendering', lastError: null } })
   renderEditor()
   try {
-    const result = await renderPitchTraceEdits({
+    const result = await renderAudioDsp(SOURA_AUDIO_DSP_OPERATIONS.pitchTrace, {
       audioBuffer: runtime.audioBuffer,
       clipId: region.id,
       notes: trace.notes,
@@ -6721,6 +6953,7 @@ function bindEditorEvents() {
     } else if (action === 'audio') {
       const insert = createInsert(el.dataset.insertType, AUDIO_EFFECT_TYPES)
       if (insert) track.audioEffects.push(insert)
+      rebuildTrackAudioEffectsChain(track.id)
     } else if (action === 'instrument-empty') {
       if (track.instrument?.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId)
       track.instrument = null
@@ -6737,12 +6970,16 @@ function bindEditorEvents() {
   app.querySelector('[data-toggle-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; track.instrument.enabled = !track.instrument.enabled; if (!track.instrument.enabled) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } scheduleEditorSave(); renderEditor() })
   app.querySelector('[data-remove-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); if (track.instrument.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId); track.instrument = null; scheduleEditorSave(); renderEditor() })
   app.querySelector('[data-edit-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; if (!track.instrument.pluginInstanceId) track.instrument.pluginInstanceId = `${track.instrument.type}:${track.id}`; dawWindowManager.openPlugin({ pluginType: track.instrument.type, trackId: track.id, instanceId: track.instrument.pluginInstanceId, params: track.instrument.params || {}, forceCenter: true }) })
-  app.querySelectorAll('[data-toggle-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); const list = el.dataset.toggleInsert === 'midi' ? track?.midiEffects : track?.audioEffects; const insert = list?.find((item)=>item.id===el.dataset.insertId); if (!insert) return; insert.enabled = !insert.enabled; scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-toggle-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); const list = el.dataset.toggleInsert === 'midi' ? track?.midiEffects : track?.audioEffects; const insert = list?.find((item)=>item.id===el.dataset.insertId); if (!insert) return; insert.enabled = !insert.enabled; if (el.dataset.toggleInsert === 'audio') rebuildTrackAudioEffectsChain(track.id); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-edit-insert]').forEach((el) => el.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
-    if (el.dataset.editInsert !== 'midi') return
     const track = ensureTrackInsertState(getSelectedTrack())
+    if (el.dataset.editInsert === 'audio') {
+      openAudioEffectWindow(track, el.dataset.insertId)
+      return
+    }
+    if (el.dataset.editInsert !== 'midi') return
     const insert = track?.midiEffects?.find((item)=>item.id === el.dataset.insertId)
     if (!track || !insert) return
     activeMidiEffectEditor = { trackId: track.id, insertId: insert.id }
@@ -6751,7 +6988,7 @@ function bindEditorEvents() {
     bottomPanelMotion = 'entering'
     renderEditor()
   }))
-  app.querySelectorAll('[data-remove-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track) return; if (el.dataset.removeInsert === 'midi') track.midiEffects = track.midiEffects.filter((item)=>item.id!==el.dataset.insertId); if (el.dataset.removeInsert === 'audio') track.audioEffects = track.audioEffects.filter((item)=>item.id!==el.dataset.insertId); scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-remove-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track) return; if (el.dataset.removeInsert === 'midi') track.midiEffects = track.midiEffects.filter((item)=>item.id!==el.dataset.insertId); if (el.dataset.removeInsert === 'audio') { dawWindowManager.closeWindow(getAudioEffectWindowInstanceId(track.id, el.dataset.insertId)); track.audioEffects = track.audioEffects.filter((item)=>item.id!==el.dataset.insertId); rebuildTrackAudioEffectsChain(track.id) } scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-channel-setting]').forEach((input)=>input.addEventListener('change', () => {
     const track = ensureTrackInsertState(getSelectedTrack())
     if (!track) return
@@ -7013,12 +7250,12 @@ function bindEditorEvents() {
   app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-record]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackRecord); if (!t) return; t.recordArmed = !t.recordArmed; scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-volume]').forEach((el) => {
-    el.addEventListener('input', () => { const t = getTrack(el.dataset.trackVolume); if (!t) return; t.volume = clamp(Number(el.value), 0, 100); const channel=trackAudioChannels.get(t.id); if(channel?.input&&audioContext) channel.input.gain.setTargetAtTime(t.volume/100, audioContext.currentTime, 0.015) })
+    el.addEventListener('input', () => { const t = getTrack(el.dataset.trackVolume); if (!t) return; t.volume = clamp(Number(el.value), 0, 100); setTrackChannelVolume(t) })
     el.addEventListener('change', ()=>scheduleEditorSave())
     el.addEventListener('dblclick', (event) => {
       const track = getTrack(el.dataset.trackVolume)
       if (!track) return
-      openInlineNumericEditor(event, { label: 'Volume', value: track.volume, min: 0, max: 100, step: 1, apply: (value) => { track.volume = value; const channel=trackAudioChannels.get(track.id); if(channel?.input&&audioContext) channel.input.gain.setTargetAtTime(value/100, audioContext.currentTime, 0.015); scheduleEditorSave(); renderEditor() } })
+      openInlineNumericEditor(event, { label: 'Volume', value: track.volume, min: 0, max: 100, step: 1, apply: (value) => { track.volume = value; setTrackChannelVolume(track); scheduleEditorSave(); renderEditor() } })
     })
   })
   app.querySelectorAll('[data-track-automation]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackAutomation); if (!t) return; t.automationOpen = !t.automationOpen; renderEditor() }))
@@ -7172,8 +7409,7 @@ function bindEditorEvents() {
     if (track) {
       track.volume = Math.round(value * 100)
       syncSelectedTrackVolumeControl(track)
-      const channel = trackAudioChannels.get(track.id)
-      if (channel?.input && audioContext) channel.input.gain.setTargetAtTime(value, audioContext.currentTime, 0.015)
+      setTrackChannelVolume(track)
     }
     const dial = app.querySelector('[data-instrument-knob-dial="volume"]')
     const valueEl = app.querySelector('[data-instrument-knob-value="volume"]')
@@ -7215,8 +7451,7 @@ function bindEditorEvents() {
       apply: (value) => {
         if (key === 'volume') {
           track.volume = value
-          const channel = trackAudioChannels.get(track.id)
-          if (channel?.input && audioContext) channel.input.gain.setTargetAtTime(value / 100, audioContext.currentTime, 0.015)
+          setTrackChannelVolume(track)
         } else {
           setTrackPan(track, value)
         }
