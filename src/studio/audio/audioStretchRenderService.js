@@ -159,6 +159,10 @@ export function createRenderedAudioMetadata({
   sourceBitDepth = null,
   renderedBitDepth = null,
   algorithm = null,
+  engine = null,
+  engineLabel = null,
+  operation = null,
+  quality = null,
   qualityMode = 'high',
   createdAt = Date.now()
 } = {}) {
@@ -172,7 +176,13 @@ export function createRenderedAudioMetadata({
     bitDepthPreserved: sourceDepth != null && sourceDepth === renderedDepth,
     sourceChannelCount: Number.isFinite(Number(sourceBuffer?.numberOfChannels)) ? Number(sourceBuffer.numberOfChannels) : null,
     renderedChannelCount: Number.isFinite(Number(renderedBuffer?.numberOfChannels)) ? Number(renderedBuffer.numberOfChannels) : null,
+    sampleRatePreserved: Number.isFinite(Number(sourceBuffer?.sampleRate)) && Number.isFinite(Number(renderedBuffer?.sampleRate)) ? Number(sourceBuffer.sampleRate) === Number(renderedBuffer.sampleRate) : false,
+    channelCountPreserved: Number.isFinite(Number(sourceBuffer?.numberOfChannels)) && Number.isFinite(Number(renderedBuffer?.numberOfChannels)) ? Number(sourceBuffer.numberOfChannels) === Number(renderedBuffer.numberOfChannels) : false,
     algorithm: algorithm || null,
+    engine: engine || null,
+    engineLabel: engineLabel || null,
+    operation: operation || null,
+    quality: quality || qualityMode || 'high',
     qualityMode: qualityMode || 'high',
     renderedDurationSeconds: Number.isFinite(Number(renderedBuffer?.duration)) ? Number(renderedBuffer.duration) : null,
     renderCreatedAt: Number.isFinite(Number(createdAt)) ? Number(createdAt) : Date.now()

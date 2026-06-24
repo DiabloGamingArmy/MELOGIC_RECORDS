@@ -1,3 +1,5 @@
+import { AUDIO_EFFECT_MANIFESTS } from '../../daw/audioEffects/catalog.js'
+
 export const DAW_PLUGIN_TYPES = {
   melogicWavetable: 'melogic-wavetable',
   librarySampler: 'library-sampler'
@@ -79,6 +81,18 @@ export const DAW_PLUGIN_DEFINITIONS = {
     }
   }
 }
+
+AUDIO_EFFECT_MANIFESTS
+  .filter((manifest) => manifest.implemented && manifest.pluginType)
+  .forEach((manifest) => {
+    DAW_PLUGIN_DEFINITIONS[manifest.pluginType] = {
+      pluginType: manifest.pluginType,
+      title: `Soura ${manifest.name}`,
+      status: 'Track audio effect',
+      defaultSize: { width: 640, height: 430 },
+      defaultParams: { ...(manifest.defaultParams || {}) }
+    }
+  })
 
 export function getDawPluginDefinition(pluginType = '') {
   return DAW_PLUGIN_DEFINITIONS[pluginType] || DAW_PLUGIN_DEFINITIONS[DAW_PLUGIN_TYPES.melogicWavetable]

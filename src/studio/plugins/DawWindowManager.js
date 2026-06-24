@@ -252,7 +252,7 @@ export class DawWindowManager {
       input.addEventListener('change', () => {
         const shell = input.closest('[data-plugin-shell]')
         if (!shell?.dataset?.pluginShell) return
-        this.updateParam(shell.dataset.pluginShell, input.dataset.pluginParam, input.value)
+        this.updateParam(shell.dataset.pluginShell, input.dataset.pluginParam, input.type === 'checkbox' ? input.checked : input.value)
       })
     })
     scope.querySelectorAll('[data-plugin-matrix-field]').forEach((input) => {
