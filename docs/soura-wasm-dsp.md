@@ -16,9 +16,33 @@ Signalsmith source details:
 - Version: `1.3.2`
 - License: MIT
 - NPM: `https://www.npmjs.com/package/signalsmith-stretch`
+- Vendored WebAudio/WASM module: `src/studio/audio/dsp/wasm/vendor/SignalsmithStretch.mjs`
 - Vendored C++ header/license path: `src/studio/audio/wasm/signalsmith/`
 
-The repo includes `src/studio/audio/wasm/signalsmith/soura_signalsmith.cpp`, a thin C ABI wrapper for the intended Emscripten Signalsmith build. The current checked-in build script emits the required browser WASM asset and manifest so production builds cannot ship without a WASM DSP module.
+The browser render path uses the official Signalsmith Stretch WebAudio/WASM module. `npm run dsp:build` extracts the embedded official WASM payload from the vendored module into `public/wasm/soura-dsp/soura_signalsmith.wasm` and writes the manifest. `npm run dsp:verify` compiles that WASM asset and rejects missing or suspiciously tiny assets, so production builds cannot ship without a real WASM DSP module.
+
+The repo also includes `src/studio/audio/wasm/signalsmith/soura_signalsmith.cpp`, a thin C ABI wrapper for a future Emscripten direct-call build.
+
+## Independent Pitch And Time
+
+Signalsmith Stretch exposes independent scheduling controls:
+
+- `rate`: maps input time to output duration for time stretch.
+- `semitones`: changes pitch independently of `rate`.
+
+Soura uses those controls as follows:
+
+- Pitch shift: `rate = 1`, `semitones = requested pitch`, output frames equal source frames.
+- Time stretch: `rate = inputFrames / outputFrames`, `semitones = 0`, output frames equal target duration.
+- Combined pitch + stretch: `rate = inputFrames / outputFrames`, `semitones = requested pitch`.
+
+The render service validates every output frame count before accepting the render and logs:
+
+```text
+[dsp-render] validation
+```
+
+with operation, source duration, target duration, rendered duration, preserve flags, and engine.
 
 ## Install Emscripten For Native Signalsmith Builds
 

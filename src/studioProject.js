@@ -1322,6 +1322,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const selectedPitchNote = getSelectedPitchTraceNote(region)
   const editedPitchNoteCount = getPitchTraceEditedNoteCount(pitchTrace)
   const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const combinedPitchStretchActive = pitchShiftActive && stretch.enabled
   const pitchShiftStatus = pitchShift.renderStatus === 'needs_render' ? 'Needs render' : (pitchShift.lastError || pitchShift.renderStatus || 'idle')
   const pitchTraceRenderStatus = pitchTrace.renderStatus === 'needs_render' ? 'Needs render' : (pitchTrace.lastError || pitchTrace.renderStatus || 'idle')
   const stretch = normalizeAudioStretch(region.stretch, {
@@ -1397,7 +1398,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
           <label>Target Length<input type="number" min="${minAudioRegionSeconds}" step="0.01" data-audio-stretch-length value="${stretchMath.targetDurationSeconds.toFixed(2)}"></label>
           <label>Length Ratio<input type="number" min="${STRETCH_RATIO_MIN}" max="${STRETCH_RATIO_MAX}" step="0.01" data-audio-stretch-ratio value="${stretchMath.lengthRatio.toFixed(2)}"></label>
           <p>Stretch Ratio: ${stretchMath.lengthRatio.toFixed(2)}x length · Status: ${esc(stretch.renderError || renderStatus || 'idle')}</p>
-          <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && !dspBlocked && stretchMath.supported ? '' : 'disabled'} ${dspBlockedTitle}>${stretch.renderStatus === 'failed' ? 'Retry Render' : 'Render Stretch'}</button>
+        <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && !dspBlocked && stretchMath.supported ? '' : 'disabled'} ${dspBlockedTitle}>${stretch.renderStatus === 'failed' ? 'Retry Render' : combinedPitchStretchActive ? 'Render Pitch + Stretch' : 'Render Stretch'}</button>
           <button type="button" data-audio-reset-stretch ${stretch.enabled ? '' : 'disabled'}>Reset Stretch</button>
         </div>
       </aside>
@@ -2183,8 +2184,12 @@ function renderAudioRegion(region, isRecording = false) {
   const stretchStatus = stretch.renderStatus === 'rendering' ? 'Rendering' : stretch.renderStatus === 'failed' ? 'Render failed' : (stretch.renderStatus === 'ready' ? 'Rendered' : 'Stretch')
   const stretchMath = getAudioStretchMath(region)
   const speedLabel = Math.round(stretchMath.speedPercent)
-  const stretchLabel = stretching || stretch.enabled ? `<b class="studio-audio-stretch-label">${stretching ? 'Time Stretch' : stretchStatus} ${speedLabel}% speed</b>` : ''
   const edit = normalizeAudioEdit(region.audioEdit)
+  const pitchSemitones = Number(edit.pitchShift?.totalSemitones) || ((Number(edit.transposeSemitones) || 0) + ((Number(edit.fineTuneCents) || 0) / 100))
+  const pitchLabel = Math.abs(pitchSemitones) > 0.001 ? `Pitch ${pitchSemitones > 0 ? '+' : ''}${pitchSemitones.toFixed(Math.abs(pitchSemitones % 1) > 0.001 ? 2 : 0)} st` : ''
+  const stretchLabel = stretching || stretch.enabled
+    ? `<b class="studio-audio-stretch-label">${pitchLabel && !stretching ? `${esc(pitchLabel)} · ` : ''}${stretching ? 'Time Stretch' : stretchStatus} ${speedLabel}% speed</b>`
+    : (pitchLabel ? `<b class="studio-audio-stretch-label">${esc(pitchLabel)}</b>` : '')
   return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute || region.muted ? 'is-audio-muted is-region-muted' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
 }
 function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=app.querySelector(`[data-track-volume="${track.id}"]`); if(!input) return; input.value=String(track.volume); input.setAttribute('value', String(track.volume)) }
@@ -2463,14 +2468,29 @@ function coerceAudioEffectParam(effectType = '', param = '', value = null) {
   if (typeof defaults[param] === 'number') return Number.isFinite(Number(value)) ? Number(value) : defaults[param]
   return value
 }
+function getDelayDivisionSeconds(division = '1/8', bpm = projectState?.bpm || 140) {
+  const quarter = 60 / clamp(Number(bpm) || 140, 20, 300)
+  const value = String(division || '1/8').toUpperCase()
+  const dotted = value.endsWith('D')
+  const triplet = value.endsWith('T')
+  const denominator = Math.max(1, Number(value.replace(/[^0-9]/g, '')) || 8)
+  const base = quarter * (4 / denominator)
+  const multiplier = dotted ? 1.5 : triplet ? (2 / 3) : 1
+  return clamp(base * multiplier, 0.03, 1.5)
+}
 function updateAudioEffectParamFromWindow(pluginWindow = {}, param = '', value = null) {
   const effectType = getAudioEffectTypeFromPlugin(pluginWindow.pluginType)
   const { track, insert } = getAudioEffectInsertFromWindow(pluginWindow)
   if (!track || !insert || !effectType || !param) return
+  const coerced = coerceAudioEffectParam(effectType, param, value)
   insert.params = {
     ...getAudioEffectDefaultParams(effectType),
     ...(insert.params || {}),
-    [param]: coerceAudioEffectParam(effectType, param, value)
+    [param]: coerced
+  }
+  if (effectType === 'delay' && insert.params.sync && (param === 'sync' || param === 'noteDivision')) {
+    insert.params.time = getDelayDivisionSeconds(insert.params.noteDivision)
+    pluginWindow.params = { ...(pluginWindow.params || {}), time: insert.params.time }
   }
   rebuildTrackAudioEffectsChain(track.id)
   scheduleEditorSave()
@@ -3343,14 +3363,18 @@ function setAudioParam(param, value, fallback = 0) {
 function createImpulseBuffer(ctx, params = {}) {
   const duration = clamp(Number(params.decay) || 2.4, 0.2, 8)
   const size = clamp(Number(params.size) || 0.62, 0.1, 1)
+  const width = clamp(Number(params.width) || 0.72, 0, 1)
   const length = Math.max(1, Math.round(ctx.sampleRate * duration))
   const impulse = ctx.createBuffer(2, length, ctx.sampleRate)
+  const shared = new Float32Array(length)
+  for (let index = 0; index < length; index += 1) shared[index] = Math.random() * 2 - 1
   for (let channelIndex = 0; channelIndex < impulse.numberOfChannels; channelIndex += 1) {
     const data = impulse.getChannelData(channelIndex)
     for (let index = 0; index < length; index += 1) {
       const t = index / Math.max(1, length - 1)
       const decay = (1 - t) ** (1.8 + (size * 3.2))
-      data[index] = (Math.random() * 2 - 1) * decay
+      const independent = Math.random() * 2 - 1
+      data[index] = ((shared[index] * (1 - width)) + (independent * width)) * decay
     }
   }
   return impulse
@@ -3372,6 +3396,7 @@ function createEqEffectNodes(ctx, params = {}) {
   if (params.lowShelfEnabled !== false) addFilter('lowshelf', params.lowShelfFrequency, 1, params.lowShelfGain)
   if (params.bell1Enabled !== false) addFilter('peaking', params.bell1Frequency, params.bell1Q, params.bell1Gain)
   if (params.bell2Enabled !== false) addFilter('peaking', params.bell2Frequency, params.bell2Q, params.bell2Gain)
+  if (params.bell3Enabled !== false) addFilter('peaking', params.bell3Frequency, params.bell3Q, params.bell3Gain)
   if (params.highShelfEnabled !== false) addFilter('highshelf', params.highShelfFrequency, 1, params.highShelfGain)
   if (params.lpEnabled) addFilter('lowpass', params.lpFrequency, params.lpQ)
   const output = ctx.createGain()
@@ -4545,14 +4570,23 @@ async function renderAudioStretchForRegion(regionId) {
   stopPlayback()
   audioStretchRenderState = { active: true, regionId, progress: null, error: '' }
   region.stretch = { ...stretch, renderStatus: 'rendering', renderError: null }
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const pitchShift = edit.pitchShift || {}
+  const pitchActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const operation = pitchActive ? SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch : SOURA_AUDIO_DSP_OPERATIONS.timeStretch
   logStretchDebug('render start', region.id, { ...stretchMath, renderStatus: 'rendering' })
   renderEditor()
   try {
-    const result = await renderAudioDsp(SOURA_AUDIO_DSP_OPERATIONS.timeStretch, {
+    const result = await renderAudioDsp(operation, {
+      audioBuffer: runtime.audioBuffer,
       sourceBuffer: runtime.audioBuffer,
       sourceStartSeconds: getAudioTrimStartSeconds(region),
+      trimStartSeconds: getAudioTrimStartSeconds(region),
+      trimEndSeconds: getAudioTrimEndSeconds(region),
       sourceDurationSeconds: stretchMath.sourceDurationSeconds,
       targetDurationSeconds: stretchMath.targetDurationSeconds,
+      transposeSemitones: edit.transposeSemitones,
+      fineTuneCents: edit.fineTuneCents,
       sampleRate: runtime.audioBuffer.sampleRate,
       sourceBitDepth: getAudioSourceBitDepth(region),
       quality: 'high',
@@ -4561,13 +4595,13 @@ async function renderAudioStretchForRegion(regionId) {
       }
     })
     const renderedWaveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
-    const renderedRuntimeId = `${region.id}:stretch:${Math.round(stretchMath.lengthRatio * 1000)}:${result.createdAt}`
+    const renderedRuntimeId = `${region.id}:${pitchActive ? 'pitch-time' : 'stretch'}:${Math.round(stretchMath.lengthRatio * 1000)}:${result.createdAt}`
     let renderedStoragePath = null
     let renderedSessionOnly = true
     try {
       renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
         clipId: region.id,
-        suffix: `stretch-${Math.round(stretchMath.lengthRatio * 1000)}`
+        suffix: `${pitchActive ? 'pitch-time' : 'stretch'}-${Math.round(stretchMath.lengthRatio * 1000)}`
       })
       renderedSessionOnly = !renderedStoragePath
     } catch (uploadErr) {
@@ -4594,7 +4628,7 @@ async function renderAudioStretchForRegion(regionId) {
       targetDurationSeconds: stretchMath.targetDurationSeconds,
       renderStatus: 'ready',
       algorithm: result.algorithm,
-      preservesPitch: result.preservesPitch,
+      preservesPitch: result.renderedAudio?.preservesPitchForStretch ?? result.preservesPitch,
       renderedObjectUrl: null,
       renderedAudioUrl: null,
       renderedStoragePath,
@@ -4608,14 +4642,34 @@ async function renderAudioStretchForRegion(regionId) {
     region.stretchRender = {
       implemented: true,
       algorithm: result.algorithm,
-      preservesPitch: result.preservesPitch,
+      preservesPitch: result.renderedAudio?.preservesPitchForStretch ?? result.preservesPitch,
       renderedAudio: result.renderedAudio,
       renderedRuntimeId,
       renderedStoragePath,
       sessionOnly: renderedSessionOnly
     }
+    if (pitchActive) {
+      const nextEdit = normalizeAudioEdit(region.audioEdit)
+      region.audioEdit = normalizeAudioEdit({
+        ...nextEdit,
+        pitchShift: {
+          ...nextEdit.pitchShift,
+          enabled: true,
+          renderStatus: 'ready',
+          renderedRuntimeId,
+          renderedStoragePath,
+          renderedAudioUrl: null,
+          renderedDurationSeconds: result.renderedDurationSeconds,
+          algorithm: result.algorithm,
+          renderedAudio: result.renderedAudio,
+          preservesDuration: result.renderedAudio?.preservesDurationForPitch === true,
+          lastError: null,
+          renderedAt: result.createdAt
+        }
+      })
+    }
     syncAudioRegionTimeline(region)
-    recordingStatus = 'Audio stretch rendered.'
+    recordingStatus = pitchActive ? 'Pitch + stretch rendered.' : 'Audio stretch rendered.'
     logStretchDebug('render success', region.id, { ...stretchMath, renderStatus: 'ready' })
     scheduleEditorSave()
   } catch (err) {
@@ -4947,6 +5001,15 @@ function getAudioPlaybackRenderChoice(region, edit, stretch) {
   const reverse = edit.reverse || {}
   const traceHasEdits = trace.enabled && trace.notes?.length && (getPitchTraceEditedNoteCount(trace) > 0 || Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001)
   const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const stretchRuntimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
+  const stretchIsCombined = stretch.algorithm === 'signalsmith_wasm_pitch_time_v1' || stretch.renderedAudio?.operation === 'combined_pitch_time'
+  if (!bypassEdits && pitchShiftActive && stretch.enabled) {
+    if (stretch.renderStatus === 'ready' && stretchIsCombined && stretchRuntimeId && audioClipRuntime.has(stretchRuntimeId)) {
+      return { runtimeId: stretchRuntimeId, mode: 'combinedPitchTime' }
+    }
+    if (stretch.renderedStoragePath || stretch.renderedAudioUrl) return { needsStretchRender: true, message: 'Combined pitch + stretch audio is not loaded yet.' }
+    return { needsStretchRender: true, message: 'Pitch + Stretch must be rendered together before playback.' }
+  }
   if (!bypassEdits) {
     if (traceHasEdits) {
       if (trace.renderStatus === 'ready' && trace.renderedRuntimeId && audioClipRuntime.has(trace.renderedRuntimeId)) {
@@ -4962,8 +5025,8 @@ function getAudioPlaybackRenderChoice(region, edit, stretch) {
     }
   }
   if (!bypassEdits && stretch.enabled && stretch.renderStatus === 'ready') {
-    const runtimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
-    if (runtimeId && audioClipRuntime.has(runtimeId)) return { runtimeId, mode: 'stretch' }
+    const runtimeId = stretchRuntimeId
+    if (runtimeId && audioClipRuntime.has(runtimeId)) return { runtimeId, mode: stretchIsCombined ? 'combinedPitchTime' : 'stretch' }
     if (stretch.renderedStoragePath || stretch.renderedAudioUrl) return { needsStretchRender: true, message: 'Rendered stretch audio is not loaded yet.' }
     return { needsStretchRender: true, message: 'Stretch render is missing its audio buffer.' }
   }
@@ -5051,7 +5114,7 @@ function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat()) {
         : currentProjectSeconds
       const elapsedVisibleSeconds = Math.max(0, projectSecondsAtSchedule - clipStartSeconds)
       if (elapsedVisibleSeconds >= visibleDurationSeconds) return
-      const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch' || playbackChoice.mode === 'reverse'
+      const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch' || playbackChoice.mode === 'combinedPitchTime' || playbackChoice.mode === 'reverse'
       if (playbackChoice.mode === 'stretch') {
         logStretchDebug('playback source', region.id, {
           sourceDurationSeconds: stretch.sourceDurationSeconds,

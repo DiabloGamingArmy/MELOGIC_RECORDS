@@ -89,7 +89,7 @@ AUDIO_EFFECT_MANIFESTS
       pluginType: manifest.pluginType,
       title: `Soura ${manifest.name}`,
       status: 'Track audio effect',
-      defaultSize: { width: 640, height: 430 },
+      defaultSize: manifest.id === 'eq' ? { width: 920, height: 620 } : { width: 720, height: 540 },
       defaultParams: { ...(manifest.defaultParams || {}) }
     }
   })

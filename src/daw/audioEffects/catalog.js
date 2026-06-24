@@ -16,12 +16,17 @@ export const AUDIO_EFFECT_PARAM_DEFAULTS = {
     bell2Frequency: 1600,
     bell2Gain: 0,
     bell2Q: 1,
+    bell3Enabled: true,
+    bell3Frequency: 4200,
+    bell3Gain: 0,
+    bell3Q: 1,
     highShelfEnabled: true,
     highShelfFrequency: 8200,
     highShelfGain: 0,
     lpEnabled: false,
     lpFrequency: 18000,
     lpQ: 0.72,
+    eqSelectedBand: 'bell1',
     outputGain: 0
   },
   reverb: {
@@ -30,14 +35,18 @@ export const AUDIO_EFFECT_PARAM_DEFAULTS = {
     preDelay: 0.025,
     damping: 6800,
     size: 0.62,
+    width: 0.72,
     outputGain: 0
   },
   delay: {
     mix: 0.22,
     time: 0.28,
+    sync: false,
+    noteDivision: '1/8',
     feedback: 0.32,
     lowCut: 120,
     highCut: 7200,
+    pingPong: false,
     outputGain: 0
   }
 }

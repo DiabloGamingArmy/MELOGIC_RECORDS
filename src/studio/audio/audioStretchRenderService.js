@@ -34,7 +34,8 @@ export function createRenderedAudioMetadata({
   operation = null,
   quality = null,
   qualityMode = 'high',
-  createdAt = Date.now()
+  createdAt = Date.now(),
+  ...extra
 } = {}) {
   const sourceDepth = Number.isFinite(Number(sourceBitDepth)) && Number(sourceBitDepth) > 0 ? Number(sourceBitDepth) : null
   const renderedDepth = normalizeWavBitDepth(renderedBitDepth ?? sourceDepth)
@@ -53,6 +54,7 @@ export function createRenderedAudioMetadata({
     engineLabel: engineLabel || null,
     engineType: engineType || null,
     operation: operation || null,
+    ...extra,
     quality: quality || qualityMode || 'high',
     qualityMode: qualityMode || 'high',
     renderedDurationSeconds: Number.isFinite(Number(renderedBuffer?.duration)) ? Number(renderedBuffer.duration) : null,
