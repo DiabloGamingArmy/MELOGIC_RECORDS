@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "check": "node scripts/check-config.mjs && npm run build",
-    "build": "vite build",
+    "dsp:build": "node scripts/build-soura-dsp-wasm.mjs",
+    "dsp:clean": "node scripts/clean-soura-dsp-wasm.mjs",
+    "dsp:verify": "node scripts/verify-soura-wasm-dsp.mjs",
+    "build": "npm run dsp:build && npm run dsp:verify && vite build",
     "preview": "vite preview",
     "storage:cors:get": "gsutil cors get gs://melogic-records.firebasestorage.app"
   },

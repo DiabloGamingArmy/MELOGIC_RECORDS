@@ -306,6 +306,13 @@ body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
 .studio-audio-editor-meta{display:flex;flex-wrap:wrap;gap:6px;color:#aebfe4;font-size:12px}
 .studio-audio-editor-meta span{padding:5px 8px;border-radius:999px;background:rgba(255,255,255,.055);border:1px solid rgba(130,150,210,.16)}
 .studio-audio-editor-warning{margin:0;padding:9px 10px;border:1px solid rgba(255,204,102,.3);border-radius:8px;background:rgba(255,204,102,.08);color:#ffd998;font-size:12px;line-height:1.4}
+.studio-audio-dsp-status{display:grid;gap:5px;margin-top:10px;padding:10px;border:1px solid rgba(118,217,255,.22);border-radius:9px;background:rgba(118,217,255,.07);color:#cfe7ff;font-size:11px;line-height:1.35}
+.studio-audio-dsp-status strong{color:#f1f8ff;font-size:12px}
+.studio-audio-dsp-status span{color:#aecaef}
+.studio-audio-dsp-status em{color:#ffd998;font-style:normal}
+.studio-audio-dsp-status.is-failed{border-color:rgba(255,100,130,.36);background:rgba(255,80,110,.08)}
+.studio-audio-dsp-status.is-failed em{color:#ffb7c6}
+.studio-audio-dsp-status.is-legacy{border-color:rgba(255,204,102,.38);background:rgba(255,204,102,.08)}
 .studio-audio-region-tools{gap:9px}
 .studio-audio-region-tools hr{width:100%;border:0;border-top:1px solid rgba(130,150,210,.2);margin:3px 0}
 .studio-audio-region-tools small{color:#8293ba;font-size:10px;text-transform:none;letter-spacing:0}
