@@ -54,6 +54,48 @@ function audioBufferFromInterleaved(interleaved, { frames, channels, sampleRate 
   return output
 }
 
+function resizeAudioBufferToFrames(audioBuffer, targetFrames) {
+  const frames = Math.max(1, Math.round(Number(targetFrames) || audioBuffer.length || 1))
+  if (audioBuffer.length === frames) return audioBuffer
+  const output = createAudioBuffer(audioBuffer.numberOfChannels || 1, frames, audioBuffer.sampleRate || 44100)
+  for (let channel = 0; channel < output.numberOfChannels; channel += 1) {
+    const target = output.getChannelData(channel)
+    const source = audioBuffer.getChannelData(Math.min(channel, audioBuffer.numberOfChannels - 1))
+    target.set(source.slice(0, Math.min(source.length, frames)))
+  }
+  return output
+}
+
+function validateRenderedBuffer({
+  operation,
+  sourceBuffer,
+  renderedBuffer,
+  targetFrames,
+  preservesPitch = false,
+  preservesDuration = false,
+  engine = SOURA_AUDIO_DSP_ENGINE_ID
+}) {
+  const expectedFrames = Math.max(1, Math.round(Number(targetFrames) || renderedBuffer.length || 1))
+  const diffFrames = Math.abs((renderedBuffer?.length || 0) - expectedFrames)
+  if (diffFrames > 1) {
+    throw new Error(`Soura DSP render validation failed for ${operation}: expected ${expectedFrames} frames, got ${renderedBuffer?.length || 0}.`)
+  }
+  const normalized = diffFrames ? resizeAudioBufferToFrames(renderedBuffer, expectedFrames) : renderedBuffer
+  const sourceDuration = Number.isFinite(Number(sourceBuffer?.duration)) ? Number(sourceBuffer.duration) : null
+  const targetDuration = expectedFrames / Math.max(1, normalized.sampleRate || sourceBuffer?.sampleRate || 44100)
+  const renderedDuration = Number.isFinite(Number(normalized.duration)) ? Number(normalized.duration) : null
+  console.info('[dsp-render] validation', {
+    operation,
+    sourceDuration,
+    targetDuration,
+    renderedDuration,
+    preservesPitch,
+    preservesDuration,
+    engine
+  })
+  return normalized
+}
+
 function applyGain(audioBuffer, gainDb = 0) {
   const gain = 10 ** ((Number(gainDb) || 0) / 20)
   if (Math.abs(gain - 1) < 0.001) return
@@ -103,6 +145,7 @@ function buildResult({
   preservesPitch = true,
   preservesDuration = true,
   totalSemitones = null,
+  metadata = {},
   startedAt = Date.now()
 }) {
   const createdAt = Date.now()
@@ -120,6 +163,10 @@ function buildResult({
     operation,
     quality,
     qualityMode: quality,
+    independentPitchTime: true,
+    preservesPitch,
+    preservesDuration,
+    ...metadata,
     createdAt
   })
   return {
@@ -137,6 +184,7 @@ function buildResult({
     renderedAudio,
     preservesPitch,
     preservesDuration,
+    independentPitchTime: true,
     totalSemitones,
     renderTimeMs: Math.max(0, Math.round((globalThis.performance?.now?.() || Date.now()) - startedAt)),
     createdAt
@@ -183,7 +231,7 @@ async function renderTimeStretch(options = {}) {
   const targetSeconds = Math.max(0.001, Number(targetDurationSeconds) || source.duration)
   const outputFrames = Math.max(1, Math.round(targetSeconds * renderRate))
   onProgress?.(0.1)
-  const renderedBuffer = await renderWasmBuffer({
+  const rawRenderedBuffer = await renderWasmBuffer({
     operation: SOURA_AUDIO_DSP_OPERATIONS.timeStretch,
     source,
     outputFrames,
@@ -191,10 +239,18 @@ async function renderTimeStretch(options = {}) {
     stretchRatio: outputFrames / Math.max(1, source.length),
     quality
   })
+  const renderedBuffer = validateRenderedBuffer({
+    operation: SOURA_AUDIO_DSP_OPERATIONS.timeStretch,
+    sourceBuffer: source,
+    renderedBuffer: rawRenderedBuffer,
+    targetFrames: outputFrames,
+    preservesPitch: true,
+    preservesDuration: false
+  })
   onProgress?.(1)
   return buildResult({
     clipId: options.clipId || '',
-    sourceBuffer,
+    sourceBuffer: source,
     renderedBuffer,
     sourceBitDepth,
     quality,
@@ -202,6 +258,14 @@ async function renderTimeStretch(options = {}) {
     operation: SOURA_AUDIO_DSP_OPERATIONS.timeStretch,
     preservesPitch: true,
     preservesDuration: false,
+    metadata: {
+      preservesPitchForStretch: true,
+      preservesDurationForPitch: false,
+      sourceDurationSeconds: source.duration,
+      targetDurationSeconds: targetSeconds,
+      renderedDurationSeconds: renderedBuffer.duration,
+      stretchRatio: outputFrames / Math.max(1, source.length)
+    },
     startedAt
   })
 }
@@ -223,7 +287,7 @@ async function renderPitchShift(options = {}) {
   const source = copyAudioRange(audioBuffer, trimStartSeconds, trimEndSeconds)
   const totalSemitones = (Number(transposeSemitones) || 0) + ((Number(fineTuneCents) || 0) / 100)
   onProgress?.(0.1)
-  const renderedBuffer = await renderWasmBuffer({
+  const rawRenderedBuffer = await renderWasmBuffer({
     operation: SOURA_AUDIO_DSP_OPERATIONS.pitchShift,
     source,
     outputFrames: source.length,
@@ -232,10 +296,18 @@ async function renderPitchShift(options = {}) {
     cents: Number(fineTuneCents) || 0,
     quality
   })
+  const renderedBuffer = validateRenderedBuffer({
+    operation: SOURA_AUDIO_DSP_OPERATIONS.pitchShift,
+    sourceBuffer: source,
+    renderedBuffer: rawRenderedBuffer,
+    targetFrames: source.length,
+    preservesPitch: false,
+    preservesDuration: true
+  })
   onProgress?.(1)
   return buildResult({
     clipId,
-    sourceBuffer: audioBuffer,
+    sourceBuffer: source,
     renderedBuffer,
     sourceBitDepth,
     quality,
@@ -244,6 +316,85 @@ async function renderPitchShift(options = {}) {
     preservesPitch: false,
     preservesDuration: true,
     totalSemitones,
+    metadata: {
+      operation: 'pitch_shift',
+      preservesDurationForPitch: true,
+      preservesPitchForStretch: false,
+      sourceDurationSeconds: source.duration,
+      targetDurationSeconds: source.duration,
+      renderedDurationSeconds: renderedBuffer.duration,
+      pitchSemitones: totalSemitones
+    },
+    startedAt
+  })
+}
+
+async function renderPitchAndStretch(options = {}) {
+  const {
+    audioBuffer,
+    sourceBuffer = audioBuffer,
+    clipId = '',
+    transposeSemitones = 0,
+    fineTuneCents = 0,
+    sourceDurationSeconds = null,
+    targetDurationSeconds = null,
+    sourceBitDepth = null,
+    quality = 'high',
+    trimStartSeconds = 0,
+    trimEndSeconds = null,
+    onProgress = null
+  } = options
+  const inputBuffer = audioBuffer || sourceBuffer
+  if (!inputBuffer?.length) throw new Error('Missing audio buffer')
+  const startedAt = globalThis.performance?.now?.() || Date.now()
+  const source = sourceDurationSeconds == null
+    ? copyAudioRange(inputBuffer, trimStartSeconds, trimEndSeconds)
+    : copyAudioDuration(inputBuffer, trimStartSeconds, sourceDurationSeconds)
+  const renderRate = source.sampleRate || inputBuffer.sampleRate || 44100
+  const targetSeconds = Math.max(0.001, Number(targetDurationSeconds) || source.duration)
+  const outputFrames = Math.max(1, Math.round(targetSeconds * renderRate))
+  const totalSemitones = (Number(transposeSemitones) || 0) + ((Number(fineTuneCents) || 0) / 100)
+  onProgress?.(0.1)
+  const rawRenderedBuffer = await renderWasmBuffer({
+    operation: SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch,
+    source,
+    outputFrames,
+    sampleRate: renderRate,
+    stretchRatio: outputFrames / Math.max(1, source.length),
+    semitones: Number(transposeSemitones) || 0,
+    cents: Number(fineTuneCents) || 0,
+    quality
+  })
+  const renderedBuffer = validateRenderedBuffer({
+    operation: SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch,
+    sourceBuffer: source,
+    renderedBuffer: rawRenderedBuffer,
+    targetFrames: outputFrames,
+    preservesPitch: false,
+    preservesDuration: false
+  })
+  onProgress?.(1)
+  return buildResult({
+    clipId,
+    sourceBuffer: source,
+    renderedBuffer,
+    sourceBitDepth,
+    quality,
+    algorithm: 'signalsmith_wasm_pitch_time_v1',
+    operation: SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch,
+    preservesPitch: false,
+    preservesDuration: false,
+    totalSemitones,
+    metadata: {
+      operation: 'combined_pitch_time',
+      preservesPitchForStretch: true,
+      preservesDurationForPitch: true,
+      sourceDurationSeconds: source.duration,
+      targetDurationSeconds: targetSeconds,
+      renderedDurationSeconds: renderedBuffer.duration,
+      stretchRatio: outputFrames / Math.max(1, source.length),
+      pitchSemitones: totalSemitones
+    },
     startedAt
   })
 }
@@ -299,7 +450,7 @@ async function renderPitchTrace(options = {}) {
     }
     const semitones = note.delta + (Number(transposeSemitones) || 0)
     const cents = Number(fineTuneCents) || 0
-    const renderedSegment = await renderWasmBuffer({
+    const rawRenderedSegment = await renderWasmBuffer({
       operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
       source: segment,
       outputFrames: segment.length,
@@ -307,6 +458,14 @@ async function renderPitchTrace(options = {}) {
       semitones,
       cents,
       quality
+    })
+    const renderedSegment = validateRenderedBuffer({
+      operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
+      sourceBuffer: segment,
+      renderedBuffer: rawRenderedSegment,
+      targetFrames: segment.length,
+      preservesPitch: false,
+      preservesDuration: true
     })
     applyGain(renderedSegment, note.gainDb)
     overlayBuffer(output, renderedSegment, startSample, fadeSamples)
@@ -323,6 +482,13 @@ async function renderPitchTrace(options = {}) {
     operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
     preservesPitch: false,
     preservesDuration: true,
+    metadata: {
+      operation: 'pitch_trace',
+      preservesDurationForPitch: true,
+      sourceDurationSeconds: source.duration,
+      targetDurationSeconds: source.duration,
+      renderedDurationSeconds: output.duration
+    },
     startedAt
   })
 }
@@ -330,6 +496,7 @@ async function renderPitchTrace(options = {}) {
 export async function renderAudioDsp(operation, options = {}) {
   if (operation === SOURA_AUDIO_DSP_OPERATIONS.timeStretch) return renderTimeStretch(options)
   if (operation === SOURA_AUDIO_DSP_OPERATIONS.pitchShift) return renderPitchShift(options)
+  if (operation === SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch) return renderPitchAndStretch(options)
   if (operation === SOURA_AUDIO_DSP_OPERATIONS.pitchTrace) return renderPitchTrace(options)
   throw new Error(`Unsupported Soura DSP operation: ${operation}`)
 }

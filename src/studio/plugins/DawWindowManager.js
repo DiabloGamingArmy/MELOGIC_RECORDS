@@ -1,6 +1,11 @@
 import { createDawPluginInstance, getDawPluginDefinition } from './pluginCatalog.js'
 import { getMelogicWavetablePreset } from './melogicWavetablePresets.js'
 import { drawWavetableVisualizers } from './MelogicWavetableShell.js'
+import {
+  drawSouraEffectVisualizers,
+  getSouraEqBandDefinition,
+  getSouraEqParamsFromPoint
+} from './SouraAudioEffectShell.js'
 
 const SESSION_KEY = 'melogic-daw-plugin-window-state-v1'
 const CHANNEL_NAME = 'melogic-daw-plugin-host'
@@ -51,6 +56,7 @@ export class DawWindowManager {
     this.zCounter = 30
     this.dragState = null
     this.resizeState = null
+    this.effectDragState = null
     this.hostWindows = new Map()
     this.sessionState = readSessionState()
     this.channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(CHANNEL_NAME) : null
@@ -248,12 +254,21 @@ export class DawWindowManager {
         const shell = input.closest('[data-plugin-shell]')
         if (!shell?.dataset?.pluginShell) return
         this.updateParam(shell.dataset.pluginShell, input.dataset.pluginParam, input.value)
+        this.scheduleSouraEffectDraw(shell)
       })
       input.addEventListener('change', () => {
         const shell = input.closest('[data-plugin-shell]')
         if (!shell?.dataset?.pluginShell) return
         this.updateParam(shell.dataset.pluginShell, input.dataset.pluginParam, input.type === 'checkbox' ? input.checked : input.value)
+        this.scheduleSouraEffectDraw(shell)
       })
+    })
+    scope.querySelectorAll('[data-soura-eq-node]').forEach((node) => {
+      node.addEventListener('pointerdown', (event) => this.startEqNodeDrag(event, node))
+      node.addEventListener('wheel', (event) => this.handleEqNodeWheel(event, node), { passive: false })
+    })
+    scope.querySelectorAll('[data-soura-reverb-pad]').forEach((pad) => {
+      pad.addEventListener('pointerdown', (event) => this.startReverbPadDrag(event, pad))
     })
     scope.querySelectorAll('[data-plugin-matrix-field]').forEach((input) => {
       const update = () => {
@@ -320,6 +335,7 @@ export class DawWindowManager {
       button.addEventListener('blur', stop)
     })
     this.scheduleVisualizerDraw(scope)
+    this.scheduleSouraEffectDraw(scope)
   }
 
   bringToFront(id) {
@@ -453,6 +469,10 @@ export class DawWindowManager {
     })
     if (param === 'preset' || param === 'mwtPage' || param.endsWith('Enabled') || param.startsWith('assetBrowser') || ['oscCount', 'selectedOsc', 'fxRack', 'selectedFx', 'modSource', 'modulationMatrix'].includes(param)) this.renderPluginBody(id)
     if (['wavetableId', 'wavetablePosition'].includes(param)) this.updateVisualizerDom(id)
+    if (String(windowState.pluginType || '').startsWith('soura-audio-effect:')) {
+      if (param === 'eqSelectedBand' || param === 'sync' || param === 'noteDivision') this.renderPluginBody(id)
+      else this.scheduleSouraEffectDraw(document.querySelector(`[data-plugin-shell="${CSS.escape(id)}"]`) || document)
+    }
     this.persist()
     if (notifyHost) {
       this.postHostMessage({ type: 'plugin-state', pluginInstanceId: id, instance: this.serializeForHost(windowState) }, this.hostWindows.get(id))
@@ -517,6 +537,10 @@ export class DawWindowManager {
     window.requestAnimationFrame(() => drawWavetableVisualizers(root))
   }
 
+  scheduleSouraEffectDraw(root = document) {
+    window.requestAnimationFrame(() => drawSouraEffectVisualizers(root))
+  }
+
   updateVisualizerDom(id) {
     const root = document.querySelector(`[data-plugin-shell="${CSS.escape(id)}"]`)
     const windowState = this.windows.get(id)
@@ -572,14 +596,92 @@ export class DawWindowManager {
   handlePointerMove(event) {
     if (this.dragState) this.applyDrag(event)
     if (this.resizeState) this.applyResize(event)
+    if (this.effectDragState) this.applyEffectDrag(event)
   }
 
   handlePointerUp() {
     this.dragState = null
     this.resizeState = null
+    this.effectDragState = null
     document.body.classList.remove('is-daw-window-dragging')
     window.removeEventListener('pointermove', this.handlePointerMove)
     this.persist()
+  }
+
+  startEqNodeDrag(event, node) {
+    if (event.button !== 0) return
+    const shell = node.closest('[data-plugin-shell]')
+    const graph = node.closest('[data-soura-eq-graph]')
+    const bandId = node.dataset.souraEqNode
+    if (!shell?.dataset?.pluginShell || !graph || !bandId) return
+    event.preventDefault()
+    this.bringToFront(shell.dataset.pluginShell)
+    this.updateParam(shell.dataset.pluginShell, 'eqSelectedBand', bandId)
+    this.effectDragState = { type: 'eq', id: shell.dataset.pluginShell, bandId }
+    document.body.classList.add('is-daw-window-dragging')
+    window.addEventListener('pointermove', this.handlePointerMove)
+    window.addEventListener('pointerup', this.handlePointerUp, { once: true })
+    this.applyEqNodeDrag(event)
+  }
+
+  applyEqNodeDrag(event) {
+    const state = this.effectDragState
+    if (!state || state.type !== 'eq') return
+    const shell = document.querySelector(`[data-plugin-shell="${CSS.escape(state.id)}"]`)
+    const graph = shell?.querySelector('[data-soura-eq-graph]')
+    if (!shell || !graph) return
+    const rect = graph.getBoundingClientRect()
+    const viewX = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 640
+    const viewY = ((event.clientY - rect.top) / Math.max(1, rect.height)) * 220
+    const update = getSouraEqParamsFromPoint(state.bandId, viewX, viewY)
+    if (!update?.band) return
+    this.updateParam(state.id, update.band.frequencyParam, update.frequency)
+    if (update.band.gainParam) this.updateParam(state.id, update.band.gainParam, Math.round(update.gain * 10) / 10)
+    this.scheduleSouraEffectDraw(shell)
+  }
+
+  handleEqNodeWheel(event, node) {
+    const shell = node.closest('[data-plugin-shell]')
+    const band = getSouraEqBandDefinition(node.dataset.souraEqNode)
+    if (!shell?.dataset?.pluginShell || !band?.qParam) return
+    event.preventDefault()
+    const windowState = this.windows.get(shell.dataset.pluginShell)
+    const current = Number(windowState?.params?.[band.qParam]) || 1
+    const next = clamp(current + (event.deltaY < 0 ? 0.1 : -0.1), 0.1, 18)
+    this.updateParam(shell.dataset.pluginShell, band.qParam, Math.round(next * 100) / 100)
+    this.scheduleSouraEffectDraw(shell)
+  }
+
+  startReverbPadDrag(event, pad) {
+    if (event.button !== 0) return
+    const shell = pad.closest('[data-plugin-shell]')
+    if (!shell?.dataset?.pluginShell) return
+    event.preventDefault()
+    this.bringToFront(shell.dataset.pluginShell)
+    this.effectDragState = { type: 'reverb-pad', id: shell.dataset.pluginShell }
+    document.body.classList.add('is-daw-window-dragging')
+    window.addEventListener('pointermove', this.handlePointerMove)
+    window.addEventListener('pointerup', this.handlePointerUp, { once: true })
+    this.applyReverbPadDrag(event)
+  }
+
+  applyReverbPadDrag(event) {
+    const state = this.effectDragState
+    if (!state || state.type !== 'reverb-pad') return
+    const shell = document.querySelector(`[data-plugin-shell="${CSS.escape(state.id)}"]`)
+    const pad = shell?.querySelector('[data-soura-reverb-pad]')
+    if (!shell || !pad) return
+    const rect = pad.getBoundingClientRect()
+    const x = clamp((event.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+    const y = clamp((event.clientY - rect.top) / Math.max(1, rect.height), 0, 1)
+    this.updateParam(state.id, 'size', Math.round((0.1 + x * 0.9) * 100) / 100)
+    this.updateParam(state.id, 'mix', Math.round((1 - y) * 100) / 100)
+    this.scheduleSouraEffectDraw(shell)
+  }
+
+  applyEffectDrag(event) {
+    if (this.effectDragState?.type === 'eq') this.applyEqNodeDrag(event)
+    if (this.effectDragState?.type === 'reverb-pad') this.applyReverbPadDrag(event)
   }
 
   getBounds(windowState) {

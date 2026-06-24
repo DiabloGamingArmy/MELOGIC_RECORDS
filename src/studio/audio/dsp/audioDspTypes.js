@@ -9,5 +9,6 @@ export const SOURA_AUDIO_DSP_REQUIRED_ERROR = 'WASM DSP engine is required for p
 export const SOURA_AUDIO_DSP_OPERATIONS = {
   timeStretch: 'time_stretch',
   pitchShift: 'pitch_shift',
+  pitchAndStretch: 'combined_pitch_time',
   pitchTrace: 'pitch_trace'
 }
