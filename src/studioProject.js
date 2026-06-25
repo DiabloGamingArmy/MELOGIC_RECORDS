@@ -954,7 +954,12 @@ function getAudioRegionPlaybackRate(region = {}) {
 }
 function syncAudioRegionTimeline(region = {}) {
   if (region.type !== 'audio') return region
-  const startBeat = Number(region.startBeat) || Number(region.timelineStartBeats) || 0
+  const rawStartBeat = Number.isFinite(Number(region.startBeat))
+    ? Number(region.startBeat)
+    : Number.isFinite(Number(region.timelineStartBeats))
+      ? Number(region.timelineStartBeats)
+      : 0
+  const startBeat = normalizeTimelineStartBeat(rawStartBeat, { snapped: false })
   const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
   const stretch = normalizeAudioStretch(region.stretch, {
     clipId: region.id,
@@ -3550,7 +3555,32 @@ function maybeTickMetronome(){
 }
 function secondsFromPlayhead(){ const bpm=Number(projectState?.bpm||140); const beatsFromZero=xToBeatsFromBarZero(timelineState.playheadX); return beatsFromZero*(60/bpm) }
 function formatTimeFromPlayhead(){ const raw=secondsFromPlayhead(); const total=Math.abs(raw)<0.0005?0:raw; const isNegative=total<0; const absTotal=Math.abs(total); const m=Math.floor(absTotal/60); const s=Math.floor(absTotal%60); const ms=Math.floor((absTotal%1)*1000); const sub=Math.floor(((absTotal*1000)%1)*100); return `${isNegative?'-':''}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}.${String(sub).padStart(2,'0')}` }
-function formatBarsFromPlayhead(){ const beatsFromZero=xToBeatsFromBarZero(timelineState.playheadX); const bar=Math.floor(beatsFromZero/timelineState.beatsPerBar); const beatWithinBar=beatsFromZero-(bar*timelineState.beatsPerBar); const beat=Math.floor(beatWithinBar)+1; const bf=beatWithinBar%1; const div=Math.floor(bf*4)+1; const tick=Math.floor((bf*4%1)*240)+1; const barLabel=bar<0?`-${String(Math.abs(bar)).padStart(3,'0')}`:String(bar).padStart(3,'0'); return `${barLabel} ${String(beat).padStart(2,'0')} ${div} ${String(tick).padStart(3,'0')}` }
+function beatsToBarBeatDivTick(globalBeat, {
+  beatsPerBar = timelineState.beatsPerBar,
+  divisionsPerBeat = 4,
+  ticksPerBeat = 960,
+  zeroBasedBars = true
+} = {}) {
+  const bpb = Math.max(1, Math.round(Number(beatsPerBar) || 4))
+  const divisions = Math.max(1, Math.round(Number(divisionsPerBeat) || 4))
+  const ppq = Math.max(divisions, Math.round(Number(ticksPerBeat) || 960))
+  const beatValue = Number.isFinite(Number(globalBeat)) ? Number(globalBeat) : 0
+  const normalizedBeat = Math.abs(beatValue) < 1e-7 ? 0 : beatValue
+  const barIndex = Math.floor(normalizedBeat / bpb)
+  const beatInBarZeroBased = Math.floor(normalizedBeat - (barIndex * bpb))
+  const wholeBeat = Math.floor(normalizedBeat)
+  const fractionOfBeat = clamp(normalizedBeat - wholeBeat, 0, 0.999999)
+  const divZeroBased = Math.min(divisions - 1, Math.floor(fractionOfBeat * divisions))
+  const ticksPerDiv = ppq / divisions
+  const ticksIntoBeat = Math.min(ppq - 1, Math.floor(fractionOfBeat * ppq))
+  return {
+    bar: zeroBasedBars ? barIndex : barIndex + 1,
+    beat: beatInBarZeroBased + 1,
+    div: divZeroBased + 1,
+    tick: Math.max(0, Math.floor(ticksIntoBeat - (divZeroBased * ticksPerDiv)))
+  }
+}
+function formatBarsFromPlayhead(){ const position=beatsToBarBeatDivTick(xToBeatsFromBarZero(timelineState.playheadX), { zeroBasedBars: true }); const barLabel=position.bar<0?`-${String(Math.abs(position.bar)).padStart(3,'0')}`:String(position.bar).padStart(3,'0'); return `${barLabel} ${String(position.beat).padStart(2,'0')} ${position.div} ${String(position.tick).padStart(3,'0')}` }
 function updateTransportDisplay(){ app.querySelector('[data-display-time]')?.replaceChildren(document.createTextNode(formatTimeFromPlayhead())); app.querySelector('[data-display-bars]')?.replaceChildren(document.createTextNode(formatBarsFromPlayhead())) }
 function updateEditorTitleStatus(){ app.querySelector('[data-editor-status]')?.replaceChildren(document.createTextNode(isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded'))) }
 function updateCycleDomFromState(){ const rangeEl = app.querySelector('[data-cycle-range]'); const startGuide = app.querySelector('.studio-cycle-guide--start'); const endGuide = app.querySelector('.studio-cycle-guide--end'); if(!cycleRange){ if(rangeEl) rangeEl.style.width='0px'; return } const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); if (rangeEl){ rangeEl.style.left=`${start}px`; rangeEl.style.width=`${Math.max(beatWidth(), end-start)}px`; rangeEl.classList.toggle('is-enabled', isCycleEnabled) } if (startGuide){ startGuide.style.left=`${start}px`; startGuide.classList.toggle('is-enabled', isCycleEnabled) } if (endGuide){ endGuide.style.left=`${end}px`; endGuide.classList.toggle('is-enabled', isCycleEnabled) } }
@@ -3849,6 +3879,11 @@ function snapBeatToGrid(beat = 0, stepBeats = getSnapStepBeats(), direction = 'n
   if (direction === 'left') return Math.floor((value - epsilon) / step) * step
   return Math.round(value / step) * step
 }
+function normalizeTimelineStartBeat(beat = 0, { snapped = isSnapEnabled } = {}) {
+  const raw = Number.isFinite(Number(beat)) ? Number(beat) : 0
+  const next = snapped ? snapBeatToGrid(raw) : raw
+  return Math.abs(next) < 1e-6 ? 0 : clampBeat(next)
+}
 function movePlayheadByKeyboard({ currentBeat = 0, direction = 1, snapEnabled = isSnapEnabled, stepBeats = getSnapStepBeats(), event = null } = {}) {
   const dir = direction < 0 ? -1 : 1
   if (snapEnabled) return clampBeat(snapBeatToGrid(currentBeat, stepBeats, dir > 0 ? 'right' : 'left'))
@@ -3863,7 +3898,7 @@ function pointerEventToTimelineX(event) {
 }
 function pointerEventToTimelineBeat(event, { snapped = isSnapEnabled } = {}) {
   const beat = clampBeat(xToBeat(pointerEventToTimelineX(event)))
-  return snapped ? clampBeat(snapBeat(beat)) : beat
+  return normalizeTimelineStartBeat(beat, { snapped })
 }
 function getTrackLaneFromY(clientY = 0) {
   const gridEl = app.querySelector('[data-arrangement-grid]')
@@ -5509,6 +5544,7 @@ async function createAudioRegionFromFile({
     const fileDurationSeconds = metadata.fileDurationSeconds
     const durationBeats = Math.max(0.25, secondsToBeats(fileDurationSeconds))
     const now = Date.now()
+    const placementBeat = normalizeTimelineStartBeat(timelineStartBeats, { snapped: false })
     let storagePath = null
     try {
       storagePath = await uploadSouraAudioBlob(file, { clipId, suffix: source === 'import' ? 'import' : '' })
@@ -5525,10 +5561,10 @@ async function createAudioRegionFromFile({
       source,
       trackId: track.id,
       name: track.autoNameRegions === false ? '' : getAudioImportRegionLabel(metadata.fileName),
-      startBeat: timelineStartBeats,
-      endBeat: timelineStartBeats + durationBeats,
-      timelineStartBeats,
-      timelineStartSeconds: getTimelineSecondsAtBeat(timelineStartBeats),
+      startBeat: placementBeat,
+      endBeat: placementBeat + durationBeats,
+      timelineStartBeats: placementBeat,
+      timelineStartSeconds: getTimelineSecondsAtBeat(placementBeat),
       transportBpm: Number(projectState?.bpm || 140),
       projectSampleRate: Number(projectState?.sampleRate || metadata.sampleRate || 44100),
       audioContextSampleRate: metadata.sampleRate || getAudioContext().sampleRate,
@@ -6019,9 +6055,8 @@ function applyAudioRegionDrag(event, region) {
   } else {
     const dx = event.clientX - drag.startX
     const deltaBeat = regionPixelsToBeats(dx)
-    const snappedDelta = isSnapEnabled ? snapBeat(deltaBeat) : deltaBeat
     const originalLength = Math.max(secondsToBeats(minSeconds), drag.endBeat - drag.startBeat)
-    const nextStart = Math.max(0, drag.startBeat + snappedDelta)
+    const nextStart = normalizeTimelineStartBeat(drag.startBeat + deltaBeat)
     region.startBeat = nextStart
     region.endBeat = nextStart + originalLength
     const nextTrack = tracks[getTrackIndexFromClientY(event.clientY)]
@@ -6042,7 +6077,6 @@ function applyMidiRegionDrag(event) {
   if (!midiRegionDrag.hasMoved && Math.hypot(dx, dy) < 4) return
   midiRegionDrag.hasMoved = true
   const deltaBeat = regionPixelsToBeats(dx)
-  const snappedDelta = isSnapEnabled ? snapBeat(deltaBeat) : deltaBeat
   const minLength = 0.25
   const originalLength = Math.max(minLength, midiRegionDrag.endBeat - midiRegionDrag.startBeat)
   if (region.type === 'audio') {
@@ -6054,7 +6088,7 @@ function applyMidiRegionDrag(event) {
     const pointerBeat = pointerEventToTimelineBeat(event)
     region.endBeat = Math.max(midiRegionDrag.startBeat + minLength, pointerBeat)
   } else {
-    const nextStart = Math.max(0, midiRegionDrag.startBeat + snappedDelta)
+    const nextStart = normalizeTimelineStartBeat(midiRegionDrag.startBeat + deltaBeat)
     region.startBeat = nextStart
     region.endBeat = nextStart + originalLength
     const noteDelta = nextStart - midiRegionDrag.startBeat

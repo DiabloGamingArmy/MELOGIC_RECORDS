@@ -33,7 +33,7 @@ function copyAudioDuration(audioBuffer, startSeconds = 0, durationSeconds = null
   return copyAudioRange(audioBuffer, startSeconds, endSeconds)
 }
 
-function interleaveAudioBuffer(audioBuffer) {
+export function audioBufferToInterleavedFloat32(audioBuffer) {
   const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
   const frames = Math.max(1, audioBuffer.length || 1)
   const interleaved = new Float32Array(frames * channels)
@@ -45,13 +45,43 @@ function interleaveAudioBuffer(audioBuffer) {
   return interleaved
 }
 
-function audioBufferFromInterleaved(interleaved, { frames, channels, sampleRate }) {
+export function interleavedFloat32ToAudioBuffer(interleaved, { frames, channels, sampleRate }) {
   const output = createAudioBuffer(channels, frames, sampleRate)
   for (let channel = 0; channel < channels; channel += 1) {
     const target = output.getChannelData(channel)
     for (let frame = 0; frame < frames; frame += 1) target[frame] = interleaved[(frame * channels) + channel] || 0
   }
   return output
+}
+
+export function getPcmStats(floatArray, channels = 1) {
+  const samples = floatArray instanceof Float32Array ? floatArray : new Float32Array(floatArray || [])
+  const channelCount = Math.max(1, Math.round(Number(channels) || 1))
+  let peak = 0
+  let sumSquares = 0
+  let nonZeroSamples = 0
+  let firstNonZeroFrame = -1
+  for (let index = 0; index < samples.length; index += 1) {
+    const value = Number(samples[index]) || 0
+    const abs = Math.abs(value)
+    if (abs > peak) peak = abs
+    if (abs > 1e-7) {
+      nonZeroSamples += 1
+      if (firstNonZeroFrame < 0) firstNonZeroFrame = Math.floor(index / channelCount)
+    }
+    sumSquares += value * value
+  }
+  return {
+    peak,
+    rms: Math.sqrt(sumSquares / Math.max(1, samples.length)),
+    nonZeroSamples,
+    firstNonZeroFrame
+  }
+}
+
+function getAudioBufferStats(audioBuffer) {
+  if (!audioBuffer?.length) return getPcmStats(new Float32Array(), 1)
+  return getPcmStats(audioBufferToInterleavedFloat32(audioBuffer), audioBuffer.numberOfChannels || 1)
 }
 
 function resizeAudioBufferToFrames(audioBuffer, targetFrames) {
@@ -81,6 +111,11 @@ function validateRenderedBuffer({
     throw new Error(`Soura DSP render validation failed for ${operation}: expected ${expectedFrames} frames, got ${renderedBuffer?.length || 0}.`)
   }
   const normalized = diffFrames ? resizeAudioBufferToFrames(renderedBuffer, expectedFrames) : renderedBuffer
+  const inputStats = getAudioBufferStats(sourceBuffer)
+  const outputStats = getAudioBufferStats(normalized)
+  if (inputStats.rms > 0.0005 && outputStats.rms < 0.00001) {
+    throw new Error('DSP render produced silent output. Original audio was preserved.')
+  }
   const sourceDuration = Number.isFinite(Number(sourceBuffer?.duration)) ? Number(sourceBuffer.duration) : null
   const targetDuration = expectedFrames / Math.max(1, normalized.sampleRate || sourceBuffer?.sampleRate || 44100)
   const renderedDuration = Number.isFinite(Number(normalized.duration)) ? Number(normalized.duration) : null
@@ -151,6 +186,13 @@ function buildResult({
   const createdAt = Date.now()
   const renderedBitDepth = normalizeWavBitDepth(sourceBitDepth)
   const renderedBlob = audioBufferToWavBlob(renderedBuffer, { bitDepth: renderedBitDepth })
+  console.info('[dsp-render] wav export', {
+    operation,
+    blobSize: renderedBlob.size,
+    renderedDurationSeconds: renderedBuffer.duration,
+    renderedSampleRate: renderedBuffer.sampleRate,
+    renderedBitDepth
+  })
   const renderedAudio = createRenderedAudioMetadata({
     sourceBuffer,
     renderedBuffer,
@@ -194,9 +236,21 @@ function buildResult({
 async function renderWasmBuffer({ operation, source, outputFrames, sampleRate, stretchRatio = 1, semitones = 0, cents = 0, quality = 'high' }) {
   const channels = Math.max(1, source.numberOfChannels || 1)
   const inputFrames = Math.max(1, source.length || 1)
+  const inputPcm = audioBufferToInterleavedFloat32(source)
+  const inputStats = getPcmStats(inputPcm, channels)
+  console.info('[dsp-render] input stats', {
+    operation,
+    clipId: source.clipId || '',
+    frames: inputFrames,
+    channels,
+    sampleRate,
+    inputPeak: inputStats.peak,
+    inputRms: inputStats.rms,
+    inputFirstNonZeroFrame: inputStats.firstNonZeroFrame
+  })
   const rendered = await renderWithSouraWasmDsp({
     operation,
-    inputPcm: interleaveAudioBuffer(source),
+    inputPcm,
     inputFrames,
     outputFrames,
     channels,
@@ -206,7 +260,23 @@ async function renderWasmBuffer({ operation, source, outputFrames, sampleRate, s
     cents,
     quality
   })
-  return audioBufferFromInterleaved(rendered.outputPcm, {
+  if (Number(rendered.returnCode || 0) !== 0) {
+    throw new Error(`Soura WASM DSP failed with return code ${rendered.returnCode}.`)
+  }
+  const outputStats = getPcmStats(rendered.outputPcm, channels)
+  console.info('[dsp-render] wasm result', {
+    operation,
+    returnCode: rendered.returnCode ?? 0,
+    outputFrames: rendered.outputFrames || outputFrames,
+    outputPeak: outputStats.peak,
+    outputRms: outputStats.rms,
+    outputFirstNonZeroFrame: outputStats.firstNonZeroFrame,
+    engine: rendered.engineId || SOURA_AUDIO_DSP_ENGINE_ID
+  })
+  if (inputStats.rms > 0.0005 && outputStats.rms < 0.00001) {
+    throw new Error('DSP render produced silent output. Original audio was preserved.')
+  }
+  return interleavedFloat32ToAudioBuffer(rendered.outputPcm, {
     frames: rendered.outputFrames || outputFrames,
     channels,
     sampleRate
