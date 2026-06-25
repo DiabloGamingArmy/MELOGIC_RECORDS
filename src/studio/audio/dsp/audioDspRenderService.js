@@ -33,6 +33,18 @@ function copyAudioDuration(audioBuffer, startSeconds = 0, durationSeconds = null
   return copyAudioRange(audioBuffer, startSeconds, endSeconds)
 }
 
+function copyAudioSamples(audioBuffer, startSample = 0, endSample = 0) {
+  const sampleRate = audioBuffer.sampleRate || 44100
+  const start = clamp(Math.floor(Number(startSample) || 0), 0, audioBuffer.length)
+  const end = clamp(Math.ceil(Number(endSample) || start + 1), start + 1, audioBuffer.length)
+  const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
+  const output = createAudioBuffer(channels, Math.max(1, end - start), sampleRate)
+  for (let channelIndex = 0; channelIndex < channels; channelIndex += 1) {
+    output.copyToChannel(audioBuffer.getChannelData(channelIndex).slice(start, end), channelIndex)
+  }
+  return output
+}
+
 export function audioBufferToInterleavedFloat32(audioBuffer) {
   const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
   const frames = Math.max(1, audioBuffer.length || 1)
@@ -167,6 +179,14 @@ function overlayBuffer(target, source, startSample = 0, fadeSamples = 128) {
       output[targetIndex] = clamp((output[targetIndex] * (1 - wet)) + ((input[index] || 0) * wet), -1, 1)
     }
   }
+}
+
+function adaptivePitchTraceFadeSamples(sampleRate, durationSeconds) {
+  const duration = Math.max(0.001, Number(durationSeconds) || 0.001)
+  const preferred = 0.022
+  const capped = Math.min(preferred, duration * 0.25)
+  const floor = Math.min(0.008, duration * 0.25)
+  return Math.max(1, Math.round(Math.max(floor, capped) * sampleRate))
 }
 
 function buildResult({
@@ -485,6 +505,8 @@ async function renderPitchTrace(options = {}) {
     quality = 'high',
     trimStartSeconds = 0,
     trimEndSeconds = null,
+    baseRenderSource = 'original',
+    stackedOnGlobalEdits = false,
     onProgress = null
   } = options
   if (!audioBuffer?.length) throw new Error('Missing audio buffer')
@@ -510,40 +532,53 @@ async function renderPitchTrace(options = {}) {
   for (let noteIndex = 0; noteIndex < editableNotes.length; noteIndex += 1) {
     const note = editableNotes[noteIndex]
     const startSeconds = Math.max(0, Number(note.startSeconds) || 0)
-    const durationSeconds = Math.max(0.03, Number(note.durationSeconds) || 0.03)
+    const durationSeconds = Math.max(0.01, Number(note.durationSeconds) || 0.01)
     const startSample = clamp(Math.floor(startSeconds * source.sampleRate), 0, source.length - 1)
     const endSample = clamp(Math.ceil((startSeconds + durationSeconds) * source.sampleRate), startSample + 1, source.length)
-    const fadeSamples = Math.round(source.sampleRate * 0.006)
+    const fadeSamples = adaptivePitchTraceFadeSamples(source.sampleRate, (endSample - startSample) / source.sampleRate)
     if (note.muted === true) {
       clearBufferRange(output, startSample, endSample, fadeSamples)
       onProgress?.((noteIndex + 1) / Math.max(1, editableNotes.length))
       continue
     }
-    const segment = createAudioBuffer(source.numberOfChannels || 1, endSample - startSample, source.sampleRate)
-    for (let channel = 0; channel < segment.numberOfChannels; channel += 1) {
-      segment.copyToChannel(source.getChannelData(channel).slice(startSample, endSample), channel)
-    }
     const semitones = note.delta + (Number(transposeSemitones) || 0)
     const cents = Number(fineTuneCents) || 0
-    const rawRenderedSegment = await renderWasmBuffer({
-      operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
-      source: segment,
-      outputFrames: segment.length,
-      sampleRate: segment.sampleRate,
-      semitones,
-      cents,
-      quality,
-      clipId
-    })
-    const renderedSegment = validateRenderedBuffer({
-      operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
-      sourceBuffer: segment,
-      renderedBuffer: rawRenderedSegment,
-      targetFrames: segment.length,
-      preservesPitch: false,
-      preservesDuration: true
-    })
+    const padSeconds = clamp(Math.max(0.055, durationSeconds * 0.85), 0.055, 0.15)
+    const paddedStartSample = clamp(Math.floor((startSeconds - padSeconds) * source.sampleRate), 0, source.length - 1)
+    const paddedEndSample = clamp(Math.ceil((startSeconds + durationSeconds + padSeconds) * source.sampleRate), paddedStartSample + 1, source.length)
+    const paddedSegment = copyAudioSamples(source, paddedStartSample, paddedEndSample)
+    const centralStart = clamp(startSample - paddedStartSample, 0, paddedSegment.length - 1)
+    const centralEnd = clamp(endSample - paddedStartSample, centralStart + 1, paddedSegment.length)
+    let renderedSegment
+    if (Math.abs(semitones) <= 0.001 && Math.abs(cents) <= 0.001) {
+      renderedSegment = copyAudioSamples(paddedSegment, centralStart, centralEnd)
+    } else {
+      const rawRenderedPaddedSegment = await renderWasmBuffer({
+        operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
+        source: paddedSegment,
+        outputFrames: paddedSegment.length,
+        sampleRate: paddedSegment.sampleRate,
+        semitones,
+        cents,
+        quality,
+        clipId
+      })
+      const renderedPaddedSegment = validateRenderedBuffer({
+        operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
+        sourceBuffer: paddedSegment,
+        renderedBuffer: rawRenderedPaddedSegment,
+        targetFrames: paddedSegment.length,
+        preservesPitch: false,
+        preservesDuration: true
+      })
+      renderedSegment = copyAudioSamples(renderedPaddedSegment, centralStart, centralEnd)
+    }
     applyGain(renderedSegment, note.gainDb)
+    const renderedStats = getAudioBufferStats(renderedSegment)
+    const originalSegmentStats = getAudioBufferStats(copyAudioSamples(source, startSample, endSample))
+    if (originalSegmentStats.rms > 0.0005 && renderedStats.rms < 0.00001) {
+      throw new Error('Pitch Trace segment render produced silent output. Original audio was preserved.')
+    }
     overlayBuffer(output, renderedSegment, startSample, fadeSamples)
     onProgress?.((noteIndex + 1) / Math.max(1, editableNotes.length))
   }
@@ -560,6 +595,9 @@ async function renderPitchTrace(options = {}) {
     preservesDuration: true,
     metadata: {
       operation: 'pitch_trace',
+      baseRenderSource,
+      pitchTraceEngine: 'wasm',
+      stackedOnGlobalEdits: Boolean(stackedOnGlobalEdits),
       preservesDurationForPitch: true,
       sourceDurationSeconds: source.duration,
       targetDurationSeconds: source.duration,
