@@ -257,6 +257,8 @@ let midiRollTool = 'cursor'
 let midiRollViewport = { regionId: '', scrollLeft: 0, scrollTop: 0 }
 let pendingMidiRollViewport = null
 let audioRegionToolsViewport = { regionId: '', scrollTop: 0 }
+let audioWaveformViewport = { regionId: '', startSeconds: 0, endSeconds: 0, zoom: 1 }
+let audioWaveformPanDrag = null
 let midiRollBeatWidth = 64
 let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
@@ -1327,14 +1329,14 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const selectedPitchNote = getSelectedPitchTraceNote(region)
   const editedPitchNoteCount = getPitchTraceEditedNoteCount(pitchTrace)
   const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
-  const combinedPitchStretchActive = pitchShiftActive && stretch.enabled
-  const pitchShiftStatus = pitchShift.renderStatus === 'needs_render' ? 'Needs render' : (pitchShift.lastError || pitchShift.renderStatus || 'idle')
-  const pitchTraceRenderStatus = pitchTrace.renderStatus === 'needs_render' ? 'Needs render' : (pitchTrace.lastError || pitchTrace.renderStatus || 'idle')
   const stretch = normalizeAudioStretch(region.stretch, {
     clipId: region.id,
     sourceDurationSeconds: getAudioSourceDurationSeconds(region),
     visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
   })
+  const combinedPitchStretchActive = pitchShiftActive && stretch.enabled
+  const pitchShiftStatus = pitchShift.renderStatus === 'needs_render' ? 'Needs render' : (pitchShift.lastError || pitchShift.renderStatus || 'idle')
+  const pitchTraceRenderStatus = pitchTrace.renderStatus === 'needs_render' ? 'Needs render' : (pitchTrace.lastError || pitchTrace.renderStatus || 'idle')
   const stretchMath = getAudioStretchMath(region)
   const missing = Boolean(region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed')
   const dspBlocked = isSouraDspRenderBlocked()
@@ -1347,7 +1349,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
     <div class="studio-bottom-panel-body studio-audio-region-editor-body ${pitchTrace.enabled ? 'has-pitch-trace-tools' : ''}">
       <section class="studio-audio-region-editor-preview">
-        <div class="studio-audio-editor-waveform ${pitchTrace.enabled ? 'has-pitch-trace' : ''}" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${pitchTrace.enabled ? renderPitchTraceView(region, track) : renderAudioWaveform(region)}</div>
+        ${renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled: pitchTrace.enabled, color, waveformColor })}
         <div class="studio-audio-editor-meta">
           <span>Start ${Number(region.startBeat || 0).toFixed(2)} beats</span>
           <span>Length ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span>
@@ -1493,6 +1495,12 @@ function setSelectedRegions(regionIds = [], { primaryId = null } = {}) {
 }
 function selectSingleRegion(regionId) {
   setSelectedRegions(regionId ? [regionId] : [], { primaryId: regionId || '' })
+}
+function syncRegionSelectionDom() {
+  const ids = new Set(getSelectedRegionIds())
+  app.querySelectorAll('[data-midi-region]').forEach((node) => {
+    node.classList.toggle('is-selected', ids.has(node.dataset.midiRegion))
+  })
 }
 function toggleRegionSelection(regionId) {
   if (!regionId) return
@@ -2129,8 +2137,63 @@ function buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks = 1200 } = {}) {
   }
   return { peaks, resolution: 'high', samplesPerPeak, durationSeconds: audioBuffer.duration, generatedAt: Date.now() }
 }
-function renderAudioWaveform(region) {
-  const chunks = getWaveformChunks(region)
+function getAudioWaveformRuntime(region, { preferRendered = true } = {}) {
+  if (!region || region.type !== 'audio') return null
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const candidates = []
+  if (preferRendered) {
+    if (edit.pitchTrace?.renderStatus === 'ready') candidates.push(edit.pitchTrace.renderedRuntimeId)
+    if (edit.pitchShift?.renderStatus === 'ready') candidates.push(edit.pitchShift.renderedRuntimeId)
+    if (edit.reverse?.renderStatus === 'ready') candidates.push(edit.reverse.renderedRuntimeId)
+    if (stretch.enabled && stretch.renderStatus === 'ready') candidates.push(stretch.renderedRuntimeId)
+  }
+  candidates.push(region.audioClip?.runtimeId || region.id)
+  const runtimeId = candidates.find((id) => id && audioClipRuntime.has(id))
+  return runtimeId ? audioClipRuntime.get(runtimeId) : null
+}
+function buildAudioWaveformChunksFromBufferWindow(audioBuffer, startSeconds = 0, endSeconds = 0, { maxPeaks = 900 } = {}) {
+  if (!audioBuffer?.length) return []
+  const sampleRate = audioBuffer.sampleRate || 44100
+  const startSample = clamp(Math.floor(Math.max(0, startSeconds) * sampleRate), 0, audioBuffer.length - 1)
+  const endSample = clamp(Math.ceil(Math.max(startSeconds + 0.001, endSeconds) * sampleRate), startSample + 1, audioBuffer.length)
+  const sampleCount = Math.max(1, endSample - startSample)
+  const peakCount = clamp(Math.ceil(sampleCount / Math.max(1, Math.ceil(sampleCount / maxPeaks))), 48, maxPeaks)
+  const samplesPerPeak = Math.max(1, Math.ceil(sampleCount / peakCount))
+  const channelCount = Math.max(1, audioBuffer.numberOfChannels || 1)
+  const chunks = []
+  for (let peakIndex = 0; peakIndex < peakCount; peakIndex += 1) {
+    const start = startSample + peakIndex * samplesPerPeak
+    const end = Math.min(endSample, start + samplesPerPeak)
+    let min = 1
+    let max = -1
+    let sum = 0
+    let count = 0
+    for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+      const channel = audioBuffer.getChannelData(channelIndex)
+      for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+        const sample = channel[sampleIndex] || 0
+        if (sample < min) min = sample
+        if (sample > max) max = sample
+        sum += sample * sample
+        count += 1
+      }
+    }
+    chunks.push({
+      t0Seconds: start / sampleRate,
+      t1Seconds: end / sampleRate,
+      min: Number(clamp(min, -1, 1).toFixed(4)),
+      max: Number(clamp(max, -1, 1).toFixed(4)),
+      rms: Number(Math.sqrt(sum / Math.max(1, count)).toFixed(4))
+    })
+  }
+  return chunks
+}
+function renderAudioWaveform(region, options = {}) {
   const stretch = normalizeAudioStretch(region.stretch, {
     clipId: region.id,
     sourceDurationSeconds: getAudioSourceDurationSeconds(region),
@@ -2148,21 +2211,101 @@ function renderAudioWaveform(region) {
   const sourceDuration = getAudioSourceDurationSeconds(region)
   const visibleDuration = getAudioRegionVisibleDurationSeconds(region)
   const stretchRatio = hasRenderedWaveform ? 1 : getAudioStretchRatio(region)
-  const viewDuration = hasRenderedWaveform ? visibleDuration : stretch.enabled ? visibleDuration : sourceDuration
+  const fullViewDuration = Math.max(minAudioRegionSeconds, hasRenderedWaveform ? visibleDuration : stretch.enabled ? visibleDuration : sourceDuration)
+  const hasWindow = Number.isFinite(Number(options.viewStartSeconds)) || Number.isFinite(Number(options.viewEndSeconds))
+  const viewStart = hasWindow ? clamp(Number(options.viewStartSeconds) || 0, 0, Math.max(0, fullViewDuration - 0.01)) : 0
+  const viewEnd = hasWindow ? clamp(Number(options.viewEndSeconds) || fullViewDuration, viewStart + 0.01, fullViewDuration) : fullViewDuration
+  const sourceViewStart = trimStart + (viewStart / Math.max(0.001, stretchRatio))
+  const sourceViewEnd = trimStart + (viewEnd / Math.max(0.001, stretchRatio))
+  const runtime = hasWindow ? getAudioWaveformRuntime(region, { preferRendered: hasRenderedWaveform }) : null
+  const chunks = runtime?.audioBuffer
+    ? buildAudioWaveformChunksFromBufferWindow(runtime.audioBuffer, sourceViewStart, sourceViewEnd, { maxPeaks: options.maxPeaks || 900 })
+    : getWaveformChunks(region)
   const visibleChunks = chunks
-    .filter((chunk) => chunk.t1Seconds >= trimStart && chunk.t0Seconds <= trimEnd)
+    .filter((chunk) => chunk.t1Seconds >= sourceViewStart && chunk.t0Seconds <= sourceViewEnd)
     .map((chunk) => {
-      const t0 = clamp(chunk.t0Seconds, trimStart, trimEnd)
-      const t1 = clamp(chunk.t1Seconds, trimStart, trimEnd)
-      const x0 = stretch.enabled ? (t0 - trimStart) * stretchRatio : (t0 - trimStart)
-      const x1 = stretch.enabled ? (t1 - trimStart) * stretchRatio : (t1 - trimStart)
+      const t0 = clamp(chunk.t0Seconds, sourceViewStart, sourceViewEnd)
+      const t1 = clamp(chunk.t1Seconds, sourceViewStart, sourceViewEnd)
+      const x0 = ((stretch.enabled || hasRenderedWaveform) ? (t0 - trimStart) * stretchRatio : (t0 - trimStart)) - viewStart
+      const x1 = ((stretch.enabled || hasRenderedWaveform) ? (t1 - trimStart) * stretchRatio : (t1 - trimStart)) - viewStart
       return { ...chunk, x: (x0 + x1) / 2, width: Math.max(0.004, x1 - x0) }
     })
-  const safeChunks = visibleChunks.length ? visibleChunks : buildFallbackWaveform(region).map((chunk)=>({ ...chunk, x: (chunk.t0Seconds + chunk.t1Seconds) / 2, width: Math.max(0.004, chunk.t1Seconds - chunk.t0Seconds) }))
+  const viewDuration = Math.max(0.001, viewEnd - viewStart)
+  const fallbackChunks = buildFallbackWaveform(region)
+    .filter((chunk) => chunk.t1Seconds >= sourceViewStart && chunk.t0Seconds <= sourceViewEnd)
+    .map((chunk) => {
+      const t0 = clamp(chunk.t0Seconds, sourceViewStart, sourceViewEnd)
+      const t1 = clamp(chunk.t1Seconds, sourceViewStart, sourceViewEnd)
+      const x0 = ((stretch.enabled || hasRenderedWaveform) ? (t0 - trimStart) * stretchRatio : (t0 - trimStart)) - viewStart
+      const x1 = ((stretch.enabled || hasRenderedWaveform) ? (t1 - trimStart) * stretchRatio : (t1 - trimStart)) - viewStart
+      return { ...chunk, x: (x0 + x1) / 2, width: Math.max(0.004, x1 - x0) }
+    })
+  const safeChunks = visibleChunks.length ? visibleChunks : fallbackChunks
   const upper = safeChunks.map((chunk) => `${chunk.x.toFixed(4)},${(50 - (Math.max(Math.abs(chunk.min), Math.abs(chunk.max), chunk.rms) * 42)).toFixed(2)}`).join(' ')
   const lower = safeChunks.map((chunk) => `${chunk.x.toFixed(4)},${(50 + (Math.max(Math.abs(chunk.min), Math.abs(chunk.max), chunk.rms) * 42)).toFixed(2)}`).reverse().join(' ')
-  const bars = safeChunks.length > 220 ? '' : safeChunks.map((chunk)=>`<span style="left:${(chunk.x / Math.max(0.001, viewDuration) * 100).toFixed(3)}%;width:${Math.max(1, chunk.width / Math.max(0.001, viewDuration) * 100).toFixed(3)}%;top:${(50 - chunk.max * 42).toFixed(2)}%;height:${Math.max(1, (chunk.max - chunk.min) * 42).toFixed(2)}%"></span>`).join('')
+  const bars = safeChunks.length > (options.editor ? 420 : 220) ? '' : safeChunks.map((chunk)=>`<span style="left:${(chunk.x / viewDuration * 100).toFixed(3)}%;width:${Math.max(1, chunk.width / viewDuration * 100).toFixed(3)}%;top:${(50 - chunk.max * 42).toFixed(2)}%;height:${Math.max(1, (chunk.max - chunk.min) * 42).toFixed(2)}%"></span>`).join('')
   return `<svg class="studio-audio-waveform" viewBox="0 0 ${Math.max(0.001, viewDuration)} 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${upper} ${lower}"></polygon><polyline points="${upper}"></polyline><polyline points="${lower.split(' ').reverse().join(' ')}"></polyline></svg><div class="studio-audio-waveform-bars" aria-hidden="true">${bars}</div>`
+}
+function normalizeAudioWaveformViewport(region) {
+  const fullDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
+  if (audioWaveformViewport.regionId !== region.id) {
+    audioWaveformViewport = { regionId: region.id, startSeconds: 0, endSeconds: fullDuration, zoom: 1 }
+    return { ...audioWaveformViewport, fullDuration }
+  }
+  const zoom = clamp(Number(audioWaveformViewport.zoom) || 1, 1, 128)
+  const length = clamp(Number(audioWaveformViewport.endSeconds - audioWaveformViewport.startSeconds) || (fullDuration / zoom), Math.min(0.02, fullDuration), fullDuration)
+  const start = clamp(Number(audioWaveformViewport.startSeconds) || 0, 0, Math.max(0, fullDuration - length))
+  audioWaveformViewport = { regionId: region.id, startSeconds: start, endSeconds: start + length, zoom: fullDuration / Math.max(0.001, length) }
+  return { ...audioWaveformViewport, fullDuration }
+}
+function setAudioWaveformViewport(region, next = {}) {
+  if (!region) return
+  const fullDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
+  const start = clamp(Number(next.startSeconds) || 0, 0, fullDuration)
+  const end = clamp(Number(next.endSeconds) || fullDuration, start + Math.min(0.02, fullDuration), fullDuration)
+  audioWaveformViewport = {
+    regionId: region.id,
+    startSeconds: Math.min(start, Math.max(0, fullDuration - (end - start))),
+    endSeconds: Math.min(fullDuration, Math.min(start, Math.max(0, fullDuration - (end - start))) + (end - start)),
+    zoom: fullDuration / Math.max(0.001, end - start)
+  }
+}
+function zoomAudioWaveformViewport(region, factor = 1, anchorRatio = 0.5) {
+  const current = normalizeAudioWaveformViewport(region)
+  const fullDuration = current.fullDuration
+  const currentLength = Math.max(0.001, current.endSeconds - current.startSeconds)
+  const nextLength = clamp(currentLength / Math.max(0.1, factor), Math.min(0.02, fullDuration), fullDuration)
+  const anchor = current.startSeconds + (currentLength * clamp(anchorRatio, 0, 1))
+  const nextStart = clamp(anchor - (nextLength * clamp(anchorRatio, 0, 1)), 0, Math.max(0, fullDuration - nextLength))
+  setAudioWaveformViewport(region, { startSeconds: nextStart, endSeconds: nextStart + nextLength })
+}
+function panAudioWaveformViewport(region, deltaSeconds = 0) {
+  const current = normalizeAudioWaveformViewport(region)
+  const length = current.endSeconds - current.startSeconds
+  const start = clamp(current.startSeconds + deltaSeconds, 0, Math.max(0, current.fullDuration - length))
+  setAudioWaveformViewport(region, { startSeconds: start, endSeconds: start + length })
+}
+function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = false, color = '#58d4ff', waveformColor = '#58d4ff' } = {}) {
+  if (pitchTraceEnabled) {
+    return `<div class="studio-audio-editor-waveform has-pitch-trace" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${renderPitchTraceView(region, track)}</div>`
+  }
+  const viewport = normalizeAudioWaveformViewport(region)
+  const start = viewport.startSeconds
+  const end = viewport.endSeconds
+  const zoom = Math.max(1, viewport.zoom)
+  return `<div class="studio-audio-editor-waveform has-waveform-viewport" data-audio-waveform-shell="${esc(region.id)}" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">
+    <header class="studio-audio-waveform-toolbar">
+      <div><strong>Waveform</strong><span>${start.toFixed(2)}s-${end.toFixed(2)}s · ${zoom.toFixed(1)}x</span></div>
+      <nav aria-label="Waveform zoom controls">
+        <button type="button" data-audio-waveform-zoom="out" ${zoom <= 1.01 ? 'disabled' : ''}>-</button>
+        <button type="button" data-audio-waveform-zoom="fit" ${zoom <= 1.01 ? 'disabled' : ''}>Fit</button>
+        <button type="button" data-audio-waveform-zoom="in">+</button>
+      </nav>
+    </header>
+    <div class="studio-audio-waveform-viewport" data-audio-waveform-viewport data-waveform-start="${start}" data-waveform-end="${end}" data-waveform-duration="${viewport.fullDuration}" tabindex="0">
+      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: 1100 })}
+    </div>
+  </div>`
 }
 function renderAudioRegion(region, isRecording = false) {
   syncAudioRegionTimeline(region)
@@ -3459,11 +3602,232 @@ function createDelayEffectNodes(ctx, params = {}) {
   feedback.connect(delay)
   return { input, output: gain, nodes: [input, dry, wet, lowCut, highCut, delay, feedback, output, gain] }
 }
+function makeDistortionCurve(amount = 0.3) {
+  const samples = 2048
+  const curve = new Float32Array(samples)
+  const drive = 1 + clamp(Number(amount) || 0, 0, 1) * 90
+  for (let index = 0; index < samples; index += 1) {
+    const x = (index * 2 / samples) - 1
+    curve[index] = ((3 + drive) * x * 20 * Math.PI / 180) / (Math.PI + drive * Math.abs(x))
+  }
+  return curve
+}
+function createCompressorEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const compressor = ctx.createDynamicsCompressor()
+  const makeup = ctx.createGain()
+  const output = ctx.createGain()
+  compressor.threshold.value = clamp(Number(params.threshold) || -24, -60, 0)
+  compressor.ratio.value = clamp(Number(params.ratio) || 3, 1, 20)
+  compressor.attack.value = clamp(Number(params.attack) || 0.012, 0.001, 0.12)
+  compressor.release.value = clamp(Number(params.release) || 0.18, 0.02, 1.2)
+  compressor.knee.value = clamp(Number(params.knee) || 18, 0, 40)
+  makeup.gain.value = effectDbToGain(params.makeupGain)
+  output.gain.value = effectDbToGain(params.outputGain)
+  connectSerial([input, compressor, makeup, output])
+  return { input, output, nodes: [input, compressor, makeup, output] }
+}
+function createLimiterEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const limiter = ctx.createDynamicsCompressor()
+  const output = ctx.createGain()
+  input.gain.value = effectDbToGain(params.inputGain)
+  limiter.threshold.value = clamp(Number(params.ceiling) || -1, -12, 0)
+  limiter.knee.value = 0
+  limiter.ratio.value = 20
+  limiter.attack.value = 0.003
+  limiter.release.value = clamp(Number(params.release) || 0.08, 0.01, 0.8)
+  output.gain.value = effectDbToGain(params.outputGain)
+  connectSerial([input, limiter, output])
+  return { input, output, nodes: [input, limiter, output] }
+}
+function createDistortionEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const shaper = ctx.createWaveShaper()
+  const tone = ctx.createBiquadFilter()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  shaper.curve = makeDistortionCurve(params.drive)
+  shaper.oversample = '4x'
+  tone.type = 'lowpass'
+  tone.frequency.value = clamp(Number(params.tone) || 6800, 800, 16000)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, shaper, tone, wet, output, gain])
+  return { input, output: gain, nodes: [input, dry, wet, shaper, tone, output, gain] }
+}
+function createModulatedDelayEffectNodes(ctx, params = {}, mode = 'chorus') {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const delay = ctx.createDelay(0.08)
+  const feedback = ctx.createGain()
+  const lfo = ctx.createOscillator()
+  const depth = ctx.createGain()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  const baseDelay = mode === 'flanger'
+    ? clamp(Number(params.delay) || 0.004, 0.001, 0.012)
+    : clamp(Number(params.delay) || 0.018, 0.004, 0.04)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  delay.delayTime.value = baseDelay
+  feedback.gain.value = clamp(Number(params.feedback) || 0, 0, mode === 'flanger' ? 0.85 : 0.65)
+  lfo.frequency.value = clamp(Number(params.rate) || 0.6, 0.03, 6)
+  depth.gain.value = (mode === 'flanger' ? 0.004 : 0.012) * clamp(Number(params.depth) || 0, 0, 1)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  input.connect(delay)
+  delay.connect(wet)
+  wet.connect(output)
+  delay.connect(feedback)
+  feedback.connect(delay)
+  lfo.connect(depth)
+  depth.connect(delay.delayTime)
+  output.connect(gain)
+  try { lfo.start() } catch {}
+  return { input, output: gain, nodes: [input, dry, wet, delay, feedback, lfo, depth, output, gain], cleanup: () => { try { lfo.stop() } catch {} } }
+}
+function createPhaserEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const feedback = ctx.createGain()
+  const feedbackDelay = ctx.createDelay(0.02)
+  const lfo = ctx.createOscillator()
+  const depth = ctx.createGain()
+  const gain = ctx.createGain()
+  const stageCount = clamp(Math.round(Number(params.stages) || 4), 2, 8)
+  const filters = Array.from({ length: stageCount }, (_, index) => {
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'allpass'
+    filter.frequency.value = 320 + index * 360
+    filter.Q.value = 0.9
+    return filter
+  })
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  feedback.gain.value = clamp(Number(params.feedback) || 0, 0, 0.7)
+  feedbackDelay.delayTime.value = 0.001
+  lfo.frequency.value = clamp(Number(params.rate) || 0.42, 0.03, 4)
+  depth.gain.value = 900 * clamp(Number(params.depth) || 0, 0, 1)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, ...filters, wet, output, gain])
+  filters[filters.length - 1]?.connect(feedback)
+  feedback.connect(feedbackDelay)
+  feedbackDelay.connect(filters[0])
+  lfo.connect(depth)
+  filters.forEach((filter) => depth.connect(filter.frequency))
+  try { lfo.start() } catch {}
+  return { input, output: gain, nodes: [input, dry, wet, feedback, feedbackDelay, lfo, depth, ...filters, output, gain], cleanup: () => { try { lfo.stop() } catch {} } }
+}
+function createTremoloEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const tremolo = ctx.createGain()
+  const lfo = ctx.createOscillator()
+  const depth = ctx.createGain()
+  const offset = ctx.createConstantSource()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  const amount = clamp(Number(params.depth) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  tremolo.gain.value = 0
+  lfo.frequency.value = clamp(Number(params.rate) || 4.2, 0.1, 14)
+  depth.gain.value = amount / 2
+  offset.offset.value = 1 - amount / 2
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  input.connect(tremolo)
+  tremolo.connect(wet)
+  wet.connect(output)
+  lfo.connect(depth)
+  depth.connect(tremolo.gain)
+  offset.connect(tremolo.gain)
+  output.connect(gain)
+  try { lfo.start(); offset.start() } catch {}
+  return { input, output: gain, nodes: [input, dry, wet, tremolo, lfo, depth, offset, output, gain], cleanup: () => { try { lfo.stop(); offset.stop() } catch {} } }
+}
+function createFilterEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const filter = ctx.createBiquadFilter()
+  const output = ctx.createGain()
+  const allowed = new Set(['lowpass', 'highpass', 'bandpass', 'notch', 'lowshelf', 'highshelf', 'peaking'])
+  filter.type = allowed.has(params.type) ? params.type : 'lowpass'
+  filter.frequency.value = clamp(Number(params.cutoff) || 6800, 20, 20000)
+  filter.Q.value = clamp(Number(params.resonance) || 0.72, 0.1, 18)
+  filter.gain.value = clamp(Number(params.gain) || 0, -24, 24)
+  output.gain.value = effectDbToGain(params.outputGain)
+  connectSerial([input, filter, output])
+  return { input, output, nodes: [input, filter, output] }
+}
+function createStereoImagerEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const splitter = ctx.createChannelSplitter(2)
+  const merger = ctx.createChannelMerger(2)
+  const output = ctx.createGain()
+  const width = clamp(Number(params.width) || 1, 0, 2)
+  const amount = clamp(Math.abs(width - 1), 0, 1)
+  const same = (1 + width) / 2
+  const cross = (1 - width) / 2
+  const leftToLeft = ctx.createGain()
+  const rightToLeft = ctx.createGain()
+  const leftToRight = ctx.createGain()
+  const rightToRight = ctx.createGain()
+  dry.gain.value = 1 - amount
+  wet.gain.value = amount
+  leftToLeft.gain.value = same
+  rightToRight.gain.value = same
+  rightToLeft.gain.value = cross
+  leftToRight.gain.value = cross
+  output.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  input.connect(splitter)
+  splitter.connect(leftToLeft, 0)
+  splitter.connect(leftToRight, 0)
+  splitter.connect(rightToLeft, 1)
+  splitter.connect(rightToRight, 1)
+  leftToLeft.connect(merger, 0, 0)
+  rightToLeft.connect(merger, 0, 0)
+  leftToRight.connect(merger, 0, 1)
+  rightToRight.connect(merger, 0, 1)
+  merger.connect(wet)
+  wet.connect(output)
+  return { input, output, nodes: [input, dry, wet, splitter, merger, leftToLeft, rightToLeft, leftToRight, rightToRight, output] }
+}
 function createAudioEffectNodes(ctx, insert = {}) {
   const params = { ...getAudioEffectDefaultParams(insert.type), ...(insert.params || {}) }
   if (insert.type === 'eq') return createEqEffectNodes(ctx, params)
   if (insert.type === 'reverb') return createReverbEffectNodes(ctx, params)
   if (insert.type === 'delay') return createDelayEffectNodes(ctx, params)
+  if (insert.type === 'compressor') return createCompressorEffectNodes(ctx, params)
+  if (insert.type === 'limiter') return createLimiterEffectNodes(ctx, params)
+  if (insert.type === 'distortion') return createDistortionEffectNodes(ctx, params)
+  if (insert.type === 'chorus') return createModulatedDelayEffectNodes(ctx, params, 'chorus')
+  if (insert.type === 'flanger') return createModulatedDelayEffectNodes(ctx, params, 'flanger')
+  if (insert.type === 'phaser') return createPhaserEffectNodes(ctx, params)
+  if (insert.type === 'tremolo') return createTremoloEffectNodes(ctx, params)
+  if (insert.type === 'filter') return createFilterEffectNodes(ctx, params)
+  if (insert.type === 'stereo-imager') return createStereoImagerEffectNodes(ctx, params)
   return null
 }
 function setTrackChannelVolume(track = {}) {
@@ -3479,7 +3843,11 @@ function rebuildTrackAudioEffectsChain(trackId = '') {
   ;(channel.effectNodes || []).forEach((node) => {
     try { node.disconnect?.() } catch {}
   })
+  ;(channel.effectCleanups || []).forEach((cleanup) => {
+    try { cleanup?.() } catch {}
+  })
   channel.effectNodes = []
+  channel.effectCleanups = []
   let current = channel.input
   const track = ensureTrackInsertState(tracks.find((item)=>item.id === trackId))
   const inserts = (track?.audioEffects || []).filter((insert) => insert.enabled !== false && isImplementedAudioEffect(insert.type))
@@ -3489,6 +3857,7 @@ function rebuildTrackAudioEffectsChain(trackId = '') {
     current.connect(effect.input)
     current = effect.output
     channel.effectNodes.push(...(effect.nodes || []))
+    if (typeof effect.cleanup === 'function') channel.effectCleanups.push(effect.cleanup)
   })
   current.connect(channel.volumeGain)
   setTrackChannelVolume(track)
@@ -3511,7 +3880,7 @@ function getTrackAudioChannel(trackId = selectedTrackId) {
   volumeGain.connect(panner)
   panner.connect(analyser)
   analyser.connect(ctx.destination)
-  const channel = { input, volumeGain, panner, analyser, effectNodes: [], data: new Float32Array(analyser.fftSize), level: 0, peak: 0 }
+  const channel = { input, volumeGain, panner, analyser, effectNodes: [], effectCleanups: [], data: new Float32Array(analyser.fftSize), level: 0, peak: 0 }
   trackAudioChannels.set(id, channel)
   rebuildTrackAudioEffectsChain(id)
   return channel
@@ -3521,6 +3890,7 @@ function disposeTrackAudioChannel(trackId = '') {
   if (!channel) return
   try { channel.input.disconnect() } catch {}
   ;(channel.effectNodes || []).forEach((node) => { try { node.disconnect?.() } catch {} })
+  ;(channel.effectCleanups || []).forEach((cleanup) => { try { cleanup?.() } catch {} })
   try { channel.volumeGain?.disconnect() } catch {}
   try { channel.panner.disconnect() } catch {}
   try { channel.analyser.disconnect() } catch {}
@@ -4393,6 +4763,33 @@ function updateTrackMeterDom(track) {
   if (fill) fill.style.height = `${Math.round(level * 100)}%`
   if (peak) peak.style.bottom = `${Math.round(level * 100)}%`
 }
+function updateTrackEqSpectrumDom(track, channel) {
+  if (!track?.id || !channel?.analyser) return
+  const eqShells = Array.from(app.querySelectorAll('.soura-fx-shell[data-effect-type="eq"][data-plugin-shell]'))
+    .filter((shell) => dawWindowManager.windows.get(shell.dataset.pluginShell)?.trackId === track.id)
+  if (!eqShells.length) return
+  if (!channel.spectrumData || channel.spectrumData.length !== channel.analyser.frequencyBinCount) channel.spectrumData = new Uint8Array(channel.analyser.frequencyBinCount)
+  channel.analyser.getByteFrequencyData(channel.spectrumData)
+  const width = 640
+  const height = 220
+  const left = 44
+  const right = 18
+  const top = 18
+  const bottom = 30
+  const graphWidth = width - left - right
+  const graphHeight = height - top - bottom
+  const points = Array.from({ length: 72 }, (_, index) => {
+    const ratio = index / 71
+    const bin = clamp(Math.round((ratio ** 1.85) * (channel.spectrumData.length - 1)), 0, channel.spectrumData.length - 1)
+    const value = channel.spectrumData[bin] / 255
+    const x = left + ratio * graphWidth
+    const y = height - bottom - value * graphHeight
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  eqShells.forEach((shell) => {
+    shell.querySelector('[data-soura-eq-spectrum]')?.setAttribute('points', points)
+  })
+}
 function startTrackMeterLoop() {
   if (meterRaf) return
   const tick = () => {
@@ -4414,6 +4811,7 @@ function startTrackMeterLoop() {
         channel.level += (target - channel.level) * attack
         channel.peak = Math.max(target, channel.peak * 0.965)
         track.outputLevel = channel.level < 0.005 ? 0 : channel.level
+        updateTrackEqSpectrumDom(track, channel)
       } else {
         track.outputLevel = Math.max(0, (Number(track.outputLevel) || 0) * 0.9)
       }
@@ -5337,6 +5735,8 @@ function bindMidiRegionEvents() {
         return
       }
       if (!regionIsSelected(regionId)) selectSingleRegion(regionId)
+      else selectedMidiRegionId = regionId
+      syncRegionSelectionDom()
       if (handleRegionToolPointer(event, regionId)) return
       startMidiRegionDrag(event, regionId)
     })
@@ -5951,7 +6351,6 @@ function getTrackIndexFromClientY(clientY) {
 }
 function startMidiRegionDrag(event, regionId) {
   if (event.button !== 0) return
-  if (audioStretchRenderState.active) return
   const region = midiRegions.find((item)=>item.id===regionId)
   const gridEl = app.querySelector('[data-arrangement-grid]')
   if (!region || !gridEl) return
@@ -5959,6 +6358,11 @@ function startMidiRegionDrag(event, regionId) {
   event.stopPropagation()
   if (!regionIsSelected(region.id)) selectSingleRegion(region.id)
   else selectedMidiRegionId = region.id
+  syncRegionSelectionDom()
+  if (audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active) {
+    if (activeBottomPanel === 'midi-roll') renderEditor()
+    return
+  }
   const handle = event.target.closest('[data-midi-region-handle]')?.dataset?.midiRegionHandle || 'move'
   const isAudioRegion = region.type === 'audio'
   if (isAudioRegion) syncAudioRegionTimeline(region)
@@ -6175,6 +6579,47 @@ function selectMidiNote(regionId, noteIndex) {
 }
 function getSelectedAudioRegion() {
   return midiRegions.find((item)=>item.id === selectedMidiRegionId && item.type === 'audio') || null
+}
+function handleAudioWaveformWheel(event) {
+  const region = getSelectedAudioRegion()
+  if (!region) return
+  event.preventDefault()
+  const viewport = event.currentTarget
+  const rect = viewport?.getBoundingClientRect?.()
+  const anchorRatio = rect?.width ? clamp((event.clientX - rect.left) / rect.width, 0, 1) : 0.5
+  if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+    const current = normalizeAudioWaveformViewport(region)
+    const delta = ((Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) / Math.max(1, rect?.width || 320)) * (current.endSeconds - current.startSeconds)
+    panAudioWaveformViewport(region, delta)
+  } else {
+    zoomAudioWaveformViewport(region, event.deltaY < 0 ? 1.18 : 1 / 1.18, anchorRatio)
+  }
+  renderEditor()
+}
+function beginAudioWaveformPan(event) {
+  const region = getSelectedAudioRegion()
+  if (!region || event.button !== 0 || event.target.closest('button, input, select, textarea')) return
+  event.preventDefault()
+  const viewport = normalizeAudioWaveformViewport(region)
+  audioWaveformPanDrag = {
+    regionId: region.id,
+    startX: event.clientX,
+    startStartSeconds: viewport.startSeconds,
+    startEndSeconds: viewport.endSeconds,
+    fullDuration: viewport.fullDuration,
+    width: Math.max(1, event.currentTarget?.getBoundingClientRect?.().width || 1)
+  }
+  document.body.classList.add('is-studio-dragging')
+}
+function applyAudioWaveformPanDrag(event) {
+  if (!audioWaveformPanDrag) return
+  const region = midiRegions.find((item)=>item.id === audioWaveformPanDrag.regionId && item.type === 'audio')
+  if (!region) return
+  const viewLength = audioWaveformPanDrag.startEndSeconds - audioWaveformPanDrag.startStartSeconds
+  const deltaSeconds = -((event.clientX - audioWaveformPanDrag.startX) / audioWaveformPanDrag.width) * viewLength
+  const start = clamp(audioWaveformPanDrag.startStartSeconds + deltaSeconds, 0, Math.max(0, audioWaveformPanDrag.fullDuration - viewLength))
+  setAudioWaveformViewport(region, { startSeconds: start, endSeconds: start + viewLength })
+  renderEditor()
 }
 function updateAudioRegionEditField(region, key, rawValue) {
   if (!region || region.type !== 'audio') return
@@ -7180,6 +7625,16 @@ function bindEditorEvents() {
   app.querySelector('.studio-midi-roll-scroll')?.addEventListener('scroll', captureMidiRollViewport, { passive: true })
   app.querySelector('[data-midi-roll-grid]')?.addEventListener('pointerdown', beginMidiRollSelection)
   app.querySelector('[data-midi-roll-grid]')?.addEventListener('wheel', handleMidiRollWheel, { passive: false })
+  app.querySelector('[data-audio-waveform-viewport]')?.addEventListener('wheel', handleAudioWaveformWheel, { passive: false })
+  app.querySelector('[data-audio-waveform-viewport]')?.addEventListener('pointerdown', beginAudioWaveformPan)
+  app.querySelectorAll('[data-audio-waveform-zoom]').forEach((button) => button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const action = button.dataset.audioWaveformZoom
+    if (action === 'fit') setAudioWaveformViewport(region, { startSeconds: 0, endSeconds: getAudioRegionVisibleDurationSeconds(region) })
+    else zoomAudioWaveformViewport(region, action === 'in' ? 1.45 : 1 / 1.45, 0.5)
+    renderEditor()
+  }))
   app.querySelector('[data-audio-region-name]')?.addEventListener('change', (event) => {
     const region = getSelectedAudioRegion()
     if (!region) return
@@ -7651,6 +8106,11 @@ function bindEditorEvents() {
       bottomPanelResizeDrag.panel?.style.setProperty('height', `${bottomPanelHeightPx}px`)
       return
     }
+    if (audioWaveformPanDrag) {
+      event.preventDefault()
+      applyAudioWaveformPanDrag(event)
+      return
+    }
     if (midiRollSelectionDrag) {
       event.preventDefault()
       updateMidiRollSelectionDrag(event)
@@ -7693,6 +8153,11 @@ function bindEditorEvents() {
     if (bottomPanelResizeDrag) {
       bottomPanelResizeDrag = null
       document.body.classList.remove('is-studio-dragging', 'is-bottom-panel-resizing')
+      return
+    }
+    if (audioWaveformPanDrag) {
+      audioWaveformPanDrag = null
+      document.body.classList.remove('is-studio-dragging')
       return
     }
     if (midiRollSelectionDrag) {
