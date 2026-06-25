@@ -355,8 +355,9 @@ const TRANSPORT_SCHEDULER_START_DELAY_SECONDS = 0.08
 const TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS = 0.16
 const PLAYBACK_LATENCY_COMPENSATION_SECONDS = 0
 const LIVE_NOTE_SAFETY_OFFSET_SECONDS = 0.003
-const PITCH_TRACE_VERSION = 'pitch-trace-v1'
-const PITCH_TRACE_ALGORITHM = 'yin-js-worker-v1'
+const PITCH_TRACE_VERSION = 'pitch-trace-v2'
+const PITCH_TRACE_ALGORITHM = 'yin-nsdf-js-worker-v2'
+const PITCH_TRACE_ANALYSIS_MODES = ['vocal', 'instrument', 'full-mix']
 const PITCH_RENDER_STATUSES = ['idle', 'rendering', 'ready', 'failed', 'needs_render']
 
 function beatsToSecondsAtBpm(beats = 0, bpm = Number(projectState?.bpm || 140)) {
@@ -492,7 +493,13 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
     algorithm: source.algorithm || (notes.length ? PITCH_TRACE_ALGORITHM : null),
     analysisVersion: source.analysisVersion || PITCH_TRACE_VERSION,
     analyzedAt: Number.isFinite(Number(source.analyzedAt)) ? Number(source.analyzedAt) : null,
-    confidenceThreshold: clamp(Number(source.confidenceThreshold ?? 0.65), 0.1, 0.98),
+    confidenceThreshold: clamp(Number(source.confidenceThreshold ?? 0.5), 0.1, 0.98),
+    analysisMode: PITCH_TRACE_ANALYSIS_MODES.includes(source.analysisMode) ? source.analysisMode : 'vocal',
+    sensitivity: clamp(Number(source.sensitivity ?? 0.72), 0, 1),
+    minNoteSeconds: clamp(Number(source.minNoteSeconds ?? 0.08), 0.035, 0.35),
+    showLowConfidence: source.showLowConfidence === true,
+    baseRenderSource: ['original', 'global_wasm_render', 'combined_wasm_render'].includes(source.baseRenderSource) ? source.baseRenderSource : null,
+    stackedOnGlobalEdits: source.stackedOnGlobalEdits === true,
     progress: 0,
     error: source.error || null,
     renderStatus,
@@ -1130,11 +1137,35 @@ function renderMidiRegionRenamePopover() {
 function renderMidiRollModal() {
   return ''
 }
+function getPitchTraceBaseSummary(region, edit = normalizeAudioEdit(region?.audioEdit)) {
+  if (!region || region.type !== 'audio') return { key: 'original', label: 'Original audio', stacked: false, pending: false }
+  const traceSource = edit.pitchTrace?.baseRenderSource || edit.pitchTrace?.renderedAudio?.baseRenderSource
+  if (traceSource === 'combined_wasm_render') return { key: traceSource, label: 'Combined pitch + stretch render', stacked: true, pending: false }
+  if (traceSource === 'global_wasm_render') return { key: traceSource, label: 'Global rendered audio', stacked: true, pending: false }
+  const pitchShift = edit.pitchShift || {}
+  const reverse = edit.reverse || {}
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const pitchActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const stretchIsCombined = stretch.algorithm === 'signalsmith_wasm_pitch_time_v1' || stretch.renderedAudio?.operation === 'combined_pitch_time'
+  if (stretch.enabled && stretch.renderStatus === 'ready') return { key: stretchIsCombined ? 'combined_wasm_render' : 'global_wasm_render', label: stretchIsCombined ? 'Combined pitch + stretch render' : 'Global stretch render', stacked: true, pending: false }
+  if (pitchActive && pitchShift.renderStatus === 'ready') return { key: 'global_wasm_render', label: 'Global transpose render', stacked: true, pending: false }
+  if (reverse.enabled && reverse.renderStatus === 'ready') return { key: 'global_wasm_render', label: 'Reverse render', stacked: true, pending: false }
+  if ((stretch.enabled && stretch.renderStatus !== 'ready') || (pitchActive && pitchShift.renderStatus !== 'ready') || (reverse.enabled && reverse.renderStatus !== 'ready')) {
+    return { key: 'pending_global_render', label: 'Global render pending', stacked: true, pending: true }
+  }
+  return { key: 'original', label: 'Original audio', stacked: false, pending: false }
+}
 function renderPitchTraceView(region, track) {
   const edit = normalizeAudioEdit(region.audioEdit)
   const trace = edit.pitchTrace
   const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
-  const notes = (trace.notes || []).filter((note)=>note.confidence >= trace.confidenceThreshold)
+  const visibleNotes = trace.showLowConfidence ? (trace.notes || []) : (trace.notes || []).filter((note)=>note.confidence >= trace.confidenceThreshold)
+  const hiddenNoteCount = Math.max(0, (trace.notes || []).length - visibleNotes.length)
+  const notes = visibleNotes
   const noteValues = notes.map((note)=>Number(note.editedMidiNote ?? note.midiNote)).filter(Number.isFinite)
   const minNote = Math.max(0, Math.min(48, ...(noteValues.length ? noteValues : [48])) - 2)
   const maxNote = Math.min(127, Math.max(72, ...(noteValues.length ? noteValues : [72])) + 2)
@@ -1153,10 +1184,12 @@ function renderPitchTraceView(region, track) {
     const stateClass = [
       pitchTraceSelectedNoteId === note.id ? 'is-selected' : '',
       delta ? 'is-edited' : '',
-      note.muted ? 'is-muted' : ''
+      note.muted ? 'is-muted' : '',
+      note.confidence < trace.confidenceThreshold ? 'is-low-confidence' : ''
     ].filter(Boolean).join(' ')
     const deltaLabel = delta ? ` · ${delta > 0 ? '+' : ''}${delta} st` : ''
-    return `<button type="button" class="studio-pitch-trace-note ${stateClass}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(formatMidiNoteName(editedMidi))}${esc(deltaLabel)} · ${Math.round((note.confidence || 0) * 100)}%"><span data-pitch-trace-note-handle="left"></span><b>${esc(formatMidiNoteName(editedMidi))}</b><span data-pitch-trace-note-handle="right"></span></button>`
+    const sourceLabel = note.source === 'manual' ? 'manual' : 'analysis'
+    return `<button type="button" class="studio-pitch-trace-note ${stateClass}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(formatMidiNoteName(editedMidi))}${esc(deltaLabel)} · ${Math.round((note.confidence || 0) * 100)}% · ${esc(sourceLabel)}"><span data-pitch-trace-note-handle="left"></span><b>${esc(formatMidiNoteName(editedMidi))}</b><span data-pitch-trace-note-handle="right"></span></button>`
   }).join('')
   const labels = Array.from({ length: rowCount }, (_, index) => {
     const midi = maxNote - index
@@ -1166,16 +1199,17 @@ function renderPitchTraceView(region, track) {
   const status = trace.status === 'analyzing'
     ? `Analyzing${trace.progress ? ` ${Math.round(trace.progress * 100)}%` : '...'}`
     : trace.status === 'ready'
-      ? `Ready · ${notes.length} note${notes.length === 1 ? '' : 's'}`
+      ? `Ready · ${notes.length} shown${hiddenNoteCount ? ` · ${hiddenNoteCount} hidden` : ''}`
       : trace.status === 'failed'
         ? `Failed · ${trace.error || 'Try again'}`
         : 'Idle'
+  const base = getPitchTraceBaseSummary(region, edit)
   return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount}">
     <div class="studio-pitch-trace-waveform">${renderAudioWaveform(region)}</div>
     <div class="studio-pitch-trace-grid" aria-hidden="true">${beatLines}</div>
     <div class="studio-pitch-trace-labels" aria-hidden="true">${labels}</div>
     <div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks || '<p>No detected notes yet. Click Analyze Audio to create a Pitch Trace.</p>'}</div>
-    <small>Pitch Trace: ${esc(status)}</small>
+    <small>Pitch Trace: ${esc(status)} · ${esc(base.label)}</small>
   </div>`
 }
 function getPitchTraceEditedNoteCount(trace = {}) {
@@ -1192,6 +1226,10 @@ function renderPitchTraceToolPane(region, missing = false) {
   const selectedPitchNote = getSelectedPitchTraceNote(region)
   const editedPitchNoteCount = getPitchTraceEditedNoteCount(trace)
   const pitchTraceRenderStatus = trace.renderStatus === 'needs_render' ? 'Needs render' : (trace.lastError || trace.renderStatus || 'idle')
+  const base = getPitchTraceBaseSummary(region, edit)
+  const shortNoteWarning = selectedPitchNote && Number(selectedPitchNote.durationSeconds) < 0.08
+    ? '<p class="studio-audio-editor-warning">Very short pitch edits may need extra render context. Soura will pad and crossfade this edit during render.</p>'
+    : ''
   return `<aside class="studio-midi-roll-tools studio-pitch-trace-tools-pane" data-pitch-trace-scroll>
     <h3>Pitch Trace</h3>
     <div class="studio-editor-tool-toggle" role="toolbar" aria-label="Pitch Trace tools">
@@ -1199,9 +1237,14 @@ function renderPitchTraceToolPane(region, missing = false) {
       <button type="button" data-pitch-trace-tool="pencil" class="${pitchTraceTool === 'pencil' ? 'is-active' : ''}" aria-pressed="${String(pitchTraceTool === 'pencil')}">Pencil</button>
     </div>
     <p>${pitchTraceTool === 'pencil' ? 'Draw Audio Notes on the Pitch Trace grid.' : 'Select, drag, and resize Audio Notes.'}</p>
+    <p class="studio-pitch-trace-base">Editing: <strong>${esc(base.label)}</strong>${base.pending ? ' · render global edits first' : ''}</p>
     <label><input type="checkbox" data-pitch-trace-enabled ${trace.enabled ? 'checked' : ''}> Pitch Trace enabled</label>
-    <label>Confidence<input type="range" min="0.3" max="0.95" step="0.05" data-pitch-trace-threshold value="${trace.confidenceThreshold}"><small>${Math.round(trace.confidenceThreshold * 100)}%</small></label>
-    <button type="button" data-pitch-trace-analyze ${missing || trace.status === 'analyzing' ? 'disabled' : ''}>${trace.notes.length ? 'Re-analyze Audio' : 'Analyze Audio'}</button>
+    <label>Mode<select data-pitch-trace-mode><option value="vocal" ${trace.analysisMode === 'vocal' ? 'selected' : ''}>Vocal / Mono</option><option value="instrument" ${trace.analysisMode === 'instrument' ? 'selected' : ''}>Instrument / Mono</option><option value="full-mix" ${trace.analysisMode === 'full-mix' ? 'selected' : ''}>Full Mix Best Effort</option></select></label>
+    <label>Sensitivity<input type="range" min="0" max="1" step="0.05" data-pitch-trace-sensitivity value="${trace.sensitivity}"><small>${Math.round(trace.sensitivity * 100)}%</small></label>
+    <label>Minimum Note<input type="range" min="0.035" max="0.2" step="0.005" data-pitch-trace-min-note value="${trace.minNoteSeconds}"><small>${Math.round(trace.minNoteSeconds * 1000)} ms</small></label>
+    <label>Confidence<input type="range" min="0.2" max="0.95" step="0.05" data-pitch-trace-threshold value="${trace.confidenceThreshold}"><small>${Math.round(trace.confidenceThreshold * 100)}%</small></label>
+    <label><input type="checkbox" data-pitch-trace-show-low-confidence ${trace.showLowConfidence ? 'checked' : ''}> Show low-confidence notes</label>
+    <button type="button" data-pitch-trace-analyze ${missing || trace.status === 'analyzing' ? 'disabled' : ''}>${trace.notes.length ? 'Re-analyze Audible Render' : 'Analyze Audible Render'}</button>
     <button type="button" data-pitch-trace-clear ${trace.notes.length || trace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
     <button type="button" data-pitch-trace-render ${trace.enabled && trace.notes.length && !missing && trace.renderStatus !== 'rendering' ? '' : 'disabled'}>${trace.renderStatus === 'failed' ? 'Retry Pitch Edits' : 'Render Pitch Edits'}</button>
     ${selectedPitchNote ? `<div class="studio-pitch-trace-note-tools">
@@ -1213,7 +1256,7 @@ function renderPitchTraceToolPane(region, missing = false) {
       <button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}">Reset Note</button>
       <button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted ? 'Unmute Note' : 'Mute Note'}</button>
       <button type="button" data-pitch-trace-note-delete="${esc(selectedPitchNote.id)}">Delete Note</button>
-    </div>` : '<small>Select or draw an Audio Note to edit it.</small>'}
+    </div>${shortNoteWarning}` : '<small>Select or draw an Audio Note to edit it.</small>'}
     <small>Analysis: ${esc(trace.status === 'analyzing' ? 'Analyzing...' : trace.status)} · Render: ${esc(pitchTraceRenderStatus)}${editedPitchNoteCount ? ` · ${editedPitchNoteCount} edit${editedPitchNoteCount === 1 ? '' : 's'}` : ''}</small>
   </aside>`
 }
@@ -1377,8 +1420,12 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <div class="studio-pitch-trace-controls">
           ${pitchTrace.enabled ? '<p>Pitch Trace tools are shown in the dedicated pane beside the editor.</p>' : `<label><input type="checkbox" data-pitch-trace-enabled> Pitch Trace</label>
           <p>Analyze the audio region, then drag detected notes vertically to retune audio segments.</p>
-          <label>Confidence<input type="range" min="0.3" max="0.95" step="0.05" data-pitch-trace-threshold value="${pitchTrace.confidenceThreshold}"><small>${Math.round(pitchTrace.confidenceThreshold * 100)}%</small></label>
-          <button type="button" data-pitch-trace-analyze ${missing || pitchTrace.status === 'analyzing' ? 'disabled' : ''}>${pitchTrace.notes.length ? 'Re-analyze Audio' : 'Analyze Audio'}</button>
+          <label>Mode<select data-pitch-trace-mode><option value="vocal" ${pitchTrace.analysisMode === 'vocal' ? 'selected' : ''}>Vocal / Mono</option><option value="instrument" ${pitchTrace.analysisMode === 'instrument' ? 'selected' : ''}>Instrument / Mono</option><option value="full-mix" ${pitchTrace.analysisMode === 'full-mix' ? 'selected' : ''}>Full Mix Best Effort</option></select></label>
+          <label>Sensitivity<input type="range" min="0" max="1" step="0.05" data-pitch-trace-sensitivity value="${pitchTrace.sensitivity}"><small>${Math.round(pitchTrace.sensitivity * 100)}%</small></label>
+          <label>Minimum Note<input type="range" min="0.035" max="0.2" step="0.005" data-pitch-trace-min-note value="${pitchTrace.minNoteSeconds}"><small>${Math.round(pitchTrace.minNoteSeconds * 1000)} ms</small></label>
+          <label>Confidence<input type="range" min="0.2" max="0.95" step="0.05" data-pitch-trace-threshold value="${pitchTrace.confidenceThreshold}"><small>${Math.round(pitchTrace.confidenceThreshold * 100)}%</small></label>
+          <label><input type="checkbox" data-pitch-trace-show-low-confidence ${pitchTrace.showLowConfidence ? 'checked' : ''}> Show low-confidence notes</label>
+          <button type="button" data-pitch-trace-analyze ${missing || pitchTrace.status === 'analyzing' ? 'disabled' : ''}>${pitchTrace.notes.length ? 'Re-analyze Audible Render' : 'Analyze Audible Render'}</button>
           <button type="button" data-pitch-trace-clear ${pitchTrace.notes.length || pitchTrace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
           <button type="button" data-pitch-trace-render ${pitchTrace.enabled && pitchTrace.notes.length && !missing && !dspBlocked && pitchTrace.renderStatus !== 'rendering' ? '' : 'disabled'} ${dspBlockedTitle}>${pitchTrace.renderStatus === 'failed' ? 'Retry Pitch Trace Render' : 'Render Pitch Trace'}</button>
           ${selectedPitchNote ? `<div class="studio-pitch-trace-note-tools">
@@ -5245,34 +5292,34 @@ async function renderPitchTraceEditsForRegion(regionId) {
   let edit = normalizeAudioEdit(region.audioEdit)
   const trace = edit.pitchTrace
   if (!trace.enabled || !trace.notes.length) return
-  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
-  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
-    await hydrateAudioRegionRuntime(region)
-    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
-  }
-  if (!runtime?.audioBuffer) {
+  const base = await resolvePitchTraceBaseRuntime(region, { ensureRendered: true })
+  if (!base?.runtime?.audioBuffer || base.error) {
     region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...trace, renderStatus: 'failed', lastError: 'Original audio is offline. Reconnect or re-record before rendering Pitch Trace edits.' } })
+    if (base?.error) region.audioEdit.pitchTrace.lastError = base.error
     recordingStatus = region.audioEdit.pitchTrace.lastError
     scheduleEditorSave()
     renderEditor()
     return
   }
+  edit = normalizeAudioEdit(region.audioEdit)
   stopPlayback()
   audioPitchRenderState = { active: true, regionId, mode: 'trace', progress: null, error: '' }
-  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...trace, renderStatus: 'rendering', lastError: null } })
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, renderStatus: 'rendering', lastError: null } })
   renderEditor()
   try {
     const result = await renderAudioDsp(SOURA_AUDIO_DSP_OPERATIONS.pitchTrace, {
-      audioBuffer: runtime.audioBuffer,
+      audioBuffer: base.runtime.audioBuffer,
       clipId: region.id,
-      notes: trace.notes,
-      transposeSemitones: edit.transposeSemitones,
-      fineTuneCents: edit.fineTuneCents,
-      sampleRate: runtime.audioBuffer.sampleRate,
+      notes: edit.pitchTrace.notes,
+      transposeSemitones: 0,
+      fineTuneCents: 0,
+      sampleRate: base.runtime.audioBuffer.sampleRate,
       sourceBitDepth: getAudioSourceBitDepth(region),
       quality: 'high',
-      trimStartSeconds: getAudioTrimStartSeconds(region),
-      trimEndSeconds: getAudioTrimEndSeconds(region),
+      trimStartSeconds: base.trimStartSeconds,
+      trimEndSeconds: base.trimEndSeconds,
+      baseRenderSource: base.baseRenderSource,
+      stackedOnGlobalEdits: base.stackedOnGlobalEdits,
       onProgress: (progress) => {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
       }
@@ -5295,7 +5342,7 @@ async function renderPitchTraceEditsForRegion(regionId) {
       contentType: result.renderedBlob?.type || 'audio/wav',
       fileDurationSeconds: result.renderedDurationSeconds,
       waveform,
-      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sourceRuntimeId: base.runtimeId,
       sessionOnly: !renderedStoragePath
     })
     edit = normalizeAudioEdit(region.audioEdit)
@@ -5311,6 +5358,8 @@ async function renderPitchTraceEditsForRegion(regionId) {
         renderedDurationSeconds: result.renderedDurationSeconds,
         renderAlgorithm: result.algorithm,
         renderedAudio: result.renderedAudio,
+        baseRenderSource: base.baseRenderSource,
+        stackedOnGlobalEdits: base.stackedOnGlobalEdits,
         preservesDuration: result.preservesDuration,
         lastError: null,
         renderedAt: result.createdAt,
@@ -6678,9 +6727,123 @@ function setAudioRegionPitchTrace(region, patch = {}, historyLabel = 'edit-pitch
   scheduleEditorSave()
   renderEditor()
 }
-function getAudioBufferSamplesForPitchTrace(audioBuffer, region) {
-  const trimStart = getAudioTrimStartSeconds(region)
-  const trimEnd = getAudioTrimEndSeconds(region)
+async function getOriginalAudioRuntimeForRegion(region) {
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  return runtime?.audioBuffer ? {
+    runtime,
+    runtimeId: region.audioClip?.runtimeId || region.id,
+    baseRenderSource: 'original',
+    label: 'original audio',
+    stackedOnGlobalEdits: false,
+    trimStartSeconds: getAudioTrimStartSeconds(region),
+    trimEndSeconds: getAudioTrimEndSeconds(region),
+    stretchRatio: getAudioStretchRatio(region)
+  } : null
+}
+async function resolvePitchTraceBaseRuntime(region, { ensureRendered = false } = {}) {
+  if (!region || region.type !== 'audio') return null
+  const original = await getOriginalAudioRuntimeForRegion(region)
+  if (!original) return null
+  let edit = normalizeAudioEdit(region.audioEdit)
+  let stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const baseFromRuntime = (runtimeId, baseRenderSource, label) => {
+    const runtime = runtimeId ? audioClipRuntime.get(runtimeId) : null
+    return runtime?.audioBuffer ? {
+      runtime,
+      runtimeId,
+      baseRenderSource,
+      label,
+      stackedOnGlobalEdits: baseRenderSource !== 'original',
+      trimStartSeconds: 0,
+      trimEndSeconds: runtime.audioBuffer.duration,
+      stretchRatio: 1
+    } : null
+  }
+  const pitchActive = Math.abs(Number(edit.pitchShift?.totalSemitones) || 0) > 0.001
+  const stretchIsCombined = stretch.algorithm === 'signalsmith_wasm_pitch_time_v1' || stretch.renderedAudio?.operation === 'combined_pitch_time'
+  if (stretch.enabled) {
+    const stretchRuntimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
+    if (stretch.renderStatus === 'ready' && (!pitchActive || stretchIsCombined)) {
+      const ready = baseFromRuntime(stretchRuntimeId, stretchIsCombined ? 'combined_wasm_render' : 'global_wasm_render', stretchIsCombined ? 'combined pitch + stretch render' : 'global stretch render')
+      if (ready) return ready
+      if (stretch.renderedStoragePath || stretch.renderedAudioUrl) {
+        await hydrateRenderedAudioRegionRuntime(region)
+        stretch = normalizeAudioStretch(region.stretch, {
+          clipId: region.id,
+          sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+          visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+        })
+        const hydrated = baseFromRuntime(stretch.renderedRuntimeId || stretchRuntimeId, stretchIsCombined ? 'combined_wasm_render' : 'global_wasm_render', stretchIsCombined ? 'combined pitch + stretch render' : 'global stretch render')
+        if (hydrated) return hydrated
+      }
+    }
+    if (ensureRendered) {
+      await renderAudioStretchForRegion(region.id)
+      edit = normalizeAudioEdit(region.audioEdit)
+      stretch = normalizeAudioStretch(region.stretch, {
+        clipId: region.id,
+        sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+        visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+      })
+      const renderedPitchActive = Math.abs(Number(edit.pitchShift?.totalSemitones) || 0) > 0.001
+      const rendered = baseFromRuntime(stretch.renderedRuntimeId || stretchRuntimeId, renderedPitchActive ? 'combined_wasm_render' : 'global_wasm_render', renderedPitchActive ? 'combined pitch + stretch render' : 'global stretch render')
+      if (rendered) return rendered
+      return { ...original, error: stretch.renderError || 'Global stretch render is required before Pitch Trace can stack edits.' }
+    }
+    return original
+  }
+  if (pitchActive) {
+    if (edit.pitchShift.renderStatus === 'ready') {
+      const ready = baseFromRuntime(edit.pitchShift.renderedRuntimeId, 'global_wasm_render', 'global transpose render')
+      if (ready) return ready
+      if (edit.pitchShift.renderedStoragePath || edit.pitchShift.renderedAudioUrl) {
+        await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+        edit = normalizeAudioEdit(region.audioEdit)
+        const hydrated = baseFromRuntime(edit.pitchShift.renderedRuntimeId, 'global_wasm_render', 'global transpose render')
+        if (hydrated) return hydrated
+      }
+    }
+    if (ensureRendered) {
+      await renderAudioPitchShiftForRegion(region.id)
+      edit = normalizeAudioEdit(region.audioEdit)
+      const rendered = baseFromRuntime(edit.pitchShift.renderedRuntimeId, 'global_wasm_render', 'global transpose render')
+      if (rendered) return rendered
+      return { ...original, error: edit.pitchShift.lastError || 'Global transpose render is required before Pitch Trace can stack edits.' }
+    }
+    return original
+  }
+  if (edit.reverse?.enabled) {
+    if (edit.reverse.renderStatus === 'ready') {
+      const ready = baseFromRuntime(edit.reverse.renderedRuntimeId, 'global_wasm_render', 'reverse render')
+      if (ready) return ready
+      if (edit.reverse.renderedStoragePath || edit.reverse.renderedAudioUrl) {
+        await hydrateAudioEditRenderRuntime(region, 'reverse')
+        edit = normalizeAudioEdit(region.audioEdit)
+        const hydrated = baseFromRuntime(edit.reverse.renderedRuntimeId, 'global_wasm_render', 'reverse render')
+        if (hydrated) return hydrated
+      }
+    }
+    if (ensureRendered) {
+      await renderAudioReverseForRegion(region.id)
+      edit = normalizeAudioEdit(region.audioEdit)
+      const rendered = baseFromRuntime(edit.reverse.renderedRuntimeId, 'global_wasm_render', 'reverse render')
+      if (rendered) return rendered
+      return { ...original, error: edit.reverse.lastError || 'Reverse render is required before Pitch Trace can stack edits.' }
+    }
+  }
+  return original
+}
+function getAudioBufferSamplesForPitchTrace(audioBuffer, region, base = null) {
+  const trimStart = Number.isFinite(Number(base?.trimStartSeconds)) ? Number(base.trimStartSeconds) : getAudioTrimStartSeconds(region)
+  const trimEnd = Number.isFinite(Number(base?.trimEndSeconds)) ? Number(base.trimEndSeconds) : getAudioTrimEndSeconds(region)
   const sampleRate = audioBuffer.sampleRate || 44100
   const startSample = clamp(Math.floor(trimStart * sampleRate), 0, audioBuffer.length)
   const endSample = clamp(Math.ceil(trimEnd * sampleRate), startSample + 1, audioBuffer.length)
@@ -6697,12 +6860,8 @@ async function analyzePitchTraceForRegion(regionId) {
   if (pitchTraceAnalysis.active) return
   const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
   if (!region) return
-  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
-  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
-    await hydrateAudioRegionRuntime(region)
-    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
-  }
-  if (!runtime?.audioBuffer) {
+  const base = await resolvePitchTraceBaseRuntime(region, { ensureRendered: false })
+  if (!base?.runtime?.audioBuffer) {
     setAudioRegionPitchTrace(region, {
       enabled: true,
       status: 'failed',
@@ -6728,7 +6887,7 @@ async function analyzePitchTraceForRegion(regionId) {
   })
   renderEditor()
   try {
-    const samples = getAudioBufferSamplesForPitchTrace(runtime.audioBuffer, region)
+    const samples = getAudioBufferSamplesForPitchTrace(base.runtime.audioBuffer, region, base)
     worker.onmessage = (event) => {
       const message = event.data || {}
       if (message.requestId !== requestId) return
@@ -6755,6 +6914,12 @@ async function analyzePitchTraceForRegion(regionId) {
             algorithm: message.algorithm || PITCH_TRACE_ALGORITHM,
             analysisVersion: PITCH_TRACE_VERSION,
             analyzedAt: Date.now(),
+            analysisMode: currentEdit.pitchTrace.analysisMode,
+            sensitivity: currentEdit.pitchTrace.sensitivity,
+            minNoteSeconds: currentEdit.pitchTrace.minNoteSeconds,
+            showLowConfidence: currentEdit.pitchTrace.showLowConfidence,
+            baseRenderSource: base.baseRenderSource,
+            stackedOnGlobalEdits: base.stackedOnGlobalEdits,
             progress: 1,
             error: null,
             renderStatus: 'idle',
@@ -6800,11 +6965,14 @@ async function analyzePitchTraceForRegion(regionId) {
       type: 'analyze',
       requestId,
       samples: samples.buffer,
-      sampleRate: runtime.audioBuffer.sampleRate || 44100,
+      sampleRate: base.runtime.audioBuffer.sampleRate || 44100,
       bpm: Number(projectState?.bpm || 140),
       regionStartBeat: Number(region.startBeat || 0),
-      stretchRatio: getAudioStretchRatio(region),
-      confidenceThreshold: edit.pitchTrace.confidenceThreshold
+      stretchRatio: base.stretchRatio || 1,
+      confidenceThreshold: edit.pitchTrace.confidenceThreshold,
+      analysisMode: edit.pitchTrace.analysisMode,
+      sensitivity: edit.pitchTrace.sensitivity,
+      minNoteSeconds: edit.pitchTrace.minNoteSeconds
     }, [samples.buffer])
   } catch (error) {
     worker.terminate()
@@ -7671,9 +7839,44 @@ function bindEditorEvents() {
         confidenceThreshold: Number(event.target.value) || 0.65
       }
     })
-    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round((Number(event.target.value) || 0.65) * 100)}%`
+    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round((Number(event.target.value) || 0.5) * 100)}%`
   })
   app.querySelector('[data-pitch-trace-threshold]')?.addEventListener('change', () => { scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-pitch-trace-sensitivity]')?.addEventListener('input', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const value = clamp(Number(event.target.value) || 0, 0, 1)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, sensitivity: value } })
+    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round(value * 100)}%`
+  })
+  app.querySelector('[data-pitch-trace-sensitivity]')?.addEventListener('change', () => { scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-pitch-trace-min-note]')?.addEventListener('input', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const value = clamp(Number(event.target.value) || 0.08, 0.035, 0.35)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, minNoteSeconds: value } })
+    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round(value * 1000)} ms`
+  })
+  app.querySelector('[data-pitch-trace-min-note]')?.addEventListener('change', () => { scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-pitch-trace-mode]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const analysisMode = PITCH_TRACE_ANALYSIS_MODES.includes(event.target.value) ? event.target.value : 'vocal'
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, analysisMode } })
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-pitch-trace-show-low-confidence]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, showLowConfidence: event.target.checked } })
+    scheduleEditorSave()
+    renderEditor()
+  })
   app.querySelector('[data-pitch-trace-analyze]')?.addEventListener('click', () => {
     const region = getSelectedAudioRegion()
     if (region) analyzePitchTraceForRegion(region.id)
@@ -8104,6 +8307,7 @@ function bindEditorEvents() {
       const nextHeight = clamp(bottomPanelResizeDrag.startHeight + (bottomPanelResizeDrag.startY - event.clientY), 220, maxHeight)
       bottomPanelHeightPx = Math.round(nextHeight)
       bottomPanelResizeDrag.panel?.style.setProperty('height', `${bottomPanelHeightPx}px`)
+      app.querySelector('.studio-editor-page')?.style.setProperty('--studio-bottom-panel-height', `${bottomPanelHeightPx}px`)
       return
     }
     if (audioWaveformPanDrag) {
@@ -8358,7 +8562,9 @@ function renderEditor() {
   const showResonaPanel = activeBottomPanel === 'resona'
   const bottomPanelId = activeBottomPanel || closingBottomPanel
   const shouldRenderBottomPanel = Boolean(bottomPanelId && bottomPanelId !== 'resona')
-  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button type="button" data-toggle-file-menu class="${isFileMenuOpen ? 'is-active' : ''}">File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button type="button" data-toggle-controls-menu class="${isControlsMenuOpen ? 'is-active' : ''}">Controls</button><button>Help</button></nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}</main>`
+  const bottomPanelClass = shouldRenderBottomPanel ? 'has-bottom-panel' : ''
+  const bottomPanelHeightStyle = bottomPanelHeightPx ? `--studio-bottom-panel-height:${bottomPanelHeightPx}px;` : ''
+  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu"><button type="button" data-toggle-file-menu class="${isFileMenuOpen ? 'is-active' : ''}">File</button><button>Edit</button><button>View</button><button>Track</button><button>Mix</button><button type="button" data-toggle-controls-menu class="${isControlsMenuOpen ? 'is-active' : ''}">Controls</button><button>Help</button></nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}</main>`
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   initShellChrome()
   app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')?.insertAdjacentHTML('afterend', renderRegionToolRail())
