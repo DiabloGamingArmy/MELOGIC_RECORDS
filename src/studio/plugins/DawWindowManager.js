@@ -4,7 +4,8 @@ import { drawWavetableVisualizers } from './MelogicWavetableShell.js'
 import {
   drawSouraEffectVisualizers,
   getSouraEqBandDefinition,
-  getSouraEqParamsFromPoint
+  getSouraEqParamsFromPoint,
+  updateSouraEqSelectionDom
 } from './SouraAudioEffectShell.js'
 
 const SESSION_KEY = 'melogic-daw-plugin-window-state-v1'
@@ -470,7 +471,8 @@ export class DawWindowManager {
     if (param === 'preset' || param === 'mwtPage' || param.endsWith('Enabled') || param.startsWith('assetBrowser') || ['oscCount', 'selectedOsc', 'fxRack', 'selectedFx', 'modSource', 'modulationMatrix'].includes(param)) this.renderPluginBody(id)
     if (['wavetableId', 'wavetablePosition'].includes(param)) this.updateVisualizerDom(id)
     if (String(windowState.pluginType || '').startsWith('soura-audio-effect:')) {
-      if (param === 'eqSelectedBand' || param === 'sync' || param === 'noteDivision') this.renderPluginBody(id)
+      if (param === 'eqSelectedBand') this.updateSouraEqSelection(id)
+      else if (param === 'sync' || param === 'noteDivision') this.renderPluginBody(id)
       else this.scheduleSouraEffectDraw(document.querySelector(`[data-plugin-shell="${CSS.escape(id)}"]`) || document)
     }
     this.persist()
@@ -549,6 +551,15 @@ export class DawWindowManager {
     canvas.dataset.wavetableId = windowState.params?.wavetableId || 'builtin-saw'
     canvas.dataset.wavetablePosition = String(windowState.params?.wavetablePosition ?? 0.35)
     this.scheduleVisualizerDraw(root)
+  }
+
+  updateSouraEqSelection(id) {
+    const root = document.querySelector(`[data-plugin-shell="${CSS.escape(id)}"]`)
+    const windowState = this.windows.get(id)
+    if (!root || !windowState) return
+    const selectedPanel = updateSouraEqSelectionDom(root, windowState.params || {})
+    if (selectedPanel) this.bind(selectedPanel)
+    this.scheduleSouraEffectDraw(root)
   }
 
   updateParamValueDom(id, param, value) {

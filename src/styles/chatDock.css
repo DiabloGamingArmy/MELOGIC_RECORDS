@@ -24,11 +24,11 @@
 .chat-dock-panel {
   position: relative;
   width: min(var(--chat-dock-width, 380px), calc(100vw - 28px), 720px);
-  height: min(var(--chat-dock-height, 560px), calc(100vh - var(--nav-offset, 76px) - 34px), 85vh);
+  height: min(var(--chat-dock-height, 560px), calc(100dvh - var(--nav-offset, 76px) - 34px), 85dvh);
   min-width: 320px;
   max-width: min(720px, 90vw);
   min-height: 380px;
-  max-height: 85vh;
+  max-height: 85dvh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
@@ -728,7 +728,7 @@ body.site-guidance-active .chat-dock-header button.chat-dock-header-action.is-mu
 
   .chat-dock-panel {
     width: 100vw;
-    height: min(82vh, calc(100vh - var(--nav-offset, 68px)));
+    height: min(82dvh, calc(100dvh - var(--nav-offset, 68px)));
     min-width: 0;
     min-height: 360px;
     border-right: 0;

@@ -14,6 +14,62 @@ const GAIN_MAX = 24
 const EQ_GRID_FREQS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
 const EQ_GRID_GAINS = [-24, -12, 0, 12, 24]
 const NOTE_DIVISIONS = ['1/4', '1/8', '1/8D', '1/8T', '1/16', '1/16T', '1/32']
+const FILTER_TYPES = ['lowpass', 'highpass', 'bandpass', 'notch', 'lowshelf', 'highshelf', 'peaking']
+const GENERIC_EFFECT_CONTROLS = {
+  compressor: [
+    { param: 'threshold', label: 'Threshold', min: -60, max: 0, step: 0.1, unit: 'dB', digits: 1 },
+    { param: 'ratio', label: 'Ratio', min: 1, max: 20, step: 0.1, digits: 1 },
+    { param: 'attack', label: 'Attack', min: 0.001, max: 0.12, step: 0.001, unit: 's', digits: 3 },
+    { param: 'release', label: 'Release', min: 0.02, max: 1.2, step: 0.01, unit: 's', digits: 2 },
+    { param: 'knee', label: 'Knee', min: 0, max: 40, step: 0.1, unit: 'dB', digits: 1 },
+    { param: 'makeupGain', label: 'Makeup', min: -12, max: 18, step: 0.1, unit: 'dB', digits: 1 }
+  ],
+  limiter: [
+    { param: 'inputGain', label: 'Input', min: -12, max: 18, step: 0.1, unit: 'dB', digits: 1 },
+    { param: 'ceiling', label: 'Ceiling', min: -12, max: 0, step: 0.1, unit: 'dB', digits: 1 },
+    { param: 'release', label: 'Release', min: 0.01, max: 0.8, step: 0.01, unit: 's', digits: 2 }
+  ],
+  distortion: [
+    { param: 'drive', label: 'Drive', min: 0, max: 1, step: 0.01, digits: 2 },
+    { param: 'tone', label: 'Tone', min: 800, max: 16000, step: 1, unit: 'Hz', digits: 0 },
+    { param: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01, digits: 2 }
+  ],
+  chorus: [
+    { param: 'rate', label: 'Rate', min: 0.05, max: 6, step: 0.01, unit: 'Hz', digits: 2 },
+    { param: 'depth', label: 'Depth', min: 0, max: 1, step: 0.01, digits: 2 },
+    { param: 'delay', label: 'Delay', min: 0.004, max: 0.04, step: 0.001, unit: 's', digits: 3 },
+    { param: 'feedback', label: 'Feedback', min: 0, max: 0.65, step: 0.01, digits: 2 },
+    { param: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01, digits: 2 }
+  ],
+  phaser: [
+    { param: 'rate', label: 'Rate', min: 0.03, max: 4, step: 0.01, unit: 'Hz', digits: 2 },
+    { param: 'depth', label: 'Depth', min: 0, max: 1, step: 0.01, digits: 2 },
+    { param: 'feedback', label: 'Feedback', min: 0, max: 0.7, step: 0.01, digits: 2 },
+    { param: 'stages', label: 'Stages', min: 2, max: 8, step: 1, digits: 0 },
+    { param: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01, digits: 2 }
+  ],
+  flanger: [
+    { param: 'rate', label: 'Rate', min: 0.03, max: 4, step: 0.01, unit: 'Hz', digits: 2 },
+    { param: 'depth', label: 'Depth', min: 0, max: 1, step: 0.01, digits: 2 },
+    { param: 'delay', label: 'Delay', min: 0.001, max: 0.012, step: 0.0005, unit: 's', digits: 4 },
+    { param: 'feedback', label: 'Feedback', min: 0, max: 0.85, step: 0.01, digits: 2 },
+    { param: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01, digits: 2 }
+  ],
+  tremolo: [
+    { param: 'rate', label: 'Rate', min: 0.1, max: 14, step: 0.01, unit: 'Hz', digits: 2 },
+    { param: 'depth', label: 'Depth', min: 0, max: 1, step: 0.01, digits: 2 },
+    { param: 'mix', label: 'Mix', min: 0, max: 1, step: 0.01, digits: 2 }
+  ],
+  filter: [
+    { param: 'type', label: 'Type', options: FILTER_TYPES },
+    { param: 'cutoff', label: 'Cutoff', min: 20, max: 20000, step: 1, unit: 'Hz', digits: 0 },
+    { param: 'resonance', label: 'Resonance', min: 0.1, max: 18, step: 0.01, digits: 2 },
+    { param: 'gain', label: 'Gain', min: -24, max: 24, step: 0.1, unit: 'dB', digits: 1 }
+  ],
+  'stereo-imager': [
+    { param: 'width', label: 'Width', min: 0, max: 2, step: 0.01, digits: 2 }
+  ]
+}
 
 const EQ_BANDS = [
   { id: 'hp', label: 'High-pass', short: 'HP', type: 'highpass', enabledParam: 'hpEnabled', frequencyParam: 'hpFrequency', qParam: 'hpQ', min: 20, max: 800 },
@@ -174,6 +230,7 @@ function renderEqGraph(params) {
       <rect x="${EQ_PAD.left}" y="${EQ_PAD.top}" width="${EQ_WIDTH - EQ_PAD.left - EQ_PAD.right}" height="${EQ_HEIGHT - EQ_PAD.top - EQ_PAD.bottom}" rx="14"></rect>
       <g class="soura-eq-grid">${renderEqGrid()}</g>
       <line class="soura-eq-zero" x1="${EQ_PAD.left}" y1="${gainToY(0)}" x2="${EQ_WIDTH - EQ_PAD.right}" y2="${gainToY(0)}"></line>
+      <polyline class="soura-eq-spectrum" data-soura-eq-spectrum points=""></polyline>
       <path class="soura-eq-curve" data-soura-eq-curve d="${buildEqCurvePath(params)}"></path>
       <g class="soura-eq-nodes">
         ${EQ_BANDS.map((band) => {
@@ -191,7 +248,7 @@ function renderEqGraph(params) {
 
 function renderEqSelectedPanel(params) {
   const selectedBand = EQ_BANDS.find((band) => band.id === (params.eqSelectedBand || 'bell1')) || EQ_BANDS[2]
-  return `<aside class="soura-eq-selected">
+  return `<aside class="soura-eq-selected" data-soura-eq-selected>
     <header><span>Selected Band</span><strong>${esc(selectedBand.label)}</strong></header>
     <div class="soura-fx-mini-grid">
       ${toggle({ param: selectedBand.enabledParam, label: 'Enabled', value: params[selectedBand.enabledParam] !== false })}
@@ -205,6 +262,7 @@ function renderEqSelectedPanel(params) {
 
 function renderEq(params) {
   return `
+    <input data-plugin-param="eqSelectedBand" type="hidden" value="${esc(params.eqSelectedBand || 'bell1')}">
     <div class="soura-fx-visual soura-eq-module">
       ${renderEqGraph(params)}
       ${renderEqSelectedPanel(params)}
@@ -213,6 +271,19 @@ function renderEq(params) {
       ${EQ_BANDS.map((band) => `<button type="button" class="${(params.eqSelectedBand || 'bell1') === band.id ? 'is-selected' : ''}" data-plugin-param-set="eqSelectedBand" data-plugin-param-value="${esc(band.id)}"><strong>${esc(band.short)}</strong><span>${esc(band.label)}</span></button>`).join('')}
     </div>
   `
+}
+export function updateSouraEqSelectionDom(shell, params = {}) {
+  if (!shell?.querySelector) return null
+  const selectedBand = params.eqSelectedBand || 'bell1'
+  const hidden = shell.querySelector('[data-plugin-param="eqSelectedBand"]')
+  if (hidden) hidden.value = selectedBand
+  const selectedPanel = shell.querySelector('[data-soura-eq-selected]')
+  if (selectedPanel) selectedPanel.outerHTML = renderEqSelectedPanel(params)
+  shell.querySelectorAll('[data-plugin-param-set="eqSelectedBand"]').forEach((button) => {
+    button.classList.toggle('is-selected', button.dataset.pluginParamValue === selectedBand)
+  })
+  drawEq(shell)
+  return shell.querySelector('[data-soura-eq-selected]')
 }
 
 function renderReverb(params) {
@@ -266,6 +337,45 @@ function renderDelay(params) {
     ${control({ param: 'highCut', label: 'High Cut', value: params.highCut, min: 1000, max: 18000, step: 1, unit: 'Hz', digits: 0, wide: true })}
   `
 }
+function renderGenericEffect(params, effectType, manifest) {
+  const controls = GENERIC_EFFECT_CONTROLS[effectType] || []
+  const meter = clamp(
+    Number(params.mix ?? params.depth ?? params.drive ?? params.width ?? params.ratio ?? params.inputGain ?? 0.5),
+    effectType === 'limiter' ? -12 : 0,
+    effectType === 'limiter' ? 18 : (effectType === 'stereo-imager' ? 2 : 1)
+  )
+  const normalized = effectType === 'limiter'
+    ? (meter + 12) / 30
+    : effectType === 'stereo-imager'
+      ? meter / 2
+      : meter
+  return `
+    <div class="soura-fx-visual soura-generic-module" data-soura-generic-module="${esc(effectType)}" style="--fx-energy:${clamp(normalized, 0, 1)}">
+      <div class="soura-generic-orb"><span></span><i></i></div>
+      <div>
+        <strong>${esc(manifest?.name || effectType)}</strong>
+        <p>${esc(getGenericEffectDescription(effectType))}</p>
+      </div>
+    </div>
+    ${controls.map((item) => item.options
+      ? selectControl({ param: item.param, label: item.label, value: params[item.param], options: item.options })
+      : control({ ...item, value: params[item.param], wide: true })
+    ).join('')}
+  `
+}
+function getGenericEffectDescription(effectType = '') {
+  return {
+    compressor: 'Dynamics control for taming peaks and lifting body.',
+    limiter: 'Fast peak control at the end of a track chain.',
+    distortion: 'Drive, tone shaping, and wet/dry blend.',
+    chorus: 'Modulated delay thickening for width and motion.',
+    phaser: 'Sweeping all-pass movement with feedback.',
+    flanger: 'Short modulated delay for metallic motion.',
+    tremolo: 'Amplitude modulation with depth and blend.',
+    filter: 'Creative filter tone shaping.',
+    'stereo-imager': 'Mid/side style width control from mono to wide.'
+  }[effectType] || 'Audio effect controls.'
+}
 
 function readShellParams(shell, effectType) {
   const defaults = getAudioEffectDefaultParams(effectType)
@@ -282,6 +392,9 @@ function drawEq(shell) {
   const params = readShellParams(shell, 'eq')
   const curve = shell.querySelector('[data-soura-eq-curve]')
   if (curve) curve.setAttribute('d', buildEqCurvePath(params))
+  shell.querySelectorAll('[data-plugin-param-set="eqSelectedBand"]').forEach((button) => {
+    button.classList.toggle('is-selected', button.dataset.pluginParamValue === (params.eqSelectedBand || 'bell1'))
+  })
   EQ_BANDS.forEach((band) => {
     const node = shell.querySelector(`[data-soura-eq-node="${CSS.escape(band.id)}"]`)
     if (!node) return
@@ -356,7 +469,9 @@ export function renderSouraAudioEffectShell(pluginWindow) {
     ? renderEq(params)
     : effectType === 'reverb'
       ? renderReverb(params)
-      : renderDelay(params)
+      : effectType === 'delay'
+        ? renderDelay(params)
+        : renderGenericEffect(params, effectType, manifest)
   return `<section class="daw-plugin-shell soura-fx-shell" data-plugin-shell="${esc(pluginWindow.pluginInstanceId)}" data-effect-type="${esc(effectType)}">
     <header class="soura-fx-header">
       <div>

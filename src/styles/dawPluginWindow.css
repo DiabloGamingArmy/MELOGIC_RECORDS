@@ -333,6 +333,16 @@
   filter: drop-shadow(0 0 8px rgba(124, 230, 255, 0.45));
 }
 
+.soura-eq-spectrum {
+  fill: none;
+  stroke: rgba(255, 228, 166, 0.52);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 7px rgba(255, 228, 166, 0.24));
+  pointer-events: none;
+}
+
 .soura-eq-node {
   cursor: grab;
   outline: none;
@@ -593,12 +603,70 @@
   gap: 10px;
 }
 
+.soura-generic-module {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  min-height: 190px;
+}
+
+.soura-generic-orb {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 38% 32%, rgba(255, 255, 255, 0.44), transparent 18%),
+    radial-gradient(circle at 50% 50%, rgba(124, 230, 255, calc(0.22 + var(--fx-energy, 0.5) * 0.36)), rgba(127, 103, 255, 0.2) 54%, rgba(7, 11, 20, 0.92) 72%);
+  border: 1px solid rgba(135, 157, 210, 0.22);
+  box-shadow: inset 0 0 32px rgba(255, 255, 255, 0.06), 0 0 calc(16px + var(--fx-energy, 0.5) * 28px) rgba(124, 230, 255, 0.18);
+}
+
+.soura-generic-orb span,
+.soura-generic-orb i {
+  position: absolute;
+  inset: calc(14px + var(--fx-energy, 0.5) * 16px);
+  border-radius: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.soura-generic-orb i {
+  inset: auto 18px 20px;
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(124, 230, 255, 0.12), #7ce6ff, rgba(255, 228, 166, 0.62));
+  transform: scaleX(calc(0.25 + var(--fx-energy, 0.5) * 0.75));
+  transform-origin: left center;
+}
+
+.soura-generic-module strong {
+  display: block;
+  color: #f3f8ff;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.soura-generic-module p {
+  max-width: 360px;
+  margin: 6px 0 0;
+  color: #91a5cc;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 @media (max-width: 760px) {
   .soura-fx-grid {
     grid-template-columns: 1fr;
   }
 
   .soura-eq-module {
+    grid-template-columns: 1fr;
+  }
+
+  .soura-generic-module {
     grid-template-columns: 1fr;
   }
 
