@@ -233,14 +233,14 @@ function buildResult({
   }
 }
 
-async function renderWasmBuffer({ operation, source, outputFrames, sampleRate, stretchRatio = 1, semitones = 0, cents = 0, quality = 'high' }) {
+async function renderWasmBuffer({ operation, source, outputFrames, sampleRate, stretchRatio = 1, semitones = 0, cents = 0, quality = 'high', clipId = '' }) {
   const channels = Math.max(1, source.numberOfChannels || 1)
   const inputFrames = Math.max(1, source.length || 1)
   const inputPcm = audioBufferToInterleavedFloat32(source)
   const inputStats = getPcmStats(inputPcm, channels)
   console.info('[dsp-render] input stats', {
     operation,
-    clipId: source.clipId || '',
+    clipId,
     frames: inputFrames,
     channels,
     sampleRate,
@@ -258,7 +258,8 @@ async function renderWasmBuffer({ operation, source, outputFrames, sampleRate, s
     stretchRatio,
     semitones,
     cents,
-    quality
+    quality,
+    clipId
   })
   if (Number(rendered.returnCode || 0) !== 0) {
     throw new Error(`Soura WASM DSP failed with return code ${rendered.returnCode}.`)
@@ -266,6 +267,7 @@ async function renderWasmBuffer({ operation, source, outputFrames, sampleRate, s
   const outputStats = getPcmStats(rendered.outputPcm, channels)
   console.info('[dsp-render] wasm result', {
     operation,
+    clipId,
     returnCode: rendered.returnCode ?? 0,
     outputFrames: rendered.outputFrames || outputFrames,
     outputPeak: outputStats.peak,
@@ -307,7 +309,8 @@ async function renderTimeStretch(options = {}) {
     outputFrames,
     sampleRate: renderRate,
     stretchRatio: outputFrames / Math.max(1, source.length),
-    quality
+    quality,
+    clipId: options.clipId || ''
   })
   const renderedBuffer = validateRenderedBuffer({
     operation: SOURA_AUDIO_DSP_OPERATIONS.timeStretch,
@@ -364,7 +367,8 @@ async function renderPitchShift(options = {}) {
     sampleRate: source.sampleRate || audioBuffer.sampleRate || 44100,
     semitones: Number(transposeSemitones) || 0,
     cents: Number(fineTuneCents) || 0,
-    quality
+    quality,
+    clipId
   })
   const renderedBuffer = validateRenderedBuffer({
     operation: SOURA_AUDIO_DSP_OPERATIONS.pitchShift,
@@ -433,7 +437,8 @@ async function renderPitchAndStretch(options = {}) {
     stretchRatio: outputFrames / Math.max(1, source.length),
     semitones: Number(transposeSemitones) || 0,
     cents: Number(fineTuneCents) || 0,
-    quality
+    quality,
+    clipId
   })
   const renderedBuffer = validateRenderedBuffer({
     operation: SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch,
@@ -527,7 +532,8 @@ async function renderPitchTrace(options = {}) {
       sampleRate: segment.sampleRate,
       semitones,
       cents,
-      quality
+      quality,
+      clipId
     })
     const renderedSegment = validateRenderedBuffer({
       operation: SOURA_AUDIO_DSP_OPERATIONS.pitchTrace,
