@@ -137,6 +137,11 @@ let colorPickerState = null
 let activeBottomPanel = ''
 let isControlsMenuOpen = false
 let controlsConfigModalOpen = false
+let projectSettingsModalOpen = false
+let projectManagementModalOpen = false
+let selectedGlobalEvent = null
+let cpuAlertState = { aboveSince: 0, lastAlertAt: 0, message: '', visible: false }
+let cpuUsagePercent = 0
 const activeInstrumentNotes = new Map()
 const pressedKeyboardNotes = new Set()
 const pressedDawMidiKeys = new Map()
@@ -213,6 +218,8 @@ let globalTracks = {
   arrangement: [],
   markers: [],
   tempoEvents: [],
+  timeSignatureEvents: [],
+  keySignatureEvents: [],
   signatureEvents: [],
   videoRefs: []
 }
@@ -342,8 +349,79 @@ const isAudioTrack = (track) => normalizeTrackType(track?.type) === 'audio'
 const isSoftwareTrack = (track) => !isAudioTrack(track)
 const trackTypeLabel = (track) => isAudioTrack(track) ? 'Audio' : 'Software'
 const normalizedTrackIconType = (track) => isAudioTrack(track) ? 'audio' : 'instrument'
-const beatsToSeconds = (beats = 0) => Math.max(0, Number(beats) || 0) * (60 / Number(projectState?.bpm || 140))
-const secondsToBeats = (seconds = 0) => Math.max(0, Number(seconds) || 0) * (Number(projectState?.bpm || 140) / 60)
+const ROOT_NOTE_OPTIONS = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
+const KEY_SCALE_OPTIONS = ['major','minor','chromatic','dorian','phrygian','lydian','mixolydian','locrian','harmonic minor','melodic minor']
+const TIME_SIGNATURE_DENOMINATORS = [2,4,8,16]
+const DEFAULT_CPU_ALERTS = { enabled: true, thresholdPercent: 85, sustainMs: 5000, cooldownMs: 60000 }
+const nowIso = () => new Date().toISOString()
+const clampProjectBpm = (value = 140) => clamp(Number(value) || 140, 20, 300)
+const normalizeRootNote = (value = 'C') => ROOT_NOTE_OPTIONS.includes(String(value || '').trim()) ? String(value || '').trim() : 'C'
+const normalizeScaleMode = (value = 'minor') => KEY_SCALE_OPTIONS.includes(String(value || '').trim()) ? String(value || '').trim() : 'minor'
+const normalizeCpuAlerts = (settings = {}) => ({
+  enabled: settings.enabled !== false,
+  thresholdPercent: clamp(Number(settings.thresholdPercent) || DEFAULT_CPU_ALERTS.thresholdPercent, 1, 100),
+  sustainMs: clamp(Number(settings.sustainMs) || DEFAULT_CPU_ALERTS.sustainMs, 1000, 60000),
+  cooldownMs: clamp(Number(settings.cooldownMs) || DEFAULT_CPU_ALERTS.cooldownMs, 5000, 300000)
+})
+function parseProjectKey(value = projectState?.key || 'C minor') {
+  const raw = String(value || '').trim()
+  const parts = raw.split(/\s+/)
+  return { root: normalizeRootNote(parts[0] || 'C'), scale: normalizeScaleMode(parts.slice(1).join(' ') || 'minor') }
+}
+function formatKeySignature(event = {}) {
+  const root = normalizeRootNote(event.root || event.key || parseProjectKey().root)
+  const scale = normalizeScaleMode(event.scale || parseProjectKey().scale)
+  return event.label || `${root} ${scale}`
+}
+function parseTimeSignature(value = projectState?.timeSignature || '4/4') {
+  if (typeof value === 'object' && value) {
+    return {
+      numerator: clamp(Math.round(Number(value.numerator) || 4), 1, 32),
+      denominator: TIME_SIGNATURE_DENOMINATORS.includes(Number(value.denominator)) ? Number(value.denominator) : 4
+    }
+  }
+  const match = String(value || '4/4').match(/(\d+)\s*\/\s*(\d+)/)
+  const numerator = clamp(Math.round(Number(match?.[1]) || 4), 1, 32)
+  const denominator = TIME_SIGNATURE_DENOMINATORS.includes(Number(match?.[2])) ? Number(match?.[2]) : 4
+  return { numerator, denominator }
+}
+function formatTimeSignature(event = {}) {
+  const sig = parseTimeSignature(event)
+  return `${sig.numerator}/${sig.denominator}`
+}
+function getProjectCpuAlerts() {
+  return normalizeCpuAlerts(projectState?.settings?.cpuAlerts || projectState?.editorState?.settings?.cpuAlerts || {})
+}
+function beatsToSeconds(beats = 0, tempoMap = null) {
+  const targetBeat = Math.max(0, Number(beats) || 0)
+  const map = tempoMap || normalizeTempoMap()
+  let seconds = 0
+  for (let i = 0; i < map.length; i += 1) {
+    const current = map[i]
+    const nextBeat = i < map.length - 1 ? Math.max(current.beat, Number(map[i + 1].beat) || current.beat) : targetBeat
+    const segmentEnd = Math.min(targetBeat, nextBeat)
+    if (segmentEnd > current.beat) seconds += (segmentEnd - current.beat) * (60 / clampProjectBpm(current.bpm))
+    if (targetBeat <= nextBeat) break
+  }
+  return Math.max(0, seconds)
+}
+function secondsToBeats(seconds = 0, tempoMap = null) {
+  const targetSeconds = Math.max(0, Number(seconds) || 0)
+  const map = tempoMap || normalizeTempoMap()
+  let elapsed = 0
+  for (let i = 0; i < map.length; i += 1) {
+    const current = map[i]
+    const nextBeat = i < map.length - 1 ? Math.max(current.beat, Number(map[i + 1].beat) || current.beat) : Infinity
+    const segmentBeats = nextBeat - current.beat
+    const secondsPerBeat = 60 / clampProjectBpm(current.bpm)
+    const segmentSeconds = segmentBeats * secondsPerBeat
+    if (!Number.isFinite(segmentSeconds) || targetSeconds <= elapsed + segmentSeconds) {
+      return Math.max(0, current.beat + ((targetSeconds - elapsed) / secondsPerBeat))
+    }
+    elapsed += segmentSeconds
+  }
+  return 0
+}
 const waveformWindowSeconds = 0.1
 const minAudioRegionSeconds = 0.05
 const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
@@ -1042,14 +1120,16 @@ const GLOBAL_TRACK_VIEW_OPTIONS = [
   { value: 'all', label: 'All' },
   { value: 'markers', label: 'Markers' },
   { value: 'tempo', label: 'Tempo' },
-  { value: 'signature', label: 'Key / Signature' },
+  { value: 'time-signature', label: 'Time Sig' },
+  { value: 'key-signature', label: 'Key Sig' },
   { value: 'video', label: 'Video / Reference' }
 ]
 const GLOBAL_TRACK_ROW_LABELS = {
   arrangement: 'Arrangement',
   markers: 'Markers',
   tempo: 'Tempo',
-  signature: 'Key / Signature',
+  'time-signature': 'Time Signature',
+  'key-signature': 'Key Signature',
   video: 'Video / Reference'
 }
 const TIMELINE_ZOOM_LIMITS = {
@@ -1058,7 +1138,10 @@ const TIMELINE_ZOOM_LIMITS = {
   deepestSnapDivision: 256,
   maxRenderedGridLines: 1800
 }
-const globalTrackRowsForView = () => globalTracks.viewMode === 'all' ? ['arrangement', 'markers', 'tempo', 'signature', 'video'] : [globalTracks.viewMode || 'markers']
+const globalTrackRowsForView = () => {
+  const mode = globalTracks.viewMode === 'signature' ? 'key-signature' : (globalTracks.viewMode || 'markers')
+  return mode === 'all' ? ['arrangement', 'markers', 'tempo', 'time-signature', 'key-signature'] : [mode]
+}
 const renderTrackToolbar = () => `<div class="studio-track-toolbar" aria-label="Track toolbar"><button type="button" data-add-track data-tooltip="Add Track" aria-label="Add Track">+</button><button type="button" data-duplicate-track data-tooltip="Duplicate selected track" aria-label="Duplicate selected track">⧉</button><button type="button" class="${globalTracks.visible ? 'is-active' : ''}" data-toggle-global-tracks data-tooltip="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}" aria-label="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}">G</button><select data-global-track-view aria-label="Global track view">${GLOBAL_TRACK_VIEW_OPTIONS.map((option)=>`<option value="${option.value}" ${globalTracks.viewMode===option.value?'selected':''}>${option.label}</option>`).join('')}</select></div>`
 const renderAddTrackModal = () => !addTrackModalOpen ? '' : `<div class="studio-add-track-modal" data-add-track-backdrop>
   <section class="studio-add-track-panel" role="dialog" aria-modal="true" aria-labelledby="studio-add-track-title">
@@ -2000,7 +2083,7 @@ function clampTimelinePixelsPerBar(value = timelineState.pixelsPerBar) {
   return clamp(Number(value) || 120, getTimelineMinPixelsPerBar(), getTimelineMaxPixelsPerBar())
 }
 function getTimelineDivisionForZoom(pixelsPerBeat = beatWidth(), { forSnap = false } = {}) {
-  const minSpacing = forSnap ? 10 : 6
+  const minSpacing = pixelsPerBeat >= 2048 ? 8 : (forSnap ? 12 : 14)
   const divisions = [256,128,64,32,16,8,4,2,1]
   return divisions.find((division)=>pixelsPerBeat / division >= minSpacing) || 1
 }
@@ -2030,7 +2113,7 @@ function formatGridRulerLabel(beat = 0, division = 1) {
   const beatInBar = Math.floor(((beat % beatsPerBar) + beatsPerBar) % beatsPerBar) + 1
   const fractional = beat - Math.floor(beat)
   if (Math.abs(fractional) < 1e-6) return `${bar}.${beatInBar}`
-  if (beatWidth() / division < 44) return ''
+  if (beatWidth() / division < 56) return ''
   return `${bar}.${beatInBar}.${Math.round(fractional * division)}`
 }
 function renderTimelineRuler() {
@@ -2053,6 +2136,10 @@ function renderTimelineRuler() {
   return labels.join('')
 }
 function renderCycleRange(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<div class="studio-cycle-range ${isCycleEnabled ? 'is-enabled' : ''}" data-cycle-range style="left:${start}px;width:${Math.max(0,end-start)}px"><span class="studio-cycle-range-handle" data-cycle-handle="start"></span><span class="studio-cycle-range-body" data-cycle-drag="move"></span><span class="studio-cycle-range-handle" data-cycle-handle="end"></span></div>` }
+function renderRulerMarkerLabels(){
+  if (globalTracks.visible) return ''
+  return (globalTracks.markers || []).map((marker)=>`<span class="studio-ruler-marker-label" style="left:${beatsFromBarZeroToX(marker.beat)}px;--marker-color:${esc(marker.color || '#ffe08a')}">${esc(marker.name || marker.label || 'Marker')}</span>`).join('')
+}
 function renderCycleBoundaryGuides(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<span class="studio-cycle-guide studio-cycle-guide--start ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${start}px"></span><span class="studio-cycle-guide studio-cycle-guide--end ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${end}px"></span>` }
 function renderTimelineLines() {
   const lines = []
@@ -2075,18 +2162,95 @@ function renderTimelineLines() {
   }
   return lines.join('')
 }
-function normalizeTempoEvents() {
-  const current = Number(projectState?.bpm || 140)
-  const events = Array.isArray(globalTracks.tempoEvents) ? globalTracks.tempoEvents : []
-  return (events.length ? events : [{ id: 'tempo-start', beat: 0, bpm: current }])
-    .map((event)=>({ id: event.id || makeInsertId('tempo'), beat: Math.max(0, Number(event.beat) || 0), bpm: clamp(Number(event.bpm) || current, 20, 300) }))
+function normalizeTempoMap(events = globalTracks.tempoEvents) {
+  const current = clampProjectBpm(projectState?.bpm || 140)
+  const source = Array.isArray(events) ? events : []
+  const normalized = (source.length ? source : [{ id: 'tempo-start', beat: 0, bpm: current, curve: 'hold' }])
+    .map((event)=>({
+      id: event.id || makeInsertId('tempo'),
+      beat: Math.max(0, Number(event.beat) || 0),
+      bpm: clampProjectBpm(event.bpm || current),
+      curve: event.curve === 'linear' ? 'linear' : 'hold',
+      createdAt: event.createdAt || nowIso(),
+      updatedAt: event.updatedAt || event.createdAt || nowIso()
+    }))
     .sort((a,b)=>a.beat-b.beat)
+  if (!normalized.some((event)=>event.beat === 0)) normalized.unshift({ id: 'tempo-start', beat: 0, bpm: current, curve: 'hold', createdAt: nowIso(), updatedAt: nowIso() })
+  return normalized
 }
-function normalizeSignatureEvents(project = projectState || {}) {
-  const events = Array.isArray(globalTracks.signatureEvents) ? globalTracks.signatureEvents : []
-  return (events.length ? events : [{ id: 'signature-start', beat: 0, key: project.key || 'C', scale: 'major', timeSignature: '4/4' }])
-    .map((event)=>({ id: event.id || makeInsertId('signature'), beat: Math.max(0, Number(event.beat) || 0), key: event.key || project.key || 'C', scale: event.scale || 'major', timeSignature: event.timeSignature || '4/4' }))
+function normalizeTempoEvents() {
+  return normalizeTempoMap()
+}
+function getTempoAtBeat(beat = 0, events = normalizeTempoMap()) {
+  const target = Math.max(0, Number(beat) || 0)
+  return events.reduce((active, event)=>event.beat <= target ? event : active, events[0] || { beat: 0, bpm: clampProjectBpm(projectState?.bpm || 140), curve: 'hold' })
+}
+function getSecondsPerBeatAtBeat(beat = 0) {
+  return 60 / clampProjectBpm(getTempoAtBeat(beat).bpm)
+}
+function normalizeTimeSignatureMap(events = globalTracks.timeSignatureEvents) {
+  const project = projectState || {}
+  const legacy = Array.isArray(globalTracks.signatureEvents) ? globalTracks.signatureEvents : []
+  const source = Array.isArray(events) && events.length ? events : legacy.map((event)=>({ id: `time-${event.id || makeInsertId('signature')}`, beat: event.beat, ...parseTimeSignature(event.timeSignature) }))
+  const fallback = parseTimeSignature(project.timeSignature || project.editorState?.settings?.project?.timeSignature || '4/4')
+  const normalized = (source.length ? source : [{ id: 'time-signature-start', beat: 0, ...fallback }])
+    .map((event)=>({
+      id: event.id || makeInsertId('time-signature'),
+      beat: Math.max(0, Number(event.beat) || 0),
+      ...parseTimeSignature(event),
+      createdAt: event.createdAt || nowIso(),
+      updatedAt: event.updatedAt || event.createdAt || nowIso()
+    }))
     .sort((a,b)=>a.beat-b.beat)
+  if (!normalized.some((event)=>event.beat === 0)) normalized.unshift({ id: 'time-signature-start', beat: 0, ...fallback, createdAt: nowIso(), updatedAt: nowIso() })
+  return normalized
+}
+function normalizeKeySignatureMap(events = globalTracks.keySignatureEvents) {
+  const legacy = Array.isArray(globalTracks.signatureEvents) ? globalTracks.signatureEvents : []
+  const parsedProjectKey = parseProjectKey()
+  const source = Array.isArray(events) && events.length ? events : legacy.map((event)=>({ id: `key-${event.id || makeInsertId('signature')}`, beat: event.beat, root: event.key, scale: event.scale }))
+  const normalized = (source.length ? source : [{ id: 'key-signature-start', beat: 0, root: parsedProjectKey.root, scale: parsedProjectKey.scale }])
+    .map((event)=>({
+      id: event.id || makeInsertId('key-signature'),
+      beat: Math.max(0, Number(event.beat) || 0),
+      root: normalizeRootNote(event.root || event.key || parsedProjectKey.root),
+      scale: normalizeScaleMode(event.scale || parsedProjectKey.scale),
+      label: formatKeySignature(event),
+      createdAt: event.createdAt || nowIso(),
+      updatedAt: event.updatedAt || event.createdAt || nowIso()
+    }))
+    .sort((a,b)=>a.beat-b.beat)
+  if (!normalized.some((event)=>event.beat === 0)) normalized.unshift({ id: 'key-signature-start', beat: 0, root: parsedProjectKey.root, scale: parsedProjectKey.scale, label: `${parsedProjectKey.root} ${parsedProjectKey.scale}`, createdAt: nowIso(), updatedAt: nowIso() })
+  return normalized
+}
+function getTimeSignatureAtBeat(beat = 0, events = normalizeTimeSignatureMap()) {
+  const target = Math.max(0, Number(beat) || 0)
+  return events.reduce((active, event)=>event.beat <= target ? event : active, events[0] || { beat: 0, numerator: 4, denominator: 4 })
+}
+function getKeySignatureAtBeat(beat = 0, events = normalizeKeySignatureMap()) {
+  const target = Math.max(0, Number(beat) || 0)
+  return events.reduce((active, event)=>event.beat <= target ? event : active, events[0] || { beat: 0, ...parseProjectKey() })
+}
+function ensureCanonicalGlobalTracks() {
+  if (!projectState) return
+  if (globalTracks.viewMode === 'signature') globalTracks.viewMode = 'key-signature'
+  globalTracks.tempoEvents = normalizeTempoMap(globalTracks.tempoEvents).filter((event)=>event.id !== 'tempo-default')
+  globalTracks.timeSignatureEvents = normalizeTimeSignatureMap(globalTracks.timeSignatureEvents).filter((event)=>event.id !== 'time-signature-default')
+  globalTracks.keySignatureEvents = normalizeKeySignatureMap(globalTracks.keySignatureEvents).filter((event)=>event.id !== 'key-signature-default')
+  globalTracks.markers = (Array.isArray(globalTracks.markers) ? globalTracks.markers : []).map((marker)=>({
+    id: marker.id || makeInsertId('marker'),
+    beat: Math.max(0, Number(marker.beat) || 0),
+    durationBeats: Math.max(0, Number(marker.durationBeats) || 0),
+    name: marker.name || marker.label || 'Marker',
+    label: marker.label || marker.name || 'Marker',
+    color: marker.color || '#ffe08a',
+    createdAt: marker.createdAt || nowIso(),
+    updatedAt: marker.updatedAt || marker.createdAt || nowIso()
+  })).sort((a,b)=>a.beat-b.beat)
+  projectState.bpm = getTempoAtBeat(0, globalTracks.tempoEvents).bpm
+  projectState.timeSignature = formatTimeSignature(getTimeSignatureAtBeat(0, globalTracks.timeSignatureEvents))
+  projectState.key = formatKeySignature(getKeySignatureAtBeat(0, globalTracks.keySignatureEvents))
+  timelineState.beatsPerBar = getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)), globalTracks.timeSignatureEvents).numerator || timelineState.beatsPerBar
 }
 function renderTempoLane(events = normalizeTempoEvents()) {
   const rowHeight = globalTracks.viewMode === 'tempo' ? 126 : 26
@@ -2094,18 +2258,25 @@ function renderTempoLane(events = normalizeTempoEvents()) {
   const line = points.length > 1
     ? points.map((point, index)=>`${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
     : `M ${barZeroX()} ${points[0]?.y || rowHeight / 2} L ${timelineContentWidth()} ${points[0]?.y || rowHeight / 2}`
-  return `<svg class="studio-global-tempo-svg" viewBox="0 0 ${timelineContentWidth()} ${rowHeight}" preserveAspectRatio="none"><path d="${line}"></path></svg>${points.map((point)=>`<button type="button" class="studio-global-tempo-node" data-global-tempo="${point.id}" style="left:${point.x}px;top:${point.y}px"><span>${Math.round(point.bpm)} BPM</span></button>`).join('')}`
+  return `<svg class="studio-global-tempo-svg" viewBox="0 0 ${timelineContentWidth()} ${rowHeight}" preserveAspectRatio="none"><path d="${line}"></path></svg>${points.map((point)=>`<button type="button" class="studio-global-tempo-node ${selectedGlobalEvent?.type==='tempo'&&selectedGlobalEvent.id===point.id?'is-selected':''}" data-global-tempo="${point.id}" style="left:${point.x}px;top:${point.y}px"><span>${Math.round(point.bpm)} BPM</span></button>`).join('')}`
+}
+function renderTimeSignatureLane(events = normalizeTimeSignatureMap()) {
+  return events.map((item)=>`<button type="button" class="studio-global-block studio-global-block--small ${selectedGlobalEvent?.type==='time-signature'&&selectedGlobalEvent.id===item.id?'is-selected':''}" data-global-time-signature="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;width:94px">${formatTimeSignature(item)}</button>`).join('')
+}
+function renderKeySignatureLane(events = normalizeKeySignatureMap()) {
+  return events.map((item)=>`<button type="button" class="studio-global-block studio-global-block--small studio-global-block--key ${selectedGlobalEvent?.type==='key-signature'&&selectedGlobalEvent.id===item.id?'is-selected':''}" data-global-key-signature="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;width:132px">${esc(formatKeySignature(item))}</button>`).join('')
 }
 function renderGlobalTrackLane() {
   if (!globalTracks.visible) return ''
-  const project = projectState || {}
   const tempoEvents = normalizeTempoEvents()
-  const signatureEvents = normalizeSignatureEvents(project)
+  const timeSignatureEvents = normalizeTimeSignatureMap()
+  const keySignatureEvents = normalizeKeySignatureMap()
   const rowRenderers = {
     arrangement: () => `${(globalTracks.arrangement || []).map((item)=>`<button type="button" class="studio-global-block" data-global-arrangement="${item.id}" style="left:${beatsFromBarZeroToX(item.startBeat)}px;width:${Math.max(48, (item.endBeat - item.startBeat) * beatWidth())}px;background:${item.color || ''}">${item.label || 'Section'}</button>`).join('')}${globalTrackDrag?.type==='arrangement'?`<span class="studio-global-block studio-global-block--preview" style="left:${beatsFromBarZeroToX(Math.min(globalTrackDrag.startBeat, globalTrackDrag.currentBeat))}px;width:${Math.max(16, Math.abs(globalTrackDrag.currentBeat - globalTrackDrag.startBeat) * beatWidth())}px">Section</span>`:''}`,
-    markers: () => (globalTracks.markers || []).map((item)=>`<button type="button" class="studio-global-marker" data-global-marker="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px">${item.label || 'Marker'}</button>`).join(''),
+    markers: () => (globalTracks.markers || []).map((item)=>`<button type="button" class="studio-global-marker ${selectedGlobalEvent?.type==='marker'&&selectedGlobalEvent.id===item.id?'is-selected':''}" data-global-marker="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;${Number(item.durationBeats)>0?`width:${Math.max(24, Number(item.durationBeats)*beatWidth())}px`:''};--marker-color:${esc(item.color || '#ffe08a')}">${esc(item.name || item.label || 'Marker')}</button>`).join(''),
     tempo: () => renderTempoLane(tempoEvents),
-    signature: () => signatureEvents.map((item)=>`<button type="button" class="studio-global-block studio-global-block--small" data-global-signature="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;width:150px">${item.key || 'C'} ${item.scale || 'major'} · ${item.timeSignature || '4/4'}</button>`).join(''),
+    'time-signature': () => renderTimeSignatureLane(timeSignatureEvents),
+    'key-signature': () => renderKeySignatureLane(keySignatureEvents),
     video: () => '<span class="studio-global-empty">No reference loaded</span>'
   }
   const rows = globalTrackRowsForView()
@@ -2118,9 +2289,15 @@ function renderGlobalTrackLabels() {
 }
 function renderGlobalTrackPopover() {
   if (!globalTrackPopover) return ''
-  if (globalTrackPopover.type === 'signature') {
-    const keys = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
-    return `<form class="studio-global-popover" data-global-signature-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>Key<select data-global-signature-key>${keys.map((key)=>`<option ${globalTrackPopover.key===key?'selected':''}>${key}</option>`).join('')}</select></label><label>Scale<select data-global-signature-scale><option ${globalTrackPopover.scale==='major'?'selected':''}>major</option><option ${globalTrackPopover.scale==='minor'?'selected':''}>minor</option></select></label><label>Signature<select data-global-signature-time><option ${globalTrackPopover.timeSignature==='4/4'?'selected':''}>4/4</option><option ${globalTrackPopover.timeSignature==='3/4'?'selected':''}>3/4</option><option ${globalTrackPopover.timeSignature==='6/8'?'selected':''}>6/8</option></select></label><button type="submit">Save</button></form>`
+  if (globalTrackPopover.type === 'tempo') {
+    return `<form class="studio-global-popover" data-global-tempo-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>BPM<input data-global-tempo-bpm type="number" min="20" max="300" step="0.1" value="${Number(globalTrackPopover.bpm || projectState?.bpm || 140)}"></label><label>Curve<select data-global-tempo-curve><option value="hold" ${globalTrackPopover.curve!=='linear'?'selected':''}>hold</option><option value="linear" ${globalTrackPopover.curve==='linear'?'selected':''}>linear</option></select></label><button type="submit">Save</button><button type="button" data-delete-global-event>Delete</button></form>`
+  }
+  if (globalTrackPopover.type === 'time-signature') {
+    const sig = parseTimeSignature(globalTrackPopover)
+    return `<form class="studio-global-popover" data-global-time-signature-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>Numerator<input data-global-time-numerator type="number" min="1" max="32" step="1" value="${sig.numerator}"></label><label>Denominator<select data-global-time-denominator>${TIME_SIGNATURE_DENOMINATORS.map((value)=>`<option value="${value}" ${sig.denominator===value?'selected':''}>${value}</option>`).join('')}</select></label><button type="submit">Save</button><button type="button" data-delete-global-event>Delete</button></form>`
+  }
+  if (globalTrackPopover.type === 'key-signature') {
+    return `<form class="studio-global-popover" data-global-key-signature-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>Root<select data-global-key-root>${ROOT_NOTE_OPTIONS.map((key)=>`<option value="${key}" ${normalizeRootNote(globalTrackPopover.root||globalTrackPopover.key)===key?'selected':''}>${key}</option>`).join('')}</select></label><label>Scale<select data-global-key-scale>${KEY_SCALE_OPTIONS.map((scale)=>`<option value="${scale}" ${normalizeScaleMode(globalTrackPopover.scale)===scale?'selected':''}>${scale}</option>`).join('')}</select></label><button type="submit">Save</button><button type="button" data-delete-global-event>Delete</button></form>`
   }
   return ''
 }
@@ -3167,7 +3344,11 @@ function getTopMenuItems(menuId = '') {
       menuSeparator(),
       { label: 'Select All Regions', action: 'select-all-regions', shortcut: 'Cmd+A', enabled: midiRegions.length > 0, tooltip: midiRegions.length ? 'Select all regions in the arrangement.' : 'No regions to select.' },
       { label: 'Deselect All', action: 'deselect-regions', shortcut: 'Esc', enabled: getSelectedRegionIds().length > 0, tooltip: 'Clear the current region selection.' },
-      { label: 'Split Region at Playhead', action: 'split-region-playhead', shortcut: 'Cmd+T', enabled: hasRegion, tooltip: hasRegion ? 'Split the selected region at the playhead.' : 'Select a region first.' }
+      { label: 'Split Region at Playhead', action: 'split-region-playhead', shortcut: 'Cmd+T', enabled: hasRegion, tooltip: hasRegion ? 'Split the selected region at the playhead.' : 'Select a region first.' },
+      menuSeparator(),
+      { label: 'Project Settings', enabled: false },
+      { label: 'Project Settings...', action: 'project-settings', enabled: true, tooltip: 'Edit project name, tempo, time signature, key, and CPU alert threshold.' },
+      { label: 'Project Management...', action: 'project-management', enabled: true, tooltip: 'View project metadata, counts, timing maps, and storage summary.' }
     ],
     view: [
       { label: 'Zoom In', action: 'zoom-in', shortcut: 'Cmd++', enabled: true, tooltip: 'Zoom the timeline in.' },
@@ -3258,6 +3439,112 @@ function renderControlsConfigModal() {
     </section>
   </div>`
 }
+function getProjectManagementInfo() {
+  ensureCanonicalGlobalTracks()
+  const audioRegions = midiRegions.filter((region)=>region.type === 'audio')
+  const midiOnlyRegions = midiRegions.filter((region)=>region.type !== 'audio')
+  const storageCount = audioRegions.filter((region)=>region.audioClip?.storagePath || region.audioClip?.downloadUrl).length
+  const lengthBeats = Math.max(0, ...midiRegions.map((region)=>Number(region.endBeat) || ((Number(region.startBeat) || 0) + (Number(region.durationBeats) || 0))))
+  const wasmStatus = getSouraWasmDspStatusSnapshot?.() || {}
+  return {
+    'Project ID': projectState?.id || 'Unknown',
+    'Project name': projectState?.title || 'Untitled Project',
+    'Owner ID': projectState?.ownerId || 'Unknown',
+    'Created': projectState?.createdAt?.toDate?.()?.toLocaleString?.() || projectState?.createdAt || 'Unknown',
+    'Updated': projectState?.updatedAt?.toDate?.()?.toLocaleString?.() || projectState?.updatedAt || 'Unknown',
+    'Track count': tracks.length,
+    'Region count': midiRegions.length,
+    'Audio regions': audioRegions.length,
+    'MIDI/software regions': midiOnlyRegions.length,
+    'Audio/storage assets': storageCount,
+    'Current BPM': getTempoAtBeat(clampBeat(xToBeat(timelineState.playheadX))).bpm,
+    'Current key': formatKeySignature(getKeySignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    'Current time signature': formatTimeSignature(getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    'Global tempo events': normalizeTempoMap().length,
+    'Marker count': globalTracks.markers.length,
+    'Estimated length': `${lengthBeats.toFixed(2)} beats / ${formatAudioDuration(beatsToSeconds(lengthBeats))}`,
+    'Save status': saveStatus,
+    'WASM DSP': wasmStatus.ready ? 'Ready' : (wasmStatus.loading ? 'Loading' : 'Not loaded'),
+    'Hydration': `${audioRegions.filter((region)=>region.audioClip?.loadStatus === 'loaded').length}/${audioRegions.length} audio loaded`
+  }
+}
+function renderProjectSettingsModal() {
+  if (!projectSettingsModalOpen) return ''
+  ensureCanonicalGlobalTracks()
+  const tempo = getTempoAtBeat(0)
+  const sig = getTimeSignatureAtBeat(0)
+  const key = getKeySignatureAtBeat(0)
+  const cpu = getProjectCpuAlerts()
+  return `<div class="studio-add-track-modal studio-project-modal" data-project-settings-backdrop>
+    <form class="studio-add-track-panel studio-project-settings-panel" role="dialog" aria-modal="true" aria-labelledby="studio-project-settings-title" data-project-settings-form>
+      <header><div><span>Project Settings</span><h3 id="studio-project-settings-title">Project Settings</h3></div><button type="button" data-close-project-settings aria-label="Close Project Settings">Close</button></header>
+      <div class="studio-project-settings-grid">
+        <label>Project name<input data-project-setting="title" type="text" maxlength="120" value="${esc(projectState?.title || 'Untitled Project')}"></label>
+        <label>BPM<input data-project-setting="bpm" type="number" min="20" max="300" step="0.1" value="${Number(tempo.bpm || 140)}"></label>
+        <label>Time numerator<input data-project-setting="numerator" type="number" min="1" max="32" step="1" value="${sig.numerator || 4}"></label>
+        <label>Time denominator<select data-project-setting="denominator">${TIME_SIGNATURE_DENOMINATORS.map((value)=>`<option value="${value}" ${Number(sig.denominator)===value?'selected':''}>${value}</option>`).join('')}</select></label>
+        <label>Key root<select data-project-setting="keyRoot">${ROOT_NOTE_OPTIONS.map((root)=>`<option value="${root}" ${normalizeRootNote(key.root)===root?'selected':''}>${root}</option>`).join('')}</select></label>
+        <label>Scale / mode<select data-project-setting="keyScale">${KEY_SCALE_OPTIONS.map((scale)=>`<option value="${scale}" ${normalizeScaleMode(key.scale)===scale?'selected':''}>${scale}</option>`).join('')}</select></label>
+        <label class="studio-project-settings-toggle"><span>CPU alerts</span><input data-project-setting="cpuEnabled" type="checkbox" ${cpu.enabled ? 'checked' : ''}></label>
+        <label>CPU threshold %<input data-project-setting="cpuThreshold" type="number" min="1" max="100" step="1" value="${Math.round(cpu.thresholdPercent)}"></label>
+        <label>Sample rate<input readonly value="${audioContext?.sampleRate || instrumentAudioContext?.sampleRate || 44100} Hz"></label>
+        <label>Bit depth<input readonly value="Source dependent"></label>
+        <label>Default snap<input readonly value="${isSnapEnabled ? `1/${Math.round(1/getSnapStepBeats())}` : 'Off'}"></label>
+        <label>Project length<input readonly value="${timelineState.positiveBeats} beats"></label>
+      </div>
+      <footer><button type="button" data-cancel-project-settings>Cancel</button><button type="submit">Save / Apply</button></footer>
+    </form>
+  </div>`
+}
+function renderProjectManagementModal() {
+  if (!projectManagementModalOpen) return ''
+  const info = getProjectManagementInfo()
+  const text = Object.entries(info).map(([key, value])=>`${key}: ${value}`).join('\n')
+  return `<div class="studio-add-track-modal studio-project-modal" data-project-management-backdrop>
+    <section class="studio-add-track-panel studio-project-management-panel" role="dialog" aria-modal="true" aria-labelledby="studio-project-management-title">
+      <header><div><span>Project Management</span><h3 id="studio-project-management-title">Project Management</h3></div><button type="button" data-close-project-management aria-label="Close Project Management">Close</button></header>
+      <div class="studio-project-info-list">${Object.entries(info).map(([key, value])=>`<div><strong>${esc(key)}</strong><span>${esc(String(value))}</span></div>`).join('')}</div>
+      <textarea data-project-info-copy-source readonly>${esc(text)}</textarea>
+      <footer><button type="button" data-copy-project-info>Copy Project Info</button><button type="button" data-close-project-management>Close</button></footer>
+    </section>
+  </div>`
+}
+function upsertBeatZeroEvent(events = [], next = {}) {
+  const now = nowIso()
+  const list = Array.isArray(events) ? events.slice() : []
+  const index = list.findIndex((event)=>Math.max(0, Number(event.beat) || 0) === 0)
+  if (index >= 0) list[index] = { ...list[index], ...next, beat: 0, updatedAt: now, createdAt: list[index].createdAt || now }
+  else list.unshift({ ...next, id: next.id || makeInsertId('global'), beat: 0, createdAt: now, updatedAt: now })
+  return list.sort((a,b)=>(Number(a.beat)||0)-(Number(b.beat)||0))
+}
+function applyProjectSettingsFromForm(form) {
+  if (!form || !projectState) return
+  const field = (name) => form.querySelector(`[data-project-setting="${name}"]`)
+  const title = String(field('title')?.value || projectState.title || 'Untitled Project').trim().slice(0, 120) || 'Untitled Project'
+  const bpm = clampProjectBpm(field('bpm')?.value || projectState.bpm || 140)
+  const numerator = clamp(Math.round(Number(field('numerator')?.value) || 4), 1, 32)
+  const denominator = TIME_SIGNATURE_DENOMINATORS.includes(Number(field('denominator')?.value)) ? Number(field('denominator')?.value) : 4
+  const root = normalizeRootNote(field('keyRoot')?.value || 'C')
+  const scale = normalizeScaleMode(field('keyScale')?.value || 'minor')
+  const cpuAlerts = normalizeCpuAlerts({
+    enabled: !!field('cpuEnabled')?.checked,
+    thresholdPercent: field('cpuThreshold')?.value,
+    sustainMs: getProjectCpuAlerts().sustainMs,
+    cooldownMs: getProjectCpuAlerts().cooldownMs
+  })
+  projectState.title = title
+  projectState.bpm = bpm
+  projectState.key = `${root} ${scale}`
+  projectState.timeSignature = `${numerator}/${denominator}`
+  projectState.settings = { ...(projectState.settings || {}), cpuAlerts }
+  globalTracks.tempoEvents = upsertBeatZeroEvent(normalizeTempoMap().filter((event)=>event.id !== 'tempo-default'), { id: normalizeTempoMap()[0]?.beat === 0 ? normalizeTempoMap()[0].id : makeInsertId('tempo'), bpm, curve: 'hold' })
+  globalTracks.timeSignatureEvents = upsertBeatZeroEvent(normalizeTimeSignatureMap(), { id: normalizeTimeSignatureMap()[0]?.beat === 0 ? normalizeTimeSignatureMap()[0].id : makeInsertId('time-signature'), numerator, denominator })
+  globalTracks.keySignatureEvents = upsertBeatZeroEvent(normalizeKeySignatureMap(), { id: normalizeKeySignatureMap()[0]?.beat === 0 ? normalizeKeySignatureMap()[0].id : makeInsertId('key-signature'), root, scale, label: `${root} ${scale}` })
+  projectSettingsModalOpen = false
+  ensureCanonicalGlobalTracks()
+  scheduleEditorSave()
+  renderEditor()
+}
 function setTimelineZoomPixelsPerBeat(pixelsPerBeat = beatWidth()) {
   const scroll = captureArrangementScroll()
   const currentBeat = xToBeatsFromBarZero(timelineState.playheadX)
@@ -3282,6 +3569,8 @@ function runDawTopMenuAction(action = '') {
   if (action === 'select-all-regions') { setSelectedRegions(midiRegions.map((region)=>region.id), { primaryId: midiRegions[0]?.id || '' }); renderEditorPreservingArrangementScroll(); return }
   if (action === 'deselect-regions') { clearRegionSelection(); renderEditorPreservingArrangementScroll(); return }
   if (action === 'split-region-playhead') { splitRegionAtBeat(selectedMidiRegionId, currentBeat); return }
+  if (action === 'project-settings') { projectSettingsModalOpen = true; renderEditor(); return }
+  if (action === 'project-management') { projectManagementModalOpen = true; renderEditor(); return }
   if (action === 'zoom-in') { setTimelineZoomPixelsPerBeat(beatWidth() * 1.4); return }
   if (action === 'zoom-out') { setTimelineZoomPixelsPerBeat(beatWidth() / 1.4); return }
   if (action === 'zoom-reset') { setTimelineZoomPixelsPerBeat(30); return }
@@ -3486,7 +3775,37 @@ function normalizeLoadedRegion(region = {}) {
   })
   return type === 'audio' ? syncAudioRegionTimeline(normalized) : normalized
 }
-function buildEditorStateForSave(){ return { version:3, timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null }, globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] }, regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })), notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId }, tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:serializeAudioEffects(audioEffects)} }), toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled } } }
+function buildEditorStateForSave(){
+  ensureCanonicalGlobalTracks()
+  const tempoAtStart = getTempoAtBeat(0, globalTracks.tempoEvents)
+  const timeAtStart = getTimeSignatureAtBeat(0, globalTracks.timeSignatureEvents)
+  const keyAtStart = getKeySignatureAtBeat(0, globalTracks.keySignatureEvents)
+  return {
+    version:4,
+    projectMetadata:{
+      title: projectState?.title || 'Untitled Project',
+      bpm: tempoAtStart.bpm,
+      key: formatKeySignature(keyAtStart),
+      timeSignature: formatTimeSignature(timeAtStart)
+    },
+    settings:{
+      project:{
+        title: projectState?.title || 'Untitled Project',
+        bpm: tempoAtStart.bpm,
+        timeSignature: formatTimeSignature(timeAtStart),
+        keyRoot: keyAtStart.root,
+        keyScale: keyAtStart.scale
+      },
+      cpuAlerts: getProjectCpuAlerts()
+    },
+    timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null },
+    globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], timeSignatureEvents:[...(globalTracks.timeSignatureEvents||[])], keySignatureEvents:[...(globalTracks.keySignatureEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] },
+    regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })),
+    notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId },
+    tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:serializeAudioEffects(audioEffects)} }),
+    toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled }
+  }
+}
 function applyLoadedEditorState(editorState) {
   if (!editorState || typeof editorState !== 'object') return
   const tl = editorState.timeline || {}
@@ -3511,10 +3830,21 @@ function applyLoadedEditorState(editorState) {
       arrangement: Array.isArray(gt.arrangement) ? gt.arrangement : globalTracks.arrangement,
       markers: Array.isArray(gt.markers) ? gt.markers : globalTracks.markers,
       tempoEvents: Array.isArray(gt.tempoEvents) ? gt.tempoEvents : globalTracks.tempoEvents,
+      timeSignatureEvents: Array.isArray(gt.timeSignatureEvents) ? gt.timeSignatureEvents : globalTracks.timeSignatureEvents,
+      keySignatureEvents: Array.isArray(gt.keySignatureEvents) ? gt.keySignatureEvents : globalTracks.keySignatureEvents,
       signatureEvents: Array.isArray(gt.signatureEvents) ? gt.signatureEvents : globalTracks.signatureEvents,
       videoRefs: Array.isArray(gt.videoRefs) ? gt.videoRefs : globalTracks.videoRefs
     }
+    if (globalTracks.viewMode === 'signature') globalTracks.viewMode = 'key-signature'
   }
+  if (projectState && editorState.settings?.cpuAlerts) projectState.settings = { ...(projectState.settings || {}), cpuAlerts: normalizeCpuAlerts(editorState.settings.cpuAlerts) }
+  if (projectState && editorState.projectMetadata) {
+    projectState.title = editorState.projectMetadata.title || projectState.title
+    projectState.bpm = Number(editorState.projectMetadata.bpm) || projectState.bpm
+    projectState.key = editorState.projectMetadata.key || projectState.key
+    projectState.timeSignature = editorState.projectMetadata.timeSignature || projectState.timeSignature
+  }
+  ensureCanonicalGlobalTracks()
 
   const ns = editorState.notes || {}
   if (Array.isArray(editorState.regions)) {
@@ -4238,29 +4568,40 @@ function playMetronomeClick(isDownbeat, startTime = null){
 }
 function maybeTickMetronome(){
   if(!isPlaying||!isMetronomeEnabled) return
-  const bpm = transportClock?.bpm || Number(projectState?.bpm || 140)
   const currentSeconds = getTransportClockProjectSeconds()
-  const currentBeatIndex = Math.max(0, Math.floor(secondsToBeatsAtBpm(currentSeconds, bpm)))
-  const lookaheadBeatIndex = Math.max(currentBeatIndex, Math.floor(secondsToBeatsAtBpm(currentSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS, bpm)))
+  const currentBeatIndex = Math.max(0, Math.floor(secondsToBeats(currentSeconds)))
+  const lookaheadBeatIndex = Math.max(currentBeatIndex, Math.floor(secondsToBeats(currentSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS)))
   const firstBeatToSchedule = Math.max(lastMetronomeBeat + 1, currentBeatIndex)
   for (let beatIndex = firstBeatToSchedule; beatIndex <= lookaheadBeatIndex; beatIndex += 1) {
-    playMetronomeClick(beatIndex%timelineState.beatsPerBar===0, getTransportScheduleTimeForProjectSeconds(beatsToSecondsAtBpm(beatIndex, bpm)))
+    const sig = getTimeSignatureAtBeat(beatIndex)
+    playMetronomeClick(beatIndex % Math.max(1, sig.numerator || 4) === 0, getTransportScheduleTimeForProjectSeconds(beatsToSeconds(beatIndex)))
     lastMetronomeBeat = beatIndex
   }
 }
-function secondsFromPlayhead(){ const bpm=Number(projectState?.bpm||140); const beatsFromZero=xToBeatsFromBarZero(timelineState.playheadX); return beatsFromZero*(60/bpm) }
+function secondsFromPlayhead(){ return beatsToSeconds(xToBeatsFromBarZero(timelineState.playheadX)) }
 function formatTimeFromPlayhead(){ const raw=secondsFromPlayhead(); const total=Math.abs(raw)<0.0005?0:raw; const isNegative=total<0; const absTotal=Math.abs(total); const m=Math.floor(absTotal/60); const s=Math.floor(absTotal%60); const ms=Math.floor((absTotal%1)*1000); const sub=Math.floor(((absTotal*1000)%1)*100); return `${isNegative?'-':''}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}.${String(sub).padStart(2,'0')}` }
 function beatsToBarBeatDivTick(globalBeat, {
-  beatsPerBar = timelineState.beatsPerBar,
   divisionsPerBeat = 4,
   ticksPerBeat = 960,
   zeroBasedBars = true
 } = {}) {
-  const bpb = Math.max(1, Math.round(Number(beatsPerBar) || 4))
   const divisions = Math.max(1, Math.round(Number(divisionsPerBeat) || 4))
   const ppq = Math.max(divisions, Math.round(Number(ticksPerBeat) || 960))
   const safeBeat = Math.max(0, Number(globalBeat) || 0)
-  const totalTicks = Math.max(0, Math.round(safeBeat * ppq))
+  const timeMap = normalizeTimeSignatureMap()
+  let barsBefore = 0
+  let segmentStart = 0
+  let activeSig = timeMap[0] || { beat: 0, numerator: 4, denominator: 4 }
+  for (let i = 0; i < timeMap.length; i += 1) {
+    activeSig = timeMap[i]
+    segmentStart = Math.max(0, Number(activeSig.beat) || 0)
+    const nextBeat = i < timeMap.length - 1 ? Math.max(segmentStart, Number(timeMap[i + 1].beat) || segmentStart) : safeBeat
+    if (safeBeat <= nextBeat) break
+    barsBefore += Math.floor((nextBeat - segmentStart) / Math.max(1, activeSig.numerator || 4))
+  }
+  const bpb = Math.max(1, Math.round(Number(activeSig.numerator) || 4))
+  const segmentBeat = Math.max(0, safeBeat - segmentStart)
+  const totalTicks = Math.max(0, Math.round(segmentBeat * ppq))
   const ticksPerBar = bpb * ppq
   const ticksPerDiv = ppq / divisions
   const barIndex = Math.floor(totalTicks / ticksPerBar)
@@ -4270,7 +4611,7 @@ function beatsToBarBeatDivTick(globalBeat, {
   const divZeroBased = Math.min(divisions - 1, Math.floor(ticksIntoBeat / ticksPerDiv))
   const ticksIntoDiv = Math.round(ticksIntoBeat - (divZeroBased * ticksPerDiv))
   return {
-    bar: zeroBasedBars ? barIndex : barIndex + 1,
+    bar: zeroBasedBars ? barsBefore + barIndex : barsBefore + barIndex + 1,
     beat: beatZeroBased + 1,
     div: divZeroBased + 1,
     tick: Math.max(0, ticksIntoDiv),
@@ -4310,11 +4651,10 @@ function getTransportClockProjectSeconds() {
   return Math.max(0, transportClock.playheadStartSeconds + elapsed - PLAYBACK_LATENCY_COMPENSATION_SECONDS)
 }
 function getTransportClockProjectBeat() {
-  const bpm = transportClock?.bpm || Number(projectState?.bpm || 140)
-  return clampBeat(secondsToBeatsAtBpm(getTransportClockProjectSeconds(), bpm))
+  return clampBeat(secondsToBeats(getTransportClockProjectSeconds()))
 }
-function projectSecondsToTimelineX(seconds = 0, bpm = transportClock?.bpm || Number(projectState?.bpm || 140)) {
-  return beatsFromBarZeroToX(secondsToBeatsAtBpm(seconds, bpm))
+function projectSecondsToTimelineX(seconds = 0) {
+  return beatsFromBarZeroToX(secondsToBeats(seconds))
 }
 function getTransportScheduleTimeForProjectSeconds(projectSeconds = 0) {
   if (!transportClock) return getAudioContext().currentTime
@@ -4322,14 +4662,14 @@ function getTransportScheduleTimeForProjectSeconds(projectSeconds = 0) {
 }
 function beginTransportClock(playheadX = timelineState.playheadX, { schedulerStartDelaySeconds = TRANSPORT_SCHEDULER_START_DELAY_SECONDS } = {}) {
   const ctx = getAudioContext()
-  const bpm = Number(projectState?.bpm || 140)
   const playheadStartBeats = clampBeat(xToBeat(playheadX))
-  const playheadStartSeconds = beatsToSecondsAtBpm(playheadStartBeats, bpm)
+  const playheadStartSeconds = beatsToSeconds(playheadStartBeats)
+  const tempo = getTempoAtBeat(playheadStartBeats)
   transportClock = {
     audioContextStartTime: ctx.currentTime + Math.max(0, schedulerStartDelaySeconds),
     playheadStartSeconds,
     playheadStartBeats,
-    bpm,
+    bpm: tempo.bpm,
     startedAtPerformanceTime: performance.now(),
     schedulerStartDelaySeconds: Math.max(0, schedulerStartDelaySeconds),
     baseLatencySeconds: Number(ctx.baseLatency) || 0,
@@ -4343,7 +4683,7 @@ function beginTransportClock(playheadX = timelineState.playheadX, { schedulerSta
     audioContextCurrentTime: ctx.currentTime,
     audioContextStartTime: transportClock.audioContextStartTime,
     schedulerStartDelayMs: Math.round(transportClock.schedulerStartDelaySeconds * 1000),
-    bpm,
+    bpm: tempo.bpm,
     baseLatencyMs: Math.round(transportClock.baseLatencySeconds * 1000),
     outputLatencyMs: Math.round(transportClock.outputLatencySeconds * 1000),
     playbackLatencyCompensationMs: Math.round(PLAYBACK_LATENCY_COMPENSATION_SECONDS * 1000)
@@ -4799,7 +5139,7 @@ function setPlayhead(x) {
     updateAudioClipPlayback(beat)
   }
 }
-function pixelsPerSecond() { const bpm = Number(projectState?.bpm || 140); const bps = bpm / 60; const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
+function pixelsPerSecond() { const bps = 1 / getSecondsPerBeatAtBeat(clampBeat(xToBeat(timelineState.playheadX))); const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
 function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
 function tickPlayback() {
   if (!isPlaying) return
@@ -4956,9 +5296,10 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
   recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus
   beginTransportClock(timelineState.playheadX)
   prewarmDawAudio().then((engine) => {
-    engine.setBpm(Number(projectState?.bpm || 140))
+    const tempo = getTempoAtBeat(clampBeat(xToBeat(timelineState.playheadX)))
+    engine.setBpm(Number(tempo.bpm || projectState?.bpm || 140))
     engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
-    engine.startTransport({ bpm: Number(projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) })
+    engine.startTransport({ bpm: Number(tempo.bpm || projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) })
   }).catch((err)=>console.warn('[studioProject] audio engine start failed', err))
   isPlaying = true
   lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX))
@@ -5112,9 +5453,39 @@ function updateTrackEqSpectrumDom(track, channel) {
     shell.querySelector('[data-soura-eq-spectrum]')?.setAttribute('points', points)
   })
 }
+function getCurrentCpuUsagePercent() {
+  return clamp(cpuUsagePercent, 0, 100)
+}
+function updateCpuAlertState(usagePercent = getCurrentCpuUsagePercent()) {
+  const settings = getProjectCpuAlerts()
+  if (!settings.enabled) {
+    cpuAlertState = { ...cpuAlertState, aboveSince: 0, visible: false, message: '' }
+    return
+  }
+  const now = performance.now()
+  if (usagePercent < settings.thresholdPercent) {
+    cpuAlertState = { ...cpuAlertState, aboveSince: 0, visible: false }
+    return
+  }
+  const aboveSince = cpuAlertState.aboveSince || now
+  const sustained = now - aboveSince >= settings.sustainMs
+  const cooledDown = now - (cpuAlertState.lastAlertAt || 0) >= settings.cooldownMs
+  cpuAlertState = { ...cpuAlertState, aboveSince }
+  if (sustained && cooledDown) {
+    cpuAlertState = {
+      aboveSince,
+      lastAlertAt: now,
+      visible: true,
+      message: `Soura workload is at ${Math.round(usagePercent)}%, above your ${Math.round(settings.thresholdPercent)}% alert threshold.`
+    }
+    recordingStatus = cpuAlertState.message
+    updateEditorTitleStatus()
+  }
+}
 function startTrackMeterLoop() {
   if (meterRaf) return
   const tick = () => {
+    const tickStart = performance.now()
     let active = false
     tracks.forEach((track) => {
       const channel = trackAudioChannels.get(track.id)
@@ -5140,6 +5511,11 @@ function startTrackMeterLoop() {
       if (track.outputLevel > 0) active = true
       updateTrackMeterDom(track)
     })
+    const tickCostMs = performance.now() - tickStart
+    const audioActivity = tracks.reduce((sum, track)=>sum + clamp(Number(track.outputLevel) || 0, 0, 1), 0) / Math.max(1, tracks.length)
+    cpuUsagePercent = clamp((tickCostMs / 16.67) * 72 + (audioActivity * 28), 0, 100)
+    updateCpuAlertState(cpuUsagePercent)
+    app.querySelector('[data-cpu-percent]')?.replaceChildren(document.createTextNode(`${Math.round(cpuUsagePercent)}%`))
     meterRaf = active || isPlaying || activeRecording || activePlaybackNotes.size ? requestAnimationFrame(tick) : 0
   }
   meterRaf = requestAnimationFrame(tick)
@@ -5840,7 +6216,7 @@ function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat()) {
       if (active) stopAudioClipPlayback(region.id)
       return
     }
-    const clipStartSeconds = Number.isFinite(Number(region.timelineStartSeconds)) ? Number(region.timelineStartSeconds) : beatsToSecondsAtBpm(startBeat, transportClock?.bpm || Number(projectState?.bpm || 140))
+    const clipStartSeconds = Number.isFinite(Number(region.timelineStartSeconds)) ? Number(region.timelineStartSeconds) : beatsToSeconds(startBeat)
     const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
     const clipEndSeconds = clipStartSeconds + visibleDurationSeconds
     if (active) {
@@ -5991,13 +6367,12 @@ function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat()) {
 function updateMidiRegionPlayback(currentBeat = getTransportClockProjectBeat()) {
   const beat = clampBeat(currentBeat)
   const ctx = getAudioContext()
-  const bpm = transportClock?.bpm || Number(projectState?.bpm || 140)
   const currentProjectSeconds = getTransportClockProjectSeconds()
   const lookaheadEndSeconds = currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS
   activePlaybackNotes.forEach((active, key) => {
     const region = midiRegions.find((item)=>item.id === active.regionId)
     const track = tracks.find((item)=>item.id === active.trackId)
-    const activeEndSeconds = beatsToSecondsAtBpm(active.endBeat, bpm)
+    const activeEndSeconds = beatsToSeconds(active.endBeat)
     if (!region || region.muted || !isTrackAudible(track) || currentProjectSeconds >= activeEndSeconds + 0.05) {
       stopPlaybackNote(key)
     }
@@ -6013,8 +6388,8 @@ function updateMidiRegionPlayback(currentBeat = getTransportClockProjectBeat()) 
       const startBeat = Number(note.startBeat) || 0
       const endBeat = startBeat + Math.max(0.05, Number(note.durationBeats) || 0.05)
       const key = `${region.id}:${index}:${note.note}`
-      const noteStartSeconds = beatsToSecondsAtBpm(startBeat, bpm)
-      const noteEndSeconds = beatsToSecondsAtBpm(endBeat, bpm)
+      const noteStartSeconds = beatsToSeconds(startBeat)
+      const noteEndSeconds = beatsToSeconds(endBeat)
       if (lookaheadEndSeconds >= noteStartSeconds && currentProjectSeconds < noteEndSeconds && !activePlaybackNotes.has(key)) {
         const scheduleTime = Math.max(ctx.currentTime, getTransportScheduleTimeForProjectSeconds(Math.max(noteStartSeconds, currentProjectSeconds)))
         const stopTime = Math.max(scheduleTime + 0.01, getTransportScheduleTimeForProjectSeconds(noteEndSeconds))
@@ -7889,11 +8264,32 @@ function beatFromGlobalEvent(event) {
   const beat = xToBeatsFromBarZero(x)
   return Math.max(0, isSnapEnabled ? Math.round(beat) : Math.round(beat * 4) / 4)
 }
-function openSignatureEditor(event, existing = null) {
+function openGlobalTempoEditor(event, existing = null) {
   const beat = existing?.beat ?? beatFromGlobalEvent(event)
-  const signature = existing || { id: makeInsertId('signature'), beat, key: projectState?.key || 'C', scale: 'major', timeSignature: '4/4' }
-  if (!existing) globalTracks.signatureEvents = [...normalizeSignatureEvents(projectState).filter((item)=>item.id !== 'signature-default'), signature]
-  globalTrackPopover = { type: 'signature', ...signature, x: event.clientX, y: event.clientY }
+  const tempo = existing || { id: makeInsertId('tempo'), beat, bpm: getTempoAtBeat(beat).bpm, curve: 'hold', createdAt: nowIso(), updatedAt: nowIso() }
+  if (!existing) globalTracks.tempoEvents = [...normalizeTempoMap().filter((item)=>item.id !== 'tempo-default'), tempo].sort((a,b)=>a.beat-b.beat)
+  selectedGlobalEvent = { type: 'tempo', id: tempo.id }
+  globalTrackPopover = { type: 'tempo', ...tempo, x: event.clientX, y: event.clientY }
+  scheduleEditorSave()
+  renderEditor()
+}
+function openTimeSignatureEditor(event, existing = null) {
+  const beat = existing?.beat ?? beatFromGlobalEvent(event)
+  const current = getTimeSignatureAtBeat(beat)
+  const signature = existing || { id: makeInsertId('time-signature'), beat, numerator: current.numerator, denominator: current.denominator, createdAt: nowIso(), updatedAt: nowIso() }
+  if (!existing) globalTracks.timeSignatureEvents = [...normalizeTimeSignatureMap(), signature].sort((a,b)=>a.beat-b.beat)
+  selectedGlobalEvent = { type: 'time-signature', id: signature.id }
+  globalTrackPopover = { type: 'time-signature', ...signature, x: event.clientX, y: event.clientY }
+  scheduleEditorSave()
+  renderEditor()
+}
+function openKeySignatureEditor(event, existing = null) {
+  const beat = existing?.beat ?? beatFromGlobalEvent(event)
+  const current = getKeySignatureAtBeat(beat)
+  const key = existing || { id: makeInsertId('key-signature'), beat, root: current.root, scale: current.scale, label: formatKeySignature(current), createdAt: nowIso(), updatedAt: nowIso() }
+  if (!existing) globalTracks.keySignatureEvents = [...normalizeKeySignatureMap(), key].sort((a,b)=>a.beat-b.beat)
+  selectedGlobalEvent = { type: 'key-signature', id: key.id }
+  globalTrackPopover = { type: 'key-signature', ...key, x: event.clientX, y: event.clientY }
   scheduleEditorSave()
   renderEditor()
 }
@@ -7981,9 +8377,23 @@ function bindEditorEvents() {
   }))
   app.querySelector('[data-controls-config-backdrop]')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) { controlsConfigModalOpen = false; renderEditor() } })
   app.querySelector('[data-close-controls-config]')?.addEventListener('click', (event) => { event.preventDefault(); controlsConfigModalOpen = false; renderEditor() })
+  app.querySelector('[data-project-settings-backdrop]')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) { projectSettingsModalOpen = false; renderEditor() } })
+  app.querySelector('[data-close-project-settings]')?.addEventListener('click', (event) => { event.preventDefault(); projectSettingsModalOpen = false; renderEditor() })
+  app.querySelector('[data-cancel-project-settings]')?.addEventListener('click', (event) => { event.preventDefault(); projectSettingsModalOpen = false; renderEditor() })
+  app.querySelector('[data-project-settings-form]')?.addEventListener('submit', (event) => { event.preventDefault(); applyProjectSettingsFromForm(event.currentTarget) })
+  app.querySelector('[data-open-project-settings]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); projectSettingsModalOpen = true; renderEditor() })
+  app.querySelector('[data-project-management-backdrop]')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) { projectManagementModalOpen = false; renderEditor() } })
+  app.querySelectorAll('[data-close-project-management]').forEach((button)=>button.addEventListener('click', (event) => { event.preventDefault(); projectManagementModalOpen = false; renderEditor() }))
+  app.querySelector('[data-copy-project-info]')?.addEventListener('click', async (event) => {
+    event.preventDefault()
+    const text = app.querySelector('[data-project-info-copy-source]')?.value || ''
+    try { await navigator.clipboard?.writeText(text); recordingStatus = 'Project info copied.' }
+    catch { recordingStatus = text }
+    updateEditorTitleStatus()
+  })
   app.querySelector('[data-musical-typing-toggle]')?.addEventListener('change', (event) => { setMusicalTypingEnabled(event.target.checked); renderEditor() })
-  document.onclick = (event) => { if (event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]') || event.target.closest('.studio-controls-config-modal')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-daw-menu]') && !event.target.closest('[data-daw-menu-toggle]') && getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() }
-  document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (controlsConfigModalOpen) { controlsConfigModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
+  document.onclick = (event) => { if (event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]') || event.target.closest('.studio-controls-config-modal') || event.target.closest('.studio-project-modal')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-daw-menu]') && !event.target.closest('[data-daw-menu-toggle]') && getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() }
+  document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if ((event.key === 'Delete' || event.key === 'Backspace') && selectedGlobalEvent && !event.target?.matches?.('input,textarea,select')) { event.preventDefault(); if (selectedGlobalEvent.type === 'marker') globalTracks.markers = globalTracks.markers.filter((item)=>item.id !== selectedGlobalEvent.id); selectedGlobalEvent = null; scheduleEditorSave(); renderEditor(); return } if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (controlsConfigModalOpen) { controlsConfigModalOpen = false; changed = true } if (projectSettingsModalOpen) { projectSettingsModalOpen = false; changed = true } if (projectManagementModalOpen) { projectManagementModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
   const page = app.querySelector('.studio-editor-page')
   page?.addEventListener('dragover', (event) => {
@@ -8392,29 +8802,96 @@ function bindEditorEvents() {
   app.querySelector('[data-duplicate-track]')?.addEventListener('click', (event) => { event.stopPropagation(); duplicateSelectedTrack() })
   app.querySelector('[data-toggle-global-tracks]')?.addEventListener('click', (event) => { event.stopPropagation(); globalTracks.visible = !globalTracks.visible; trackMenuState = null; scheduleEditorSave(); renderEditor() })
   app.querySelector('[data-global-track-view]')?.addEventListener('change', (event) => { globalTracks.viewMode = event.target.value || 'all'; scheduleEditorSave(); renderEditor() })
-  app.querySelector('[data-global-signature-form]')?.addEventListener('submit', (event) => {
+  app.querySelector('[data-global-tempo-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     if (!globalTrackPopover?.id) return
     const eventId = globalTrackPopover.id
-    const events = normalizeSignatureEvents(projectState).filter((item)=>item.id !== 'signature-default')
+    const events = normalizeTempoMap().filter((item)=>item.id !== 'tempo-default')
     const existing = events.find((item)=>item.id===eventId)
     const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
-    next.key = app.querySelector('[data-global-signature-key]')?.value || 'C'
-    next.scale = app.querySelector('[data-global-signature-scale]')?.value || 'major'
-    next.timeSignature = app.querySelector('[data-global-signature-time]')?.value || '4/4'
+    next.bpm = clampProjectBpm(app.querySelector('[data-global-tempo-bpm]')?.value || 140)
+    next.curve = app.querySelector('[data-global-tempo-curve]')?.value === 'linear' ? 'linear' : 'hold'
+    next.updatedAt = nowIso()
     if (!existing) events.push(next)
-    globalTracks.signatureEvents = events.sort((a,b)=>a.beat-b.beat)
+    globalTracks.tempoEvents = events.sort((a,b)=>a.beat-b.beat)
+    if ((Number(next.beat) || 0) === 0) projectState.bpm = next.bpm
     globalTrackPopover = null
     scheduleEditorSave()
     renderEditor()
   })
+  app.querySelector('[data-global-time-signature-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (!globalTrackPopover?.id) return
+    const eventId = globalTrackPopover.id
+    const events = normalizeTimeSignatureMap()
+    const existing = events.find((item)=>item.id===eventId)
+    const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
+    next.numerator = clamp(Math.round(Number(app.querySelector('[data-global-time-numerator]')?.value) || 4), 1, 32)
+    next.denominator = TIME_SIGNATURE_DENOMINATORS.includes(Number(app.querySelector('[data-global-time-denominator]')?.value)) ? Number(app.querySelector('[data-global-time-denominator]')?.value) : 4
+    next.updatedAt = nowIso()
+    if (!existing) events.push(next)
+    globalTracks.timeSignatureEvents = events.sort((a,b)=>a.beat-b.beat)
+    if ((Number(next.beat) || 0) === 0) projectState.timeSignature = formatTimeSignature(next)
+    globalTrackPopover = null
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-global-key-signature-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (!globalTrackPopover?.id) return
+    const eventId = globalTrackPopover.id
+    const events = normalizeKeySignatureMap()
+    const existing = events.find((item)=>item.id===eventId)
+    const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
+    next.root = normalizeRootNote(app.querySelector('[data-global-key-root]')?.value || 'C')
+    next.scale = normalizeScaleMode(app.querySelector('[data-global-key-scale]')?.value || 'minor')
+    next.label = `${next.root} ${next.scale}`
+    next.updatedAt = nowIso()
+    if (!existing) events.push(next)
+    globalTracks.keySignatureEvents = events.sort((a,b)=>a.beat-b.beat)
+    if ((Number(next.beat) || 0) === 0) projectState.key = next.label
+    globalTrackPopover = null
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-delete-global-event]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    const type = globalTrackPopover?.type
+    const id = globalTrackPopover?.id
+    if (!type || !id) return
+    if (type === 'tempo') globalTracks.tempoEvents = normalizeTempoMap().filter((item)=>item.id !== id || item.beat === 0)
+    if (type === 'time-signature') globalTracks.timeSignatureEvents = normalizeTimeSignatureMap().filter((item)=>item.id !== id || item.beat === 0)
+    if (type === 'key-signature') globalTracks.keySignatureEvents = normalizeKeySignatureMap().filter((item)=>item.id !== id || item.beat === 0)
+    globalTrackPopover = null
+    selectedGlobalEvent = null
+    scheduleEditorSave()
+    renderEditor()
+  })
   app.querySelectorAll('[data-global-arrangement]').forEach((button)=>button.addEventListener('dblclick', (event)=>{ event.preventDefault(); event.stopPropagation(); renameGlobalArrangement(button.dataset.globalArrangement) }))
-  app.querySelectorAll('[data-global-marker]').forEach((button)=>button.addEventListener('dblclick', (event)=>{ event.preventDefault(); event.stopPropagation(); renameGlobalMarker(button.dataset.globalMarker) }))
-  app.querySelectorAll('[data-global-signature]').forEach((button)=>button.addEventListener('dblclick', (event)=>{
+  app.querySelectorAll('[data-global-marker]').forEach((button)=>{
+    button.addEventListener('pointerdown', (event)=>{
+      event.preventDefault()
+      event.stopPropagation()
+      const marker = globalTracks.markers.find((item)=>item.id===button.dataset.globalMarker)
+      if (!marker) return
+      selectedGlobalEvent = { type:'marker', id:marker.id }
+      globalTrackDrag = { type: event.shiftKey ? 'marker-duration' : 'marker', id: marker.id, startBeat: marker.beat, currentBeat: event.shiftKey ? marker.beat + Math.max(0, Number(marker.durationBeats) || 0) : marker.beat }
+      document.body.classList.add('is-studio-dragging')
+    })
+    button.addEventListener('click', (event)=>{ event.stopPropagation(); selectedGlobalEvent = { type:'marker', id:button.dataset.globalMarker }; renderEditor() })
+    button.addEventListener('dblclick', (event)=>{ event.preventDefault(); event.stopPropagation(); renameGlobalMarker(button.dataset.globalMarker) })
+  })
+  app.querySelectorAll('[data-global-time-signature]').forEach((button)=>button.addEventListener('dblclick', (event)=>{
     event.preventDefault()
     event.stopPropagation()
-    const item = normalizeSignatureEvents(projectState).find((signature)=>signature.id===button.dataset.globalSignature)
-    if (item) openSignatureEditor(event, item)
+    const item = normalizeTimeSignatureMap().find((signature)=>signature.id===button.dataset.globalTimeSignature)
+    if (item) openTimeSignatureEditor(event, item)
+  }))
+  app.querySelectorAll('[data-global-key-signature]').forEach((button)=>button.addEventListener('dblclick', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const item = normalizeKeySignatureMap().find((signature)=>signature.id===button.dataset.globalKeySignature)
+    if (item) openKeySignatureEditor(event, item)
   }))
   app.querySelectorAll('[data-global-tempo]').forEach((button)=>button.addEventListener('pointerdown', (event)=>{
     event.preventDefault()
@@ -8425,6 +8902,8 @@ function bindEditorEvents() {
       item = { ...item, id: makeInsertId('tempo') }
       globalTracks.tempoEvents = [item]
     }
+    selectedGlobalEvent = { type: 'tempo', id: item.id }
+    if (event.detail >= 2) { openGlobalTempoEditor(event, item); return }
     globalTrackDrag = { type: 'tempo', id: item.id, startBeat: item.beat, currentBeat: item.beat, bpm: item.bpm }
     document.body.classList.add('is-studio-dragging')
   }))
@@ -8443,15 +8922,15 @@ function bindEditorEvents() {
       event.preventDefault()
       const beat = beatFromGlobalEvent(event)
       if (row.dataset.globalRow === 'markers') {
-        globalTracks.markers.push({ id: makeInsertId('marker'), beat, label: 'Marker' })
+        globalTracks.markers.push({ id: makeInsertId('marker'), beat, durationBeats: 0, name: 'Marker', label: 'Marker', color: '#ffe08a', createdAt: nowIso(), updatedAt: nowIso() })
         scheduleEditorSave()
         renderEditor()
       } else if (row.dataset.globalRow === 'tempo') {
-        globalTracks.tempoEvents = [...normalizeTempoEvents().filter((item)=>item.id !== 'tempo-default'), { id: makeInsertId('tempo'), beat, bpm: Number(projectState?.bpm || 140) }].sort((a,b)=>a.beat-b.beat)
-        scheduleEditorSave()
-        renderEditor()
-      } else if (row.dataset.globalRow === 'signature') {
-        openSignatureEditor(event)
+        openGlobalTempoEditor(event)
+      } else if (row.dataset.globalRow === 'time-signature') {
+        openTimeSignatureEditor(event)
+      } else if (row.dataset.globalRow === 'key-signature') {
+        openKeySignatureEditor(event)
       }
     })
   })
@@ -8585,7 +9064,7 @@ function bindEditorEvents() {
   let didMovePlayhead = false
   let didCycleChange = false
   const syncTimelineScroll = (source = null, { refresh = true } = {}) => { const scrollLeft = source?.scrollLeft ?? grid?.scrollLeft ?? 0; const liveGlobalLane = app.querySelector('[data-global-tracks]'); if (grid && grid !== source) grid.scrollLeft = scrollLeft; if (ruler && ruler !== source) ruler.scrollLeft = scrollLeft; if (liveGlobalLane && liveGlobalLane !== source) liveGlobalLane.scrollLeft = scrollLeft; if (extensionLane && extensionLane !== source) extensionLane.scrollLeft = scrollLeft; if (refresh) scheduleTimelineVisualRefresh() }
-  const updateTimelineRulerDom = () => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
+  const updateTimelineRulerDom = () => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
   const updateTimelineGridLinesDom = () => { const gridInner = app.querySelector('[data-arrangement-grid-inner]'); if (!gridInner) return; const selection = gridInner.querySelector('[data-selection-box]'); const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'; const selectionHtml = selection ? selection.outerHTML : selectionMarkup; gridInner.innerHTML = `<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}` }
   const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
   const applyTimelineGeometry = () => { timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar); syncBarsFromPositiveBeats(); app.querySelector('[data-arrangement]')?.style.setProperty('--bars', timelineState.bars); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-beat', `${timelineState.pixelsPerBar / timelineState.beatsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--timeline-content-width', `${timelineContentWidth()}px`); clampTimelineSystems(); updateCycleDomFromState(); setPlayhead(timelineState.playheadX) }
@@ -8657,6 +9136,10 @@ function bindEditorEvents() {
       const ratio = rect ? 1 - (y / Math.max(1, rect.height)) : 0.5
       globalTrackDrag.bpm = Math.round(clamp(20 + ratio * 280, 20, 300))
       globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===globalTrackDrag.id ? { ...item, beat: globalTrackDrag.currentBeat, bpm: globalTrackDrag.bpm } : item).filter((item)=>item.id !== 'tempo-default').sort((a,b)=>a.beat-b.beat)
+    } else if (globalTrackDrag.type === 'marker') {
+      globalTracks.markers = globalTracks.markers.map((item)=>item.id===globalTrackDrag.id ? { ...item, beat: globalTrackDrag.currentBeat, updatedAt: nowIso() } : item).sort((a,b)=>a.beat-b.beat)
+    } else if (globalTrackDrag.type === 'marker-duration') {
+      globalTracks.markers = globalTracks.markers.map((item)=>item.id===globalTrackDrag.id ? { ...item, durationBeats: Math.max(0, globalTrackDrag.currentBeat - globalTrackDrag.startBeat), updatedAt: nowIso() } : item).sort((a,b)=>a.beat-b.beat)
     }
     updateGlobalTrackLaneDom()
   })
@@ -8862,7 +9345,14 @@ function renderEditor() {
   }
   const pendingAudioRegionToolsViewport = captureAudioRegionToolsViewport()
   const project = projectState
-  if (studioAudioEngine) studioAudioEngine.setBpm(Number(project?.bpm || 140))
+  ensureCanonicalGlobalTracks()
+  const displayBeat = clampBeat(xToBeat(timelineState.playheadX))
+  const displayTempo = getTempoAtBeat(displayBeat)
+  const displayTimeSignature = getTimeSignatureAtBeat(displayBeat)
+  const displayKeySignature = getKeySignatureAtBeat(displayBeat)
+  const cpuAlerts = getProjectCpuAlerts()
+  const cpuPercent = getCurrentCpuUsagePercent()
+  if (studioAudioEngine) studioAudioEngine.setBpm(Number(displayTempo.bpm || project?.bpm || 140))
   document.body.classList.add('is-studio-editor')
   Array.from(document.body.classList).forEach((className)=>{ if (className.startsWith('is-region-tool-')) document.body.classList.remove(className) })
   document.body.classList.add(`is-region-tool-${activeRegionTool}`)
@@ -8871,7 +9361,7 @@ function renderEditor() {
   const shouldRenderBottomPanel = Boolean(bottomPanelId && bottomPanelId !== 'resona')
   const bottomPanelClass = shouldRenderBottomPanel ? 'has-bottom-panel' : ''
   const bottomPanelHeightStyle = bottomPanelHeightPx ? `--studio-bottom-panel-height:${bottomPanelHeightPx}px;` : ''
-  const shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu">${renderTopMenuButtons()}</nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(project.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">4/4 <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${project.key}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu"><strong class="studio-logic-primary">0%</strong><span class="studio-logic-secondary">CPU</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${project.bpm} BPM</span><span>${project.key}</span><span>4/4</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}${renderControlsConfigModal()}</main>`
+  let shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu">${renderTopMenuButtons()}</nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu ${cpuAlerts.enabled && cpuPercent >= cpuAlerts.thresholdPercent ? 'is-warning' : ''}"><strong class="studio-logic-primary" data-cpu-percent>${Math.round(cpuPercent)}%</strong><span class="studio-logic-secondary">CPU${cpuAlerts.enabled ? ` / ${Math.round(cpuAlerts.thresholdPercent)}%` : ''}</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}${renderControlsConfigModal()}${renderProjectSettingsModal()}${renderProjectManagementModal()}</main>`
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   initShellChrome()
   app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')?.insertAdjacentHTML('afterend', renderRegionToolRail())
