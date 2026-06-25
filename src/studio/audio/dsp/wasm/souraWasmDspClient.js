@@ -106,6 +106,30 @@ function getPitchSemitones(payload = {}) {
   return (Number(payload.semitones) || 0) + ((Number(payload.cents) || 0) / 100)
 }
 
+function getPcmStats(input = []) {
+  const samples = input instanceof Float32Array ? input : new Float32Array(input || [])
+  let peak = 0
+  let sumSquares = 0
+  let firstNonZeroFrame = -1
+  let nonZeroSamples = 0
+  for (let index = 0; index < samples.length; index += 1) {
+    const value = Number(samples[index]) || 0
+    const abs = Math.abs(value)
+    if (abs > peak) peak = abs
+    if (abs > 1e-7) {
+      nonZeroSamples += 1
+      if (firstNonZeroFrame < 0) firstNonZeroFrame = index
+    }
+    sumSquares += value * value
+  }
+  return {
+    peak,
+    rms: Math.sqrt(sumSquares / Math.max(1, samples.length)),
+    firstNonZeroFrame,
+    nonZeroSamples
+  }
+}
+
 export function getSouraWasmDspStatusSnapshot() {
   return { ...status }
 }
@@ -150,6 +174,7 @@ export async function renderWithSouraWasmDsp(payload = {}) {
   const channels = Math.max(1, Math.min(8, Math.round(Number(payload.channels) || 1)))
   const sampleRate = Math.max(8000, Math.round(Number(payload.sampleRate) || 44100))
   const input = payload.inputPcm instanceof Float32Array ? payload.inputPcm : new Float32Array(payload.inputPcm || [])
+  const inputStats = getPcmStats(input)
   const inputChannels = deinterleave(input, inputFrames, channels)
   const ctx = createOfflineContext(channels, outputFrames, sampleRate)
   const stretchNode = await SignalsmithStretch(ctx, {
@@ -164,12 +189,31 @@ export async function renderWithSouraWasmDsp(payload = {}) {
 
   const rate = Math.max(0.01, Math.min(100, inputFrames / outputFrames))
   const semitones = getPitchSemitones(payload)
-  await stretchNode.start(0, 0, outputFrames / sampleRate, rate, semitones)
+  const latencySeconds = Math.max(0, Number(await stretchNode.latency?.()) || 0)
+  await stretchNode.schedule({
+    active: true,
+    output: 0,
+    input: -latencySeconds,
+    rate,
+    semitones
+  })
+  await stretchNode.schedule({
+    active: false,
+    output: (outputFrames / sampleRate) + latencySeconds,
+    input: inputFrames / sampleRate,
+    rate,
+    semitones
+  })
   const renderedBuffer = await ctx.startRendering()
   const outputPcm = interleave(renderedBuffer, outputFrames, channels)
+  const outputStats = getPcmStats(outputPcm)
+  if (inputStats.rms > 0.0005 && outputStats.rms < 0.00001) {
+    throw new Error('Soura WASM DSP returned silent PCM output.')
+  }
   setStatus({ status: 'loaded', error: '', quality: payload.quality || status.quality || 'high', ...engine })
 
   return {
+    returnCode: 0,
     outputBuffer: outputPcm.buffer,
     outputPcm,
     outputFrames,

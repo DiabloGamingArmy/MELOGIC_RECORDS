@@ -183,6 +183,8 @@
 }
 
 .resona-surface-composer {
+  min-height: 0;
+  flex-shrink: 0;
   display: grid;
   gap: 7px;
   padding: 9px;
