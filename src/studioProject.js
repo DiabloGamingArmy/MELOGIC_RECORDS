@@ -3564,22 +3564,43 @@ function beatsToBarBeatDivTick(globalBeat, {
   const bpb = Math.max(1, Math.round(Number(beatsPerBar) || 4))
   const divisions = Math.max(1, Math.round(Number(divisionsPerBeat) || 4))
   const ppq = Math.max(divisions, Math.round(Number(ticksPerBeat) || 960))
-  const beatValue = Number.isFinite(Number(globalBeat)) ? Number(globalBeat) : 0
-  const normalizedBeat = Math.abs(beatValue) < 1e-7 ? 0 : beatValue
-  const barIndex = Math.floor(normalizedBeat / bpb)
-  const beatInBarZeroBased = Math.floor(normalizedBeat - (barIndex * bpb))
-  const wholeBeat = Math.floor(normalizedBeat)
-  const fractionOfBeat = clamp(normalizedBeat - wholeBeat, 0, 0.999999)
-  const divZeroBased = Math.min(divisions - 1, Math.floor(fractionOfBeat * divisions))
+  const safeBeat = Math.max(0, Number(globalBeat) || 0)
+  const totalTicks = Math.max(0, Math.round(safeBeat * ppq))
+  const ticksPerBar = bpb * ppq
   const ticksPerDiv = ppq / divisions
-  const ticksIntoBeat = Math.min(ppq - 1, Math.floor(fractionOfBeat * ppq))
+  const barIndex = Math.floor(totalTicks / ticksPerBar)
+  const ticksIntoBar = totalTicks - (barIndex * ticksPerBar)
+  const beatZeroBased = Math.floor(ticksIntoBar / ppq)
+  const ticksIntoBeat = ticksIntoBar - (beatZeroBased * ppq)
+  const divZeroBased = Math.min(divisions - 1, Math.floor(ticksIntoBeat / ticksPerDiv))
+  const ticksIntoDiv = Math.round(ticksIntoBeat - (divZeroBased * ticksPerDiv))
   return {
     bar: zeroBasedBars ? barIndex : barIndex + 1,
-    beat: beatInBarZeroBased + 1,
+    beat: beatZeroBased + 1,
     div: divZeroBased + 1,
-    tick: Math.max(0, Math.floor(ticksIntoBeat - (divZeroBased * ticksPerDiv)))
+    tick: Math.max(0, ticksIntoDiv),
+    totalTicks
   }
 }
+function assertBarBeatDivTickMath() {
+  const cases = [
+    [0, 0, 1, 1, 0],
+    [1, 0, 2, 1, 0],
+    [2, 0, 3, 1, 0],
+    [3, 0, 4, 1, 0],
+    [4, 1, 1, 1, 0],
+    [0.25, 0, 1, 2, 0],
+    [0.5, 0, 1, 3, 0],
+    [0.75, 0, 1, 4, 0],
+    [0.999999999, 0, 2, 1, 0],
+    [1.000000001, 0, 2, 1, 0]
+  ]
+  const failures = cases
+    .map(([input, bar, beat, div, tick]) => ({ input, expected: { bar, beat, div, tick }, actual: beatsToBarBeatDivTick(input, { beatsPerBar: 4, divisionsPerBeat: 4, ticksPerBeat: 960, zeroBasedBars: true }) }))
+    .filter(({ expected, actual }) => actual.bar !== expected.bar || actual.beat !== expected.beat || actual.div !== expected.div || actual.tick !== expected.tick)
+  if (failures.length) console.warn('[soura-time-display] bar/beat/div/tick math check failed', failures)
+}
+if (import.meta.env?.DEV) assertBarBeatDivTickMath()
 function formatBarsFromPlayhead(){ const position=beatsToBarBeatDivTick(xToBeatsFromBarZero(timelineState.playheadX), { zeroBasedBars: true }); const barLabel=position.bar<0?`-${String(Math.abs(position.bar)).padStart(3,'0')}`:String(position.bar).padStart(3,'0'); return `${barLabel} ${String(position.beat).padStart(2,'0')} ${position.div} ${String(position.tick).padStart(3,'0')}` }
 function updateTransportDisplay(){ app.querySelector('[data-display-time]')?.replaceChildren(document.createTextNode(formatTimeFromPlayhead())); app.querySelector('[data-display-bars]')?.replaceChildren(document.createTextNode(formatBarsFromPlayhead())) }
 function updateEditorTitleStatus(){ app.querySelector('[data-editor-status]')?.replaceChildren(document.createTextNode(isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded'))) }
