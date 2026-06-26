@@ -987,52 +987,78 @@ service cloud.firestore {
       return value in ['song', 'beat', 'vocal', 'podcast', 'blank'];
     }
 
+    function studioProjectDocumentKeysAllowed(data) {
+      return data.keys().hasOnly([
+        'title',
+        'ownerId',
+        'collaboratorIds',
+        'bpm',
+        'key',
+        'timeSignature',
+        'type',
+        'visibility',
+        'createdAt',
+        'updatedAt',
+        'lastOpenedAt',
+        'version',
+        'tracks',
+        'timeline',
+        'mixer',
+        'collaboration',
+        'settings',
+        'globalTracks',
+        'editorState'
+      ]);
+    }
+
+    function studioProjectBaseFieldsValid(data) {
+      return data.ownerId is string
+        && data.ownerId.size() >= 1
+        && data.collaboratorIds is list
+        && data.visibility == 'private'
+        && data.version == 1
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && data.bpm is number
+        && data.bpm >= 40
+        && data.bpm <= 240
+        && data.key is string
+        && data.key.size() >= 1
+        && data.key.size() <= 40
+        && data.type is string
+        && studioTypeValid(data.type)
+        && (!('timeSignature' in data) || (
+          data.timeSignature is string
+          && data.timeSignature.size() >= 1
+          && data.timeSignature.size() <= 20
+        ))
+        && (!('tracks' in data) || data.tracks is list)
+        && (!('timeline' in data) || data.timeline is map)
+        && (!('mixer' in data) || data.mixer is map)
+        && (!('collaboration' in data) || data.collaboration is map)
+        && (!('settings' in data) || data.settings is map)
+        && (!('globalTracks' in data) || data.globalTracks is map)
+        && (!('editorState' in data) || data.editorState is map);
+    }
+
     function studioProjectCreateIsValid() {
       return signedIn()
-        && request.resource.data.keys().hasOnly([
-          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version','editorState'
-        ])
+        && studioProjectDocumentKeysAllowed(request.resource.data)
+        && studioProjectBaseFieldsValid(request.resource.data)
         && request.resource.data.ownerId == request.auth.uid
-        && request.resource.data.collaboratorIds is list
-        && request.resource.data.collaboratorIds.size() == 0
-        && request.resource.data.visibility == 'private'
-        && request.resource.data.version == 1
-        && request.resource.data.title is string
-        && request.resource.data.title.size() >= 1
-        && request.resource.data.title.size() <= 120
-        && request.resource.data.bpm is number
-        && request.resource.data.bpm >= 40
-        && request.resource.data.bpm <= 240
-        && request.resource.data.key is string
-        && request.resource.data.key.size() >= 1
-        && request.resource.data.key.size() <= 40
-        && request.resource.data.type is string
-        && studioTypeValid(request.resource.data.type)
-        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
+        && request.resource.data.collaboratorIds.size() == 0;
     }
 
     function studioProjectUpdateIsValid() {
       return signedIn()
-        && request.resource.data.keys().hasOnly([
-          'title','ownerId','collaboratorIds','bpm','key','type','visibility','createdAt','updatedAt','lastOpenedAt','version','editorState'
-        ])
+        && studioProjectDocumentKeysAllowed(request.resource.data)
+        && studioProjectBaseFieldsValid(request.resource.data)
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.collaboratorIds == resource.data.collaboratorIds
-        && request.resource.data.visibility == 'private'
-        && request.resource.data.version == 1
-        && request.resource.data.title is string
-        && request.resource.data.title.size() >= 1
-        && request.resource.data.title.size() <= 120
-        && request.resource.data.bpm is number
-        && request.resource.data.bpm >= 40
-        && request.resource.data.bpm <= 240
-        && request.resource.data.key is string
-        && request.resource.data.key.size() >= 1
-        && request.resource.data.key.size() <= 40
-        && request.resource.data.type is string
-        && studioTypeValid(request.resource.data.type)
-        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
+        && request.resource.data.visibility == resource.data.visibility
+        && request.resource.data.version == resource.data.version;
     }
 
     function isStageOwnerResource() {
