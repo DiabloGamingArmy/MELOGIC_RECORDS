@@ -304,6 +304,12 @@ let saveStatus = 'Saved'
 let bottomPanelMotion = ''
 let closingBottomPanel = ''
 let bottomPanelMotionTimer = 0
+const STUDIO_APPBAR_HEIGHT = 42
+const STUDIO_TRANSPORT_HEIGHT = 64
+const STUDIO_FOOTER_HEIGHT = 32
+const STUDIO_EXTENSION_LANE_HEIGHT = 24
+const STUDIO_MIN_TIMELINE_HEIGHT = 132
+const STUDIO_NAV_OFFSET = 64
 let arpEnabled = false
 let arpMode = 'Up/Down'
 let arpRate = '1/16'
@@ -4967,11 +4973,40 @@ function xToBeatsFromBarOne(x) { return xToBeatsFromBarZero(x) }
 function beatsFromBarOneToX(beats) { return beatsFromBarZeroToX(beats) }
 function ensureDefaultCycleRange(){ if(cycleRange) return; const start = barZeroX(); cycleRange = { startX:start, endX:start + timelineState.pixelsPerBar } }
 function clearBottomPanelMotionTimer(){ if(bottomPanelMotionTimer){ clearTimeout(bottomPanelMotionTimer); bottomPanelMotionTimer=0 } }
+function getStudioEditorViewportHeight() {
+  const page = app?.querySelector?.('.studio-editor-page')
+  const rectHeight = page?.getBoundingClientRect?.().height
+  if (Number.isFinite(rectHeight) && rectHeight > 0) return rectHeight
+  return Math.max(320, window.innerHeight - (keepSiteMenuOpen ? STUDIO_NAV_OFFSET : 0))
+}
+function getStudioTransportBudgetHeight() {
+  const transport = app?.querySelector?.('.studio-editor-transport')
+  const rectHeight = transport?.getBoundingClientRect?.().height
+  if (Number.isFinite(rectHeight) && rectHeight > 0) return rectHeight
+  return window.innerWidth <= 1100 ? 96 : STUDIO_TRANSPORT_HEIGHT
+}
+function getMaxBottomPanelHeight() {
+  const viewportHeight = getStudioEditorViewportHeight()
+  const reservedHeight = STUDIO_APPBAR_HEIGHT + getStudioTransportBudgetHeight() + STUDIO_FOOTER_HEIGHT + STUDIO_EXTENSION_LANE_HEIGHT + STUDIO_MIN_TIMELINE_HEIGHT
+  return Math.max(120, Math.floor(viewportHeight - reservedHeight))
+}
+function clampBottomPanelHeightPx(height = bottomPanelHeightPx) {
+  if (!height) return 0
+  const maxHeight = getMaxBottomPanelHeight()
+  const minHeight = Math.min(220, maxHeight)
+  return Math.round(clamp(Number(height) || 0, minHeight, maxHeight))
+}
+function syncBottomPanelHeightToViewport() {
+  if (!bottomPanelHeightPx) return
+  const nextHeight = clampBottomPanelHeightPx(bottomPanelHeightPx)
+  if (nextHeight !== bottomPanelHeightPx) bottomPanelHeightPx = nextHeight
+}
 function openBottomPanel(panelId){
   clearBottomPanelMotionTimer()
   if(activeBottomPanel===panelId){ closeBottomPanel(); return }
   if(activeBottomPanel==='instrument'&&panelId!=='instrument') { stopAllInstrumentNotes(); stopAllTrackInstrumentNotes() }
   if(panelId !== 'midi-effect') activeMidiEffectEditor = null
+  syncBottomPanelHeightToViewport()
   activeBottomPanel=panelId
   closingBottomPanel=''
   bottomPanelMotion='entering'
@@ -5084,6 +5119,62 @@ function studioResonaContext() {
 
 function renderStudioResonaPanel() {
   return '<aside class="studio-resona-side-panel" data-studio-resona-panel><div data-resona-embedded="studio_daw"></div></aside>'
+}
+
+function elementVisibleInViewport(selector = '') {
+  const node = app.querySelector(selector)
+  if (!node) return false
+  const rect = node.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight
+}
+
+function auditSouraLayout() {
+  const rectHeight = (selector) => {
+    const node = app.querySelector(selector)
+    return node ? Math.round(node.getBoundingClientRect().height) : 0
+  }
+  const viewportHeight = window.innerHeight
+  const page = app.querySelector('.studio-editor-page')
+  const rootHeight = page ? Math.round(page.getBoundingClientRect().height) : 0
+  const projectRangeBarVisible = elementVisibleInViewport('[data-timeline-extension-lane]')
+  const statusStripVisible = elementVisibleInViewport('.studio-editor-footer')
+  const resonaComposerVisible = elementVisibleInViewport('.studio-resona-side-panel .resona-surface-composer')
+  const overflowDetected = Boolean(page && (
+    page.scrollHeight > page.clientHeight + 1 ||
+    !projectRangeBarVisible ||
+    !statusStripVisible ||
+    (app.querySelector('.studio-resona-side-panel') && !resonaComposerVisible)
+  ))
+  const payload = {
+    viewportHeight,
+    rootHeight,
+    mainWorkspaceHeight: rectHeight('.studio-editor-workspace'),
+    timelineAreaHeight: rectHeight('[data-arrangement-grid]'),
+    regionEditorHeight: rectHeight('.studio-bottom-panel'),
+    bottomRangeBarHeight: rectHeight('[data-timeline-extension-lane]'),
+    bottomStatusStripHeight: rectHeight('.studio-editor-footer'),
+    resonaDockHeight: rectHeight('.studio-resona-side-panel'),
+    resonaComposerHeight: rectHeight('.studio-resona-side-panel .resona-surface-composer'),
+    projectRangeBarVisible,
+    statusStripVisible,
+    resonaComposerVisible,
+    overflowDetected
+  }
+  console.info('[soura-layout] viewport audit', payload)
+  return payload
+}
+
+function shouldRunSouraLayoutAudit() {
+  return import.meta.env.DEV && (
+    new URLSearchParams(window.location.search).has('souraLayoutDebug') ||
+    localStorage.getItem('melogic:souraLayoutDebug') === '1'
+  )
+}
+
+function scheduleSouraLayoutAudit() {
+  window.__auditSouraLayout = auditSouraLayout
+  if (!shouldRunSouraLayoutAudit()) return
+  requestAnimationFrame(() => requestAnimationFrame(auditSouraLayout))
 }
 
 function mountStudioResonaPanel() {
@@ -9089,8 +9180,9 @@ function bindEditorEvents() {
   window.addEventListener('pointermove', (event) => {
     if (bottomPanelResizeDrag) {
       event.preventDefault()
-      const maxHeight = Math.max(260, window.innerHeight - 120)
-      const nextHeight = clamp(bottomPanelResizeDrag.startHeight + (bottomPanelResizeDrag.startY - event.clientY), 220, maxHeight)
+      const maxHeight = getMaxBottomPanelHeight()
+      const minHeight = Math.min(220, maxHeight)
+      const nextHeight = clamp(bottomPanelResizeDrag.startHeight + (bottomPanelResizeDrag.startY - event.clientY), minHeight, maxHeight)
       bottomPanelHeightPx = Math.round(nextHeight)
       bottomPanelResizeDrag.panel?.style.setProperty('height', `${bottomPanelHeightPx}px`)
       app.querySelector('.studio-editor-page')?.style.setProperty('--studio-bottom-panel-height', `${bottomPanelHeightPx}px`)
@@ -9359,6 +9451,7 @@ function renderEditor() {
   const showResonaPanel = activeBottomPanel === 'resona'
   const bottomPanelId = activeBottomPanel || closingBottomPanel
   const shouldRenderBottomPanel = Boolean(bottomPanelId && bottomPanelId !== 'resona')
+  if (shouldRenderBottomPanel) syncBottomPanelHeightToViewport()
   const bottomPanelClass = shouldRenderBottomPanel ? 'has-bottom-panel' : ''
   const bottomPanelHeightStyle = bottomPanelHeightPx ? `--studio-bottom-panel-height:${bottomPanelHeightPx}px;` : ''
   let shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu">${renderTopMenuButtons()}</nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu ${cpuAlerts.enabled && cpuPercent >= cpuAlerts.thresholdPercent ? 'is-warning' : ''}"><strong class="studio-logic-primary" data-cpu-percent>${Math.round(cpuPercent)}%</strong><span class="studio-logic-secondary">CPU${cpuAlerts.enabled ? ` / ${Math.round(cpuAlerts.thresholdPercent)}%` : ''}</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}${renderControlsConfigModal()}${renderProjectSettingsModal()}${renderProjectManagementModal()}</main>`
@@ -9383,6 +9476,7 @@ function renderEditor() {
   restoreMidiRollViewport()
   restoreAudioRegionToolsViewport(pendingAudioRegionToolsViewport)
   mountStudioResonaPanel()
+  scheduleSouraLayoutAudit()
   applyStudioGuideTargets()
   updateTransportPlaybackUI()
 }
@@ -9474,6 +9568,18 @@ if(!window.__melogicDawAudioPrewarmBound){
   window.__melogicDawAudioPrewarmBound = true
   window.addEventListener('pointerdown', () => prewarmDawAudio().catch(()=>{}), { once:true, capture:true })
   window.addEventListener('keydown', () => prewarmDawAudio().catch(()=>{}), { once:true, capture:true })
+}
+if(!window.__melogicStudioLayoutResizeBound){
+  window.__melogicStudioLayoutResizeBound = true
+  let layoutResizeTimer = 0
+  window.addEventListener('resize', () => {
+    window.clearTimeout(layoutResizeTimer)
+    layoutResizeTimer = window.setTimeout(() => {
+      const previousHeight = bottomPanelHeightPx
+      syncBottomPanelHeightToViewport()
+      if (previousHeight !== bottomPanelHeightPx || app.querySelector('.studio-editor-page')) renderEditor()
+    }, 80)
+  }, { passive:true })
 }
 if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
