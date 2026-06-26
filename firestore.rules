@@ -576,134 +576,6 @@ service cloud.firestore {
         && (!('reviewJobStatus' in request.resource.data) || request.resource.data.reviewJobStatus is string);
     }
 
-    function zeroOrMissing(field) {
-      return !(field in request.resource.data)
-        || request.resource.data[field] == 0;
-    }
-
-    function falseOrMissing(field) {
-      return !(field in request.resource.data)
-        || request.resource.data[field] == false;
-    }
-
-    function nullOrMissing(field) {
-      return !(field in request.resource.data)
-        || request.resource.data[field] == null;
-    }
-
-    function emptyStringNullOrMissing(field) {
-      return !(field in request.resource.data)
-        || request.resource.data[field] == ''
-        || request.resource.data[field] == null;
-    }
-
-    function emptyListOrMissing(field) {
-      return !(field in request.resource.data)
-        || (
-          request.resource.data[field] is list
-          && request.resource.data[field].size() == 0
-        );
-    }
-
-    function stableZeroOrDefault(field) {
-      return !(field in request.resource.data)
-        || (
-          field in resource.data
-          && request.resource.data[field] == resource.data[field]
-        )
-        || (
-          !(field in resource.data)
-          && request.resource.data[field] == 0
-        );
-    }
-
-    function stableFalseOrDefault(field) {
-      return !(field in request.resource.data)
-        || (
-          field in resource.data
-          && request.resource.data[field] == resource.data[field]
-        )
-        || (
-          !(field in resource.data)
-          && request.resource.data[field] == false
-        );
-    }
-
-    function stableNullOrDefault(field) {
-      return !(field in request.resource.data)
-        || (
-          field in resource.data
-          && request.resource.data[field] == resource.data[field]
-        )
-        || (
-          !(field in resource.data)
-          && request.resource.data[field] == null
-        );
-    }
-
-    function stableEmptyStringNullOrDefault(field) {
-      return !(field in request.resource.data)
-        || (
-          field in resource.data
-          && request.resource.data[field] == resource.data[field]
-        )
-        || (
-          !(field in resource.data)
-          && (
-            request.resource.data[field] == ''
-            || request.resource.data[field] == null
-          )
-        );
-    }
-
-    function stableEmptyListOrDefault(field) {
-      return !(field in request.resource.data)
-        || (
-          field in resource.data
-          && request.resource.data[field] == resource.data[field]
-        )
-        || (
-          !(field in resource.data)
-          && request.resource.data[field] is list
-          && request.resource.data[field].size() == 0
-        );
-    }
-
-    function safeCountsMapCreate() {
-      return !('counts' in request.resource.data)
-        || (
-          request.resource.data.counts is map
-          && request.resource.data.counts.keys().hasOnly([
-            'likes',
-            'dislikes',
-            'saves',
-            'shares',
-            'comments',
-            'downloads',
-            'follows'
-          ])
-          && (!('likes' in request.resource.data.counts) || request.resource.data.counts.likes == 0)
-          && (!('dislikes' in request.resource.data.counts) || request.resource.data.counts.dislikes == 0)
-          && (!('saves' in request.resource.data.counts) || request.resource.data.counts.saves == 0)
-          && (!('shares' in request.resource.data.counts) || request.resource.data.counts.shares == 0)
-          && (!('comments' in request.resource.data.counts) || request.resource.data.counts.comments == 0)
-          && (!('downloads' in request.resource.data.counts) || request.resource.data.counts.downloads == 0)
-          && (!('follows' in request.resource.data.counts) || request.resource.data.counts.follows == 0)
-        );
-    }
-
-    function safeCountsMapUpdate() {
-      return !('counts' in request.resource.data)
-        || (
-          'counts' in resource.data
-          && request.resource.data.counts == resource.data.counts
-        )
-        || (
-          !('counts' in resource.data)
-          && safeCountsMapCreate()
-        );
-    }
-
     function safeModerationStatusCreate() {
       return !('moderationStatus' in request.resource.data)
         || request.resource.data.moderationStatus == null
@@ -748,127 +620,42 @@ service cloud.firestore {
         );
     }
 
-    function safeModerationSummaryUpdate() {
-      return stableEmptyStringNullOrDefault('moderationSummary')
-        || (
-          isProductReviewSubmission()
-          && (
-            request.resource.data.moderationSummary == ''
-            || request.resource.data.moderationSummary == null
-          )
-        );
-    }
-
-    function safeModerationReasonsUpdate() {
-      return stableEmptyListOrDefault('moderationReasons')
-        || (
-          isProductReviewSubmission()
-          && request.resource.data.moderationReasons is list
-          && request.resource.data.moderationReasons.size() == 0
-        );
-    }
-
-    function safeReviewedAtUpdate() {
-      return stableNullOrDefault('reviewedAt')
-        || (
-          isProductReviewSubmission()
-          && request.resource.data.reviewedAt == null
-        );
-    }
-
-    function safeReviewedByUpdate() {
-      return stableEmptyStringNullOrDefault('reviewedBy')
-        || (
-          isProductReviewSubmission()
-          && (
-            request.resource.data.reviewedBy == ''
-            || request.resource.data.reviewedBy == null
-          )
-        );
-    }
-
-    function safePublishedAtUpdate() {
-      return stableNullOrDefault('publishedAt')
-        || (
-          request.resource.data.status != 'published'
-          && request.resource.data.publishedAt == null
-        );
-    }
-
-    function productServerFieldsSafeOnCreate() {
-      return safeModerationStatusCreate()
-        && emptyStringNullOrMissing('moderationSummary')
-        && emptyListOrMissing('moderationReasons')
-        && emptyStringNullOrMissing('moderationRiskLevel')
-        && falseOrMissing('moderationAIConfigured')
-        && falseOrMissing('moderationAIAttempted')
-        && falseOrMissing('moderationAISucceeded')
-        && falseOrMissing('moderationAIEnabled')
-        && emptyStringNullOrMissing('moderationAIModel')
-        && emptyStringNullOrMissing('moderationAIError')
-        && emptyStringNullOrMissing('moderationAIErrorCode')
-        && emptyStringNullOrMissing('moderationAIErrorCategory')
-        && nullOrMissing('moderationAICompletedAt')
-        && nullOrMissing('moderationAIFailedAt')
-        && nullOrMissing('reviewRequestedAt')
-        && emptyStringNullOrMissing('reviewRequestedBy')
-        && emptyStringNullOrMissing('reviewJobStatus')
-        && nullOrMissing('reviewedAt')
-        && emptyStringNullOrMissing('reviewedBy')
-        && nullOrMissing('publishedAt')
-
-        && zeroOrMissing('likeCount')
-        && zeroOrMissing('dislikeCount')
-        && zeroOrMissing('saveCount')
-        && zeroOrMissing('downloadCount')
-        && zeroOrMissing('commentCount')
-        && zeroOrMissing('shareCount')
-        && zeroOrMissing('followCount')
-        && safeCountsMapCreate()
-
-        && falseOrMissing('featured')
-        && falseOrMissing('promoted')
-        && zeroOrMissing('salesCount')
-        && zeroOrMissing('revenue')
-        && zeroOrMissing('entitlementCount');
-    }
-
     function productServerFieldsSafeOnUpdate() {
       return safeModerationStatusUpdate()
-        && safeModerationSummaryUpdate()
-        && safeModerationReasonsUpdate()
-        && stableEmptyStringNullOrDefault('moderationRiskLevel')
-        && stableFalseOrDefault('moderationAIConfigured')
-        && stableFalseOrDefault('moderationAIAttempted')
-        && stableFalseOrDefault('moderationAISucceeded')
-        && stableFalseOrDefault('moderationAIEnabled')
-        && stableEmptyStringNullOrDefault('moderationAIModel')
-        && stableEmptyStringNullOrDefault('moderationAIError')
-        && stableEmptyStringNullOrDefault('moderationAIErrorCode')
-        && stableEmptyStringNullOrDefault('moderationAIErrorCategory')
-        && stableNullOrDefault('moderationAICompletedAt')
-        && stableNullOrDefault('moderationAIFailedAt')
-        && stableNullOrDefault('reviewRequestedAt')
-        && stableEmptyStringNullOrDefault('reviewRequestedBy')
-        && stableEmptyStringNullOrDefault('reviewJobStatus')
-        && safeReviewedAtUpdate()
-        && safeReviewedByUpdate()
-        && safePublishedAtUpdate()
-
-        && stableZeroOrDefault('likeCount')
-        && stableZeroOrDefault('dislikeCount')
-        && stableZeroOrDefault('saveCount')
-        && stableZeroOrDefault('downloadCount')
-        && stableZeroOrDefault('commentCount')
-        && stableZeroOrDefault('shareCount')
-        && stableZeroOrDefault('followCount')
-        && safeCountsMapUpdate()
-
-        && stableFalseOrDefault('featured')
-        && stableFalseOrDefault('promoted')
-        && stableZeroOrDefault('salesCount')
-        && stableZeroOrDefault('revenue')
-        && stableZeroOrDefault('entitlementCount');
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'moderationSummary',
+          'moderationReasons',
+          'moderationRiskLevel',
+          'moderationAIConfigured',
+          'moderationAIAttempted',
+          'moderationAISucceeded',
+          'moderationAIEnabled',
+          'moderationAIModel',
+          'moderationAIError',
+          'moderationAIErrorCode',
+          'moderationAIErrorCategory',
+          'moderationAICompletedAt',
+          'moderationAIFailedAt',
+          'reviewRequestedAt',
+          'reviewRequestedBy',
+          'reviewJobStatus',
+          'reviewedAt',
+          'reviewedBy',
+          'publishedAt',
+          'likeCount',
+          'dislikeCount',
+          'saveCount',
+          'downloadCount',
+          'commentCount',
+          'shareCount',
+          'followCount',
+          'counts',
+          'featured',
+          'promoted',
+          'salesCount',
+          'revenue',
+          'entitlementCount'
+        ]);
     }
 
     function creatorIdentityIsStable() {
@@ -987,78 +774,66 @@ service cloud.firestore {
       return value in ['song', 'beat', 'vocal', 'podcast', 'blank'];
     }
 
-    function studioProjectDocumentKeysAllowed(data) {
-      return data.keys().hasOnly([
-        'title',
-        'ownerId',
-        'collaboratorIds',
-        'bpm',
-        'key',
-        'timeSignature',
-        'type',
-        'visibility',
-        'createdAt',
-        'updatedAt',
-        'lastOpenedAt',
-        'version',
-        'tracks',
-        'timeline',
-        'mixer',
-        'collaboration',
-        'settings',
-        'globalTracks',
-        'editorState'
-      ]);
-    }
-
-    function studioProjectBaseFieldsValid(data) {
-      return data.ownerId is string
-        && data.ownerId.size() >= 1
-        && data.collaboratorIds is list
-        && data.visibility == 'private'
-        && data.version == 1
-        && data.title is string
-        && data.title.size() >= 1
-        && data.title.size() <= 120
-        && data.bpm is number
-        && data.bpm >= 40
-        && data.bpm <= 240
-        && data.key is string
-        && data.key.size() >= 1
-        && data.key.size() <= 40
-        && data.type is string
-        && studioTypeValid(data.type)
-        && (!('timeSignature' in data) || (
-          data.timeSignature is string
-          && data.timeSignature.size() >= 1
-          && data.timeSignature.size() <= 20
-        ))
-        && (!('tracks' in data) || data.tracks is list)
-        && (!('timeline' in data) || data.timeline is map)
-        && (!('mixer' in data) || data.mixer is map)
-        && (!('collaboration' in data) || data.collaboration is map)
-        && (!('settings' in data) || data.settings is map)
-        && (!('globalTracks' in data) || data.globalTracks is map)
-        && (!('editorState' in data) || data.editorState is map);
-    }
-
     function studioProjectCreateIsValid() {
       return signedIn()
-        && studioProjectDocumentKeysAllowed(request.resource.data)
-        && studioProjectBaseFieldsValid(request.resource.data)
+        && request.resource.data.keys().hasOnly([
+          'title','ownerId','collaboratorIds','bpm','key','timeSignature','type','visibility','createdAt','updatedAt','lastOpenedAt','version','tracks','timeline','mixer','collaboration','settings','globalTracks','editorState'
+        ])
         && request.resource.data.ownerId == request.auth.uid
-        && request.resource.data.collaboratorIds.size() == 0;
+        && request.resource.data.collaboratorIds is list
+        && request.resource.data.collaboratorIds.size() == 0
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.version == 1
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.bpm is number
+        && request.resource.data.bpm >= 40
+        && request.resource.data.bpm <= 240
+        && request.resource.data.key is string
+        && request.resource.data.key.size() >= 1
+        && request.resource.data.key.size() <= 40
+        && request.resource.data.type is string
+        && studioTypeValid(request.resource.data.type)
+        && (!('timeSignature' in request.resource.data) || request.resource.data.timeSignature is string)
+        && (!('tracks' in request.resource.data) || request.resource.data.tracks is list)
+        && (!('timeline' in request.resource.data) || request.resource.data.timeline is map)
+        && (!('mixer' in request.resource.data) || request.resource.data.mixer is map)
+        && (!('collaboration' in request.resource.data) || request.resource.data.collaboration is map)
+        && (!('settings' in request.resource.data) || request.resource.data.settings is map)
+        && (!('globalTracks' in request.resource.data) || request.resource.data.globalTracks is map)
+        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
     }
 
     function studioProjectUpdateIsValid() {
       return signedIn()
-        && studioProjectDocumentKeysAllowed(request.resource.data)
-        && studioProjectBaseFieldsValid(request.resource.data)
+        && request.resource.data.keys().hasOnly([
+          'title','ownerId','collaboratorIds','bpm','key','timeSignature','type','visibility','createdAt','updatedAt','lastOpenedAt','version','tracks','timeline','mixer','collaboration','settings','globalTracks','editorState'
+        ])
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.collaboratorIds == resource.data.collaboratorIds
-        && request.resource.data.visibility == resource.data.visibility
-        && request.resource.data.version == resource.data.version;
+        && request.resource.data.visibility == 'private'
+        && request.resource.data.version == 1
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 120
+        && request.resource.data.bpm is number
+        && request.resource.data.bpm >= 40
+        && request.resource.data.bpm <= 240
+        && request.resource.data.key is string
+        && request.resource.data.key.size() >= 1
+        && request.resource.data.key.size() <= 40
+        && request.resource.data.type is string
+        && studioTypeValid(request.resource.data.type)
+        && (!('timeSignature' in request.resource.data) || request.resource.data.timeSignature is string)
+        && (!('tracks' in request.resource.data) || request.resource.data.tracks is list)
+        && (!('timeline' in request.resource.data) || request.resource.data.timeline is map)
+        && (!('mixer' in request.resource.data) || request.resource.data.mixer is map)
+        && (!('collaboration' in request.resource.data) || request.resource.data.collaboration is map)
+        && (!('settings' in request.resource.data) || request.resource.data.settings is map)
+        && (!('globalTracks' in request.resource.data) || request.resource.data.globalTracks is map)
+        && (!('editorState' in request.resource.data) || request.resource.data.editorState is map);
     }
 
     function isStageOwnerResource() {
@@ -1132,67 +907,6 @@ service cloud.firestore {
         && (!('deckHeight' in dimensions) || (dimensions.deckHeight is number && dimensions.deckHeight >= 0 && dimensions.deckHeight <= 100))
         && dimensions.unit is string
         && stageUnitValid(dimensions.unit);
-    }
-
-    function stagePlanValid(plan) {
-      return plan is map
-        && plan.keys().hasOnly([
-          'id','name','title','version','createdAt','updatedAt','units','stageType','stageDimensions',
-          'coordinateSystem','objects','fixtures','audioInputs','rigging','video','power','layers',
-          'measurements','annotations','venue','notes','warnings','exportSettings','editorState',
-          'defaultPlanVersion'
-        ])
-        && (!('id' in plan) || plan.id is string)
-        && (!('name' in plan) || (plan.name is string && plan.name.size() <= 120))
-        && (!('title' in plan) || (plan.title is string && plan.title.size() <= 120))
-        && (!('version' in plan) || plan.version is number)
-        && (!('units' in plan) || (plan.units is string && stageUnitValid(plan.units)))
-        && (!('stageType' in plan) || (plan.stageType is string && stageTypeValid(plan.stageType)))
-        && (!('stageDimensions' in plan) || stageDimensionsValid(plan.stageDimensions))
-        && (!('coordinateSystem' in plan) || plan.coordinateSystem is map)
-        && (!('objects' in plan) || (plan.objects is list && plan.objects.size() <= 1000))
-        && (!('fixtures' in plan) || (plan.fixtures is list && plan.fixtures.size() <= 1000))
-        && (!('audioInputs' in plan) || (plan.audioInputs is list && plan.audioInputs.size() <= 500))
-        && (!('rigging' in plan) || (plan.rigging is list && plan.rigging.size() <= 500))
-        && (!('video' in plan) || (plan.video is list && plan.video.size() <= 500))
-        && (!('power' in plan) || (plan.power is list && plan.power.size() <= 250))
-        && (!('layers' in plan) || (plan.layers is list && plan.layers.size() <= 50))
-        && (!('measurements' in plan) || (plan.measurements is list && plan.measurements.size() <= 500))
-        && (!('annotations' in plan) || (plan.annotations is list && plan.annotations.size() <= 500))
-        && (!('venue' in plan) || plan.venue is map)
-        && (!('notes' in plan) || (plan.notes is string && plan.notes.size() <= 20000))
-        && (!('warnings' in plan) || (plan.warnings is list && plan.warnings.size() <= 1000))
-        && (!('exportSettings' in plan) || plan.exportSettings is map)
-        && (!('defaultPlanVersion' in plan) || plan.defaultPlanVersion is number)
-        && (!('editorState' in plan) || stageEditorStateValid(plan.editorState));
-    }
-
-    function stageEditorStateValid(editorState) {
-      return editorState is map
-        && editorState.keys().hasOnly([
-          'viewportMode','paneSizes','activeLayer','selectedObjectId','selectedObjectIds','showGrid','snapEnabled',
-          'snapInterval','showLabels','showBeams','showViewportDiagnostics','activeStageSection',
-          'activeLibraryCategory','objectLibrarySearch','editorToolMode','activeEditorMode',
-          'activeInspectorTab','activeDataTab','renderMode','stageTabs','activeStageTabId',
-          'objectTransforms','savedAt'
-        ])
-        && (!('viewportMode' in editorState) || editorState.viewportMode in ['perspective3d','top2d','front','side','isometric'])
-        && (!('paneSizes' in editorState) || editorState.paneSizes is map)
-        && (!('selectedObjectId' in editorState) || editorState.selectedObjectId is string)
-        && (!('selectedObjectIds' in editorState) || (editorState.selectedObjectIds is list && editorState.selectedObjectIds.size() <= 250))
-        && (!('showGrid' in editorState) || editorState.showGrid is bool)
-        && (!('snapEnabled' in editorState) || editorState.snapEnabled is bool)
-        && (!('snapInterval' in editorState) || (editorState.snapInterval is number && editorState.snapInterval > 0 && editorState.snapInterval <= 12))
-        && (!('showLabels' in editorState) || editorState.showLabels is bool)
-        && (!('showBeams' in editorState) || editorState.showBeams is bool)
-        && (!('showViewportDiagnostics' in editorState) || editorState.showViewportDiagnostics is bool)
-        && (!('activeLibraryCategory' in editorState) || (editorState.activeLibraryCategory is string && editorState.activeLibraryCategory.size() <= 80))
-        && (!('objectLibrarySearch' in editorState) || (editorState.objectLibrarySearch is string && editorState.objectLibrarySearch.size() <= 120))
-        && (!('editorToolMode' in editorState) || editorState.editorToolMode in ['pan','select','move','rotate','scale'])
-        && (!('renderMode' in editorState) || editorState.renderMode in ['simple','technical','beam','export-clean'])
-        && (!('stageTabs' in editorState) || (editorState.stageTabs is list && editorState.stageTabs.size() <= 24))
-        && (!('objectTransforms' in editorState) || editorState.objectTransforms is map)
-        && (!('savedAt' in editorState) || editorState.savedAt is string);
     }
 
     function stageProjectDataValid(data) {
