@@ -404,9 +404,10 @@ test('Stripe Connect error details expose safe diagnostic fields', () => {
     stripeCode: 'account_invalid',
     stripeParam: 'account',
     stripeRequestId: 'req_123',
-    safeMessage: 'You can only create new accounts if you have signed up for Connect.'
+    safeMessage: 'Stripe Connect setup may be incomplete for this platform. Please contact support with the Stripe request ID below.'
   })
   assert.equal(Object.hasOwn(details, 'stack'), false)
+  assert.equal(Object.hasOwn(details, 'message'), false)
 })
 
 test('Stripe Connect return URLs must be absolute HTTPS URLs', () => {
@@ -431,4 +432,27 @@ test('Stripe Connect secret mode is detected without exposing the secret', () =>
   assert.equal(stripeConnect.stripeSecretMode('sk_live_123'), 'live')
   assert.equal(stripeConnect.stripeSecretMode(''), 'missing')
   assert.equal(stripeConnect.stripeSecretMode('not-a-key'), 'unknown')
+})
+
+test('Stripe Connect preflight validates key mode and HTTPS public site URL', () => {
+  const preflight = stripeConnect.validateStripeConnectPreflight({
+    secret: 'sk_test_123',
+    publicSiteUrl: 'https://melogicrecords.studio/',
+    uid: 'creator-1'
+  })
+  assert.equal(preflight.stripeSecretMode, 'test')
+  assert.equal(preflight.livemode, false)
+  assert.equal(preflight.siteUrl, 'https://melogicrecords.studio')
+
+  assert.throws(() => stripeConnect.validateStripeConnectPreflight({
+    secret: 'sk_live_123',
+    publicSiteUrl: 'http://melogicrecords.studio',
+    uid: 'creator-1'
+  }), /Stripe payouts are not configured correctly/)
+
+  assert.throws(() => stripeConnect.validateStripeConnectPreflight({
+    secret: '',
+    publicSiteUrl: 'https://melogicrecords.studio',
+    uid: 'creator-1'
+  }), /Stripe payouts are not configured correctly/)
 })

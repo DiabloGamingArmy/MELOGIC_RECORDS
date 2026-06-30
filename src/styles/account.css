@@ -448,6 +448,17 @@
   padding: 0.82rem 0.95rem;
 }
 
+.payout-error-details {
+  display: grid;
+  gap: 0.18rem;
+  margin-top: 0.5rem;
+  color: #ffc5cd;
+}
+
+.payout-error-details small {
+  font-size: 0.78rem;
+}
+
 .payout-setup-card {
   margin-top: 1rem;
   display: flex;
