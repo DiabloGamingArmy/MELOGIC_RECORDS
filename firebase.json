@@ -448,7 +448,7 @@
       "emailPassword": true,
       "googleSignIn": {
         "oAuthBrandDisplayName": "Melogic Records",
-        "supportEmail": "support@melogicrecords.com"
+        "supportEmail": "support@melogicrecords.studio"
       }
     }
   }
