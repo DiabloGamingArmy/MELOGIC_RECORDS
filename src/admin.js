@@ -3675,7 +3675,8 @@ function operationsPricingPanel() {
           ${operationCheckbox({ name: 'enabled', label: 'Enabled', checked: pricing.enabled !== false })}
           ${operationTextInput({ name: 'defaultCurrency', label: 'Default currency', value: pricing.defaultCurrency || 'USD' })}
           ${operationTextInput({ name: 'feeMode', label: 'Fee mode', value: pricing.feeMode || 'seller_absorbs' })}
-          ${operationTextInput({ name: 'platformFeeBps', label: 'Platform fee BPS', type: 'number', value: pricing.platformFeeBps ?? 1100, helper: '1100 bps = 11%' })}
+          ${operationTextInput({ name: 'defaultPlatformFeeBps', label: 'Standard platform fee BPS', type: 'number', value: pricing.defaultPlatformFeeBps ?? pricing.platformFeeBps ?? 1000, helper: '1000 bps = 10%' })}
+          ${operationTextInput({ name: 'proPlatformFeeBps', label: 'Pro platform fee BPS', type: 'number', value: pricing.proPlatformFeeBps ?? 400, helper: '400 bps = 4%' })}
           ${operationTextInput({ name: 'platformFeeLabel', label: 'Platform fee label', value: pricing.platformFeeLabel || 'Melogic Records Fee' })}
           ${operationTextInput({ name: 'processorPercentBps', label: 'Processor percent BPS', type: 'number', value: pricing.processorPercentBps ?? 290, helper: '290 bps = 2.9%' })}
           ${operationTextInput({ name: 'processorFixedFeeCents', label: 'Processor fixed fee cents', type: 'number', value: pricing.processorFixedFeeCents ?? 30, helper: '30 cents = $0.30' })}

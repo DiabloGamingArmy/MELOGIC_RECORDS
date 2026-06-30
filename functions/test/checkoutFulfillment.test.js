@@ -10,6 +10,7 @@ const userCommerceAudit = require('../src/admin/userCommerceAudit').__test
 const orderRepair = require('../src/payments/repairCheckoutOrder').__test
 const creatorEarnings = require('../src/payments/creatorEarnings').__test
 const stripeConnect = require('../src/payments/stripeConnect').__test
+const creatorWithdrawals = require('../src/payments/creatorWithdrawals').__test
 
 function snapshot(data = null) {
   return {
@@ -244,13 +245,13 @@ test('creator ledger payload records pending net earnings without inventing Stri
     stripeCheckoutSessionId: 'cs_test_123',
     grossAmount: 1000,
     currency: 'usd',
-    feeBps: 1500,
+    feeBps: 1000,
     availableAt: 'later',
     now: 'now'
   })
   assert.equal(payload.grossAmount, 1000)
-  assert.equal(payload.platformFeeAmount, 150)
-  assert.equal(payload.creatorNetAmount, 850)
+  assert.equal(payload.platformFeeAmount, 100)
+  assert.equal(payload.creatorNetAmount, 900)
   assert.equal(payload.stripeFeeAmount, null)
   assert.equal(payload.creatorNetStatus, 'before_stripe_fee')
   assert.equal(payload.status, 'pending')
@@ -260,14 +261,29 @@ test('creator ledger payload records pending net earnings without inventing Stri
 test('creator ledger subtracts trusted Stripe fees when the seller absorbs processing', () => {
   const payload = creatorEarnings.creatorLedgerPayload({
     grossAmount: 1000,
-    feeBps: 1500,
+    feeBps: 1000,
     feeMode: 'seller_absorbs',
     stripeFeeAmount: 59
   })
-  assert.equal(payload.platformFeeAmount, 150)
+  assert.equal(payload.platformFeeAmount, 100)
   assert.equal(payload.stripeFeeAmount, 59)
-  assert.equal(payload.creatorNetAmount, 791)
+  assert.equal(payload.creatorNetAmount, 841)
   assert.equal(payload.creatorNetStatus, 'finalized_for_ledger')
+})
+
+test('creator ledger snapshots Pro and non-Pro platform fee bps', () => {
+  assert.equal(creatorEarnings.sellerPlatformFeeBpsFromUser({}, {
+    defaultPlatformFeeBps: 1000,
+    proPlatformFeeBps: 400
+  }), 1000)
+  assert.equal(creatorEarnings.sellerPlatformFeeBpsFromUser({
+    plan: 'pro',
+    subscriptionStatus: 'active'
+  }, {
+    defaultPlatformFeeBps: 1000,
+    proPlatformFeeBps: 400
+  }), 400)
+  assert.equal(creatorEarnings.creatorLedgerPayload({ grossAmount: 1000, feeBps: 400 }).platformFeeAmount, 40)
 })
 
 test('Stripe processing fee is allocated across creator lines without losing cents', () => {
@@ -291,16 +307,77 @@ test('earnings summary is rebuildable from ledger status and currency', () => {
   const summary = creatorEarnings.buildEarningsSummary([
     { status: 'pending', grossAmount: 1000, creatorNetAmount: 800, currency: 'usd' },
     { status: 'available', grossAmount: 500, creatorNetAmount: 400, currency: 'usd' },
-    { status: 'withdrawn', grossAmount: 250, creatorNetAmount: 200, currency: 'usd' },
+    { status: 'partially_withdrawn', grossAmount: 300, creatorNetAmount: 250, withdrawnAmount: 100, currency: 'usd' },
+    { status: 'withdrawn', grossAmount: 250, creatorNetAmount: 200, withdrawnAmount: 200, currency: 'usd' },
     { status: 'pending', grossAmount: 100, creatorNetAmount: 85, creatorNetStatus: 'before_stripe_fee', currency: 'usd' },
     { status: 'refunded', grossAmount: 100, creatorNetAmount: 80, currency: 'usd' }
   ])
   assert.deepEqual(summary.pendingByCurrency, { USD: 885 })
-  assert.deepEqual(summary.availableByCurrency, { USD: 400 })
-  assert.deepEqual(summary.withdrawnByCurrency, { USD: 200 })
-  assert.equal(summary.lifetimeGrossAmount, 1850)
-  assert.equal(summary.lifetimeNetAmount, 1485)
+  assert.deepEqual(summary.availableByCurrency, { USD: 550 })
+  assert.deepEqual(summary.withdrawnByCurrency, { USD: 300 })
+  assert.equal(summary.lifetimeGrossAmount, 2150)
+  assert.equal(summary.lifetimeNetAmount, 1735)
   assert.equal(summary.unfinalizedEntryCount, 1)
+})
+
+test('platform revenue payload tracks company cut separately from creator balance', () => {
+  const payload = checkout.platformRevenuePayload({
+    creatorLedger: {
+      creatorUid: 'seller-1',
+      buyerUid: 'buyer-1',
+      grossAmount: 1000,
+      platformFeeAmount: 100,
+      platformFeeBps: 1000,
+      currency: 'usd'
+    },
+    orderId: 'order-1',
+    productId: 'product-1',
+    stripeCheckoutSessionId: 'cs_test_123',
+    now: 'now'
+  })
+  assert.equal(payload.platformFeeAmount, 100)
+  assert.equal(payload.grossAmount, 1000)
+  assert.equal(payload.status, 'earned')
+  assert.equal(payload.source, 'creator_ledger')
+})
+
+test('creator withdrawal helpers enforce availability and instant fee math', () => {
+  assert.deepEqual(creatorWithdrawals.withdrawalAmounts({ amountCents: 1000, mode: 'instant' }), {
+    amountCents: 1000,
+    feeAmountCents: 99,
+    payoutAmountCents: 901,
+    mode: 'instant'
+  })
+  assert.throws(() => creatorWithdrawals.assertWithdrawalRequest({
+    uid: 'seller-1',
+    amountCents: 1001,
+    availableAmountCents: 1000,
+    connect: { stripeConnectAccountId: 'acct_123' }
+  }), /exceeds available/)
+  assert.throws(() => creatorWithdrawals.assertWithdrawalRequest({
+    uid: 'seller-1',
+    amountCents: 500,
+    availableAmountCents: 1000,
+    connect: {}
+  }), /Set up Stripe payouts/)
+})
+
+test('creator withdrawal allocations prevent double-spend with remaining balances', () => {
+  const entries = [
+    { id: 'ledger-1', creatorNetAmount: 700, withdrawnAmount: 200, status: 'partially_withdrawn' },
+    { id: 'ledger-2', creatorNetAmount: 500, status: 'available' }
+  ]
+  const result = creatorWithdrawals.withdrawalLedgerAllocations(entries, 800)
+  assert.equal(result.remaining, 0)
+  assert.deepEqual(result.allocations.map((entry) => ({
+    id: entry.id,
+    amountCents: entry.amountCents,
+    nextStatus: entry.nextStatus,
+    nextWithdrawnAmount: entry.nextWithdrawnAmount
+  })), [
+    { id: 'ledger-1', amountCents: 500, nextStatus: 'withdrawn', nextWithdrawnAmount: 700 },
+    { id: 'ledger-2', amountCents: 300, nextStatus: 'partially_withdrawn', nextWithdrawnAmount: 300 }
+  ])
 })
 
 test('Stripe Connect status exposes only safe onboarding fields', () => {

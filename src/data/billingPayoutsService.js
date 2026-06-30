@@ -40,6 +40,11 @@ function normalizeEarningsSummary(data = {}) {
     withdrawnByCurrency: currencyMap(data.withdrawnByCurrency),
     lifetimeGrossByCurrency: currencyMap(data.lifetimeGrossByCurrency),
     lifetimeNetByCurrency: currencyMap(data.lifetimeNetByCurrency),
+    pendingAmount: Math.max(0, Math.round(Number(data.pendingAmount || 0))),
+    availableAmount: Math.max(0, Math.round(Number(data.availableAmount || 0))),
+    withdrawnAmount: Math.max(0, Math.round(Number(data.withdrawnAmount || 0))),
+    lifetimeNetAmount: Math.max(0, Math.round(Number(data.lifetimeNetAmount || 0))),
+    currency: String(data.currency || 'USD').toUpperCase(),
     entryCount: Math.max(0, Number(data.entryCount || 0)),
     unfinalizedEntryCount: Math.max(0, Number(data.unfinalizedEntryCount || 0)),
     updatedAt: data.updatedAt || null
@@ -71,6 +76,17 @@ export async function createStripeConnectAccount() {
 export async function createStripeConnectOnboardingLink() {
   const callable = httpsCallable(functions, 'createStripeConnectOnboardingLink')
   const result = await callable({})
+  return result.data || {}
+}
+
+export async function createCreatorWithdrawalRequest({ amountCents = 0, currency = 'USD', mode = 'standard', clientRequestId = '' } = {}) {
+  const callable = httpsCallable(functions, 'createCreatorWithdrawalRequest')
+  const result = await callable({
+    amountCents,
+    currency,
+    mode,
+    clientRequestId
+  })
   return result.data || {}
 }
 

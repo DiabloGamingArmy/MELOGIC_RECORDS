@@ -2,7 +2,8 @@ const admin = require('firebase-admin')
 const { logger } = require('firebase-functions')
 const { defineInt } = require('firebase-functions/params')
 
-const DEFAULT_PLATFORM_FEE_BPS = 1500
+const DEFAULT_PLATFORM_FEE_BPS = 1000
+const PRO_PLATFORM_FEE_BPS = 400
 const DEFAULT_HOLD_DAYS = 7
 const CREATOR_EARNINGS_HOLD_DAYS = defineInt('CREATOR_EARNINGS_HOLD_DAYS', {
   default: DEFAULT_HOLD_DAYS
@@ -32,11 +33,32 @@ async function loadCreatorEarningsConfig(database) {
   const snapshot = await database.doc('platformSettings/marketplacePricing').get()
   const data = snapshot.exists ? snapshot.data() || {} : {}
   return {
-    platformFeeBps: configuredInt(data.platformFeeBps, DEFAULT_PLATFORM_FEE_BPS, { min: 0, max: 5000 }),
+    defaultPlatformFeeBps: configuredInt(data.defaultPlatformFeeBps, DEFAULT_PLATFORM_FEE_BPS, { min: 0, max: 5000 }),
+    proPlatformFeeBps: configuredInt(data.proPlatformFeeBps, PRO_PLATFORM_FEE_BPS, { min: 0, max: 5000 }),
     feeMode: cleanString(data.feeMode || 'seller_absorbs', 80),
     version: configuredInt(data.version, 1, { min: 1, max: 100000 }),
     source: snapshot.exists ? 'platformSettings/marketplacePricing' : 'marketplace_pricing_fallback'
   }
+}
+
+function userHasActiveProMembership(user = {}) {
+  const plan = cleanString(user.plan || user.membershipPlan || user.subscriptionPlan || user.creatorPlan || '', 80).toLowerCase()
+  const status = cleanString(user.subscriptionStatus || user.membershipStatus || user.planStatus || '', 80).toLowerCase()
+  return ['pro', 'melogic_pro', 'creator_pro'].includes(plan)
+    && ['active', 'trialing'].includes(status)
+}
+
+function sellerPlatformFeeBpsFromUser(user = {}, config = {}) {
+  return userHasActiveProMembership(user)
+    ? configuredInt(config.proPlatformFeeBps, PRO_PLATFORM_FEE_BPS, { min: 0, max: 5000 })
+    : configuredInt(config.defaultPlatformFeeBps ?? config.platformFeeBps, DEFAULT_PLATFORM_FEE_BPS, { min: 0, max: 5000 })
+}
+
+async function getSellerPlatformFeeBps(database, uid = '', config = {}) {
+  const userId = cleanString(uid, 180)
+  if (!userId || userId.includes('/')) return sellerPlatformFeeBpsFromUser({}, config)
+  const snapshot = await database.collection('users').doc(userId).get()
+  return sellerPlatformFeeBpsFromUser(snapshot.exists ? snapshot.data() || {} : {}, config)
 }
 
 function ledgerEntryId(orderId = '', productId = '') {
@@ -161,9 +183,11 @@ function buildEarningsSummary(entries = []) {
 
     addCurrencyAmount(lifetimeGrossByCurrency, currency, gross)
     addCurrencyAmount(lifetimeNetByCurrency, currency, net)
+    const withdrawn = nonNegativeInt(entry.withdrawnAmount, status === 'withdrawn' ? net : 0)
+    const remaining = Math.max(0, net - withdrawn)
     if (status === 'pending') addCurrencyAmount(pendingByCurrency, currency, net)
-    if (status === 'available') addCurrencyAmount(availableByCurrency, currency, net)
-    if (status === 'withdrawn') addCurrencyAmount(withdrawnByCurrency, currency, net)
+    if (['available', 'partially_withdrawn'].includes(status)) addCurrencyAmount(availableByCurrency, currency, remaining)
+    if (withdrawn > 0 || status === 'withdrawn') addCurrencyAmount(withdrawnByCurrency, currency, withdrawn)
 
     const value = entry.updatedAt || entry.createdAt
     const millis = typeof value?.toMillis === 'function'
@@ -233,8 +257,11 @@ module.exports = {
   buildEarningsSummary,
   creatorLedgerPayload,
   earningsHoldDays,
+  getSellerPlatformFeeBps,
   ledgerEntryId,
   loadCreatorEarningsConfig,
+  sellerPlatformFeeBpsFromUser,
+  userHasActiveProMembership,
   rebuildCreatorEarningsSummaries,
   rebuildCreatorEarningsSummary,
   __test: {
@@ -242,6 +269,8 @@ module.exports = {
     allocateGrossAmounts,
     buildEarningsSummary,
     creatorLedgerPayload,
+    sellerPlatformFeeBpsFromUser,
+    userHasActiveProMembership,
     ledgerEntryId,
     orderItemAmount
   }
