@@ -4,6 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState } from './firebase/auth'
 import {
+  createCreatorWithdrawalRequest,
   createStripeConnectOnboardingLink,
   getBillingPayoutData,
   refreshStripeConnectStatus
@@ -16,6 +17,7 @@ const state = {
   loading: true,
   actioning: false,
   refreshing: false,
+  withdrawing: false,
   error: '',
   errorDetails: null,
   notice: '',
@@ -52,6 +54,21 @@ function formatCurrencyMap(value = {}) {
   const entries = Object.entries(value || {})
   if (!entries.length) return money(0, 'USD')
   return entries.map(([currency, amount]) => money(amount, currency)).join(' + ')
+}
+
+function primaryCurrency(summary = {}) {
+  return summary.currency || Object.keys(summary.availableByCurrency || {})[0] || 'USD'
+}
+
+function primaryAmount(summary = {}, key = 'availableByCurrency') {
+  const currency = primaryCurrency(summary)
+  const fallbackKey = {
+    pendingByCurrency: 'pendingAmount',
+    availableByCurrency: 'availableAmount',
+    withdrawnByCurrency: 'withdrawnAmount',
+    lifetimeNetByCurrency: 'lifetimeNetAmount'
+  }[key] || 'availableAmount'
+  return Math.max(0, Math.round(Number(summary[key]?.[currency] ?? summary[fallbackKey] ?? 0)))
 }
 
 function connectState() {
@@ -143,6 +160,34 @@ function errorDetailsMarkup() {
   return `<div class="payout-error-details">${lines.map((line) => `<small>${escapeHtml(line)}</small>`).join('')}</div>`
 }
 
+function withdrawalPanelMarkup(summary = {}) {
+  const currency = primaryCurrency(summary)
+  const availableAmount = primaryAmount(summary, 'availableByCurrency')
+  const maxLabel = money(availableAmount, currency)
+  const disabled = state.withdrawing || !state.connect?.hasAccount || availableAmount <= 0
+  return `
+    <div class="payout-withdrawal-panel">
+      <div>
+        <span class="account-label">Withdrawals</span>
+        <h3>Available to withdraw: ${escapeHtml(maxLabel)}</h3>
+        <p>Standard withdrawals create a reviewed payout request. Funds are held for about 10-11 days before processing.</p>
+      </div>
+      <form class="payout-withdrawal-form" data-withdrawal-form>
+        <label class="filter-control">
+          <span>Amount</span>
+          <input data-withdrawal-amount type="number" min="1" step="0.01" max="${(availableAmount / 100).toFixed(2)}" placeholder="0.00" ${disabled ? 'disabled' : ''} />
+        </label>
+        <input type="hidden" data-withdrawal-currency value="${escapeHtml(currency)}" />
+        <button type="submit" class="button button-muted" ${disabled ? 'disabled' : ''}>${state.withdrawing ? 'Requesting...' : 'Request standard withdrawal'}</button>
+      </form>
+      <div class="payout-instant-disabled" aria-disabled="true">
+        <strong>Instant withdrawal</strong>
+        <span>$0.99 fee · unavailable until Stripe instant payout eligibility is verified.</span>
+      </div>
+    </div>
+  `
+}
+
 function renderSignedOut() {
   return `
     <section class="account-panel account-empty">
@@ -216,7 +261,7 @@ function renderPage() {
             <article><span>Lifetime net</span><strong>${escapeHtml(formatCurrencyMap(summary.lifetimeNetByCurrency))}</strong></article>
             <article><span>Transferred</span><strong>${escapeHtml(formatCurrencyMap(summary.withdrawnByCurrency))}</strong></article>
           </div>
-          <button type="button" class="button button-muted payout-withdraw-button" disabled>Withdrawals coming soon</button>
+          ${withdrawalPanelMarkup(summary)}
           <p class="payout-footnote">Earnings are calculated from the server-owned creator ledger. New earnings remain pending through the configured hold period.${summary.unfinalizedEntryCount ? ` ${Number(summary.unfinalizedEntryCount)} entr${Number(summary.unfinalizedEntryCount) === 1 ? 'y is' : 'ies are'} still waiting for final Stripe fee data.` : ''}</p>
         </section>
       </div>
@@ -235,6 +280,7 @@ function render() {
   initShellChrome()
   app.querySelector('[data-start-stripe-onboarding]')?.addEventListener('click', startOnboarding)
   app.querySelector('[data-refresh-stripe-status]')?.addEventListener('click', refreshStatus)
+  app.querySelector('[data-withdrawal-form]')?.addEventListener('submit', requestWithdrawal)
 }
 
 function isStripeOnboardingUrl(value = '') {
@@ -282,6 +328,38 @@ async function refreshStatus({ returnedFromStripe = false } = {}) {
     state.error = error?.message || 'Payout status could not be refreshed.'
   }
   state.refreshing = false
+  render()
+}
+
+async function requestWithdrawal(event) {
+  event.preventDefault()
+  if (state.withdrawing) return
+  const form = event.currentTarget
+  const amountValue = Number(form.querySelector('[data-withdrawal-amount]')?.value || 0)
+  const currency = form.querySelector('[data-withdrawal-currency]')?.value || primaryCurrency(state.earningsSummary || {})
+  const amountCents = Math.round(amountValue * 100)
+  state.error = ''
+  state.errorDetails = null
+  state.notice = ''
+  state.withdrawing = true
+  render()
+  try {
+    const result = await createCreatorWithdrawalRequest({
+      amountCents,
+      currency,
+      mode: 'standard',
+      clientRequestId: `web_${state.user?.uid || 'user'}_${Date.now()}`
+    })
+    const withdrawal = result.withdrawal || {}
+    state.notice = `Withdrawal request created for ${money(withdrawal.amountCents || amountCents, withdrawal.currency || currency)}.`
+    const data = await getBillingPayoutData(state.user.uid)
+    state.connect = data.connect
+    state.earningsSummary = data.earningsSummary
+  } catch (error) {
+    console.error('[billing-payouts] withdrawal request failed', error)
+    state.error = error?.message || 'Withdrawal request could not be created.'
+  }
+  state.withdrawing = false
   render()
 }
 

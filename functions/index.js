@@ -21,6 +21,10 @@ const {
   createStripeConnectOnboardingLink,
   refreshStripeConnectStatus
 } = require('./src/payments/stripeConnect')
+const {
+  auditCreatorPayoutLedger,
+  createCreatorWithdrawalRequest
+} = require('./src/payments/creatorWithdrawals')
 const { claimFreeProduct } = require('./src/products/claimFreeProduct')
 const { createProductDownloadUrl } = require('./src/products/createProductDownloadUrl')
 const { createProductDownloadLink } = require('./src/products/createProductDownloadLink')
@@ -143,6 +147,8 @@ exports.repairAdminCheckoutOrder = repairAdminCheckoutOrder
 exports.createStripeConnectAccount = createStripeConnectAccount
 exports.createStripeConnectOnboardingLink = createStripeConnectOnboardingLink
 exports.refreshStripeConnectStatus = refreshStripeConnectStatus
+exports.createCreatorWithdrawalRequest = createCreatorWithdrawalRequest
+exports.auditCreatorPayoutLedger = auditCreatorPayoutLedger
 exports.claimFreeProduct = claimFreeProduct
 exports.createProductDownloadUrl = createProductDownloadUrl
 exports.createProductDownloadLink = createProductDownloadLink

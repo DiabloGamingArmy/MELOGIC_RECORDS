@@ -832,14 +832,16 @@ function getPricingSettings() {
     defaultCurrency: 'USD',
     supportedCurrencies: ['USD'],
     platformFeeLabel: 'Melogic Records Fee',
-    platformFeeBps: 1500,
+    defaultPlatformFeeBps: 1000,
+    proPlatformFeeBps: 400,
+    platformFeeBps: 1000,
     processorFeeLabel: 'Stripe Fee',
     processorPercentBps: 290,
     processorFixedFeeCents: 30,
     salesMilestones: [100, 1000, 100000],
     transactionNotice: {
       title: 'Transactions Notice:',
-      commission: 'Commission: Our platform applies a standard 15% commission on all digital product sales.',
+      commission: 'Commission: Our platform applies a standard 10% commission on digital product sales, with a 4% rate for active Pro creators.',
       processingFees: 'Processing Fees: Transactions are subject to standard third-party processing fees, which are deducted prior to payout.',
       supportedMethods: 'Supported Methods: Buyers can purchase via Credit Card, Apple Pay, and PayPal. Sellers can receive payouts via Direct Deposit or PayPal.'
     }

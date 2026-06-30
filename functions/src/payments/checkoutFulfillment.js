@@ -6,6 +6,7 @@ const {
   allocateGrossAmounts,
   creatorLedgerPayload,
   earningsHoldDays,
+  getSellerPlatformFeeBps,
   ledgerEntryId,
   loadCreatorEarningsConfig,
   rebuildCreatorEarningsSummaries
@@ -209,6 +210,30 @@ function orderItemForProduct(order = {}, productId = '') {
   return (Array.isArray(order.items) ? order.items : []).find((item) => cleanString(item?.productId || '', 180) === productId) || {}
 }
 
+function platformRevenuePayload({
+  creatorLedger = {},
+  orderId = '',
+  productId = '',
+  stripeCheckoutSessionId = '',
+  now
+} = {}) {
+  return {
+    source: 'creator_ledger',
+    orderId: cleanString(orderId, 180),
+    productId: cleanString(productId, 180),
+    creatorUid: cleanString(creatorLedger.creatorUid || '', 180),
+    buyerUid: cleanString(creatorLedger.buyerUid || '', 180),
+    stripeCheckoutSessionId: cleanString(stripeCheckoutSessionId || creatorLedger.stripeCheckoutSessionId || '', 180),
+    grossAmount: Math.max(0, Math.round(Number(creatorLedger.grossAmount || 0))),
+    platformFeeAmount: Math.max(0, Math.round(Number(creatorLedger.platformFeeAmount || 0))),
+    platformFeeBps: Math.max(0, Math.round(Number(creatorLedger.platformFeeBps || 0))),
+    currency: cleanString(creatorLedger.currency || 'USD', 12).toUpperCase(),
+    status: 'earned',
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
 function purchaseAccessPayload({
   uid = '',
   productId = '',
@@ -267,6 +292,16 @@ async function fulfillPaidCheckout({
   const safeEventId = cleanString(eventId || `session_${context.stripeSessionId}`, 180).replaceAll('/', '_')
   const eventRef = database.collection('stripeWebhookEvents').doc(safeEventId)
   const earningsConfig = await loadCreatorEarningsConfig(database)
+  const productLookup = await Promise.all(context.productIds.map((productId) => database.collection('products').doc(productId).get()))
+  const productOwnerUids = productLookup.map((productSnap, index) => {
+    const product = productSnap.exists ? productSnap.data() || {} : {}
+    const orderItem = orderItemForProduct(context.order, context.productIds[index])
+    return cleanString(product.artistId || orderItem.creatorUid || orderItem.artistId || orderItem.productSnapshot?.creatorUid || '', 180)
+  })
+  const feeBpsByCreatorUid = new Map()
+  await Promise.all([...new Set(productOwnerUids.filter(Boolean))].map(async (creatorUid) => {
+    feeBpsByCreatorUid.set(creatorUid, await getSellerPlatformFeeBps(database, creatorUid, earningsConfig))
+  }))
   const availableAt = admin.firestore.Timestamp.fromMillis(
     Date.now() + (earningsHoldDays() * 24 * 60 * 60 * 1000)
   )
@@ -278,7 +313,10 @@ async function fulfillPaidCheckout({
     const ledgerRefs = context.productIds.map((productId) => (
       database.collection('creatorLedger').doc(ledgerEntryId(context.orderId, productId))
     ))
-    const refs = [context.orderRef, eventRef, ...productRefs, ...entitlementRefs, ...libraryRefs, ...ledgerRefs]
+    const platformRevenueRefs = context.productIds.map((productId) => (
+      database.collection('platformRevenueLedger').doc(ledgerEntryId(context.orderId, productId))
+    ))
+    const refs = [context.orderRef, eventRef, ...productRefs, ...entitlementRefs, ...libraryRefs, ...ledgerRefs, ...platformRevenueRefs]
     const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)))
     const orderSnap = snapshots[0]
     if (!orderSnap.exists) throw new Error('Checkout order disappeared during fulfillment.')
@@ -365,7 +403,7 @@ async function fulfillPaidCheckout({
         }, { merge: true })
       }
 
-      const creatorUid = snapshot.creatorUid
+      const creatorUid = payload.productSnapshot.creatorUid
       if (!creatorUid || creatorUid === context.uid) {
         missingCreatorProductIds.push(productId)
       } else {
@@ -377,7 +415,7 @@ async function fulfillPaidCheckout({
           stripeCheckoutSessionId: context.stripeSessionId,
           grossAmount: grossAmounts[index] || 0,
           currency: orderFields.currency,
-          feeBps: earningsConfig.platformFeeBps,
+          feeBps: feeBpsByCreatorUid.get(creatorUid) ?? earningsConfig.defaultPlatformFeeBps,
           feeConfigSource: earningsConfig.source,
           feeConfigVersion: earningsConfig.version,
           feeMode: earningsConfig.feeMode,
@@ -405,6 +443,13 @@ async function fulfillPaidCheckout({
           creatorUids.add(creatorUid)
           ledgerEntryIds.push(ledgerRefs[index].id)
           transaction.set(ledgerRefs[index], ledgerPayload)
+          transaction.set(platformRevenueRefs[index], platformRevenuePayload({
+            creatorLedger: ledgerPayload,
+            orderId: context.orderId,
+            productId,
+            stripeCheckoutSessionId: context.stripeSessionId,
+            now
+          }))
         }
       }
     })
@@ -513,6 +558,7 @@ module.exports = {
     accessWriteNeeded,
     normalizeProductIds,
     paymentIntentId,
+    platformRevenuePayload,
     productSnapshot,
     purchaseAccessPayload,
     stripeAmount,
