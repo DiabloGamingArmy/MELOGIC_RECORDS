@@ -41,7 +41,10 @@ function stripeSecretMode(secret = '') {
 function assertStripeSecret(secret = '') {
   const mode = stripeSecretMode(secret)
   if (!['test', 'live'].includes(mode)) {
-    throw new HttpsError('failed-precondition', 'Stripe payouts are not configured.')
+    throw new HttpsError('failed-precondition', 'Stripe payouts are not configured correctly.', {
+      stage: 'config',
+      safeMessage: 'Stripe payouts are not configured correctly.'
+    })
   }
   const expectedMode = cleanString(process.env.STRIPE_MODE || '', 20).toLowerCase()
   if (expectedMode && ['test', 'live'].includes(expectedMode) && expectedMode !== mode) {
@@ -72,6 +75,16 @@ function stripeErrorSummary(error = {}) {
   }
 }
 
+function safeStripeConnectMessage(stage = 'unknown', stripe = {}) {
+  const cleanStage = cleanString(stage, 80)
+  const stripeType = cleanString(stripe.type || '', 120)
+  if (cleanStage === 'config') return 'Stripe payouts are not configured correctly.'
+  if (cleanStage === 'account_creation' && stripeType === 'StripeInvalidRequestError') {
+    return 'Stripe Connect setup may be incomplete for this platform. Please contact support with the Stripe request ID below.'
+  }
+  return 'Stripe onboarding could not be opened. Please try again or contact support.'
+}
+
 function stripeConnectLog(level = 'info', stage = '', message = '', data = {}) {
   const payload = {
     stage: cleanString(stage, 80),
@@ -88,7 +101,7 @@ function safeErrorDetails(stage = 'unknown', error = {}) {
     stripeCode: stripe.code,
     stripeParam: stripe.param,
     stripeRequestId: stripe.requestId,
-    safeMessage: stripe.message || cleanString(error.message || 'Stripe request failed.', 500)
+    safeMessage: safeStripeConnectMessage(stage, stripe)
   }
 }
 
@@ -260,6 +273,41 @@ function isHttpsUrl(value = '') {
   }
 }
 
+function validateStripeConnectPreflight({ secret = '', publicSiteUrl = '', uid = '', stage = 'config' } = {}) {
+  const stripeSecretMode = assertStripeSecret(secret)
+  const siteUrl = cleanString(publicSiteUrl, 500).replace(/\/+$/, '')
+  let siteUrlHost = ''
+  try {
+    siteUrlHost = new URL(siteUrl).hostname
+  } catch {
+    siteUrlHost = ''
+  }
+
+  stripeConnectLog('info', stage, 'Stripe Connect preflight check', {
+    uid,
+    stripeSecretMode,
+    publicSiteUrlHost: siteUrlHost
+  })
+
+  if (!isHttpsUrl(siteUrl)) {
+    stripeConnectLog('error', 'config', 'PUBLIC_SITE_URL must be an absolute HTTPS URL', {
+      uid,
+      stripeSecretMode,
+      publicSiteUrlHost: siteUrlHost
+    })
+    throw new HttpsError('failed-precondition', 'Stripe payouts are not configured correctly.', {
+      stage: 'config',
+      safeMessage: 'Stripe payouts are not configured correctly.'
+    })
+  }
+
+  return {
+    stripeSecretMode,
+    livemode: stripeSecretMode === 'live',
+    siteUrl
+  }
+}
+
 async function acquireAccountCreationLock({ database, uid = '', livemode = false } = {}) {
   const privateRef = privateConnectRef(database, uid)
   return database.runTransaction(async (transaction) => {
@@ -295,14 +343,21 @@ async function ensureStripeConnectAccount({
   stripe,
   uid = '',
   email = '',
-  secret = ''
+  secret = '',
+  publicSiteUrl = ''
 } = {}) {
   const userId = cleanString(uid, 180)
   if (!userId || userId.includes('/')) throw new HttpsError('unauthenticated', 'You must be signed in.')
 
   const privateRef = privateConnectRef(database, userId)
-  const secretMode = assertStripeSecret(secret)
-  const livemode = secretMode === 'live'
+  const preflight = validateStripeConnectPreflight({
+    secret,
+    publicSiteUrl,
+    uid: userId,
+    stage: 'account_creation_preflight'
+  })
+  const secretMode = preflight.stripeSecretMode
+  const livemode = preflight.livemode
   stripeConnectLog('info', 'account_lookup', 'reading connected account binding', {
     uid: userId,
     stripeSecretMode: secretMode
@@ -465,7 +520,13 @@ async function createAccountForRequest(request) {
   })
 
   const secret = STRIPE_SECRET_KEY.value()
-  const secretMode = assertStripeSecret(secret)
+  const preflight = validateStripeConnectPreflight({
+    secret,
+    publicSiteUrl: PUBLIC_SITE_URL.value(),
+    uid,
+    stage: 'config'
+  })
+  const secretMode = preflight.stripeSecretMode
   stripeConnectLog('info', 'config', 'Stripe key mode detected', {
     uid,
     stripeSecretMode: secretMode
@@ -476,7 +537,8 @@ async function createAccountForRequest(request) {
     stripe,
     uid,
     email: authUser?.email || request.auth?.token?.email || '',
-    secret
+    secret,
+    publicSiteUrl: preflight.siteUrl
   })
 }
 
@@ -531,9 +593,15 @@ const createStripeConnectOnboardingLink = onCall(
     try {
       const result = await createAccountForRequest(request)
       const secret = STRIPE_SECRET_KEY.value()
-      const secretMode = assertStripeSecret(secret)
+      const preflight = validateStripeConnectPreflight({
+        secret,
+        publicSiteUrl: PUBLIC_SITE_URL.value(),
+        uid,
+        stage: 'config'
+      })
+      const secretMode = preflight.stripeSecretMode
       const stripe = new Stripe(secret)
-      const siteUrl = PUBLIC_SITE_URL.value().replace(/\/+$/, '')
+      const siteUrl = preflight.siteUrl
       const returnUrl = `${siteUrl}/account/billing-payouts?stripeConnect=return`
       const refreshUrl = `${siteUrl}/account/billing-payouts?stripeConnect=refresh`
       if (!isHttpsUrl(returnUrl) || !isHttpsUrl(refreshUrl)) {
@@ -656,10 +724,12 @@ module.exports = {
     stripeErrorSummary,
     stripeSecretMode,
     stripeLivemode,
+    validateStripeConnectPreflight,
     accountMatchesUid,
     accountIdPreview,
     findExistingStripeConnectAccount,
     safeErrorDetails,
+    safeStripeConnectMessage,
     isHttpsUrl
   }
 }

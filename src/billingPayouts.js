@@ -17,6 +17,7 @@ const state = {
   actioning: false,
   refreshing: false,
   error: '',
+  errorDetails: null,
   notice: '',
   connect: null,
   earningsSummary: null
@@ -111,6 +112,37 @@ function requirementsMarkup() {
   `).join('')
 }
 
+function safeErrorDetails(error = {}) {
+  const details = error?.details && typeof error.details === 'object' ? error.details : {}
+  return {
+    stage: String(details.stage || '').trim(),
+    stripeRequestId: String(details.stripeRequestId || '').trim(),
+    safeMessage: String(details.safeMessage || '').trim(),
+    stripeType: String(details.stripeType || '').trim()
+  }
+}
+
+function onboardingErrorMessage(error = {}) {
+  const code = String(error?.code || '')
+  const details = safeErrorDetails(error)
+  if (code.includes('unauthenticated')) return 'Please sign in again to set up payouts.'
+  if (code.includes('failed-precondition') || details.stage === 'config') return 'Stripe payouts are not configured correctly.'
+  if (details.safeMessage) return details.safeMessage
+  if (details.stage === 'account_creation' && details.stripeType === 'StripeInvalidRequestError') {
+    return 'Stripe Connect setup may be incomplete. Please contact support.'
+  }
+  return 'Stripe onboarding could not be opened. Please try again.'
+}
+
+function errorDetailsMarkup() {
+  const details = state.errorDetails || {}
+  const lines = []
+  if (details.stage) lines.push(`Stage: ${details.stage}`)
+  if (details.stripeRequestId) lines.push(`Stripe request ID: ${details.stripeRequestId}`)
+  if (!lines.length) return ''
+  return `<div class="payout-error-details">${lines.map((line) => `<small>${escapeHtml(line)}</small>`).join('')}</div>`
+}
+
 function renderSignedOut() {
   return `
     <section class="account-panel account-empty">
@@ -137,7 +169,7 @@ function renderPage() {
       </div>
 
       ${state.notice ? `<div class="account-success-banner" role="status">${escapeHtml(state.notice)}</div>` : ''}
-      ${state.error ? `<div class="payout-error" role="alert">${escapeHtml(state.error)}</div>` : ''}
+      ${state.error ? `<div class="payout-error" role="alert">${escapeHtml(state.error)}${errorDetailsMarkup()}</div>` : ''}
 
       <section class="payout-setup-card is-${presentation.tone}">
         <div>
@@ -217,6 +249,7 @@ function isStripeOnboardingUrl(value = '') {
 async function startOnboarding() {
   state.actioning = true
   state.error = ''
+  state.errorDetails = null
   render()
   try {
     const result = await createStripeConnectOnboardingLink()
@@ -228,14 +261,8 @@ async function startOnboarding() {
       message: error?.message || '',
       details: error?.details || null
     })
-    const code = String(error?.code || '')
-    if (code.includes('unauthenticated')) {
-      state.error = 'Please sign in again to set up payouts.'
-    } else if (code.includes('failed-precondition')) {
-      state.error = 'Payout setup is temporarily unavailable.'
-    } else {
-      state.error = 'Stripe onboarding could not be opened. Please try again.'
-    }
+    state.errorDetails = safeErrorDetails(error)
+    state.error = onboardingErrorMessage(error)
     state.actioning = false
     render()
   }
@@ -244,6 +271,7 @@ async function startOnboarding() {
 async function refreshStatus({ returnedFromStripe = false } = {}) {
   state.refreshing = true
   state.error = ''
+  state.errorDetails = null
   render()
   try {
     const result = await refreshStripeConnectStatus()
@@ -286,6 +314,7 @@ async function load(user) {
   } catch (error) {
     console.error('[billing-payouts] load failed', error)
     state.error = 'Billing and payout information could not be loaded.'
+    state.errorDetails = null
     state.loading = false
     render()
   }
