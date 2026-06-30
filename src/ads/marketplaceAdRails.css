@@ -1,0 +1,53 @@
+.marketplace-ad-rails-layout {
+  display: block;
+}
+
+.marketplace-ad-rail {
+  display: none;
+}
+
+.adsense-display-slot {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 280px;
+  border: 1px solid rgba(124, 141, 183, 0.22);
+  border-radius: var(--ml-radius-md, 0.75rem);
+  background: rgba(8, 12, 22, 0.72);
+  padding: 0.55rem;
+}
+
+.adsense-display-slot__label {
+  color: var(--ml-text-muted, #9fb2df);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+@media (min-width: 1280px) {
+  .marketplace-ad-rails-layout {
+    display: grid;
+    grid-template-columns: minmax(120px, 160px) minmax(0, var(--section-max, 1180px)) minmax(120px, 160px);
+    gap: 1rem;
+    align-items: start;
+    max-width: min(100% - 2rem, 1540px);
+    margin: 0 auto;
+  }
+
+  .marketplace-ad-rails-layout > [data-marketplace-root] {
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .marketplace-ad-rail {
+    position: sticky;
+    top: 96px;
+    display: grid;
+    min-width: 0;
+  }
+
+  .marketplace-ad-rail:empty {
+    visibility: hidden;
+  }
+}

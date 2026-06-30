@@ -1,5 +1,6 @@
 import './styles/base.css'
 import './styles/products.css'
+import { mountMarketplaceAdRails } from './ads/MarketplaceAdRails'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { attachHeroVideo } from './components/heroVideo'
@@ -628,7 +629,7 @@ app.innerHTML = `
     </section>
 
     <section class="section products-catalog">
-      <div class="section-inner">
+      <div class="section-inner" data-marketplace-root>
         <div class="products-filter-row" aria-label="Catalog controls">
           <label class="filter-control filter-search">
             <span>Search</span>
@@ -719,6 +720,7 @@ function initProductsHeroVideo() {
 const logoReadyPromise = initShellChrome()
 const heroReadyPromise = initProductsHeroVideo()
 createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise })
+mountMarketplaceAdRails()
 bindCatalogControls()
 setupInfiniteScroll()
 loadNextPage({ reset: true })
