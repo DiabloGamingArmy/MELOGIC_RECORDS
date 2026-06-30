@@ -16,9 +16,35 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci && npm run check
-      - uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MELOGIC_RECORDS }}
-          channelId: live
-          projectId: melogic-records
+      - name: Deploy to Firebase Hosting
+        shell: bash
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MELOGIC_RECORDS }}
+          FIREBASE_TOOLS_VERSION: 14.17.0
+        run: |
+          set -o pipefail
+
+          service_account_file="$RUNNER_TEMP/firebase-service-account.json"
+          deploy_log="$RUNNER_TEMP/firebase-hosting-deploy.log"
+
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > "$service_account_file"
+          export GOOGLE_APPLICATION_CREDENTIALS="$service_account_file"
+
+          set +e
+          npx -y "firebase-tools@$FIREBASE_TOOLS_VERSION" deploy --only hosting --project melogic-records 2>&1 | tee "$deploy_log"
+          deploy_status=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$deploy_status" -eq 0 ]; then
+            exit 0
+          fi
+
+          active_version_error_count=$(grep -Ec "Can't release to projects/-/sites/melogic-records/channels/live: supplied version .* is the current active version" "$deploy_log" || true)
+          firebase_error_count=$(grep -Ec "(^|[[:space:]])Error:" "$deploy_log" || true)
+
+          if [ "$active_version_error_count" -gt 0 ] && [ "$firebase_error_count" -le "$active_version_error_count" ]; then
+            echo "Firebase Hosting reports this version is already live; treating the idempotent live release retry as successful."
+            exit 0
+          fi
+
+          exit "$deploy_status"

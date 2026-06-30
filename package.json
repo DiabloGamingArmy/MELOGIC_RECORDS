@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check": "node scripts/check-config.mjs && npm run build",
+    "verify:ads": "npm run build && node scripts/verify-ads-txt.mjs",
     "dsp:build": "node scripts/build-soura-dsp-wasm.mjs",
     "dsp:clean": "node scripts/clean-soura-dsp-wasm.mjs",
     "dsp:verify": "node scripts/verify-soura-wasm-dsp.mjs",
