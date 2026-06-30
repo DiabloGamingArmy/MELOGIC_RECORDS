@@ -5,6 +5,7 @@ import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { authRoute, ROUTES } from './utils/routes'
 import { accountDateIso, listUserLibraryItems } from './data/accountCommerceService'
+import { clearCart } from './data/cartService'
 import { createProductDownloadLink } from './data/entitlementService'
 import { reconcileCheckoutSession } from './data/checkoutService'
 import { beginProductDownloads, productDownloadDialogMarkup } from './components/productDownloadDialog'
@@ -25,6 +26,8 @@ const state = {
   reconciliationAttempted: false,
   downloadDialog: { open: false, loading: false, ready: false, error: '', productId: '', title: '', sizeBytes: 0, fileCount: 0 }
 }
+
+if (initialPurchaseSuccess) clearCart()
 
 const filters = [
   { key: 'all', label: 'All' },
@@ -267,6 +270,7 @@ async function loadLibrary(user) {
       state.reconciliationAttempted = true
       try {
         await reconcileCheckoutSession(initialCheckoutSessionId)
+        clearCart()
       } catch (error) {
         console.error('[library] checkout reconciliation failed', {
           code: error?.code,
