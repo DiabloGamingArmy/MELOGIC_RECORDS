@@ -323,7 +323,7 @@ function paidSession(overrides = {}) {
   }
 }
 
-function checkoutSeed({ creatorUid = 'seller-1', orderId = 'order-1', productId = 'product-1' } = {}) {
+function checkoutSeed({ creatorUid = 'seller-1', orderId = 'order-1', productId = 'product-1', product = {} } = {}) {
   return {
     [`orders/${orderId}`]: {
       uid: 'buyer-1',
@@ -365,7 +365,8 @@ function checkoutSeed({ creatorUid = 'seller-1', orderId = 'order-1', productId 
       productType: 'Sample Pack',
       marketplaceProductType: 'digital',
       visibility: 'public',
-      status: 'published'
+      status: 'published',
+      ...product
     }
   }
 }
@@ -384,6 +385,9 @@ test('paid Stripe session fulfills order, access, ledger and summaries', async (
   assert.equal(result.orderMarkedPaid, true)
   assert.deepEqual(result.grantedProductIds, ['product-1'])
   assert.deepEqual(result.ledgerEntryIds, ['order-1_product-1'])
+  assert.deepEqual(result.sellerSaleIds, ['order-1_product-1'])
+  assert.deepEqual(result.platformRevenueEntryIds, ['order-1_product-1'])
+  assert.equal(result.buyerOrderMirrorWritten, true)
   assert.deepEqual(result.missingCreatorProductIds, [])
 
   const order = database.data('orders/order-1')
@@ -394,20 +398,40 @@ test('paid Stripe session fulfills order, access, ledger and summaries', async (
 
   assert.equal(database.data('users/buyer-1/libraryItems/product-1').status, 'active')
   assert.equal(database.data('users/buyer-1/entitlements/product-1').status, 'active')
+  assert.equal(database.data('users/buyer-1/libraryItems/product-1').sellerUid, 'seller-1')
+  assert.equal(database.data('users/buyer-1/orders/order-1').paymentStatus, 'paid')
+  assert.equal(database.data('users/buyer-1/orders/order-1').amountTotalCents, 1000)
 
   const ledger = database.data('creatorLedger/order-1_product-1')
   assert.equal(ledger.creatorUid, 'seller-1')
+  assert.equal(ledger.sellerUid, 'seller-1')
   assert.equal(ledger.buyerUid, 'buyer-1')
   assert.equal(ledger.grossAmount, 1000)
   assert.equal(ledger.platformFeeAmount, 100)
   assert.equal(ledger.stripeFeeAmount, 59)
   assert.equal(ledger.creatorNetAmount, 841)
   assert.equal(ledger.status, 'pending')
+  assert.equal(ledger.source, 'stripe_checkout_fulfillment')
+  assert.equal(ledger.productSnapshot.title, 'Paid Loop Kit')
 
-  assert.equal(database.data('platformRevenueLedger/order-1_product-1').platformFeeAmount, 100)
+  const sale = database.data('users/seller-1/sales/order-1_product-1')
+  assert.equal(sale.status, 'paid')
+  assert.equal(sale.sellerUid, 'seller-1')
+  assert.equal(sale.grossAmountCents, 1000)
+  assert.equal(sale.platformFeeAmountCents, 100)
+  assert.equal(sale.creatorNetAmountCents, 841)
+  assert.equal(sale.sellerPayoutStatus, 'pending')
+
+  const platformRevenue = database.data('platformRevenueLedger/order-1_product-1')
+  assert.equal(platformRevenue.platformFeeAmount, 100)
+  assert.equal(platformRevenue.platformFeeAmountCents, 100)
+  assert.equal(platformRevenue.grossAmountCents, 1000)
+  assert.equal(platformRevenue.sellerUid, 'seller-1')
+  assert.equal(platformRevenue.source, 'stripe_checkout')
   assert.deepEqual(database.data('users/buyer-1/commerceSummary/current').spendByCurrency, { USD: 1000 })
   assert.equal(database.data('users/buyer-1/commerceSummary/current').paidOrderCount, 1)
   assert.deepEqual(database.data('users/seller-1/earningsSummary/current').pendingByCurrency, { USD: 841 })
+  assert.deepEqual(database.data('platformRevenueSummary/current').earnedByCurrency, { USD: 100 })
 })
 
 test('duplicate paid Stripe fulfillment is a safe no-op', async () => {
@@ -430,6 +454,10 @@ test('duplicate paid Stripe fulfillment is a safe no-op', async () => {
   assert.deepEqual(result.duplicateProductIds, ['product-1'])
   assert.deepEqual(result.ledgerEntryIds, [])
   assert.deepEqual(result.duplicateLedgerEntryIds, ['order-1_product-1'])
+  assert.deepEqual(result.sellerSaleIds, [])
+  assert.deepEqual(result.duplicateSellerSaleIds, ['order-1_product-1'])
+  assert.deepEqual(result.platformRevenueEntryIds, [])
+  assert.deepEqual(result.duplicatePlatformRevenueEntryIds, ['order-1_product-1'])
   assert.deepEqual(database.data('users/buyer-1/commerceSummary/current').spendByCurrency, { USD: 1000 })
   assert.deepEqual(database.data('users/seller-1/earningsSummary/current').pendingByCurrency, { USD: 841 })
 })
@@ -449,6 +477,8 @@ test('buyer reconcile path can repair checkout if webhook failed', async () => {
   assert.deepEqual(result.grantedProductIds, ['product-1'])
   assert.equal(database.data('orders/order-1').fulfillmentSource, 'buyer_checkout_reconcile')
   assert.equal(database.data('users/buyer-1/libraryItems/product-1').orderId, 'order-1')
+  assert.equal(database.data('users/buyer-1/orders/order-1').paymentStatus, 'paid')
+  assert.equal(database.data('users/seller-1/sales/order-1_product-1').status, 'paid')
 })
 
 test('missing creator UID does not block buyer fulfillment', async () => {
@@ -465,7 +495,33 @@ test('missing creator UID does not block buyer fulfillment', async () => {
   assert.deepEqual(result.missingCreatorProductIds, ['product-1'])
   assert.equal(database.data('orders/order-1').paymentStatus, 'paid')
   assert.equal(database.data('users/buyer-1/libraryItems/product-1').status, 'active')
+  assert.equal(database.data('users/buyer-1/orders/order-1').paymentStatus, 'paid')
   assert.equal(database.data('creatorLedger/order-1_product-1'), undefined)
+  assert.equal(database.data('users/seller-1/sales/order-1_product-1'), undefined)
+})
+
+test('ambiguous downloadable paid products still grant digital access', async () => {
+  const seed = checkoutSeed({
+    product: {
+      marketplaceProductType: '',
+      fulfillment: {},
+      productType: 'Loop Kit',
+      primaryDownloadPath: 'products/product-1/files/loops.zip'
+    }
+  })
+  seed['orders/order-1'].items[0].fulfillment = {}
+  seed['orders/order-1'].items[0].productSnapshot.productType = 'Loop Kit'
+  const database = new FakeFirestore(seed)
+  const result = await checkoutModule.fulfillPaidCheckout({
+    database,
+    session: paidSession(),
+    eventId: 'evt_ambiguous_download',
+    eventType: 'checkout.session.completed'
+  })
+
+  assert.deepEqual(result.grantedProductIds, ['product-1'])
+  assert.equal(database.data('users/buyer-1/libraryItems/product-1').status, 'active')
+  assert.equal(database.data('users/buyer-1/entitlements/product-1').status, 'active')
 })
 
 test('library success return clears cart only on purchase success path', () => {
@@ -669,9 +725,11 @@ test('platform revenue payload tracks company cut separately from creator balanc
     now: 'now'
   })
   assert.equal(payload.platformFeeAmount, 100)
+  assert.equal(payload.platformFeeAmountCents, 100)
   assert.equal(payload.grossAmount, 1000)
+  assert.equal(payload.grossAmountCents, 1000)
   assert.equal(payload.status, 'earned')
-  assert.equal(payload.source, 'creator_ledger')
+  assert.equal(payload.source, 'stripe_checkout')
 })
 
 test('creator withdrawal helpers enforce availability and instant fee math', () => {

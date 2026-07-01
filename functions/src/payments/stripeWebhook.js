@@ -131,6 +131,8 @@ exports.stripeWebhook = onRequest(
               repairedProductIds: result.repairedProductIds,
               ledgerEntryIds: result.ledgerEntryIds,
               repairedLedgerEntryIds: result.repairedLedgerEntryIds,
+              sellerSaleIds: result.sellerSaleIds,
+              platformRevenueEntryIds: result.platformRevenueEntryIds,
               livemode: session.livemode === true,
               amountTotal: session.amount_total || 0,
               currency: session.currency || ''
@@ -177,7 +179,12 @@ exports.stripeWebhook = onRequest(
         duplicateProductIds: result.duplicateProductIds,
         ledgerEntryIds: result.ledgerEntryIds,
         repairedLedgerEntryIds: result.repairedLedgerEntryIds,
+        sellerSaleIds: result.sellerSaleIds,
+        repairedSellerSaleIds: result.repairedSellerSaleIds,
+        platformRevenueEntryIds: result.platformRevenueEntryIds,
         missingCreatorProductIds: result.missingCreatorProductIds,
+        buyerOrderMirrorWritten: result.buyerOrderMirrorWritten === true,
+        skippedReasons: result.skippedReasons,
         orderMarkedPaid: result.orderMarkedPaid === true
       })
       res.status(200).json({ received: true, processed: result.changed, ...result })

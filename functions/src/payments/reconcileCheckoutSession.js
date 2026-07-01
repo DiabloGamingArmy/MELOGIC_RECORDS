@@ -92,6 +92,9 @@ const reconcileCheckoutSession = onCall({
           orderId: result.orderId,
           stripeSessionId: result.stripeSessionId,
           productIds: result.productIds,
+          sellerSaleIds: result.sellerSaleIds,
+          ledgerEntryIds: result.ledgerEntryIds,
+          platformRevenueEntryIds: result.platformRevenueEntryIds,
           amountTotalCents: session.amount_total ?? null,
           currency: session.currency || ''
         }
@@ -113,7 +116,12 @@ const reconcileCheckoutSession = onCall({
       duplicateProductIds: result.duplicateProductIds,
       ledgerEntryIds: result.ledgerEntryIds,
       repairedLedgerEntryIds: result.repairedLedgerEntryIds,
+      sellerSaleIds: result.sellerSaleIds,
+      repairedSellerSaleIds: result.repairedSellerSaleIds,
+      platformRevenueEntryIds: result.platformRevenueEntryIds,
       missingCreatorProductIds: result.missingCreatorProductIds,
+      buyerOrderMirrorWritten: result.buyerOrderMirrorWritten === true,
+      skippedReasons: result.skippedReasons,
       orderMarkedPaid: result.orderMarkedPaid === true
     })
     return { ok: true, ...result }

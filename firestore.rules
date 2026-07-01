@@ -1013,6 +1013,11 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /sales/{saleId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /adminNotes/{noteId} {
         allow read, write: if false;
       }
