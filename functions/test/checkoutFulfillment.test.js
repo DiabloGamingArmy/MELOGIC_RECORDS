@@ -388,6 +388,8 @@ test('paid Stripe session fulfills order, access, ledger and summaries', async (
   assert.deepEqual(result.sellerSaleIds, ['order-1_product-1'])
   assert.deepEqual(result.platformRevenueEntryIds, ['order-1_product-1'])
   assert.equal(result.buyerOrderMirrorWritten, true)
+  assert.equal(result.libraryWriteCount, 1)
+  assert.equal(result.entitlementWriteCount, 1)
   assert.deepEqual(result.missingCreatorProductIds, [])
 
   const order = database.data('orders/order-1')
@@ -416,6 +418,7 @@ test('paid Stripe session fulfills order, access, ledger and summaries', async (
 
   const sale = database.data('users/seller-1/sales/order-1_product-1')
   assert.equal(sale.status, 'paid')
+  assert.equal(sale.saleId, 'order-1_product-1')
   assert.equal(sale.sellerUid, 'seller-1')
   assert.equal(sale.grossAmountCents, 1000)
   assert.equal(sale.platformFeeAmountCents, 100)
@@ -452,6 +455,8 @@ test('duplicate paid Stripe fulfillment is a safe no-op', async () => {
   assert.equal(result.changed, false)
   assert.deepEqual(result.grantedProductIds, [])
   assert.deepEqual(result.duplicateProductIds, ['product-1'])
+  assert.equal(result.libraryWriteCount, 0)
+  assert.equal(result.entitlementWriteCount, 0)
   assert.deepEqual(result.ledgerEntryIds, [])
   assert.deepEqual(result.duplicateLedgerEntryIds, ['order-1_product-1'])
   assert.deepEqual(result.sellerSaleIds, [])
@@ -475,6 +480,8 @@ test('buyer reconcile path can repair checkout if webhook failed', async () => {
   assert.equal(result.changed, true)
   assert.equal(result.orderMarkedPaid, true)
   assert.deepEqual(result.grantedProductIds, ['product-1'])
+  assert.equal(result.libraryWriteCount, 1)
+  assert.equal(result.entitlementWriteCount, 1)
   assert.equal(database.data('orders/order-1').fulfillmentSource, 'buyer_checkout_reconcile')
   assert.equal(database.data('users/buyer-1/libraryItems/product-1').orderId, 'order-1')
   assert.equal(database.data('users/buyer-1/orders/order-1').paymentStatus, 'paid')
@@ -492,6 +499,8 @@ test('missing creator UID does not block buyer fulfillment', async () => {
 
   assert.equal(result.orderMarkedPaid, true)
   assert.deepEqual(result.grantedProductIds, ['product-1'])
+  assert.equal(result.libraryWriteCount, 1)
+  assert.equal(result.entitlementWriteCount, 1)
   assert.deepEqual(result.missingCreatorProductIds, ['product-1'])
   assert.equal(database.data('orders/order-1').paymentStatus, 'paid')
   assert.equal(database.data('users/buyer-1/libraryItems/product-1').status, 'active')
@@ -524,11 +533,60 @@ test('ambiguous downloadable paid products still grant digital access', async ()
   assert.equal(database.data('users/buyer-1/entitlements/product-1').status, 'active')
 })
 
+test('physical-only paid products do not grant digital library access', async () => {
+  const seed = checkoutSeed({
+    product: {
+      title: 'Signed Vinyl',
+      productType: 'Vinyl',
+      marketplaceProductType: 'physical',
+      fulfillment: { type: 'physical' },
+      physical: {
+        enabled: true,
+        condition: 'New',
+        quantityAvailable: 3,
+        shipping: { mode: 'flat_rate', flatRateCents: 599 }
+      },
+      primaryDownloadPath: ''
+    }
+  })
+  seed['orders/order-1'].items[0] = {
+    ...seed['orders/order-1'].items[0],
+    title: 'Signed Vinyl',
+    fulfillment: { type: 'physical' },
+    productSnapshot: {
+      title: 'Signed Vinyl',
+      creatorName: 'Seller One',
+      creatorUid: 'seller-1',
+      productType: 'Vinyl',
+      marketplaceProductType: 'physical'
+    }
+  }
+  const database = new FakeFirestore(seed)
+  const result = await checkoutModule.fulfillPaidCheckout({
+    database,
+    session: paidSession(),
+    eventId: 'evt_physical_only',
+    eventType: 'checkout.session.completed'
+  })
+
+  assert.equal(result.orderMarkedPaid, true)
+  assert.deepEqual(result.grantedProductIds, [])
+  assert.equal(result.libraryWriteCount, 0)
+  assert.equal(result.entitlementWriteCount, 0)
+  assert.equal(database.data('users/buyer-1/libraryItems/product-1'), undefined)
+  assert.equal(database.data('users/buyer-1/entitlements/product-1'), undefined)
+  assert.equal(database.data('orders/order-1').items[0].entitlementStatus, 'not_applicable')
+  assert.equal(database.data('users/buyer-1/orders/order-1').paymentStatus, 'paid')
+  assert.equal(database.data('creatorLedger/order-1_product-1').creatorUid, 'seller-1')
+  assert.deepEqual(result.skippedReasons, [{ productId: 'product-1', reason: 'digital_access_not_required' }])
+})
+
 test('library success return clears cart only on purchase success path', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/library.js'), 'utf8')
   assert.match(source, /import\s+\{\s*clearCart\s*\}\s+from\s+'\.\/data\/cartService'/)
   assert.match(source, /if\s*\(\s*initialPurchaseSuccess\s*\)\s*clearCart\(\)/)
   assert.match(source, /await\s+reconcileCheckoutSession\(initialCheckoutSessionId\)[\s\S]{0,80}clearCart\(\)/)
+  assert.match(source, /Payment succeeded, but library access could not be verified/)
   assert.doesNotMatch(source, /checkout=cancelled[\s\S]{0,120}clearCart\(\)/)
 })
 

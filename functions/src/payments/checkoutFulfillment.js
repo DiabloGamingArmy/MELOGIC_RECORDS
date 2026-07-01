@@ -128,6 +128,56 @@ function accessWriteNeeded(snapshot, { orderId = '', stripeSessionId = '' } = {}
     || cleanString(data.acquisitionType || '', 80).toLowerCase() !== 'purchase'
 }
 
+function grantBuyerLibraryAccess({
+  transaction,
+  database,
+  buyerUid = '',
+  productId = '',
+  product = {},
+  orderItem = {},
+  orderId = '',
+  session = {},
+  now,
+  entitlementSnap = null,
+  librarySnap = null
+} = {}) {
+  const uid = cleanString(buyerUid, 180)
+  const safeProductId = cleanString(productId, 180)
+  if (!transaction || !database || !uid || uid.includes('/') || !safeProductId || safeProductId.includes('/')) {
+    throw new Error('A valid buyer and product are required to grant checkout access.')
+  }
+  const entitlementRef = database.doc(`users/${uid}/entitlements/${safeProductId}`)
+  const libraryRef = database.doc(`users/${uid}/libraryItems/${safeProductId}`)
+  const payload = purchaseAccessPayload({
+    uid,
+    productId: safeProductId,
+    product,
+    orderItem,
+    orderId,
+    session,
+    now
+  })
+  const existingEntitlement = entitlementSnap?.exists ? entitlementSnap.data() || {} : {}
+  const existingLibrary = librarySnap?.exists ? librarySnap.data() || {} : {}
+  transaction.set(entitlementRef, {
+    ...payload,
+    entitlementId: cleanString(existingEntitlement.entitlementId || `${uid}_${safeProductId}`, 380),
+    grantedAt: existingEntitlement.grantedAt || existingEntitlement.createdAt || now,
+    createdAt: existingEntitlement.createdAt || now
+  }, { merge: true })
+  transaction.set(libraryRef, {
+    ...payload,
+    entitlementId: cleanString(existingLibrary.entitlementId || existingEntitlement.entitlementId || `${uid}_${safeProductId}`, 380),
+    acquiredAt: existingLibrary.acquiredAt || existingLibrary.createdAt || now,
+    createdAt: existingLibrary.createdAt || now
+  }, { merge: true })
+  return {
+    entitlementPath: entitlementRef.path,
+    libraryItemPath: libraryRef.path,
+    payload
+  }
+}
+
 async function findOrderForSession(database, session = {}) {
   const stripeSessionId = cleanString(session.id || '', 180)
   const metadataOrderId = cleanString(session.metadata?.orderId || '', 180)
@@ -247,6 +297,11 @@ function paidLineRequiresDigitalAccess(product = {}, orderItem = {}) {
   return hasDigitalFulfillment({ ...product, ...orderItem }) || productLooksDownloadable(product, orderItem)
 }
 
+function safeDocumentId(value = '', max = 180) {
+  const id = cleanString(value, max)
+  return id && !id.includes('/') ? id : ''
+}
+
 function platformRevenuePayload({
   creatorLedger = {},
   orderId = '',
@@ -284,12 +339,14 @@ function platformRevenuePayload({
 function sellerSalePayload({
   creatorLedger = {},
   productSnapshot: snapshot = {},
+  saleId = '',
   orderId = '',
   productId = '',
   session = {},
   now
 } = {}) {
   return {
+    saleId: cleanString(saleId, 180),
     sellerUid: cleanString(creatorLedger.creatorUid || creatorLedger.sellerUid || '', 180),
     creatorUid: cleanString(creatorLedger.creatorUid || creatorLedger.sellerUid || '', 180),
     buyerUid: cleanString(creatorLedger.buyerUid || '', 180),
@@ -460,7 +517,7 @@ async function fulfillPaidCheckout({
   const productOwnerUids = productLookup.map((productSnap, index) => {
     const product = productSnap.exists ? productSnap.data() || {} : {}
     const orderItem = orderItemForProduct(context.order, context.productIds[index])
-    return cleanString(product.artistId || orderItem.creatorUid || orderItem.artistId || orderItem.productSnapshot?.creatorUid || '', 180)
+    return safeDocumentId(product.artistId || orderItem.creatorUid || orderItem.artistId || orderItem.productSnapshot?.creatorUid || '', 180)
   })
   const feeBpsByCreatorUid = new Map()
   await Promise.all([...new Set(productOwnerUids.filter(Boolean))].map(async (creatorUid) => {
@@ -542,6 +599,8 @@ async function fulfillPaidCheckout({
     const duplicatePlatformRevenueEntryIds = []
     const missingCreatorProductIds = []
     const skippedReasons = []
+    let libraryWriteCount = 0
+    let entitlementWriteCount = 0
     const creatorUids = new Set()
 
     context.productIds.forEach((productId, index) => {
@@ -573,6 +632,11 @@ async function fulfillPaidCheckout({
         sessionId: context.stripeSessionId,
         buyerUid: context.uid,
         productId,
+        productExists: productSnap.exists === true,
+        fulfillmentType: normalizeProductFulfillment({ ...product, ...orderItem }).type,
+        shouldGrantLibraryAccess: digitalRequired,
+        entitlementPath: entitlementRefs[index].path,
+        libraryItemPath: libraryRefs[index].path,
         digitalRequired,
         physicalRequired,
         creatorUid: payload.productSnapshot.creatorUid,
@@ -587,24 +651,22 @@ async function fulfillPaidCheckout({
         skippedReasons.push({ productId, reason: 'digital_access_not_required' })
       }
 
-      if (digitalRequired && entitlementNeedsWrite) {
-        const existing = entitlementSnap.exists ? entitlementSnap.data() || {} : {}
-        transaction.set(entitlementRefs[index], {
-          ...payload,
-          entitlementId: cleanString(existing.entitlementId || `${context.uid}_${productId}`, 380),
-          grantedAt: existing.grantedAt || existing.createdAt || now,
-          createdAt: existing.createdAt || now
-        }, { merge: true })
-      }
-
-      if (digitalRequired && libraryNeedsWrite) {
-        const existing = librarySnap.exists ? librarySnap.data() || {} : {}
-        transaction.set(libraryRefs[index], {
-          ...payload,
-          entitlementId: cleanString(existing.entitlementId || `${context.uid}_${productId}`, 380),
-          acquiredAt: existing.acquiredAt || existing.createdAt || now,
-          createdAt: existing.createdAt || now
-        }, { merge: true })
+      if (digitalRequired) {
+        grantBuyerLibraryAccess({
+          transaction,
+          database,
+          buyerUid: context.uid,
+          productId,
+          product,
+          orderItem,
+          orderId: context.orderId,
+          session,
+          now,
+          entitlementSnap,
+          librarySnap
+        })
+        if (entitlementNeedsWrite) entitlementWriteCount += 1
+        if (libraryNeedsWrite) libraryWriteCount += 1
       }
 
       if (physicalRequired && orderChanged) {
@@ -614,7 +676,7 @@ async function fulfillPaidCheckout({
         }, { merge: true })
       }
 
-      const creatorUid = payload.productSnapshot.creatorUid
+      const creatorUid = safeDocumentId(payload.productSnapshot.creatorUid, 180)
       if (!creatorUid || creatorUid === context.uid) {
         missingCreatorProductIds.push(productId)
         skippedReasons.push({ productId, reason: !creatorUid ? 'missing_creator_uid' : 'buyer_is_creator' })
@@ -636,6 +698,19 @@ async function fulfillPaidCheckout({
           productSnapshot: payload.productSnapshot,
           availableAt,
           now
+        })
+        logger.info('[checkout-fulfillment] seller accounting planned', {
+          orderId: context.orderId,
+          sessionId: context.stripeSessionId,
+          buyerUid: context.uid,
+          productId,
+          sellerUid: creatorUid,
+          grossAmount: ledgerPayload.grossAmount,
+          platformFee: ledgerPayload.platformFeeAmount,
+          creatorNet: ledgerPayload.creatorNetAmount,
+          ledgerPath: ledgerRefs[index].path,
+          salePath: saleRefs[index]?.path || '',
+          platformRevenuePath: platformRevenueRefs[index].path
         })
         if (ledgerSnap.exists) {
           duplicateLedgerEntryIds.push(ledgerRefs[index].id)
@@ -667,6 +742,7 @@ async function fulfillPaidCheckout({
         const salePayload = sellerSalePayload({
           creatorLedger: ledgerPayload,
           productSnapshot: payload.productSnapshot,
+          saleId,
           orderId: context.orderId,
           productId,
           session,
@@ -774,6 +850,8 @@ async function fulfillPaidCheckout({
       duplicatePlatformRevenueEntryIds,
       missingCreatorProductIds,
       buyerOrderMirrorWritten: !buyerOrderSnap.exists || orderChanged,
+      libraryWriteCount,
+      entitlementWriteCount,
       skippedReasons,
       processedAt: now,
       updatedAt: now
@@ -802,6 +880,8 @@ async function fulfillPaidCheckout({
       duplicatePlatformRevenueEntryIds,
       missingCreatorProductIds,
       buyerOrderMirrorWritten,
+      libraryWriteCount,
+      entitlementWriteCount,
       skippedReasons,
       creatorUids: [...creatorUids],
       orderMarkedPaid: true,
@@ -841,6 +921,8 @@ async function fulfillPaidCheckout({
     grantedCount: result.grantedProductIds.length,
     repairedCount: result.repairedProductIds.length,
     duplicateCount: result.duplicateProductIds.length,
+    libraryWriteCount: result.libraryWriteCount,
+    entitlementWriteCount: result.entitlementWriteCount,
     sellerSaleCount: result.sellerSaleIds.length,
     ledgerCount: result.ledgerEntryIds.length,
     platformRevenueCount: result.platformRevenueEntryIds.length,
@@ -856,6 +938,7 @@ module.exports = {
   resolveCheckoutContext,
   __test: {
     accessWriteNeeded,
+    grantBuyerLibraryAccess,
     normalizeProductIds,
     paymentIntentId,
     buyerOrderMirrorPayload,
