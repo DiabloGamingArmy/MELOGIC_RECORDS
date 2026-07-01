@@ -14,7 +14,7 @@ const { provisionUserAccount } = require('./src/users/provisionUserAccount')
 const { verifyRecaptchaEnterprise } = require('./src/security/verifyRecaptchaEnterprise')
 const { createCheckoutSession } = require('./src/payments/createCheckoutSession')
 const { stripeWebhook } = require('./src/payments/stripeWebhook')
-const { reconcileCheckoutSession } = require('./src/payments/reconcileCheckoutSession')
+const { reconcileCheckoutSession, repairPaidCheckoutAccess } = require('./src/payments/reconcileCheckoutSession')
 const { repairAdminCheckoutOrder } = require('./src/payments/repairCheckoutOrder')
 const { auditCheckoutSessionFulfillment } = require('./src/payments/auditCheckoutSessionFulfillment')
 const {
@@ -144,6 +144,7 @@ exports.setProductEngagement = setProductEngagement
 exports.createCheckoutSession = createCheckoutSession
 exports.stripeWebhook = stripeWebhook
 exports.reconcileCheckoutSession = reconcileCheckoutSession
+exports.repairPaidCheckoutAccess = repairPaidCheckoutAccess
 exports.repairAdminCheckoutOrder = repairAdminCheckoutOrder
 exports.auditCheckoutSessionFulfillment = auditCheckoutSessionFulfillment
 exports.createStripeConnectAccount = createStripeConnectAccount

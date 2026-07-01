@@ -23,6 +23,7 @@ const state = {
   search: '',
   purchaseSuccess: initialPurchaseSuccess,
   showPurchaseBanner: initialPurchaseSuccess,
+  purchaseVerificationError: '',
   reconciliationAttempted: false,
   downloadDialog: { open: false, loading: false, ready: false, error: '', productId: '', title: '', sizeBytes: 0, fileCount: 0 }
 }
@@ -142,6 +143,7 @@ function renderLibrary() {
   return `
     <section class="account-panel">
       ${state.showPurchaseBanner ? '<div class="account-success-banner" data-purchase-banner>Thank you for your purchase!</div>' : ''}
+      ${state.purchaseVerificationError ? `<div class="account-empty-inline">${escapeHtml(state.purchaseVerificationError)}</div>` : ''}
       <div class="account-heading">
         <div>
           <p class="eyebrow">Melogic Account</p>
@@ -276,6 +278,8 @@ async function loadLibrary(user) {
           code: error?.code,
           message: error?.message
         })
+        const sessionText = initialCheckoutSessionId ? ` Contact support with session ID ${initialCheckoutSessionId}.` : ' Contact support with your checkout receipt.'
+        state.purchaseVerificationError = `Payment succeeded, but library access could not be verified.${sessionText}`
       }
     }
     state.items = await listUserLibraryItems(user.uid)
