@@ -57,16 +57,35 @@ exports.stripeWebhook = onRequest(
     logger.info('[stripe-webhook] checkout event received', {
       eventId: event.id || '',
       eventType: event.type || '',
+      sessionId: session?.id || '',
       stripeSessionId: session?.id || '',
+      payment_status: session?.payment_status || '',
       paymentStatus: session?.payment_status || '',
+      orderId: session?.metadata?.orderId || '',
+      buyerUid: session?.metadata?.buyerUid || session?.metadata?.uid || '',
+      productIdsCount: (() => {
+        try {
+          const parsed = JSON.parse(session?.metadata?.productIds || '[]')
+          return Array.isArray(parsed) ? parsed.length : 0
+        } catch {
+          return 0
+        }
+      })(),
       livemode: session?.livemode === true
     })
 
     if (session?.payment_status !== 'paid') {
       logger.warn('[stripe-webhook] checkout not paid; fulfillment skipped', {
         eventId: event.id || '',
+        eventType: event.type || '',
+        sessionId: session?.id || '',
         stripeSessionId: session?.id || '',
-        paymentStatus: session?.payment_status || ''
+        payment_status: session?.payment_status || '',
+        paymentStatus: session?.payment_status || '',
+        orderId: session?.metadata?.orderId || '',
+        buyerUid: session?.metadata?.buyerUid || session?.metadata?.uid || '',
+        fulfillmentResult: 'skipped_payment_not_paid',
+        orderMarkedPaid: false
       })
       res.status(200).json({ received: true, skipped: 'payment_not_paid' })
       return
@@ -144,19 +163,35 @@ exports.stripeWebhook = onRequest(
         ? '[stripe-webhook] checkout fulfillment completed'
         : '[stripe-webhook] duplicate checkout event was a safe no-op', {
         eventId: event.id || '',
-        orderId: result.orderId,
-        uid: result.uid,
+        eventType: event.type || '',
+        sessionId: result.stripeSessionId,
         stripeSessionId: result.stripeSessionId,
+        payment_status: session?.payment_status || '',
+        orderId: result.orderId,
+        buyerUid: result.uid,
+        uid: result.uid,
+        productIdsCount: result.productIds.length,
+        fulfillmentResult: result.changed ? 'processed' : 'duplicate_noop',
         grantedProductIds: result.grantedProductIds,
         repairedProductIds: result.repairedProductIds,
-        duplicateProductIds: result.duplicateProductIds
+        duplicateProductIds: result.duplicateProductIds,
+        ledgerEntryIds: result.ledgerEntryIds,
+        repairedLedgerEntryIds: result.repairedLedgerEntryIds,
+        missingCreatorProductIds: result.missingCreatorProductIds,
+        orderMarkedPaid: result.orderMarkedPaid === true
       })
       res.status(200).json({ received: true, processed: result.changed, ...result })
     } catch (error) {
       logger.error('[stripe-webhook] checkout fulfillment failed', {
         eventId: event.id || '',
         eventType: event.type || '',
+        sessionId: session?.id || '',
         stripeSessionId: session?.id || '',
+        payment_status: session?.payment_status || '',
+        orderId: session?.metadata?.orderId || '',
+        buyerUid: session?.metadata?.buyerUid || session?.metadata?.uid || '',
+        fulfillmentResult: 'failed',
+        orderMarkedPaid: false,
         code: error?.code || '',
         message: error?.message || '',
         metadata: {

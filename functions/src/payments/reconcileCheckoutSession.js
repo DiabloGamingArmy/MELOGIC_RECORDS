@@ -41,12 +41,28 @@ const reconcileCheckoutSession = onCall({
     logger.warn('[checkout-reconcile] unpaid checkout rejected', {
       sessionId,
       uid,
-      paymentStatus: session.payment_status || ''
+      payment_status: session.payment_status || '',
+      paymentStatus: session.payment_status || '',
+      orderId: session.metadata?.orderId || '',
+      buyerUid: session.metadata?.buyerUid || session.metadata?.uid || '',
+      fulfillmentResult: 'skipped_payment_not_paid',
+      orderMarkedPaid: false
     })
     throw new HttpsError('failed-precondition', 'Checkout payment is not confirmed.')
   }
 
   const context = await resolveCheckoutContext(admin.firestore(), session)
+  logger.info('[checkout-reconcile] paid checkout reconciliation started', {
+    eventId: `reconcile_${session.id}`,
+    eventType: 'checkout.session.reconciled',
+    sessionId,
+    stripeSessionId: sessionId,
+    payment_status: session.payment_status || '',
+    orderId: context.orderId,
+    buyerUid: context.uid,
+    requesterUid: uid,
+    productIdsCount: context.productIds.length
+  })
   if (context.uid !== uid) {
     logger.warn('[checkout-reconcile] buyer mismatch rejected', {
       sessionId,
@@ -82,18 +98,37 @@ const reconcileCheckoutSession = onCall({
       })
     }
     logger.info('[checkout-reconcile] access verified', {
+      eventId: `reconcile_${session.id}`,
+      eventType: 'checkout.session.reconciled',
       sessionId,
+      stripeSessionId: result.stripeSessionId,
+      payment_status: session.payment_status || '',
       uid,
+      buyerUid: result.uid,
       orderId: result.orderId,
+      productIdsCount: result.productIds.length,
+      fulfillmentResult: result.changed ? 'processed' : 'duplicate_noop',
       grantedProductIds: result.grantedProductIds,
       repairedProductIds: result.repairedProductIds,
-      duplicateProductIds: result.duplicateProductIds
+      duplicateProductIds: result.duplicateProductIds,
+      ledgerEntryIds: result.ledgerEntryIds,
+      repairedLedgerEntryIds: result.repairedLedgerEntryIds,
+      missingCreatorProductIds: result.missingCreatorProductIds,
+      orderMarkedPaid: result.orderMarkedPaid === true
     })
     return { ok: true, ...result }
   } catch (error) {
     logger.error('[checkout-reconcile] fulfillment failed', {
+      eventId: `reconcile_${session.id}`,
+      eventType: 'checkout.session.reconciled',
       sessionId,
+      stripeSessionId: sessionId,
+      payment_status: session.payment_status || '',
       uid,
+      buyerUid: session.metadata?.buyerUid || session.metadata?.uid || '',
+      orderId: session.metadata?.orderId || '',
+      fulfillmentResult: 'failed',
+      orderMarkedPaid: false,
       code: error?.code || '',
       message: error?.message || ''
     })
