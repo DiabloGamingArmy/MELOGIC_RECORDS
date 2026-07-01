@@ -16,6 +16,7 @@ const { createCheckoutSession } = require('./src/payments/createCheckoutSession'
 const { stripeWebhook } = require('./src/payments/stripeWebhook')
 const { reconcileCheckoutSession } = require('./src/payments/reconcileCheckoutSession')
 const { repairAdminCheckoutOrder } = require('./src/payments/repairCheckoutOrder')
+const { auditCheckoutSessionFulfillment } = require('./src/payments/auditCheckoutSessionFulfillment')
 const {
   createStripeConnectAccount,
   createStripeConnectOnboardingLink,
@@ -144,6 +145,7 @@ exports.createCheckoutSession = createCheckoutSession
 exports.stripeWebhook = stripeWebhook
 exports.reconcileCheckoutSession = reconcileCheckoutSession
 exports.repairAdminCheckoutOrder = repairAdminCheckoutOrder
+exports.auditCheckoutSessionFulfillment = auditCheckoutSessionFulfillment
 exports.createStripeConnectAccount = createStripeConnectAccount
 exports.createStripeConnectOnboardingLink = createStripeConnectOnboardingLink
 exports.refreshStripeConnectStatus = refreshStripeConnectStatus

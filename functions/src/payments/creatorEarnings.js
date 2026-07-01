@@ -117,6 +117,7 @@ function creatorLedgerPayload({
   productId = '',
   orderId = '',
   stripeCheckoutSessionId = '',
+  paymentIntentId = '',
   grossAmount = 0,
   currency = 'USD',
   feeBps = DEFAULT_PLATFORM_FEE_BPS,
@@ -124,6 +125,7 @@ function creatorLedgerPayload({
   feeConfigVersion = 1,
   feeMode = 'seller_absorbs',
   stripeFeeAmount = null,
+  productSnapshot = null,
   availableAt = null,
   now = null
 } = {}) {
@@ -136,10 +138,13 @@ function creatorLedgerPayload({
   const creatorNetAmount = Math.max(0, netBeforeStripeFee - (creatorAbsorbsStripeFee ? safeStripeFee || 0 : 0))
   return {
     creatorUid: cleanString(creatorUid, 180),
+    sellerUid: cleanString(creatorUid, 180),
     buyerUid: cleanString(buyerUid, 180),
     productId: cleanString(productId, 180),
     orderId: cleanString(orderId, 180),
     stripeCheckoutSessionId: cleanString(stripeCheckoutSessionId, 180),
+    paymentIntentId: cleanString(paymentIntentId, 180),
+    stripePaymentIntentId: cleanString(paymentIntentId, 180),
     grossAmount: gross,
     platformFeeAmount,
     platformFeeBps: safeFeeBps,
@@ -153,6 +158,10 @@ function creatorLedgerPayload({
       ? 'before_stripe_fee'
       : 'finalized_for_ledger',
     currency: cleanString(currency || 'USD', 12).toUpperCase(),
+    productSnapshot: productSnapshot && typeof productSnapshot === 'object' ? productSnapshot : null,
+    productTitle: cleanString(productSnapshot?.title || '', 180),
+    productType: cleanString(productSnapshot?.productType || '', 120),
+    source: 'stripe_checkout_fulfillment',
     status: 'pending',
     availableAt,
     createdAt: now,

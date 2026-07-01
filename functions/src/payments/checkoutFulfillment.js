@@ -210,28 +210,178 @@ function orderItemForProduct(order = {}, productId = '') {
   return (Array.isArray(order.items) ? order.items : []).find((item) => cleanString(item?.productId || '', 180) === productId) || {}
 }
 
+function truthy(value) {
+  return value === true || value === 'true' || value === 1 || value === '1'
+}
+
+function productLooksDownloadable(product = {}, orderItem = {}) {
+  const typeText = [
+    product.productType,
+    product.productKind,
+    product.marketplaceProductType,
+    orderItem.productType,
+    orderItem.productKind,
+    orderItem.productSnapshot?.productType,
+    orderItem.productSnapshot?.marketplaceProductType
+  ].map((value) => cleanString(value || '', 120).toLowerCase()).join(' ')
+  const hasDownloadPath = Boolean(
+    product.primaryDownloadPath
+    || product.downloadPath
+    || product.filePath
+    || product.storagePath
+    || orderItem.primaryDownloadPath
+    || orderItem.downloadPath
+    || orderItem.productSnapshot?.primaryDownloadPath
+  )
+  const assetSummary = product.assetSummary || orderItem.assetSummary || orderItem.productSnapshot?.assetSummary || {}
+  const fileCount = Number(assetSummary.downloadableCount ?? assetSummary.fileCount ?? product.fileCount ?? product.downloadFileCount ?? 0)
+  return truthy(orderItem.fulfillment?.digital?.required)
+    || truthy(product.fulfillment?.digital?.enabled)
+    || truthy(product.digital?.enabled)
+    || hasDownloadPath
+    || (Number.isFinite(fileCount) && fileCount > 0)
+    || /\b(sample|pack|preset|tool|download|digital|loop|kit|plugin|instrument|template|sound|wav|midi)\b/.test(typeText)
+}
+
+function paidLineRequiresDigitalAccess(product = {}, orderItem = {}) {
+  return hasDigitalFulfillment({ ...product, ...orderItem }) || productLooksDownloadable(product, orderItem)
+}
+
 function platformRevenuePayload({
   creatorLedger = {},
   orderId = '',
   productId = '',
   stripeCheckoutSessionId = '',
+  paymentIntentId = '',
+  livemode = false,
   now
 } = {}) {
+  const grossAmount = Math.max(0, Math.round(Number(creatorLedger.grossAmount || 0)))
+  const platformFeeAmount = Math.max(0, Math.round(Number(creatorLedger.platformFeeAmount || 0)))
   return {
-    source: 'creator_ledger',
+    source: 'stripe_checkout',
     orderId: cleanString(orderId, 180),
     productId: cleanString(productId, 180),
     creatorUid: cleanString(creatorLedger.creatorUid || '', 180),
+    sellerUid: cleanString(creatorLedger.sellerUid || creatorLedger.creatorUid || '', 180),
     buyerUid: cleanString(creatorLedger.buyerUid || '', 180),
     stripeCheckoutSessionId: cleanString(stripeCheckoutSessionId || creatorLedger.stripeCheckoutSessionId || '', 180),
-    grossAmount: Math.max(0, Math.round(Number(creatorLedger.grossAmount || 0))),
-    platformFeeAmount: Math.max(0, Math.round(Number(creatorLedger.platformFeeAmount || 0))),
+    paymentIntentId: cleanString(paymentIntentId || creatorLedger.paymentIntentId || '', 180),
+    stripePaymentIntentId: cleanString(paymentIntentId || creatorLedger.stripePaymentIntentId || creatorLedger.paymentIntentId || '', 180),
+    grossAmount,
+    grossAmountCents: grossAmount,
+    platformFeeAmount,
+    platformFeeAmountCents: platformFeeAmount,
     platformFeeBps: Math.max(0, Math.round(Number(creatorLedger.platformFeeBps || 0))),
     currency: cleanString(creatorLedger.currency || 'USD', 12).toUpperCase(),
+    livemode: livemode === true,
     status: 'earned',
     createdAt: now,
     updatedAt: now
   }
+}
+
+function sellerSalePayload({
+  creatorLedger = {},
+  productSnapshot: snapshot = {},
+  orderId = '',
+  productId = '',
+  session = {},
+  now
+} = {}) {
+  return {
+    sellerUid: cleanString(creatorLedger.creatorUid || creatorLedger.sellerUid || '', 180),
+    creatorUid: cleanString(creatorLedger.creatorUid || creatorLedger.sellerUid || '', 180),
+    buyerUid: cleanString(creatorLedger.buyerUid || '', 180),
+    productId: cleanString(productId, 180),
+    orderId: cleanString(orderId, 180),
+    stripeCheckoutSessionId: cleanString(creatorLedger.stripeCheckoutSessionId || session.id || '', 180),
+    paymentIntentId: paymentIntentId(session) || cleanString(creatorLedger.paymentIntentId || '', 180),
+    stripePaymentIntentId: paymentIntentId(session) || cleanString(creatorLedger.stripePaymentIntentId || creatorLedger.paymentIntentId || '', 180),
+    soldAt: now,
+    createdAt: now,
+    updatedAt: now,
+    productSnapshot: {
+      title: cleanString(snapshot.title || '', 180),
+      slug: cleanString(snapshot.slug || '', 180),
+      productType: cleanString(snapshot.productType || '', 120),
+      coverURL: cleanString(snapshot.coverURL || '', 900),
+      usageLicense: cleanString(snapshot.usageLicense || '', 160),
+      fulfillment: snapshot.fulfillment || null,
+      sizeBytes: Math.max(0, Math.round(Number(snapshot.sizeBytes || 0)))
+    },
+    grossAmountCents: Math.max(0, Math.round(Number(creatorLedger.grossAmount || 0))),
+    currency: cleanString(creatorLedger.currency || 'USD', 12).toUpperCase(),
+    platformFeeBps: Math.max(0, Math.round(Number(creatorLedger.platformFeeBps || 0))),
+    platformFeeAmountCents: Math.max(0, Math.round(Number(creatorLedger.platformFeeAmount || 0))),
+    stripeFeeAmountCents: creatorLedger.stripeFeeAmount == null ? null : Math.max(0, Math.round(Number(creatorLedger.stripeFeeAmount || 0))),
+    stripeFeeStatus: cleanString(creatorLedger.stripeFeeStatus || '', 80),
+    creatorNetAmountCents: Math.max(0, Math.round(Number(creatorLedger.creatorNetAmount || 0))),
+    creatorNetStatus: cleanString(creatorLedger.creatorNetStatus || '', 80),
+    feeMode: cleanString(creatorLedger.feeMode || 'seller_absorbs', 80),
+    sellerPayoutStatus: 'pending',
+    status: 'paid',
+    livemode: session.livemode === true,
+    paymentSource: session.livemode === true ? 'stripe_live' : 'stripe_test'
+  }
+}
+
+function buyerOrderMirrorPayload({
+  order = {},
+  orderId = '',
+  uid = '',
+  productIds = [],
+  items = [],
+  orderFields = {},
+  session = {},
+  now
+} = {}) {
+  return {
+    id: cleanString(orderId, 180),
+    orderId: cleanString(orderId, 180),
+    uid: cleanString(uid, 180),
+    buyerUid: cleanString(uid, 180),
+    productIds,
+    items,
+    status: 'paid',
+    paymentStatus: 'paid',
+    orderState: 'order_placed',
+    checkoutStatus: orderFields.checkoutStatus,
+    paidAt: order.paidAt || now,
+    createdAt: order.createdAt || now,
+    updatedAt: now,
+    amountSubtotalCents: orderFields.amountSubtotalCents,
+    amountTotalCents: orderFields.amountTotalCents,
+    amountCents: orderFields.amountCents,
+    currency: orderFields.currency,
+    stripeSessionId: cleanString(session.id || '', 180),
+    checkoutSessionId: cleanString(session.id || '', 180),
+    paymentIntentId: orderFields.paymentIntentId,
+    stripePaymentIntentId: orderFields.stripePaymentIntentId,
+    paymentSource: session.livemode === true ? 'stripe_live' : 'stripe_test',
+    livemode: session.livemode === true
+  }
+}
+
+async function rebuildPlatformRevenueSummary(database = admin.firestore()) {
+  const snapshot = await database.collection('platformRevenueLedger').limit(1000).get()
+  const earnedByCurrency = {}
+  let entryCount = 0
+  snapshot.docs.forEach((docSnap) => {
+    const data = docSnap.data() || {}
+    if (cleanString(data.status || '', 40).toLowerCase() !== 'earned') return
+    const currency = cleanString(data.currency || 'USD', 12).toUpperCase()
+    const amount = Math.max(0, Math.round(Number(data.platformFeeAmountCents ?? data.platformFeeAmount ?? 0)))
+    earnedByCurrency[currency] = (earnedByCurrency[currency] || 0) + amount
+    entryCount += 1
+  })
+  await database.doc('platformRevenueSummary/current').set({
+    earnedByCurrency,
+    entryCount,
+    source: 'rebuilt_from_platform_revenue_ledger',
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+  return { earnedByCurrency, entryCount }
 }
 
 function purchaseAccessPayload({
@@ -255,6 +405,8 @@ function purchaseAccessPayload({
     productId,
     productTitle: snapshot.title,
     artistId: snapshot.creatorUid,
+    sellerUid: snapshot.creatorUid,
+    creatorUid: snapshot.creatorUid,
     artistName: snapshot.creatorName,
     productSlug: snapshot.slug,
     productType: snapshot.productType,
@@ -271,6 +423,9 @@ function purchaseAccessPayload({
     stripePaymentIntentId: paymentIntentId(session),
     paymentIntentId: paymentIntentId(session),
     productSnapshot: snapshot,
+    acquiredAt: now,
+    grantedAt: now,
+    createdAt: now,
     updatedAt: now
   }
 }
@@ -289,6 +444,15 @@ async function fulfillPaidCheckout({
   }
 
   const context = await resolveCheckoutContext(database, session)
+  logger.info('[checkout-fulfillment] paid checkout fulfillment started', {
+    eventId,
+    eventType,
+    source,
+    sessionId: context.stripeSessionId,
+    orderId: context.orderId,
+    buyerUid: context.uid,
+    productIds: context.productIds
+  })
   const safeEventId = cleanString(eventId || `session_${context.stripeSessionId}`, 180).replaceAll('/', '_')
   const eventRef = database.collection('stripeWebhookEvents').doc(safeEventId)
   const earningsConfig = await loadCreatorEarningsConfig(database)
@@ -308,6 +472,7 @@ async function fulfillPaidCheckout({
 
   const result = await database.runTransaction(async (transaction) => {
     const productRefs = context.productIds.map((productId) => database.collection('products').doc(productId))
+    const buyerOrderRef = database.doc(`users/${context.uid}/orders/${context.orderId}`)
     const entitlementRefs = context.productIds.map((productId) => database.doc(`users/${context.uid}/entitlements/${productId}`))
     const libraryRefs = context.productIds.map((productId) => database.doc(`users/${context.uid}/libraryItems/${productId}`))
     const ledgerRefs = context.productIds.map((productId) => (
@@ -316,15 +481,41 @@ async function fulfillPaidCheckout({
     const platformRevenueRefs = context.productIds.map((productId) => (
       database.collection('platformRevenueLedger').doc(ledgerEntryId(context.orderId, productId))
     ))
-    const refs = [context.orderRef, eventRef, ...productRefs, ...entitlementRefs, ...libraryRefs, ...ledgerRefs, ...platformRevenueRefs]
+    const saleRefs = context.productIds.map((productId, index) => {
+      const sellerUid = productOwnerUids[index] || ''
+      return sellerUid && sellerUid !== context.uid
+        ? database.doc(`users/${sellerUid}/sales/${ledgerEntryId(context.orderId, productId)}`)
+        : null
+    })
+    const refs = [
+      context.orderRef,
+      eventRef,
+      buyerOrderRef,
+      ...productRefs,
+      ...entitlementRefs,
+      ...libraryRefs,
+      ...ledgerRefs,
+      ...platformRevenueRefs,
+      ...saleRefs.filter(Boolean)
+    ]
     const snapshots = await Promise.all(refs.map((ref) => transaction.get(ref)))
     const orderSnap = snapshots[0]
     if (!orderSnap.exists) throw new Error('Checkout order disappeared during fulfillment.')
 
-    const productOffset = 2
+    const buyerOrderSnap = snapshots[2]
+    const productOffset = 3
     const entitlementOffset = productOffset + productRefs.length
     const libraryOffset = entitlementOffset + entitlementRefs.length
     const ledgerOffset = libraryOffset + libraryRefs.length
+    const platformRevenueOffset = ledgerOffset + ledgerRefs.length
+    const saleOffset = platformRevenueOffset + platformRevenueRefs.length
+    const saleSnapshotByIndex = new Map()
+    let saleSnapCursor = saleOffset
+    saleRefs.forEach((ref, index) => {
+      if (!ref) return
+      saleSnapshotByIndex.set(index, snapshots[saleSnapCursor])
+      saleSnapCursor += 1
+    })
     const order = orderSnap.data() || {}
     const orderFields = stripeOrderFields(session, order)
     const grossAmounts = allocateGrossAmounts({
@@ -344,7 +535,13 @@ async function fulfillPaidCheckout({
     const ledgerEntryIds = []
     const duplicateLedgerEntryIds = []
     const repairedLedgerEntryIds = []
+    const sellerSaleIds = []
+    const duplicateSellerSaleIds = []
+    const repairedSellerSaleIds = []
+    const platformRevenueEntryIds = []
+    const duplicatePlatformRevenueEntryIds = []
     const missingCreatorProductIds = []
+    const skippedReasons = []
     const creatorUids = new Set()
 
     context.productIds.forEach((productId, index) => {
@@ -352,13 +549,15 @@ async function fulfillPaidCheckout({
       const entitlementSnap = snapshots[entitlementOffset + index]
       const librarySnap = snapshots[libraryOffset + index]
       const ledgerSnap = snapshots[ledgerOffset + index]
+      const platformRevenueSnap = snapshots[platformRevenueOffset + index]
+      const saleSnap = saleSnapshotByIndex.get(index)
       const entitlementActive = isActiveAccess(entitlementSnap)
       const libraryActive = isActiveAccess(librarySnap)
       const entitlementNeedsWrite = accessWriteNeeded(entitlementSnap, context)
       const libraryNeedsWrite = accessWriteNeeded(librarySnap, context)
       const product = productSnap.exists ? productSnap.data() || {} : {}
       const orderItem = orderItemForProduct(order, productId)
-      const digitalRequired = hasDigitalFulfillment({ ...product, ...orderItem })
+      const digitalRequired = paidLineRequiresDigitalAccess(product, orderItem)
       const physicalRequired = hasPhysicalFulfillment({ ...product, ...orderItem })
       const payload = purchaseAccessPayload({
         uid: context.uid,
@@ -369,11 +568,23 @@ async function fulfillPaidCheckout({
         session,
         now
       })
+      logger.info('[checkout-fulfillment] product fulfillment planned', {
+        orderId: context.orderId,
+        sessionId: context.stripeSessionId,
+        buyerUid: context.uid,
+        productId,
+        digitalRequired,
+        physicalRequired,
+        creatorUid: payload.productSnapshot.creatorUid,
+        grossAmount: grossAmounts[index] || 0
+      })
 
       if (digitalRequired) {
         if (!entitlementNeedsWrite && !libraryNeedsWrite && entitlementActive && libraryActive) duplicateProductIds.push(productId)
         else if (entitlementSnap.exists || librarySnap.exists) repairedProductIds.push(productId)
         else grantedProductIds.push(productId)
+      } else {
+        skippedReasons.push({ productId, reason: 'digital_access_not_required' })
       }
 
       if (digitalRequired && entitlementNeedsWrite) {
@@ -406,6 +617,7 @@ async function fulfillPaidCheckout({
       const creatorUid = payload.productSnapshot.creatorUid
       if (!creatorUid || creatorUid === context.uid) {
         missingCreatorProductIds.push(productId)
+        skippedReasons.push({ productId, reason: !creatorUid ? 'missing_creator_uid' : 'buyer_is_creator' })
       } else {
         const ledgerPayload = creatorLedgerPayload({
           creatorUid,
@@ -413,6 +625,7 @@ async function fulfillPaidCheckout({
           productId,
           orderId: context.orderId,
           stripeCheckoutSessionId: context.stripeSessionId,
+          paymentIntentId: orderFields.paymentIntentId,
           grossAmount: grossAmounts[index] || 0,
           currency: orderFields.currency,
           feeBps: feeBpsByCreatorUid.get(creatorUid) ?? earningsConfig.defaultPlatformFeeBps,
@@ -420,6 +633,7 @@ async function fulfillPaidCheckout({
           feeConfigVersion: earningsConfig.version,
           feeMode: earningsConfig.feeMode,
           stripeFeeAmount: stripeFeeAmounts[index],
+          productSnapshot: payload.productSnapshot,
           availableAt,
           now
         })
@@ -436,6 +650,10 @@ async function fulfillPaidCheckout({
               stripeFeeStatus: ledgerPayload.stripeFeeStatus,
               creatorNetAmount: ledgerPayload.creatorNetAmount,
               creatorNetStatus: ledgerPayload.creatorNetStatus,
+              productSnapshot: ledgerPayload.productSnapshot,
+              productTitle: ledgerPayload.productTitle,
+              productType: ledgerPayload.productType,
+              source: ledgerPayload.source,
               updatedAt: now
             }, { merge: true })
           }
@@ -443,11 +661,46 @@ async function fulfillPaidCheckout({
           creatorUids.add(creatorUid)
           ledgerEntryIds.push(ledgerRefs[index].id)
           transaction.set(ledgerRefs[index], ledgerPayload)
+        }
+
+        const saleId = ledgerRefs[index].id
+        const salePayload = sellerSalePayload({
+          creatorLedger: ledgerPayload,
+          productSnapshot: payload.productSnapshot,
+          orderId: context.orderId,
+          productId,
+          session,
+          now
+        })
+        if (saleSnap?.exists) {
+          duplicateSellerSaleIds.push(saleId)
+          const existing = saleSnap.data() || {}
+          if (existing.stripeFeeAmountCents == null && Number.isInteger(salePayload.stripeFeeAmountCents)) {
+            repairedSellerSaleIds.push(saleId)
+            transaction.set(saleRefs[index], {
+              stripeFeeAmountCents: salePayload.stripeFeeAmountCents,
+              stripeFeeStatus: salePayload.stripeFeeStatus,
+              creatorNetAmountCents: salePayload.creatorNetAmountCents,
+              creatorNetStatus: salePayload.creatorNetStatus,
+              updatedAt: now
+            }, { merge: true })
+          }
+        } else if (saleRefs[index]) {
+          sellerSaleIds.push(saleId)
+          transaction.set(saleRefs[index], salePayload)
+        }
+
+        if (platformRevenueSnap.exists) {
+          duplicatePlatformRevenueEntryIds.push(platformRevenueRefs[index].id)
+        } else {
+          platformRevenueEntryIds.push(platformRevenueRefs[index].id)
           transaction.set(platformRevenueRefs[index], platformRevenuePayload({
             creatorLedger: ledgerPayload,
             orderId: context.orderId,
             productId,
             stripeCheckoutSessionId: context.stripeSessionId,
+            paymentIntentId: orderFields.paymentIntentId,
+            livemode: session.livemode === true,
             now
           }))
         }
@@ -460,8 +713,8 @@ async function fulfillPaidCheckout({
       const productIndex = context.productIds.indexOf(productId)
       const productSnap = productIndex >= 0 ? snapshots[productOffset + productIndex] : null
       const product = productSnap?.exists ? productSnap.data() || {} : {}
-      const digitalRequired = hasDigitalFulfillment({ ...product, ...item })
       const physicalRequired = hasPhysicalFulfillment({ ...product, ...item })
+      const digitalRequired = paidLineRequiresDigitalAccess(product, item)
       return {
         ...item,
         entitlementStatus: digitalRequired ? 'active' : 'not_applicable',
@@ -490,6 +743,16 @@ async function fulfillPaidCheckout({
       entitlementStatus: grantedProductIds.length || repairedProductIds.length || duplicateProductIds.length ? 'active' : 'not_applicable',
       updatedAt: now
     }, { merge: true })
+    transaction.set(buyerOrderRef, buyerOrderMirrorPayload({
+      order,
+      orderId: context.orderId,
+      uid: context.uid,
+      productIds: context.productIds,
+      items,
+      orderFields,
+      session,
+      now
+    }), { merge: true })
     transaction.set(eventRef, {
       eventId: safeEventId,
       eventType,
@@ -504,7 +767,14 @@ async function fulfillPaidCheckout({
       ledgerEntryIds,
       duplicateLedgerEntryIds,
       repairedLedgerEntryIds,
+      sellerSaleIds,
+      duplicateSellerSaleIds,
+      repairedSellerSaleIds,
+      platformRevenueEntryIds,
+      duplicatePlatformRevenueEntryIds,
       missingCreatorProductIds,
+      buyerOrderMirrorWritten: !buyerOrderSnap.exists || orderChanged,
+      skippedReasons,
       processedAt: now,
       updatedAt: now
     }, { merge: true })
@@ -512,7 +782,8 @@ async function fulfillPaidCheckout({
     const customerLifecycleChanged = orderChanged
       || grantedProductIds.length > 0
       || repairedProductIds.length > 0
-    const ledgerChanged = ledgerEntryIds.length > 0 || repairedLedgerEntryIds.length > 0
+    const buyerOrderMirrorWritten = !buyerOrderSnap.exists || orderChanged
+    const ledgerChanged = ledgerEntryIds.length > 0 || repairedLedgerEntryIds.length > 0 || sellerSaleIds.length > 0 || repairedSellerSaleIds.length > 0 || platformRevenueEntryIds.length > 0
     return {
       uid: context.uid,
       orderId: context.orderId,
@@ -524,13 +795,20 @@ async function fulfillPaidCheckout({
       ledgerEntryIds,
       duplicateLedgerEntryIds,
       repairedLedgerEntryIds,
+      sellerSaleIds,
+      duplicateSellerSaleIds,
+      repairedSellerSaleIds,
+      platformRevenueEntryIds,
+      duplicatePlatformRevenueEntryIds,
       missingCreatorProductIds,
+      buyerOrderMirrorWritten,
+      skippedReasons,
       creatorUids: [...creatorUids],
       orderMarkedPaid: true,
       orderChanged,
       customerLifecycleChanged,
       ledgerChanged,
-      changed: customerLifecycleChanged || ledgerChanged
+      changed: customerLifecycleChanged || ledgerChanged || buyerOrderMirrorWritten
     }
   })
   await Promise.all([
@@ -541,7 +819,13 @@ async function fulfillPaidCheckout({
         message: error?.message || ''
       })
     }),
-    rebuildCreatorEarningsSummaries(database, result.creatorUids)
+    rebuildCreatorEarningsSummaries(database, result.creatorUids),
+    rebuildPlatformRevenueSummary(database).catch((error) => {
+      logger.error('[checkout-fulfillment] platform revenue summary rebuild failed', {
+        orderId: context.orderId,
+        message: error?.message || ''
+      })
+    })
   ])
   if (result.missingCreatorProductIds.length) {
     logger.error('[checkout-fulfillment] creator earnings skipped because product ownership is missing', {
@@ -549,6 +833,20 @@ async function fulfillPaidCheckout({
       productIds: result.missingCreatorProductIds
     })
   }
+  logger.info('[checkout-fulfillment] paid checkout fulfillment finished', {
+    orderId: result.orderId,
+    sessionId: result.stripeSessionId,
+    buyerUid: result.uid,
+    productCount: result.productIds.length,
+    grantedCount: result.grantedProductIds.length,
+    repairedCount: result.repairedProductIds.length,
+    duplicateCount: result.duplicateProductIds.length,
+    sellerSaleCount: result.sellerSaleIds.length,
+    ledgerCount: result.ledgerEntryIds.length,
+    platformRevenueCount: result.platformRevenueEntryIds.length,
+    missingCreatorCount: result.missingCreatorProductIds.length,
+    orderMarkedPaid: result.orderMarkedPaid
+  })
   return result
 }
 
@@ -560,9 +858,13 @@ module.exports = {
     accessWriteNeeded,
     normalizeProductIds,
     paymentIntentId,
+    buyerOrderMirrorPayload,
+    paidLineRequiresDigitalAccess,
     platformRevenuePayload,
     productSnapshot,
     purchaseAccessPayload,
+    rebuildPlatformRevenueSummary,
+    sellerSalePayload,
     stripeAmount,
     stripeOrderFields,
     stripeProcessingFee
