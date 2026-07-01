@@ -2154,7 +2154,8 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
-      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow read: if signedIn()
+        && (resource.data.uid == request.auth.uid || resource.data.buyerUid == request.auth.uid);
       allow write: if false;
     }
 

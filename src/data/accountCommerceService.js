@@ -167,20 +167,31 @@ export async function listUserOrders(uid = '', { limitCount = 0 } = {}) {
   const userId = String(uid || '').trim()
   if (!db || !userId) return []
   const rowLimit = Math.min(Math.max(Number(limitCount) || 0, 0), 50)
-  const topLevelConstraints = [where('uid', '==', userId)]
-  if (rowLimit) topLevelConstraints.push(limit(rowLimit))
+  const uidConstraints = [where('uid', '==', userId)]
+  const buyerUidConstraints = [where('buyerUid', '==', userId)]
+  if (rowLimit) {
+    uidConstraints.push(limit(rowLimit))
+    buyerUidConstraints.push(limit(rowLimit))
+  }
   const nestedReference = collection(db, 'users', userId, 'orders')
 
-  const [topLevelResult, nestedResult] = await Promise.allSettled([
-    getDocs(query(collection(db, 'orders'), ...topLevelConstraints)),
+  const [topLevelUidResult, topLevelBuyerResult, nestedResult] = await Promise.allSettled([
+    getDocs(query(collection(db, 'orders'), ...uidConstraints)),
+    getDocs(query(collection(db, 'orders'), ...buyerUidConstraints)),
     getDocs(rowLimit ? query(nestedReference, limit(rowLimit)) : nestedReference)
   ])
 
   const map = new Map()
-  if (topLevelResult.status === 'fulfilled') {
-    topLevelResult.value.docs.forEach((docSnap) => map.set(docSnap.id, normalizeOrder(docSnap)))
+  if (topLevelUidResult.status === 'fulfilled') {
+    topLevelUidResult.value.docs.forEach((docSnap) => map.set(docSnap.id, normalizeOrder(docSnap)))
   } else {
-    console.warn('[accountCommerceService] order read failed', topLevelResult.reason?.message || topLevelResult.reason)
+    console.warn('[accountCommerceService] uid order read failed', topLevelUidResult.reason?.message || topLevelUidResult.reason)
+  }
+
+  if (topLevelBuyerResult.status === 'fulfilled') {
+    topLevelBuyerResult.value.docs.forEach((docSnap) => map.set(docSnap.id, normalizeOrder(docSnap)))
+  } else {
+    console.warn('[accountCommerceService] buyerUid order read failed', topLevelBuyerResult.reason?.message || topLevelBuyerResult.reason)
   }
 
   if (nestedResult.status === 'fulfilled') {

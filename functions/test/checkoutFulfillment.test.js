@@ -1,7 +1,10 @@
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
 
-const checkout = require('../src/payments/checkoutFulfillment').__test
+const checkoutModule = require('../src/payments/checkoutFulfillment')
+const checkout = checkoutModule.__test
 const fulfillment = require('../src/products/productFulfillment')
 const adminGrant = require('../src/admin/grantAdminProducts').__test
 const webhook = require('../src/payments/stripeWebhook').__test
@@ -16,6 +19,156 @@ function snapshot(data = null) {
   return {
     exists: data !== null,
     data: () => data
+  }
+}
+
+function clone(value) {
+  if (value === undefined || value === null) return value
+  if (Array.isArray(value)) return value.map(clone)
+  if (typeof value !== 'object') return value
+  if (Object.getPrototypeOf(value) !== Object.prototype) return value
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)]))
+}
+
+class FakeDocRef {
+  constructor(database, path) {
+    this.database = database
+    this.path = path
+    this.id = path.split('/').pop()
+  }
+
+  collection(name) {
+    return new FakeCollectionRef(this.database, `${this.path}/${name}`)
+  }
+
+  async get() {
+    return this.database._docSnapshot(this)
+  }
+
+  async set(data, options = {}) {
+    this.database._set(this.path, data, options)
+  }
+}
+
+class FakeCollectionRef {
+  constructor(database, path) {
+    this.database = database
+    this.path = path
+  }
+
+  doc(id = '') {
+    return new FakeDocRef(this.database, `${this.path}/${id || this.database._autoId()}`)
+  }
+
+  where(field, operator, value) {
+    return new FakeQuery(this.database, this.path, [{ field, operator, value }])
+  }
+
+  limit(count) {
+    return new FakeQuery(this.database, this.path, [], count)
+  }
+
+  async get() {
+    return new FakeQuery(this.database, this.path).get()
+  }
+}
+
+class FakeQuery {
+  constructor(database, path, filters = [], limitCount = 0) {
+    this.database = database
+    this.path = path
+    this.filters = filters
+    this.limitCount = limitCount
+    this._isQuery = true
+  }
+
+  where(field, operator, value) {
+    return new FakeQuery(this.database, this.path, [...this.filters, { field, operator, value }], this.limitCount)
+  }
+
+  limit(count) {
+    return new FakeQuery(this.database, this.path, this.filters, count)
+  }
+
+  async get() {
+    return this.database._querySnapshot(this)
+  }
+}
+
+class FakeTransaction {
+  constructor(database) {
+    this.database = database
+  }
+
+  async get(target) {
+    return target?._isQuery ? this.database._querySnapshot(target) : this.database._docSnapshot(target)
+  }
+
+  set(ref, data, options = {}) {
+    this.database._set(ref.path, data, options)
+  }
+}
+
+class FakeFirestore {
+  constructor(seed = {}) {
+    this.store = new Map(Object.entries(seed).map(([path, data]) => [path, clone(data)]))
+    this.autoCount = 0
+  }
+
+  _autoId() {
+    this.autoCount += 1
+    return `auto-${this.autoCount}`
+  }
+
+  collection(path) {
+    return new FakeCollectionRef(this, path)
+  }
+
+  doc(path) {
+    return new FakeDocRef(this, path)
+  }
+
+  async runTransaction(callback) {
+    return callback(new FakeTransaction(this))
+  }
+
+  _docSnapshot(ref) {
+    const data = this.store.get(ref.path)
+    return {
+      id: ref.id,
+      ref,
+      exists: data !== undefined,
+      data: () => clone(data)
+    }
+  }
+
+  _querySnapshot(queryRef) {
+    const prefix = `${queryRef.path}/`
+    let docs = [...this.store.entries()]
+      .filter(([path]) => path.startsWith(prefix) && !path.slice(prefix.length).includes('/'))
+      .map(([path, data]) => ({ ref: new FakeDocRef(this, path), id: path.split('/').pop(), data }))
+    docs = docs.filter(({ data }) => queryRef.filters.every((filter) => {
+      if (filter.operator !== '==') throw new Error(`Unsupported fake query operator: ${filter.operator}`)
+      return data?.[filter.field] === filter.value
+    }))
+    if (queryRef.limitCount) docs = docs.slice(0, queryRef.limitCount)
+    return {
+      docs: docs.map(({ ref, id, data }) => ({
+        id,
+        ref,
+        exists: true,
+        data: () => clone(data)
+      }))
+    }
+  }
+
+  _set(path, data, options = {}) {
+    const existing = this.store.get(path) || {}
+    this.store.set(path, options.merge ? { ...existing, ...clone(data) } : clone(data))
+  }
+
+  data(path) {
+    return clone(this.store.get(path))
   }
 }
 
@@ -141,6 +294,186 @@ test('webhook accepts immediate and delayed successful checkout events', () => {
   assert.equal(webhook.FULFILLMENT_EVENTS.has('checkout.session.completed'), true)
   assert.equal(webhook.FULFILLMENT_EVENTS.has('checkout.session.async_payment_succeeded'), true)
   assert.equal(webhook.FULFILLMENT_EVENTS.has('payment_intent.created'), false)
+})
+
+function paidSession(overrides = {}) {
+  return {
+    id: 'cs_test_paid',
+    status: 'complete',
+    payment_status: 'paid',
+    amount_subtotal: 1000,
+    amount_total: 1000,
+    currency: 'usd',
+    livemode: true,
+    customer: 'cus_123',
+    payment_intent: {
+      id: 'pi_123',
+      latest_charge: {
+        balance_transaction: { fee: 59 }
+      }
+    },
+    total_details: { amount_discount: 0, amount_shipping: 0, amount_tax: 0 },
+    metadata: {
+      uid: 'buyer-1',
+      buyerUid: 'buyer-1',
+      orderId: 'order-1',
+      productIds: JSON.stringify(['product-1'])
+    },
+    ...overrides
+  }
+}
+
+function checkoutSeed({ creatorUid = 'seller-1', orderId = 'order-1', productId = 'product-1' } = {}) {
+  return {
+    [`orders/${orderId}`]: {
+      uid: 'buyer-1',
+      buyerUid: 'buyer-1',
+      productIds: [productId],
+      items: [{
+        productId,
+        title: 'Paid Loop Kit',
+        creatorUid,
+        artistName: 'Seller One',
+        quantity: 1,
+        amountCents: 1000,
+        amountTotalCents: 1000,
+        currency: 'USD',
+        entitlementStatus: 'pending',
+        productSnapshot: {
+          title: 'Paid Loop Kit',
+          creatorName: 'Seller One',
+          creatorUid,
+          productType: 'Sample Pack'
+        }
+      }],
+      status: 'checkout_created',
+      paymentStatus: 'checkout_created',
+      orderState: 'checkout_created',
+      checkoutStatus: 'open',
+      stripeSessionId: 'cs_test_paid',
+      checkoutSessionId: 'cs_test_paid',
+      amountTotalCents: 1000,
+      amountCents: 1000,
+      currency: 'USD'
+    },
+    [`products/${productId}`]: {
+      title: 'Paid Loop Kit',
+      artistId: creatorUid,
+      artistName: 'Seller One',
+      priceCents: 1000,
+      currency: 'usd',
+      productType: 'Sample Pack',
+      marketplaceProductType: 'digital',
+      visibility: 'public',
+      status: 'published'
+    }
+  }
+}
+
+test('paid Stripe session fulfills order, access, ledger and summaries', async () => {
+  const database = new FakeFirestore(checkoutSeed())
+  const result = await checkoutModule.fulfillPaidCheckout({
+    database,
+    session: paidSession(),
+    eventId: 'evt_paid_1',
+    eventType: 'checkout.session.completed',
+    source: 'stripe_webhook'
+  })
+
+  assert.equal(result.orderId, 'order-1')
+  assert.equal(result.orderMarkedPaid, true)
+  assert.deepEqual(result.grantedProductIds, ['product-1'])
+  assert.deepEqual(result.ledgerEntryIds, ['order-1_product-1'])
+  assert.deepEqual(result.missingCreatorProductIds, [])
+
+  const order = database.data('orders/order-1')
+  assert.equal(order.paymentStatus, 'paid')
+  assert.equal(order.orderState, 'order_placed')
+  assert.equal(order.amountTotalCents, 1000)
+  assert.equal(order.paymentSource, 'stripe_live')
+
+  assert.equal(database.data('users/buyer-1/libraryItems/product-1').status, 'active')
+  assert.equal(database.data('users/buyer-1/entitlements/product-1').status, 'active')
+
+  const ledger = database.data('creatorLedger/order-1_product-1')
+  assert.equal(ledger.creatorUid, 'seller-1')
+  assert.equal(ledger.buyerUid, 'buyer-1')
+  assert.equal(ledger.grossAmount, 1000)
+  assert.equal(ledger.platformFeeAmount, 100)
+  assert.equal(ledger.stripeFeeAmount, 59)
+  assert.equal(ledger.creatorNetAmount, 841)
+  assert.equal(ledger.status, 'pending')
+
+  assert.equal(database.data('platformRevenueLedger/order-1_product-1').platformFeeAmount, 100)
+  assert.deepEqual(database.data('users/buyer-1/commerceSummary/current').spendByCurrency, { USD: 1000 })
+  assert.equal(database.data('users/buyer-1/commerceSummary/current').paidOrderCount, 1)
+  assert.deepEqual(database.data('users/seller-1/earningsSummary/current').pendingByCurrency, { USD: 841 })
+})
+
+test('duplicate paid Stripe fulfillment is a safe no-op', async () => {
+  const database = new FakeFirestore(checkoutSeed())
+  await checkoutModule.fulfillPaidCheckout({
+    database,
+    session: paidSession(),
+    eventId: 'evt_paid_1',
+    eventType: 'checkout.session.completed'
+  })
+  const result = await checkoutModule.fulfillPaidCheckout({
+    database,
+    session: paidSession(),
+    eventId: 'evt_paid_1_retry',
+    eventType: 'checkout.session.completed'
+  })
+
+  assert.equal(result.changed, false)
+  assert.deepEqual(result.grantedProductIds, [])
+  assert.deepEqual(result.duplicateProductIds, ['product-1'])
+  assert.deepEqual(result.ledgerEntryIds, [])
+  assert.deepEqual(result.duplicateLedgerEntryIds, ['order-1_product-1'])
+  assert.deepEqual(database.data('users/buyer-1/commerceSummary/current').spendByCurrency, { USD: 1000 })
+  assert.deepEqual(database.data('users/seller-1/earningsSummary/current').pendingByCurrency, { USD: 841 })
+})
+
+test('buyer reconcile path can repair checkout if webhook failed', async () => {
+  const database = new FakeFirestore(checkoutSeed())
+  const result = await checkoutModule.fulfillPaidCheckout({
+    database,
+    session: paidSession(),
+    eventId: 'reconcile_cs_test_paid',
+    eventType: 'checkout.session.reconciled',
+    source: 'buyer_checkout_reconcile'
+  })
+
+  assert.equal(result.changed, true)
+  assert.equal(result.orderMarkedPaid, true)
+  assert.deepEqual(result.grantedProductIds, ['product-1'])
+  assert.equal(database.data('orders/order-1').fulfillmentSource, 'buyer_checkout_reconcile')
+  assert.equal(database.data('users/buyer-1/libraryItems/product-1').orderId, 'order-1')
+})
+
+test('missing creator UID does not block buyer fulfillment', async () => {
+  const database = new FakeFirestore(checkoutSeed({ creatorUid: '' }))
+  const result = await checkoutModule.fulfillPaidCheckout({
+    database,
+    session: paidSession(),
+    eventId: 'evt_missing_creator',
+    eventType: 'checkout.session.completed'
+  })
+
+  assert.equal(result.orderMarkedPaid, true)
+  assert.deepEqual(result.grantedProductIds, ['product-1'])
+  assert.deepEqual(result.missingCreatorProductIds, ['product-1'])
+  assert.equal(database.data('orders/order-1').paymentStatus, 'paid')
+  assert.equal(database.data('users/buyer-1/libraryItems/product-1').status, 'active')
+  assert.equal(database.data('creatorLedger/order-1_product-1'), undefined)
+})
+
+test('library success return clears cart only on purchase success path', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../src/library.js'), 'utf8')
+  assert.match(source, /import\s+\{\s*clearCart\s*\}\s+from\s+'\.\/data\/cartService'/)
+  assert.match(source, /if\s*\(\s*initialPurchaseSuccess\s*\)\s*clearCart\(\)/)
+  assert.match(source, /await\s+reconcileCheckoutSession\(initialCheckoutSessionId\)[\s\S]{0,80}clearCart\(\)/)
+  assert.doesNotMatch(source, /checkout=cancelled[\s\S]{0,120}clearCart\(\)/)
 })
 
 test('trusted Stripe order fields preserve paid totals including zero values', () => {

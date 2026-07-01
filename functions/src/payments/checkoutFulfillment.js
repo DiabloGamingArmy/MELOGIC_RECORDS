@@ -526,6 +526,8 @@ async function fulfillPaidCheckout({
       repairedLedgerEntryIds,
       missingCreatorProductIds,
       creatorUids: [...creatorUids],
+      orderMarkedPaid: true,
+      orderChanged,
       customerLifecycleChanged,
       ledgerChanged,
       changed: customerLifecycleChanged || ledgerChanged
