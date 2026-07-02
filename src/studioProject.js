@@ -258,6 +258,8 @@ let pitchTraceNoteDraw = null
 let meterRaf = 0
 let midiRegionMenuState = null
 let midiRegionClipboard = null
+let midiNoteClipboard = null
+let activeCommandContext = 'arrangement'
 let midiRollState = null
 let midiRollSelectedNoteIndex = null
 let midiRollSelectedNoteIndices = []
@@ -272,6 +274,11 @@ let midiRollBeatWidth = 64
 let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
 let midiNoteDrag = null
+let regionEditorPlayheadDrag = null
+let transportInlineEdit = null
+let transportValueDrag = null
+let timelineUserInteractingUntil = 0
+let timelineExtensionRepeatTimer = 0
 let regionRenameState = null
 let regionColorPickerState = null
 let audioEnginePrewarmPromise = null
@@ -358,6 +365,8 @@ const normalizedTrackIconType = (track) => isAudioTrack(track) ? 'audio' : 'inst
 const ROOT_NOTE_OPTIONS = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
 const KEY_SCALE_OPTIONS = ['major','minor','chromatic','dorian','phrygian','lydian','mixolydian','locrian','harmonic minor','melodic minor']
 const TIME_SIGNATURE_DENOMINATORS = [2,4,8,16]
+const COMMON_TRANSPORT_TIME_SIGNATURES = ['2/4','3/4','4/4','5/4','6/8','7/8','9/8','12/8']
+const COMMON_TRANSPORT_KEYS = ['C major','C minor','C# major','C# minor','Db major','Db minor','D major','D minor','Eb major','Eb minor','E major','E minor','F major','F minor','F# major','F# minor','Gb major','Gb minor','G major','G minor','Ab major','Ab minor','A major','A minor','Bb major','Bb minor','B major','B minor']
 const DEFAULT_CPU_ALERTS = { enabled: true, thresholdPercent: 85, sustainMs: 5000, cooldownMs: 60000 }
 const nowIso = () => new Date().toISOString()
 const clampProjectBpm = (value = 140) => clamp(Number(value) || 140, 20, 300)
@@ -1484,11 +1493,14 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const renderStatus = stretch.renderStatus === 'needs_render' ? 'Needs render' : stretch.renderStatus
   const color = region.color || track?.color || '#58d4ff'
   const waveformColor = getReadableWaveformColor(color)
+  const regionLength = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
+  const gridWidth = Math.max(420, regionLength * midiRollBeatWidth)
   return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${motionClass}" data-audio-region-editor="${esc(region.id)}"${style}>
     <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
     <div class="studio-bottom-panel-body studio-audio-region-editor-body ${pitchTrace.enabled ? 'has-pitch-trace-tools' : ''}">
       <section class="studio-audio-region-editor-preview">
+        ${renderRegionEditorTimeline(region, gridWidth)}
         ${renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled: pitchTrace.enabled, color, waveformColor })}
         <div class="studio-audio-editor-meta">
           <span>Start ${Number(region.startBeat || 0).toFixed(2)} beats</span>
@@ -1556,6 +1568,16 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
     </div>
   </section>`
 }
+function renderRegionEditorTimeline(region, gridWidth) {
+  if (!region) return ''
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 1)
+  const regionLength = regionEnd - regionStart
+  const width = Math.max(420, Number(gridWidth) || regionLength * midiRollBeatWidth)
+  const playheadLeft = (xToBeat(timelineState.playheadX) - regionStart) * midiRollBeatWidth
+  const ticks = Array.from({ length: Math.ceil(regionLength) + 1 }, (_, index)=>`<span style="left:${index * midiRollBeatWidth}px">${index + 1}</span>`).join('')
+  return `<div class="studio-region-editor-timeline" data-region-editor-timeline="${esc(region.id)}"><div class="studio-region-editor-timeline-spacer"></div><div class="studio-region-editor-timeline-inner" data-region-editor-timeline-inner style="width:${width}px">${ticks}<i class="studio-region-editor-playhead" style="left:${playheadLeft}px"></i></div></div>`
+}
 function renderMidiRollPanel(motionClass = '') {
   const selectedRegion = midiRegions.find((item)=>item.id === selectedMidiRegionId) || midiRegions.find((item)=>item.id === midiRollState?.regionId) || null
   if (selectedRegion?.type === 'audio') return renderAudioRegionEditorPanel(selectedRegion, motionClass)
@@ -1579,6 +1601,7 @@ function renderMidiRollPanel(motionClass = '') {
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Track')} · ${esc(getMidiRegionLabel(region))} · ${Number(region.startBeat || 0).toFixed(2)}-${Number(region.endBeat || 0).toFixed(2)} · ${notes.length} notes</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
     <div class="studio-bottom-panel-body studio-midi-roll-body">
       <section class="studio-midi-roll-main">
+        ${renderRegionEditorTimeline(region, gridWidth)}
         <div class="studio-midi-roll-scroll">
           <div class="studio-midi-roll-keys" style="height:${gridHeight}px">${rows.map((note)=>{ const pitch=((note%12)+12)%12; const black=[1,3,6,8,10].includes(pitch); return `<span class="${black ? 'is-black' : 'is-white'} ${pitch === 0 ? 'is-root' : ''}">${pitch === 0 ? esc(formatMidiNoteName(note)) : ''}</span>` }).join('')}</div>
           <div class="studio-midi-roll-grid" data-midi-roll-grid style="width:${gridWidth}px;height:${gridHeight}px">
@@ -4644,12 +4667,52 @@ function assertBarBeatDivTickMath() {
 }
 if (import.meta.env?.DEV) assertBarBeatDivTickMath()
 function formatBarsFromPlayhead(){ const position=beatsToBarBeatDivTick(xToBeatsFromBarZero(timelineState.playheadX), { zeroBasedBars: true }); const barLabel=position.bar<0?`-${String(Math.abs(position.bar)).padStart(3,'0')}`:String(position.bar).padStart(3,'0'); return `${barLabel} ${String(position.beat).padStart(2,'0')} ${position.div} ${String(position.tick).padStart(3,'0')}` }
-function updateTransportDisplay(){ app.querySelector('[data-display-time]')?.replaceChildren(document.createTextNode(formatTimeFromPlayhead())); app.querySelector('[data-display-bars]')?.replaceChildren(document.createTextNode(formatBarsFromPlayhead())) }
+function getTransportBbdtPosition(){ return beatsToBarBeatDivTick(xToBeatsFromBarZero(timelineState.playheadX), { zeroBasedBars: true }) }
+function formatTransportBarLabel(value){ return Number(value)<0?`-${String(Math.abs(Number(value))).padStart(3,'0')}`:String(Number(value)).padStart(3,'0') }
+function renderTransportInlineInput(field, value){ return `<input class="studio-logic-inline-input" data-transport-inline-input="${field}" value="${esc(value)}" autocomplete="off" spellcheck="false">` }
+function renderTransportInlineSelect(field, value, options){ return `<select class="studio-logic-inline-select" data-transport-inline-select="${field}">${options.map((option)=>`<option value="${esc(option)}" ${option===value?'selected':''}>${esc(option)}</option>`).join('')}</select>` }
+function renderTransportTimeDisplay(){
+  if (transportInlineEdit?.field === 'time') return renderTransportInlineInput('time', transportInlineEdit.value)
+  return `<strong class="studio-logic-primary studio-logic-editable" data-display-time data-transport-inline="time">${formatTimeFromPlayhead()}</strong>`
+}
+function renderTransportBarsDisplay(){
+  const pos = getTransportBbdtPosition()
+  const values = { bar: formatTransportBarLabel(pos.bar), beat: String(pos.beat).padStart(2,'0'), div: String(pos.div), tick: String(pos.tick).padStart(3,'0') }
+  const fields = ['bar','beat','div','tick']
+  return `<strong class="studio-logic-primary studio-logic-bars" data-display-bars>${fields.map((field)=>transportInlineEdit?.field===field ? renderTransportInlineInput(field, transportInlineEdit.value) : `<span class="studio-logic-editable" data-transport-inline="${field}">${values[field]}</span>`).join('<span aria-hidden="true"> </span>')}</strong>`
+}
+function renderTransportTempoDisplay(displayTempo){
+  const value = Number(displayTempo?.bpm || 140).toFixed(4)
+  if (transportInlineEdit?.field === 'tempo') return renderTransportInlineInput('tempo', transportInlineEdit.value)
+  return `<strong class="studio-logic-primary studio-logic-editable" data-transport-inline="tempo">${value}</strong>`
+}
+function renderTransportTimeSignatureDisplay(displayTimeSignature){
+  const value = formatTimeSignature(displayTimeSignature)
+  if (transportInlineEdit?.field === 'timeSignature') return renderTransportInlineSelect('timeSignature', value, COMMON_TRANSPORT_TIME_SIGNATURES)
+  return `<span class="studio-logic-secondary studio-logic-editable" data-transport-inline="timeSignature">${value}</span>`
+}
+function renderTransportKeyDisplay(displayKeySignature){
+  const value = formatKeySignature(displayKeySignature)
+  if (transportInlineEdit?.field === 'key') return renderTransportInlineSelect('key', value, COMMON_TRANSPORT_KEYS)
+  return `<strong class="studio-logic-primary studio-logic-editable" data-transport-inline="key">${esc(value)}</strong>`
+}
+function updateTransportDisplay(){
+  if (transportInlineEdit) return
+  const time = app.querySelector('[data-display-time]')
+  if (time) time.textContent = formatTimeFromPlayhead()
+  const bars = app.querySelector('[data-display-bars]')
+  if (bars) {
+    const pos = getTransportBbdtPosition()
+    const values = [formatTransportBarLabel(pos.bar), String(pos.beat).padStart(2,'0'), String(pos.div), String(pos.tick).padStart(3,'0')]
+    bars.querySelectorAll('[data-transport-inline]').forEach((node, index)=>{ node.textContent = values[index] || node.textContent })
+  }
+}
 function updateEditorTitleStatus(){ app.querySelector('[data-editor-status]')?.replaceChildren(document.createTextNode(isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded'))) }
 function updateCycleDomFromState(){ const rangeEl = app.querySelector('[data-cycle-range]'); const startGuide = app.querySelector('.studio-cycle-guide--start'); const endGuide = app.querySelector('.studio-cycle-guide--end'); if(!cycleRange){ if(rangeEl) rangeEl.style.width='0px'; return } const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); if (rangeEl){ rangeEl.style.left=`${start}px`; rangeEl.style.width=`${Math.max(beatWidth(), end-start)}px`; rangeEl.classList.toggle('is-enabled', isCycleEnabled) } if (startGuide){ startGuide.style.left=`${start}px`; startGuide.classList.toggle('is-enabled', isCycleEnabled) } if (endGuide){ endGuide.style.left=`${end}px`; endGuide.classList.toggle('is-enabled', isCycleEnabled) } }
 function updateCycleButtonDom(){ const btn=app.querySelector('[data-toggle-cycle]'); if(!btn) return; btn.classList.toggle('is-active', isCycleEnabled); btn.setAttribute('aria-pressed', String(isCycleEnabled)) }
 function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
-function followPlayheadIfNeeded(){ if(!followPlayhead) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); const ruler=app.querySelector('[data-timeline-ruler]'); if(ruler) ruler.scrollLeft=grid.scrollLeft }
+function markTimelineUserInteraction(durationMs = 900){ timelineUserInteractingUntil = Date.now() + durationMs }
+function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); const ruler=app.querySelector('[data-timeline-ruler]'); if(ruler) ruler.scrollLeft=grid.scrollLeft }
 function getTransportClockProjectSeconds() {
   if (!isPlaying || !transportClock) return secondsFromPlayhead()
   const ctx = getAudioContext()
@@ -5215,13 +5278,13 @@ function applyStudioGuideTargets() {
     element.setAttribute('data-guide-role', role)
   })
 }
-function setPlayhead(x) {
+function setPlayhead(x, { restartTransport = true } = {}) {
   timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX())
   if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
   app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`)
   updateTransportDisplay()
   updateMidiRollPlayheadDom()
-  if (isPlaying && !isTransportTicking) {
+  if (restartTransport && isPlaying && !isTransportTicking) {
     stopAllAudioClipPlayback()
     stopAllPlaybackNotes()
     beginTransportClock(timelineState.playheadX)
@@ -5229,6 +5292,127 @@ function setPlayhead(x) {
     updateMidiRegionPlayback(beat)
     updateAudioClipPlayback(beat)
   }
+}
+function setPlayheadBeat(beat, options = {}) {
+  setPlayhead(beatToX(clampBeat(beat)), options)
+}
+function setBaseTempo(bpm) {
+  const value = clampProjectBpm(bpm)
+  const events = normalizeTempoEvents().filter((event)=>event.id !== 'tempo-default')
+  const first = events.find((event)=>Number(event.beat) === 0) || { id: 'tempo-start', beat: 0, curve: 'hold', createdAt: nowIso() }
+  const next = { ...first, beat: 0, bpm: value, curve: first.curve || 'hold', updatedAt: nowIso() }
+  globalTracks.tempoEvents = [next, ...events.filter((event)=>event.id !== first.id)].sort((a,b)=>a.beat-b.beat)
+  projectState.bpm = value
+  if (studioAudioEngine) studioAudioEngine.setBpm(value)
+}
+function setBaseTimeSignature(value) {
+  const sig = parseTimeSignature(value)
+  const events = normalizeTimeSignatureMap().filter((event)=>event.id !== 'time-signature-default')
+  const first = events.find((event)=>Number(event.beat) === 0) || { id: 'time-signature-start', beat: 0, createdAt: nowIso() }
+  globalTracks.timeSignatureEvents = [{ ...first, beat: 0, numerator: sig.numerator, denominator: sig.denominator, updatedAt: nowIso() }, ...events.filter((event)=>event.id !== first.id)].sort((a,b)=>a.beat-b.beat)
+  projectState.timeSignature = formatTimeSignature(sig)
+  timelineState.beatsPerBar = sig.numerator
+  syncBarsFromPositiveBeats()
+}
+function setBaseKeySignature(value) {
+  const parsed = parseProjectKey(value)
+  const events = normalizeKeySignatureMap().filter((event)=>event.id !== 'key-signature-default')
+  const first = events.find((event)=>Number(event.beat) === 0) || { id: 'key-signature-start', beat: 0, createdAt: nowIso() }
+  const label = `${parsed.root} ${parsed.scale}`
+  globalTracks.keySignatureEvents = [{ ...first, beat: 0, root: parsed.root, scale: parsed.scale, label, updatedAt: nowIso() }, ...events.filter((event)=>event.id !== first.id)].sort((a,b)=>a.beat-b.beat)
+  projectState.key = label
+}
+function parseTransportTimeInput(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  const parts = raw.split(':').map((part)=>Number(part))
+  if (parts.some((part)=>!Number.isFinite(part))) return null
+  if (parts.length === 1) return Math.max(0, parts[0])
+  if (parts.length === 2) return Math.max(0, (parts[0] * 60) + parts[1])
+  if (parts.length === 3) return Math.max(0, (parts[0] * 3600) + (parts[1] * 60) + parts[2])
+  return null
+}
+function bbdtToBeat({ bar, beat, div, tick }) {
+  const sig = getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))
+  const beatsPerBar = Math.max(1, Number(sig.numerator) || timelineState.beatsPerBar || 4)
+  const divisions = 4
+  const ticksPerBeat = 960
+  const safeBar = Math.max(0, Math.round(Number(bar) || 0))
+  const safeBeat = clamp(Math.round(Number(beat) || 1), 1, beatsPerBar)
+  const safeDiv = clamp(Math.round(Number(div) || 1), 1, divisions)
+  const safeTick = clamp(Math.round(Number(tick) || 0), 0, Math.floor(ticksPerBeat / divisions) - 1)
+  return safeBar * beatsPerBar + (safeBeat - 1) + ((safeDiv - 1) / divisions) + (safeTick / ticksPerBeat)
+}
+function commitTransportInlineEdit(field, rawValue) {
+  const value = String(rawValue || '').trim()
+  if (!value) return false
+  if (field === 'tempo') setBaseTempo(value)
+  else if (field === 'timeSignature') setBaseTimeSignature(value)
+  else if (field === 'key') setBaseKeySignature(value)
+  else if (field === 'time') {
+    const seconds = parseTransportTimeInput(value)
+    if (seconds == null) return false
+    setPlayheadBeat(secondsToBeats(seconds), { restartTransport: false })
+  } else if (['bar','beat','div','tick'].includes(field)) {
+    const pos = getTransportBbdtPosition()
+    pos[field] = value
+    setPlayheadBeat(bbdtToBeat(pos), { restartTransport: false })
+  } else return false
+  scheduleEditorSave()
+  return true
+}
+function openTransportInlineEdit(field) {
+  const pos = getTransportBbdtPosition()
+  const values = {
+    tempo: String(Number(getTempoAtBeat(clampBeat(xToBeat(timelineState.playheadX))).bpm || 140)),
+    timeSignature: formatTimeSignature(getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    key: formatKeySignature(getKeySignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    time: formatTimeFromPlayhead(),
+    bar: String(pos.bar),
+    beat: String(pos.beat),
+    div: String(pos.div),
+    tick: String(pos.tick)
+  }
+  transportInlineEdit = { field, value: values[field] || '' }
+  const scroll = captureArrangementScroll()
+  renderEditorPreservingArrangementScroll(scroll)
+  requestAnimationFrame(() => {
+    const input = app.querySelector(`[data-transport-inline-input="${CSS.escape(field)}"],[data-transport-inline-select="${CSS.escape(field)}"]`)
+    input?.focus()
+    input?.select?.()
+  })
+}
+function closeTransportInlineEdit({ commit = false, value = '' } = {}) {
+  const field = transportInlineEdit?.field
+  if (commit && field) commitTransportInlineEdit(field, value)
+  transportInlineEdit = null
+  const scroll = captureArrangementScroll()
+  renderEditorPreservingArrangementScroll(scroll)
+}
+function applyTransportValueDrag(field, delta) {
+  if (!field) return
+  if (field === 'time') setPlayheadBeat(xToBeat(timelineState.playheadX) + (delta * 0.125), { restartTransport: false })
+  else if (['bar','beat','div','tick'].includes(field)) {
+    const pos = getTransportBbdtPosition()
+    const step = field === 'bar' || field === 'beat' ? 1 : (field === 'div' ? 0.25 : 1 / 960)
+    setPlayheadBeat(xToBeat(timelineState.playheadX) + (delta * step), { restartTransport: false })
+  }
+  updateTransportDisplay()
+}
+function regionEditorTimelineBeatFromEvent(event) {
+  const timeline = event.target.closest?.('[data-region-editor-timeline]') || (regionEditorPlayheadDrag?.regionId ? app.querySelector(`[data-region-editor-timeline="${CSS.escape(regionEditorPlayheadDrag.regionId)}"]`) : null)
+  const inner = timeline?.querySelector('[data-region-editor-timeline-inner]')
+  const region = midiRegions.find((item)=>item.id === timeline?.dataset.regionEditorTimeline)
+  const rect = inner?.getBoundingClientRect?.()
+  if (!timeline || !inner || !region || !rect) return null
+  const localX = clamp(event.clientX - rect.left, 0, inner.offsetWidth || rect.width || 0)
+  return clampBeat((Number(region.startBeat) || 0) + (localX / midiRollBeatWidth))
+}
+function setPlayheadFromRegionEditorTimeline(event) {
+  const beat = regionEditorTimelineBeatFromEvent(event)
+  if (beat == null) return
+  setPlayheadBeat(beat, { restartTransport: false })
+  updateTransportDisplay()
 }
 function pixelsPerSecond() { const bps = 1 / getSecondsPerBeatAtBeat(clampBeat(xToBeat(timelineState.playheadX))); const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
 function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
@@ -6532,6 +6716,7 @@ function openRegionEditorForRegion(regionId = '') {
 function bindMidiRegionEvents() {
   app.querySelectorAll('[data-midi-region]').forEach((region)=>{
     region.addEventListener('pointerdown',(event)=>{
+      activeCommandContext = 'arrangement'
       const regionId = region.dataset.midiRegion
       if (event.button !== 0) return
       if (event.shiftKey) {
@@ -7384,6 +7569,7 @@ function selectMidiNote(regionId, noteIndex) {
   const region = midiRegions.find((item)=>item.id === regionId)
   if (!region?.notes?.[noteIndex]) return
   midiRollState = { ...(midiRollState || {}), regionId }
+  activeCommandContext = 'midi-editor'
   selectSingleRegion(regionId)
   midiRollSelectedNoteIndex = noteIndex
   midiRollStatus = ''
@@ -7847,6 +8033,61 @@ function deleteSelectedMidiNote() {
   })
   return true
 }
+function isMidiEditorCommandContext() {
+  return activeCommandContext === 'midi-editor' && activeBottomPanel === 'midi-roll' && !!getMidiRollRegion()
+}
+function selectAllMidiRollNotes() {
+  const region = getMidiRollRegion()
+  if (!region?.notes?.length) return false
+  midiRollSelectedNoteIndices = region.notes.map((_, index)=>index)
+  midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+  midiRollStatus = `Selected ${midiRollSelectedNoteIndices.length} notes.`
+  renderEditor()
+  return true
+}
+function copySelectedMidiRollNotes() {
+  const region = getMidiRollRegion()
+  const indices = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  const notes = [...new Set(indices)].map((index)=>region?.notes?.[index]).filter(Boolean)
+  if (!region || !notes.length) return false
+  const earliestStartBeat = Math.min(...notes.map((note)=>Number(note.startBeat) || Number(region.startBeat) || 0))
+  midiNoteClipboard = {
+    type: 'midi-notes',
+    earliestStartBeat,
+    notes: notes.map((note)=>({
+      note: { ...note },
+      relativeStartBeat: (Number(note.startBeat) || earliestStartBeat) - earliestStartBeat
+    }))
+  }
+  midiRollStatus = `Copied ${notes.length} note${notes.length === 1 ? '' : 's'}.`
+  renderEditor()
+  return true
+}
+function pasteSelectedMidiRollNotes() {
+  const region = getMidiRollRegion()
+  if (!region || !midiNoteClipboard?.notes?.length) return false
+  const regionStart = Number(region.startBeat) || 0
+  const pasteBeat = clamp(xToBeat(timelineState.playheadX), regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + 1))
+  commitHistoryMutation('paste-midi-notes', () => {
+    const created = []
+    const incoming = midiNoteClipboard.notes.map((item) => {
+      const source = item.note || {}
+      const startBeat = pasteBeat + Number(item.relativeStartBeat || 0)
+      const durationBeats = Math.max(0.05, Number(source.durationBeats) || 0.25)
+      const note = { ...source, id: makeInsertId('note'), startBeat, durationBeats }
+      created.push(note)
+      return note
+    })
+    region.notes = [...(region.notes || []), ...incoming].sort((a,b)=>(Number(a.startBeat)||0)-(Number(b.startBeat)||0) || (Number(a.note)||0)-(Number(b.note)||0))
+    const maxEnd = Math.max(Number(region.endBeat) || regionStart, ...incoming.map((note)=>(Number(note.startBeat)||regionStart) + Math.max(0.05, Number(note.durationBeats)||0.25)))
+    region.endBeat = Math.max(Number(region.endBeat) || regionStart + 0.25, maxEnd)
+    region.durationBeats = region.endBeat - regionStart
+    midiRollSelectedNoteIndices = created.map((createdNote)=>region.notes.indexOf(createdNote)).filter((index)=>index >= 0)
+    midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    midiRollStatus = `Pasted ${incoming.length} note${incoming.length === 1 ? '' : 's'}.`
+  })
+  return true
+}
 function getMidiRollTargetNoteIndices() {
   const region = getMidiRollRegion()
   if (!region?.notes?.length) return []
@@ -7881,6 +8122,7 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
   if (!region || !note || !grid) return
   event.preventDefault()
   event.stopPropagation()
+  activeCommandContext = 'midi-editor'
   selectSingleRegion(regionId)
   if (event.shiftKey) {
     const selected = new Set(midiRollSelectedNoteIndices)
@@ -8237,6 +8479,7 @@ function drawMidiNoteAtGridPoint(region, point) {
 }
 function beginMidiRollSelection(event) {
   if (event.button !== 0 || event.target.closest('[data-midi-note-index]')) return
+  activeCommandContext = 'midi-editor'
   const region = getMidiRollRegion()
   const point = getMidiRollGridPoint(event)
   if (!region || !point) return
@@ -8586,6 +8829,32 @@ function bindEditorEvents() {
   const showTooltip = (target) => { if (!tooltip || !target?.dataset?.tooltip) return; tooltip.textContent = target.dataset.tooltip; tooltip.hidden = false; const rect = target.getBoundingClientRect(); const trect = tooltip.getBoundingClientRect(); tooltip.style.left = `${Math.max(8, rect.left + rect.width / 2 - trect.width / 2)}px`; tooltip.style.top = `${Math.max(8, rect.top - trect.height - 8)}px` }
   const hideTooltip = () => { if (tooltip) tooltip.hidden = true }
   app.querySelectorAll('[data-tooltip]').forEach((target) => { target.addEventListener('pointerenter', () => showTooltip(target)); target.addEventListener('pointerleave', hideTooltip); target.addEventListener('focus', () => showTooltip(target)); target.addEventListener('blur', hideTooltip) })
+  app.querySelectorAll('[data-transport-inline]').forEach((target) => {
+    target.addEventListener('dblclick', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openTransportInlineEdit(target.dataset.transportInline)
+    })
+    target.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || ['tempo','timeSignature','key'].includes(target.dataset.transportInline)) return
+      transportValueDrag = { field: target.dataset.transportInline, startX: event.clientX, startY: event.clientY, lastStep: 0 }
+      document.body.classList.add('is-studio-dragging')
+    })
+  })
+  app.querySelectorAll('[data-transport-inline-input]').forEach((input) => {
+    input.addEventListener('keydown', (event) => {
+      if (event.code === 'Enter') { event.preventDefault(); closeTransportInlineEdit({ commit: true, value: input.value }) }
+      else if (event.code === 'Escape') { event.preventDefault(); closeTransportInlineEdit({ commit: false }) }
+    })
+    input.addEventListener('blur', () => { if (transportInlineEdit) closeTransportInlineEdit({ commit: true, value: input.value }) })
+  })
+  app.querySelectorAll('[data-transport-inline-select]').forEach((select) => {
+    select.addEventListener('change', () => closeTransportInlineEdit({ commit: true, value: select.value }))
+    select.addEventListener('keydown', (event) => {
+      if (event.code === 'Escape') { event.preventDefault(); closeTransportInlineEdit({ commit: false }) }
+    })
+    select.addEventListener('blur', () => { if (transportInlineEdit) closeTransportInlineEdit({ commit: false }) })
+  })
   app.querySelector('[data-bottom-panel-resize]')?.addEventListener('pointerdown', (event) => {
     const panel = event.target.closest('.studio-bottom-panel')
     if (!panel) return
@@ -8600,6 +8869,17 @@ function bindEditorEvents() {
     detachBottomPanel(button.dataset.detachBottomPanel)
   }))
   app.querySelector('.studio-midi-roll-scroll')?.addEventListener('scroll', captureMidiRollViewport, { passive: true })
+  app.querySelector('[data-midi-roll-editor]')?.addEventListener('pointerdown', () => { activeCommandContext = 'midi-editor' })
+  app.querySelector('[data-audio-region-editor]')?.addEventListener('pointerdown', () => { activeCommandContext = 'audio-editor' })
+  app.querySelectorAll('[data-region-editor-timeline]').forEach((timeline) => timeline.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    activeCommandContext = timeline.closest('[data-midi-roll-editor]') ? 'midi-editor' : 'audio-editor'
+    regionEditorPlayheadDrag = { regionId: timeline.dataset.regionEditorTimeline }
+    setPlayheadFromRegionEditorTimeline(event)
+    document.body.classList.add('is-studio-dragging')
+  }))
   app.querySelector('[data-midi-roll-grid]')?.addEventListener('pointerdown', beginMidiRollSelection)
   app.querySelector('[data-midi-roll-grid]')?.addEventListener('wheel', handleMidiRollWheel, { passive: false })
   app.querySelector('[data-audio-waveform-viewport]')?.addEventListener('wheel', handleAudioWaveformWheel, { passive: false })
@@ -9154,7 +9434,7 @@ function bindEditorEvents() {
   let extensionDrag = null
   let didMovePlayhead = false
   let didCycleChange = false
-  const syncTimelineScroll = (source = null, { refresh = true } = {}) => { const scrollLeft = source?.scrollLeft ?? grid?.scrollLeft ?? 0; const liveGlobalLane = app.querySelector('[data-global-tracks]'); if (grid && grid !== source) grid.scrollLeft = scrollLeft; if (ruler && ruler !== source) ruler.scrollLeft = scrollLeft; if (liveGlobalLane && liveGlobalLane !== source) liveGlobalLane.scrollLeft = scrollLeft; if (extensionLane && extensionLane !== source) extensionLane.scrollLeft = scrollLeft; if (refresh) scheduleTimelineVisualRefresh() }
+  const syncTimelineScroll = (source = null, { refresh = false } = {}) => { const scrollLeft = source?.scrollLeft ?? grid?.scrollLeft ?? 0; const liveGlobalLane = app.querySelector('[data-global-tracks]'); const sync = (node) => { if (node && node !== source && Math.abs((node.scrollLeft || 0) - scrollLeft) > 0.5) node.scrollLeft = scrollLeft }; sync(grid); sync(ruler); sync(liveGlobalLane); sync(extensionLane); if (refresh) scheduleTimelineVisualRefresh() }
   const updateTimelineRulerDom = () => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
   const updateTimelineGridLinesDom = () => { const gridInner = app.querySelector('[data-arrangement-grid-inner]'); if (!gridInner) return; const selection = gridInner.querySelector('[data-selection-box]'); const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'; const selectionHtml = selection ? selection.outerHTML : selectionMarkup; gridInner.innerHTML = `<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}` }
   const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
@@ -9164,20 +9444,50 @@ function bindEditorEvents() {
   const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
   const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact)); }
   const isPinnedRight = () => !!grid && (grid.scrollLeft + grid.clientWidth >= grid.scrollWidth - 4)
-  grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if ((event.ctrlKey || event.metaKey) && overTimeline) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const oldTimelineX = grid.scrollLeft + mouseX; const anchorBeat = xToBeatsFromBarZero(oldTimelineX); let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX); if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat); const cycleBeats = cycleRange ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) } : null; const direction = event.deltaY < 0 ? 1 : -1; const zoomFactor = direction > 0 ? 1.12 : 1 / 1.12; timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoomFactor); timelineState.playheadX = beatsFromBarZeroToX(playheadBeat); if (cycleBeats) { let startBeat = cycleBeats.start; let endBeat = cycleBeats.end; if (isSnapEnabled) { startBeat = snapBeatToGrid(startBeat); endBeat = snapBeatToGrid(endBeat) } cycleRange = { startX: beatsFromBarZeroToX(startBeat), endX: beatsFromBarZeroToX(endBeat) } } refreshTimelineVisualsLive(); const newTimelineX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(newTimelineX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); scheduleEditorSave(); return }
+  grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); if (overTimeline) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if ((event.ctrlKey || event.metaKey) && overTimeline) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const oldTimelineX = grid.scrollLeft + mouseX; const anchorBeat = xToBeatsFromBarZero(oldTimelineX); let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX); if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat); const cycleBeats = cycleRange ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) } : null; const direction = event.deltaY < 0 ? 1 : -1; const zoomFactor = direction > 0 ? 1.12 : 1 / 1.12; timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoomFactor); timelineState.playheadX = beatsFromBarZeroToX(playheadBeat); if (cycleBeats) { let startBeat = cycleBeats.start; let endBeat = cycleBeats.end; if (isSnapEnabled) { startBeat = snapBeatToGrid(startBeat); endBeat = snapBeatToGrid(endBeat) } cycleRange = { startX: beatsFromBarZeroToX(startBeat), endX: beatsFromBarZeroToX(endBeat) } } refreshTimelineVisualsLive(); const newTimelineX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(newTimelineX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); scheduleEditorSave(); return }
     if (event.altKey && overTrackZone) { event.preventDefault(); timelineState.trackHeight = clamp(timelineState.trackHeight + (event.deltaY < 0 ? 6 : -6), 44, 220); updateTrackHeightDom(); scheduleTimelineVisualRefresh(); scheduleEditorSave(); return }
     if (event.shiftKey && overTimeline) { event.preventDefault(); grid.scrollLeft = clamp(grid.scrollLeft + event.deltaY, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid) }
   }, { passive:false })
-  grid?.addEventListener('scroll', () => syncTimelineScroll(grid), { passive:true })
-  ruler?.addEventListener('scroll', () => syncTimelineScroll(ruler), { passive:true })
-  app.querySelector('[data-global-tracks]')?.addEventListener('scroll', (event) => syncTimelineScroll(event.currentTarget), { passive:true })
-  extensionLane?.addEventListener('scroll', () => syncTimelineScroll(extensionLane), { passive:true })
-  app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight }; document.body.classList.add('is-studio-dragging') }))
+  grid?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(grid) }, { passive:true })
+  ruler?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(ruler) }, { passive:true })
+  app.querySelector('[data-global-tracks]')?.addEventListener('scroll', (event) => { markTimelineUserInteraction(); syncTimelineScroll(event.currentTarget) }, { passive:true })
+  extensionLane?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(extensionLane) }, { passive:true })
+  const restoreTimelineExtensionScroll = (drag = extensionDrag) => {
+    if (!grid || !drag) return
+    const max = Math.max(0, grid.scrollWidth - grid.clientWidth)
+    grid.scrollLeft = drag.side === 'right' && drag.pinRight ? max : clamp(drag.scrollLeft || 0, 0, max)
+    syncTimelineScroll(grid)
+  }
+  const scheduleTimelineExtensionScrollRestore = (drag = extensionDrag) => requestAnimationFrame(() => restoreTimelineExtensionScroll(drag))
+  const extendTimelineWhileHeld = () => {
+    if (!extensionDrag || extensionDrag.side !== 'right' || extensionDrag.moved) return
+    timelineState.positiveBeats = clamp(timelineState.positiveBeats + 1, timelineState.beatsPerBar, 800)
+    extensionDrag.startPositiveBeats = timelineState.positiveBeats
+    scheduleTimelineVisualRefresh()
+    scheduleTimelineExtensionScrollRestore(extensionDrag)
+  }
+  app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); markTimelineUserInteraction(1400); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight, moved:false }; if (timelineExtensionRepeatTimer) clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = window.setInterval(extendTimelineWhileHeld, 120); document.body.classList.add('is-studio-dragging') }))
   ruler?.addEventListener('pointerdown', (event) => { const cycleHandle = event.target.closest('[data-cycle-handle]'); const cycleMove = event.target.closest('[data-cycle-drag]'); const inCycleStrip = isCycleStripPointerEvent(event, ruler); if (cycleHandle && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: cycleHandle.dataset.cycleHandle === 'start' ? 'resize-start' : 'resize-end', fixedX: cycleHandle.dataset.cycleHandle === 'start' ? cycleRange.endX : cycleRange.startX }; return } if (cycleMove && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: 'move', startPointerX: x, startRange: { ...cycleRange } }; return } if (inCycleStrip) { event.preventDefault(); const x = getRulerLocalX(event); setCycleEnabled(true); cycleDrag = { mode: 'create', anchorX: x }; applyCycleRange(x, x + beatWidth()); document.body.classList.add('is-studio-dragging'); return } event.preventDefault(); timelineState.isDraggingPlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); scheduleEditorSave() })
-  grid?.addEventListener('pointerdown', (event) => { if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); if (!event.shiftKey) clearRegionSelection(); midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.hidden = false } })
-	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); if (grid) { grid.scrollLeft = extensionDrag.side==='right' ? Math.max(0, grid.scrollWidth-grid.clientWidth) : extensionDrag.scrollLeft; syncTimelineScroll() } return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
-	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
+  grid?.addEventListener('pointerdown', (event) => { activeCommandContext = 'arrangement'; if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); if (!event.shiftKey) clearRegionSelection(); midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.hidden = false } })
+	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; extensionDrag.moved = extensionDrag.moved || Math.abs(dx) > 3; markTimelineUserInteraction(1400); if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); scheduleTimelineExtensionScrollRestore(extensionDrag); return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
+	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } if (extensionDrag) restoreTimelineExtensionScroll(extensionDrag); panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
   window.addEventListener('pointermove', (event) => {
+    if (transportValueDrag) {
+      event.preventDefault()
+      const raw = ((event.clientX - transportValueDrag.startX) - (event.clientY - transportValueDrag.startY)) / 14
+      const step = Math.trunc(raw)
+      const delta = step - transportValueDrag.lastStep
+      if (delta) {
+        transportValueDrag.lastStep = step
+        applyTransportValueDrag(transportValueDrag.field, delta)
+      }
+      return
+    }
+    if (regionEditorPlayheadDrag) {
+      event.preventDefault()
+      setPlayheadFromRegionEditorTimeline(event)
+      return
+    }
     if (bottomPanelResizeDrag) {
       event.preventDefault()
       const maxHeight = getMaxBottomPanelHeight()
@@ -9236,6 +9546,18 @@ function bindEditorEvents() {
     updateGlobalTrackLaneDom()
   })
   window.addEventListener('pointerup', () => {
+    if (transportValueDrag) {
+      transportValueDrag = null
+      document.body.classList.remove('is-studio-dragging')
+      scheduleEditorSave()
+      return
+    }
+    if (regionEditorPlayheadDrag) {
+      regionEditorPlayheadDrag = null
+      document.body.classList.remove('is-studio-dragging')
+      scheduleEditorSave()
+      return
+    }
     if (bottomPanelResizeDrag) {
       bottomPanelResizeDrag = null
       document.body.classList.remove('is-studio-dragging', 'is-bottom-panel-resizing')
@@ -9455,6 +9777,11 @@ function renderEditor() {
   const bottomPanelClass = shouldRenderBottomPanel ? 'has-bottom-panel' : ''
   const bottomPanelHeightStyle = bottomPanelHeightPx ? `--studio-bottom-panel-height:${bottomPanelHeightPx}px;` : ''
   let shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu">${renderTopMenuButtons()}</nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu ${cpuAlerts.enabled && cpuPercent >= cpuAlerts.thresholdPercent ? 'is-warning' : ''}"><strong class="studio-logic-primary" data-cpu-percent>${Math.round(cpuPercent)}%</strong><span class="studio-logic-secondary">CPU${cpuAlerts.enabled ? ` / ${Math.round(cpuAlerts.thresholdPercent)}%` : ''}</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}${renderControlsConfigModal()}${renderProjectSettingsModal()}${renderProjectManagementModal()}</main>`
+  shell = shell
+    .replace(`<section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section>`, `<section class="studio-logic-section studio-logic-section--time">${renderTransportTimeDisplay()}<span class="studio-logic-secondary">time</span></section>`)
+    .replace(`<section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section>`, `<section class="studio-logic-section studio-logic-section--bars">${renderTransportBarsDisplay()}<span class="studio-logic-secondary">bar beat div tick</span></section>`)
+    .replace(`<section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section>`, `<section class="studio-logic-section studio-logic-section--tempo">${renderTransportTempoDisplay(displayTempo)}${renderTransportTimeSignatureDisplay(displayTimeSignature)}</section>`)
+    .replace(`<section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section>`, `<section class="studio-logic-section studio-logic-section--key">${renderTransportKeyDisplay(displayKeySignature)}<span class="studio-logic-secondary">key</span></section>`)
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   initShellChrome()
   app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')?.insertAdjacentHTML('afterend', renderRegionToolRail())
@@ -9504,18 +9831,38 @@ function handleStudioKeydown(event){
     }
     if(event.code === 'KeyC'){
       event.preventDefault()
+      if (activeCommandContext === 'audio-editor') return
+      if (isMidiEditorCommandContext() && copySelectedMidiRollNotes()) return
       copyMidiRegion()
       return
     }
     if(event.code === 'KeyV'){
       event.preventDefault()
+      if (activeCommandContext === 'audio-editor') return
+      if (isMidiEditorCommandContext() && pasteSelectedMidiRollNotes()) return
       pasteMidiRegion()
       return
     }
     if(event.code === 'KeyX'){
       event.preventDefault()
+      if (activeCommandContext === 'audio-editor') return
+      if (isMidiEditorCommandContext() && copySelectedMidiRollNotes()) { deleteSelectedMidiNote(); return }
       copyMidiRegion()
       deleteMidiRegion()
+      return
+    }
+    if(event.code === 'KeyA'){
+      event.preventDefault()
+      if (isMidiEditorCommandContext()) {
+        selectAllMidiRollNotes()
+      } else if (activeCommandContext === 'audio-editor') {
+        return
+      } else {
+        const ids = midiRegions.map((region)=>region.id)
+        setSelectedRegions(ids, { primaryId: ids[0] || '' })
+        activeCommandContext = 'arrangement'
+        renderEditor()
+      }
       return
     }
     if(event.code === 'KeyD'){
