@@ -180,6 +180,41 @@
         "type": 301
       },
       {
+        "source": "/about.html",
+        "destination": "/about",
+        "type": 301
+      },
+      {
+        "source": "/contact.html",
+        "destination": "/contact",
+        "type": 301
+      },
+      {
+        "source": "/privacy.html",
+        "destination": "/privacy",
+        "type": 301
+      },
+      {
+        "source": "/terms.html",
+        "destination": "/terms",
+        "type": 301
+      },
+      {
+        "source": "/refund-policy.html",
+        "destination": "/refund-policy",
+        "type": 301
+      },
+      {
+        "source": "/creator-guidelines.html",
+        "destination": "/creator-guidelines",
+        "type": 301
+      },
+      {
+        "source": "/ad-policy.html",
+        "destination": "/ad-policy",
+        "type": 301
+      },
+      {
         "source": "/studio.html",
         "destination": "/studio",
         "type": 301
@@ -360,6 +395,34 @@
       {
         "source": "/support",
         "destination": "/support.html"
+      },
+      {
+        "source": "/about",
+        "destination": "/about.html"
+      },
+      {
+        "source": "/contact",
+        "destination": "/contact.html"
+      },
+      {
+        "source": "/privacy",
+        "destination": "/privacy.html"
+      },
+      {
+        "source": "/terms",
+        "destination": "/terms.html"
+      },
+      {
+        "source": "/refund-policy",
+        "destination": "/refund-policy.html"
+      },
+      {
+        "source": "/creator-guidelines",
+        "destination": "/creator-guidelines.html"
+      },
+      {
+        "source": "/ad-policy",
+        "destination": "/ad-policy.html"
       },
       {
         "source": "/studio",

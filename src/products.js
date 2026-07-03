@@ -697,6 +697,26 @@ app.innerHTML = `
       </div>
     </section>
 
+    <section class="section products-info-section" aria-label="How the Melogic marketplace works">
+      <div class="section-inner products-info-grid">
+        <article>
+          <p class="eyebrow">For buyers</p>
+          <h2>Digital audio products with account library access.</h2>
+          <p>Melogic marketplace listings can include sample packs, presets, wavetable packs, loops, drum kits, MIDI packs, project files, tutorials, plugins, and other production tools. Paid checkout and free claims add eligible products to your Melogic library for access and downloads.</p>
+        </article>
+        <article>
+          <p class="eyebrow">For creators</p>
+          <h2>Sell original sounds, tools, and project resources.</h2>
+          <p>Creators prepare product pages with descriptions, previews, categories, pricing, and delivery files. Payouts require supported payment setup and eligibility review before funds can be sent to the creator.</p>
+        </article>
+        <article>
+          <p class="eyebrow">Safety</p>
+          <h2>Review, moderation, and support keep the catalog useful.</h2>
+          <p>Melogic reviews reports and product issues for missing files, misleading descriptions, copyright concerns, and prohibited content. Buyers and creators can contact support when a listing, order, download, or payout setup needs attention.</p>
+        </article>
+      </div>
+    </section>
+
     <footer class="section products-footer">
       <div class="section-inner">
         <p class="eyebrow">Melogic Records</p>

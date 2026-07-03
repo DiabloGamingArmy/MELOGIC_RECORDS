@@ -1,4 +1,4 @@
-import { ADS_ENABLED, ADSENSE_CLIENT_ID } from './adConfig'
+import { ADS_ENABLED, ADSENSE_CLIENT_ID, ADS_VISIBLE_DURING_REVIEW } from './adConfig'
 
 const pushedSlots = new WeakSet()
 
@@ -16,7 +16,7 @@ function pushAdSlot(insElement) {
 }
 
 export function createAdSenseDisplaySlot({ slotId, className = '' } = {}) {
-  if (!ADS_ENABLED || !slotId) return null
+  if (!ADS_ENABLED || !ADS_VISIBLE_DURING_REVIEW || !slotId) return null
 
   const slot = document.createElement('aside')
   slot.className = ['adsense-display-slot', className].filter(Boolean).join(' ')

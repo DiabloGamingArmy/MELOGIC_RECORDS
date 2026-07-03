@@ -8,6 +8,7 @@ import { ROUTES, authRoute } from '../utils/routes'
 import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
 import { initChatDock } from './chatDock'
 import { initSiteGuidance } from './siteGuidance'
+import { ensureSiteFooter } from './siteFooter'
 import '../styles/chatDock.css'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
@@ -468,6 +469,7 @@ async function initAccessGate() {
 export async function initShellChrome() {
   initNavBrandLogo()
   syncNavOffset()
+  ensureSiteFooter()
   if (!shellResizeBound) {
     shellResizeBound = true
     window.addEventListener('resize', syncNavOffset, { passive: true })

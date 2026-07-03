@@ -2,6 +2,7 @@ const BLOCKED_AD_PATH_PREFIXES = [
   '/auth',
   '/cart',
   '/checkout',
+  '/account',
   '/account/billing-payouts',
   '/account/orders',
   '/account/library',

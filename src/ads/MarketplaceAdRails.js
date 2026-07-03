@@ -1,5 +1,5 @@
 import './marketplaceAdRails.css'
-import { MARKETPLACE_AD_SLOTS } from './adConfig'
+import { ADS_ENABLED, ADS_VISIBLE_DURING_REVIEW, MARKETPLACE_AD_SLOTS } from './adConfig'
 import { canShowMarketplaceRails } from './adPlacementRules'
 import { createAdSenseDisplaySlot } from './AdSenseDisplaySlot'
 
@@ -21,6 +21,7 @@ function createRail(position, slotId) {
 }
 
 export function mountMarketplaceAdRails({ root = document.querySelector('[data-marketplace-root]') } = {}) {
+  if (!ADS_ENABLED || !ADS_VISIBLE_DURING_REVIEW) return null
   if (!canShowMarketplaceRails()) return null
   if (!root || root.closest(RAIL_WRAPPER_SELECTOR)) return null
 
