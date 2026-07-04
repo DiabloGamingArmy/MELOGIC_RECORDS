@@ -1589,8 +1589,35 @@ function renderRegionEditorTimeline(region, gridWidth) {
   const regionLength = regionEnd - regionStart
   const width = Math.max(420, Number(gridWidth) || regionLength * midiRollBeatWidth)
   const playheadLeft = (xToBeat(timelineState.playheadX) - regionStart) * midiRollBeatWidth
-  const ticks = Array.from({ length: Math.ceil(regionLength) + 1 }, (_, index)=>`<span style="left:${index * midiRollBeatWidth}px">${index + 1}</span>`).join('')
+  const ticks = renderRegionEditorTimelineTicks(regionLength)
   return `<div class="studio-region-editor-header-container"><div class="studio-region-editor-timeline" data-region-editor-timeline="${esc(region.id)}"><div class="studio-region-editor-timeline-spacer"></div><div class="studio-region-editor-timeline-viewport" data-region-editor-timeline-viewport><div class="studio-region-editor-timeline-inner" data-region-editor-timeline-inner style="width:${width}px">${ticks}<i class="studio-region-editor-playhead" style="left:${playheadLeft}px"></i></div></div></div></div>`
+}
+function getMidiRollGridDivision() {
+  if (midiRollBeatWidth >= 512) return 1 / 32
+  if (midiRollBeatWidth >= 320) return 1 / 16
+  if (midiRollBeatWidth >= 180) return 1 / 8
+  return 1 / 4
+}
+function renderRegionEditorTimelineTicks(regionLength = 0) {
+  const division = getMidiRollGridDivision()
+  const count = Math.ceil(regionLength / division) + 1
+  return Array.from({ length: count }, (_, index)=>{
+    const beat = index * division
+    const wholeBeat = Math.abs(beat - Math.round(beat)) < 1e-6
+    const label = wholeBeat ? Math.round(beat) + 1 : ''
+    return `<span class="${wholeBeat ? 'is-major' : 'is-subdivision'}" style="left:${beat * midiRollBeatWidth}px">${label}</span>`
+  }).join('')
+}
+function renderMidiRollGridLines(regionLength = 0) {
+  const division = getMidiRollGridDivision()
+  const count = Math.ceil(regionLength / division) + 1
+  return Array.from({ length: count }, (_, index)=>{
+    const beat = index * division
+    const wholeBeat = Math.abs(beat - Math.round(beat)) < 1e-6
+    const halfBeat = !wholeBeat && Math.abs((beat * 2) - Math.round(beat * 2)) < 1e-6
+    const cls = wholeBeat ? 'is-beat' : halfBeat ? 'is-half' : 'is-subdivision'
+    return `<i class="${cls}" style="left:${beat * midiRollBeatWidth}px"></i>`
+  }).join('')
 }
 function renderMidiRollPanel(motionClass = '') {
   const selectedRegion = midiRegions.find((item)=>item.id === selectedMidiRegionId) || midiRegions.find((item)=>item.id === midiRollState?.regionId) || null
@@ -1619,7 +1646,7 @@ function renderMidiRollPanel(motionClass = '') {
         <div class="studio-midi-roll-scroll">
           <div class="studio-midi-roll-keys" style="height:${gridHeight}px">${rows.map((note)=>{ const pitch=((note%12)+12)%12; const black=[1,3,6,8,10].includes(pitch); return `<span class="${black ? 'is-black' : 'is-white'} ${pitch === 0 ? 'is-root' : ''}">${pitch === 0 ? esc(formatMidiNoteName(note)) : ''}</span>` }).join('')}</div>
           <div class="studio-midi-roll-grid" data-midi-roll-grid style="width:${gridWidth}px;height:${gridHeight}px">
-            ${Array.from({ length: Math.ceil(regionLength / 0.25) + 1 }, (_, index)=>`<i class="${index % 4 === 0 ? 'is-beat' : ''}" style="left:${index * (midiRollBeatWidth / 4)}px"></i>`).join('')}
+            ${renderMidiRollGridLines(regionLength)}
             <span class="studio-midi-roll-playhead" data-midi-roll-playhead style="left:${playheadLeft}px"></span>
             <span class="studio-midi-roll-selection" data-midi-roll-selection hidden></span>
             ${notes.map((note, index)=>{
@@ -2142,6 +2169,23 @@ function normalizeTrackAutomation(track = {}) {
   })
   return { visible: track.automation?.visible !== false, activeParameter, parameters }
 }
+function evaluateTrackAutomationValue(track = {}, parameter = 'volume', beat = 0) {
+  const data = getTrackAutomationData(track, parameter)
+  const points = [...(data.points || [])].sort((a, b)=>a.beat-b.beat)
+  if (!points.length) return data.defaultValue
+  const targetBeat = clampBeat(Number(beat) || 0)
+  if (targetBeat <= points[0].beat) return points[0].value
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1]
+    const next = points[index]
+    if (targetBeat > next.beat) continue
+    const span = Math.max(0.000001, next.beat - previous.beat)
+    const t = clamp((targetBeat - previous.beat) / span, 0, 1)
+    const shaped = applyAutomationCurve(t, previous.curveAmount)
+    return clampTrackAutomationValue(parameter, previous.value + ((next.value - previous.value) * shaped))
+  }
+  return points[points.length - 1].value
+}
 function ensureTrackAutomation(track = {}) {
   if (!track) return null
   track.automation = normalizeTrackAutomation(track)
@@ -2206,7 +2250,14 @@ function renderTrackAutomationLanes() {
         return Math.abs(curve) < 0.001 ? `L ${point.x} ${point.y}` : `Q ${midX} ${midY} ${point.x} ${point.y}`
       }).join(' ')
       : `M ${barZeroX()} ${defaultY} L ${timelineContentWidth()} ${defaultY}`
-    return `<section class="studio-track-automation-lane" data-track-automation-lane="${esc(track.id)}" data-track-automation-parameter="${esc(parameter)}" style="top:${top}px;height:${height}px;--track-color:${esc(track.color || '#58d4ff')}"><svg viewBox="0 0 ${timelineContentWidth()} ${height}" preserveAspectRatio="none"><path class="studio-track-automation-line" data-track-automation-default-line="${esc(track.id)}" d="${path}"></path></svg>${points.map((point)=>`<button type="button" class="studio-track-automation-point ${selectedTrackAutomation?.trackId===track.id&&selectedTrackAutomation?.parameter===parameter&&selectedTrackAutomation?.pointId===point.id?'is-selected':''}" data-track-automation-point="${esc(point.id)}" data-track-id="${esc(track.id)}" data-track-automation-point-parameter="${esc(parameter)}" style="left:${point.x}px;top:${point.y}px"><span>${esc(formatTrackAutomationValue(parameter, point.value))}</span></button>`).join('')}${points.length ? '' : `<button type="button" class="studio-track-automation-default-line-hit" data-track-automation-default="${esc(track.id)}" data-track-automation-default-parameter="${esc(parameter)}" style="top:${defaultY}px" aria-label="${esc(track.name)} ${esc(parameter)} automation default"></button>`}</section>`
+    const segmentHits = points.slice(0, -1).map((point, index)=>{
+      const next = points[index + 1]
+      const left = Math.min(point.x, next.x)
+      const width = Math.max(18, Math.abs(next.x - point.x))
+      const centerY = ((point.y + next.y) / 2) - (clamp(Number(point.curveAmount) || 0, -1, 1) * height * 0.28)
+      return `<button type="button" class="studio-track-automation-segment-hit" data-track-automation-segment="${esc(point.id)}" data-track-id="${esc(track.id)}" data-track-automation-segment-parameter="${esc(parameter)}" style="left:${left}px;top:${clamp(centerY, 8, height - 8)}px;width:${width}px" aria-label="${esc(track.name)} ${esc(parameter)} automation curve segment"></button>`
+    }).join('')
+    return `<section class="studio-track-automation-lane" data-track-automation-lane="${esc(track.id)}" data-track-automation-parameter="${esc(parameter)}" style="top:${top}px;height:${height}px;--track-color:${esc(track.color || '#58d4ff')}"><svg viewBox="0 0 ${timelineContentWidth()} ${height}" preserveAspectRatio="none"><path class="studio-track-automation-line" data-track-automation-default-line="${esc(track.id)}" d="${path}"></path></svg>${segmentHits}${points.map((point)=>`<button type="button" class="studio-track-automation-point ${selectedTrackAutomation?.trackId===track.id&&selectedTrackAutomation?.parameter===parameter&&selectedTrackAutomation?.pointId===point.id?'is-selected':''}" data-track-automation-point="${esc(point.id)}" data-track-id="${esc(track.id)}" data-track-automation-point-parameter="${esc(parameter)}" style="left:${point.x}px;top:${point.y}px"><span>${esc(formatTrackAutomationValue(parameter, point.value))}</span></button>`).join('')}${points.length ? '' : `<button type="button" class="studio-track-automation-default-line-hit" data-track-automation-default="${esc(track.id)}" data-track-automation-default-parameter="${esc(parameter)}" style="top:${defaultY}px" aria-label="${esc(track.name)} ${esc(parameter)} automation default"></button>`}</section>`
   }).join('')
 }
 function trackAutomationPointer(event, lane = event.target.closest?.('[data-track-automation-lane]')) {
@@ -2216,10 +2267,11 @@ function trackAutomationPointer(event, lane = event.target.closest?.('[data-trac
   const rect = lane.getBoundingClientRect()
   const x = event.clientX - rect.left + (app.querySelector('[data-arrangement-grid]')?.scrollLeft || 0)
   const y = event.clientY - rect.top
+  const rawBeat = clampBeat(xToBeatsFromBarZero(x))
   return {
     track,
     parameter,
-    beat: clampBeat(xToBeatsFromBarZero(x)),
+    beat: isSnapEnabled ? snapBeatToGrid(rawBeat) : rawBeat,
     value: trackAutomationYToValue(parameter, y, Math.max(44, timelineState.trackHeight)),
     lane
   }
@@ -2233,10 +2285,24 @@ function setTrackAutomationPoint(track, parameter, pointId, patch = {}) {
     value: clampTrackAutomationValue(parameter, patch.value ?? point.value)
   } : point).sort((a,b)=>a.beat-b.beat)
 }
+function setTrackAutomationSegmentCurve(track, parameter, pointId, curveAmount = 0) {
+  const data = getTrackAutomationData(track, parameter)
+  data.points = data.points.map((point)=>point.id === pointId ? {
+    ...point,
+    curve: 'linear',
+    curveAmount: clamp(Number(curveAmount) || 0, -1, 1)
+  } : point)
+}
 function addTrackAutomationPointFromEvent(event) {
   const info = trackAutomationPointer(event)
   if (!info) return
   const data = getTrackAutomationData(info.track, info.parameter)
+  const nearby = data.points.find((point)=>Math.abs(point.beat - info.beat) < 0.015)
+  if (nearby) {
+    selectedTrackAutomation = { trackId: info.track.id, parameter: info.parameter, pointId: nearby.id }
+    renderEditorPreservingArrangementScroll()
+    return
+  }
   const point = { id: makeInsertId('automation-point'), beat: info.beat, value: info.value, curve: 'linear', curveAmount: 0 }
   data.points.push(point)
   data.points.sort((a,b)=>a.beat-b.beat)
@@ -2983,11 +3049,47 @@ function renderMidiEffectEditorPanel(motionClass = '') {
       : `<section class="studio-instrument-subpage-placeholder"><h3>${esc(editor.insert.name)}</h3><p>This MIDI effect does not have a dedicated editor yet.</p></section>`
   return `<section class="studio-bottom-panel studio-midi-effect-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><div><strong>${esc(editor.insert.name)}</strong><span>${esc(editor.track.name)} · MIDI Effect</span></div><nav><button type="button" data-detach-bottom-panel="midi-effect">Detach</button><button type="button" class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><div class="studio-instrument-content">${content}</div></div></section>`
 }
+function renderMixerInsertList(track = null) {
+  const inserts = track ? [
+    ...(isSoftwareTrack(track) ? (track.midiEffects || []).map((insert)=>({ ...insert, category: 'MIDI' })) : []),
+    ...(track.audioEffects || []).map((insert)=>({ ...insert, category: 'Audio' }))
+  ] : []
+  if (!inserts.length) return '<p>No effects</p>'
+  return inserts.map((insert)=>`<button type="button" class="${insert.enabled === false ? 'is-disabled' : ''}" title="${esc(insert.category)} FX">${esc(insert.name || insert.type || 'Effect')}<small>${esc(insert.category)}</small></button>`).join('')
+}
+function renderMixerChannelStrip(track = null, { stereoOut = false } = {}) {
+  const color = stereoOut ? '#8cdfff' : (track?.color || '#58d4ff')
+  const level = clamp(Number(track?.outputLevel) || 0, 0, 1)
+  const volume = stereoOut ? 100 : clamp(Number(track?.volume) || 0, 0, 100)
+  const pan = stereoOut ? 0 : clamp(Number(track?.pan) || 0, -100, 100)
+  const name = stereoOut ? 'Stereo Out' : (track?.name || 'Track')
+  const id = track?.id || ''
+  const selectedClass = !stereoOut && selectedTrackId === id ? 'is-selected' : ''
+  return `<article class="studio-mixer-strip ${stereoOut ? 'studio-mixer-strip--stereo-out' : ''} ${selectedClass}" style="--track-color:${esc(color)};--track-meter-level:${level}" ${id ? `data-mixer-track-strip="${esc(id)}"` : ''}>
+    <span class="studio-mixer-color-strip" aria-hidden="true"></span>
+    <button class="studio-mixer-icon" type="button" ${id ? `data-track-icon="${esc(id)}"` : 'disabled'} aria-label="${esc(name)} channel">${stereoOut ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16"/><path d="M4 16h16"/><path d="M8 4v16"/><path d="M16 4v16"/></svg>' : trackTypeIcon(normalizedTrackIconType(track))}</button>
+    <strong title="${esc(name)}">${esc(name)}</strong>
+    <div class="studio-mixer-buttons">
+      <button type="button" ${stereoOut ? 'disabled' : `data-track-mute="${esc(id)}"`} class="${track?.muted ? 'is-active' : ''}" data-tooltip="Mute">M</button>
+      <button type="button" ${stereoOut ? 'disabled' : `data-track-solo="${esc(id)}"`} class="${track?.soloed ? 'is-active' : ''}" data-tooltip="Solo">S</button>
+      <button type="button" ${stereoOut ? 'disabled' : `data-track-record="${esc(id)}"`} class="${track?.recordArmed ? 'is-active' : ''}" data-tooltip="Record arm">R</button>
+    </div>
+    <div class="studio-mixer-inserts">${renderMixerInsertList(stereoOut ? null : track)}</div>
+    <div class="studio-mixer-pan"><button class="studio-track-pan" type="button" ${stereoOut ? 'disabled' : `data-track-pan="${esc(id)}"`} aria-label="${esc(name)} pan ${Math.round(pan)}" data-tooltip="Pan ${Math.round(pan)}" style="--pan-angle:${(pan / 100) * 135}deg"></button><span>${esc(formatTrackAutomationValue('pan', pan))}</span></div>
+    <div class="studio-mixer-fader-row"><span class="studio-mixer-meter" aria-hidden="true"><i style="height:${Math.round(level * 100)}%"></i></span><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small>${Math.round(volume)}%</small></div>
+    <span class="studio-mixer-routing">${stereoOut ? 'Output' : esc(track?.audioOutput || 'Stereo Out')}</span>
+  </article>`
+}
+function renderMixerPanel(motionClass = '') {
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  return `<section class="studio-bottom-panel studio-mixer-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Mixer</strong><nav><button type="button" data-detach-bottom-panel="mixer">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-mixer-body"><div class="studio-mixer-strips">${renderMixerChannelStrip(null, { stereoOut: true })}<span class="studio-mixer-divider" aria-hidden="true"></span>${tracks.map((track)=>renderMixerChannelStrip(track)).join('')}</div></div></section>`
+}
 function renderBottomPanel(panel,motionClass=''){
   if(panel==='instrument') return renderInstrumentPanel().replace('studio-bottom-panel studio-instrument-panel', `studio-bottom-panel studio-instrument-panel ${motionClass}`.trim())
   if(panel==='midi-roll') return renderMidiRollPanel(motionClass)
   if(panel==='midi-effect') return renderMidiEffectEditorPanel(motionClass)
-  const t={loops:['Loop Browser','Loops and samples will appear here.'],mixer:['Mixer','Channel strips and routing will appear here.'],collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']
+  if(panel==='mixer') return renderMixerPanel(motionClass)
+  const t={loops:['Loop Browser','Loops and samples will appear here.'],collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']
   return `<section class="studio-bottom-panel ${motionClass}"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>${t[0]}</strong><nav><button type="button" data-detach-bottom-panel="${esc(panel)}">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><p>${t[1]}</p></div></section>`
 }
 
@@ -3439,7 +3541,7 @@ async function loadStudioLibrary({ force = false } = {}) {
     studioLibraryState.loaded = true
   } finally {
     studioLibraryState.loading = false
-    renderEditor()
+    renderEditorPreservingArrangementScroll()
   }
 }
 
@@ -4172,7 +4274,7 @@ function applyLoadedEditorState(editorState) {
   }
   timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
 }
-function scheduleEditorSave(){ if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } renderEditor() },800) }
+function scheduleEditorSave(){ if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } renderEditorPreservingArrangementScroll(captureArrangementScroll()) },800) }
 
 async function hydrateRenderedAudioRegionRuntime(region) {
   if (!region?.id || region.type !== 'audio') return false
@@ -5050,6 +5152,8 @@ function restoreArrangementScroll(scroll = null) {
   if (!grid || !scroll) return
   grid.scrollLeft = Math.max(0, Number(scroll.left) || 0)
   grid.scrollTop = Math.max(0, Number(scroll.top) || 0)
+  const trackList = app.querySelector('.studio-track-list')
+  if (trackList) trackList.scrollTop = grid.scrollTop
   syncArrangementRulerScroll(grid.scrollLeft)
 }
 function restoreArrangementScrollSoon(scroll = null) {
@@ -5674,8 +5778,9 @@ function regionEditorTimelineBeatFromEvent(event) {
   return clampBeat((Number(region.startBeat) || 0) + (localX / midiRollBeatWidth))
 }
 function setPlayheadFromRegionEditorTimeline(event) {
-  const beat = regionEditorTimelineBeatFromEvent(event)
+  let beat = regionEditorTimelineBeatFromEvent(event)
   if (beat == null) return
+  if (isSnapEnabled) beat = snapBeatToGrid(beat)
   setPlayheadBeat(beat, { restartTransport: false })
   updateTransportDisplay()
 }
@@ -8825,7 +8930,7 @@ function handleMidiRollWheel(event) {
     const scrollRect = scroll?.getBoundingClientRect?.()
     const pointerX = scrollRect ? event.clientX - scrollRect.left : 0
     const beatAtPointer = ((scroll?.scrollLeft || 0) + pointerX) / Math.max(1, midiRollBeatWidth)
-    midiRollBeatWidth = Math.round(clamp(midiRollBeatWidth * (event.deltaY < 0 ? 1.12 : 0.88), 28, 180))
+    midiRollBeatWidth = Math.round(clamp(midiRollBeatWidth * (event.deltaY < 0 ? 1.12 : 0.88), 28, 720))
     pendingMidiRollViewport = {
       regionId: getMidiRollRegion()?.id || '',
       scrollLeft: Math.max(0, (beatAtPointer * midiRollBeatWidth) - pointerX),
@@ -9020,7 +9125,8 @@ function bindEditorEvents() {
     scheduleAudioImportPreviewRender()
   })
   app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
-  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = el.dataset.trackRow; trackMenuState = null; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor(); warmSelectedTrackInstrument('track-select') }))
+  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = el.dataset.trackRow; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-select') }))
+  app.querySelectorAll('[data-track-icon]').forEach((el) => el.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); const id = el.dataset.trackIcon; if (!id) return; if (selectedTrackId !== id) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = id; activeLeftPanel = 'inspector'; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-inspector') }))
   app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const nextMenu = el.dataset.toggleInspectorMenu; inspectorMenu = inspectorMenu === nextMenu ? null : nextMenu; inspectorMenuPosition = null; if (inspectorMenu === 'instrument') { const rect = el.getBoundingClientRect(); inspectorMenuPosition = getClampedFloatingPosition(rect.left + rect.width / 2, rect.bottom + 8, 260, 210) } renderEditor() }))
   app.querySelectorAll('[data-inspector-menu-choice]').forEach((el) => el.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -9462,15 +9568,35 @@ function bindEditorEvents() {
     trackAutomationDrag = { type: 'point', trackId: track.id, parameter, pointId: point.dataset.trackAutomationPoint }
     document.body.classList.add('is-studio-dragging')
   }))
+  app.querySelectorAll('[data-track-automation-segment]').forEach((segment)=>segment.addEventListener('pointerdown', (event)=>{
+    if (event.detail > 1) return
+    event.preventDefault()
+    event.stopPropagation()
+    const track = getTrack(segment.dataset.trackId)
+    if (!track) return
+    const parameter = segment.dataset.trackAutomationSegmentParameter || getTrackAutomationParameter(track)
+    const data = getTrackAutomationData(track, parameter)
+    const point = data.points.find((item)=>item.id === segment.dataset.trackAutomationSegment)
+    if (!point) return
+    selectedTrackAutomation = { trackId: track.id, parameter, pointId: point.id }
+    trackAutomationDrag = { type: 'segment', trackId: track.id, parameter, pointId: point.id, startY: event.clientY, curveAmount: Number(point.curveAmount) || 0 }
+    document.body.classList.add('is-studio-dragging')
+  }))
   app.querySelectorAll('[data-track-options]').forEach((el) => el.addEventListener('click', (e) => {
     e.stopPropagation()
     const id = el.dataset.trackOptions
     selectedTrackId = id
     trackMenuState = { trackId: id, ...getClampedTrackMenuPosition(e.clientX, e.clientY) }
-    activeLeftPanel = 'inspector'
     inspectorMenu = null
     renderEditor()
     warmSelectedTrackInstrument('track-options')
+  }))
+  app.querySelectorAll('[data-mixer-track-strip]').forEach((strip)=>strip.addEventListener('click', (event)=>{
+    if (event.target.closest('button,input,select,textarea')) return
+    const id = strip.dataset.mixerTrackStrip
+    if (!id) return
+    selectedTrackId = id
+    renderEditorPreservingArrangementScroll()
   }))
   app.querySelector('[data-add-track]')?.addEventListener('click', (event) => { event.stopPropagation(); openAddTrackModal() })
   app.querySelector('[data-close-add-track]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); closeAddTrackModal() })
@@ -9649,7 +9775,7 @@ function bindEditorEvents() {
     else if (action === 'delete') deleteSelectedTrack()
     else if (action === 'color') { const track = getSelectedTrack(); colorPickerState = { ...menuPos, trackId: selectedTrackId, color: track?.color || '#58d4ff' }; renderEditor() }
     else if (action === 'inspector') { activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }
-    else if (action === 'rename') { const track = getSelectedTrack(); renameTrackState = { ...menuPos, trackId: selectedTrackId, name: track?.name || '' }; activeLeftPanel = 'inspector'; renderEditor(); requestAnimationFrame(()=>app.querySelector('[data-track-rename-input]')?.select?.()) }
+    else if (action === 'rename') { const track = getSelectedTrack(); renameTrackState = { ...menuPos, trackId: selectedTrackId, name: track?.name || '' }; renderEditorPreservingArrangementScroll(); requestAnimationFrame(()=>app.querySelector('[data-track-rename-input]')?.select?.()) }
   }))
   app.querySelectorAll('[data-track-pan]').forEach((knob) => {
     knob.addEventListener('pointerdown', (event) => { if (event.detail > 1) return; event.preventDefault(); event.stopPropagation(); const t = getTrack(knob.dataset.trackPan); if (!t) return; panDrag = { trackId: t.id, startX: event.clientX, startPan: t.pan, knob }; knob.setPointerCapture?.(event.pointerId) })
@@ -9762,10 +9888,20 @@ function bindEditorEvents() {
 
   const extensionLane = app.querySelector('[data-timeline-extension-lane]')
   const extensionInner = app.querySelector('[data-timeline-extension-inner]')
+  const trackList = app.querySelector('.studio-track-list')
   let extensionDrag = null
   let didMovePlayhead = false
   let didCycleChange = false
   const syncTimelineScroll = (source = null, { refresh = false } = {}) => { const scrollLeft = source?.scrollLeft ?? grid?.scrollLeft ?? 0; const liveGlobalLane = app.querySelector('[data-global-tracks]'); const sync = (node) => { if (node && node !== source && Math.abs((node.scrollLeft || 0) - scrollLeft) > 0.5) node.scrollLeft = scrollLeft }; sync(grid); sync(ruler); sync(liveGlobalLane); sync(extensionLane); if (refresh) scheduleTimelineVisualRefresh() }
+  let syncingTrackVerticalScroll = false
+  const syncTrackVerticalScroll = (source) => {
+    if (!grid || !trackList || syncingTrackVerticalScroll) return
+    syncingTrackVerticalScroll = true
+    const top = source === trackList ? trackList.scrollTop : grid.scrollTop
+    if (source !== grid && Math.abs((grid.scrollTop || 0) - top) > 0.5) grid.scrollTop = top
+    if (source !== trackList && Math.abs((trackList.scrollTop || 0) - top) > 0.5) trackList.scrollTop = top
+    syncingTrackVerticalScroll = false
+  }
   const updateTimelineRulerDom = () => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
   const updateTimelineGridLinesDom = () => { const gridInner = app.querySelector('[data-arrangement-grid-inner]'); if (!gridInner) return; const selection = gridInner.querySelector('[data-selection-box]'); const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'; const selectionHtml = selection ? selection.outerHTML : selectionMarkup; gridInner.innerHTML = `<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}` }
   const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
@@ -9779,7 +9915,8 @@ function bindEditorEvents() {
     if (event.altKey && overTrackZone) { event.preventDefault(); timelineState.trackHeight = clamp(timelineState.trackHeight + (event.deltaY < 0 ? 6 : -6), 44, 220); updateTrackHeightDom(); scheduleTimelineVisualRefresh(); scheduleEditorSave(); return }
     if (event.shiftKey && overTimeline) { event.preventDefault(); const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? normalizedWheelPixels(event, 'x') : normalizedWheelPixels(event, 'y'); grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid) }
   }, { passive:false })
-  grid?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(grid) }, { passive:true })
+  grid?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(grid); syncTrackVerticalScroll(grid) }, { passive:true })
+  trackList?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTrackVerticalScroll(trackList) }, { passive:true })
   ruler?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(ruler) }, { passive:true })
   app.querySelector('[data-global-tracks]')?.addEventListener('scroll', (event) => { markTimelineUserInteraction(); syncTimelineScroll(event.currentTarget) }, { passive:true })
   extensionLane?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(extensionLane) }, { passive:true })
@@ -9813,11 +9950,11 @@ function bindEditorEvents() {
     scheduleTimelineVisualRefresh()
     scheduleTimelineExtensionScrollRestore(extensionDrag)
   }
-  app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); markTimelineUserInteraction(1400); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, pointerX:event.clientX, beatCarry:0, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight, moved:false }; if (timelineExtensionRepeatTimer) clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = window.setInterval(extendTimelineWhileHeld, 80); document.body.classList.add('is-studio-dragging') }))
+  app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); markTimelineUserInteraction(3200); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, pointerX:event.clientX, beatCarry:0, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight, moved:false }; if (timelineExtensionRepeatTimer) clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = window.setInterval(extendTimelineWhileHeld, 80); document.body.classList.add('is-studio-dragging') }))
   ruler?.addEventListener('pointerdown', (event) => { const cycleHandle = event.target.closest('[data-cycle-handle]'); const cycleMove = event.target.closest('[data-cycle-drag]'); const inCycleStrip = isCycleStripPointerEvent(event, ruler); if (cycleHandle && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: cycleHandle.dataset.cycleHandle === 'start' ? 'resize-start' : 'resize-end', fixedX: cycleHandle.dataset.cycleHandle === 'start' ? cycleRange.endX : cycleRange.startX }; return } if (cycleMove && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: 'move', startPointerX: x, startRange: { ...cycleRange } }; return } if (inCycleStrip) { event.preventDefault(); const x = getRulerLocalX(event); setCycleEnabled(true); cycleDrag = { mode: 'create', anchorX: x }; applyCycleRange(x, x + beatWidth()); document.body.classList.add('is-studio-dragging'); return } event.preventDefault(); timelineState.isDraggingPlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); scheduleEditorSave() })
   grid?.addEventListener('pointerdown', (event) => { activeCommandContext = 'arrangement'; if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); if (!event.shiftKey) clearRegionSelection(); midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.hidden = false } })
-	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { extensionDrag.pointerX = event.clientX; extensionDrag.moved = extensionDrag.moved || Math.abs(event.clientX - extensionDrag.startX) > 3; markTimelineUserInteraction(1400); return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
-	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } if (extensionDrag) restoreTimelineExtensionScroll(extensionDrag); panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
+	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { extensionDrag.pointerX = event.clientX; extensionDrag.moved = extensionDrag.moved || Math.abs(event.clientX - extensionDrag.startX) > 3; markTimelineUserInteraction(3200); return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
+	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; if (hadExtension) markTimelineUserInteraction(3200); if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } if (extensionDrag) restoreTimelineExtensionScroll(extensionDrag); panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
   window.addEventListener('blur', () => { if (!extensionDrag) return; if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } restoreTimelineExtensionScroll(extensionDrag); extensionDrag = null; document.body.classList.remove('is-studio-dragging'); scheduleEditorSave() })
   window.addEventListener('pointermove', (event) => {
     if (transportValueDrag) {
@@ -9886,6 +10023,10 @@ function bindEditorEvents() {
         setTrackAutomationDefault(track, trackAutomationDrag.parameter, info.value)
       } else if (trackAutomationDrag.type === 'point') {
         setTrackAutomationPoint(track, trackAutomationDrag.parameter, trackAutomationDrag.pointId, { beat: info.beat, value: info.value })
+        selectedTrackAutomation = { trackId: track.id, parameter: trackAutomationDrag.parameter, pointId: trackAutomationDrag.pointId }
+      } else if (trackAutomationDrag.type === 'segment') {
+        const delta = (Number(trackAutomationDrag.startY) - event.clientY) / 80
+        setTrackAutomationSegmentCurve(track, trackAutomationDrag.parameter, trackAutomationDrag.pointId, clamp((Number(trackAutomationDrag.curveAmount) || 0) + delta, -1, 1))
         selectedTrackAutomation = { trackId: track.id, parameter: trackAutomationDrag.parameter, pointId: trackAutomationDrag.pointId }
       }
       updateTimelineGridLinesDom()
