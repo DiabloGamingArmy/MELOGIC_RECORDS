@@ -936,6 +936,24 @@
   gap: .55rem;
 }
 
+.dashboard-report-checkbox {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: .55rem;
+  color: #c8d6f5;
+  text-transform: none;
+}
+
+.dashboard-report-checkbox input {
+  margin-top: .18rem;
+}
+
+.dashboard-report-checkbox span {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: .92rem;
+}
+
 .dashboard-report-modal form { margin-top: .9rem; }
 .dashboard-report-modal label span {
   color: #aebfe8;
@@ -956,6 +974,43 @@
 
 .dashboard-report-success { color: #a7fff3; }
 .dashboard-report-error { color: #ffd3de; }
+
+.dashboard-license-modal {
+  max-height: min(760px, 92vh);
+  overflow: auto;
+}
+
+.dashboard-license-document {
+  display: grid;
+  gap: .85rem;
+  margin-top: 1rem;
+  color: #dbe7ff;
+  line-height: 1.62;
+}
+
+.dashboard-license-document h2,
+.dashboard-license-document h3,
+.dashboard-license-document h4,
+.dashboard-license-document p,
+.dashboard-license-document ul {
+  margin: 0;
+}
+
+.dashboard-license-document ul {
+  padding-left: 1.2rem;
+}
+
+.dashboard-license-document code {
+  border: 1px solid rgba(122, 148, 209, 0.35);
+  border-radius: 4px;
+  padding: .05rem .22rem;
+  background: rgba(8, 13, 25, 0.9);
+}
+
+.dashboard-inline-action,
+.dashboard-license-side-button {
+  width: fit-content;
+}
 
 /* Creator product dashboard alignment */
 .panel-surface,

@@ -415,7 +415,7 @@ function beatsToSeconds(beats = 0, tempoMap = null) {
     const current = map[i]
     const nextBeat = i < map.length - 1 ? Math.max(current.beat, Number(map[i + 1].beat) || current.beat) : targetBeat
     const segmentEnd = Math.min(targetBeat, nextBeat)
-    if (segmentEnd > current.beat) seconds += (segmentEnd - current.beat) * (60 / clampProjectBpm(current.bpm))
+    if (segmentEnd > current.beat) seconds += tempoSegmentDuration(current, map[i + 1], segmentEnd)
     if (targetBeat <= nextBeat) break
   }
   return Math.max(0, seconds)
@@ -428,10 +428,20 @@ function secondsToBeats(seconds = 0, tempoMap = null) {
     const current = map[i]
     const nextBeat = i < map.length - 1 ? Math.max(current.beat, Number(map[i + 1].beat) || current.beat) : Infinity
     const segmentBeats = nextBeat - current.beat
-    const secondsPerBeat = 60 / clampProjectBpm(current.bpm)
-    const segmentSeconds = segmentBeats * secondsPerBeat
+    const segmentSeconds = Number.isFinite(segmentBeats) ? tempoSegmentDuration(current, map[i + 1], nextBeat) : Infinity
     if (!Number.isFinite(segmentSeconds) || targetSeconds <= elapsed + segmentSeconds) {
-      return Math.max(0, current.beat + ((targetSeconds - elapsed) / secondsPerBeat))
+      if (!Number.isFinite(segmentSeconds)) {
+        return Math.max(0, current.beat + ((targetSeconds - elapsed) / (60 / clampProjectBpm(current.bpm))))
+      }
+      let low = current.beat
+      let high = nextBeat
+      for (let step = 0; step < 24; step += 1) {
+        const mid = (low + high) / 2
+        const midSeconds = tempoSegmentDuration(current, map[i + 1], mid)
+        if (midSeconds < targetSeconds - elapsed) low = mid
+        else high = mid
+      }
+      return Math.max(0, (low + high) / 2)
     }
     elapsed += segmentSeconds
   }
@@ -1177,7 +1187,8 @@ const renderAddTrackModal = () => !addTrackModalOpen ? '' : `<div class="studio-
 </div>`
 const renderTrackCard = (track) => {
   const level = clamp(Number(track.outputLevel) || 0, 0, 1)
-  return `<div class="studio-track-stack"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(normalizedTrackIconType(track))}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></article>${track.automationOpen ? '<div class="studio-automation-lane"><span>Automation</span><button type="button">Volume</button><button type="button">Pan</button><button type="button">Filter</button><button type="button">Add</button></div>' : ''}</div>`
+  const automationLane = track.automationOpen ? `<div class="studio-automation-lane"><header><span>Automation</span><button type="button">Volume</button><button type="button">Pan</button><button type="button">Filter</button><button type="button">Add</button></header><div class="studio-track-automation-data" aria-hidden="true"><svg viewBox="0 0 320 52" preserveAspectRatio="none"><path d="M0 34 C72 34 84 18 142 18 S232 38 320 16"></path></svg><i style="left:18%;top:62%"></i><i style="left:44%;top:34%"></i><i style="left:74%;top:58%"></i></div></div>` : ''
+  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(normalizedTrackIconType(track))}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div>${automationLane}</article></div>`
 }
 const renderTrackContextMenu = () => {
   if (!trackMenuState?.trackId) return ''
@@ -1576,7 +1587,7 @@ function renderRegionEditorTimeline(region, gridWidth) {
   const width = Math.max(420, Number(gridWidth) || regionLength * midiRollBeatWidth)
   const playheadLeft = (xToBeat(timelineState.playheadX) - regionStart) * midiRollBeatWidth
   const ticks = Array.from({ length: Math.ceil(regionLength) + 1 }, (_, index)=>`<span style="left:${index * midiRollBeatWidth}px">${index + 1}</span>`).join('')
-  return `<div class="studio-region-editor-timeline" data-region-editor-timeline="${esc(region.id)}"><div class="studio-region-editor-timeline-spacer"></div><div class="studio-region-editor-timeline-inner" data-region-editor-timeline-inner style="width:${width}px">${ticks}<i class="studio-region-editor-playhead" style="left:${playheadLeft}px"></i></div></div>`
+  return `<div class="studio-region-editor-header-container"><div class="studio-region-editor-timeline" data-region-editor-timeline="${esc(region.id)}"><div class="studio-region-editor-timeline-spacer"></div><div class="studio-region-editor-timeline-viewport" data-region-editor-timeline-viewport><div class="studio-region-editor-timeline-inner" data-region-editor-timeline-inner style="width:${width}px">${ticks}<i class="studio-region-editor-playhead" style="left:${playheadLeft}px"></i></div></div></div></div>`
 }
 function renderMidiRollPanel(motionClass = '') {
   const selectedRegion = midiRegions.find((item)=>item.id === selectedMidiRegionId) || midiRegions.find((item)=>item.id === midiRollState?.regionId) || null
@@ -2068,6 +2079,30 @@ function runRegionToolAction(toolId) {
 const renderTrackRenamePopover = () => renameTrackState ? `<form class="studio-track-popover studio-track-popover--rename" data-track-rename-form style="left:${Math.round(renameTrackState.x)}px;top:${Math.round(renameTrackState.y)}px"><label>Rename Track<input data-track-rename-input value="${(renameTrackState.name || '').replace(/"/g, '&quot;')}" /></label><div><button type="submit">Save</button><button type="button" data-track-rename-cancel>Cancel</button></div></form>` : ''
 const renderTrackColorPopover = () => colorPickerState ? `<form class="studio-track-popover studio-track-popover--color" data-track-color-form style="left:${Math.round(colorPickerState.x)}px;top:${Math.round(colorPickerState.y)}px"><label>Track Color<input type="color" data-track-color-input value="${colorPickerState.color || '#58d4ff'}" /></label><button type="submit">Apply</button></form>` : ''
 
+function trackVisualHeight(track = null) {
+  return Math.max(44, timelineState.trackHeight) * (track?.automationOpen ? 2 : 1)
+}
+function trackLaneTop(trackIndex = 0) {
+  return tracks.slice(0, Math.max(0, trackIndex)).reduce((sum, track)=>sum + trackVisualHeight(track), 0)
+}
+function trackIndexAtTimelineY(y = 0) {
+  let offset = 0
+  for (let index = 0; index < tracks.length; index += 1) {
+    const height = trackVisualHeight(tracks[index])
+    if (y < offset + height) return index
+    offset += height
+  }
+  return Math.max(0, tracks.length - 1)
+}
+function totalTrackLaneHeight() {
+  return tracks.reduce((sum, track)=>sum + trackVisualHeight(track), 0)
+}
+function normalizedWheelPixels(event, axis = 'y') {
+  const raw = axis === 'x' ? event.deltaX : event.deltaY
+  const unit = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? Math.max(1, window.innerHeight * 0.85) : 1)
+  return raw * unit
+}
+
 function renderTimelineRegions() {
   const persisted = midiRegions.map((region)=>region.type === 'audio' ? renderAudioRegion(region, false) : renderMidiRegion(region, false)).join('')
   const liveNotes = activeRecording?.type === 'midi' ? [
@@ -2095,7 +2130,7 @@ function renderAudioImportPreview() {
   const width = Math.max(32, secondsToBeats(duration) * beatWidth())
   const trackIndex = Math.max(0, tracks.findIndex((item)=>item.id === audioImportDrag.trackId))
   const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
-  const top = trackIndex * timelineState.trackHeight + inset
+  const top = trackLaneTop(trackIndex) + inset
   const height = Math.max(28, timelineState.trackHeight - (inset * 2))
   const status = audioImportDrag.status === 'loading'
     ? 'Reading audio...'
@@ -2199,7 +2234,8 @@ function normalizeTempoMap(events = globalTracks.tempoEvents) {
       id: event.id || makeInsertId('tempo'),
       beat: Math.max(0, Number(event.beat) || 0),
       bpm: clampProjectBpm(event.bpm || current),
-      curve: event.curve === 'linear' ? 'linear' : 'hold',
+      curve: event.curve === 'hold' ? 'hold' : 'linear',
+      curveAmount: clamp(Number(event.curveAmount) || 0, -1, 1),
       createdAt: event.createdAt || nowIso(),
       updatedAt: event.updatedAt || event.createdAt || nowIso()
     }))
@@ -2210,9 +2246,48 @@ function normalizeTempoMap(events = globalTracks.tempoEvents) {
 function normalizeTempoEvents() {
   return normalizeTempoMap()
 }
+function applyAutomationCurve(t = 0, curveAmount = 0) {
+  const value = clamp(Number(t) || 0, 0, 1)
+  const curve = clamp(Number(curveAmount) || 0, -1, 1)
+  if (Math.abs(curve) < 0.001) return value
+  const exponent = 1 + Math.abs(curve) * 3
+  return curve > 0 ? Math.pow(value, exponent) : 1 - Math.pow(1 - value, exponent)
+}
+function interpolateTempoBpm(start = {}, end = null, beat = 0) {
+  const startBpm = clampProjectBpm(start.bpm || projectState?.bpm || 140)
+  if (!end || start.curve === 'hold') return startBpm
+  const segmentBeats = Math.max(0.000001, (Number(end.beat) || 0) - (Number(start.beat) || 0))
+  const t = clamp(((Number(beat) || 0) - (Number(start.beat) || 0)) / segmentBeats, 0, 1)
+  const shaped = applyAutomationCurve(t, start.curveAmount)
+  return clampProjectBpm(startBpm + ((clampProjectBpm(end.bpm || startBpm) - startBpm) * shaped))
+}
+function tempoSegmentDuration(start = {}, end = null, segmentEndBeat = 0) {
+  const startBeat = Number(start.beat) || 0
+  const endBeat = Math.max(startBeat, Number(segmentEndBeat) || startBeat)
+  const beats = endBeat - startBeat
+  if (beats <= 0) return 0
+  if (!end || start.curve === 'hold') return beats * (60 / clampProjectBpm(start.bpm))
+  const steps = Math.max(8, Math.ceil(beats * 8))
+  let seconds = 0
+  let previousBeat = startBeat
+  let previousBpm = interpolateTempoBpm(start, end, previousBeat)
+  for (let index = 1; index <= steps; index += 1) {
+    const currentBeat = startBeat + (beats * (index / steps))
+    const currentBpm = interpolateTempoBpm(start, end, currentBeat)
+    const avgBpm = clampProjectBpm((previousBpm + currentBpm) / 2)
+    seconds += (currentBeat - previousBeat) * (60 / avgBpm)
+    previousBeat = currentBeat
+    previousBpm = currentBpm
+  }
+  return seconds
+}
 function getTempoAtBeat(beat = 0, events = normalizeTempoMap()) {
   const target = Math.max(0, Number(beat) || 0)
-  return events.reduce((active, event)=>event.beat <= target ? event : active, events[0] || { beat: 0, bpm: clampProjectBpm(projectState?.bpm || 140), curve: 'hold' })
+  const map = Array.isArray(events) && events.length ? events : normalizeTempoMap()
+  const index = Math.max(0, map.findIndex((event, eventIndex)=>target >= event.beat && (eventIndex === map.length - 1 || target < map[eventIndex + 1].beat)))
+  const active = map[index] || map[0] || { beat: 0, bpm: clampProjectBpm(projectState?.bpm || 140), curve: 'hold' }
+  const next = map[index + 1] || null
+  return { ...active, evaluatedBeat: target, bpm: interpolateTempoBpm(active, next, target) }
 }
 function getSecondsPerBeatAtBeat(beat = 0) {
   return 60 / clampProjectBpm(getTempoAtBeat(beat).bpm)
@@ -2285,9 +2360,23 @@ function renderTempoLane(events = normalizeTempoEvents()) {
   const rowHeight = globalTracks.viewMode === 'tempo' ? 126 : 26
   const points = events.map((event)=>({ ...event, x: beatsFromBarZeroToX(event.beat), y: clamp(rowHeight - 12 - ((event.bpm - 20) / 280) * (rowHeight - 20), 8, rowHeight - 12) }))
   const line = points.length > 1
-    ? points.map((point, index)=>`${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')
+    ? points.map((point, index)=>{
+      if (index === 0) return `M ${point.x} ${point.y}`
+      const previous = points[index - 1]
+      const curve = clamp(Number(previous.curveAmount) || 0, -1, 1)
+      const midX = (previous.x + point.x) / 2
+      const midY = ((previous.y + point.y) / 2) - (curve * rowHeight * 0.28)
+      return Math.abs(curve) < 0.001 ? `L ${point.x} ${point.y}` : `Q ${midX} ${midY} ${point.x} ${point.y}`
+    }).join(' ')
     : `M ${barZeroX()} ${points[0]?.y || rowHeight / 2} L ${timelineContentWidth()} ${points[0]?.y || rowHeight / 2}`
-  return `<svg class="studio-global-tempo-svg" viewBox="0 0 ${timelineContentWidth()} ${rowHeight}" preserveAspectRatio="none"><path d="${line}"></path></svg>${points.map((point)=>`<button type="button" class="studio-global-tempo-node ${selectedGlobalEvent?.type==='tempo'&&selectedGlobalEvent.id===point.id?'is-selected':''}" data-global-tempo="${point.id}" style="left:${point.x}px;top:${point.y}px"><span>${Math.round(point.bpm)} BPM</span></button>`).join('')}`
+  const handles = points.slice(0, -1).map((point, index)=>{
+    const next = points[index + 1]
+    const curve = clamp(Number(point.curveAmount) || 0, -1, 1)
+    const x = (point.x + next.x) / 2
+    const y = ((point.y + next.y) / 2) - (curve * rowHeight * 0.28)
+    return `<button type="button" class="studio-global-tempo-curve-handle ${selectedGlobalEvent?.type==='tempo-curve'&&selectedGlobalEvent.id===point.id?'is-selected':''}" data-global-tempo-curve="${point.id}" style="left:${x}px;top:${y}px" aria-label="Tempo curve handle"></button>`
+  }).join('')
+  return `<svg class="studio-global-tempo-svg" viewBox="0 0 ${timelineContentWidth()} ${rowHeight}" preserveAspectRatio="none"><path d="${line}"></path></svg>${handles}${points.map((point)=>`<button type="button" class="studio-global-tempo-node ${selectedGlobalEvent?.type==='tempo'&&selectedGlobalEvent.id===point.id?'is-selected':''}" data-global-tempo="${point.id}" style="left:${point.x}px;top:${point.y}px"><span>${Math.round(point.bpm)} BPM</span></button>`).join('')}`
 }
 function renderTimeSignatureLane(events = normalizeTimeSignatureMap()) {
   return events.map((item)=>`<button type="button" class="studio-global-block studio-global-block--small ${selectedGlobalEvent?.type==='time-signature'&&selectedGlobalEvent.id===item.id?'is-selected':''}" data-global-time-signature="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;width:94px">${formatTimeSignature(item)}</button>`).join('')
@@ -2401,7 +2490,7 @@ function renderMidiRegion(region, isRecording = false) {
   const left = beatsFromBarZeroToX(startBeat)
   const width = Math.max(18, (endBeat - startBeat) * beatWidth())
   const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
-  const top = trackIndex * timelineState.trackHeight + inset
+  const top = trackLaneTop(trackIndex) + inset
   const height = Math.max(28, timelineState.trackHeight - (inset * 2))
   const track = tracks[trackIndex] || getSelectedTrack()
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
@@ -2653,7 +2742,7 @@ function renderAudioRegion(region, isRecording = false) {
   const left = isRecording && Number.isFinite(Number(region.recordingStartPixelX)) ? Number(region.recordingStartPixelX) : beatsFromBarZeroToX(startBeat)
   const width = Math.max(isRecording ? 1 : 18, (endBeat - startBeat) * beatWidth())
   const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
-  const top = trackIndex * timelineState.trackHeight + inset
+  const top = trackLaneTop(trackIndex) + inset
   const height = Math.max(28, timelineState.trackHeight - (inset * 2))
   const track = tracks[trackIndex] || getSelectedTrack()
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
@@ -4684,20 +4773,24 @@ function renderTransportBarsDisplay(){
 function renderTransportTempoDisplay(displayTempo){
   const value = Number(displayTempo?.bpm || 140).toFixed(4)
   if (transportInlineEdit?.field === 'tempo') return renderTransportInlineInput('tempo', transportInlineEdit.value)
-  return `<strong class="studio-logic-primary studio-logic-editable" data-transport-inline="tempo">${value}</strong>`
+  return `<strong class="studio-logic-primary studio-logic-editable" data-display-tempo data-transport-inline="tempo">${value}</strong>`
 }
 function renderTransportTimeSignatureDisplay(displayTimeSignature){
   const value = formatTimeSignature(displayTimeSignature)
   if (transportInlineEdit?.field === 'timeSignature') return renderTransportInlineSelect('timeSignature', value, COMMON_TRANSPORT_TIME_SIGNATURES)
-  return `<span class="studio-logic-secondary studio-logic-editable" data-transport-inline="timeSignature">${value}</span>`
+  return `<span class="studio-logic-secondary studio-logic-editable" data-display-time-signature data-transport-inline="timeSignature">${value}</span>`
 }
 function renderTransportKeyDisplay(displayKeySignature){
   const value = formatKeySignature(displayKeySignature)
   if (transportInlineEdit?.field === 'key') return renderTransportInlineSelect('key', value, COMMON_TRANSPORT_KEYS)
-  return `<strong class="studio-logic-primary studio-logic-editable" data-transport-inline="key">${esc(value)}</strong>`
+  return `<strong class="studio-logic-primary studio-logic-editable" data-display-key data-transport-inline="key">${esc(value)}</strong>`
 }
 function updateTransportDisplay(){
   if (transportInlineEdit) return
+  const displayBeat = clampBeat(xToBeat(timelineState.playheadX))
+  const displayTempo = getTempoAtBeat(displayBeat)
+  const displayTimeSignature = getTimeSignatureAtBeat(displayBeat)
+  const displayKeySignature = getKeySignatureAtBeat(displayBeat)
   const time = app.querySelector('[data-display-time]')
   if (time) time.textContent = formatTimeFromPlayhead()
   const bars = app.querySelector('[data-display-bars]')
@@ -4706,6 +4799,19 @@ function updateTransportDisplay(){
     const values = [formatTransportBarLabel(pos.bar), String(pos.beat).padStart(2,'0'), String(pos.div), String(pos.tick).padStart(3,'0')]
     bars.querySelectorAll('[data-transport-inline]').forEach((node, index)=>{ node.textContent = values[index] || node.textContent })
   }
+  const tempo = app.querySelector('[data-display-tempo]')
+  if (tempo) tempo.textContent = Number(displayTempo.bpm || 140).toFixed(4)
+  const timeSignature = app.querySelector('[data-display-time-signature]')
+  if (timeSignature) timeSignature.textContent = formatTimeSignature(displayTimeSignature)
+  const key = app.querySelector('[data-display-key]')
+  if (key) key.textContent = formatKeySignature(displayKeySignature)
+  const footerTempo = app.querySelector('[data-footer-tempo]')
+  if (footerTempo) footerTempo.textContent = `${Number(displayTempo.bpm || 140).toFixed(1)} BPM`
+  const footerKey = app.querySelector('[data-footer-key]')
+  if (footerKey) footerKey.textContent = formatKeySignature(displayKeySignature)
+  const footerTime = app.querySelector('[data-footer-time-signature]')
+  if (footerTime) footerTime.textContent = formatTimeSignature(displayTimeSignature)
+  if (studioAudioEngine) studioAudioEngine.setBpm(Number(displayTempo.bpm || projectState?.bpm || 140))
 }
 function updateEditorTitleStatus(){ app.querySelector('[data-editor-status]')?.replaceChildren(document.createTextNode(isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded'))) }
 function updateCycleDomFromState(){ const rangeEl = app.querySelector('[data-cycle-range]'); const startGuide = app.querySelector('.studio-cycle-guide--start'); const endGuide = app.querySelector('.studio-cycle-guide--end'); if(!cycleRange){ if(rangeEl) rangeEl.style.width='0px'; return } const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); if (rangeEl){ rangeEl.style.left=`${start}px`; rangeEl.style.width=`${Math.max(beatWidth(), end-start)}px`; rangeEl.classList.toggle('is-enabled', isCycleEnabled) } if (startGuide){ startGuide.style.left=`${start}px`; startGuide.classList.toggle('is-enabled', isCycleEnabled) } if (endGuide){ endGuide.style.left=`${end}px`; endGuide.classList.toggle('is-enabled', isCycleEnabled) } }
@@ -5026,7 +5132,7 @@ function getTrackLaneFromY(clientY = 0) {
   const gridEl = app.querySelector('[data-arrangement-grid]')
   const rect = gridEl?.getBoundingClientRect?.()
   if (!rect) return 0
-  return clamp(Math.floor((clientY - rect.top + (gridEl.scrollTop || 0)) / Math.max(1, timelineState.trackHeight)), 0, Math.max(0, tracks.length - 1))
+  return trackIndexAtTimelineY(clientY - rect.top + (gridEl.scrollTop || 0))
 }
 function regionPixelsToBeats(pixels = 0) { return Number(pixels || 0) / beatWidth() }
 function regionPixelsToSeconds(pixels = 0) { return beatsToSeconds(regionPixelsToBeats(pixels)) }
@@ -5108,10 +5214,18 @@ function updateMidiRollPlayheadDom() {
   const left = (xToBeat(timelineState.playheadX) - Number(region.startBeat || 0)) * midiRollBeatWidth
   marker.style.left = `${left}px`
 }
+function syncRegionEditorTimelineScroll(scrollLeft = null) {
+  const bodyScroll = app.querySelector('.studio-midi-roll-scroll')
+  const left = Number.isFinite(Number(scrollLeft)) ? Number(scrollLeft) : (bodyScroll?.scrollLeft || 0)
+  app.querySelectorAll('[data-region-editor-timeline-viewport]').forEach((viewport)=>{
+    if (Math.abs((viewport.scrollLeft || 0) - left) > 0.5) viewport.scrollLeft = left
+  })
+}
 function captureMidiRollViewport() {
   const scroll = app.querySelector('.studio-midi-roll-scroll')
   const region = getMidiRollRegion()
   if (!scroll || !region) return
+  syncRegionEditorTimelineScroll(scroll.scrollLeft || 0)
   midiRollViewport = {
     regionId: region.id,
     scrollLeft: scroll.scrollLeft || 0,
@@ -5124,6 +5238,7 @@ function restoreMidiRollViewport() {
   if (!scroll || !region || midiRollViewport.regionId !== region.id) return
   scroll.scrollLeft = midiRollViewport.scrollLeft || 0
   scroll.scrollTop = midiRollViewport.scrollTop || 0
+  syncRegionEditorTimelineScroll(scroll.scrollLeft || 0)
 }
 function captureAudioRegionToolsViewport() {
   const scroll = app.querySelector('[data-region-editor-scroll]')
@@ -5280,7 +5395,12 @@ function applyStudioGuideTargets() {
 }
 function setPlayhead(x, { restartTransport = true } = {}) {
   timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX())
-  if (studioAudioEngine) studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
+  if (studioAudioEngine) {
+    const beat = clampBeat(xToBeat(timelineState.playheadX))
+    const tempo = getTempoAtBeat(beat)
+    studioAudioEngine.setBpm(Number(tempo.bpm || projectState?.bpm || 140))
+    studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
+  }
   app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`)
   updateTransportDisplay()
   updateMidiRollPlayheadDom()
@@ -5402,10 +5522,11 @@ function applyTransportValueDrag(field, delta) {
 function regionEditorTimelineBeatFromEvent(event) {
   const timeline = event.target.closest?.('[data-region-editor-timeline]') || (regionEditorPlayheadDrag?.regionId ? app.querySelector(`[data-region-editor-timeline="${CSS.escape(regionEditorPlayheadDrag.regionId)}"]`) : null)
   const inner = timeline?.querySelector('[data-region-editor-timeline-inner]')
+  const viewport = timeline?.querySelector('[data-region-editor-timeline-viewport]')
   const region = midiRegions.find((item)=>item.id === timeline?.dataset.regionEditorTimeline)
-  const rect = inner?.getBoundingClientRect?.()
+  const rect = viewport?.getBoundingClientRect?.() || inner?.getBoundingClientRect?.()
   if (!timeline || !inner || !region || !rect) return null
-  const localX = clamp(event.clientX - rect.left, 0, inner.offsetWidth || rect.width || 0)
+  const localX = clamp(event.clientX - rect.left + (viewport?.scrollLeft || 0), 0, inner.offsetWidth || rect.width || 0)
   return clampBeat((Number(region.startBeat) || 0) + (localX / midiRollBeatWidth))
 }
 function setPlayheadFromRegionEditorTimeline(event) {
@@ -9182,6 +9303,7 @@ function bindEditorEvents() {
     const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
     next.bpm = clampProjectBpm(app.querySelector('[data-global-tempo-bpm]')?.value || 140)
     next.curve = app.querySelector('[data-global-tempo-curve]')?.value === 'linear' ? 'linear' : 'hold'
+    next.curveAmount = next.curve === 'linear' ? clamp(Number(next.curveAmount) || 0, -1, 1) : 0
     next.updatedAt = nowIso()
     if (!existing) events.push(next)
     globalTracks.tempoEvents = events.sort((a,b)=>a.beat-b.beat)
@@ -9278,9 +9400,33 @@ function bindEditorEvents() {
     globalTrackDrag = { type: 'tempo', id: item.id, startBeat: item.beat, currentBeat: item.beat, bpm: item.bpm }
     document.body.classList.add('is-studio-dragging')
   }))
+  app.querySelectorAll('[data-global-tempo-curve]').forEach((button)=>{
+    button.addEventListener('pointerdown', (event)=>{
+      event.preventDefault()
+      event.stopPropagation()
+      const item = normalizeTempoEvents().find((tempo)=>tempo.id===button.dataset.globalTempoCurve)
+      if (!item) return
+      selectedGlobalEvent = { type: 'tempo-curve', id: item.id }
+      globalTrackDrag = { type: 'tempo-curve', id: item.id, startY: event.clientY, curveAmount: Number(item.curveAmount) || 0 }
+      document.body.classList.add('is-studio-dragging')
+    })
+    button.addEventListener('dblclick', (event)=>{
+      event.preventDefault()
+      event.stopPropagation()
+      globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===button.dataset.globalTempoCurve ? { ...item, curve: 'linear', curveAmount: 0, updatedAt: nowIso() } : item).filter((item)=>item.id !== 'tempo-default')
+      selectedGlobalEvent = { type: 'tempo-curve', id: button.dataset.globalTempoCurve }
+      scheduleEditorSave()
+      renderEditor()
+    })
+  })
   app.querySelectorAll('[data-global-row]').forEach((row)=> {
     row.addEventListener('pointerdown', (event)=> {
       if (event.target.closest('button')) return
+      if (row.dataset.globalRow === 'tempo') {
+        selectedGlobalEvent = null
+        updateGlobalTrackLaneDom()
+        return
+      }
       if (row.dataset.globalRow !== 'arrangement') return
       event.preventDefault()
       const beat = beatFromGlobalEvent(event)
@@ -9442,11 +9588,11 @@ function bindEditorEvents() {
   let timelineVisualRefreshRaf = 0
   const refreshTimelineVisualsLive = () => { applyTimelineGeometry(); updateTimelineRulerDom(); updateTimelineGridLinesDom(); updateGlobalTrackLaneDom(); updateCycleDomFromState(); updateTransportDisplay(); syncTimelineScroll(null, { refresh: false }); bindMidiRegionEvents() }
   const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
-  const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact)); }
+  const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) { page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); page.style.setProperty('--studio-track-lanes-height', `${totalTrackLaneHeight()}px`) } const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact)); }
   const isPinnedRight = () => !!grid && (grid.scrollLeft + grid.clientWidth >= grid.scrollWidth - 4)
   grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); if (overTimeline) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if ((event.ctrlKey || event.metaKey) && overTimeline) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const oldTimelineX = grid.scrollLeft + mouseX; const anchorBeat = xToBeatsFromBarZero(oldTimelineX); let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX); if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat); const cycleBeats = cycleRange ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) } : null; const direction = event.deltaY < 0 ? 1 : -1; const zoomFactor = direction > 0 ? 1.12 : 1 / 1.12; timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoomFactor); timelineState.playheadX = beatsFromBarZeroToX(playheadBeat); if (cycleBeats) { let startBeat = cycleBeats.start; let endBeat = cycleBeats.end; if (isSnapEnabled) { startBeat = snapBeatToGrid(startBeat); endBeat = snapBeatToGrid(endBeat) } cycleRange = { startX: beatsFromBarZeroToX(startBeat), endX: beatsFromBarZeroToX(endBeat) } } refreshTimelineVisualsLive(); const newTimelineX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(newTimelineX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); scheduleEditorSave(); return }
     if (event.altKey && overTrackZone) { event.preventDefault(); timelineState.trackHeight = clamp(timelineState.trackHeight + (event.deltaY < 0 ? 6 : -6), 44, 220); updateTrackHeightDom(); scheduleTimelineVisualRefresh(); scheduleEditorSave(); return }
-    if (event.shiftKey && overTimeline) { event.preventDefault(); grid.scrollLeft = clamp(grid.scrollLeft + event.deltaY, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid) }
+    if (event.shiftKey && overTimeline) { event.preventDefault(); const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? normalizedWheelPixels(event, 'x') : normalizedWheelPixels(event, 'y'); grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid) }
   }, { passive:false })
   grid?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(grid) }, { passive:true })
   ruler?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(ruler) }, { passive:true })
@@ -9460,17 +9606,31 @@ function bindEditorEvents() {
   }
   const scheduleTimelineExtensionScrollRestore = (drag = extensionDrag) => requestAnimationFrame(() => restoreTimelineExtensionScroll(drag))
   const extendTimelineWhileHeld = () => {
-    if (!extensionDrag || extensionDrag.side !== 'right' || extensionDrag.moved) return
-    timelineState.positiveBeats = clamp(timelineState.positiveBeats + 1, timelineState.beatsPerBar, 800)
-    extensionDrag.startPositiveBeats = timelineState.positiveBeats
+    if (!extensionDrag) return
+    const pointerX = Number(extensionDrag.pointerX ?? extensionDrag.startX)
+    const distance = extensionDrag.side === 'right' ? pointerX - extensionDrag.startX : extensionDrag.startX - pointerX
+    if (distance <= 0) return
+    const beatsPerSecond = clamp(1.2 + (distance / 48), 1.2, 12)
+    extensionDrag.beatCarry = (Number(extensionDrag.beatCarry) || 0) + (beatsPerSecond * 0.08)
+    const beats = Math.floor(extensionDrag.beatCarry)
+    if (beats < 1) return
+    extensionDrag.beatCarry -= beats
+    if (extensionDrag.side === 'right') {
+      timelineState.positiveBeats = clamp(timelineState.positiveBeats + beats, timelineState.beatsPerBar, 800)
+    } else {
+      timelineState.preStartPixels = clamp((Number(timelineState.preStartPixels) || 0) + (beats * beatWidth()), 0, timelineState.pixelsPerBar * 10)
+      timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats)
+      if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }
+    }
     scheduleTimelineVisualRefresh()
     scheduleTimelineExtensionScrollRestore(extensionDrag)
   }
-  app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); markTimelineUserInteraction(1400); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight, moved:false }; if (timelineExtensionRepeatTimer) clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = window.setInterval(extendTimelineWhileHeld, 120); document.body.classList.add('is-studio-dragging') }))
+  app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); markTimelineUserInteraction(1400); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, pointerX:event.clientX, beatCarry:0, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight, moved:false }; if (timelineExtensionRepeatTimer) clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = window.setInterval(extendTimelineWhileHeld, 80); document.body.classList.add('is-studio-dragging') }))
   ruler?.addEventListener('pointerdown', (event) => { const cycleHandle = event.target.closest('[data-cycle-handle]'); const cycleMove = event.target.closest('[data-cycle-drag]'); const inCycleStrip = isCycleStripPointerEvent(event, ruler); if (cycleHandle && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: cycleHandle.dataset.cycleHandle === 'start' ? 'resize-start' : 'resize-end', fixedX: cycleHandle.dataset.cycleHandle === 'start' ? cycleRange.endX : cycleRange.startX }; return } if (cycleMove && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: 'move', startPointerX: x, startRange: { ...cycleRange } }; return } if (inCycleStrip) { event.preventDefault(); const x = getRulerLocalX(event); setCycleEnabled(true); cycleDrag = { mode: 'create', anchorX: x }; applyCycleRange(x, x + beatWidth()); document.body.classList.add('is-studio-dragging'); return } event.preventDefault(); timelineState.isDraggingPlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); scheduleEditorSave() })
   grid?.addEventListener('pointerdown', (event) => { activeCommandContext = 'arrangement'; if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); if (!event.shiftKey) clearRegionSelection(); midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.hidden = false } })
-	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { const dx = event.clientX - extensionDrag.startX; extensionDrag.moved = extensionDrag.moved || Math.abs(dx) > 3; markTimelineUserInteraction(1400); if (extensionDrag.side === 'right') { const rawBeats = extensionDrag.startPositiveBeats + (dx / beatWidth()); timelineState.positiveBeats = clamp(Math.round(rawBeats), timelineState.beatsPerBar, 800); } else { const snappedPre = Math.round((extensionDrag.startPre - dx) / beatWidth()) * beatWidth(); timelineState.preStartPixels = clamp(snappedPre, 0, timelineState.pixelsPerBar * 10); timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats); if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }; } scheduleTimelineVisualRefresh(); scheduleTimelineExtensionScrollRestore(extensionDrag); return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
+	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { extensionDrag.pointerX = event.clientX; extensionDrag.moved = extensionDrag.moved || Math.abs(event.clientX - extensionDrag.startX) > 3; markTimelineUserInteraction(1400); return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } })
 	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } if (extensionDrag) restoreTimelineExtensionScroll(extensionDrag); panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() })
+  window.addEventListener('blur', () => { if (!extensionDrag) return; if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } restoreTimelineExtensionScroll(extensionDrag); extensionDrag = null; document.body.classList.remove('is-studio-dragging'); scheduleEditorSave() })
   window.addEventListener('pointermove', (event) => {
     if (transportValueDrag) {
       event.preventDefault()
@@ -9538,6 +9698,10 @@ function bindEditorEvents() {
       const ratio = rect ? 1 - (y / Math.max(1, rect.height)) : 0.5
       globalTrackDrag.bpm = Math.round(clamp(20 + ratio * 280, 20, 300))
       globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===globalTrackDrag.id ? { ...item, beat: globalTrackDrag.currentBeat, bpm: globalTrackDrag.bpm } : item).filter((item)=>item.id !== 'tempo-default').sort((a,b)=>a.beat-b.beat)
+    } else if (globalTrackDrag.type === 'tempo-curve') {
+      const delta = (globalTrackDrag.startY - event.clientY) / 80
+      const curveAmount = clamp((Number(globalTrackDrag.curveAmount) || 0) + delta, -1, 1)
+      globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===globalTrackDrag.id ? { ...item, curve: 'linear', curveAmount, updatedAt: nowIso() } : item).filter((item)=>item.id !== 'tempo-default').sort((a,b)=>a.beat-b.beat)
     } else if (globalTrackDrag.type === 'marker') {
       globalTracks.markers = globalTracks.markers.map((item)=>item.id===globalTrackDrag.id ? { ...item, beat: globalTrackDrag.currentBeat, updatedAt: nowIso() } : item).sort((a,b)=>a.beat-b.beat)
     } else if (globalTrackDrag.type === 'marker-duration') {
@@ -9777,6 +9941,9 @@ function renderEditor() {
   const bottomPanelClass = shouldRenderBottomPanel ? 'has-bottom-panel' : ''
   const bottomPanelHeightStyle = bottomPanelHeightPx ? `--studio-bottom-panel-height:${bottomPanelHeightPx}px;` : ''
   let shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu">${renderTopMenuButtons()}</nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu ${cpuAlerts.enabled && cpuPercent >= cpuAlerts.thresholdPercent ? 'is-warning' : ''}"><strong class="studio-logic-primary" data-cpu-percent>${Math.round(cpuPercent)}%</strong><span class="studio-logic-secondary">CPU${cpuAlerts.enabled ? ` / ${Math.round(cpuAlerts.thresholdPercent)}%` : ''}</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}${renderControlsConfigModal()}${renderProjectSettingsModal()}${renderProjectManagementModal()}</main>`
+  shell = shell.replace(`--studio-track-height:${timelineState.trackHeight}px;`, `--studio-track-height:${timelineState.trackHeight}px;--studio-track-lanes-height:${totalTrackLaneHeight()}px;`)
+  shell = shell
+    .replace(`<span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span>`, `<span data-footer-tempo>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span data-footer-key>${formatKeySignature(displayKeySignature)}</span><span data-footer-time-signature>${formatTimeSignature(displayTimeSignature)}</span>`)
   shell = shell
     .replace(`<section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section>`, `<section class="studio-logic-section studio-logic-section--time">${renderTransportTimeDisplay()}<span class="studio-logic-secondary">time</span></section>`)
     .replace(`<section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section>`, `<section class="studio-logic-section studio-logic-section--bars">${renderTransportBarsDisplay()}<span class="studio-logic-secondary">bar beat div tick</span></section>`)

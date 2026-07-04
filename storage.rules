@@ -79,6 +79,17 @@ service firebase.storage {
         );
     }
 
+    match /legal/licenses/products/{fileName} {
+      allow read: if fileName.matches('.*_v[0-9]+\\.md');
+      allow write: if isAdminStorageWriter()
+        && request.resource != null
+        && request.resource.size <= 1024 * 1024
+        && (
+          request.resource.contentType.matches('text/.*')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
+    }
+
     function isCommunityCommentAttachmentUpload() {
       return request.resource != null
         && request.resource.size > 0

@@ -175,6 +175,9 @@ exports.createCheckoutSession = onCall(
           marketplaceProductType: fulfillment.type,
           fulfillment,
           usageLicense: String(product.usageLicense || 'Standard License'),
+          usageLicenseVersion: Math.max(0, Math.round(Number(product.usageLicenseVersion || 0) || 0)),
+          usageLicensePath: String(product.usageLicensePath || ''),
+          usageLicenseKey: String(product.usageLicenseKey || ''),
           sizeBytes: Math.max(0, Math.round(Number(product.primaryDownloadBytes || product.assetSummary?.totalBytes || 0)))
         }
         }

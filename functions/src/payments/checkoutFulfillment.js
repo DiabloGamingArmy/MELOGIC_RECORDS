@@ -106,6 +106,9 @@ function productSnapshot(productId = '', product = {}, orderItem = {}) {
     marketplaceProductType: fulfillment.type,
     fulfillment,
     usageLicense: cleanString(product.usageLicense || itemSnapshot.usageLicense || 'Standard License', 160),
+    usageLicenseVersion: Math.max(0, Math.round(Number(product.usageLicenseVersion || itemSnapshot.usageLicenseVersion || 0) || 0)),
+    usageLicensePath: cleanString(product.usageLicensePath || itemSnapshot.usageLicensePath || '', 900),
+    usageLicenseKey: cleanString(product.usageLicenseKey || itemSnapshot.usageLicenseKey || '', 80),
     sizeBytes: Math.max(0, Math.round(Number(
       product.primaryDownloadBytes
       || product.assetSummary?.totalBytes

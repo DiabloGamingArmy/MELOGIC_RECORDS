@@ -34,6 +34,8 @@ import { searchProfilesByUsername } from './data/profileSearchService'
 import { getMarketplacePricingSettings } from './data/marketplaceSettingsService'
 import { getAgreementMarkdown, getLatestMarketplaceSellerAgreement } from './data/legalAgreementService'
 import { confirmCreatorEligibility, getCreatorAgeVerificationStatus } from './data/creatorComplianceService'
+import { loadProductLicenseDocument, productLicenseFields, productLicenseInfo } from './data/productLicenseService'
+import { renderSafeMarkdown } from './utils/safeMarkdown'
 
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
@@ -64,7 +66,7 @@ const FULFILLMENT_TYPE_OPTIONS = [
   { type: 'hybrid', label: 'Hybrid Product', description: 'Digital download plus physical fulfillment.' }
 ]
 
-const USAGE_LICENSE_OPTIONS = ['Standard License', 'Royalty Free', 'Custom License', 'Exclusive License']
+const USAGE_LICENSE_OPTIONS = ['Standard License', 'Royalty-Free', 'Custom License', 'Exclusive License']
 
 const app = document.querySelector('#app')
 app.innerHTML = `
@@ -134,6 +136,7 @@ let editorState = {
     status: null,
     attestationAccepted: false
   },
+  licenseDialog: { open: false, loading: false, error: '', document: null },
   publishConfirmOpen: false,
   status: { message: '', state: 'info' },
   isSubmittingReview: false,
@@ -206,6 +209,9 @@ function createEmptyProductDraft(user = null, profile = null) {
     featured: false,
     saleEnabled: false,
     usageLicense: 'Standard License',
+    usageLicenseVersion: 1,
+    usageLicensePath: 'legal/licenses/products/standard-license_v1.md',
+    usageLicenseKey: 'standard-license',
     version: '',
     licensePath: '',
     categories: '',
@@ -380,6 +386,9 @@ function submitStatusPanelMarkup() {
 function updateDraftField(key, value) {
   if (!editorState.draft) return
   editorState.draft[key] = value
+  if (key === 'usageLicense') {
+    Object.assign(editorState.draft, productLicenseFields(value))
+  }
   saveDraftState()
 }
 
@@ -1522,6 +1531,7 @@ function renderProductInfoPanel() {
   const releaseDisplay = draft.releasedAt ? formattedEditDate(draft.releasedAt) : (isEditMode ? (draft.publishedAt ? formattedEditDate(draft.publishedAt) : 'Not set') : 'Set automatically on publish')
   const fulfillment = normalizeProductFulfillment(draft)
   const categoryOptions = productCategoryOptionsFor(draft)
+  const licenseInfo = productLicenseInfo(draft)
   return `
     <section class="product-info-grid">
       <div class="product-info-field is-wide product-fulfillment-selector">
@@ -1544,7 +1554,13 @@ function renderProductInfoPanel() {
 
       <div class="product-info-field"><label>Short Description</label><input name="shortDescription" value="${escapeHtml(draft.shortDescription)}" /></div>
       <div class="product-info-field"><label>Release Date</label><div class="product-info-readonly">${escapeHtml(releaseDisplay)}</div></div>
-      <div class="product-info-field"><label>Usage License</label><select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select></div>
+      <div class="product-info-field">
+        <div class="product-info-label-row">
+          <label>Usage License</label>
+          <button type="button" class="license-preview-button" data-preview-usage-license>${iconSvg('fileText')} <span>View license</span></button>
+        </div>
+        <select name="usageLicense">${USAGE_LICENSE_OPTIONS.map((option) => `<option ${licenseInfo.label === option || draft.usageLicense === option ? 'selected' : ''}>${option}</option>`).join('')}</select>
+      </div>
 
       <div class="product-info-field is-wide"><label>Long Description</label><div class="rich-editor-toolbar" data-rich-toolbar><button type="button" data-rich-cmd="bold">B</button><button type="button" data-rich-cmd="italic">I</button><button type="button" data-rich-cmd="underline">U</button><button type="button" data-rich-cmd="insertUnorderedList">• List</button><button type="button" data-rich-cmd="insertOrderedList">1. List</button><button type="button" data-rich-align="justifyLeft">Left</button><button type="button" data-rich-align="justifyCenter">Center</button><button type="button" data-rich-align="justifyRight">Right</button><button type="button" data-rich-link>Link</button><button type="button" data-rich-cmd="insertHorizontalRule">HR</button><select data-rich-font><option value="">Font</option><option>Arial</option><option>Georgia</option><option>Verdana</option></select><select data-rich-size><option value="">Size</option><option value="12px">12</option><option value="14px">14</option><option value="16px">16</option><option value="18px">18</option></select><input type="color" value="#e8efff" data-rich-color aria-label="Text color" /></div><div class="rich-description-editor" contenteditable="true" data-description-editor>${sanitizeRichDescription(draft.description || '')}</div><input type="hidden" name="description" value="${escapeHtml(draft.description)}" data-description-hidden /></div>
       <div class="product-info-side-stack">
@@ -1560,11 +1576,18 @@ function renderPhysicalDetailsPanel() {
   const draft = editorState.draft || createEmptyProductDraft(editorState.user)
   const fulfillment = normalizeProductFulfillment(draft)
   const physical = fulfillment.physical
+  const remaining = physicalAvailableQuantity(draft)
   return `
     <section class="product-info-grid physical-details-grid">
       <div class="product-info-field"><label>Condition</label><select data-physical-field="condition"><option value="">Select condition</option>${['New', 'Like New', 'Good', 'Fair', 'Used / Vintage', 'Made to Order'].map((option) => `<option value="${escapeHtml(option)}" ${physical.condition === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}</select></div>
       <div class="product-info-field"><label>Quantity Available</label><input type="number" min="0" step="1" value="${escapeHtml(physical.quantityAvailable)}" data-physical-field="quantityAvailable" /></div>
-      <div class="product-info-field"><label>Available After Sales</label><div class="product-info-readonly">${physicalAvailableQuantity(draft)}</div></div>
+      <div class="product-info-field"><label>Remaining Inventory</label><div class="product-info-readonly">${remaining}</div><p class="product-field-help">Calculated from quantity available minus completed or reserved sales.</p></div>
+      <div class="product-info-field is-wide physical-inventory-summary">
+        <span>${escapeHtml(physical.quantityAvailable)} available before sales</span>
+        <span>${escapeHtml(physical.quantitySold)} sold</span>
+        <span>${escapeHtml(physical.quantityReserved)} reserved</span>
+        <strong>${escapeHtml(remaining)} remaining</strong>
+      </div>
 
       <div class="product-info-field"><label>Ships From Country</label><input value="${escapeHtml(physical.shipsFrom.country)}" data-physical-field="shipsFrom.country" placeholder="United States" /></div>
       <div class="product-info-field"><label>State / Region</label><input value="${escapeHtml(physical.shipsFrom.region)}" data-physical-field="shipsFrom.region" placeholder="CA" /></div>
@@ -1626,7 +1649,7 @@ function renderMediaUploadPanel() {
             <div>
               <h3>${digitalEnabled ? 'Digital Deliverables' : 'Product Media'}</h3>
               <p class="editor-file-stats">${fileEntries.length} ${fileEntries.length === 1 ? 'file' : 'files'} · ${formatBytes(totalBytes)} · ${deliverableCount} deliverable${deliverableCount === 1 ? '' : 's'}</p>
-              ${digitalEnabled ? '' : '<p class="editor-file-stats">Physical-only products do not require a downloadable file.</p>'}
+              ${digitalEnabled ? '' : '<p class="editor-file-stats">No digital media required.</p><p class="editor-file-stats">This product is marked as physical only. Digital download files cannot be uploaded for this product format. You can still add product images/previews where supported, but buyer delivery is handled through the physical details and shipping information.</p>'}
             </div>
             ${digitalEnabled ? `<div class="editor-file-add-wrap">
               <button type="button" class="editor-file-add-button" data-deliverable-add-menu-toggle aria-label="Add file or folder" aria-haspopup="menu" aria-expanded="${editorState.deliverableAddMenuOpen ? 'true' : 'false'}">+</button>
@@ -1646,7 +1669,7 @@ function renderMediaUploadPanel() {
                     <div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="file:${escapeHtml(row.entry.id)}" aria-label="Open file actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'is-open' : ''}" role="menu"><button type="button" data-file-action="rename:${escapeHtml(row.entry.id)}">Rename</button><button type="button" data-file-action="move:${escapeHtml(row.entry.id)}">Move</button><button type="button" data-file-action="delete:${escapeHtml(row.entry.id)}">Delete</button></div></div>
                     ${row.entry.status === 'uploading' ? `<div class="editor-file-progress"><span style="width:${Math.max(0, Math.min(100, Number(row.entry.progress || 0)))}%"></span></div>` : ''}
                   </div>`).join('')}`
-              : `<p class="file-viewer-empty">${digitalEnabled ? 'No product files added yet. Use + Add to attach your main deliverable.' : 'No media added yet. Use the image and preview buttons to build the listing.'}</p>`}
+              : `<div class="file-viewer-empty">${digitalEnabled ? '<p>No product files added yet. Use + Add to attach your main deliverable.</p>' : '<strong>No digital media required.</strong><p>This product is marked as physical only. Digital download files cannot be uploaded for this product format. You can still add product images/previews where supported, but buyer delivery is handled through the physical details and shipping information.</p>'}</div>`}
           </div></div></div>
         </article>
 
@@ -1760,6 +1783,28 @@ function renderContributorsPanel() {
   `
 }
 
+function renderLicenseDialog() {
+  if (!editorState.licenseDialog.open) return ''
+  const document = editorState.licenseDialog.document || {}
+  return `
+    <div class="dashboard-modal-backdrop" role="presentation">
+      <section class="dashboard-report-modal product-license-modal" role="dialog" aria-modal="true" aria-labelledby="editor-license-title">
+        <header>
+          <div>
+            <h2 id="editor-license-title">${escapeHtml(document.title || document.label || 'Product License')}</h2>
+            <p class="dashboard-mini-note">Version ${escapeHtml(String(document.version || 1))}</p>
+          </div>
+          <button type="button" class="dashboard-report-close" data-close-usage-license aria-label="Close license modal">${iconSvg('x')}</button>
+        </header>
+        ${editorState.licenseDialog.loading ? '<p class="license-modal-status">Loading license document...</p>' : ''}
+        ${editorState.licenseDialog.error ? `<p class="dashboard-report-error">${escapeHtml(editorState.licenseDialog.error)}</p>` : ''}
+        ${document.markdown ? `<div class="dashboard-license-document">${renderSafeMarkdown(document.markdown)}</div>` : ''}
+        <p class="dashboard-mini-note">This selected license version is saved with the product and preserved for orders.</p>
+      </section>
+    </div>
+  `
+}
+
 function renderEditor() {
   const section = readSectionHash()
   const sections = visibleProductSections()
@@ -1807,11 +1852,32 @@ function renderEditor() {
         </form>
       </section>
     </div>
+    ${renderLicenseDialog()}
   `
 
   editorRoot.querySelectorAll('[data-section]').forEach((button) => {
     button.addEventListener('click', () => {
       window.location.hash = button.getAttribute('data-section')
+      renderEditor()
+    })
+  })
+
+  editorRoot.querySelector('[data-preview-usage-license]')?.addEventListener('click', async () => {
+    const info = productLicenseInfo(editorState.draft || {})
+    editorState.licenseDialog = { open: true, loading: true, error: '', document: info }
+    renderEditor()
+    try {
+      const document = await loadProductLicenseDocument(editorState.draft || {})
+      editorState.licenseDialog = { open: true, loading: false, error: '', document }
+    } catch {
+      editorState.licenseDialog = { open: true, loading: false, error: 'License document unavailable. Please try again later.', document: info }
+    }
+    renderEditor()
+  })
+
+  editorRoot.querySelectorAll('[data-close-usage-license]').forEach((button) => {
+    button.addEventListener('click', () => {
+      editorState.licenseDialog = { open: false, loading: false, error: '', document: null }
       renderEditor()
     })
   })

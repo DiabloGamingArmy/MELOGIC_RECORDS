@@ -4,7 +4,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { addToCart } from './data/cartService'
 import { createReport, getProductShellById, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
-import { claimFreeProduct, createProductDownloadLink, createProductDownloadUrl, userOwnsProduct } from './data/entitlementService'
+import { claimFreeProduct, createProductDownloadLink, createProductDownloadUrl, getProductAccessContext, userOwnsProduct } from './data/entitlementService'
 import { sendProductGift } from './data/productGiftService'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { beginProductDownloads, productDownloadDialogMarkup } from './components/productDownloadDialog'
@@ -25,6 +25,8 @@ import {
 import { getProductGiftSendUiState } from './utils/productGiftState'
 import { renderSafeRichDescription } from './utils/richDescription'
 import { iconSvg } from './utils/icons'
+import { loadProductLicenseDocument, productLicenseInfo } from './data/productLicenseService'
+import { renderSafeMarkdown } from './utils/safeMarkdown'
 
 const app = document.querySelector('#app')
 
@@ -52,6 +54,7 @@ const state = {
   ,openReviewMenuId: ''
   ,openReplyMenuKey: ''
   ,productReport: { open: false, submitting: false, error: '', message: '' }
+  ,licenseDialog: { open: false, loading: false, error: '', document: null }
   ,downloadDialog: { open: false, loading: false, ready: false, error: '', productId: '', title: '', sizeBytes: 0, fileCount: 0 }
   ,giftFlow: {
     query: '',
@@ -350,12 +353,12 @@ function renderGiftFlow(product = {}) {
 }
 
 const PRODUCT_REPORT_REASONS = [
-  'Fraudulent or misleading',
-  'Download does not work',
-  'Product not as described',
-  'Stolen/copyrighted content',
-  'Unsafe or malicious file',
-  'Spam',
+  'Missing or broken download',
+  'Product does not match description',
+  'Copyright or stolen content concern',
+  'Malware or unsafe file concern',
+  'Misleading pricing or license issue',
+  'Inappropriate/prohibited content',
   'Other'
 ]
 
@@ -525,6 +528,7 @@ function renderState(title, body) {
 
 function productReportDialog(product = {}) {
   if (!state.productReport.open) return ''
+  const showPurchaseContext = Boolean(state.currentUser?.uid && state.pageData.ownsProduct && !state.pageData.ownerPreview)
   return `
     <div class="dashboard-modal-backdrop" role="presentation">
       <section class="dashboard-report-modal" role="dialog" aria-modal="true" aria-labelledby="product-report-title">
@@ -545,6 +549,12 @@ function productReportDialog(product = {}) {
               <span>Description</span>
               <textarea name="description" maxlength="2000" rows="5" placeholder="Add details that can help marketplace staff review this report."></textarea>
             </label>
+            ${showPurchaseContext ? `
+              <label class="dashboard-report-checkbox">
+                <input type="checkbox" name="includePurchaseContext" />
+                <span>Include my purchase/order context with this report.</span>
+              </label>
+            ` : ''}
             ${state.productReport.error ? `<p class="dashboard-report-error">${escapeHtml(state.productReport.error)}</p>` : ''}
             <div class="dashboard-report-actions">
               <button type="button" class="button button-muted" data-close-product-report ${state.productReport.submitting ? 'disabled' : ''}>Cancel</button>
@@ -552,6 +562,28 @@ function productReportDialog(product = {}) {
             </div>
           </form>
         `}
+      </section>
+    </div>
+  `
+}
+
+function productLicenseDialog() {
+  if (!state.licenseDialog.open) return ''
+  const document = state.licenseDialog.document || {}
+  return `
+    <div class="dashboard-modal-backdrop" role="presentation">
+      <section class="dashboard-report-modal dashboard-license-modal" role="dialog" aria-modal="true" aria-labelledby="product-license-title">
+        <header>
+          <div>
+            <h2 id="product-license-title">${escapeHtml(document.title || document.label || 'Product License')}</h2>
+            <p class="dashboard-mini-note">Version ${escapeHtml(String(document.version || 1))}</p>
+          </div>
+          <button type="button" class="dashboard-report-close" data-close-product-license aria-label="Close license modal">${iconSvg('x')}</button>
+        </header>
+        ${state.licenseDialog.loading ? '<p class="dashboard-license-status">Loading license document...</p>' : ''}
+        ${state.licenseDialog.error ? `<p class="dashboard-report-error">${escapeHtml(state.licenseDialog.error)}</p>` : ''}
+        ${document.markdown ? `<div class="dashboard-license-document">${renderSafeMarkdown(document.markdown)}</div>` : ''}
+        <p class="dashboard-mini-note">This license version is preserved with the product/order record when available.</p>
       </section>
     </div>
   `
@@ -617,6 +649,13 @@ function getLikeRatio(likes = 0, dislikes = 0) {
 }
 function getProductLikeCount(product = {}) { return Math.max(0, Number(product.counts?.likes ?? product.likeCount ?? 0)) }
 function getProductDislikeCount(product = {}) { return Math.max(0, Number(product.counts?.dislikes ?? product.dislikeCount ?? 0)) }
+
+function safeTimestampString(value = null) {
+  if (!value) return ''
+  if (typeof value?.toDate === 'function') return value.toDate().toISOString()
+  if (value instanceof Date) return value.toISOString()
+  return String(value || '').slice(0, 180)
+}
 
 function creatorReviewStatusMarkup(product = {}) {
   const status = String(product.status || '').toLowerCase()
@@ -1117,6 +1156,8 @@ function bindProductEngagementHandlers(context) {
 }
 
 function renderProduct(product, recommendations = [], ownerPreview = false, productFiles = [], ownsProduct = false) {
+  state.pageData.ownsProduct = Boolean(ownsProduct)
+  state.pageData.ownerPreview = Boolean(ownerPreview)
   const mediaItems = buildMediaItems(product)
   state.mediaItems = mediaItems
   state.selectedMediaIndex = 0
@@ -1127,6 +1168,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
   const physicalEnabled = hasPhysicalFulfillment(product)
   const digitalEnabled = hasDigitalFulfillment(product)
   const physicalSoldOut = isPhysicalSoldOut(product)
+  const licenseInfo = productLicenseInfo(product)
   const creatorHref = product.artistId ? publicProfileRoute({ uid: product.artistId }) : ROUTES.profilePublic
   if (state.productEngagement.productId !== product.id) {
     state.productEngagement = {
@@ -1245,7 +1287,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                       <h2>Compatibility</h2>
                       <p>${escapeHtml((product.dawCompatibility || []).join(', ') || (product.formatKeys || []).join(', ') || 'Compatibility details are based on creator-provided metadata.')}</p>
                     </article>
-                    <article class="dashboard-section-card dashboard-metadata-card"><h2>License / Usage</h2><p>${product.licensePath ? 'License included.' : 'License details were not uploaded yet.'}</p></article>
+                    <article class="dashboard-section-card dashboard-metadata-card"><h2>License / Usage</h2><p>${escapeHtml(licenseInfo.label)} · v${escapeHtml(String(licenseInfo.version))}</p><button type="button" class="button button-muted dashboard-inline-action" data-view-product-license>View license</button></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Fulfillment</h2><p>${escapeHtml(fulfillmentTypeLabel(product))}${physicalEnabled ? ` · ${escapeHtml(shippingModeLabel(fulfillment.physical.shipping.mode))}` : ' · Instant digital download'}</p></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Creator Notes</h2><p>${escapeHtml(product.shortDescription || 'Creator notes will appear here when provided.')}</p></article>
                     <article class="dashboard-section-card dashboard-metadata-card"><h2>Tags</h2><div class="dashboard-tag-row">${tags.length ? tags.map((tag) => `<span class="dashboard-pill">${escapeHtml(tag)}</span>`).join('') : '<span class="dashboard-pill">No tags yet</span>'}</div></article>
@@ -1316,7 +1358,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               <div class="dashboard-action-stack">
                 <button type="button" class="button button-accent ${state.isDraftPreview ? 'preview-mode-disabled' : ''}" data-product-primary-action ${state.isDraftPreview || userHasAccess || physicalSoldOut ? 'disabled' : ''} ${state.isDraftPreview ? 'title="Disabled in marketplace preview."' : ''}>${escapeHtml(primaryActionLabel)}</button>
                 <a class="button button-muted" href="${ROUTES.products}">Back to Products</a>
-                <button type="button" class="button button-muted" data-report-product ${state.isDraftPreview || isOwner ? 'disabled' : ''} title="${isOwner ? 'You cannot report your own product.' : 'Report this product'}">Report Product</button>
+                <button type="button" class="button button-muted" data-report-product ${state.isDraftPreview ? 'disabled' : ''} title="${isOwner ? 'You cannot report your own product.' : 'Report this product'}">Report Product</button>
                 ${userHasAccess && !state.isDraftPreview ? `
                   <div class="dashboard-download-divider"></div>
                   ${digitalEnabled ? '<button type="button" class="button dashboard-download-button" data-product-download>Download Content</button>' : ''}
@@ -1334,7 +1376,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
               ${physicalEnabled && fulfillment.physical.shipping.notes ? `<p class="dashboard-mini-note">${escapeHtml(fulfillment.physical.shipping.notes)}</p>` : ''}
               ${physicalEnabled && fulfillment.physical.returnPolicy ? `<p class="dashboard-mini-note">${escapeHtml(fulfillment.physical.returnPolicy)}</p>` : ''}
               ${state.productReport.message ? `<p class="dashboard-mini-note">${escapeHtml(state.productReport.message)}</p>` : ''}
-              <p class="dashboard-mini-note">${product.licensePath ? 'License included' : 'License details available from creator on request'}</p>
+              <button type="button" class="button button-muted dashboard-license-side-button" data-view-product-license>View ${escapeHtml(licenseInfo.label)}</button>
               <p class="dashboard-mini-note">Created by ${escapeHtml(product.artistName)}</p>
             </article>
 
@@ -1369,6 +1411,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
       </section>
     </main>
     ${productReportDialog(product)}
+    ${productLicenseDialog()}
     ${productDownloadDialogMarkup(state.downloadDialog)}
   `
 
@@ -1533,6 +1576,27 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     } catch {}
   })
 
+  app.querySelectorAll('[data-view-product-license]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      state.licenseDialog = { open: true, loading: true, error: '', document: productLicenseInfo(product) }
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+      try {
+        const document = await loadProductLicenseDocument(product)
+        state.licenseDialog = { open: true, loading: false, error: '', document }
+      } catch {
+        state.licenseDialog = { open: true, loading: false, error: 'License document unavailable. Please try again later.', document: productLicenseInfo(product) }
+      }
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    })
+  })
+
+  app.querySelectorAll('[data-close-product-license]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.licenseDialog = { open: false, loading: false, error: '', document: null }
+      renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+    })
+  })
+
   app.querySelector('[data-report-product]')?.addEventListener('click', () => {
     if (state.isDraftPreview) return
     if (!state.currentUser?.uid) {
@@ -1560,6 +1624,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     const formData = new FormData(form)
     const reason = String(formData.get('reason') || '').trim()
     const description = String(formData.get('description') || '').trim()
+    const includePurchaseContext = formData.get('includePurchaseContext') === 'on'
     if (!reason) {
       state.productReport.error = 'Choose a reason before submitting.'
       renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
@@ -1573,6 +1638,9 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     state.productReport = { ...state.productReport, submitting: true, error: '' }
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
     try {
+      const accessContext = includePurchaseContext && state.currentUser?.uid
+        ? await getProductAccessContext(state.currentUser.uid, product.id)
+        : { ownsProduct: Boolean(ownsProduct) }
       await createReport({
         targetType: 'product',
         targetId: product.id,
@@ -1584,7 +1652,14 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
           title: product.title || '',
           artistId: product.artistId || '',
           status: product.status || '',
-          visibility: product.visibility || ''
+          visibility: product.visibility || '',
+          ownsProduct: Boolean(accessContext.ownsProduct || ownsProduct),
+          includePurchaseContext: Boolean(includePurchaseContext),
+          orderIds: includePurchaseContext ? (accessContext.orderIds || []) : [],
+          entitlementPath: includePurchaseContext ? (accessContext.entitlementPath || '') : '',
+          libraryItemPath: includePurchaseContext ? (accessContext.libraryItemPath || '') : '',
+          purchaseTimestamp: includePurchaseContext ? safeTimestampString(accessContext.purchaseTimestamp) : '',
+          source: 'product_viewer'
         }
       })
       state.productReport = { open: true, submitting: false, error: '', message: 'Thank you. Your report has been submitted.' }

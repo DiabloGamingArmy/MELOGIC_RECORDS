@@ -41,6 +41,10 @@ function productLibraryPayload({ uid = '', productId = '', product = {}, source 
     source,
     status: 'active',
     license: String(product.usageLicense || 'Standard License'),
+    usageLicense: String(product.usageLicense || 'Standard License'),
+    usageLicenseVersion: Math.max(0, Math.round(Number(product.usageLicenseVersion || 0) || 0)),
+    usageLicensePath: String(product.usageLicensePath || ''),
+    usageLicenseKey: String(product.usageLicenseKey || ''),
     claimedAt: now,
     createdAt: now,
     updatedAt: now
@@ -149,7 +153,10 @@ exports.claimFreeProduct = onCall(
             productType: String(product.productType || product.productKind || 'Product'),
             marketplaceProductType: fulfillment.type,
             fulfillment,
-            usageLicense: String(product.usageLicense || 'Standard License')
+            usageLicense: String(product.usageLicense || 'Standard License'),
+            usageLicenseVersion: Math.max(0, Math.round(Number(product.usageLicenseVersion || 0) || 0)),
+            usageLicensePath: String(product.usageLicensePath || ''),
+            usageLicenseKey: String(product.usageLicenseKey || '')
           }
         }],
         source: 'free_claim',

@@ -12,6 +12,30 @@ export async function userOwnsProduct(uid = '', productId = '') {
   return Boolean(entitlementSnapshot?.exists() || librarySnapshot?.exists())
 }
 
+export async function getProductAccessContext(uid = '', productId = '') {
+  if (!db || !uid || !productId) return { ownsProduct: false }
+  const [entitlementSnapshot, librarySnapshot] = await Promise.all([
+    getDoc(doc(db, 'users', uid, 'entitlements', productId)).catch(() => null),
+    getDoc(doc(db, 'users', uid, 'libraryItems', productId)).catch(() => null)
+  ])
+  const entitlement = entitlementSnapshot?.exists() ? (entitlementSnapshot.data() || {}) : null
+  const libraryItem = librarySnapshot?.exists() ? (librarySnapshot.data() || {}) : null
+  const orderIds = Array.from(new Set([
+    entitlement?.orderId,
+    entitlement?.sourceOrderId,
+    libraryItem?.orderId,
+    libraryItem?.sourceOrderId
+  ].map((value) => String(value || '').trim()).filter(Boolean))).slice(0, 5)
+  const purchaseTimestamp = entitlement?.grantedAt || entitlement?.createdAt || libraryItem?.acquiredAt || libraryItem?.createdAt || null
+  return {
+    ownsProduct: Boolean(entitlement || libraryItem),
+    entitlementPath: entitlementSnapshot?.exists() ? entitlementSnapshot.ref.path : '',
+    libraryItemPath: librarySnapshot?.exists() ? librarySnapshot.ref.path : '',
+    orderIds,
+    purchaseTimestamp
+  }
+}
+
 export async function claimFreeProduct(uid = '', productId = '') {
   if (!functions || !uid || !productId) throw new Error('Sign in before adding this product to your library.')
   const callable = httpsCallable(functions, 'claimFreeProduct')

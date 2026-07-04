@@ -5,6 +5,12 @@ const { writeAccountEvent } = require('../account/accountEvents')
 
 const TARGET_TYPES = new Set(['product', 'profile', 'user', 'order', 'community', 'community_post', 'community_comment', 'community_story'])
 const PRODUCT_REASONS = new Set([
+  'Missing or broken download',
+  'Product does not match description',
+  'Copyright or stolen content concern',
+  'Malware or unsafe file concern',
+  'Misleading pricing or license issue',
+  'Inappropriate/prohibited content',
   'Fraudulent or misleading',
   'Download does not work',
   'Product not as described',
