@@ -65,6 +65,7 @@ const REGION_TOOL_ITEMS = [
   { id: 'gain', label: 'Gain', glyph: '+', enabled: false, reason: 'Use Region Editor gain' },
   { id: 'automation', label: 'Automation', glyph: 'AU', enabled: false, reason: 'Use track automation' }
 ]
+const MIDI_ROLL_FINE_BEAT_STEP = 1 / 128
 let keepSiteMenuOpen = localStorage.getItem(PREF_KEY) === '1'
 let channelAccordionState = (() => {
   try {
@@ -275,6 +276,7 @@ let midiRollBeatWidth = 64
 let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
 let midiNoteDrag = null
+const midiPreviewNotes = new Map()
 let regionEditorPlayheadDrag = null
 let trackAutomationDrag = null
 let selectedTrackAutomation = null
@@ -1526,6 +1528,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         ${missing ? `<p class="studio-audio-editor-warning" title="${esc(getAudioOfflineMessage(region))}">${esc(region.audioClip?.loadError || getAudioOfflineMessage(region))}</p>` : ''}
       </section>
       ${pitchTrace.enabled ? renderPitchTraceToolPane(region, missing) : ''}
+      ${renderRegionEditorToolStrip({ label: 'Audio region editor tools' })}
       <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
         <h3>${esc(getMidiRegionLabel(region))}</h3>
         <label>Region name<input data-audio-region-name value="${esc(region.name || '')}" placeholder="${esc(track?.name || 'Audio Region')}"></label>
@@ -1589,15 +1592,24 @@ function renderRegionEditorTimeline(region, gridWidth) {
   const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 1)
   const regionLength = regionEnd - regionStart
   const width = Math.max(420, Number(gridWidth) || regionLength * midiRollBeatWidth)
-  const playheadLeft = (xToBeat(timelineState.playheadX) - regionStart) * midiRollBeatWidth
+  const playheadLeft = positionToRegionEditorX(xToBeat(timelineState.playheadX), region)
   const ticks = renderRegionEditorTimelineTicks(regionLength)
   return `<div class="studio-region-editor-header-container"><div class="studio-region-editor-timeline" data-region-editor-timeline="${esc(region.id)}"><div class="studio-region-editor-timeline-spacer"></div><div class="studio-region-editor-timeline-viewport" data-region-editor-timeline-viewport><div class="studio-region-editor-timeline-inner" data-region-editor-timeline-inner style="width:${width}px">${ticks}<i class="studio-region-editor-playhead" style="left:${playheadLeft}px"></i></div></div></div></div>`
+}
+function positionToRegionEditorX(beat = 0, region = getMidiRollRegion()) {
+  return (Number(beat || 0) - (Number(region?.startBeat) || 0)) * midiRollBeatWidth
+}
+function regionEditorXToPosition(x = 0, region = getMidiRollRegion()) {
+  return (Number(region?.startBeat) || 0) + (Number(x || 0) / Math.max(1, midiRollBeatWidth))
 }
 function getMidiRollGridDivision() {
   if (midiRollBeatWidth >= 512) return 1 / 32
   if (midiRollBeatWidth >= 320) return 1 / 16
   if (midiRollBeatWidth >= 180) return 1 / 8
   return 1 / 4
+}
+function getMidiRollEditSnapValue() {
+  return isSnapEnabled ? getMidiRollGridDivision() : MIDI_ROLL_FINE_BEAT_STEP
 }
 function snapBeatToRegionEditorGrid(beat = 0, regionStart = 0) {
   const division = getMidiRollGridDivision()
@@ -1625,6 +1637,21 @@ function renderMidiRollGridLines(regionLength = 0) {
     return `<i class="${cls}" style="left:${beat * midiRollBeatWidth}px"></i>`
   }).join('')
 }
+function getRegionEditorToolItems() {
+  return REGION_TOOL_ITEMS.filter((tool) => tool.mode !== 'action' && (tool.enabled || tool.id === 'draw'))
+}
+function getRegionEditorActiveTool() {
+  return midiRollTool === 'pencil' ? 'draw' : (activeRegionTool || 'select')
+}
+function renderRegionEditorToolStrip({ label = 'Region Editor tools' } = {}) {
+  const activeTool = getRegionEditorActiveTool()
+  return `<nav class="studio-region-editor-tool-strip" role="toolbar" aria-label="${esc(label)}">${getRegionEditorToolItems().map((tool) => {
+    const enabled = tool.enabled || tool.id === 'draw'
+    const active = activeTool === tool.id
+    const title = `${tool.id === 'draw' ? 'Draw / Pencil' : tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}${!enabled && tool.reason ? ` - ${tool.reason}` : ''}`
+    return `<button type="button" class="studio-region-editor-tool-button ${active ? 'is-active' : ''}" data-region-editor-tool="${esc(tool.id)}" aria-label="${esc(title)}" aria-pressed="${String(active)}" ${enabled ? '' : 'disabled'}><span>${esc(tool.glyph)}</span><small>${esc(tool.id === 'draw' ? 'Pencil' : tool.label)}</small></button>`
+  }).join('')}</nav>`
+}
 function renderMidiRollPanel(motionClass = '') {
   const selectedRegion = midiRegions.find((item)=>item.id === selectedMidiRegionId) || midiRegions.find((item)=>item.id === midiRollState?.regionId) || null
   if (selectedRegion?.type === 'audio') return renderAudioRegionEditorPanel(selectedRegion, motionClass)
@@ -1642,7 +1669,9 @@ function renderMidiRollPanel(motionClass = '') {
   const gridHeight = rows.length * midiRollRowHeight
   const quantize = midiRollState?.quantize || '0.25'
   const playheadBeat = xToBeat(timelineState.playheadX)
-  const playheadLeft = (playheadBeat - Number(region.startBeat || 0)) * midiRollBeatWidth
+  const playheadLeft = positionToRegionEditorX(playheadBeat, region)
+  const selectedPitches = new Set(midiRollSelectedNoteIndices.map((index)=>Number(notes[index]?.note)).filter(Number.isFinite))
+  if (Number.isInteger(midiRollSelectedNoteIndex) && notes[midiRollSelectedNoteIndex]) selectedPitches.add(Number(notes[midiRollSelectedNoteIndex].note))
   return `<section class="studio-bottom-panel studio-midi-roll-editor ${motionClass}" data-midi-roll-editor data-midi-roll-region="${esc(region.id)}" style="--midi-roll-beat-width:${midiRollBeatWidth}px;--midi-roll-row-height:${midiRollRowHeight}px;--midi-roll-grid-width:${gridWidth}px;--midi-roll-grid-height:${gridHeight}px;${bottomPanelHeightPx ? `height:${bottomPanelHeightPx}px;` : ''}">
     <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Track')} · ${esc(getMidiRegionLabel(region))} · ${Number(region.startBeat || 0).toFixed(2)}-${Number(region.endBeat || 0).toFixed(2)} · ${notes.length} notes</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
@@ -1650,22 +1679,23 @@ function renderMidiRollPanel(motionClass = '') {
       <section class="studio-midi-roll-main">
         ${renderRegionEditorTimeline(region, gridWidth)}
         <div class="studio-midi-roll-scroll">
-          <div class="studio-midi-roll-keys" style="height:${gridHeight}px">${rows.map((note)=>{ const pitch=((note%12)+12)%12; const black=[1,3,6,8,10].includes(pitch); return `<span class="${black ? 'is-black' : 'is-white'} ${pitch === 0 ? 'is-root' : ''}">${pitch === 0 ? esc(formatMidiNoteName(note)) : ''}</span>` }).join('')}</div>
+          <div class="studio-midi-roll-keys" style="height:${gridHeight}px">${rows.map((note)=>{ const pitch=((note%12)+12)%12; const black=[1,3,6,8,10].includes(pitch); return `<button type="button" class="${black ? 'is-black' : 'is-white'} ${pitch === 0 ? 'is-root' : ''} ${selectedPitches.has(note) ? 'is-selected-pitch' : ''}" data-midi-roll-key-note="${note}" aria-label="Preview ${esc(formatMidiNoteName(note))}">${pitch === 0 ? esc(formatMidiNoteName(note)) : ''}</button>` }).join('')}</div>
           <div class="studio-midi-roll-grid" data-midi-roll-grid style="width:${gridWidth}px;height:${gridHeight}px">
             ${renderMidiRollGridLines(regionLength)}
             <span class="studio-midi-roll-playhead" data-midi-roll-playhead style="left:${playheadLeft}px"></span>
             <span class="studio-midi-roll-selection" data-midi-roll-selection hidden></span>
             ${notes.map((note, index)=>{
               const pitchIndex = rows.indexOf(Number(note.note) || 60)
-              const left = Math.max(0, (Number(note.startBeat || region.startBeat) - Number(region.startBeat || 0)) * midiRollBeatWidth)
+              const left = Math.max(0, positionToRegionEditorX(Number(note.startBeat || region.startBeat), region))
               const width = Math.max(10, (Number(note.durationBeats) || 0.25) * midiRollBeatWidth)
               const top = Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)
               const selected = index === midiRollSelectedNoteIndex || midiRollSelectedNoteIndices.includes(index)
-              return `<button type="button" class="studio-midi-roll-note ${selected ? 'is-selected' : ''}" data-midi-note-index="${index}" style="left:${left}px;top:${top}px;width:${width}px;--region-color:${esc(region.independentColor || region.color || track?.color || '#58d4ff')}"><span data-midi-note-handle="left"></span><strong>${esc(formatMidiNoteName(note.note))}</strong><span data-midi-note-handle="right"></span></button>`
+              return `<button type="button" class="studio-midi-roll-note ${selected ? 'is-selected' : ''}" data-midi-note-index="${index}" title="${esc(formatMidiNoteName(note.note))} · ${Number(note.startBeat || 0).toFixed(2)} · ${Number(note.durationBeats || 0.25).toFixed(2)} beats" style="left:${left}px;top:${top}px;width:${width}px;--region-color:${esc(region.independentColor || region.color || track?.color || '#58d4ff')}"><span data-midi-note-handle="left"></span><strong>${esc(formatMidiNoteName(note.note))}</strong><span data-midi-note-handle="right"></span></button>`
             }).join('')}
           </div>
         </div>
       </section>
+      ${renderRegionEditorToolStrip({ label: 'MIDI region editor tools' })}
       <aside class="studio-midi-roll-tools">
         <h3>${esc(getMidiRegionLabel(region))}</h3>
         <div class="studio-editor-tool-toggle" role="toolbar" aria-label="MIDI editor tools">
@@ -5266,6 +5296,7 @@ function captureDawSnapshot() {
 }
 function restoreDawSnapshot(snapshot) {
   if (!snapshot) return
+  stopAllMidiPreviewNotes()
   stopAllTrackInstrumentNotes()
   stopAllPlaybackNotes()
   stopAllAudioClipPlayback()
@@ -5475,14 +5506,14 @@ function updateMidiRollPlayheadDom() {
   const region = marker ? getMidiRollRegion() : null
   const playheadBeat = xToBeat(timelineState.playheadX)
   if (marker && region) {
-    const left = (playheadBeat - Number(region.startBeat || 0)) * midiRollBeatWidth
+    const left = positionToRegionEditorX(playheadBeat, region)
     marker.style.left = `${left}px`
   }
   app.querySelectorAll('[data-region-editor-timeline]').forEach((timeline) => {
     const timelineRegion = midiRegions.find((item) => item.id === timeline.dataset.regionEditorTimeline)
     const headerMarker = timeline.querySelector('.studio-region-editor-playhead')
     if (!timelineRegion || !headerMarker) return
-    headerMarker.style.left = `${(playheadBeat - Number(timelineRegion.startBeat || 0)) * midiRollBeatWidth}px`
+    headerMarker.style.left = `${positionToRegionEditorX(playheadBeat, timelineRegion)}px`
   })
 }
 function syncRegionEditorTimelineScroll(scrollLeft = null) {
@@ -5798,7 +5829,7 @@ function regionEditorTimelineBeatFromEvent(event) {
   const rect = viewport?.getBoundingClientRect?.() || inner?.getBoundingClientRect?.()
   if (!timeline || !inner || !region || !rect) return null
   const localX = clamp(event.clientX - rect.left + (viewport?.scrollLeft || 0), 0, inner.offsetWidth || rect.width || 0)
-  return clampBeat((Number(region.startBeat) || 0) + (localX / midiRollBeatWidth))
+  return clampBeat(regionEditorXToPosition(localX, region))
 }
 function getRegionEditorTimelineFromEvent(event) {
   return event.target.closest?.('[data-region-editor-timeline]') || (regionEditorPlayheadDrag?.regionId ? app.querySelector(`[data-region-editor-timeline="${CSS.escape(regionEditorPlayheadDrag.regionId)}"]`) : null)
@@ -6276,6 +6307,62 @@ function playTrackMidiNote(track, note, velocity = 0.85) {
 }
 function stopTrackMidiNote(track, note) {
   stopLiveInstrumentNote(track, note)
+}
+function stopMidiPreviewNote(key) {
+  const active = midiPreviewNotes.get(key)
+  if (!active) return
+  window.clearTimeout(active.timer)
+  if (active.track && active.note != null) stopTrackMidiNote(active.track, active.note)
+  if (active.fallback && audioContext) {
+    try {
+      active.fallback.gain.gain.cancelScheduledValues(audioContext.currentTime)
+      active.fallback.gain.gain.setValueAtTime(Math.max(0.0001, active.fallback.gain.gain.value), audioContext.currentTime)
+      active.fallback.gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.04)
+      active.fallback.osc.stop(audioContext.currentTime + 0.05)
+    } catch {}
+  }
+  midiPreviewNotes.delete(key)
+}
+function stopAllMidiPreviewNotes() {
+  Array.from(midiPreviewNotes.keys()).forEach((key)=>stopMidiPreviewNote(key))
+}
+function playMidiPreviewNote(noteNumber, { track = getMidiRegionTrack(getMidiRollRegion()) || getSelectedTrack(), velocity = 0.85, durationBeats = 0.25, key = '' } = {}) {
+  const note = clamp(Math.round(Number(noteNumber) || 60), 0, 127)
+  const previewKey = key || `midi-preview:${track?.id || 'fallback'}:${note}`
+  stopMidiPreviewNote(previewKey)
+  const durationMs = clamp(beatsToSeconds(Math.max(0.05, Number(durationBeats) || 0.25)) * 1000, 90, 850)
+  if (track?.instrument && track.instrument.enabled !== false) {
+    playTrackMidiNote(track, note, velocity)
+    const timer = window.setTimeout(() => stopMidiPreviewNote(previewKey), durationMs)
+    midiPreviewNotes.set(previewKey, { track, note, timer })
+    return
+  }
+  try {
+    const ctx = getAudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(midiNoteToFrequency(note), ctx.currentTime)
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(clamp(velocity, 0.05, 1) * 0.12, ctx.currentTime + 0.012)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (durationMs / 1000))
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(ctx.currentTime)
+    const timer = window.setTimeout(() => stopMidiPreviewNote(previewKey), durationMs)
+    midiPreviewNotes.set(previewKey, { note, timer, fallback: { osc, gain } })
+  } catch (err) {
+    console.warn('[midi-preview] failed', err)
+  }
+}
+function auditionMidiRollNote(note, region = getMidiRollRegion()) {
+  if (!note) return
+  playMidiPreviewNote(note.note, {
+    track: getMidiRegionTrack(region) || getSelectedTrack(),
+    velocity: clamp(Number(note.velocity) || 0.85, 0.01, 1),
+    durationBeats: Math.max(0.05, Number(note.durationBeats) || 0.25),
+    key: `midi-roll:${region?.id || 'region'}:${Number(note.note) || 60}`
+  })
 }
 function hasSoloedTracks() { return tracks.some((track)=>track.soloed) }
 function isTrackOutputAudible(track) {
@@ -8409,18 +8496,25 @@ function resetAudioRegionStretch(region) {
 function getMidiRollSnapValue() {
   return Math.max(0.03125, Number(midiRollState?.quantize || 0.25) || 0.25)
 }
+function getSelectedMidiRollNoteIndices(region = getMidiRollRegion()) {
+  if (!region?.notes?.length) return []
+  const indices = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  return [...new Set(indices)].filter((index) => Number.isInteger(index) && region.notes[index]).sort((a, b) => a - b)
+}
 function mutateSelectedMidiNote(type, mutator) {
   const region = getMidiRollRegion()
-  const index = midiRollSelectedNoteIndex
-  if (!region || !Number.isInteger(index) || !region.notes?.[index]) return
+  const indices = getSelectedMidiRollNoteIndices(region)
+  if (!region || !indices.length) return
   commitHistoryMutation(type, () => {
-    const note = region.notes[index]
-    mutator(note, region, index)
+    indices.forEach((index) => {
+      const note = region.notes[index]
+      if (note) mutator(note, region, index)
+    })
   })
 }
 function deleteSelectedMidiNote() {
   const region = getMidiRollRegion()
-  const selected = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  const selected = getSelectedMidiRollNoteIndices(region)
   if (!region || !selected.some((index) => region.notes?.[index])) return false
   commitHistoryMutation('delete-midi-note', () => {
     selected.sort((a, b) => b - a).forEach((index) => {
@@ -8445,7 +8539,7 @@ function selectAllMidiRollNotes() {
 }
 function copySelectedMidiRollNotes() {
   const region = getMidiRollRegion()
-  const indices = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  const indices = getSelectedMidiRollNoteIndices(region)
   const notes = [...new Set(indices)].map((index)=>region?.notes?.[index]).filter(Boolean)
   if (!region || !notes.length) return false
   const earliestStartBeat = Math.min(...notes.map((note)=>Number(note.startBeat) || Number(region.startBeat) || 0))
@@ -8465,12 +8559,14 @@ function pasteSelectedMidiRollNotes() {
   const region = getMidiRollRegion()
   if (!region || !midiNoteClipboard?.notes?.length) return false
   const regionStart = Number(region.startBeat) || 0
-  const pasteBeat = clamp(xToBeat(timelineState.playheadX), regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + 1))
+  const rawPasteBeat = clamp(xToBeat(timelineState.playheadX), regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + 1))
+  const pasteBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(rawPasteBeat, regionStart) : rawPasteBeat
   commitHistoryMutation('paste-midi-notes', () => {
     const created = []
     const incoming = midiNoteClipboard.notes.map((item) => {
       const source = item.note || {}
-      const startBeat = pasteBeat + Number(item.relativeStartBeat || 0)
+      const rawStartBeat = pasteBeat + Number(item.relativeStartBeat || 0)
+      const startBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(rawStartBeat, regionStart) : rawStartBeat
       const durationBeats = Math.max(0.05, Number(source.durationBeats) || 0.25)
       const note = { ...source, id: makeInsertId('note'), startBeat, durationBeats }
       created.push(note)
@@ -8513,6 +8609,50 @@ function quantizeSelectedMidiNote() {
     midiRollStatus = selectedCount ? `Quantized ${indices.length} selected note${indices.length === 1 ? '' : 's'}.` : `Quantized ${indices.length} clip note${indices.length === 1 ? '' : 's'}.`
   })
 }
+function nudgeSelectedMidiRollNotes(event) {
+  const region = getMidiRollRegion()
+  const indices = getSelectedMidiRollNoteIndices(region)
+  if (!region || !indices.length || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) return false
+  event.preventDefault()
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 0.25)
+  const rows = midiRollPitchRows(region)
+  const minPitch = rows[rows.length - 1]
+  const maxPitch = rows[0]
+  const pitchDelta = event.code === 'ArrowUp' ? 1 : event.code === 'ArrowDown' ? -1 : 0
+  const beatStep = event.shiftKey ? MIDI_ROLL_FINE_BEAT_STEP : getMidiRollEditSnapValue()
+  const beatDelta = event.code === 'ArrowLeft' ? -beatStep : event.code === 'ArrowRight' ? beatStep : 0
+  const snapshots = indices.map((index)=> {
+    const note = region.notes[index]
+    return {
+      index,
+      startBeat: Number(note.startBeat) || regionStart,
+      durationBeats: Math.max(0.05, Number(note.durationBeats) || 0.25),
+      note: Number(note.note) || 60
+    }
+  })
+  const minBeatDelta = Math.max(...snapshots.map((snapshot)=>regionStart - snapshot.startBeat))
+  const maxBeatDelta = Math.min(...snapshots.map((snapshot)=>regionEnd - snapshot.durationBeats - snapshot.startBeat))
+  const clampedBeatDelta = beatDelta ? clamp(beatDelta, minBeatDelta, maxBeatDelta) : 0
+  const minPitchDelta = Math.max(...snapshots.map((snapshot)=>minPitch - snapshot.note))
+  const maxPitchDelta = Math.min(...snapshots.map((snapshot)=>maxPitch - snapshot.note))
+  const clampedPitchDelta = pitchDelta ? clamp(pitchDelta, minPitchDelta, maxPitchDelta) : 0
+  if (!clampedBeatDelta && !clampedPitchDelta) return true
+  commitHistoryMutation('nudge-midi-notes', () => {
+    snapshots.forEach((snapshot) => {
+      const note = region.notes[snapshot.index]
+      if (!note) return
+      note.startBeat = snapBeat(snapshot.startBeat + clampedBeatDelta, MIDI_ROLL_FINE_BEAT_STEP)
+      note.note = clamp(snapshot.note + clampedPitchDelta, minPitch, maxPitch)
+    })
+    midiRollSelectedNoteIndices = snapshots.map((snapshot)=>snapshot.index).filter((index)=>region.notes[index])
+    midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    midiRollStatus = `${clampedPitchDelta ? 'Pitch' : 'Time'} nudged ${snapshots.length} note${snapshots.length === 1 ? '' : 's'}.`
+  })
+  const auditionIndex = midiRollSelectedNoteIndex ?? midiRollSelectedNoteIndices[0]
+  auditionMidiRollNote(region.notes[auditionIndex], region)
+  return true
+}
 function beginMidiNoteDrag(event, regionId, noteIndex) {
   const region = midiRegions.find((item)=>item.id === regionId)
   const note = region?.notes?.[noteIndex]
@@ -8522,6 +8662,7 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
   event.stopPropagation()
   activeCommandContext = 'midi-editor'
   selectSingleRegion(regionId)
+  auditionMidiRollNote(note, region)
   if (event.shiftKey) {
     const selected = new Set(midiRollSelectedNoteIndices)
     if (selected.has(noteIndex)) selected.delete(noteIndex)
@@ -8532,10 +8673,17 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
     renderEditor()
     return
   }
-  midiRollSelectedNoteIndex = noteIndex
-  midiRollSelectedNoteIndices = [noteIndex]
+  const existingSelection = getSelectedMidiRollNoteIndices(region)
+  if (!existingSelection.includes(noteIndex)) {
+    midiRollSelectedNoteIndex = noteIndex
+    midiRollSelectedNoteIndices = [noteIndex]
+  } else {
+    midiRollSelectedNoteIndex = noteIndex
+    midiRollSelectedNoteIndices = existingSelection
+  }
   midiRollStatus = ''
   const handle = event.target.closest('[data-midi-note-handle]')?.dataset?.midiNoteHandle || 'move'
+  const selectedIndices = getSelectedMidiRollNoteIndices(region)
   midiNoteDrag = {
     regionId,
     noteIndex,
@@ -8546,6 +8694,16 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
     startBeat: Number(note.startBeat) || Number(region.startBeat) || 0,
     durationBeats: Math.max(0.05, Number(note.durationBeats) || 0.25),
     note: Number(note.note) || 60,
+    noteSnapshots: selectedIndices.map((index) => {
+      const selectedNote = region.notes[index]
+      return {
+        index,
+        startBeat: Number(selectedNote.startBeat) || Number(region.startBeat) || 0,
+        durationBeats: Math.max(0.05, Number(selectedNote.durationBeats) || 0.25),
+        note: Number(selectedNote.note) || 60,
+        lastAuditionNote: Number(selectedNote.note) || 60
+      }
+    }),
     hasMoved: false
   }
   document.body.classList.add('is-studio-dragging', 'is-midi-note-dragging')
@@ -8560,34 +8718,53 @@ function applyMidiNoteDrag(event) {
   const dy = event.clientY - midiNoteDrag.startY
   if (!midiNoteDrag.hasMoved && Math.hypot(dx, dy) < 3) return
   midiNoteDrag.hasMoved = true
-  const snap = getMidiRollSnapValue()
+  const snap = getMidiRollEditSnapValue()
   const deltaBeat = snapBeat(dx / midiRollBeatWidth, snap)
   const pitchDelta = -Math.round(dy / midiRollRowHeight)
   const regionStart = Number(region.startBeat) || 0
   const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 0.25)
+  const snapshots = midiNoteDrag.noteSnapshots?.length ? midiNoteDrag.noteSnapshots : [{ index: midiNoteDrag.noteIndex, startBeat: midiNoteDrag.startBeat, durationBeats: midiNoteDrag.durationBeats, note: midiNoteDrag.note, lastAuditionNote: midiNoteDrag.note }]
+  const rows = midiRollPitchRows(region)
+  const minPitch = rows[rows.length - 1]
+  const maxPitch = rows[0]
   if (midiNoteDrag.mode === 'left') {
-    const nextStart = clamp(snapBeat(midiNoteDrag.startBeat + deltaBeat, snap), regionStart, midiNoteDrag.startBeat + midiNoteDrag.durationBeats - 0.05)
-    note.durationBeats = Math.max(0.05, midiNoteDrag.startBeat + midiNoteDrag.durationBeats - nextStart)
-    note.startBeat = nextStart
+    const clampedDelta = Math.max(...snapshots.map((snapshot) => regionStart - snapshot.startBeat), Math.min(deltaBeat, ...snapshots.map((snapshot) => snapshot.durationBeats - 0.05)))
+    snapshots.forEach((snapshot) => {
+      const selectedNote = region.notes[snapshot.index]
+      if (!selectedNote) return
+      const nextStart = snapBeat(snapshot.startBeat + clampedDelta, snap)
+      const noteEnd = snapshot.startBeat + snapshot.durationBeats
+      selectedNote.startBeat = clamp(nextStart, regionStart, noteEnd - 0.05)
+      selectedNote.durationBeats = Math.max(0.05, noteEnd - selectedNote.startBeat)
+    })
   } else if (midiNoteDrag.mode === 'right') {
-    const nextEnd = clamp(snapBeat(midiNoteDrag.startBeat + midiNoteDrag.durationBeats + deltaBeat, snap), midiNoteDrag.startBeat + 0.05, regionEnd)
-    note.durationBeats = Math.max(0.05, nextEnd - midiNoteDrag.startBeat)
+    const clampedDelta = Math.min(deltaBeat, ...snapshots.map((snapshot) => regionEnd - (snapshot.startBeat + snapshot.durationBeats)))
+    snapshots.forEach((snapshot) => {
+      const selectedNote = region.notes[snapshot.index]
+      if (!selectedNote) return
+      const nextEnd = snapBeat(snapshot.startBeat + snapshot.durationBeats + clampedDelta, snap)
+      selectedNote.durationBeats = Math.max(0.05, clamp(nextEnd, snapshot.startBeat + 0.05, regionEnd) - snapshot.startBeat)
+    })
   } else {
-    note.startBeat = clamp(snapBeat(midiNoteDrag.startBeat + deltaBeat, snap), regionStart, Math.max(regionStart, regionEnd - midiNoteDrag.durationBeats))
-    const rows = midiRollPitchRows(region)
-    note.note = clamp(midiNoteDrag.note + pitchDelta, rows[rows.length - 1], rows[0])
+    const minStartDelta = Math.max(...snapshots.map((snapshot) => regionStart - snapshot.startBeat))
+    const maxStartDelta = Math.min(...snapshots.map((snapshot) => regionEnd - snapshot.durationBeats - snapshot.startBeat))
+    const clampedBeatDelta = clamp(deltaBeat, minStartDelta, maxStartDelta)
+    const minPitchDelta = Math.max(...snapshots.map((snapshot) => minPitch - snapshot.note))
+    const maxPitchDelta = Math.min(...snapshots.map((snapshot) => maxPitch - snapshot.note))
+    const clampedPitchDelta = clamp(pitchDelta, minPitchDelta, maxPitchDelta)
+    snapshots.forEach((snapshot) => {
+      const selectedNote = region.notes[snapshot.index]
+      if (!selectedNote) return
+      selectedNote.startBeat = snapBeat(snapshot.startBeat + clampedBeatDelta, snap)
+      selectedNote.note = clamp(snapshot.note + clampedPitchDelta, minPitch, maxPitch)
+      if (selectedNote.note !== snapshot.lastAuditionNote) {
+        snapshot.lastAuditionNote = selectedNote.note
+        auditionMidiRollNote(selectedNote, region)
+      }
+    })
   }
   refreshMidiRegionDom()
-  const noteEl = app.querySelector(`[data-midi-note-index="${CSS.escape(String(midiNoteDrag.noteIndex))}"]`)
-  if (noteEl) {
-    const rows = midiRollPitchRows()
-    const pitchIndex = rows.indexOf(Number(note.note) || 60)
-    noteEl.style.left = `${Math.max(0, (Number(note.startBeat || regionStart) - regionStart) * midiRollBeatWidth)}px`
-    noteEl.style.width = `${Math.max(10, (Number(note.durationBeats) || 0.25) * midiRollBeatWidth)}px`
-    noteEl.style.top = `${Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)}px`
-    const label = noteEl.querySelector('strong')
-    if (label) label.textContent = formatMidiNoteName(note.note)
-  }
+  updateMidiRollNoteDom(region, snapshots.map((snapshot)=>snapshot.index))
 }
 function finishMidiNoteDrag() {
   if (!midiNoteDrag) return
@@ -8857,23 +9034,46 @@ function drawMidiNoteAtGridPoint(region, point) {
   const rows = midiRollPitchRows(region)
   const rowIndex = clamp(Math.floor(point.y / midiRollRowHeight), 0, rows.length - 1)
   const pitch = rows[rowIndex] ?? 60
-  const snap = getMidiRollSnapValue()
+  const snap = getMidiRollEditSnapValue()
   const regionStart = Number(region.startBeat) || 0
-  const startBeat = clamp(snapBeat(regionStart + (point.x / midiRollBeatWidth), snap), regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + snap) - 0.05)
+  const startBeat = clamp(snapBeat(regionEditorXToPosition(point.x, region), snap), regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + snap) - 0.05)
   const before = captureDawSnapshot()
-  region.notes = [...(region.notes || []), {
+  const note = {
     id: makeInsertId('note'),
     note: pitch,
     startBeat,
     durationBeats: Math.max(0.05, snap),
     velocity: 0.85
-  }]
+  }
+  region.notes = [...(region.notes || []), note]
   midiRollSelectedNoteIndex = region.notes.length - 1
   midiRollSelectedNoteIndices = [midiRollSelectedNoteIndex]
   midiRollStatus = `Drew ${formatMidiNoteName(pitch)}.`
+  auditionMidiRollNote(note, region)
   pushHistory('draw-midi-note', before, captureDawSnapshot())
   scheduleEditorSave()
   renderEditor()
+}
+function updateMidiRollNoteDom(region, indices = getSelectedMidiRollNoteIndices(region)) {
+  if (!region) return
+  const rows = midiRollPitchRows(region)
+  const regionStart = Number(region.startBeat) || 0
+  indices.forEach((index) => {
+    const note = region.notes?.[index]
+    const noteEl = app.querySelector(`[data-midi-note-index="${CSS.escape(String(index))}"]`)
+    if (!note || !noteEl) return
+    const pitchIndex = rows.indexOf(Number(note.note) || 60)
+    noteEl.style.left = `${Math.max(0, positionToRegionEditorX(Number(note.startBeat || regionStart), region))}px`
+    noteEl.style.width = `${Math.max(10, (Number(note.durationBeats) || 0.25) * midiRollBeatWidth)}px`
+    noteEl.style.top = `${Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)}px`
+    noteEl.title = `${formatMidiNoteName(note.note)} · ${Number(note.startBeat || 0).toFixed(2)} · ${Number(note.durationBeats || 0.25).toFixed(2)} beats`
+    const label = noteEl.querySelector('strong')
+    if (label) label.textContent = formatMidiNoteName(note.note)
+  })
+  const selectedPitches = new Set(getSelectedMidiRollNoteIndices(region).map((index)=>Number(region.notes?.[index]?.note)).filter(Number.isFinite))
+  app.querySelectorAll('[data-midi-roll-key-note]').forEach((key) => {
+    key.classList.toggle('is-selected-pitch', selectedPitches.has(Number(key.dataset.midiRollKeyNote)))
+  })
 }
 function beginMidiRollSelection(event) {
   if (event.button !== 0 || event.target.closest('[data-midi-note-index]')) return
@@ -8938,7 +9138,7 @@ function finishMidiRollSelection() {
   const selected = []
   ;(region.notes || []).forEach((note, index) => {
     const pitchIndex = rows.indexOf(Number(note.note) || 60)
-    const noteLeft = Math.max(0, (Number(note.startBeat || regionStart) - regionStart) * midiRollBeatWidth)
+    const noteLeft = Math.max(0, positionToRegionEditorX(Number(note.startBeat || regionStart), region))
     const noteRight = noteLeft + Math.max(10, (Number(note.durationBeats) || 0.25) * midiRollBeatWidth)
     const noteTop = Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)
     const noteBottom = noteTop + Math.max(10, midiRollRowHeight - 6)
@@ -10196,7 +10396,7 @@ function bindEditorEvents() {
     renderEditor()
   })
   app.querySelector('[data-transport-play]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; togglePlayback() })
-  app.querySelector('[data-transport-stop]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = '' ; renderEditor() })
+  app.querySelector('[data-transport-stop]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } finalizeMidiRecording(); stopAllMidiPreviewNotes(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = '' ; renderEditor() })
   app.querySelector('[data-transport-start]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(barZeroX()); scheduleEditorSave() })
   app.querySelector('[data-transport-end]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(maxTimelineX()); scheduleEditorSave() })
   app.querySelector('[data-transport-rewind]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(timelineState.playheadX - (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
@@ -10315,6 +10515,37 @@ function bindEditorEvents() {
     regionColorPickerState = null
     renderEditor()
   })
+  app.querySelector('[data-midi-roll-editor]')?.addEventListener('pointerdown', () => {
+    activeCommandContext = 'midi-editor'
+  }, { capture: true })
+  app.querySelector('[data-audio-region-editor]')?.addEventListener('pointerdown', () => {
+    activeCommandContext = 'audio-editor'
+  }, { capture: true })
+  app.querySelectorAll('[data-region-editor-tool]').forEach((button)=>button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const toolId = button.dataset.regionEditorTool || 'select'
+    activeRegionTool = toolId === 'draw' ? 'draw' : toolId
+    midiRollTool = toolId === 'draw' ? 'pencil' : 'cursor'
+    if (toolId === 'loop') runRegionToolAction('loop')
+    renderEditorPreservingArrangementScroll()
+  }))
+  app.querySelectorAll('[data-midi-roll-key-note]').forEach((key)=> {
+    const note = Number(key.dataset.midiRollKeyNote)
+    const stopKey = `midi-key:${midiRollState?.regionId || selectedMidiRegionId}:${note}`
+    key.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      activeCommandContext = 'midi-editor'
+      playMidiPreviewNote(note, {
+        track: getMidiRegionTrack(getMidiRollRegion()) || getSelectedTrack(),
+        durationBeats: 0.25,
+        key: stopKey
+      })
+    })
+    key.addEventListener('pointerup', () => stopMidiPreviewNote(stopKey))
+    key.addEventListener('pointerleave', () => stopMidiPreviewNote(stopKey))
+  })
   app.querySelectorAll('[data-midi-note-index]').forEach((noteEl)=>noteEl.addEventListener('pointerdown', (event) => {
     beginMidiNoteDrag(event, midiRollState?.regionId || selectedMidiRegionId, Number(noteEl.dataset.midiNoteIndex))
   }))
@@ -10330,6 +10561,7 @@ function bindEditorEvents() {
   })
   app.querySelectorAll('[data-midi-roll-tool]').forEach((button)=>button.addEventListener('click', () => {
     midiRollTool = button.dataset.midiRollTool === 'pencil' ? 'pencil' : 'cursor'
+    activeRegionTool = midiRollTool === 'pencil' ? 'draw' : 'select'
     renderEditor()
   }))
   app.querySelector('[data-midi-quantize-note]')?.addEventListener('click', () => quantizeSelectedMidiNote())
@@ -10475,6 +10707,9 @@ function handleStudioKeydown(event){
   }
   if(event.altKey && !['ArrowLeft','ArrowRight'].includes(event.code)) return
   if(event.code==='Space'){handleSpaceTransport(event); return}
+  if (isMidiEditorCommandContext() && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+    if (nudgeSelectedMidiRollNotes(event)) return
+  }
   if(event.code==='KeyR'){
     event.preventDefault()
     if(activeRecording || isCountInRunning) stopRecordingAndKeep()
@@ -10529,7 +10764,7 @@ if(!window.__melogicStudioLayoutResizeBound){
     }, 80)
   }, { passive:true })
 }
-if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
+if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllMidiPreviewNotes(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
 async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor(); preloadSouraWasmDsp().then(()=>renderEditor()).catch((err)=>{ console.error('[soura-dsp] preload failed', err); renderEditor() }); warmSelectedTrackInstrument('project-open'); hydrateProjectAudioAssets().catch((err)=>console.warn('[studioProject] audio hydration failed', err)) }
 init()
