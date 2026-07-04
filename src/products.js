@@ -717,12 +717,6 @@ app.innerHTML = `
       </div>
     </section>
 
-    <footer class="section products-footer">
-      <div class="section-inner">
-        <p class="eyebrow">Melogic Records</p>
-        <p>Catalog-ready tools and creator releases built for the next wave of heavy electronic music.</p>
-      </div>
-    </footer>
   </main>
 `
 

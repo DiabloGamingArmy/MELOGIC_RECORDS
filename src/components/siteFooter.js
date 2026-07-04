@@ -19,8 +19,13 @@ const PUBLIC_FOOTER_BLOCKED_PREFIXES = [
   '/account',
   '/admin',
   '/inbox',
+  '/community',
+  '/instrument-host',
   '/products/new',
-  '/products/dashboard'
+  '/products/dashboard',
+  '/studio/daw',
+  '/studio/stagemaker/project',
+  '/stage'
 ]
 
 export function shouldRenderSiteFooter(pathname = window.location.pathname) {

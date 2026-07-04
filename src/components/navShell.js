@@ -7,6 +7,7 @@ export function navShell(options = {}) {
   const isProfile = currentPage === 'profile'
   const isInbox = currentPage === 'inbox'
   const isStudio = currentPage === 'studio'
+  const isSupport = currentPage === 'support'
   const isAdmin = currentPage === 'admin'
 
   return `
@@ -24,7 +25,7 @@ export function navShell(options = {}) {
           <a href="${ROUTES.products}" data-guide-id="global-nav-products" data-guide-label="Products" data-guide-role="global-nav-link" ${isProducts ? 'aria-current="page"' : ''}>Products</a>
           <a href="${ROUTES.studio}" data-guide-id="global-nav-studio" data-guide-label="Studio" data-guide-role="global-nav-link" ${isStudio ? 'aria-current="page"' : ''}>Studio</a>
           <a href="${ROUTES.community}" data-guide-id="global-nav-community" data-guide-label="Community" data-guide-role="global-nav-link">Community</a>
-          <a href="${ROUTES.support}" data-guide-id="global-nav-support" data-guide-label="Support" data-guide-role="global-nav-link">Support</a>
+          <a href="${ROUTES.support}" data-guide-id="global-nav-support" data-guide-label="Support" data-guide-role="global-nav-link" ${isSupport ? 'aria-current="page"' : ''}>Support</a>
         </nav>
 
         <div class="nav-actions" aria-label="Account and cart actions">

@@ -265,48 +265,102 @@ const PAGES = {
         ]
       }
     ]
+  },
+  faq: {
+    currentPage: 'faq',
+    eyebrow: 'Support FAQ',
+    title: 'Frequently Asked Questions',
+    description: 'Answers about Melogic Records marketplace purchases, digital downloads, creator selling, payout setup, support, moderation, and advertising.',
+    cta: { label: 'Contact Support', href: ROUTES.support },
+    sections: [
+      {
+        title: 'Buying and product access',
+        body: [
+          paragraph('Melogic marketplace products can include sample packs, drum kits, loops, one-shots, presets, wavetable packs, MIDI packs, project files, tutorials, and creative production tools. Paid checkout and free claims add eligible products to your Melogic library.'),
+          paragraph('If checkout succeeds but a product does not appear in your library, contact support with the product name, account email, and order time so Melogic can repair access or investigate fulfillment.')
+        ]
+      },
+      {
+        title: 'Creator selling and payouts',
+        body: [
+          paragraph('Creators can prepare product listings, upload deliverables and preview media, set pricing, and submit products for marketplace review. Creators must own or have permission to distribute every file they upload.'),
+          paragraph('Creator payouts require supported payment setup and eligibility review. Payment infrastructure handles payout delivery after account configuration, fraud checks, and any required compliance steps.')
+        ]
+      },
+      {
+        title: 'Reports, moderation, and ads',
+        body: [
+          paragraph('Use support to report missing downloads, incorrect files, inaccurate descriptions, or suspected copyright issues. Melogic may repair access, contact the creator, pause a listing, issue a refund when appropriate, or take moderation action.'),
+          paragraph('Ads may appear on public marketplace or content pages and should be labeled as advertisements. Ads are not intended for checkout, account billing, library, admin, inbox, or private support communication pages.')
+        ]
+      }
+    ]
   }
 }
+
+const SUPPORT_DOC_LINKS = [
+  ['Support Home', ROUTES.support, 'support'],
+  ['About Melogic', ROUTES.about, 'about'],
+  ['Contact', ROUTES.contact, 'contact'],
+  ['FAQ', ROUTES.faq, 'faq'],
+  ['Privacy Policy', ROUTES.privacy, 'privacy'],
+  ['Terms of Service', ROUTES.terms, 'terms'],
+  ['Refund Policy', ROUTES.refundPolicy, 'refund-policy'],
+  ['Creator Guidelines', ROUTES.creatorGuidelines, 'creator-guidelines'],
+  ['Advertising Policy', ROUTES.adPolicy, 'ad-policy']
+]
 
 function normalizePageKey() {
   const fromDataset = document.body?.dataset?.page || ''
   if (PAGES[fromDataset]) return fromDataset
-  const path = window.location.pathname.replace(/^\/+|\/+$/g, '') || 'about'
+  const parts = window.location.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  const path = parts[0] === 'support' ? parts[1] : parts[0]
   return PAGES[path] ? path : 'about'
 }
 
 function renderSection(section) {
   return `
-    <section class="info-section">
-      <div class="section-inner info-section-inner">
-        <h2>${section.title}</h2>
-        <div class="info-section-copy">${section.body.join('')}</div>
-      </div>
+    <section class="support-doc-block">
+      <h2>${section.title}</h2>
+      <div class="support-doc-copy">${section.body.join('')}</div>
     </section>
   `
 }
 
+function renderSupportDocSidebar(activeKey) {
+  return `
+    <aside class="support-doc-sidebar" aria-label="Support documentation">
+      <a class="support-doc-back-link" href="${ROUTES.support}">Support Center</a>
+      <nav>
+        ${SUPPORT_DOC_LINKS.map(([label, href, key]) => `<a class="support-doc-nav-link ${key === activeKey ? 'is-active' : ''}" href="${href}" ${key === activeKey ? 'aria-current="page"' : ''}>${label}</a>`).join('')}
+      </nav>
+    </aside>
+  `
+}
+
 function mountPublicInfoPage() {
-  const page = PAGES[normalizePageKey()]
+  const pageKey = normalizePageKey()
+  const page = PAGES[pageKey]
   const app = document.querySelector('#app')
   if (!app) return
 
   app.innerHTML = `
     ${renderPagePreloaderMarkup()}
-    ${navShell({ currentPage: page.currentPage })}
-    <main class="info-page">
-      <section class="info-hero section">
-        <div class="section-inner info-hero-inner">
-          <p class="eyebrow">${page.eyebrow}</p>
-          <h1>${page.title}</h1>
-          <p>${page.description}</p>
-          <div class="hero-actions">
-            <a class="button button-accent" href="${page.cta.href}">${page.cta.label}</a>
-            <a class="button button-muted" href="${ROUTES.contact}">Contact Melogic</a>
-          </div>
+    ${navShell({ currentPage: 'support' })}
+    <main class="support-doc-page">
+      <section class="section support-doc-section">
+        <div class="section-inner support-doc-layout">
+          ${renderSupportDocSidebar(pageKey)}
+          <article class="support-doc-article">
+            <header class="support-doc-header">
+              <p class="eyebrow">${page.eyebrow}</p>
+              <h1>${page.title}</h1>
+              <p>${page.description}</p>
+            </header>
+            ${page.sections.map(renderSection).join('')}
+          </article>
         </div>
       </section>
-      ${page.sections.map(renderSection).join('')}
     </main>
     ${renderSiteFooter()}
   `

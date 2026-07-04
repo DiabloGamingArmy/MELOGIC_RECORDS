@@ -434,17 +434,6 @@
   margin: 0;
 }
 
-.products-footer {
-  border-top: 1px solid rgba(151, 165, 197, 0.11);
-  padding-bottom: 3rem;
-}
-
-.products-footer p {
-  margin: 0.35rem 0 0;
-  color: var(--muted);
-  max-width: 72ch;
-}
-
 @keyframes productShimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }

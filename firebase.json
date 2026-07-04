@@ -171,7 +171,12 @@
       },
       {
         "source": "/faq.html",
-        "destination": "/faq",
+        "destination": "/support/faq",
+        "type": 301
+      },
+      {
+        "source": "/faq",
+        "destination": "/support/faq",
         "type": 301
       },
       {
@@ -181,37 +186,72 @@
       },
       {
         "source": "/about.html",
-        "destination": "/about",
+        "destination": "/support/about",
+        "type": 301
+      },
+      {
+        "source": "/about",
+        "destination": "/support/about",
         "type": 301
       },
       {
         "source": "/contact.html",
-        "destination": "/contact",
+        "destination": "/support/contact",
+        "type": 301
+      },
+      {
+        "source": "/contact",
+        "destination": "/support/contact",
         "type": 301
       },
       {
         "source": "/privacy.html",
-        "destination": "/privacy",
+        "destination": "/support/privacy",
+        "type": 301
+      },
+      {
+        "source": "/privacy",
+        "destination": "/support/privacy",
         "type": 301
       },
       {
         "source": "/terms.html",
-        "destination": "/terms",
+        "destination": "/support/terms",
+        "type": 301
+      },
+      {
+        "source": "/terms",
+        "destination": "/support/terms",
         "type": 301
       },
       {
         "source": "/refund-policy.html",
-        "destination": "/refund-policy",
+        "destination": "/support/refund-policy",
+        "type": 301
+      },
+      {
+        "source": "/refund-policy",
+        "destination": "/support/refund-policy",
         "type": 301
       },
       {
         "source": "/creator-guidelines.html",
-        "destination": "/creator-guidelines",
+        "destination": "/support/creator-guidelines",
+        "type": 301
+      },
+      {
+        "source": "/creator-guidelines",
+        "destination": "/support/creator-guidelines",
         "type": 301
       },
       {
         "source": "/ad-policy.html",
-        "destination": "/ad-policy",
+        "destination": "/support/ad-policy",
+        "type": 301
+      },
+      {
+        "source": "/ad-policy",
+        "destination": "/support/ad-policy",
         "type": 301
       },
       {
@@ -389,7 +429,7 @@
         "destination": "/forms.html"
       },
       {
-        "source": "/faq",
+        "source": "/support/faq",
         "destination": "/faq.html"
       },
       {
@@ -397,31 +437,31 @@
         "destination": "/support.html"
       },
       {
-        "source": "/about",
+        "source": "/support/about",
         "destination": "/about.html"
       },
       {
-        "source": "/contact",
+        "source": "/support/contact",
         "destination": "/contact.html"
       },
       {
-        "source": "/privacy",
+        "source": "/support/privacy",
         "destination": "/privacy.html"
       },
       {
-        "source": "/terms",
+        "source": "/support/terms",
         "destination": "/terms.html"
       },
       {
-        "source": "/refund-policy",
+        "source": "/support/refund-policy",
         "destination": "/refund-policy.html"
       },
       {
-        "source": "/creator-guidelines",
+        "source": "/support/creator-guidelines",
         "destination": "/creator-guidelines.html"
       },
       {
-        "source": "/ad-policy",
+        "source": "/support/ad-policy",
         "destination": "/ad-policy.html"
       },
       {
