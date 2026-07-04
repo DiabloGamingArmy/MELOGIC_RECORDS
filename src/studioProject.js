@@ -275,6 +275,8 @@ let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
 let midiNoteDrag = null
 let regionEditorPlayheadDrag = null
+let trackAutomationDrag = null
+let selectedTrackAutomation = null
 let transportInlineEdit = null
 let transportValueDrag = null
 let timelineUserInteractingUntil = 0
@@ -1187,8 +1189,9 @@ const renderAddTrackModal = () => !addTrackModalOpen ? '' : `<div class="studio-
 </div>`
 const renderTrackCard = (track) => {
   const level = clamp(Number(track.outputLevel) || 0, 0, 1)
-  const automationLane = track.automationOpen ? `<div class="studio-automation-lane"><header><span>Automation</span><button type="button">Volume</button><button type="button">Pan</button><button type="button">Filter</button><button type="button">Add</button></header><div class="studio-track-automation-data" aria-hidden="true"><svg viewBox="0 0 320 52" preserveAspectRatio="none"><path d="M0 34 C72 34 84 18 142 18 S232 38 320 16"></path></svg><i style="left:18%;top:62%"></i><i style="left:44%;top:34%"></i><i style="left:74%;top:58%"></i></div></div>` : ''
-  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(normalizedTrackIconType(track))}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div>${automationLane}</article></div>`
+  const automation = ensureTrackAutomation(track)
+  const automationSidebar = track.automationOpen ? `<div class="studio-track-automation-sidebar" data-track-automation-sidebar="${esc(track.id)}"><span>Automation</span><select data-track-automation-parameter="${esc(track.id)}" aria-label="${esc(track.name)} automation parameter">${TRACK_AUTOMATION_PARAMETERS.map((option)=>`<option value="${esc(option.id)}" ${automation.activeParameter===option.id?'selected':''} ${option.disabled?'disabled':''}>${esc(option.label)}</option>`).join('')}</select><small>${esc(formatTrackAutomationValue(automation.activeParameter, getTrackAutomationData(track, automation.activeParameter).defaultValue))}</small></div>` : ''
+  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(normalizedTrackIconType(track))}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div></article>${automationSidebar}</div>`
 }
 const renderTrackContextMenu = () => {
   if (!trackMenuState?.trackId) return ''
@@ -2102,6 +2105,145 @@ function normalizedWheelPixels(event, axis = 'y') {
   const unit = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? Math.max(1, window.innerHeight * 0.85) : 1)
   return raw * unit
 }
+const TRACK_AUTOMATION_PARAMETERS = [
+  { id: 'volume', label: 'Volume', min: 0, max: 100, unit: '%', valueKey: 'volume' },
+  { id: 'pan', label: 'Pan', min: -100, max: 100, unit: '', valueKey: 'pan' },
+  { id: 'filter', label: 'Filter', min: 0, max: 100, unit: '%', valueKey: 'filter' },
+  { id: 'more', label: 'Add / More...', disabled: true }
+]
+function trackAutomationParameterDef(parameter = 'volume') {
+  return TRACK_AUTOMATION_PARAMETERS.find((item)=>item.id === parameter && !item.disabled) || TRACK_AUTOMATION_PARAMETERS[0]
+}
+function trackCurrentAutomationValue(track = {}, parameter = 'volume') {
+  if (parameter === 'pan') return clamp(Number(track.pan) || 0, -100, 100)
+  if (parameter === 'filter') return clamp(Number(track.filter) || 50, 0, 100)
+  return clamp(Number(track.volume) || 0, 0, 100)
+}
+function clampTrackAutomationValue(parameter = 'volume', value = 0) {
+  const def = trackAutomationParameterDef(parameter)
+  return clamp(Number(value) || 0, def.min, def.max)
+}
+function normalizeTrackAutomation(track = {}) {
+  const activeParameter = ['volume', 'pan', 'filter'].includes(track.automation?.activeParameter) ? track.automation.activeParameter : 'volume'
+  const sourceParameters = track.automation?.parameters && typeof track.automation.parameters === 'object' ? track.automation.parameters : {}
+  const parameters = {}
+  ;['volume', 'pan', 'filter'].forEach((parameter)=>{
+    const source = sourceParameters[parameter] || {}
+    parameters[parameter] = {
+      defaultValue: clampTrackAutomationValue(parameter, Number.isFinite(Number(source.defaultValue)) ? source.defaultValue : trackCurrentAutomationValue(track, parameter)),
+      points: (Array.isArray(source.points) ? source.points : []).map((point)=>({
+        id: point.id || makeInsertId('automation'),
+        beat: clampBeat(Number(point.beat ?? point.position) || 0),
+        value: clampTrackAutomationValue(parameter, point.value),
+        curve: point.curve === 'hold' ? 'hold' : 'linear',
+        curveAmount: clamp(Number(point.curveAmount) || 0, -1, 1)
+      })).sort((a,b)=>a.beat-b.beat)
+    }
+  })
+  return { visible: track.automation?.visible !== false, activeParameter, parameters }
+}
+function ensureTrackAutomation(track = {}) {
+  if (!track) return null
+  track.automation = normalizeTrackAutomation(track)
+  return track.automation
+}
+function getTrackAutomationParameter(track = {}) {
+  return ensureTrackAutomation(track)?.activeParameter || 'volume'
+}
+function getTrackAutomationData(track = {}, parameter = getTrackAutomationParameter(track)) {
+  return ensureTrackAutomation(track)?.parameters?.[parameter] || normalizeTrackAutomation(track).parameters.volume
+}
+function setTrackAutomationDefault(track, parameter, value) {
+  const automation = ensureTrackAutomation(track)
+  const data = automation.parameters[parameter]
+  data.defaultValue = clampTrackAutomationValue(parameter, value)
+  if (parameter === 'volume') {
+    track.volume = Math.round(data.defaultValue)
+    setTrackChannelVolume(track)
+    syncSelectedTrackVolumeControl(track)
+  } else if (parameter === 'pan') {
+    setTrackPan(track, data.defaultValue)
+  } else if (parameter === 'filter') {
+    track.filter = data.defaultValue
+  }
+}
+function trackAutomationValueToY(parameter = 'volume', value = 0, height = timelineState.trackHeight) {
+  const def = trackAutomationParameterDef(parameter)
+  const ratio = (clampTrackAutomationValue(parameter, value) - def.min) / Math.max(1, def.max - def.min)
+  return clamp((1 - ratio) * Math.max(1, height - 16) + 8, 8, Math.max(8, height - 8))
+}
+function trackAutomationYToValue(parameter = 'volume', y = 0, height = timelineState.trackHeight) {
+  const def = trackAutomationParameterDef(parameter)
+  const ratio = 1 - clamp((Number(y) - 8) / Math.max(1, height - 16), 0, 1)
+  return clampTrackAutomationValue(parameter, def.min + ratio * (def.max - def.min))
+}
+function formatTrackAutomationValue(parameter = 'volume', value = 0) {
+  const rounded = Math.round(clampTrackAutomationValue(parameter, value))
+  if (parameter === 'pan') return rounded === 0 ? 'C' : `${Math.abs(rounded)}${rounded < 0 ? 'L' : 'R'}`
+  return `${rounded}%`
+}
+function renderTrackAutomationLanes() {
+  return tracks.map((track, trackIndex)=>{
+    if (!track.automationOpen) return ''
+    const automation = ensureTrackAutomation(track)
+    const parameter = automation.activeParameter
+    const data = automation.parameters[parameter]
+    const top = trackLaneTop(trackIndex) + timelineState.trackHeight
+    const height = Math.max(44, timelineState.trackHeight)
+    const points = (data.points || []).map((point)=>({
+      ...point,
+      x: beatsFromBarZeroToX(point.beat),
+      y: trackAutomationValueToY(parameter, point.value, height)
+    }))
+    const defaultY = trackAutomationValueToY(parameter, data.defaultValue, height)
+    const path = points.length
+      ? points.map((point, index)=>{
+        if (index === 0) return `M ${point.x} ${point.y}`
+        const previous = points[index - 1]
+        const curve = clamp(Number(previous.curveAmount) || 0, -1, 1)
+        const midX = (previous.x + point.x) / 2
+        const midY = ((previous.y + point.y) / 2) - (curve * height * 0.28)
+        return Math.abs(curve) < 0.001 ? `L ${point.x} ${point.y}` : `Q ${midX} ${midY} ${point.x} ${point.y}`
+      }).join(' ')
+      : `M ${barZeroX()} ${defaultY} L ${timelineContentWidth()} ${defaultY}`
+    return `<section class="studio-track-automation-lane" data-track-automation-lane="${esc(track.id)}" data-track-automation-parameter="${esc(parameter)}" style="top:${top}px;height:${height}px;--track-color:${esc(track.color || '#58d4ff')}"><svg viewBox="0 0 ${timelineContentWidth()} ${height}" preserveAspectRatio="none"><path class="studio-track-automation-line" data-track-automation-default-line="${esc(track.id)}" d="${path}"></path></svg>${points.map((point)=>`<button type="button" class="studio-track-automation-point ${selectedTrackAutomation?.trackId===track.id&&selectedTrackAutomation?.parameter===parameter&&selectedTrackAutomation?.pointId===point.id?'is-selected':''}" data-track-automation-point="${esc(point.id)}" data-track-id="${esc(track.id)}" data-track-automation-point-parameter="${esc(parameter)}" style="left:${point.x}px;top:${point.y}px"><span>${esc(formatTrackAutomationValue(parameter, point.value))}</span></button>`).join('')}${points.length ? '' : `<button type="button" class="studio-track-automation-default-line-hit" data-track-automation-default="${esc(track.id)}" data-track-automation-default-parameter="${esc(parameter)}" style="top:${defaultY}px" aria-label="${esc(track.name)} ${esc(parameter)} automation default"></button>`}</section>`
+  }).join('')
+}
+function trackAutomationPointer(event, lane = event.target.closest?.('[data-track-automation-lane]')) {
+  const track = tracks.find((item)=>item.id === lane?.dataset.trackAutomationLane)
+  if (!track || !lane) return null
+  const parameter = lane.dataset.trackAutomationParameter || getTrackAutomationParameter(track)
+  const rect = lane.getBoundingClientRect()
+  const x = event.clientX - rect.left + (app.querySelector('[data-arrangement-grid]')?.scrollLeft || 0)
+  const y = event.clientY - rect.top
+  return {
+    track,
+    parameter,
+    beat: clampBeat(xToBeatsFromBarZero(x)),
+    value: trackAutomationYToValue(parameter, y, Math.max(44, timelineState.trackHeight)),
+    lane
+  }
+}
+function setTrackAutomationPoint(track, parameter, pointId, patch = {}) {
+  const data = getTrackAutomationData(track, parameter)
+  data.points = data.points.map((point)=>point.id === pointId ? {
+    ...point,
+    ...patch,
+    beat: clampBeat(Number(patch.beat ?? point.beat) || 0),
+    value: clampTrackAutomationValue(parameter, patch.value ?? point.value)
+  } : point).sort((a,b)=>a.beat-b.beat)
+}
+function addTrackAutomationPointFromEvent(event) {
+  const info = trackAutomationPointer(event)
+  if (!info) return
+  const data = getTrackAutomationData(info.track, info.parameter)
+  const point = { id: makeInsertId('automation-point'), beat: info.beat, value: info.value, curve: 'linear', curveAmount: 0 }
+  data.points.push(point)
+  data.points.sort((a,b)=>a.beat-b.beat)
+  selectedTrackAutomation = { trackId: info.track.id, parameter: info.parameter, pointId: point.id }
+  scheduleEditorSave()
+  renderEditorPreservingArrangementScroll()
+}
 
 function renderTimelineRegions() {
   const persisted = midiRegions.map((region)=>region.type === 'audio' ? renderAudioRegion(region, false) : renderMidiRegion(region, false)).join('')
@@ -2119,7 +2261,7 @@ function renderTimelineRegions() {
       ? renderAudioRegion({ ...activeRecording, endBeat: Math.max(activeRecording.startBeat + 0.25, clampBeat(xToBeat(timelineState.playheadX))), color: '#ff2d55' }, true)
       : renderMidiRegion({ ...activeRecording, notes: liveNotes, endBeat: Math.max(activeRecording.startBeat + 0.25, clampBeat(xToBeat(timelineState.playheadX))), color: '#ff2d55' }, true)
     : ''
-  return `${persisted}${live}`
+  return `${renderTrackAutomationLanes()}${persisted}${live}`
 }
 function renderAudioImportPreview() {
   if (!audioImportDrag?.active) return ''
@@ -2251,7 +2393,7 @@ function applyAutomationCurve(t = 0, curveAmount = 0) {
   const curve = clamp(Number(curveAmount) || 0, -1, 1)
   if (Math.abs(curve) < 0.001) return value
   const exponent = 1 + Math.abs(curve) * 3
-  return curve > 0 ? Math.pow(value, exponent) : 1 - Math.pow(1 - value, exponent)
+  return curve > 0 ? 1 - Math.pow(1 - value, exponent) : Math.pow(value, exponent)
 }
 function interpolateTempoBpm(start = {}, end = null, beat = 0) {
   const startBpm = clampProjectBpm(start.bpm || projectState?.bpm || 140)
@@ -2890,6 +3032,7 @@ function ensureTrackInsertState(track) {
   if (!Array.isArray(track.audioEffects)) track.audioEffects = []
   track.audioEffects = track.audioEffects.map(normalizeAudioEffectInsert).filter(Boolean)
   if (track.instrument && typeof track.instrument !== 'object') track.instrument = null
+  ensureTrackAutomation(track)
   return track
 }
 function nextTrackColor(index = tracks.length) {
@@ -3703,7 +3846,7 @@ function runDawTopMenuAction(action = '') {
   if (action === 'duplicate-track') { duplicateSelectedTrack(); return }
   if (action === 'delete-track') { deleteSelectedTrack(); return }
   if (action === 'rename-track') { activeLeftPanel = 'inspector'; renderEditor(); return }
-  if (action === 'toggle-track-automation') { if (track) { track.automationOpen = !track.automationOpen; scheduleEditorSave() } renderEditor(); return }
+  if (action === 'toggle-track-automation') { if (track) { ensureTrackAutomation(track); track.automationOpen = !track.automationOpen; selectedTrackAutomation = null; scheduleEditorSave() } renderEditorPreservingArrangementScroll(); return }
   if (action === 'reset-track-volume') { if (track) { track.volume = 72; setTrackChannelVolume(track); scheduleEditorSave() } renderEditor(); return }
   if (action === 'center-track-pan') { if (track) setTrackPan(track, 0, { save: true }); renderEditor(); return }
   if (action === 'toggle-playback') { if (!(activeRecording || isCountInRunning)) togglePlayback(); renderEditor(); return }
@@ -3920,7 +4063,7 @@ function buildEditorStateForSave(){
     globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], timeSignatureEvents:[...(globalTracks.timeSignatureEvents||[])], keySignatureEvents:[...(globalTracks.keySignatureEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] },
     regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })),
     notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId },
-    tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:serializeAudioEffects(audioEffects)} }),
+    tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,automation,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,automation:deepClone(automation),volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:serializeAudioEffects(audioEffects)} }),
     toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled }
   }
 }
@@ -4012,6 +4155,7 @@ function applyLoadedEditorState(editorState) {
         soloed: !!saved.soloed,
         recordArmed: !!saved.recordArmed,
         automationOpen: !!saved.automationOpen,
+        automation: saved.automation && typeof saved.automation === 'object' ? deepClone(saved.automation) : t.automation,
         volume: Number.isFinite(Number(saved.volume)) ? Number(saved.volume) : t.volume,
         pan: Number.isFinite(Number(saved.pan))
           ? clamp(Number(editorState.version || 1) < 2 ? Number(saved.pan) * 100 : Number(saved.pan), -100, 100)
@@ -9276,7 +9420,48 @@ function bindEditorEvents() {
       openInlineNumericEditor(event, { label: 'Volume', value: track.volume, min: 0, max: 100, step: 1, apply: (value) => { track.volume = value; setTrackChannelVolume(track); scheduleEditorSave(); renderEditor() } })
     })
   })
-  app.querySelectorAll('[data-track-automation]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackAutomation); if (!t) return; t.automationOpen = !t.automationOpen; renderEditor() }))
+  app.querySelectorAll('[data-track-automation]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackAutomation); if (!t) return; ensureTrackAutomation(t); t.automationOpen = !t.automationOpen; selectedTrackAutomation = null; scheduleEditorSave(); renderEditorPreservingArrangementScroll() }))
+  app.querySelectorAll('[data-track-automation-parameter]').forEach((select)=>select.addEventListener('change', () => {
+    const track = getTrack(select.dataset.trackAutomationParameter)
+    if (!track || select.value === 'more') return
+    const automation = ensureTrackAutomation(track)
+    automation.activeParameter = ['volume', 'pan', 'filter'].includes(select.value) ? select.value : 'volume'
+    selectedTrackAutomation = null
+    scheduleEditorSave()
+    renderEditorPreservingArrangementScroll()
+  }))
+  app.querySelectorAll('[data-track-automation-lane]').forEach((lane)=>{
+    lane.addEventListener('pointerdown', (event)=>{
+      if (event.target.closest('[data-track-automation-point], [data-track-automation-default]')) return
+      selectedTrackAutomation = null
+      updateTimelineGridLinesDom()
+    })
+    lane.addEventListener('dblclick', (event)=>{
+      if (event.target.closest('[data-track-automation-point]')) return
+      event.preventDefault()
+      event.stopPropagation()
+      addTrackAutomationPointFromEvent(event)
+    })
+  })
+  app.querySelectorAll('[data-track-automation-default]').forEach((line)=>line.addEventListener('pointerdown', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const track = getTrack(line.dataset.trackAutomationDefault)
+    if (!track) return
+    const parameter = line.dataset.trackAutomationDefaultParameter || getTrackAutomationParameter(track)
+    trackAutomationDrag = { type: 'default', trackId: track.id, parameter }
+    document.body.classList.add('is-studio-dragging')
+  }))
+  app.querySelectorAll('[data-track-automation-point]').forEach((point)=>point.addEventListener('pointerdown', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const track = getTrack(point.dataset.trackId)
+    if (!track) return
+    const parameter = point.dataset.trackAutomationPointParameter || getTrackAutomationParameter(track)
+    selectedTrackAutomation = { trackId: track.id, parameter, pointId: point.dataset.trackAutomationPoint }
+    trackAutomationDrag = { type: 'point', trackId: track.id, parameter, pointId: point.dataset.trackAutomationPoint }
+    document.body.classList.add('is-studio-dragging')
+  }))
   app.querySelectorAll('[data-track-options]').forEach((el) => el.addEventListener('click', (e) => {
     e.stopPropagation()
     const id = el.dataset.trackOptions
@@ -9609,16 +9794,19 @@ function bindEditorEvents() {
     if (!extensionDrag) return
     const pointerX = Number(extensionDrag.pointerX ?? extensionDrag.startX)
     const distance = extensionDrag.side === 'right' ? pointerX - extensionDrag.startX : extensionDrag.startX - pointerX
-    if (distance <= 0) return
-    const beatsPerSecond = clamp(1.2 + (distance / 48), 1.2, 12)
+    if (Math.abs(distance) <= 2) return
+    const direction = distance < 0 ? -1 : 1
+    const beatsPerSecond = clamp(1.2 + (Math.abs(distance) / 48), 1.2, 12)
     extensionDrag.beatCarry = (Number(extensionDrag.beatCarry) || 0) + (beatsPerSecond * 0.08)
     const beats = Math.floor(extensionDrag.beatCarry)
     if (beats < 1) return
     extensionDrag.beatCarry -= beats
     if (extensionDrag.side === 'right') {
-      timelineState.positiveBeats = clamp(timelineState.positiveBeats + beats, timelineState.beatsPerBar, 800)
+      timelineState.positiveBeats = clamp(timelineState.positiveBeats + (beats * direction), timelineState.beatsPerBar, 800)
     } else {
-      timelineState.preStartPixels = clamp((Number(timelineState.preStartPixels) || 0) + (beats * beatWidth()), 0, timelineState.pixelsPerBar * 10)
+      const beforePre = Number(timelineState.preStartPixels) || 0
+      timelineState.preStartPixels = clamp(beforePre + (beats * direction * beatWidth()), 0, timelineState.pixelsPerBar * 10)
+      extensionDrag.scrollLeft = (Number(extensionDrag.scrollLeft) || 0) + (timelineState.preStartPixels - beforePre)
       timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats)
       if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }
     }
@@ -9688,6 +9876,21 @@ function bindEditorEvents() {
       scheduleMidiRegionDragFrame(event)
       return
     }
+    if (trackAutomationDrag) {
+      event.preventDefault()
+      const track = getTrack(trackAutomationDrag.trackId)
+      const lane = app.querySelector(`[data-track-automation-lane="${CSS.escape(trackAutomationDrag.trackId)}"]`)
+      const info = track ? trackAutomationPointer(event, lane) : null
+      if (!track || !info) return
+      if (trackAutomationDrag.type === 'default') {
+        setTrackAutomationDefault(track, trackAutomationDrag.parameter, info.value)
+      } else if (trackAutomationDrag.type === 'point') {
+        setTrackAutomationPoint(track, trackAutomationDrag.parameter, trackAutomationDrag.pointId, { beat: info.beat, value: info.value })
+        selectedTrackAutomation = { trackId: track.id, parameter: trackAutomationDrag.parameter, pointId: trackAutomationDrag.pointId }
+      }
+      updateTimelineGridLinesDom()
+      return
+    }
     if (!globalTrackDrag) return
     event.preventDefault()
     globalTrackDrag.currentBeat = beatFromGlobalEvent(event)
@@ -9750,6 +9953,13 @@ function bindEditorEvents() {
     }
     if (midiRegionDrag) {
       finishMidiRegionDrag()
+      return
+    }
+    if (trackAutomationDrag) {
+      trackAutomationDrag = null
+      document.body.classList.remove('is-studio-dragging')
+      scheduleEditorSave()
+      renderEditorPreservingArrangementScroll()
       return
     }
     if (!globalTrackDrag) return
