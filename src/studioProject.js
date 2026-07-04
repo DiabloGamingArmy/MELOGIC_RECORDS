@@ -192,6 +192,7 @@ let isTransportTicking = false
 let transportClock = null
 let transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
 let panDrag = null
+let inlineNumberEditorState = null
 let followPlayhead = false
 let isCycleEnabled = false
 let isMetronomeEnabled = true
@@ -1598,6 +1599,11 @@ function getMidiRollGridDivision() {
   if (midiRollBeatWidth >= 180) return 1 / 8
   return 1 / 4
 }
+function snapBeatToRegionEditorGrid(beat = 0, regionStart = 0) {
+  const division = getMidiRollGridDivision()
+  const start = Number(regionStart) || 0
+  return start + Math.round(((Number(beat) || 0) - start) / division) * division
+}
 function renderRegionEditorTimelineTicks(regionLength = 0) {
   const division = getMidiRollGridDivision()
   const count = Math.ceil(regionLength / division) + 1
@@ -2975,7 +2981,16 @@ function renderAudioRegion(region, isRecording = false) {
     : (pitchLabel ? `<b class="studio-audio-stretch-label">${esc(pitchLabel)}</b>` : '')
   return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute || region.muted ? 'is-audio-muted is-region-muted' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
 }
-function syncSelectedTrackVolumeControl(track){ if(!track) return; const input=app.querySelector(`[data-track-volume="${track.id}"]`); if(!input) return; input.value=String(track.volume); input.setAttribute('value', String(track.volume)) }
+function syncSelectedTrackVolumeControl(track){
+  if (!track) return
+  app.querySelectorAll(`[data-track-volume="${CSS.escape(track.id)}"]`).forEach((input) => {
+    input.value = String(track.volume)
+    input.setAttribute('value', String(track.volume))
+  })
+  app.querySelectorAll(`[data-track-volume-readout="${CSS.escape(track.id)}"]`).forEach((readout) => {
+    readout.textContent = `${Math.round(track.volume)}%`
+  })
+}
 function getInstrumentKnobDescriptors(){
   const selected=getSelectedTrack()
   const trackVolume=Number.isFinite(Number(selected?.volume)) ? Number(selected.volume) : Math.round(instrumentVolume*100)
@@ -3070,13 +3085,13 @@ function renderMixerChannelStrip(track = null, { stereoOut = false } = {}) {
     <button class="studio-mixer-icon" type="button" ${id ? `data-track-icon="${esc(id)}"` : 'disabled'} aria-label="${esc(name)} channel">${stereoOut ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16"/><path d="M4 16h16"/><path d="M8 4v16"/><path d="M16 4v16"/></svg>' : trackTypeIcon(normalizedTrackIconType(track))}</button>
     <strong title="${esc(name)}">${esc(name)}</strong>
     <div class="studio-mixer-buttons">
-      <button type="button" ${stereoOut ? 'disabled' : `data-track-mute="${esc(id)}"`} class="${track?.muted ? 'is-active' : ''}" data-tooltip="Mute">M</button>
-      <button type="button" ${stereoOut ? 'disabled' : `data-track-solo="${esc(id)}"`} class="${track?.soloed ? 'is-active' : ''}" data-tooltip="Solo">S</button>
-      <button type="button" ${stereoOut ? 'disabled' : `data-track-record="${esc(id)}"`} class="${track?.recordArmed ? 'is-active' : ''}" data-tooltip="Record arm">R</button>
+      <button type="button" ${stereoOut ? 'disabled' : `data-track-mute="${esc(id)}"`} class="${track?.muted ? 'is-active' : ''}" aria-label="Mute ${esc(name)}" data-tooltip="Mute">${icon('mute')}</button>
+      <button type="button" ${stereoOut ? 'disabled' : `data-track-solo="${esc(id)}"`} class="${track?.soloed ? 'is-active' : ''}" aria-label="Solo ${esc(name)}" data-tooltip="Solo">${icon('solo')}</button>
+      <button type="button" ${stereoOut ? 'disabled' : `data-track-record="${esc(id)}"`} class="${track?.recordArmed ? 'is-active' : ''}" aria-label="Record arm ${esc(name)}" data-tooltip="Record Arm">R</button>
     </div>
     <div class="studio-mixer-inserts">${renderMixerInsertList(stereoOut ? null : track)}</div>
-    <div class="studio-mixer-pan"><button class="studio-track-pan" type="button" ${stereoOut ? 'disabled' : `data-track-pan="${esc(id)}"`} aria-label="${esc(name)} pan ${Math.round(pan)}" data-tooltip="Pan ${Math.round(pan)}" style="--pan-angle:${(pan / 100) * 135}deg"></button><span>${esc(formatTrackAutomationValue('pan', pan))}</span></div>
-    <div class="studio-mixer-fader-row"><span class="studio-mixer-meter" aria-hidden="true"><i style="height:${Math.round(level * 100)}%"></i></span><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small>${Math.round(volume)}%</small></div>
+    <div class="studio-mixer-pan"><button class="studio-track-pan" type="button" ${stereoOut ? 'disabled' : `data-track-pan="${esc(id)}"`} aria-label="${esc(name)} pan ${Math.round(pan)}" data-tooltip="Pan ${Math.round(pan)}" style="--pan-angle:${(pan / 100) * 135}deg"></button><span ${stereoOut ? '' : `data-track-pan-readout="${esc(id)}"`}>${esc(formatTrackAutomationValue('pan', pan))}</span></div>
+    <div class="studio-mixer-fader-row"><span class="studio-mixer-meter" aria-hidden="true"><i style="height:${Math.round(level * 100)}%"></i></span><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small class="studio-mixer-volume-readout" ${stereoOut ? '' : `data-track-volume-readout="${esc(id)}"`}>${Math.round(volume)}%</small></div>
     <span class="studio-mixer-routing">${stereoOut ? 'Output' : esc(track?.audioOutput || 'Stereo Out')}</span>
   </article>`
 }
@@ -5458,9 +5473,17 @@ function maxTimelineX() { return timelineEndX() }
 function updateMidiRollPlayheadDom() {
   const marker = app.querySelector('[data-midi-roll-playhead]')
   const region = marker ? getMidiRollRegion() : null
-  if (!marker || !region) return
-  const left = (xToBeat(timelineState.playheadX) - Number(region.startBeat || 0)) * midiRollBeatWidth
-  marker.style.left = `${left}px`
+  const playheadBeat = xToBeat(timelineState.playheadX)
+  if (marker && region) {
+    const left = (playheadBeat - Number(region.startBeat || 0)) * midiRollBeatWidth
+    marker.style.left = `${left}px`
+  }
+  app.querySelectorAll('[data-region-editor-timeline]').forEach((timeline) => {
+    const timelineRegion = midiRegions.find((item) => item.id === timeline.dataset.regionEditorTimeline)
+    const headerMarker = timeline.querySelector('.studio-region-editor-playhead')
+    if (!timelineRegion || !headerMarker) return
+    headerMarker.style.left = `${(playheadBeat - Number(timelineRegion.startBeat || 0)) * midiRollBeatWidth}px`
+  })
 }
 function syncRegionEditorTimelineScroll(scrollLeft = null) {
   const bodyScroll = app.querySelector('.studio-midi-roll-scroll')
@@ -5768,7 +5791,7 @@ function applyTransportValueDrag(field, delta) {
   updateTransportDisplay()
 }
 function regionEditorTimelineBeatFromEvent(event) {
-  const timeline = event.target.closest?.('[data-region-editor-timeline]') || (regionEditorPlayheadDrag?.regionId ? app.querySelector(`[data-region-editor-timeline="${CSS.escape(regionEditorPlayheadDrag.regionId)}"]`) : null)
+  const timeline = getRegionEditorTimelineFromEvent(event)
   const inner = timeline?.querySelector('[data-region-editor-timeline-inner]')
   const viewport = timeline?.querySelector('[data-region-editor-timeline-viewport]')
   const region = midiRegions.find((item)=>item.id === timeline?.dataset.regionEditorTimeline)
@@ -5777,10 +5800,15 @@ function regionEditorTimelineBeatFromEvent(event) {
   const localX = clamp(event.clientX - rect.left + (viewport?.scrollLeft || 0), 0, inner.offsetWidth || rect.width || 0)
   return clampBeat((Number(region.startBeat) || 0) + (localX / midiRollBeatWidth))
 }
+function getRegionEditorTimelineFromEvent(event) {
+  return event.target.closest?.('[data-region-editor-timeline]') || (regionEditorPlayheadDrag?.regionId ? app.querySelector(`[data-region-editor-timeline="${CSS.escape(regionEditorPlayheadDrag.regionId)}"]`) : null)
+}
 function setPlayheadFromRegionEditorTimeline(event) {
   let beat = regionEditorTimelineBeatFromEvent(event)
   if (beat == null) return
-  if (isSnapEnabled) beat = snapBeatToGrid(beat)
+  const timeline = getRegionEditorTimelineFromEvent(event)
+  const region = midiRegions.find((item)=>item.id === timeline?.dataset.regionEditorTimeline)
+  if (isSnapEnabled) beat = snapBeatToRegionEditorGrid(beat, Number(region?.startBeat) || 0)
   setPlayheadBeat(beat, { restartTransport: false })
   updateTransportDisplay()
 }
@@ -9021,41 +9049,76 @@ function setTrackPan(track, value, { save = false } = {}) {
   track.pan = clamp(Math.round(Number(value) || 0), -100, 100)
   const channel = trackAudioChannels.get(track.id)
   if (channel?.panner && audioContext) channel.panner.pan.setTargetAtTime(track.pan / 100, audioContext.currentTime, 0.015)
-  const knob = app.querySelector(`[data-track-pan="${CSS.escape(track.id)}"]`)
-  knob?.style.setProperty('--pan-angle', `${(track.pan / 100) * 135}deg`)
-  knob?.setAttribute('aria-label', `${track.name} pan ${track.pan}`)
-  knob?.setAttribute('data-tooltip', `Pan ${track.pan}`)
+  app.querySelectorAll(`[data-track-pan="${CSS.escape(track.id)}"]`).forEach((knob) => {
+    knob.style.setProperty('--pan-angle', `${(track.pan / 100) * 135}deg`)
+    knob.setAttribute('aria-label', `${track.name} pan ${track.pan}`)
+    knob.setAttribute('data-tooltip', `Pan ${track.pan}`)
+  })
+  app.querySelectorAll(`[data-track-pan-readout="${CSS.escape(track.id)}"]`).forEach((readout) => {
+    readout.textContent = formatTrackAutomationValue('pan', track.pan)
+  })
   if (save) scheduleEditorSave()
 }
 function openInlineNumericEditor(event, { value, min, max, step = 1, label = 'Value', apply } = {}) {
   event.preventDefault()
   event.stopPropagation()
+  inlineNumberEditorState = {
+    x: event.clientX,
+    y: event.clientY,
+    value: Number(value),
+    min: Number(min),
+    max: Number(max),
+    step,
+    label,
+    apply
+  }
+  mountInlineNumericEditor()
+}
+function closeInlineNumericEditor({ commit = false } = {}) {
+  const state = inlineNumberEditorState
+  if (!state) return
+  const input = app.querySelector('[data-inline-number-editor] input')
+  const value = clamp(Number(input?.value ?? state.value), state.min, state.max)
+  inlineNumberEditorState = null
   app.querySelector('[data-inline-number-editor]')?.remove()
+  if (commit) state.apply?.(value)
+}
+function mountInlineNumericEditor() {
+  const state = inlineNumberEditorState
+  if (!state) return
   const page = app.querySelector('.studio-editor-page')
   if (!page) return
-  const position = getClampedFloatingPosition(event.clientX, event.clientY, 150, 82)
+  app.querySelector('[data-inline-number-editor]')?.remove()
+  const position = getClampedFloatingPosition(state.x, state.y, 150, 82)
   const form = document.createElement('form')
   form.className = 'studio-inline-number-editor'
   form.dataset.inlineNumberEditor = ''
   form.style.left = `${position.x}px`
   form.style.top = `${position.y}px`
-  form.innerHTML = `<label>${esc(label)}<input type="number" min="${min}" max="${max}" step="${step}" value="${Number(value)}"></label>`
+  form.innerHTML = `<label>${esc(state.label)}<input type="number" min="${state.min}" max="${state.max}" step="${state.step}" value="${Number(state.value)}"></label>`
   page.append(form)
   const input = form.querySelector('input')
-  let closed = false
-  const close = (commit) => {
-    if (closed) return
-    closed = true
-    if (commit) apply?.(clamp(Number(input.value), Number(min), Number(max)))
-    form.remove()
-  }
-  form.addEventListener('submit', (submitEvent) => { submitEvent.preventDefault(); close(true) })
+  form.addEventListener('pointerdown', (pointerEvent) => pointerEvent.stopPropagation())
+  form.addEventListener('submit', (submitEvent) => { submitEvent.preventDefault(); closeInlineNumericEditor({ commit: true }) })
+  input.addEventListener('input', () => { if (inlineNumberEditorState) inlineNumberEditorState.value = Number(input.value) })
   input.addEventListener('keydown', (keyEvent) => {
-    if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); close(false) }
+    if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); closeInlineNumericEditor({ commit: false }) }
   })
-  input.addEventListener('blur', () => window.setTimeout(() => close(true), 0), { once: true })
-  input.focus()
-  input.select()
+  const onPointerDown = (pointerEvent) => {
+    if (!form.isConnected) {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      return
+    }
+    if (form.contains(pointerEvent.target)) return
+    document.removeEventListener('pointerdown', onPointerDown, true)
+    closeInlineNumericEditor({ commit: true })
+  }
+  document.addEventListener('pointerdown', onPointerDown, true)
+  requestAnimationFrame(() => {
+    if (!inlineNumberEditorState || !input.isConnected) return
+    input.focus()
+    input.select()
+  })
 }
 
 function bindEditorEvents() {
@@ -9096,7 +9159,7 @@ function bindEditorEvents() {
     updateEditorTitleStatus()
   })
   app.querySelector('[data-musical-typing-toggle]')?.addEventListener('change', (event) => { setMusicalTypingEnabled(event.target.checked); renderEditor() })
-  document.onclick = (event) => { if (event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]') || event.target.closest('.studio-controls-config-modal') || event.target.closest('.studio-project-modal')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-daw-menu]') && !event.target.closest('[data-daw-menu-toggle]') && getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() }
+  document.onclick = (event) => { if (event.target.closest('[data-inline-number-editor]') || event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]') || event.target.closest('.studio-controls-config-modal') || event.target.closest('.studio-project-modal')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-daw-menu]') && !event.target.closest('[data-daw-menu-toggle]') && getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() }
   document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if ((event.key === 'Delete' || event.key === 'Backspace') && selectedGlobalEvent && !event.target?.matches?.('input,textarea,select')) { event.preventDefault(); if (selectedGlobalEvent.type === 'marker') globalTracks.markers = globalTracks.markers.filter((item)=>item.id !== selectedGlobalEvent.id); selectedGlobalEvent = null; scheduleEditorSave(); renderEditor(); return } if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (controlsConfigModalOpen) { controlsConfigModalOpen = false; changed = true } if (projectSettingsModalOpen) { projectSettingsModalOpen = false; changed = true } if (projectManagementModalOpen) { projectManagementModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
   const page = app.querySelector('.studio-editor-page')
@@ -9518,7 +9581,18 @@ function bindEditorEvents() {
   app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-record]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackRecord); if (!t) return; t.recordArmed = !t.recordArmed; scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-volume]').forEach((el) => {
-    el.addEventListener('input', () => { const t = getTrack(el.dataset.trackVolume); if (!t) return; t.volume = clamp(Number(el.value), 0, 100); setTrackChannelVolume(t) })
+    el.addEventListener('input', () => {
+      const t = getTrack(el.dataset.trackVolume)
+      if (!t) return
+      t.volume = clamp(Number(el.value), 0, 100)
+      app.querySelectorAll(`[data-track-volume="${CSS.escape(t.id)}"]`).forEach((input) => {
+        if (input !== el) input.value = String(t.volume)
+      })
+      app.querySelectorAll(`[data-track-volume-readout="${CSS.escape(t.id)}"]`).forEach((readout) => {
+        readout.textContent = `${Math.round(t.volume)}%`
+      })
+      setTrackChannelVolume(t)
+    })
     el.addEventListener('change', ()=>scheduleEditorSave())
     el.addEventListener('dblclick', (event) => {
       const track = getTrack(el.dataset.trackVolume)
@@ -9538,7 +9612,11 @@ function bindEditorEvents() {
   }))
   app.querySelectorAll('[data-track-automation-lane]').forEach((lane)=>{
     lane.addEventListener('pointerdown', (event)=>{
-      if (event.target.closest('[data-track-automation-point], [data-track-automation-default]')) return
+      if (event.target.closest('[data-track-automation-point], [data-track-automation-default], [data-track-automation-segment]')) return
+      selectedTrackAutomation = null
+    })
+    lane.addEventListener('click', (event)=>{
+      if (event.detail > 1 || event.target.closest('[data-track-automation-point], [data-track-automation-default], [data-track-automation-segment]')) return
       selectedTrackAutomation = null
       updateTimelineGridLinesDom()
     })
@@ -10302,7 +10380,11 @@ function renderEditor() {
     .replace(`<section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section>`, `<section class="studio-logic-section studio-logic-section--key">${renderTransportKeyDisplay(displayKeySignature)}<span class="studio-logic-secondary">key</span></section>`)
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   initShellChrome()
-  app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')?.insertAdjacentHTML('afterend', renderRegionToolRail())
+  const resonaRailButton = app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')
+  resonaRailButton?.insertAdjacentHTML('afterend', renderRegionToolRail())
+  const railDividerAnchor = app.querySelector('.studio-region-tool-rail') || resonaRailButton
+  railDividerAnchor?.insertAdjacentHTML('afterend', '<div class="studio-right-rail-divider"></div>')
+  app.querySelectorAll('.studio-right-rail-divider + .studio-right-rail-divider').forEach((divider) => divider.remove())
   app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
   const audioRenderModal = renderAudioStretchRenderModal()
   if (audioRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioRenderModal)
@@ -10324,6 +10406,7 @@ function renderEditor() {
   scheduleSouraLayoutAudit()
   applyStudioGuideTargets()
   updateTransportPlaybackUI()
+  mountInlineNumericEditor()
 }
 
 
