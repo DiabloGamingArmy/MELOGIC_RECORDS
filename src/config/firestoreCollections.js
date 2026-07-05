@@ -2,6 +2,7 @@ export const FIRESTORE_COLLECTIONS = {
   products: 'products',
   musicReleases: 'musicReleases',
   musicTracks: 'musicTracks',
+  musicLiveStreams: 'musicLiveStreams',
   productSubcollections: {
     comments: 'comments',
     files: 'files',

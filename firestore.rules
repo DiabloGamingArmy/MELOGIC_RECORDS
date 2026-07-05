@@ -2110,6 +2110,24 @@ service cloud.firestore {
       }
     }
 
+    match /musicReleases/{releaseId} {
+      allow read: if resource.data.status == 'published'
+        && resource.data.visibility == 'public';
+      allow write: if false;
+    }
+
+    match /musicTracks/{trackId} {
+      allow read: if resource.data.status == 'published'
+        && resource.data.visibility == 'public';
+      allow write: if false;
+    }
+
+    match /musicLiveStreams/{streamId} {
+      allow read: if resource.data.status == 'live'
+        && resource.data.visibility in ['public', 'unlisted'];
+      allow write: if false;
+    }
+
     match /reports/{reportId} {
       allow read: if canReadReportsClaim();
       allow write: if false;

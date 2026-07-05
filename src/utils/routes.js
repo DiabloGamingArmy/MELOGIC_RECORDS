@@ -1,6 +1,8 @@
 export const ROUTES = {
   home: '/home',
   music: '/music',
+  musicLive: '/music/live',
+  musicGoLive: '/music/go-live',
   products: '/products',
   productDetail: '/product',
   cart: '/cart',
@@ -193,6 +195,13 @@ export function musicReleaseRoute(releaseOrId = '') {
   }
 
   return `${ROUTES.music}/releases/${encodeURIComponent(String(releaseOrId || '').trim())}`
+}
+
+export function musicLiveStreamRoute(streamOrId = '') {
+  const id = typeof streamOrId === 'object'
+    ? String(streamOrId.streamId || streamOrId.id || '').trim()
+    : String(streamOrId || '').trim()
+  return id ? `${ROUTES.musicLive}/${encodeURIComponent(id)}` : ROUTES.musicLive
 }
 
 export function communityPostRoute(postId = '', { commentId = '', replyId = '' } = {}) {

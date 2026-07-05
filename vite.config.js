@@ -4,7 +4,10 @@ import { resolve } from 'node:path'
 
 function htmlRouteFallbackPlugin() {
   const routeEntries = [
-    { prefix: '/music/releases/', html: 'music.html' }
+    { prefix: '/music/releases/', html: 'music.html' },
+    { prefix: '/music/live/', html: 'music.html' },
+    { prefix: '/music/live', html: 'music.html' },
+    { prefix: '/music/go-live', html: 'music.html' }
   ]
 
   function findEntry(url = '') {

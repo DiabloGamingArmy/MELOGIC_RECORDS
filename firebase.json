@@ -314,6 +314,18 @@
         "destination": "/music.html"
       },
       {
+        "source": "/music/live",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/music/live/**",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/music/go-live",
+        "destination": "/music.html"
+      },
+      {
         "source": "/music/releases/**",
         "destination": "/music.html"
       },
