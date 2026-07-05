@@ -5,6 +5,7 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getSiteAssetURL } from './firebase/siteAssets'
+import { getMyAccountPermissions } from './data/accountPermissionsService'
 import {
   endMusicLiveStream,
   getMusicLiveStream,
@@ -53,6 +54,8 @@ const libraryItems = [
 
 const state = {
   currentUser: null,
+  accountPermissions: null,
+  accountPermissionsLoading: false,
   route: { mode: 'landing', id: '' },
   activeView: 'home',
   sidebarOpen: false,
@@ -601,6 +604,8 @@ function renderReleaseDetailPage() {
 
 function renderGoLivePage() {
   const isSignedIn = Boolean(state.currentUser)
+  const canGoLive = state.accountPermissions?.permissions?.musicLive === true
+  const permissionsReady = !state.accountPermissionsLoading
   const categories = [
     ['music', 'Music'],
     ['podcast', 'Podcast'],
@@ -619,7 +624,7 @@ function renderGoLivePage() {
       </div>
       <a class="button button-muted" href="${ROUTES.musicLive}">Live Streams</a>
     </section>
-    ${!isSignedIn ? signInAction('Sign in as an eligible creator to start a live stream.') : `
+    ${!isSignedIn ? signInAction('Sign in as an eligible creator to start a live stream.') : !permissionsReady ? emptyState('Checking live access', 'Loading your account permissions before opening the live setup.') : !canGoLive ? emptyState('Live streaming is limited to approved creators.', 'Ask the Melogic team to enable live streaming for your account before starting an audio stream.', `<a class="button button-muted" href="${ROUTES.musicLive}">Back to Live Streams</a>`) : `
       <section class="music-go-live-grid">
         <form class="music-go-live-form music-panel" data-go-live-form>
           <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
@@ -731,6 +736,7 @@ function rerender() {
   else if (state.route.mode === 'goLive') renderGoLivePage()
   else if (state.route.mode === 'liveDetail') renderLiveDetailPage()
   else renderLandingPage()
+  initShellChrome()
   bindMusicEvents()
   attachMusicHeroVideo()
 }
@@ -1198,6 +1204,17 @@ async function attachMusicHeroVideo() {
 async function loadMusicPage() {
   initShellChrome()
   state.currentUser = await waitForInitialAuthState().catch(() => null)
+  state.accountPermissions = null
+  if (state.currentUser) {
+    state.accountPermissionsLoading = true
+    try {
+      state.accountPermissions = await getMyAccountPermissions()
+    } catch (error) {
+      state.accountPermissions = { permissions: { musicLive: false }, restrictions: {}, source: 'fallback' }
+    } finally {
+      state.accountPermissionsLoading = false
+    }
+  }
   state.route = currentRouteMode()
   state.activeView = getInitialView()
   state.loading = true

@@ -20,6 +20,7 @@ import {
   listAdminReports,
   listAdminTeam,
   listAdminUsers,
+  getAdminAccountPermissions,
   listMarketplaceReviewQueue,
   repairAdminCheckoutOrder,
   reviewProductDecision,
@@ -33,6 +34,7 @@ import {
   sendAdminSystemMessage,
   setTemporaryPassword,
   setUserSuspension,
+  updateAdminAccountPermissions,
   updateReportDecision,
   updateAdminSettings,
   uploadSellerAgreementMarkdown
@@ -183,6 +185,77 @@ const USER_ADMIN_FILTERS = [
   { key: 'verified', label: 'Verified' },
   { key: 'has_products', label: 'Has Products' },
   { key: 'has_reports', label: 'Has Reports' }
+]
+
+const ACCOUNT_PERMISSION_GROUPS = [
+  {
+    title: 'Identity / Profile',
+    fields: [
+      ['viewPublicContent', 'View public content'],
+      ['productCreate', 'Creator/product account']
+    ]
+  },
+  {
+    title: 'Community',
+    fields: [
+      ['communityPost', 'Post in Community'],
+      ['communityReact', 'React in Community'],
+      ['communityMessage', 'Message members']
+    ]
+  },
+  {
+    title: 'Marketplace',
+    fields: [
+      ['productInteract', 'Interact with products'],
+      ['productPurchase', 'Purchase products'],
+      ['productDownload', 'Download owned/free products']
+    ]
+  },
+  {
+    title: 'Music',
+    fields: [
+      ['musicDiscover', 'Discover music'],
+      ['musicListen', 'Listen to music'],
+      ['musicLive', 'Go live'],
+      ['musicPost', 'Post music'],
+      ['musicSubmit', 'Submit music'],
+      ['musicVideoPost', 'Post music videos']
+    ]
+  },
+  {
+    title: 'Studio',
+    fields: [
+      ['studioBasic', 'Use Studio basics'],
+      ['souraBasic', 'Use Soura basics'],
+      ['highQuotaStudio', 'High-quota Studio tools'],
+      ['distributionSubmit', 'Distribution submissions']
+    ]
+  },
+  {
+    title: 'Account / Safety',
+    fields: [
+      ['adminTools', 'Admin tools'],
+      ['staffTools', 'Staff tools']
+    ]
+  }
+]
+
+const ACCOUNT_BADGE_FIELDS = [
+  ['verified', 'Verified badge'],
+  ['creator', 'Creator badge'],
+  ['artist', 'Artist badge'],
+  ['founder', 'Founder badge'],
+  ['staff', 'Staff badge']
+]
+
+const ACCOUNT_RESTRICTION_FIELDS = [
+  ['suspended', 'Account suspended'],
+  ['liveSuspended', 'Live suspended'],
+  ['musicRestricted', 'Music restricted'],
+  ['marketplaceRestricted', 'Marketplace restricted'],
+  ['communityRestricted', 'Community restricted'],
+  ['studioRestricted', 'Studio restricted'],
+  ['messagingRestricted', 'Messaging restricted']
 ]
 
 const REPORT_ADMIN_FILTERS = [
@@ -348,7 +421,7 @@ const state = {
   },
   adminData: {
     products: { items: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 },
-    users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, payoutConnect: null, earningsSummary: null, creatorLedgerEntries: [], creatorAgeVerification: null, accountEvents: [], adminNotes: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
+    users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, payoutConnect: null, earningsSummary: null, creatorLedgerEntries: [], creatorAgeVerification: null, accountEvents: [], adminNotes: [], heavyLoaded: false, loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 4, actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loadingMore: false, loaded: false, error: '', filter: 'open', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     community: {
       posts: [],
@@ -375,6 +448,8 @@ const state = {
     team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
     logs: { items: [], detail: null, detailId: '', loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 }
   },
+  accountActionsMenuUid: '',
+  accountPermissionsDialog: { open: false, uid: '', loading: false, saving: false, error: '', data: null },
   settings: {
     data: {},
     loading: false,
@@ -2522,6 +2597,96 @@ function adminCreatorLedgerTable(entries = []) {
   })
 }
 
+function renderAccountActionMenu({ uid, user, publicProfile, isSelf, canNote, canSuspend, canGrantProduct, actioning }) {
+  const open = state.accountActionsMenuUid === uid
+  const itemClass = 'admin-account-menu-item'
+  return `
+    <div class="admin-account-actions-menu ${open ? 'is-open' : ''}" data-account-actions-menu>
+      <button type="button" class="admin-icon-button" data-toggle-account-actions="${escapeHtml(uid)}" aria-haspopup="menu" aria-expanded="${open}" title="Account actions">${iconSvg('moreVertical')}</button>
+      <div class="admin-account-actions-dropdown" role="menu" ${open ? '' : 'hidden'}>
+        <button type="button" class="${itemClass}" data-admin-give-product="${escapeHtml(uid)}" ${canGrantProduct ? '' : 'disabled'}>Give Product</button>
+        <button type="button" class="${itemClass}" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled' : ''}>Message</button>
+        <button type="button" class="${itemClass}" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled'}>Email User</button>
+        <button type="button" class="${itemClass}" data-admin-auth-email="password_reset" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled'}>Send Reset</button>
+        <button type="button" class="${itemClass}" data-admin-force-reset="${escapeHtml(uid)}" ${can('userModerate') && user?.email ? '' : 'disabled'}>Force Reset</button>
+        <button type="button" class="${itemClass}" data-admin-temp-password="${escapeHtml(uid)}" ${can('roleManage') ? '' : 'disabled'}>Set Temporary Password</button>
+        <button type="button" class="${itemClass} is-danger" data-admin-revoke-recovery="${escapeHtml(uid)}" ${can('roleManage') && user?.recoveryCodesGenerated ? '' : 'disabled'}>Revoke Codes</button>
+        <button type="button" class="${itemClass}" data-admin-auth-email="email_verification" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email && !user?.emailVerified ? '' : 'disabled'}>Send Verification</button>
+        <button type="button" class="${itemClass}" data-admin-security-notice-user="${escapeHtml(uid)}" ${can('emailSend') ? '' : 'disabled'}>Security Notice</button>
+        <button type="button" class="${itemClass} ${user?.suspended ? '' : 'is-danger'}" data-admin-suspension-user="${escapeHtml(uid)}" ${!canSuspend || isSelf || actioning ? 'disabled' : ''}>${user?.suspended ? 'Unsuspend' : 'Suspend'}</button>
+        <button type="button" class="${itemClass}" data-admin-note-user="${escapeHtml(uid)}" ${!canNote || actioning ? 'disabled' : ''}>Add Note</button>
+        <button type="button" class="${itemClass}" data-admin-account-permissions="${escapeHtml(uid)}" ${can('userModerate') || can('roleManage') ? '' : 'disabled'}>Edit Account Permissions</button>
+        <a class="${itemClass}" href="${publicProfile}" target="_blank" rel="noreferrer">Public Profile</a>
+      </div>
+    </div>
+  `
+}
+
+function permissionToggle({ name, label, values, defaultValues, prefix, disabled = false }) {
+  const checked = values?.[name] === true
+  const defaultLabel = defaultValues && Object.prototype.hasOwnProperty.call(defaultValues, name)
+    ? `Default: ${defaultValues[name] ? 'on' : 'off'}`
+    : ''
+  return `
+    <label class="admin-permission-toggle">
+      <input type="checkbox" name="${escapeHtml(`${prefix}.${name}`)}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''} />
+      <span><strong>${escapeHtml(label)}</strong>${defaultLabel ? `<small>${escapeHtml(defaultLabel)}</small>` : ''}</span>
+    </label>
+  `
+}
+
+function accountPermissionsDialog() {
+  const dialog = state.accountPermissionsDialog || {}
+  if (!dialog.open) return ''
+  const data = dialog.data || {}
+  const explicit = data.explicit || {}
+  const effective = data.effective || {}
+  const permissions = explicit.exists ? (explicit.permissions || {}) : (effective.permissions || {})
+  const badges = explicit.exists ? (explicit.badges || {}) : (effective.badges || {})
+  const restrictions = explicit.exists ? (explicit.restrictions || {}) : (effective.restrictions || {})
+  return `
+    <div class="admin-modal-backdrop" data-close-account-permissions role="presentation">
+      <section class="admin-decision-modal admin-permissions-modal" role="dialog" aria-modal="true" aria-labelledby="admin-permissions-title">
+        <header>
+          <div>
+            <h2 id="admin-permissions-title">Edit Account Permissions</h2>
+            <p class="admin-muted">Trusted overrides for <span class="admin-code-value">${escapeHtml(dialog.uid)}</span>.</p>
+          </div>
+          <button type="button" class="admin-icon-button" data-close-account-permissions title="Close">${iconSvg('x')}</button>
+        </header>
+        ${dialog.loading ? '<article class="admin-empty-state">Loading account permissions...</article>' : `
+          ${dialog.error ? `<p class="admin-error">${escapeHtml(dialog.error)}</p>` : ''}
+          <form data-account-permissions-form>
+            <div class="admin-permissions-grid">
+              ${ACCOUNT_PERMISSION_GROUPS.map((group) => `
+                <fieldset class="admin-permission-group">
+                  <legend>${escapeHtml(group.title)}</legend>
+                  ${group.fields.map(([key, label]) => permissionToggle({ name: key, label, values: permissions, defaultValues: data.defaults || {}, prefix: 'permissions', disabled: dialog.saving })).join('')}
+                </fieldset>
+              `).join('')}
+              <fieldset class="admin-permission-group">
+                <legend>Public Badges</legend>
+                ${ACCOUNT_BADGE_FIELDS.map(([key, label]) => permissionToggle({ name: key, label, values: badges, prefix: 'badges', disabled: dialog.saving })).join('')}
+              </fieldset>
+              <fieldset class="admin-permission-group">
+                <legend>Restrictions</legend>
+                ${ACCOUNT_RESTRICTION_FIELDS.map(([key, label]) => permissionToggle({ name: key, label, values: restrictions, prefix: 'restrictions', disabled: dialog.saving })).join('')}
+              </fieldset>
+            </div>
+            <label><span>Reason / note</span><textarea name="changeReason" required maxlength="1200" placeholder="Required audit note.">${escapeHtml(explicit.changeReason || '')}</textarea></label>
+            <label><span>Optional expiration</span><input name="expiresAt" type="datetime-local" value="${escapeHtml((explicit.expiresAt || '').slice(0, 16))}" ${dialog.saving ? 'disabled' : ''} /></label>
+            <p class="admin-muted">Effective source: ${escapeHtml(effective.source || 'defaults')}${effective.updatedAt ? ` · Updated ${escapeHtml(formatDate(effective.updatedAt))}` : ''}</p>
+            <div class="admin-modal-actions">
+              <button type="button" class="admin-secondary-button" data-close-account-permissions ${dialog.saving ? 'disabled' : ''}>Cancel</button>
+              <button type="submit" class="admin-primary-link" ${dialog.saving ? 'disabled' : ''}>${dialog.saving ? 'Saving...' : 'Save Permissions'}</button>
+            </div>
+          </form>
+        `}
+      </section>
+    </div>
+  `
+}
+
 function selectedUserPanel() {
   const uid = adminUserDetailUid()
   const data = adminData('users')
@@ -2557,18 +2722,7 @@ function selectedUserPanel() {
         </div>
       </div>
       <div class="admin-header-actions">
-        <button type="button" class="admin-secondary-button" data-admin-give-product="${escapeHtml(uid)}" ${canGrantProduct ? '' : 'disabled title="Order support or listing edit permission is required."'}>Give Product</button>
-        <button type="button" class="admin-secondary-button" data-admin-message-user="${escapeHtml(uid)}" ${isSelf ? 'disabled title="You cannot open a direct message with yourself."' : ''}>Message</button>
-        <button type="button" class="admin-secondary-button" data-admin-email-user="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Email User</button>
-        <button type="button" class="admin-secondary-button" data-admin-auth-email="password_reset" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email ? '' : 'disabled title="emailSend permission and a user email are required."'}>Send Reset</button>
-        <button type="button" class="admin-secondary-button" data-admin-force-reset="${escapeHtml(uid)}" ${can('userModerate') && user?.email ? '' : 'disabled title="User moderation permission and a user email are required."'}>Force Reset</button>
-        <button type="button" class="admin-secondary-button" data-admin-temp-password="${escapeHtml(uid)}" ${can('roleManage') ? '' : 'disabled title="Owner role management permission is required."'}>Set Temporary Password</button>
-        <button type="button" class="admin-secondary-button is-danger" data-admin-revoke-recovery="${escapeHtml(uid)}" ${can('roleManage') && user.recoveryCodesGenerated ? '' : 'disabled title="Owner role management permission and generated recovery codes are required."'}>Revoke Codes</button>
-        <button type="button" class="admin-secondary-button" data-admin-auth-email="email_verification" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email && !user.emailVerified ? '' : 'disabled title="Only available for unverified email accounts with emailSend permission."'}>Send Verification</button>
-        <button type="button" class="admin-secondary-button" data-admin-security-notice-user="${escapeHtml(uid)}" ${can('emailSend') ? '' : 'disabled title="emailSend permission is required."'}>Security Notice</button>
-        <button type="button" class="admin-secondary-button ${user?.suspended ? '' : 'is-danger'}" data-admin-suspension-user="${escapeHtml(uid)}" ${!canSuspend || isSelf || actioning ? `disabled title="${escapeHtml(isSelf ? 'You cannot suspend your own account.' : canSuspend ? 'Account action in progress.' : 'User moderation permission is required.')}"` : ''}>${actioning === 'suspension' ? 'Saving...' : user?.suspended ? 'Unsuspend' : 'Suspend'}</button>
-        <button type="button" class="admin-secondary-button" data-admin-note-user="${escapeHtml(uid)}" ${!canNote || actioning ? `disabled title="${escapeHtml(canNote ? 'Account action in progress.' : 'User moderation or order support permission is required.')}"` : ''}>Add Note</button>
-        <a class="admin-secondary-link" href="${publicProfile}" target="_blank" rel="noreferrer">Public Profile</a>
+        ${renderAccountActionMenu({ uid, user, publicProfile, isSelf, canNote, canSuspend, canGrantProduct, actioning })}
         <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh account">${iconSvg('barChart')}</button>
       </div>
     </header>
@@ -2651,6 +2805,15 @@ function selectedUserPanel() {
           <p class="admin-muted">Native attestation only. No date of birth or identity document data is stored here.</p>
         </div>
       </section>
+      ${data.heavyLoaded ? '' : `
+        <section class="admin-section-slab admin-load-detail-slab">
+          <div>
+            <h2>Detailed account data</h2>
+            <p class="admin-muted">Products are capped and commerce, orders, payouts, and extended activity are lazy-loaded to keep Account Hub responsive.</p>
+          </div>
+          <button type="button" class="admin-secondary-button" data-load-full-account="${escapeHtml(uid)}" ${data.loading ? 'disabled' : ''}>Load Full Account Data</button>
+        </section>
+      `}
       <section class="admin-section-slab admin-fixed-panel is-products-panel">
         <div class="admin-slab-heading"><h2>Products</h2><span class="admin-muted">${data.recentProducts?.length || 0} loaded</span></div>
         <div class="admin-table-scroll">${data.recentProducts?.length ? productAdminTable(data.recentProducts) : '<article class="admin-empty-state">No recent products loaded for this creator.</article>'}</div>
@@ -2691,7 +2854,8 @@ function selectedUserPanel() {
       </section>
       ${userActionDialog()}
       ${productGrantDialog()}
-    ` : `<article class="admin-empty-state">No profile found for ${escapeHtml(uid)}.</article>${userActionDialog()}${productGrantDialog()}`}
+      ${accountPermissionsDialog()}
+    ` : `<article class="admin-empty-state">No profile found for ${escapeHtml(uid)}.</article>${userActionDialog()}${productGrantDialog()}${accountPermissionsDialog()}`}
   `
 }
 
@@ -5594,7 +5758,9 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
       const data = adminData('users')
       const detailUid = adminUserDetailUid()
       if (detailUid) {
-        const result = await getAdminUserProfile({ uid: detailUid })
+        if (data.profile?.uid && data.profile.uid !== detailUid) data.heavyLoaded = false
+        const detailMode = data.heavyLoaded ? 'full' : 'summary'
+        const result = await getAdminUserProfile({ uid: detailUid, detailMode })
         state.adminData.users.profile = result.user || null
         state.adminData.users.adminUser = result.adminUser || null
         state.adminData.users.recentProducts = result.recentProducts || []
@@ -5607,6 +5773,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.creatorAgeVerification = result.creatorAgeVerification || null
         state.adminData.users.accountEvents = result.accountEvents || []
         state.adminData.users.adminNotes = result.adminNotes || []
+        state.adminData.users.heavyLoaded = result.heavyLoaded === true
         await hydrateReviewMedia(state.adminData.users.recentProducts)
       } else {
         state.adminData.users.profile = null
@@ -5621,6 +5788,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
         state.adminData.users.creatorAgeVerification = null
         state.adminData.users.accountEvents = []
         state.adminData.users.adminNotes = []
+        state.adminData.users.heavyLoaded = false
       }
       const result = await listAdminUsers({ limitCount: data.pageSize || 15, search: data.search, uid: detailUid || '', cursor: append ? data.cursor : '' })
       state.adminData.users.items = append ? mergePageItems(state.adminData.users.items, result.users || []) : (result.users || [])
@@ -7081,6 +7249,66 @@ function closeProductGrantDialog() {
   render()
 }
 
+async function openAccountPermissionsDialog(uid = '') {
+  if (!uid || (!can('userModerate') && !can('roleManage'))) return
+  state.accountActionsMenuUid = ''
+  state.accountPermissionsDialog = { open: true, uid, loading: true, saving: false, error: '', data: null }
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    const result = await getAdminAccountPermissions({ uid })
+    state.accountPermissionsDialog = { open: true, uid, loading: false, saving: false, error: '', data: result }
+  } catch (error) {
+    console.warn('[admin] account permissions load failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.accountPermissionsDialog = { open: true, uid, loading: false, saving: false, error: adminActionBlockedMessage(error), data: null }
+  }
+  render()
+}
+
+function closeAccountPermissionsDialog() {
+  if (state.accountPermissionsDialog?.saving) return
+  state.accountPermissionsDialog = { open: false, uid: '', loading: false, saving: false, error: '', data: null }
+  render()
+}
+
+function collectAccountPermissionForm(form) {
+  const result = { permissions: {}, badges: {}, restrictions: {} }
+  form.querySelectorAll('input[type="checkbox"][name^="permissions."], input[type="checkbox"][name^="badges."], input[type="checkbox"][name^="restrictions."]').forEach((input) => {
+    const [group, key] = String(input.name || '').split('.')
+    if (result[group] && key) result[group][key] = input.checked === true
+  })
+  return {
+    ...result,
+    changeReason: String(form.elements.changeReason?.value || '').trim(),
+    expiresAt: String(form.elements.expiresAt?.value || '').trim()
+  }
+}
+
+async function submitAccountPermissions(form) {
+  const dialog = state.accountPermissionsDialog
+  if (!dialog?.open || !dialog.uid || dialog.saving) return
+  const payload = collectAccountPermissionForm(form)
+  if (!payload.changeReason) {
+    dialog.error = 'A reason is required for the audit log.'
+    render()
+    return
+  }
+  dialog.saving = true
+  dialog.error = ''
+  render()
+  try {
+    const result = await updateAdminAccountPermissions({ uid: dialog.uid, ...payload })
+    state.accountPermissionsDialog = { open: false, uid: '', loading: false, saving: false, error: '', data: null }
+    state.message = 'Account permissions updated.'
+    await loadAdminSectionData('users', { silent: true })
+  } catch (error) {
+    console.warn('[admin] account permissions save failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.accountPermissionsDialog = { ...dialog, saving: false, error: adminActionBlockedMessage(error) }
+  }
+  render()
+}
+
 async function searchProductsForGrant(form) {
   const dialog = state.productGrantDialog
   if (!dialog?.open || dialog.searching || dialog.submitting) return
@@ -7903,6 +8131,25 @@ function bindEvents() {
     if (state.section === 'dashboard') loadAdminOverview({ silent: true })
   })
   app.querySelector('[data-refresh-admin-section]')?.addEventListener('click', () => loadAdminSectionData(state.section))
+  app.querySelectorAll('[data-toggle-account-actions]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const uid = button.getAttribute('data-toggle-account-actions') || ''
+      state.accountActionsMenuUid = state.accountActionsMenuUid === uid ? '' : uid
+      render()
+    })
+  })
+  app.querySelectorAll('[data-account-actions-menu]').forEach((menu) => {
+    menu.addEventListener('click', (event) => event.stopPropagation())
+  })
+  app.querySelectorAll('[data-load-full-account]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const data = adminData('users')
+      data.heavyLoaded = true
+      loadAdminSectionData('users', { silent: true })
+    })
+  })
   app.querySelectorAll('[data-admin-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       const collection = button.getAttribute('data-admin-collection') || ''
@@ -7959,7 +8206,10 @@ function bindEvents() {
     button.addEventListener('click', () => openAdminMessage(button.getAttribute('data-admin-message-user') || ''))
   })
   app.querySelectorAll('[data-admin-give-product]').forEach((button) => {
-    button.addEventListener('click', () => openProductGrantDialog(button.getAttribute('data-admin-give-product') || ''))
+    button.addEventListener('click', () => {
+      state.accountActionsMenuUid = ''
+      openProductGrantDialog(button.getAttribute('data-admin-give-product') || '')
+    })
   })
   app.querySelectorAll('[data-repair-admin-order]').forEach((button) => {
     button.addEventListener('click', () => submitAdminOrderRepair(button.getAttribute('data-repair-admin-order') || ''))
@@ -8004,6 +8254,15 @@ function bindEvents() {
   app.querySelectorAll('[data-admin-suspension-user]').forEach((button) => {
     button.addEventListener('click', () => openUserActionDialog('suspension', button.getAttribute('data-admin-suspension-user') || ''))
   })
+  app.querySelectorAll('[data-admin-account-permissions]').forEach((button) => {
+    button.addEventListener('click', () => openAccountPermissionsDialog(button.getAttribute('data-admin-account-permissions') || ''))
+  })
+  app.querySelectorAll('[data-close-account-permissions]').forEach((element) => {
+    element.addEventListener('click', (event) => {
+      if (event.target !== element && !element.matches('button')) return
+      closeAccountPermissionsDialog()
+    })
+  })
   app.querySelectorAll('[data-close-user-action]').forEach((button) => {
     button.addEventListener('click', closeUserActionDialog)
   })
@@ -8014,6 +8273,10 @@ function bindEvents() {
   app.querySelector('[data-admin-suspension-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     submitUserSuspension(event.currentTarget)
+  })
+  app.querySelector('[data-account-permissions-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitAccountPermissions(event.currentTarget)
   })
   app.querySelectorAll('[data-report-action]').forEach((button) => {
     button.addEventListener('click', () => handleReportAction(button.getAttribute('data-report-action') || ''))
@@ -8688,6 +8951,25 @@ window.addEventListener('popstate', () => {
     } else {
       loadAdminSectionData(currentSectionKey(), { silent: true })
     }
+  }
+})
+
+document.addEventListener('pointerdown', (event) => {
+  if (!state.accountActionsMenuUid) return
+  if (event.target?.closest?.('[data-account-actions-menu]')) return
+  state.accountActionsMenuUid = ''
+  render()
+})
+
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return
+  if (state.accountPermissionsDialog?.open) {
+    closeAccountPermissionsDialog()
+    return
+  }
+  if (state.accountActionsMenuUid) {
+    state.accountActionsMenuUid = ''
+    render()
   }
 })
 

@@ -51,19 +51,21 @@ function adminNoteSummary(docSnap) {
 const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const claims = assertAnyPermission(request, ['userRead', 'roleManage', 'productReview'])
   const uid = cleanString(request.data?.uid || '', 180)
+  const detailMode = cleanString(request.data?.detailMode || 'summary', 40)
+  const includeHeavy = detailMode === 'full'
   if (!uid || uid.includes('/')) throw new HttpsError('invalid-argument', 'A valid uid is required.')
 
   const [profileSnap, userSnap, adminSnap, productsSnap, eventsSnap, notesSnap, recoverySnap, authUser, commerce, payouts, ageVerification] = await Promise.all([
     db().collection('profiles').doc(uid).get(),
     db().collection('users').doc(uid).get(),
     db().collection('adminUsers').doc(uid).get(),
-    db().collection('products').where('artistId', '==', uid).limit(25).get(),
-    db().collection('users').doc(uid).collection('accountEvents').orderBy('createdAt', 'desc').limit(12).get(),
-    db().collection('users').doc(uid).collection('adminNotes').orderBy('createdAt', 'desc').limit(25).get().catch(() => ({ docs: [] })),
+    db().collection('products').where('artistId', '==', uid).limit(includeHeavy ? 25 : 4).get(),
+    db().collection('users').doc(uid).collection('accountEvents').orderBy('createdAt', 'desc').limit(includeHeavy ? 12 : 4).get(),
+    db().collection('users').doc(uid).collection('adminNotes').orderBy('createdAt', 'desc').limit(includeHeavy ? 25 : 4).get().catch(() => ({ docs: [] })),
     db().collection('users').doc(uid).collection('security').doc('recoveryCodes').get().catch(() => ({ exists: false, data: () => ({}) })),
     admin.auth().getUser(uid).catch(() => null),
-    loadUserCommerceAudit(uid),
-    loadUserPayoutAudit(uid),
+    includeHeavy ? loadUserCommerceAudit(uid) : Promise.resolve({ libraryItems: [], orders: [], commerceSummary: null }),
+    includeHeavy ? loadUserPayoutAudit(uid) : Promise.resolve({ connect: null, earningsSummary: null, ledgerEntries: [] }),
     loadCreatorAgeVerification(uid)
   ])
 
@@ -106,6 +108,7 @@ const getAdminUserProfile = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
     payoutConnect: payouts.connect,
     earningsSummary: payouts.earningsSummary,
     creatorLedgerEntries: payouts.ledgerEntries,
+    heavyLoaded: includeHeavy,
     creatorAgeVerification: ageVerification,
     accountEvents: eventsSnap.docs.map(accountEventSummary),
     adminNotes: notesSnap.docs.map(adminNoteSummary),

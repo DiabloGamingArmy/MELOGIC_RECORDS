@@ -1822,11 +1822,25 @@ export async function listAdminUsers({ limitCount = 50, search = '', uid = '', c
   return result?.data || { ok: false, users: [] }
 }
 
-export async function getAdminUserProfile({ uid = '' } = {}) {
+export async function getAdminUserProfile({ uid = '', detailMode = 'summary' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'getAdminUserProfile')
-  const result = await callable({ uid })
+  const result = await callable({ uid, detailMode })
   return result?.data || { ok: false, user: null, recentProducts: [], adminNotes: [] }
+}
+
+export async function getAdminAccountPermissions({ uid = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'getAdminAccountPermissions')
+  const result = await callable({ uid })
+  return result?.data || { ok: false, explicit: {}, effective: {} }
+}
+
+export async function updateAdminAccountPermissions(payload = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'updateAdminAccountPermissions')
+  const result = await callable(payload)
+  return result?.data || { ok: false, explicit: {}, effective: {} }
 }
 
 export async function searchAdminGrantProducts({ uid = '', search = '' } = {}) {

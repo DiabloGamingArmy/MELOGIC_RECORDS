@@ -70,6 +70,7 @@ service cloud.firestore {
       return [
         'accountStatus',
         'suspended',
+        'publicBadges',
         'followerCount',
         'followersCount',
         'followingCount'
@@ -1020,6 +1021,12 @@ service cloud.firestore {
 
       match /adminNotes/{noteId} {
         allow read, write: if false;
+      }
+
+      match /permissions/{permissionId} {
+        allow read: if permissionId == 'current'
+          && (isOwner(uid) || hasUserModerateClaim() || hasRoleManageClaim());
+        allow write: if false;
       }
 
       match /savedProducts/{productId} {

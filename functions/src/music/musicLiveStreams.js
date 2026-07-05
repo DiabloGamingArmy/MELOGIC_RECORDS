@@ -2,6 +2,7 @@ const admin = require('firebase-admin')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { defineSecret } = require('firebase-functions/params')
 const { AccessToken } = require('livekit-server-sdk')
+const { resolvePermissionsForUid } = require('../account/accountPermissions')
 
 const LIVEKIT_URL = defineSecret('LIVEKIT_URL')
 const LIVEKIT_API_KEY = defineSecret('LIVEKIT_API_KEY')
@@ -37,17 +38,19 @@ function safeJson(value) {
 }
 
 async function loadAccount(uid) {
-  const [userSnap, profileSnap] = await Promise.all([
+  const [userSnap, profileSnap, accountPermissions] = await Promise.all([
     db().collection('users').doc(uid).get(),
-    db().collection('profiles').doc(uid).get()
+    db().collection('profiles').doc(uid).get(),
+    resolvePermissionsForUid(uid).catch(() => null)
   ])
   return {
     user: userSnap.exists ? userSnap.data() || {} : null,
-    profile: profileSnap.exists ? profileSnap.data() || {} : null
+    profile: profileSnap.exists ? profileSnap.data() || {} : null,
+    accountPermissions
   }
 }
 
-function assertEligible({ auth, user, profile }) {
+function assertEligible({ auth, user, profile, accountPermissions }) {
   if (!auth) throw new HttpsError('unauthenticated', 'Sign in to go live.')
   if (auth.token.email && auth.token.email_verified === false) {
     throw new HttpsError('failed-precondition', 'Verify your email before going live.')
@@ -59,9 +62,12 @@ function assertEligible({ auth, user, profile }) {
   if (user.liveStreamingStatus === 'suspended' || user.liveStreamingStatus === 'disabled') {
     throw new HttpsError('permission-denied', 'Live streaming is disabled for this account.')
   }
+  if (accountPermissions?.restrictions?.liveSuspended === true || accountPermissions?.restrictions?.musicRestricted === true || accountPermissions?.restrictions?.suspended === true) {
+    throw new HttpsError('permission-denied', 'Live streaming is disabled for this account.')
+  }
   const role = cleanString(user.role || user.accountType || profile.roleLabel || '', 40).toLowerCase()
   const roleLabel = cleanString(user.roleLabel || profile.roleLabel || '', 40).toLowerCase()
-  const eligible = user.musicLiveEnabled === true || profile.musicLiveEnabled === true || ELIGIBLE_ROLES.has(role) || ELIGIBLE_ROLES.has(roleLabel)
+  const eligible = accountPermissions?.permissions?.musicLive === true || user.musicLiveEnabled === true || profile.musicLiveEnabled === true || ELIGIBLE_ROLES.has(role) || ELIGIBLE_ROLES.has(roleLabel)
   if (!eligible) throw new HttpsError('permission-denied', 'Live streaming is currently limited to eligible creators.')
 }
 
@@ -98,8 +104,8 @@ const startMusicLiveStream = onCall(
   async (request) => {
     const uid = request.auth?.uid
     if (!uid) throw new HttpsError('unauthenticated', 'Sign in to go live.')
-    const { user, profile } = await loadAccount(uid)
-    assertEligible({ auth: request.auth, user, profile })
+    const { user, profile, accountPermissions } = await loadAccount(uid)
+    assertEligible({ auth: request.auth, user, profile, accountPermissions })
 
     const title = cleanString(request.data?.title, 90)
     const description = cleanString(request.data?.description, 1200)

@@ -2,30 +2,31 @@
   min-height: 100vh;
   padding-bottom: 7.8rem;
   background:
-    radial-gradient(820px 320px at 82% -12%, rgba(88, 148, 255, 0.12), transparent 70%),
-    radial-gradient(620px 280px at 10% 28%, rgba(110, 231, 255, 0.07), transparent 72%),
+    radial-gradient(900px 340px at 78% 0%, rgba(88, 148, 255, 0.08), transparent 72%),
+    linear-gradient(90deg, rgba(8, 12, 22, 0.98), rgba(6, 10, 18, 0.96)),
     var(--ml-bg);
+  background-repeat: no-repeat;
+  background-size: 100% 720px, 100% 100%, auto;
 }
 
 .music-app-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  gap: 1rem;
-  width: min(1480px, 96vw);
-  margin: 0 auto;
-  padding: 1rem 0 2rem;
+  grid-template-columns: clamp(220px, 18vw, 270px) minmax(0, 1fr);
+  gap: 0;
+  width: min(1680px, 100%);
+  margin: 0;
+  padding: 0;
 }
 
 .music-sidebar {
   position: sticky;
-  top: calc(var(--nav-offset) + 1rem);
+  top: var(--nav-offset);
   align-self: start;
-  min-height: calc(100vh - var(--nav-offset) - 9rem);
-  border: 1px solid var(--ml-border);
-  border-radius: var(--ml-radius-md);
-  background: linear-gradient(180deg, rgba(9, 13, 23, 0.92), rgba(5, 9, 17, 0.86));
-  box-shadow: var(--ml-shadow-panel);
-  padding: 0.85rem;
+  min-height: calc(100vh - var(--nav-offset) - 7.8rem);
+  border-right: 1px solid var(--ml-border);
+  background: linear-gradient(180deg, rgba(8, 12, 22, 0.96), rgba(5, 9, 17, 0.92));
+  box-shadow: none;
+  padding: 1rem 0.85rem;
 }
 
 .music-sidebar-title {
@@ -104,10 +105,10 @@
 
 .music-mobile-menu {
   display: none;
-  margin: 0.85rem auto 0;
-  width: min(96vw, 1480px);
+  margin: 0;
+  width: 100%;
   border: 1px solid var(--ml-border);
-  border-radius: var(--ml-radius-md);
+  border-radius: 0;
   background: var(--ml-bg-interactive);
   color: var(--ml-text);
   padding: 0.7rem;
@@ -118,6 +119,7 @@
   min-width: 0;
   display: grid;
   gap: 1.25rem;
+  padding: 1rem clamp(0.85rem, 2vw, 1.6rem) 2rem;
 }
 
 .music-app-hero {
@@ -233,10 +235,17 @@
 .music-panel,
 .music-empty-state {
   border: 1px solid var(--ml-border);
-  border-radius: var(--ml-radius-md);
-  background: linear-gradient(180deg, rgba(10, 15, 28, 0.8), rgba(7, 11, 20, 0.72));
-  box-shadow: var(--ml-shadow-panel);
+  border-radius: 8px;
+  background: rgba(8, 13, 24, 0.62);
+  box-shadow: none;
   padding: 0.9rem;
+}
+
+.music-row-section,
+.music-view-header,
+.music-how-compact {
+  border-color: rgba(130, 190, 255, 0.12);
+  background: rgba(8, 13, 24, 0.36);
 }
 
 .music-row-heading {
@@ -893,6 +902,8 @@
     display: none;
     position: static;
     min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--ml-border);
   }
 
   .music-sidebar.is-open {
