@@ -112,6 +112,10 @@ export function normalizeMusicRelease(dataOrSnap = {}, explicitId = '') {
     tags: toStringArray(raw.tags),
     coverArtPath: String(raw.coverArtPath || raw.coverPath || ''),
     coverArtURL: String(raw.coverArtURL || raw.coverArtUrl || raw.coverURL || raw.coverUrl || ''),
+    featured: raw.featured === true,
+    featuredRank: toNumber(raw.featuredRank, 999),
+    featuredAt: toIsoDate(raw.featuredAt),
+    streamAudioURL: String(raw.streamAudioURL || raw.previewStreamAudioURL || raw.previewAudioURL || ''),
     status,
     visibility,
     releaseDate: toIsoDate(raw.releaseDate || raw.releasedAt || raw.publishedAt),
@@ -124,6 +128,27 @@ export function normalizeMusicRelease(dataOrSnap = {}, explicitId = '') {
     trackIds: toStringArray(raw.trackIds),
     likeCount: toNumber(raw.likeCount ?? raw.counts?.likes),
     playCount: toNumber(raw.playCount ?? raw.counts?.plays)
+  }
+}
+
+export function normalizeMusicArtist(dataOrSnap = {}, explicitId = '') {
+  const raw = typeof dataOrSnap.data === 'function' ? dataOrSnap.data() || {} : dataOrSnap || {}
+  const id = explicitId || dataOrSnap.id || raw.uid || raw.artistUid || ''
+  const artistName = String(raw.artistName || raw.displayName || raw.name || raw.username || 'Melogic Artist')
+  return {
+    id,
+    uid: id,
+    artistName,
+    displayName: artistName,
+    username: String(raw.username || raw.usernameLower || ''),
+    photoURL: String(raw.photoURL || raw.avatarURL || raw.imageURL || ''),
+    avatarURL: String(raw.avatarURL || raw.photoURL || raw.imageURL || ''),
+    roleLabel: String(raw.roleLabel || raw.role || 'Artist'),
+    musicGenre: String(raw.musicGenre || raw.genre || ''),
+    followerCount: toNumber(raw.followerCount ?? raw.stats?.followers),
+    listenerCount: toNumber(raw.listenerCount ?? raw.stats?.listeners),
+    featuredMusicArtist: raw.featuredMusicArtist === true,
+    featuredMusicRank: toNumber(raw.featuredMusicRank, 999)
   }
 }
 
@@ -184,6 +209,107 @@ export async function listPublishedMusicReleases({ limitCount = 24, genre = '', 
     return sortReleasesClientSide(snapshot.docs.map((docSnap) => normalizeMusicRelease(docSnap)), sort)
   } catch (error) {
     console.warn('[musicService] Published music releases could not be loaded.', error?.message || error)
+    return []
+  }
+}
+
+export async function listFeaturedMusicReleases(limitCount = 16) {
+  if (!db) return []
+  const cappedLimit = Math.max(1, Math.min(20, Number(limitCount) || 16))
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, FIRESTORE_COLLECTIONS.musicReleases),
+      where('status', '==', 'published'),
+      where('visibility', '==', 'public'),
+      where('featured', '==', true),
+      orderBy('featuredRank', 'asc'),
+      limit(cappedLimit)
+    ))
+    return snapshot.docs.map((docSnap) => normalizeMusicRelease(docSnap))
+  } catch (error) {
+    console.warn('[musicService] Featured music releases could not be loaded.', error?.message || error)
+    return listPublishedMusicReleases({ limitCount: cappedLimit, sort: 'popular' })
+  }
+}
+
+export async function listNewMusicReleases(limitCount = 16) {
+  return listPublishedMusicReleases({ limitCount, sort: 'newest' })
+}
+
+export async function listFeaturedArtists(limitCount = 12) {
+  if (!db) return []
+  const cappedLimit = Math.max(1, Math.min(20, Number(limitCount) || 12))
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, FIRESTORE_COLLECTIONS.profiles),
+      where('featuredMusicArtist', '==', true),
+      orderBy('featuredMusicRank', 'asc'),
+      limit(cappedLimit)
+    ))
+    return snapshot.docs.map((docSnap) => normalizeMusicArtist(docSnap))
+  } catch (error) {
+    console.warn('[musicService] Featured music artists could not be loaded.', error?.message || error)
+    return []
+  }
+}
+
+export async function listRecentlyPlayed(uid = '', limitCount = 12) {
+  if (!db || !uid) return []
+  const cappedLimit = Math.max(1, Math.min(20, Number(limitCount) || 12))
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, 'users', uid, 'recentlyPlayedMusic'),
+      orderBy('playedAt', 'desc'),
+      limit(cappedLimit)
+    ))
+    return snapshot.docs.map((docSnap) => {
+      const raw = docSnap.data() || {}
+      return raw.release ? normalizeMusicRelease(raw.release, raw.releaseId || docSnap.id) : normalizeMusicRelease(raw, raw.releaseId || docSnap.id)
+    })
+  } catch (error) {
+    console.warn('[musicService] Recently played music could not be loaded.', error?.message || error)
+    return []
+  }
+}
+
+export async function listUserLibraryMusic(uid = '', type = 'recently-added', limitCount = 20) {
+  if (!db || !uid) return []
+  const cappedLimit = Math.max(1, Math.min(30, Number(limitCount) || 20))
+  const collectionName = type === 'artists' ? 'savedMusicArtists' : type === 'songs' ? 'savedMusicTracks' : 'savedMusicReleases'
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, 'users', uid, collectionName),
+      orderBy('createdAt', 'desc'),
+      limit(cappedLimit)
+    ))
+    if (type === 'artists') return snapshot.docs.map((docSnap) => normalizeMusicArtist(docSnap))
+    if (type === 'songs') return snapshot.docs.map((docSnap) => normalizeMusicTrack(docSnap))
+    return snapshot.docs.map((docSnap) => {
+      const raw = docSnap.data() || {}
+      return raw.release ? normalizeMusicRelease(raw.release, raw.releaseId || docSnap.id) : normalizeMusicRelease(raw, raw.releaseId || docSnap.id)
+    })
+  } catch (error) {
+    console.warn('[musicService] User music library could not be loaded.', error?.message || error)
+    return []
+  }
+}
+
+export async function searchMusic(searchText = '', limitCount = 16) {
+  if (!db) return []
+  const token = String(searchText || '').trim().toLowerCase().split(/\s+/).find((item) => item.length > 1)
+  if (!token) return []
+  const cappedLimit = Math.max(1, Math.min(20, Number(limitCount) || 16))
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, FIRESTORE_COLLECTIONS.musicReleases),
+      where('status', '==', 'published'),
+      where('visibility', '==', 'public'),
+      where('searchKeywords', 'array-contains', token),
+      limit(cappedLimit)
+    ))
+    return snapshot.docs.map((docSnap) => normalizeMusicRelease(docSnap))
+  } catch (error) {
+    console.warn('[musicService] Music search could not be loaded.', error?.message || error)
     return []
   }
 }
