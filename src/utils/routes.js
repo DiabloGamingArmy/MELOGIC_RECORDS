@@ -1,5 +1,6 @@
 export const ROUTES = {
   home: '/home',
+  music: '/music',
   products: '/products',
   productDetail: '/product',
   cart: '/cart',
@@ -73,6 +74,7 @@ export const ROUTES = {
 const LEGACY_ROUTE_MAP = {
   '/': ROUTES.home,
   '/index.html': ROUTES.home,
+  '/music.html': ROUTES.music,
   '/products.html': ROUTES.products,
   '/product.html': ROUTES.productDetail,
   '/product-dashboard.html': ROUTES.productDashboard,
@@ -179,6 +181,18 @@ export function productRoute(productOrId = '') {
   }
 
   return `/products/${encodeURIComponent(String(productOrId || '').trim())}`
+}
+
+export function musicReleaseRoute(releaseOrId = '') {
+  if (releaseOrId && typeof releaseOrId === 'object') {
+    const id = String(releaseOrId.id || releaseOrId.releaseId || '').trim()
+    if (!id) return `${ROUTES.music}/releases/`
+    const slug = slugifyRouteSegment(releaseOrId.slug || releaseOrId.title || '')
+    if (!slug) return `${ROUTES.music}/releases/${encodeURIComponent(id)}`
+    return `${ROUTES.music}/releases/${encodeURIComponent(`${slug}--${id}`)}`
+  }
+
+  return `${ROUTES.music}/releases/${encodeURIComponent(String(releaseOrId || '').trim())}`
 }
 
 export function communityPostRoute(postId = '', { commentId = '', replyId = '' } = {}) {

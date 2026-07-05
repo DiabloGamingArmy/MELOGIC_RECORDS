@@ -372,8 +372,13 @@ main {
   color: #dce6ff;
 }
 
+.main-nav a[aria-current='page'] {
+  color: #f2f7ff;
+}
+
 .main-nav a:hover::after,
-.main-nav a:focus-visible::after {
+.main-nav a:focus-visible::after,
+.main-nav a[aria-current='page']::after {
   transform: scaleX(1);
 }
 

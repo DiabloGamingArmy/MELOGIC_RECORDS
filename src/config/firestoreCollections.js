@@ -1,5 +1,7 @@
 export const FIRESTORE_COLLECTIONS = {
   products: 'products',
+  musicReleases: 'musicReleases',
+  musicTracks: 'musicTracks',
   productSubcollections: {
     comments: 'comments',
     files: 'files',

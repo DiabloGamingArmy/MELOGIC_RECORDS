@@ -90,6 +90,11 @@
         "type": 301
       },
       {
+        "source": "/music.html",
+        "destination": "/music",
+        "type": 301
+      },
+      {
         "source": "/products.html",
         "destination": "/products",
         "type": 301
@@ -303,6 +308,14 @@
       {
         "source": "/home",
         "destination": "/index.html"
+      },
+      {
+        "source": "/music",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/music/releases/**",
+        "destination": "/music.html"
       },
       {
         "source": "/products",

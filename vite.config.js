@@ -1,11 +1,56 @@
 import { defineConfig } from 'vite'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+function htmlRouteFallbackPlugin() {
+  const routeEntries = [
+    { prefix: '/music/releases/', html: 'music.html' }
+  ]
+
+  function findEntry(url = '') {
+    const pathname = String(url || '').split('?')[0]
+    return routeEntries.find((entry) => pathname.startsWith(entry.prefix))
+  }
+
+  return {
+    name: 'melogic-html-route-fallbacks',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const entry = findEntry(req.url)
+        if (!entry) {
+          next()
+          return
+        }
+        const html = readFileSync(resolve(__dirname, entry.html), 'utf-8')
+        const transformed = await server.transformIndexHtml(req.url || '/', html)
+        res.statusCode = 200
+        res.setHeader('Content-Type', 'text/html')
+        res.end(transformed)
+      })
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const entry = findEntry(req.url)
+        if (!entry) {
+          next()
+          return
+        }
+        const html = readFileSync(resolve(__dirname, 'dist', entry.html), 'utf-8')
+        res.statusCode = 200
+        res.setHeader('Content-Type', 'text/html')
+        res.end(html)
+      })
+    }
+  }
+}
+
 export default defineConfig({
+  plugins: [htmlRouteFallbackPlugin()],
   build: {
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
+        music: resolve(__dirname, 'music.html'),
         products: resolve(__dirname, 'products.html'),
         community: resolve(__dirname, 'community.html'),
         live: resolve(__dirname, 'live.html'),
