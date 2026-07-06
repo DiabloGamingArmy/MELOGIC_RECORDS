@@ -1,4 +1,5 @@
 const admin = require('firebase-admin')
+const crypto = require('crypto')
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https')
 const { defineSecret } = require('firebase-functions/params')
 const { AccessToken, TrackSource } = require('livekit-server-sdk')
@@ -10,10 +11,13 @@ const LIVEKIT_API_SECRET = defineSecret('LIVEKIT_API_SECRET')
 
 const ALLOWED_CATEGORIES = new Set(['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other'])
 const ALLOWED_VISIBILITIES = new Set(['public', 'unlisted', 'private'])
+const ALLOWED_ACCESS_MODES = new Set(['public', 'unlisted', 'private', 'password'])
 const ALLOWED_AUDIO_MODES = new Set(['music', 'voice'])
+const ALLOWED_REACTIONS = new Set(['like', 'dislike', 'none'])
 const ELIGIBLE_ROLES = new Set(['creator', 'artist', 'founder', 'staff', 'admin', 'owner'])
 const STARTING_TIMEOUT_MS = 5 * 60 * 1000
 const HOST_HEARTBEAT_STALE_MS = 90 * 1000
+const LISTENER_PRESENCE_STALE_MS = 60 * 1000
 const CHAT_TEXT_MAX_LENGTH = 500
 const MAX_ACTIVE_LIVE_STREAMS_PER_HOST = 3
 const STAFF_ACTIVE_LIVE_STREAMS_PER_HOST = 10
@@ -31,6 +35,10 @@ function cleanRoomName(value) {
   return cleanString(value, 96).replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-')
 }
 
+function cleanId(value, max = 160) {
+  return cleanString(value, max).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, max)
+}
+
 function toTags(value) {
   if (Array.isArray(value)) return value.map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
   return String(value || '').split(',').map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
@@ -38,6 +46,13 @@ function toTags(value) {
 
 function normalizeAudioMode(value) {
   return ALLOWED_AUDIO_MODES.has(value) ? value : 'music'
+}
+
+function normalizeAccessMode(data = {}) {
+  const requested = cleanString(data.accessMode || '', 40)
+  if (ALLOWED_ACCESS_MODES.has(requested)) return requested
+  const visibility = ALLOWED_VISIBILITIES.has(data.visibility) ? data.visibility : 'public'
+  return visibility
 }
 
 function timestampMillis(value) {
@@ -76,10 +91,57 @@ function cleanStreamMetadata(data = {}) {
   const description = cleanString(data.description, 1200)
   const category = ALLOWED_CATEGORIES.has(data.category) ? data.category : 'music'
   const visibility = ALLOWED_VISIBILITIES.has(data.visibility) ? data.visibility : 'public'
+  const accessMode = normalizeAccessMode({ ...data, visibility })
   const coverArtURL = sanitizeCoverArtURL(data.coverArtURL)
   const coverArtPath = cleanString(data.coverArtPath, 500)
+  const coverArtSource = ['url', 'upload', 'fallback'].includes(data.coverArtSource) ? data.coverArtSource : (coverArtURL ? 'url' : 'fallback')
   const tags = toTags(data.tags)
-  return { title, description, category, visibility, coverArtURL, coverArtPath, tags }
+  return { title, description, category, visibility, accessMode, passwordProtected: accessMode === 'password', coverArtURL, coverArtPath, coverArtSource, tags }
+}
+
+function hashPassword(password = '', salt = crypto.randomBytes(16).toString('hex')) {
+  const cleanPassword = cleanString(password, 200)
+  if (!cleanPassword) return null
+  const hash = crypto.pbkdf2Sync(cleanPassword, salt, 120000, 32, 'sha256').toString('hex')
+  return { salt, hash, algorithm: 'pbkdf2_sha256', iterations: 120000 }
+}
+
+function verifyPassword(password = '', secret = {}) {
+  if (!secret?.passwordHash || !secret?.passwordSalt) return false
+  const next = hashPassword(password, secret.passwordSalt)
+  if (!next?.hash) return false
+  try {
+    return crypto.timingSafeEqual(Buffer.from(next.hash, 'hex'), Buffer.from(secret.passwordHash, 'hex'))
+  } catch {
+    return false
+  }
+}
+
+function isPubliclyJoinable(stream = {}) {
+  const accessMode = stream.accessMode || stream.visibility || 'private'
+  return stream.status === 'live'
+    && ['public', 'unlisted', 'password'].includes(accessMode)
+    && stream.visibility !== 'private'
+    && stream.hostConnected === true
+    && stream.audioPublished === true
+    && isHeartbeatFresh(stream)
+}
+
+async function recomputeListenerCount(streamRef) {
+  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - LISTENER_PRESENCE_STALE_MS)
+  const presenceSnap = await streamRef.collection('presence').where('lastSeenAt', '>=', cutoff).limit(1000).get()
+  const listenerCount = presenceSnap.size
+  await streamRef.set({
+    listenerCount,
+    peakListenerCount: admin.firestore.FieldValue.increment(0),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+  const streamSnap = await streamRef.get()
+  const stream = streamSnap.data() || {}
+  if (listenerCount > Number(stream.peakListenerCount || 0)) {
+    await streamRef.set({ peakListenerCount: listenerCount }, { merge: true })
+  }
+  return listenerCount
 }
 
 function liveLog(stage, extra = {}) {
@@ -183,8 +245,23 @@ function assertCanChat({ auth, user, profile, accountPermissions }) {
   if (accountPermissions?.suspended === true || restrictions.suspended === true || restrictions.communityRestricted === true || restrictions.musicRestricted === true) {
     throw new HttpsError('permission-denied', 'Live chat is restricted for this account.')
   }
-  if (permissions.musicLiveChat === false || permissions.communityMessage === false || permissions.communityPost === false) {
+  if (permissions.musicLiveChat === false || permissions.communityMessage === false) {
     throw new HttpsError('permission-denied', 'Live chat is restricted for this account.')
+  }
+}
+
+function assertCanInteract({ auth, user, profile, accountPermissions }) {
+  if (!auth) throw new HttpsError('unauthenticated', 'Sign in to interact with live streams.')
+  if (user?.suspended === true || profile?.suspended === true || user?.accountStatus === 'suspended' || profile?.accountStatus === 'suspended') {
+    throw new HttpsError('permission-denied', 'This account cannot interact with live streams.')
+  }
+  const restrictions = accountPermissions?.restrictions || {}
+  const permissions = accountPermissions?.permissions || {}
+  if (accountPermissions?.suspended === true || restrictions.suspended === true || restrictions.communityRestricted === true || restrictions.musicRestricted === true) {
+    throw new HttpsError('permission-denied', 'Live stream interactions are restricted for this account.')
+  }
+  if (permissions.communityReact === false) {
+    throw new HttpsError('permission-denied', 'Live stream interactions are restricted for this account.')
   }
 }
 
@@ -237,15 +314,15 @@ const startMusicLiveStream = onCall(
       stage = 'payload validated'
       const title = cleanString(request.data?.title, 90)
       const description = cleanString(request.data?.description, 1200)
-      const category = ALLOWED_CATEGORIES.has(request.data?.category) ? request.data.category : 'music'
-      const visibility = ALLOWED_VISIBILITIES.has(request.data?.visibility) ? request.data.visibility : 'public'
-      const coverArtPath = cleanString(request.data?.coverArtPath, 500)
-      const coverArtURL = sanitizeCoverArtURL(request.data?.coverArtURL)
-      const tags = toTags(request.data?.tags)
+      const metadata = cleanStreamMetadata(request.data || {})
+      const { category, visibility, accessMode, coverArtPath, coverArtURL, coverArtSource, tags } = metadata
       const audioMode = normalizeAudioMode(request.data?.audioMode)
       if (title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.', { stage })
       if (request.data?.rightsAccepted !== true) throw new HttpsError('failed-precondition', 'You must accept the live stream rules before going live.', { stage })
-      liveLog(stage, { uid, category, visibility, audioMode, hasCoverArtURL: Boolean(coverArtURL) })
+      if (accessMode === 'password' && !cleanString(request.data?.password, 200)) {
+        throw new HttpsError('invalid-argument', 'Add a listener password before starting a password-protected stream.', { stage })
+      }
+      liveLog(stage, { uid, category, visibility, accessMode, audioMode, hasCoverArtURL: Boolean(coverArtURL) })
 
       stage = 'active stream check started'
       const maxActiveStreams = liveStreamLimitForHost({ user, profile, accountPermissions, auth: request.auth })
@@ -336,9 +413,12 @@ const startMusicLiveStream = onCall(
         tags,
         coverArtPath,
         coverArtURL,
+        coverArtSource,
         status: 'starting',
         connectionStatus: 'starting',
         visibility,
+        accessMode,
+        passwordProtected: accessMode === 'password',
         audioMode,
         audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
         audioOnly: true,
@@ -364,6 +444,19 @@ const startMusicLiveStream = onCall(
         moderationStatus: 'clear',
         reportCount: 0
       })
+      if (accessMode === 'password') {
+        const secret = hashPassword(request.data?.password)
+        await db().collection('musicLiveStreamSecrets').doc(streamId).set({
+          streamId,
+          hostUid: uid,
+          passwordHash: secret.hash,
+          passwordSalt: secret.salt,
+          passwordAlgorithm: secret.algorithm,
+          passwordIterations: secret.iterations,
+          createdAt: now,
+          updatedAt: now
+        })
+      }
       liveLog(stage, { uid, streamId, status: 'starting' })
 
       liveLog('response returned', { uid, streamId })
@@ -464,6 +557,27 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
   const metadata = cleanStreamMetadata(request.data || {})
   if (metadata.title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.')
   const now = admin.firestore.FieldValue.serverTimestamp()
+  const secretRef = db().collection('musicLiveStreamSecrets').doc(streamId)
+  if (metadata.accessMode === 'password') {
+    const password = cleanString(request.data?.password, 200)
+    const existingSecret = await secretRef.get()
+    if (!existingSecret.exists && !password) throw new HttpsError('invalid-argument', 'Add a listener password before making this stream password-protected.')
+    if (password) {
+      const secret = hashPassword(password)
+      await secretRef.set({
+        streamId,
+        hostUid: stream.hostUid,
+        passwordHash: secret.hash,
+        passwordSalt: secret.salt,
+        passwordAlgorithm: secret.algorithm,
+        passwordIterations: secret.iterations,
+        updatedAt: now,
+        createdAt: existingSecret.exists ? existingSecret.data()?.createdAt || now : now
+      }, { merge: true })
+    }
+  } else {
+    await secretRef.delete().catch(() => {})
+  }
   await streamRef.set({
     ...metadata,
     updatedAt: now,
@@ -512,7 +626,8 @@ const joinMusicLiveStream = onCall(
     if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
     const stream = snap.data() || {}
     if (stream.status !== 'live') throw new HttpsError('failed-precondition', 'This stream is not live.')
-    if (stream.visibility === 'private') throw new HttpsError('permission-denied', 'This stream is private.')
+    const accessMode = stream.accessMode || stream.visibility || 'private'
+    if (accessMode === 'private' || stream.visibility === 'private') throw new HttpsError('permission-denied', 'This stream is private.')
     if (stream.hostConnected !== true || stream.audioPublished !== true || !isHeartbeatFresh(stream)) {
       await streamRef.set({
         status: 'ended',
@@ -526,10 +641,18 @@ const joinMusicLiveStream = onCall(
       }, { merge: true })
       throw new HttpsError('failed-precondition', 'This stream has ended.')
     }
+    if (accessMode === 'password' || stream.passwordProtected === true) {
+      const secretSnap = await db().collection('musicLiveStreamSecrets').doc(streamId).get()
+      if (!verifyPassword(request.data?.password, secretSnap.data() || {})) {
+        throw new HttpsError('permission-denied', 'Incorrect stream password.')
+      }
+    }
     if (!stream.livekitRoomName && !stream.roomName) throw new HttpsError('failed-precondition', 'This stream is missing its live room.')
 
     const uid = request.auth?.uid || ''
-    const identity = uid ? `listener-${uid}` : `listener-anon-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const anonId = cleanId(request.data?.anonId, 80) || cleanId(request.data?.presenceId, 80) || `${Date.now()}${Math.random().toString(36).slice(2, 8)}`
+    const presenceId = cleanId(request.data?.presenceId, 120) || (uid ? `uid-${uid}` : `anon-${anonId}`)
+    const identity = uid ? `listener-${uid}` : `listener-anon-${anonId}`
     const name = cleanString(request.auth?.token?.name || request.auth?.token?.email || 'Melogic Listener', 80)
     const roomName = cleanRoomName(stream.livekitRoomName || stream.roomName)
 
@@ -542,11 +665,18 @@ const joinMusicLiveStream = onCall(
       config: livekitConfig('listener LiveKit config validated')
     })
 
-    await streamRef.set({
-      listenerCount: admin.firestore.FieldValue.increment(1),
-      peakListenerCount: Math.max(Number(stream.peakListenerCount || 0), Number(stream.listenerCount || 0) + 1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    const now = admin.firestore.FieldValue.serverTimestamp()
+    await streamRef.collection('presence').doc(presenceId).set({
+      presenceId,
+      streamId,
+      uid: uid || null,
+      anonId: uid ? null : anonId,
+      displayName: uid ? name : 'Anonymous listener',
+      joinedAt: now,
+      lastSeenAt: now,
+      userAgent: cleanString(request.rawRequest?.headers?.['user-agent'] || '', 180)
     }, { merge: true })
+    const listenerCount = await recomputeListenerCount(streamRef)
 
     return {
       ok: true,
@@ -555,7 +685,9 @@ const joinMusicLiveStream = onCall(
       listenerToken,
       token: listenerToken,
       url: LIVEKIT_URL.value(),
-      identity
+      identity,
+      presenceId,
+      listenerCount
     }
   }
 )
@@ -565,6 +697,207 @@ const endMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => 
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in to end a live stream.')
   const streamId = cleanString(request.data?.streamId, 120)
   return endStreamByHost({ uid, streamId, reason: cleanString(request.data?.reason, 80) || 'host_ended' })
+})
+
+const updateMusicLiveListenerPresence = onCall({ region: 'us-central1' }, async (request) => {
+  const streamId = cleanString(request.data?.streamId, 120)
+  const presenceId = cleanId(request.data?.presenceId, 120)
+  if (!streamId || streamId.includes('/') || !presenceId) throw new HttpsError('invalid-argument', 'A valid stream and listener presence id are required.')
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const presenceRef = streamRef.collection('presence').doc(presenceId)
+  const presenceSnap = await presenceRef.get()
+  if (!presenceSnap.exists) throw new HttpsError('failed-precondition', 'Listener presence is not active.')
+  const streamSnap = await streamRef.get()
+  if (!streamSnap.exists || !isPubliclyJoinable(streamSnap.data() || {})) throw new HttpsError('failed-precondition', 'This stream is no longer live.')
+  await presenceRef.set({ lastSeenAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+  const listenerCount = await recomputeListenerCount(streamRef)
+  return { ok: true, streamId, presenceId, listenerCount }
+})
+
+const leaveMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => {
+  const streamId = cleanString(request.data?.streamId, 120)
+  const presenceId = cleanId(request.data?.presenceId, 120)
+  if (!streamId || streamId.includes('/') || !presenceId) throw new HttpsError('invalid-argument', 'A valid stream and listener presence id are required.')
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  await streamRef.collection('presence').doc(presenceId).delete().catch(() => {})
+  const listenerCount = await recomputeListenerCount(streamRef).catch(() => 0)
+  return { ok: true, streamId, presenceId, listenerCount }
+})
+
+const getMusicLiveViewerState = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  const streamId = cleanString(request.data?.streamId, 120)
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  if (!uid) return { ok: true, reaction: 'none', saved: false }
+  const [reactionSnap, savedSnap] = await Promise.all([
+    db().collection('musicLiveStreams').doc(streamId).collection('reactions').doc(uid).get(),
+    db().collection('users').doc(uid).collection('savedMusicLiveStreams').doc(streamId).get()
+  ])
+  return {
+    ok: true,
+    reaction: reactionSnap.exists ? cleanString(reactionSnap.data()?.reaction, 20) || 'none' : 'none',
+    saved: savedSnap.exists
+  }
+})
+
+const toggleMusicLiveReaction = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to react to live streams.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  const nextReaction = ALLOWED_REACTIONS.has(request.data?.reaction) ? request.data.reaction : 'none'
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const account = await loadAccount(uid)
+  assertCanInteract({ auth: request.auth, ...account })
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const reactionRef = streamRef.collection('reactions').doc(uid)
+  const result = await db().runTransaction(async (transaction) => {
+    const [streamSnap, reactionSnap] = await Promise.all([transaction.get(streamRef), transaction.get(reactionRef)])
+    if (!streamSnap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+    const stream = streamSnap.data() || {}
+    if (!['public', 'unlisted', 'password'].includes(stream.accessMode || stream.visibility || 'private')) throw new HttpsError('permission-denied', 'This stream is not available for reactions.')
+    const previous = reactionSnap.exists ? cleanString(reactionSnap.data()?.reaction, 20) : 'none'
+    const updates = { updatedAt: admin.firestore.FieldValue.serverTimestamp() }
+    if (previous === 'like') updates.likeCount = admin.firestore.FieldValue.increment(-1)
+    if (previous === 'dislike') updates.dislikeCount = admin.firestore.FieldValue.increment(-1)
+    if (nextReaction === 'like') updates.likeCount = admin.firestore.FieldValue.increment(1)
+    if (nextReaction === 'dislike') updates.dislikeCount = admin.firestore.FieldValue.increment(1)
+    transaction.set(streamRef, updates, { merge: true })
+    transaction.set(reactionRef, {
+      uid,
+      streamId,
+      reaction: nextReaction,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true })
+    return {
+      reaction: nextReaction,
+      likeCount: Math.max(0, Number(stream.likeCount || 0) + (previous === 'like' ? -1 : 0) + (nextReaction === 'like' ? 1 : 0)),
+      dislikeCount: Math.max(0, Number(stream.dislikeCount || 0) + (previous === 'dislike' ? -1 : 0) + (nextReaction === 'dislike' ? 1 : 0))
+    }
+  })
+  return { ok: true, streamId, ...result }
+})
+
+const toggleSaveMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to save live streams.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  const saved = request.data?.saved === true
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const account = await loadAccount(uid)
+  assertCanInteract({ auth: request.auth, ...account })
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const saveRef = db().collection('users').doc(uid).collection('savedMusicLiveStreams').doc(streamId)
+  const result = await db().runTransaction(async (transaction) => {
+    const [streamSnap, saveSnap] = await Promise.all([transaction.get(streamRef), transaction.get(saveRef)])
+    if (!streamSnap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+    const stream = streamSnap.data() || {}
+    if (saved && !saveSnap.exists) {
+      transaction.set(saveRef, {
+        streamId,
+        savedAt: admin.firestore.FieldValue.serverTimestamp(),
+        hostUid: stream.hostUid || '',
+        title: stream.title || '',
+        coverArtURL: stream.coverArtURL || '',
+        status: stream.status || ''
+      })
+      transaction.set(streamRef, { saveCount: admin.firestore.FieldValue.increment(1), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+    } else if (!saved && saveSnap.exists) {
+      transaction.delete(saveRef)
+      transaction.set(streamRef, { saveCount: admin.firestore.FieldValue.increment(-1), updatedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
+    }
+    return { saved, saveCount: Math.max(0, Number(stream.saveCount || 0) + (saved && !saveSnap.exists ? 1 : 0) - (!saved && saveSnap.exists ? 1 : 0)) }
+  })
+  return { ok: true, streamId, ...result }
+})
+
+async function assertStreamHost(streamId, uid) {
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const snap = await streamRef.get()
+  if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+  const stream = snap.data() || {}
+  if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can update this live stream.')
+  return { streamRef, stream }
+}
+
+function cleanSequenceItem(data = {}) {
+  return {
+    title: cleanString(data.title, 120),
+    artist: cleanString(data.artist, 120),
+    album: cleanString(data.album, 120),
+    artworkURL: sanitizeCoverArtURL(data.artworkURL),
+    notes: cleanString(data.notes, 600)
+  }
+}
+
+const upsertMusicLiveSequenceItem = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to update now-playing items.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const { streamRef } = await assertStreamHost(streamId, uid)
+  const item = cleanSequenceItem(request.data || {})
+  if (!item.title) throw new HttpsError('invalid-argument', 'Sequence item title is required.')
+  const itemId = cleanId(request.data?.itemId, 120) || streamRef.collection('sequenceItems').doc().id
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  const payload = {
+    itemId,
+    streamId,
+    hostUid: uid,
+    ...item,
+    updatedAt: now
+  }
+  if (!request.data?.itemId) payload.createdAt = now
+  await streamRef.collection('sequenceItems').doc(itemId).set(payload, { merge: true })
+  return { ok: true, streamId, itemId, item }
+})
+
+const deleteMusicLiveSequenceItem = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to update now-playing items.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  const itemId = cleanId(request.data?.itemId, 120)
+  if (!streamId || streamId.includes('/') || !itemId) throw new HttpsError('invalid-argument', 'A valid stream and item id are required.')
+  const { streamRef, stream } = await assertStreamHost(streamId, uid)
+  await streamRef.collection('sequenceItems').doc(itemId).delete()
+  if (stream.currentNowPlaying?.sequenceItemId === itemId) {
+    await streamRef.set({
+      currentNowPlaying: admin.firestore.FieldValue.delete(),
+      lastMetadataUpdateAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true })
+  }
+  return { ok: true, streamId, itemId }
+})
+
+const setMusicLiveNowPlaying = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to update now-playing.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  const itemId = cleanId(request.data?.itemId, 120)
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const { streamRef } = await assertStreamHost(streamId, uid)
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  if (!itemId) {
+    await streamRef.set({
+      currentNowPlaying: admin.firestore.FieldValue.delete(),
+      lastMetadataUpdateAt: now,
+      updatedAt: now
+    }, { merge: true })
+    return { ok: true, streamId, currentNowPlaying: null }
+  }
+  const itemSnap = await streamRef.collection('sequenceItems').doc(itemId).get()
+  if (!itemSnap.exists) throw new HttpsError('not-found', 'Sequence item not found.')
+  const item = cleanSequenceItem(itemSnap.data() || {})
+  await streamRef.set({
+    currentNowPlaying: {
+      ...item,
+      sequenceItemId: itemId,
+      updatedAt: now
+    },
+    lastMetadataUpdateAt: now,
+    updatedAt: now
+  }, { merge: true })
+  return { ok: true, streamId, currentNowPlaying: { ...item, sequenceItemId: itemId } }
 })
 
 function parseBeaconBody(req) {
@@ -659,6 +992,14 @@ module.exports = {
   updateMusicLiveStreamInfo,
   joinMusicLiveStream,
   endMusicLiveStream,
+  updateMusicLiveListenerPresence,
+  leaveMusicLiveStream,
+  getMusicLiveViewerState,
+  toggleMusicLiveReaction,
+  toggleSaveMusicLiveStream,
+  upsertMusicLiveSequenceItem,
+  deleteMusicLiveSequenceItem,
+  setMusicLiveNowPlaying,
   endMusicLiveStreamBeacon,
   sendMusicLiveChatMessage
 }

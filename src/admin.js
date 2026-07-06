@@ -217,6 +217,7 @@ const ACCOUNT_PERMISSION_GROUPS = [
       ['musicDiscover', 'Discover music'],
       ['musicListen', 'Listen to music'],
       ['musicLive', 'Go live'],
+      ['musicLiveChat', 'Can chat in live streams'],
       ['musicPost', 'Post music'],
       ['musicSubmit', 'Submit music'],
       ['musicVideoPost', 'Post music videos']

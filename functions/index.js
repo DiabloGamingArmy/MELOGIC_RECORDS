@@ -100,6 +100,14 @@ const {
   updateMusicLiveStreamInfo,
   joinMusicLiveStream,
   endMusicLiveStream,
+  updateMusicLiveListenerPresence,
+  leaveMusicLiveStream,
+  getMusicLiveViewerState,
+  toggleMusicLiveReaction,
+  toggleSaveMusicLiveStream,
+  upsertMusicLiveSequenceItem,
+  deleteMusicLiveSequenceItem,
+  setMusicLiveNowPlaying,
   endMusicLiveStreamBeacon,
   sendMusicLiveChatMessage
 } = require('./src/music/musicLiveStreams')
@@ -250,6 +258,14 @@ exports.heartbeatMusicLiveStream = heartbeatMusicLiveStream
 exports.updateMusicLiveStreamInfo = updateMusicLiveStreamInfo
 exports.joinMusicLiveStream = joinMusicLiveStream
 exports.endMusicLiveStream = endMusicLiveStream
+exports.updateMusicLiveListenerPresence = updateMusicLiveListenerPresence
+exports.leaveMusicLiveStream = leaveMusicLiveStream
+exports.getMusicLiveViewerState = getMusicLiveViewerState
+exports.toggleMusicLiveReaction = toggleMusicLiveReaction
+exports.toggleSaveMusicLiveStream = toggleSaveMusicLiveStream
+exports.upsertMusicLiveSequenceItem = upsertMusicLiveSequenceItem
+exports.deleteMusicLiveSequenceItem = deleteMusicLiveSequenceItem
+exports.setMusicLiveNowPlaying = setMusicLiveNowPlaying
 exports.endMusicLiveStreamBeacon = endMusicLiveStreamBeacon
 exports.sendMusicLiveChatMessage = sendMusicLiveChatMessage
 exports.getPublicProfileStats = getPublicProfileStats

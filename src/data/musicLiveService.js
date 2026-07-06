@@ -41,8 +41,11 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     tags: toStringArray(raw.tags),
     coverArtPath: String(raw.coverArtPath || ''),
     coverArtURL: String(raw.coverArtURL || raw.coverURL || ''),
+    coverArtSource: String(raw.coverArtSource || (raw.coverArtURL ? 'url' : 'fallback')),
     status: String(raw.status || 'draft'),
     visibility: String(raw.visibility || 'private'),
+    accessMode: String(raw.accessMode || raw.visibility || 'private'),
+    passwordProtected: raw.passwordProtected === true || raw.accessMode === 'password',
     audioMode: String(raw.audioMode || 'music'),
     audioProfile: String(raw.audioProfile || ''),
     audioOnly: raw.audioOnly !== false,
@@ -61,6 +64,19 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     lastMetadataUpdateAt: toIsoDate(raw.lastMetadataUpdateAt),
     listenerCount: toNumber(raw.listenerCount),
     peakListenerCount: toNumber(raw.peakListenerCount),
+    likeCount: toNumber(raw.likeCount),
+    dislikeCount: toNumber(raw.dislikeCount),
+    saveCount: toNumber(raw.saveCount),
+    currentNowPlaying: raw.currentNowPlaying && typeof raw.currentNowPlaying === 'object'
+      ? {
+          title: String(raw.currentNowPlaying.title || ''),
+          artist: String(raw.currentNowPlaying.artist || ''),
+          album: String(raw.currentNowPlaying.album || ''),
+          artworkURL: String(raw.currentNowPlaying.artworkURL || ''),
+          sequenceItemId: String(raw.currentNowPlaying.sequenceItemId || ''),
+          updatedAt: toIsoDate(raw.currentNowPlaying.updatedAt)
+        }
+      : null,
     isRecordable: raw.isRecordable === true,
     archiveRequested: raw.archiveRequested === true,
     archiveStatus: String(raw.archiveStatus || 'none'),
@@ -79,7 +95,7 @@ export function isLiveStreamFresh(stream = {}) {
 
 export function isPublicLiveStreamVisible(stream = {}) {
   return stream.status === 'live'
-    && stream.visibility === 'public'
+    && (stream.visibility === 'public' || stream.accessMode === 'password')
     && stream.audioOnly !== false
     && stream.hostConnected === true
     && stream.audioPublished === true
@@ -155,6 +171,37 @@ export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError
   )
 }
 
+export function subscribeMusicLiveSequenceItems(streamId = '', onNext = () => {}, onError = () => {}) {
+  const id = String(streamId || '').trim()
+  if (!db || !id || id.includes('/')) return () => {}
+  const itemsQuery = query(
+    collection(db, FIRESTORE_COLLECTIONS.musicLiveStreams, id, 'sequenceItems'),
+    orderBy('createdAt', 'asc'),
+    limit(100)
+  )
+  return onSnapshot(
+    itemsQuery,
+    (snapshot) => onNext(snapshot.docs.map((docSnap) => {
+      const raw = docSnap.data() || {}
+      return {
+        id: docSnap.id,
+        itemId: String(raw.itemId || docSnap.id),
+        title: String(raw.title || ''),
+        artist: String(raw.artist || ''),
+        album: String(raw.album || ''),
+        artworkURL: String(raw.artworkURL || ''),
+        notes: String(raw.notes || ''),
+        createdAt: toIsoDate(raw.createdAt),
+        updatedAt: toIsoDate(raw.updatedAt)
+      }
+    })),
+    (error) => {
+      console.warn('[musicLiveService] Live sequence subscription failed.', error?.message || error)
+      onError(error)
+    }
+  )
+}
+
 export async function getMusicLiveStream(streamId = '') {
   const id = String(streamId || '').trim()
   if (!db || !id || id.includes('/')) return null
@@ -191,9 +238,9 @@ export async function updateMusicLiveStreamInfo(payload = {}) {
   return result?.data || { ok: false }
 }
 
-export async function joinMusicLiveStream(streamId = '') {
+export async function joinMusicLiveStream(streamId = '', options = {}) {
   const callable = httpsCallable(functions, 'joinMusicLiveStream')
-  const result = await callable({ streamId })
+  const result = await callable({ streamId, ...options })
   return result?.data || { ok: false }
 }
 
@@ -206,6 +253,54 @@ export async function endMusicLiveStream(streamId = '') {
 export async function sendMusicLiveChatMessage(streamId = '', text = '') {
   const callable = httpsCallable(functions, 'sendMusicLiveChatMessage')
   const result = await callable({ streamId, text })
+  return result?.data || { ok: false }
+}
+
+export async function updateMusicLiveListenerPresence(streamId = '', presenceId = '') {
+  const callable = httpsCallable(functions, 'updateMusicLiveListenerPresence')
+  const result = await callable({ streamId, presenceId })
+  return result?.data || { ok: false }
+}
+
+export async function leaveMusicLiveStream(streamId = '', presenceId = '') {
+  const callable = httpsCallable(functions, 'leaveMusicLiveStream')
+  const result = await callable({ streamId, presenceId })
+  return result?.data || { ok: false }
+}
+
+export async function getMusicLiveViewerState(streamId = '') {
+  const callable = httpsCallable(functions, 'getMusicLiveViewerState')
+  const result = await callable({ streamId })
+  return result?.data || { ok: false, reaction: 'none', saved: false }
+}
+
+export async function toggleMusicLiveReaction(streamId = '', reaction = 'none') {
+  const callable = httpsCallable(functions, 'toggleMusicLiveReaction')
+  const result = await callable({ streamId, reaction })
+  return result?.data || { ok: false }
+}
+
+export async function toggleSaveMusicLiveStream(streamId = '', saved = true) {
+  const callable = httpsCallable(functions, 'toggleSaveMusicLiveStream')
+  const result = await callable({ streamId, saved })
+  return result?.data || { ok: false }
+}
+
+export async function upsertMusicLiveSequenceItem(payload = {}) {
+  const callable = httpsCallable(functions, 'upsertMusicLiveSequenceItem')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function deleteMusicLiveSequenceItem(streamId = '', itemId = '') {
+  const callable = httpsCallable(functions, 'deleteMusicLiveSequenceItem')
+  const result = await callable({ streamId, itemId })
+  return result?.data || { ok: false }
+}
+
+export async function setMusicLiveNowPlaying(streamId = '', itemId = '') {
+  const callable = httpsCallable(functions, 'setMusicLiveNowPlaying')
+  const result = await callable({ streamId, itemId })
   return result?.data || { ok: false }
 }
 

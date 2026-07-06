@@ -1,24 +1,35 @@
 import './styles/base.css'
 import './styles/music.css'
 import { AudioPresets, Room, RoomEvent, createLocalAudioTrack } from 'livekit-client'
+import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getSiteAssetURL } from './firebase/siteAssets'
+import { storage } from './firebase/storage'
 import { getMyAccountPermissions } from './data/accountPermissionsService'
 import {
+  deleteMusicLiveSequenceItem,
   endMusicLiveStream,
   getMusicLiveStream,
+  getMusicLiveViewerState,
   heartbeatMusicLiveStream,
   isLiveStreamFresh,
   joinMusicLiveStream,
+  leaveMusicLiveStream,
   listPublicLiveStreams,
   markMusicLiveStreamOnAir,
   sendMusicLiveChatMessage,
   sendMusicLiveUnloadBeacon,
+  setMusicLiveNowPlaying,
   startMusicLiveStream,
   subscribeMusicLiveChat,
+  subscribeMusicLiveSequenceItems,
   subscribeMusicLiveStream,
+  toggleMusicLiveReaction,
+  toggleSaveMusicLiveStream,
+  updateMusicLiveListenerPresence,
+  upsertMusicLiveSequenceItem,
   updateMusicLiveStreamInfo
 } from './data/musicLiveService'
 import {
@@ -88,6 +99,15 @@ const state = {
   liveError: '',
   listenerRoom: null,
   listenerAudioElement: null,
+  listenerPresenceId: '',
+  listenerPresenceTimer: 0,
+  livePassword: '',
+  liveActionMessage: '',
+  liveViewer: {
+    reaction: 'none',
+    saved: false,
+    loading: false
+  },
   liveChat: {
     messages: [],
     text: '',
@@ -96,18 +116,32 @@ const state = {
     unsubscribe: null,
     lastSentAt: 0
   },
+  liveSequence: {
+    items: [],
+    unsubscribe: null,
+    editingItemId: '',
+    form: { title: '', artist: '', album: '', artworkURL: '', notes: '' },
+    saving: false,
+    error: ''
+  },
   goLive: {
     form: {
       category: 'music',
       audioMode: 'music',
+      accessMode: 'public',
+      password: '',
       title: '',
       description: '',
       coverArtURL: '',
+      coverArtPath: '',
+      coverArtSource: 'fallback',
       tags: '',
       visibility: 'public',
       rightsAccepted: false,
       archiveRequested: false
     },
+    draftId: '',
+    uploadingCover: false,
     devices: [],
     selectedDeviceId: '',
     previewStream: null,
@@ -433,6 +467,36 @@ function liveCategoryLabel(value = '') {
   return titleCase(String(value || 'music'))
 }
 
+function liveAccessLabel(streamOrForm = {}) {
+  const access = streamOrForm.accessMode || streamOrForm.visibility || 'public'
+  if (access === 'password') return 'Password protected'
+  return titleCase(access)
+}
+
+function listenerCountLabel(count = 0) {
+  const value = Number(count || 0)
+  return `${value.toLocaleString()} ${value === 1 ? 'listening' : 'listening'}`
+}
+
+function liveShareURL(streamId = '') {
+  return `${window.location.origin}${musicLiveStreamRoute(streamId)}`
+}
+
+function renderNowPlaying(stream = {}) {
+  const now = nowPlayingDisplay(stream)
+  if (!stream.currentNowPlaying?.title) return ''
+  return `
+    <article class="music-now-playing">
+      ${now.artworkURL ? `<img src="${escapeHtml(now.artworkURL)}" alt="" />` : '<span aria-hidden="true">NP</span>'}
+      <div>
+        <p class="music-eyebrow">Now Playing</p>
+        <h3>${escapeHtml(now.title)}</h3>
+        <p>${escapeHtml([now.artist, now.album].filter(Boolean).join(' · '))}</p>
+      </div>
+    </article>
+  `
+}
+
 function liveStreamCard(stream) {
   return `
     <article class="music-live-card">
@@ -440,11 +504,12 @@ function liveStreamCard(stream) {
         ${renderLiveArtwork(stream)}
         <div class="music-live-card-body">
           <span class="music-live-badge">LIVE</span>
+          ${stream.passwordProtected ? '<span class="music-live-lock">Locked</span>' : ''}
           <h3>${escapeHtml(stream.title)}</h3>
           <p>${escapeHtml(stream.hostDisplayName)}</p>
           <div class="music-live-meta">
             <span>${escapeHtml(liveCategoryLabel(stream.category))}</span>
-            <span>${Number(stream.listenerCount || 0).toLocaleString()} listening</span>
+            <span>${escapeHtml(listenerCountLabel(stream.listenerCount))}</span>
           </div>
         </div>
       </a>
@@ -713,6 +778,138 @@ function stopLiveListRefresh() {
   state.liveListRefreshTimer = 0
 }
 
+function stopLiveSequenceSubscription() {
+  if (state.liveSequence.unsubscribe) state.liveSequence.unsubscribe()
+  state.liveSequence.unsubscribe = null
+}
+
+function stopListenerPresenceHeartbeat() {
+  if (state.listenerPresenceTimer) window.clearInterval(state.listenerPresenceTimer)
+  state.listenerPresenceTimer = 0
+}
+
+function listenerAnonId() {
+  try {
+    const existing = window.sessionStorage.getItem('melogic_live_anon_id')
+    if (existing) return existing
+    const generated = `anon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+    window.sessionStorage.setItem('melogic_live_anon_id', generated)
+    return generated
+  } catch {
+    return `anon_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+  }
+}
+
+function livePresenceId(streamId = '') {
+  const uid = state.currentUser?.uid || ''
+  return uid ? `uid-${uid}-${streamId}` : `${listenerAnonId()}-${streamId}`
+}
+
+function startListenerPresenceHeartbeat(streamId, presenceId) {
+  stopListenerPresenceHeartbeat()
+  if (!streamId || !presenceId) return
+  state.listenerPresenceTimer = window.setInterval(() => {
+    updateMusicLiveListenerPresence(streamId, presenceId).catch(() => {})
+  }, 20000)
+}
+
+function nowPlayingDisplay(stream = {}) {
+  const current = stream.currentNowPlaying
+  return current?.title
+    ? {
+        title: current.title,
+        artist: current.artist || stream.hostDisplayName,
+        album: current.album || 'Melogic Music Live',
+        artworkURL: current.artworkURL || stream.coverArtURL
+      }
+    : {
+        title: stream.title,
+        artist: stream.hostDisplayName,
+        album: 'Melogic Music Live',
+        artworkURL: stream.coverArtURL
+      }
+}
+
+function updateLiveMediaSession(stream = state.liveStream) {
+  if (!('mediaSession' in navigator) || typeof window.MediaMetadata !== 'function' || !stream) return
+  const meta = nowPlayingDisplay(stream)
+  const artwork = meta.artworkURL ? [{ src: meta.artworkURL, sizes: '512x512', type: 'image/png' }] : []
+  navigator.mediaSession.metadata = new window.MediaMetadata({
+    title: meta.title || 'Melogic Music Live',
+    artist: meta.artist || stream.hostDisplayName || 'Melogic',
+    album: meta.album || 'Melogic Music Live',
+    artwork
+  })
+  navigator.mediaSession.playbackState = ['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'playing' : 'paused'
+  navigator.mediaSession.setActionHandler('play', () => {
+    if (!['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) joinLiveListener().catch(() => {})
+    else state.listenerAudioElement?.play?.().catch(() => {})
+  })
+  navigator.mediaSession.setActionHandler('pause', () => {
+    disconnectLiveListener()
+    rerender()
+  })
+  navigator.mediaSession.setActionHandler('stop', () => {
+    disconnectLiveListener()
+    rerender()
+  })
+}
+
+function shouldShowGlobalMusicPlayer() {
+  if (state.listenerRoom && state.liveStream?.id) return state.route.mode !== 'liveDetail' || state.route.id !== state.liveStream.id
+  if (!state.player.track) return false
+  if (state.route.mode === 'release') {
+    return state.player.track.releaseId !== state.route.id && state.player.track.id !== `release-${state.route.id}`
+  }
+  return true
+}
+
+function ensureGoLiveDraftId() {
+  if (!state.goLive.draftId) state.goLive.draftId = `draft_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+  return state.goLive.draftId
+}
+
+async function deleteUploadedCover(path = '') {
+  if (!storage || !path) return
+  await deleteObject(storageRef(storage, path)).catch(() => {})
+}
+
+async function uploadLiveCoverFile(file) {
+  if (!state.currentUser || !storage || !file) return
+  if (!file.type.startsWith('image/')) {
+    state.goLive.formError = 'Cover upload must be an image file.'
+    rerender()
+    return
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    state.goLive.formError = 'Cover image must be 8 MB or smaller.'
+    rerender()
+    return
+  }
+  state.goLive.uploadingCover = true
+  state.goLive.formError = ''
+  rerender()
+  try {
+    if (state.goLive.form.coverArtSource === 'upload') await deleteUploadedCover(state.goLive.form.coverArtPath)
+    const ext = (file.name.split('.').pop() || 'jpg').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'jpg'
+    const path = `users/${state.currentUser.uid}/musicLiveUploads/${ensureGoLiveDraftId()}/cover/cover-${Date.now()}.${ext}`
+    const ref = storageRef(storage, path)
+    await uploadBytes(ref, file, {
+      contentType: file.type,
+      customMetadata: { ownerUid: state.currentUser.uid, draftId: state.goLive.draftId, type: 'music-live-cover' }
+    })
+    const url = await getDownloadURL(ref)
+    state.goLive.form.coverArtURL = url
+    state.goLive.form.coverArtPath = path
+    state.goLive.form.coverArtSource = 'upload'
+  } catch (error) {
+    state.goLive.formError = error?.message || 'Cover image could not be uploaded.'
+  } finally {
+    state.goLive.uploadingCover = false
+    rerender()
+  }
+}
+
 function renderLiveChatPanel(streamId = '') {
   const signedIn = Boolean(state.currentUser)
   return `
@@ -765,13 +962,83 @@ function renderHostMetadataEditor(form) {
       <label><span>Cover image URL</span><input name="coverArtURL" value="${escapeHtml(form.coverArtURL)}" /></label>
       <label><span>Tags</span><input name="tags" value="${escapeHtml(form.tags)}" /></label>
       <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}" ${form.category === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-      <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
+      <label><span>Access</span><select name="accessMode"><option value="public" ${form.accessMode === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.accessMode === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.accessMode === 'private' ? 'selected' : ''}>Private</option><option value="password" ${form.accessMode === 'password' ? 'selected' : ''}>Password protected</option></select></label>
+      <input type="hidden" name="visibility" value="${form.accessMode === 'private' ? 'private' : form.accessMode === 'unlisted' ? 'unlisted' : 'public'}" />
+      ${form.accessMode === 'password' ? '<label><span>New password (optional)</span><input name="password" type="password" maxlength="200" placeholder="Leave blank to keep current password" /></label>' : ''}
       ${state.goLive.editError ? `<p class="music-live-error">${escapeHtml(state.goLive.editError)}</p>` : ''}
       <div class="music-live-actions">
         <button class="button button-accent" type="submit" ${state.goLive.editSaving ? 'disabled' : ''}>${state.goLive.editSaving ? 'Saving...' : 'Save live updates'}</button>
         <button class="button button-muted" type="button" data-toggle-live-edit>Close</button>
       </div>
     </form>
+  `
+}
+
+function renderHostSequencePanel() {
+  if (!state.goLive.streamId) {
+    return `
+      <aside class="music-panel music-sequence-panel">
+        <p class="music-eyebrow">Now Playing</p>
+        <h2>Sequence</h2>
+        <p class="music-muted">Go live to add manual now-playing cards for lock screens and listener metadata.</p>
+        <div class="music-future-note"><strong>Automatic app metadata - coming later</strong><span>Browser apps cannot directly read Apple Music, iTunes, or Spotify desktop metadata. Future options may include a native Melogic helper app or authorized service APIs.</span></div>
+      </aside>
+    `
+  }
+  const form = state.liveSequence.form
+  return `
+    <aside class="music-panel music-sequence-panel">
+      <div class="music-row-heading">
+        <div>
+          <p class="music-eyebrow">Now Playing</p>
+          <h2>Sequence</h2>
+        </div>
+        <button type="button" class="button button-muted" data-live-sequence-clear>Clear</button>
+      </div>
+      <form class="music-sequence-form" data-live-sequence-form>
+        <input type="hidden" name="itemId" value="${escapeHtml(state.liveSequence.editingItemId)}" />
+        <label><span>Title</span><input name="title" maxlength="120" value="${escapeHtml(form.title)}" placeholder="Track or segment title" /></label>
+        <label><span>Artist</span><input name="artist" maxlength="120" value="${escapeHtml(form.artist)}" placeholder="Artist / guest" /></label>
+        <label><span>Album</span><input name="album" maxlength="120" value="${escapeHtml(form.album)}" placeholder="Album / show" /></label>
+        <label><span>Artwork URL</span><input name="artworkURL" maxlength="1000" value="${escapeHtml(form.artworkURL)}" placeholder="Optional artwork URL" /></label>
+        <label><span>Notes</span><textarea name="notes" maxlength="600" rows="2">${escapeHtml(form.notes)}</textarea></label>
+        ${state.liveSequence.error ? `<p class="music-live-error">${escapeHtml(state.liveSequence.error)}</p>` : ''}
+        <div class="music-live-actions">
+          <button class="button button-accent" type="submit" ${state.liveSequence.saving ? 'disabled' : ''}>${state.liveSequence.editingItemId ? 'Save Item' : 'Add Item'}</button>
+          ${state.liveSequence.editingItemId ? '<button class="button button-muted" type="button" data-live-sequence-reset>Cancel Edit</button>' : ''}
+        </div>
+      </form>
+      <div class="music-sequence-list">
+        ${state.liveSequence.items.length ? state.liveSequence.items.map((item) => `
+          <article class="music-sequence-item ${state.liveStream?.currentNowPlaying?.sequenceItemId === item.itemId ? 'is-active' : ''}">
+            <div>
+              <strong>${escapeHtml(item.title)}</strong>
+              <span>${escapeHtml([item.artist, item.album].filter(Boolean).join(' · ') || 'Manual cue')}</span>
+            </div>
+            <div class="music-live-actions">
+              <button type="button" class="button button-muted" data-live-sequence-set="${escapeHtml(item.itemId)}">Set Live</button>
+              <button type="button" class="button button-muted" data-live-sequence-edit="${escapeHtml(item.itemId)}">Edit</button>
+              <button type="button" class="button button-danger" data-live-sequence-delete="${escapeHtml(item.itemId)}">Delete</button>
+            </div>
+          </article>
+        `).join('') : '<p class="music-muted">No sequence items yet.</p>'}
+      </div>
+      <div class="music-future-note"><strong>Automatic app metadata - coming later</strong><span>Use manual sequence items today. Browser apps cannot directly read currently playing desktop music app metadata.</span></div>
+    </aside>
+  `
+}
+
+function renderLiveActions(stream) {
+  const signedIn = Boolean(state.currentUser)
+  return `
+    <div class="music-live-action-bar">
+      <button type="button" class="button button-muted ${state.liveViewer.reaction === 'like' ? 'is-active' : ''}" data-live-reaction="like">${Number(stream.likeCount || 0).toLocaleString()} Like</button>
+      <button type="button" class="button button-muted ${state.liveViewer.reaction === 'dislike' ? 'is-active' : ''}" data-live-reaction="dislike">${Number(stream.dislikeCount || 0).toLocaleString()} Dislike</button>
+      <button type="button" class="button button-muted ${state.liveViewer.saved ? 'is-active' : ''}" data-live-save>${state.liveViewer.saved ? 'Saved' : 'Save'} · ${Number(stream.saveCount || 0).toLocaleString()}</button>
+      <button type="button" class="button button-muted" data-live-share>Share</button>
+    </div>
+    ${!signedIn ? '<p class="music-muted">Sign in to like, dislike, save, or chat. Listening and sharing are open.</p>' : ''}
+    ${state.liveActionMessage ? `<p class="music-muted">${escapeHtml(state.liveActionMessage)}</p>` : ''}
   `
 }
 
@@ -800,15 +1067,39 @@ function renderGoLivePage() {
     </section>
     ${!isSignedIn ? signInAction('Sign in as an eligible creator to start a live stream.') : !permissionsReady ? emptyState('Checking live access', 'Loading your account permissions before opening the live setup.') : !canGoLive ? emptyState('Live streaming is limited to approved creators.', 'Ask the Melogic team to enable live streaming for your account before starting an audio stream.', `<a class="button button-muted" href="${ROUTES.musicLive}">Back to Live Streams</a>`) : `
       <section class="music-go-live-grid">
+        <article class="music-panel music-live-preview-card">
+          <p class="music-eyebrow">Listener Preview</p>
+          ${renderLiveArtwork({ title: form.title || 'Untitled live stream', coverArtURL: form.coverArtURL }, 'music-live-detail-art')}
+          <div>
+            <span class="music-live-badge">${state.goLive.streamId ? 'LIVE' : 'READY'}</span>
+            <span class="music-live-lock">${escapeHtml(liveAccessLabel(form))}</span>
+            <h2>${escapeHtml(form.title || 'Untitled live stream')}</h2>
+            <p>${escapeHtml(form.description || 'Your stream description will appear here.')}</p>
+            <div class="music-live-host"><span aria-hidden="true"></span><div><strong>${escapeHtml(state.currentUser?.displayName || 'Melogic Creator')}</strong><small>${escapeHtml(liveCategoryLabel(form.category))} · ${escapeHtml(listenerCountLabel(state.liveStream?.listenerCount || 0))}</small></div></div>
+          </div>
+        </article>
         <form class="music-go-live-form music-panel" data-go-live-form>
+          <p class="music-eyebrow">Broadcast setup</p>
+          <h2>Stream Details</h2>
           <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}" ${form.category === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
           <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
           <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
           <label><span>Title</span><input name="title" maxlength="90" required placeholder="Tonight on Melogic..." value="${escapeHtml(form.title)}" /></label>
           <label><span>Description</span><textarea name="description" rows="4" maxlength="1200" placeholder="Tell listeners what this stream is about.">${escapeHtml(form.description)}</textarea></label>
-          <label><span>Cover image URL</span><input name="coverArtURL" placeholder="Optional image URL for this live stream" value="${escapeHtml(form.coverArtURL)}" /></label>
+          <div class="music-cover-tools">
+            <label><span>Cover image URL</span><input name="coverArtURL" placeholder="Optional image URL for this live stream" value="${escapeHtml(form.coverArtURL)}" /></label>
+            <div class="music-live-actions">
+              <label class="button button-muted music-upload-button"><input type="file" accept="image/*" data-live-cover-upload /> ${state.goLive.uploadingCover ? 'Uploading...' : 'Upload Image'}</label>
+              <button type="button" class="button button-muted" data-live-cover-clear>Clear Cover</button>
+            </div>
+            <p class="music-muted">Use a reliable HTTPS image URL or upload a cover. Uploaded covers replace the previous upload for this draft.</p>
+          </div>
           <label><span>Tags</span><input name="tags" placeholder="radio, new music, behind the scenes" value="${escapeHtml(form.tags)}" /></label>
-          <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
+          <div class="music-access-panel">
+            <label><span>Access</span><select name="accessMode"><option value="public" ${form.accessMode === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.accessMode === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.accessMode === 'private' ? 'selected' : ''}>Private</option><option value="password" ${form.accessMode === 'password' ? 'selected' : ''}>Password protected</option></select></label>
+            <input type="hidden" name="visibility" value="${form.accessMode === 'private' ? 'private' : form.accessMode === 'unlisted' ? 'unlisted' : 'public'}" />
+            ${form.accessMode === 'password' ? `<label><span>Listener password</span><input name="password" type="password" maxlength="200" value="${escapeHtml(form.password)}" placeholder="Listeners need this password to join." /></label><p class="music-muted">Listeners need this password to join. It is hashed server-side and is not stored as plaintext.</p>` : ''}
+          </div>
           <div class="music-live-rules">
             <strong>Live stream rules</strong>
             <p>Stream only content you have rights to broadcast. No harmful, illegal, abusive, or unauthorized copyrighted audio. Melogic may remove streams that violate rules.</p>
@@ -846,6 +1137,7 @@ function renderGoLivePage() {
           ` : ''}
         </aside>
         ${state.goLive.streamId ? renderLiveChatPanel(state.goLive.streamId) : ''}
+        ${renderHostSequencePanel()}
       </section>
     `}
   `)
@@ -871,14 +1163,20 @@ function renderLiveDetailPage() {
         <p>${escapeHtml(stream.description || 'Audio-only live stream on Melogic Music.')}</p>
         <div class="music-live-host">
           ${stream.hostPhotoURL ? `<img src="${escapeHtml(stream.hostPhotoURL)}" alt="" />` : '<span aria-hidden="true"></span>'}
-          <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${escapeHtml(liveCategoryLabel(stream.category))} · ${Number(stream.listenerCount || 0).toLocaleString()} listening</small></div>
+          <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${escapeHtml(liveCategoryLabel(stream.category))} · ${escapeHtml(listenerCountLabel(stream.listenerCount))}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
         </div>
+        ${renderNowPlaying(stream)}
         <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Live audio</span>'}</div>
+        ${stream.passwordProtected && !['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? `
+          <form class="music-password-form" data-live-password-form>
+            <label><span>Stream password</span><input name="password" type="password" value="${escapeHtml(state.livePassword)}" placeholder="Enter password to listen" /></label>
+          </form>
+        ` : ''}
         <div class="music-live-listener">
           <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${['live', 'waiting'].includes(state.liveStatus) ? 'Pause / Leave' : 'Listen'}</button>
           <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
-          <button type="button" class="button button-muted" disabled>Report</button>
         </div>
+        ${renderLiveActions(stream)}
         ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : 'This stream has ended or is no longer public.')}</p>`}
       </div>
     </section>
@@ -887,6 +1185,28 @@ function renderLiveDetailPage() {
 }
 
 function renderPlayer() {
+  if (!shouldShowGlobalMusicPlayer()) return ''
+  if (state.listenerRoom && state.liveStream?.id) {
+    const meta = nowPlayingDisplay(state.liveStream)
+    return `
+      <aside class="music-player" data-music-player aria-label="Melogic Music live player">
+        <div class="music-player-art">
+          ${meta.artworkURL ? `<img src="${escapeHtml(meta.artworkURL)}" alt="" />` : '<span aria-hidden="true">LIVE</span>'}
+        </div>
+        <div class="music-player-meta">
+          <strong>${escapeHtml(meta.title || state.liveStream.title)}</strong>
+          <span>${escapeHtml(meta.artist || state.liveStream.hostDisplayName)} · Live</span>
+        </div>
+        <button type="button" class="button button-accent" data-live-global-toggle>${['live', 'waiting'].includes(state.liveStatus) ? 'Pause' : 'Play'}</button>
+        <span class="music-live-badge">LIVE</span>
+        <label class="music-player-volume">
+          <span>Volume</span>
+          <input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume />
+        </label>
+        <button type="button" class="button button-muted" data-live-global-stop>Stop</button>
+      </aside>
+    `
+  }
   const track = state.player.track
   return `
     <aside class="music-player" data-music-player aria-label="Melogic Music player">
@@ -1053,12 +1373,19 @@ function stopPreviewStream() {
 function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) {
   if (!form) return
   const data = new FormData(form)
+  const nextCoverURL = String(data.get('coverArtURL') || '').slice(0, 1000)
+  const previousCoverURL = state.goLive.form.coverArtURL
+  const previousCoverSource = state.goLive.form.coverArtSource
   state.goLive.form = {
     category: String(data.get('category') || 'music'),
     audioMode: String(data.get('audioMode') || state.goLive.form.audioMode || 'music') === 'voice' ? 'voice' : 'music',
+    accessMode: String(data.get('accessMode') || state.goLive.form.accessMode || 'public'),
+    password: String(data.get('password') || state.goLive.form.password || '').slice(0, 200),
     title: String(data.get('title') || '').slice(0, 90),
     description: String(data.get('description') || '').slice(0, 1200),
-    coverArtURL: String(data.get('coverArtURL') || '').slice(0, 1000),
+    coverArtURL: nextCoverURL,
+    coverArtPath: state.goLive.form.coverArtPath || '',
+    coverArtSource: nextCoverURL ? (previousCoverSource === 'upload' && nextCoverURL === previousCoverURL ? 'upload' : 'url') : 'fallback',
     tags: String(data.get('tags') || '').slice(0, 500),
     visibility: String(data.get('visibility') || 'public'),
     rightsAccepted: data.get('rightsAccepted') === 'on',
@@ -1181,6 +1508,7 @@ function startLiveStreamSubscription(streamId) {
       }
       state.liveStream = stream
       state.liveError = ''
+      updateLiveMediaSession(stream)
       rerender()
     },
     () => {
@@ -1194,6 +1522,36 @@ function startLiveStreamSubscription(streamId) {
   )
 }
 
+function startLiveSequenceSubscription(streamId) {
+  stopLiveSequenceSubscription()
+  if (!streamId) return
+  state.liveSequence.unsubscribe = subscribeMusicLiveSequenceItems(
+    streamId,
+    (items) => {
+      state.liveSequence.items = items
+      rerender()
+    },
+    () => {
+      state.liveSequence.error = 'Now-playing sequence could not be loaded.'
+      rerender()
+    }
+  )
+}
+
+async function loadViewerState(streamId) {
+  if (!streamId || !state.currentUser) {
+    state.liveViewer = { reaction: 'none', saved: false, loading: false }
+    return
+  }
+  state.liveViewer.loading = true
+  try {
+    const viewer = await getMusicLiveViewerState(streamId)
+    state.liveViewer = { reaction: viewer.reaction || 'none', saved: viewer.saved === true, loading: false }
+  } catch {
+    state.liveViewer = { reaction: 'none', saved: false, loading: false }
+  }
+}
+
 async function saveHostLiveMetadata(form) {
   if (!state.goLive.streamId) return
   const data = new FormData(form)
@@ -1202,9 +1560,13 @@ async function saveHostLiveMetadata(form) {
     title: String(data.get('title') || '').slice(0, 90),
     description: String(data.get('description') || '').slice(0, 1200),
     coverArtURL: String(data.get('coverArtURL') || '').slice(0, 1000),
+    coverArtPath: state.goLive.form.coverArtPath || '',
+    coverArtSource: state.goLive.form.coverArtSource || 'fallback',
     tags: String(data.get('tags') || '').slice(0, 500),
     category: String(data.get('category') || 'music'),
-    visibility: String(data.get('visibility') || 'public')
+    visibility: String(data.get('visibility') || 'public'),
+    accessMode: String(data.get('accessMode') || state.goLive.form.accessMode || 'public'),
+    password: String(data.get('password') || '').slice(0, 200)
   }
   state.goLive.editSaving = true
   state.goLive.editError = ''
@@ -1251,6 +1613,59 @@ async function sendLiveChatMessage(form) {
   }
 }
 
+function resetSequenceForm() {
+  state.liveSequence.editingItemId = ''
+  state.liveSequence.form = { title: '', artist: '', album: '', artworkURL: '', notes: '' }
+  state.liveSequence.error = ''
+  rerender()
+}
+
+function editSequenceItem(itemId = '') {
+  const item = state.liveSequence.items.find((entry) => entry.itemId === itemId)
+  if (!item) return
+  state.liveSequence.editingItemId = item.itemId
+  state.liveSequence.form = {
+    title: item.title || '',
+    artist: item.artist || '',
+    album: item.album || '',
+    artworkURL: item.artworkURL || '',
+    notes: item.notes || ''
+  }
+  state.liveSequence.error = ''
+  rerender()
+}
+
+async function saveSequenceItem(form) {
+  if (!state.goLive.streamId) return
+  const data = new FormData(form)
+  const payload = {
+    streamId: state.goLive.streamId,
+    itemId: String(data.get('itemId') || '').trim(),
+    title: String(data.get('title') || '').trim().slice(0, 120),
+    artist: String(data.get('artist') || '').trim().slice(0, 120),
+    album: String(data.get('album') || '').trim().slice(0, 120),
+    artworkURL: String(data.get('artworkURL') || '').trim().slice(0, 1000),
+    notes: String(data.get('notes') || '').trim().slice(0, 600)
+  }
+  if (!payload.title) {
+    state.liveSequence.error = 'Add a title for this now-playing item.'
+    rerender()
+    return
+  }
+  state.liveSequence.saving = true
+  state.liveSequence.error = ''
+  rerender()
+  try {
+    await upsertMusicLiveSequenceItem(payload)
+    resetSequenceForm()
+  } catch (error) {
+    state.liveSequence.error = error?.message || 'Sequence item could not be saved.'
+  } finally {
+    state.liveSequence.saving = false
+    rerender()
+  }
+}
+
 async function startHostBroadcast(form) {
   if (!state.currentUser) return
   updateGoLiveFormState(form)
@@ -1266,7 +1681,11 @@ async function startHostBroadcast(form) {
       description: formState.description,
       category: formState.category,
       visibility: formState.visibility,
+      accessMode: formState.accessMode,
+      password: formState.password,
       coverArtURL: formState.coverArtURL,
+      coverArtPath: formState.coverArtPath,
+      coverArtSource: formState.coverArtSource,
       tags: formState.tags,
       audioMode: formState.audioMode,
       rightsAccepted: formState.rightsAccepted,
@@ -1314,6 +1733,10 @@ async function startHostBroadcast(form) {
     await markMusicLiveStreamOnAir(pendingStreamId)
     startHostHeartbeat(pendingStreamId)
     startLiveChatSubscription(pendingStreamId)
+    if (formState.accessMode !== 'private') {
+      startLiveStreamSubscription(pendingStreamId)
+      startLiveSequenceSubscription(pendingStreamId)
+    }
     state.goLive.connectionStatus = 'Audio published. You are live.'
   } catch (error) {
     console.warn('[music] startMusicLiveStream failed', {
@@ -1377,6 +1800,11 @@ async function endHostBroadcast() {
 }
 
 function disconnectLiveListener() {
+  stopListenerPresenceHeartbeat()
+  if (state.liveStream?.id && state.listenerPresenceId) {
+    leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
+  }
+  state.listenerPresenceId = ''
   if (state.listenerAudioElement) {
     state.listenerAudioElement.remove()
     state.listenerAudioElement = null
@@ -1386,6 +1814,7 @@ function disconnectLiveListener() {
     state.listenerRoom = null
   }
   state.liveStatus = 'idle'
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
 }
 
 async function joinLiveListener() {
@@ -1400,7 +1829,14 @@ async function joinLiveListener() {
   state.liveError = ''
   rerender()
   try {
-    const credentials = await joinMusicLiveStream(state.liveStream.id)
+    const presenceId = livePresenceId(state.liveStream.id)
+    const credentials = await joinMusicLiveStream(state.liveStream.id, {
+      password: state.livePassword,
+      presenceId,
+      anonId: listenerAnonId()
+    })
+    state.listenerPresenceId = credentials.presenceId || presenceId
+    startListenerPresenceHeartbeat(state.liveStream.id, state.listenerPresenceId)
     // LiveKit/WebRTC keeps audio interactive and handles jitter/reconnects internally.
     // It does not expose a normal browser-side setting for a large intentional radio buffer.
     const room = new Room({ adaptiveStream: true, dynacast: true })
@@ -1421,6 +1857,7 @@ async function joinLiveListener() {
         updateLiveListenerControls()
       })
       state.liveStatus = 'live'
+      updateLiveMediaSession(state.liveStream)
       updateLiveListenerControls()
     })
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -1442,6 +1879,7 @@ async function joinLiveListener() {
     })
     room.on(RoomEvent.Disconnected, () => {
       state.liveStatus = state.liveStream?.status === 'live' ? 'ended' : 'idle'
+      stopListenerPresenceHeartbeat()
       updateLiveListenerControls()
     })
     await room.connect(credentials.url, credentials.listenerToken || credentials.token)
@@ -1546,10 +1984,35 @@ function bindMusicEvents() {
     refreshAudioDevices().catch(() => {})
   })
   app.querySelector('[data-go-live-form]')?.addEventListener('input', (event) => {
+    const previousPath = state.goLive.form.coverArtSource === 'upload' ? state.goLive.form.coverArtPath : ''
+    const previousURL = state.goLive.form.coverArtURL
     updateGoLiveFormState(event.currentTarget)
+    if (previousPath && state.goLive.form.coverArtSource !== 'upload' && state.goLive.form.coverArtURL !== previousURL) {
+      deleteUploadedCover(previousPath).catch(() => {})
+      state.goLive.form.coverArtPath = ''
+    }
   })
   app.querySelector('[data-go-live-form]')?.addEventListener('change', (event) => {
+    const previousPath = state.goLive.form.coverArtSource === 'upload' ? state.goLive.form.coverArtPath : ''
+    const previousURL = state.goLive.form.coverArtURL
     updateGoLiveFormState(event.currentTarget)
+    if (previousPath && state.goLive.form.coverArtSource !== 'upload' && state.goLive.form.coverArtURL !== previousURL) {
+      deleteUploadedCover(previousPath).catch(() => {})
+      state.goLive.form.coverArtPath = ''
+    }
+  })
+  app.querySelector('[data-live-cover-upload]')?.addEventListener('change', (event) => {
+    const file = event.target.files?.[0]
+    if (file) uploadLiveCoverFile(file).catch(() => {})
+  })
+  app.querySelector('[data-live-cover-clear]')?.addEventListener('click', () => {
+    updateGoLiveFormState()
+    const oldPath = state.goLive.form.coverArtSource === 'upload' ? state.goLive.form.coverArtPath : ''
+    state.goLive.form.coverArtURL = ''
+    state.goLive.form.coverArtPath = ''
+    state.goLive.form.coverArtSource = 'fallback'
+    deleteUploadedCover(oldPath).catch(() => {})
+    rerender()
   })
   app.querySelector('[data-toggle-preview-mute]')?.addEventListener('click', () => {
     updateGoLiveFormState()
@@ -1577,7 +2040,12 @@ function bindMusicEvents() {
     endHostBroadcast().catch(() => {})
   })
   app.querySelector('[data-live-listen]')?.addEventListener('click', () => {
+    const passwordForm = app.querySelector('[data-live-password-form]')
+    if (passwordForm) state.livePassword = String(new FormData(passwordForm).get('password') || '')
     joinLiveListener().catch(() => {})
+  })
+  app.querySelector('[data-live-password-form]')?.addEventListener('input', (event) => {
+    state.livePassword = String(new FormData(event.currentTarget).get('password') || '')
   })
   app.querySelector('[data-live-volume]')?.addEventListener('input', (event) => {
     state.player.volume = Number(event.target.value)
@@ -1589,6 +2057,94 @@ function bindMusicEvents() {
   app.querySelector('[data-live-chat-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     sendLiveChatMessage(event.currentTarget).catch(() => {})
+  })
+  app.querySelectorAll('[data-live-reaction]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!state.currentUser) {
+        state.liveActionMessage = 'Sign in to like or dislike live streams.'
+        rerender()
+        return
+      }
+      const requested = button.dataset.liveReaction || 'none'
+      const next = state.liveViewer.reaction === requested ? 'none' : requested
+      toggleMusicLiveReaction(state.liveStream?.id || '', next).then((result) => {
+        state.liveViewer.reaction = result.reaction || next
+        state.liveActionMessage = ''
+      }).catch((error) => {
+        state.liveActionMessage = error?.message || 'Reaction could not be saved.'
+      }).finally(rerender)
+    })
+  })
+  app.querySelector('[data-live-save]')?.addEventListener('click', () => {
+    if (!state.currentUser) {
+      state.liveActionMessage = 'Sign in to save live streams.'
+      rerender()
+      return
+    }
+    const next = !state.liveViewer.saved
+    toggleSaveMusicLiveStream(state.liveStream?.id || '', next).then((result) => {
+      state.liveViewer.saved = result.saved === true
+      state.liveActionMessage = result.saved ? 'Saved to your live streams.' : 'Removed from saved live streams.'
+    }).catch((error) => {
+      state.liveActionMessage = error?.message || 'Save could not be updated.'
+    }).finally(rerender)
+  })
+  app.querySelector('[data-live-share]')?.addEventListener('click', () => {
+    const url = liveShareURL(state.liveStream?.id || state.goLive.streamId)
+    if (navigator.share) {
+      navigator.share({ title: state.liveStream?.title || 'Melogic Music Live', url }).catch(() => {})
+    } else {
+      navigator.clipboard?.writeText(url).then(() => {
+        state.liveActionMessage = 'Live stream link copied.'
+        rerender()
+      }).catch(() => {
+        state.liveActionMessage = url
+        rerender()
+      })
+    }
+  })
+  app.querySelector('[data-live-global-toggle]')?.addEventListener('click', () => {
+    if (state.listenerAudioElement && !state.listenerAudioElement.paused) {
+      state.listenerAudioElement.pause()
+      state.liveStatus = 'waiting'
+      updateLiveMediaSession()
+      rerender()
+    } else {
+      state.listenerAudioElement?.play?.().then(() => {
+        state.liveStatus = 'live'
+        updateLiveMediaSession()
+        rerender()
+      }).catch(() => {})
+    }
+  })
+  app.querySelector('[data-live-global-stop]')?.addEventListener('click', () => {
+    disconnectLiveListener()
+    rerender()
+  })
+  app.querySelector('[data-live-sequence-form]')?.addEventListener('input', (event) => {
+    const data = new FormData(event.currentTarget)
+    state.liveSequence.form = {
+      title: String(data.get('title') || '').slice(0, 120),
+      artist: String(data.get('artist') || '').slice(0, 120),
+      album: String(data.get('album') || '').slice(0, 120),
+      artworkURL: String(data.get('artworkURL') || '').slice(0, 1000),
+      notes: String(data.get('notes') || '').slice(0, 600)
+    }
+  })
+  app.querySelector('[data-live-sequence-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    saveSequenceItem(event.currentTarget).catch(() => {})
+  })
+  app.querySelector('[data-live-sequence-reset]')?.addEventListener('click', () => resetSequenceForm())
+  app.querySelector('[data-live-sequence-clear]')?.addEventListener('click', () => setMusicLiveNowPlaying(state.goLive.streamId, '').catch(() => {}))
+  app.querySelectorAll('[data-live-sequence-set]').forEach((button) => {
+    button.addEventListener('click', () => setMusicLiveNowPlaying(state.goLive.streamId, button.dataset.liveSequenceSet || '').catch(() => {}))
+  })
+  app.querySelectorAll('[data-live-sequence-edit]').forEach((button) => {
+    button.addEventListener('click', () => editSequenceItem(button.dataset.liveSequenceEdit || ''))
+  })
+  app.querySelectorAll('[data-live-sequence-delete]').forEach((button) => {
+    button.addEventListener('click', () => deleteMusicLiveSequenceItem(state.goLive.streamId, button.dataset.liveSequenceDelete || '').catch(() => {}))
   })
   app.querySelectorAll('[data-play-release]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1655,6 +2211,7 @@ async function attachMusicHeroVideo() {
 async function loadMusicPage() {
   stopLiveStreamSubscription()
   stopLiveChatSubscription()
+  stopLiveSequenceSubscription()
   stopLiveListRefresh()
   initShellChrome()
   state.currentUser = await waitForInitialAuthState().catch(() => null)
@@ -1688,6 +2245,8 @@ async function loadMusicPage() {
     if (state.liveStream?.id) {
       startLiveStreamSubscription(state.liveStream.id)
       startLiveChatSubscription(state.liveStream.id)
+      startLiveSequenceSubscription(state.liveStream.id)
+      await loadViewerState(state.liveStream.id)
     }
     state.loading = false
     rerender()
@@ -1731,6 +2290,7 @@ window.addEventListener('popstate', () => {
   disconnectLiveListener()
   stopLiveStreamSubscription()
   stopLiveChatSubscription()
+  stopLiveSequenceSubscription()
   state.route = currentRouteMode()
   state.activeView = getInitialView()
   loadMusicPage().catch(() => rerender())
@@ -1744,6 +2304,9 @@ window.addEventListener('beforeunload', (event) => {
 
 window.addEventListener('pagehide', () => {
   if (isHostBroadcastActive()) sendHostUnloadSignal('host_pagehide')
+  if (state.liveStream?.id && state.listenerPresenceId) {
+    leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
+  }
 })
 
 loadMusicPage().catch((error) => {
