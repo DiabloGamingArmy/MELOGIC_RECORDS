@@ -220,6 +220,12 @@ export async function startMusicLiveStream(payload = {}) {
   return result?.data || { ok: false }
 }
 
+export async function prepareMusicLiveStreamDraft(payload = {}) {
+  const callable = httpsCallable(functions, 'prepareMusicLiveStreamDraft')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
 export async function markMusicLiveStreamOnAir(streamId = '') {
   const callable = httpsCallable(functions, 'markMusicLiveStreamOnAir')
   const result = await callable({ streamId })

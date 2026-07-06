@@ -381,7 +381,18 @@ const startMusicLiveStream = onCall(
       const config = livekitConfig(stage)
 
       stage = 'stream doc id generated'
-      streamRef = db().collection('musicLiveStreams').doc()
+      const requestedStreamId = cleanId(request.data?.streamId, 120)
+      streamRef = requestedStreamId ? db().collection('musicLiveStreams').doc(requestedStreamId) : db().collection('musicLiveStreams').doc()
+      if (requestedStreamId) {
+        const existingStream = await streamRef.get()
+        if (existingStream.exists) {
+          const stream = existingStream.data() || {}
+          if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can start this draft stream.', { stage })
+          if (!['draft', 'setup', 'error'].includes(stream.status || 'draft')) {
+            throw new HttpsError('failed-precondition', 'This stream is already active or ended.', { stage })
+          }
+        }
+      }
       const streamId = streamRef.id
       const roomName = cleanRoomName(`music-live-${streamId}`)
       liveLog(stage, { uid, streamId, roomName })
@@ -402,6 +413,8 @@ const startMusicLiveStream = onCall(
 
       stage = 'Firestore stream document created'
       const now = admin.firestore.FieldValue.serverTimestamp()
+      const previousSnap = await streamRef.get()
+      const previousStream = previousSnap.exists ? previousSnap.data() || {} : {}
       await streamRef.set({
         streamId,
         hostUid: uid,
@@ -430,7 +443,7 @@ const startMusicLiveStream = onCall(
         livekitRoomSid: '',
         startedAt: null,
         endedAt: null,
-        createdAt: now,
+        createdAt: previousStream.createdAt || now,
         updatedAt: now,
         lastHostHeartbeatAt: null,
         listenerCount: 0,
@@ -489,6 +502,88 @@ const startMusicLiveStream = onCall(
     }
   }
 )
+
+const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to prepare a live stream.')
+  const { user, profile, accountPermissions } = await loadAccount(uid)
+  assertEligible({ auth: request.auth, user, profile, accountPermissions })
+
+  const requestedStreamId = cleanId(request.data?.streamId, 120)
+  const streamRef = requestedStreamId ? db().collection('musicLiveStreams').doc(requestedStreamId) : db().collection('musicLiveStreams').doc()
+  const streamId = streamRef.id
+  const snap = await streamRef.get()
+  if (snap.exists) {
+    const stream = snap.data() || {}
+    if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can update this draft stream.')
+    if (!['draft', 'setup', 'error'].includes(stream.status || 'draft')) {
+      return { ok: true, streamId, status: stream.status || 'live' }
+    }
+  }
+
+  const metadata = cleanStreamMetadata(request.data || {})
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
+  const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
+  const title = cleanString(request.data?.title, 90) || 'Untitled live stream'
+  const roomName = cleanRoomName(`music-live-${streamId}`)
+
+  await streamRef.set({
+    streamId,
+    hostUid: uid,
+    hostDisplayName,
+    hostPhotoURL,
+    title,
+    description: metadata.description,
+    category: metadata.category,
+    tags: metadata.tags,
+    coverArtPath: metadata.coverArtPath,
+    coverArtURL: metadata.coverArtURL,
+    coverArtSource: metadata.coverArtSource,
+    status: 'draft',
+    connectionStatus: 'draft',
+    visibility: metadata.visibility,
+    accessMode: metadata.accessMode,
+    passwordProtected: metadata.accessMode === 'password',
+    audioMode: normalizeAudioMode(request.data?.audioMode),
+    audioProfile: normalizeAudioMode(request.data?.audioMode) === 'music' ? 'high_quality_music' : 'podcast_voice',
+    audioOnly: true,
+    videoEnabled: false,
+    hostConnected: false,
+    audioPublished: false,
+    roomName,
+    livekitRoomName: roomName,
+    livekitRoomSid: '',
+    startedAt: null,
+    endedAt: null,
+    createdAt: snap.exists ? snap.data()?.createdAt || now : now,
+    updatedAt: now,
+    lastHostHeartbeatAt: null,
+    listenerCount: 0,
+    peakListenerCount: 0,
+    isRecordable: false,
+    archiveRequested: false,
+    archiveStatus: 'none',
+    moderationStatus: 'clear',
+    reportCount: 0
+  }, { merge: true })
+
+  if (metadata.accessMode === 'password' && cleanString(request.data?.password, 200)) {
+    const secret = hashPassword(request.data?.password)
+    await db().collection('musicLiveStreamSecrets').doc(streamId).set({
+      streamId,
+      hostUid: uid,
+      passwordHash: secret.hash,
+      passwordSalt: secret.salt,
+      passwordAlgorithm: secret.algorithm,
+      passwordIterations: secret.iterations,
+      createdAt: now,
+      updatedAt: now
+    }, { merge: true })
+  }
+
+  return { ok: true, streamId, status: 'draft' }
+})
 
 const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (request) => {
   const uid = request.auth?.uid
@@ -834,7 +929,7 @@ const upsertMusicLiveSequenceItem = onCall({ region: 'us-central1' }, async (req
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in to update now-playing items.')
   const streamId = cleanString(request.data?.streamId, 120)
   if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
-  const { streamRef } = await assertStreamHost(streamId, uid)
+  const { streamRef, stream } = await assertStreamHost(streamId, uid)
   const item = cleanSequenceItem(request.data || {})
   if (!item.title) throw new HttpsError('invalid-argument', 'Sequence item title is required.')
   const itemId = cleanId(request.data?.itemId, 120) || streamRef.collection('sequenceItems').doc().id
@@ -848,6 +943,17 @@ const upsertMusicLiveSequenceItem = onCall({ region: 'us-central1' }, async (req
   }
   if (!request.data?.itemId) payload.createdAt = now
   await streamRef.collection('sequenceItems').doc(itemId).set(payload, { merge: true })
+  if (stream.currentNowPlaying?.sequenceItemId === itemId) {
+    await streamRef.set({
+      currentNowPlaying: {
+        ...item,
+        sequenceItemId: itemId,
+        updatedAt: now
+      },
+      lastMetadataUpdateAt: now,
+      updatedAt: now
+    }, { merge: true })
+  }
   return { ok: true, streamId, itemId, item }
 })
 
@@ -986,6 +1092,7 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
 })
 
 module.exports = {
+  prepareMusicLiveStreamDraft,
   startMusicLiveStream,
   markMusicLiveStreamOnAir,
   heartbeatMusicLiveStream,

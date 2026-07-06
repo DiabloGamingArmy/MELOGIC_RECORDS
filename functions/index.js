@@ -94,6 +94,7 @@ const {
 } = require('./src/compliance/creatorAgeVerification')
 const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
 const {
+  prepareMusicLiveStreamDraft,
   startMusicLiveStream,
   markMusicLiveStreamOnAir,
   heartbeatMusicLiveStream,
@@ -252,6 +253,7 @@ exports.sendAdminAuthEmail = sendAdminAuthEmail
 exports.getEmailAdminStatus = getEmailAdminStatus
 exports.listAdminEmailLogs = listAdminEmailLogs
 exports.createLiveKitToken = createLiveKitToken
+exports.prepareMusicLiveStreamDraft = prepareMusicLiveStreamDraft
 exports.startMusicLiveStream = startMusicLiveStream
 exports.markMusicLiveStreamOnAir = markMusicLiveStreamOnAir
 exports.heartbeatMusicLiveStream = heartbeatMusicLiveStream

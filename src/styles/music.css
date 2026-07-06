@@ -673,8 +673,9 @@
   gap: 0.7rem;
 }
 
+.music-live-avatar,
 .music-live-host img,
-.music-live-host > span {
+.music-live-host > span:not(.music-stable-image) {
   width: 2.8rem;
   height: 2.8rem;
   border-radius: 50%;
@@ -698,9 +699,10 @@
 
 .music-go-live-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr) 9.5rem;
   gap: 1rem;
   align-items: start;
+  min-height: min(780px, calc(100vh - var(--nav-offset) - 9rem));
 }
 
 .music-live-preview-card,
@@ -715,6 +717,94 @@
 
 .music-live-preview-card {
   align-content: start;
+}
+
+.music-host-work-area,
+.music-host-listener-preview,
+.music-host-control-rail {
+  position: sticky;
+  top: calc(var(--nav-offset) + 1rem);
+  max-height: calc(100vh - var(--nav-offset) - 2rem);
+}
+
+.music-host-work-area {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  min-height: min(760px, calc(100vh - var(--nav-offset) - 9rem));
+}
+
+.music-host-control-scroll {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.music-host-control-section {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.music-host-listener-preview {
+  align-content: start;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.music-host-preview-copy {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.music-host-control-rail {
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: rgba(5, 9, 17, 0.66);
+  box-shadow: var(--ml-shadow-panel);
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem;
+}
+
+.music-host-control-rail button {
+  border: 1px solid transparent;
+  border-radius: var(--ml-radius-sm);
+  background: transparent;
+  color: var(--ml-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  padding: 0.65rem 0.7rem;
+  text-align: left;
+}
+
+.music-host-control-rail button.is-active,
+.music-host-control-rail button:hover,
+.music-host-control-rail button:focus-visible {
+  border-color: rgba(110, 231, 255, 0.28);
+  background: rgba(110, 231, 255, 0.08);
+  color: var(--ml-text);
+  outline: none;
+}
+
+.music-host-footer {
+  border-top: 1px solid var(--ml-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  padding-top: 0.8rem;
+}
+
+.music-host-footer div:first-child {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.music-host-footer span {
+  color: var(--ml-text-muted);
+  font-size: 0.84rem;
 }
 
 .music-live-preview-card h2 {
@@ -871,27 +961,37 @@
 
 .music-live-chat {
   align-content: start;
+  min-height: 0;
 }
 
 .music-live-chat-messages {
   display: grid;
   gap: 0.55rem;
-  max-height: 22rem;
+  max-height: min(32rem, 48vh);
   overflow: auto;
   padding-right: 0.2rem;
 }
 
 .music-live-chat-message {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  gap: 0.55rem;
   border: 1px solid var(--ml-border);
   border-radius: var(--ml-radius-md);
   background: rgba(5, 9, 17, 0.48);
   padding: 0.62rem 0.7rem;
 }
 
-.music-live-chat-message div {
+.music-live-chat-message div div {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
+}
+
+.music-chat-avatar {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
 }
 
 .music-live-chat-message time {
@@ -931,8 +1031,9 @@
   padding: 0.7rem;
 }
 
+.music-now-playing-art,
 .music-now-playing img,
-.music-now-playing > span {
+.music-now-playing > span:not(.music-stable-image) {
   width: 4.2rem;
   aspect-ratio: 1;
   border-radius: var(--ml-radius-md);
@@ -950,10 +1051,15 @@
 .music-sequence-list {
   display: grid;
   gap: 0.6rem;
+  max-height: min(34rem, 48vh);
+  overflow: auto;
+  padding-right: 0.2rem;
 }
 
 .music-sequence-item {
   display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr) auto;
+  align-items: center;
   gap: 0.55rem;
   border: 1px solid var(--ml-border);
   border-radius: var(--ml-radius-md);
@@ -966,9 +1072,91 @@
 }
 
 .music-sequence-item span,
+.music-sequence-item small,
 .music-future-note span {
   display: block;
   color: var(--ml-text-muted);
+}
+
+.music-sequence-art,
+.music-sequence-form-preview {
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: var(--ml-radius-sm);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.music-sequence-form-preview {
+  width: 5rem;
+  height: 5rem;
+}
+
+.music-sequence-status {
+  border: 1px solid var(--ml-border);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.22rem 0.5rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.music-sequence-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  grid-column: 2 / -1;
+}
+
+.music-studio-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.music-studio-panel {
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: rgba(5, 9, 17, 0.56);
+  display: grid;
+  gap: 0.45rem;
+  min-height: 10rem;
+  padding: 0.8rem;
+}
+
+.music-studio-panel.is-program {
+  border-color: rgba(36, 211, 120, 0.36);
+}
+
+.music-studio-panel.is-preview {
+  border-color: rgba(110, 231, 255, 0.34);
+}
+
+.music-stable-image {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.music-stable-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  position: absolute;
+  inset: 0;
+}
+
+.music-stable-image.is-loaded .music-stable-fallback {
+  opacity: 0;
+}
+
+.music-stable-fallback {
+  color: var(--ml-text-muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  transition: opacity 120ms ease;
 }
 
 .music-future-note {
@@ -1153,6 +1341,37 @@
   .music-go-live-grid,
   .music-how-grid {
     grid-template-columns: 1fr;
+  }
+
+  .music-host-work-area,
+  .music-host-listener-preview,
+  .music-host-control-rail {
+    position: static;
+    max-height: none;
+  }
+
+  .music-host-control-rail {
+    grid-row: 1;
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .music-host-control-rail button {
+    white-space: nowrap;
+  }
+
+  .music-host-footer,
+  .music-studio-grid,
+  .music-sequence-item {
+    grid-template-columns: 1fr;
+  }
+
+  .music-host-footer {
+    align-items: stretch;
+  }
+
+  .music-sequence-controls {
+    grid-column: auto;
   }
 
   .music-hero-stat {

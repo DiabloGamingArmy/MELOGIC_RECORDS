@@ -2130,11 +2130,14 @@ service cloud.firestore {
     }
 
     match /musicLiveStreams/{streamId} {
-      allow read: if resource.data.status == 'live'
-        && (
-          resource.data.visibility in ['public', 'unlisted']
-          || resource.data.accessMode in ['public', 'unlisted', 'password']
-        );
+      allow read: if (
+          resource.data.status == 'live'
+          && (
+            resource.data.visibility in ['public', 'unlisted']
+            || resource.data.accessMode in ['public', 'unlisted', 'password']
+          )
+        )
+        || (signedIn() && (resource.data.hostUid == request.auth.uid || isAdminClaim()));
       allow update: if signedIn()
         && (resource.data.hostUid == request.auth.uid || isAdminClaim())
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -2196,11 +2199,15 @@ service cloud.firestore {
       }
 
       match /sequenceItems/{itemId} {
-        allow read: if get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
-          && (
-            get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
-            || get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted', 'password']
-          );
+        allow read: if (
+            get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
+            && (
+              get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
+              || get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted', 'password']
+            )
+          )
+          || (signedIn()
+            && (get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.hostUid == request.auth.uid || isAdminClaim()));
         allow write: if false;
       }
 

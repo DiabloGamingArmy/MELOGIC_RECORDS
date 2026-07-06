@@ -19,6 +19,7 @@ import {
   leaveMusicLiveStream,
   listPublicLiveStreams,
   markMusicLiveStreamOnAir,
+  prepareMusicLiveStreamDraft,
   sendMusicLiveChatMessage,
   sendMusicLiveUnloadBeacon,
   setMusicLiveNowPlaying,
@@ -71,6 +72,8 @@ const libraryItems = [
   ['madeForYou', 'Made for You']
 ]
 
+const stableImageCache = new Map()
+
 const state = {
   currentUser: null,
   accountPermissions: null,
@@ -122,7 +125,9 @@ const state = {
     editingItemId: '',
     form: { title: '', artist: '', album: '', artworkURL: '', notes: '' },
     saving: false,
-    error: ''
+    error: '',
+    studioMode: false,
+    previewItemId: ''
   },
   goLive: {
     form: {
@@ -141,6 +146,8 @@ const state = {
       archiveRequested: false
     },
     draftId: '',
+    draftStreamId: '',
+    activeControl: 'details',
     uploadingCover: false,
     devices: [],
     selectedDeviceId: '',
@@ -188,6 +195,11 @@ function escapeHtml(value) {
 
 function titleCase(value = '') {
   return String(value || '').replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase())
+}
+
+function initialsFor(value = '') {
+  const parts = String(value || 'Melogic Creator').trim().split(/\s+/).filter(Boolean)
+  return (parts.length > 1 ? `${parts[0][0]}${parts[1][0]}` : (parts[0] || 'M').slice(0, 2)).toUpperCase()
 }
 
 function formatDate(value = '') {
@@ -247,12 +259,37 @@ function renderReleaseArtwork(release, className = 'music-release-art') {
   return `<div class="${className} music-release-art-fallback" aria-hidden="true"><span>MR</span></div>`
 }
 
+function renderStableImage({ src = '', alt = '', className = '', fallback = 'MR', key = '' } = {}) {
+  const cleanSrc = String(src || '').trim()
+  const failed = cleanSrc && stableImageCache.get(cleanSrc) === 'failed'
+  const loaded = cleanSrc && stableImageCache.get(cleanSrc) === 'loaded'
+  return `
+    <span class="${escapeHtml(className)} music-stable-image ${loaded ? 'is-loaded' : ''} ${failed || !cleanSrc ? 'is-fallback' : ''}" ${cleanSrc && !failed ? `data-stable-image data-src="${escapeHtml(cleanSrc)}" data-alt="${escapeHtml(alt)}" data-image-key="${escapeHtml(key || cleanSrc)}"` : ''}>
+      ${loaded ? `<img src="${escapeHtml(cleanSrc)}" alt="${escapeHtml(alt)}" loading="lazy" />` : ''}
+      <span class="music-stable-fallback" aria-hidden="true">${escapeHtml(fallback)}</span>
+    </span>
+  `
+}
+
 function renderLiveArtwork(stream, className = 'music-live-art') {
   const cover = stream?.coverArtURL || ''
-  if (cover) {
-    return `<div class="${className} music-live-art-fallback music-live-art-with-image"><img src="${escapeHtml(cover)}" alt="${escapeHtml(stream.title)} cover art" loading="lazy" onerror="this.remove()" /><span aria-hidden="true">LIVE</span></div>`
-  }
-  return `<div class="${className} music-live-art-fallback" aria-hidden="true"><span>LIVE</span></div>`
+  return renderStableImage({
+    src: cover,
+    alt: `${stream?.title || 'Live stream'} cover art`,
+    className: `${className} music-live-art-fallback music-live-art-with-image`,
+    fallback: 'LIVE',
+    key: `live-cover-${stream?.id || stream?.streamId || stream?.title || cover}`
+  })
+}
+
+function renderAvatarImage({ src = '', name = '', className = 'music-avatar' } = {}) {
+  return renderStableImage({
+    src,
+    alt: name ? `${name} profile image` : 'Profile image',
+    className,
+    fallback: initialsFor(name),
+    key: `avatar-${name || src}`
+  })
 }
 
 function renderArtistArtwork(artist) {
@@ -487,7 +524,7 @@ function renderNowPlaying(stream = {}) {
   if (!stream.currentNowPlaying?.title) return ''
   return `
     <article class="music-now-playing">
-      ${now.artworkURL ? `<img src="${escapeHtml(now.artworkURL)}" alt="" />` : '<span aria-hidden="true">NP</span>'}
+      ${renderStableImage({ src: now.artworkURL, alt: '', className: 'music-now-playing-art', fallback: 'NP', key: `now-${stream.id || stream.streamId || ''}` })}
       <div>
         <p class="music-eyebrow">Now Playing</p>
         <h3>${escapeHtml(now.title)}</h3>
@@ -618,6 +655,32 @@ function renderAppShell(content) {
       ${renderPlayer()}
     </main>
   `
+}
+
+function hydrateStableImages() {
+  app.querySelectorAll('[data-stable-image]').forEach((container) => {
+    const src = container.dataset.src || ''
+    if (!src || container.querySelector('img')) return
+    if (stableImageCache.get(src) === 'failed') {
+      container.classList.add('is-fallback')
+      return
+    }
+    const image = new Image()
+    image.alt = container.dataset.alt || ''
+    image.loading = 'lazy'
+    image.onload = () => {
+      stableImageCache.set(src, 'loaded')
+      if (container.dataset.src !== src || container.querySelector('img')) return
+      container.prepend(image)
+      container.classList.add('is-loaded')
+      container.classList.remove('is-fallback')
+    }
+    image.onerror = () => {
+      stableImageCache.set(src, 'failed')
+      if (container.dataset.src === src) container.classList.add('is-fallback')
+    }
+    image.src = src
+  })
 }
 
 function renderLandingPage() {
@@ -840,7 +903,9 @@ function updateLiveMediaSession(stream = state.liveStream) {
     album: meta.album || 'Melogic Music Live',
     artwork
   })
-  navigator.mediaSession.playbackState = ['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'playing' : 'paused'
+  navigator.mediaSession.playbackState = state.liveStatus === 'ended' || stream.status === 'ended'
+    ? 'none'
+    : ['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'playing' : 'paused'
   navigator.mediaSession.setActionHandler('play', () => {
     if (!['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) joinLiveListener().catch(() => {})
     else state.listenerAudioElement?.play?.().catch(() => {})
@@ -923,11 +988,14 @@ function renderLiveChatPanel(streamId = '') {
       <div class="music-live-chat-messages" data-live-chat-messages>
         ${state.liveChat.messages.length ? state.liveChat.messages.map((message) => `
           <article class="music-live-chat-message">
+            ${renderAvatarImage({ src: message.photoURL, name: message.displayName, className: 'music-chat-avatar' })}
             <div>
-              <strong>${escapeHtml(message.displayName)}</strong>
-              <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
+              <div>
+                <strong>${escapeHtml(message.displayName)}</strong>
+                <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
+              </div>
+              <p>${escapeHtml(message.text)}</p>
             </div>
-            <p>${escapeHtml(message.text)}</p>
           </article>
         `).join('') : '<p class="music-muted">No messages yet.</p>'}
       </div>
@@ -974,33 +1042,87 @@ function renderHostMetadataEditor(form) {
   `
 }
 
-function renderHostSequencePanel() {
-  if (!state.goLive.streamId) {
-    return `
-      <aside class="music-panel music-sequence-panel">
-        <p class="music-eyebrow">Now Playing</p>
-        <h2>Sequence</h2>
-        <p class="music-muted">Go live to add manual now-playing cards for lock screens and listener metadata.</p>
-        <div class="music-future-note"><strong>Automatic app metadata - coming later</strong><span>Browser apps cannot directly read Apple Music, iTunes, or Spotify desktop metadata. Future options may include a native Melogic helper app or authorized service APIs.</span></div>
-      </aside>
-    `
-  }
-  const form = state.liveSequence.form
+function renderSequenceArtwork(item = {}) {
+  return renderStableImage({
+    src: item.artworkURL,
+    alt: item.title ? `${item.title} artwork` : 'Sequence artwork',
+    className: 'music-sequence-art',
+    fallback: 'NP',
+    key: `sequence-${item.itemId || item.title || item.artworkURL || 'fallback'}`
+  })
+}
+
+function sequenceItemStatus(item = {}) {
+  const liveItemId = state.liveStream?.currentNowPlaying?.sequenceItemId || ''
+  if (liveItemId && liveItemId === item.itemId) return 'Live'
+  if (state.liveSequence.previewItemId && state.liveSequence.previewItemId === item.itemId) return 'Queued'
+  return liveItemId ? 'Not Live' : 'Ready'
+}
+
+function renderSequenceControls(item = {}) {
+  const isLive = state.liveStream?.currentNowPlaying?.sequenceItemId === item.itemId
+  const primary = state.liveSequence.studioMode
+    ? `<button type="button" class="button button-accent" data-live-sequence-queue="${escapeHtml(item.itemId)}">Queue Item</button>`
+    : isLive
+      ? `<button type="button" class="button button-muted" data-live-sequence-clear>Take Down</button>`
+      : `<button type="button" class="button button-accent" data-live-sequence-set="${escapeHtml(item.itemId)}">Set Live</button>`
   return `
-    <aside class="music-panel music-sequence-panel">
+    <div class="music-sequence-controls">
+      ${primary}
+      <button type="button" class="button button-muted" data-live-sequence-edit="${escapeHtml(item.itemId)}">Edit</button>
+      <button type="button" class="button button-danger" data-live-sequence-delete="${escapeHtml(item.itemId)}">Remove</button>
+    </div>
+  `
+}
+
+function renderHostSequencePanel() {
+  const form = state.liveSequence.form
+  const liveItem = state.liveSequence.items.find((item) => item.itemId === state.liveStream?.currentNowPlaying?.sequenceItemId)
+  const previewItem = state.liveSequence.items.find((item) => item.itemId === state.liveSequence.previewItemId)
+  return `
+    <section class="music-sequence-panel">
       <div class="music-row-heading">
         <div>
           <p class="music-eyebrow">Now Playing</p>
           <h2>Sequence</h2>
         </div>
-        <button type="button" class="button button-muted" data-live-sequence-clear>Clear</button>
+        <div class="music-live-actions">
+          <button type="button" class="button button-muted ${state.liveSequence.studioMode ? 'is-active' : ''}" data-live-studio-mode>${state.liveSequence.studioMode ? 'Studio Mode On' : 'Studio Mode Off'}</button>
+          <button type="button" class="button button-muted" data-live-sequence-clear>Take Down Live</button>
+        </div>
       </div>
+      ${state.liveSequence.studioMode ? `
+        <div class="music-studio-grid">
+          <article class="music-studio-panel is-program">
+            <p class="music-eyebrow">Live / Program</p>
+            ${liveItem ? `
+              ${renderSequenceArtwork(liveItem)}
+              <strong>${escapeHtml(liveItem.title)}</strong>
+              <span>${escapeHtml([liveItem.artist, liveItem.album].filter(Boolean).join(' · ') || 'On air now')}</span>
+            ` : '<p class="music-muted">Nothing is live.</p>'}
+            <button type="button" class="button button-muted" data-live-sequence-clear ${liveItem ? '' : 'disabled'}>Take Down Live</button>
+          </article>
+          <article class="music-studio-panel is-preview">
+            <p class="music-eyebrow">Preview</p>
+            ${previewItem ? `
+              ${renderSequenceArtwork(previewItem)}
+              <strong>${escapeHtml(previewItem.title)}</strong>
+              <span>${escapeHtml([previewItem.artist, previewItem.album].filter(Boolean).join(' · ') || 'Queued next')}</span>
+            ` : '<p class="music-muted">Queue an item to preview it here.</p>'}
+            <div class="music-live-actions">
+              <button type="button" class="button button-accent" data-live-sequence-take ${previewItem ? '' : 'disabled'}>Take</button>
+              <button type="button" class="button button-muted" data-live-sequence-clear-preview ${previewItem ? '' : 'disabled'}>Clear Preview</button>
+            </div>
+          </article>
+        </div>
+      ` : ''}
       <form class="music-sequence-form" data-live-sequence-form>
         <input type="hidden" name="itemId" value="${escapeHtml(state.liveSequence.editingItemId)}" />
         <label><span>Title</span><input name="title" maxlength="120" value="${escapeHtml(form.title)}" placeholder="Track or segment title" /></label>
         <label><span>Artist</span><input name="artist" maxlength="120" value="${escapeHtml(form.artist)}" placeholder="Artist / guest" /></label>
         <label><span>Album</span><input name="album" maxlength="120" value="${escapeHtml(form.album)}" placeholder="Album / show" /></label>
-        <label><span>Artwork URL</span><input name="artworkURL" maxlength="1000" value="${escapeHtml(form.artworkURL)}" placeholder="Optional artwork URL" /></label>
+        <label><span>Artwork URL</span><input name="artworkURL" type="url" maxlength="1000" value="${escapeHtml(form.artworkURL)}" placeholder="Optional HTTPS artwork URL" /></label>
+        ${form.artworkURL ? renderStableImage({ src: form.artworkURL, alt: 'Artwork preview', className: 'music-sequence-form-preview', fallback: 'NP', key: 'sequence-form-preview' }) : ''}
         <label><span>Notes</span><textarea name="notes" maxlength="600" rows="2">${escapeHtml(form.notes)}</textarea></label>
         ${state.liveSequence.error ? `<p class="music-live-error">${escapeHtml(state.liveSequence.error)}</p>` : ''}
         <div class="music-live-actions">
@@ -1011,20 +1133,19 @@ function renderHostSequencePanel() {
       <div class="music-sequence-list">
         ${state.liveSequence.items.length ? state.liveSequence.items.map((item) => `
           <article class="music-sequence-item ${state.liveStream?.currentNowPlaying?.sequenceItemId === item.itemId ? 'is-active' : ''}">
+            ${renderSequenceArtwork(item)}
             <div>
               <strong>${escapeHtml(item.title)}</strong>
               <span>${escapeHtml([item.artist, item.album].filter(Boolean).join(' · ') || 'Manual cue')}</span>
+              ${item.notes ? `<small>${escapeHtml(item.notes)}</small>` : ''}
             </div>
-            <div class="music-live-actions">
-              <button type="button" class="button button-muted" data-live-sequence-set="${escapeHtml(item.itemId)}">Set Live</button>
-              <button type="button" class="button button-muted" data-live-sequence-edit="${escapeHtml(item.itemId)}">Edit</button>
-              <button type="button" class="button button-danger" data-live-sequence-delete="${escapeHtml(item.itemId)}">Delete</button>
-            </div>
+            <span class="music-sequence-status">${escapeHtml(sequenceItemStatus(item))}</span>
+            ${renderSequenceControls(item)}
           </article>
-        `).join('') : '<p class="music-muted">No sequence items yet.</p>'}
+        `).join('') : '<p class="music-muted">No sequence items yet. Add cues before going live; they will stay attached to this broadcast draft.</p>'}
       </div>
       <div class="music-future-note"><strong>Automatic app metadata - coming later</strong><span>Use manual sequence items today. Browser apps cannot directly read currently playing desktop music app metadata.</span></div>
-    </aside>
+    </section>
   `
 }
 
@@ -1040,6 +1161,152 @@ function renderLiveActions(stream) {
     ${!signedIn ? '<p class="music-muted">Sign in to like, dislike, save, or chat. Listening and sharing are open.</p>' : ''}
     ${state.liveActionMessage ? `<p class="music-muted">${escapeHtml(state.liveActionMessage)}</p>` : ''}
   `
+}
+
+function goLiveStatusLabel() {
+  if (state.goLive.streamId) return state.goLive.starting ? 'Starting' : 'Live'
+  if (state.goLive.draftStreamId) return 'Draft'
+  return 'Ready'
+}
+
+function renderHostListenerPreview(form) {
+  const stream = {
+    ...form,
+    id: activeHostStreamId(),
+    hostDisplayName: state.liveStream?.hostDisplayName || state.currentUser?.displayName || 'Melogic Creator',
+    hostPhotoURL: state.liveStream?.hostPhotoURL || state.currentUser?.photoURL || '',
+    listenerCount: state.liveStream?.listenerCount || 0,
+    currentNowPlaying: state.liveStream?.currentNowPlaying || null,
+    title: form.title || 'Untitled live stream',
+    description: form.description || 'Your stream description will appear here.'
+  }
+  return `
+    <aside class="music-panel music-host-listener-preview">
+      <div class="music-row-heading">
+        <div>
+          <p class="music-eyebrow">Listener Preview</p>
+          <h2>Public View</h2>
+        </div>
+        <span class="music-live-badge">${escapeHtml(goLiveStatusLabel())}</span>
+      </div>
+      ${renderLiveArtwork(stream, 'music-live-detail-art')}
+      <div class="music-host-preview-copy">
+        <div>
+          <span class="music-live-lock" data-host-preview-access>${escapeHtml(liveAccessLabel(form))}</span>
+          <h2 data-host-preview-title>${escapeHtml(stream.title)}</h2>
+          <p data-host-preview-description>${escapeHtml(stream.description)}</p>
+        </div>
+        <div class="music-live-host">
+          ${renderAvatarImage({ src: stream.hostPhotoURL, name: stream.hostDisplayName, className: 'music-live-avatar' })}
+          <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small><span data-host-preview-category>${escapeHtml(liveCategoryLabel(form.category))}</span> · ${escapeHtml(listenerCountLabel(stream.listenerCount))}</small></div>
+        </div>
+        ${renderNowPlaying(stream)}
+        <div class="music-live-action-bar is-preview-only">
+          <button type="button" class="button button-muted" disabled>Like</button>
+          <button type="button" class="button button-muted" disabled>Dislike</button>
+          <button type="button" class="button button-muted" disabled>Save</button>
+          <button type="button" class="button button-muted" disabled>Share</button>
+        </div>
+      </div>
+    </aside>
+  `
+}
+
+function syncHostPreviewFromForm() {
+  const form = state.goLive.form
+  const title = app.querySelector('[data-host-preview-title]')
+  const description = app.querySelector('[data-host-preview-description]')
+  const access = app.querySelector('[data-host-preview-access]')
+  const category = app.querySelector('[data-host-preview-category]')
+  if (title) title.textContent = form.title || 'Untitled live stream'
+  if (description) description.textContent = form.description || 'Your stream description will appear here.'
+  if (access) access.textContent = liveAccessLabel(form)
+  if (category) category.textContent = liveCategoryLabel(form.category)
+}
+
+function renderStreamDetailsControls(form, categories) {
+  return `
+    <section class="music-host-control-section">
+      <div>
+        <p class="music-eyebrow">Broadcast setup</p>
+        <h2>Stream Details</h2>
+      </div>
+      <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}" ${form.category === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label><span>Title</span><input name="title" maxlength="90" required placeholder="Tonight on Melogic..." value="${escapeHtml(form.title)}" /></label>
+      <label><span>Description</span><textarea name="description" rows="4" maxlength="1200" placeholder="Tell listeners what this stream is about.">${escapeHtml(form.description)}</textarea></label>
+      <div class="music-cover-tools">
+        <label><span>Cover image URL</span><input name="coverArtURL" placeholder="Optional image URL for this live stream" value="${escapeHtml(form.coverArtURL)}" /></label>
+        <div class="music-live-actions">
+          <label class="button button-muted music-upload-button"><input type="file" accept="image/*" data-live-cover-upload /> ${state.goLive.uploadingCover ? 'Uploading...' : 'Upload Image'}</label>
+          <button type="button" class="button button-muted" data-live-cover-clear>Clear Cover</button>
+        </div>
+      </div>
+      <label><span>Tags</span><input name="tags" placeholder="radio, new music, behind the scenes" value="${escapeHtml(form.tags)}" /></label>
+      <div class="music-access-panel">
+        <label><span>Access</span><select name="accessMode"><option value="public" ${form.accessMode === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.accessMode === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.accessMode === 'private' ? 'selected' : ''}>Private</option><option value="password" ${form.accessMode === 'password' ? 'selected' : ''}>Password protected</option></select></label>
+        <input type="hidden" name="visibility" value="${form.accessMode === 'private' ? 'private' : form.accessMode === 'unlisted' ? 'unlisted' : 'public'}" />
+        ${form.accessMode === 'password' ? `<label><span>Listener password</span><input name="password" type="password" maxlength="200" value="${escapeHtml(form.password)}" placeholder="Listeners need this password to join." /></label>` : ''}
+      </div>
+      <div class="music-live-rules">
+        <strong>Live stream rules</strong>
+        <p>Stream only content you have rights to broadcast. No harmful, illegal, abusive, or unauthorized copyrighted audio. Melogic may remove streams that violate rules.</p>
+        <label class="music-checkbox"><input type="checkbox" name="rightsAccepted" required ${form.rightsAccepted ? 'checked' : ''} /> <span>I have the rights or permission to broadcast this audio and agree to Melogic live stream rules.</span></label>
+        <label class="music-checkbox"><input type="checkbox" name="archiveRequested" disabled ${form.archiveRequested ? 'checked' : ''} /> <span>Request archive after stream. Save as replay is coming soon.</span></label>
+      </div>
+    </section>
+  `
+}
+
+function renderAudioControls(form) {
+  return `
+    <section class="music-host-control-section">
+      <div>
+        <p class="music-eyebrow">Audio input</p>
+        <h2>Microphone / Interface</h2>
+      </div>
+      <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
+      <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
+      <select data-live-device-select>
+        <option value="">Browser default</option>
+        ${state.goLive.devices.map((device) => `<option value="${escapeHtml(device.deviceId)}" ${state.goLive.selectedDeviceId === device.deviceId ? 'selected' : ''}>${escapeHtml(device.label || `Audio input ${state.goLive.devices.indexOf(device) + 1}`)}</option>`).join('')}
+      </select>
+      <div class="music-meter" aria-label="Audio input level"><span style="width:${Math.round(state.goLive.level * 100)}%"></span></div>
+      <div class="music-live-actions">
+        <button type="button" class="button button-muted" data-refresh-audio-devices>Enable / Refresh Mic</button>
+        <button type="button" class="button button-muted" data-toggle-preview-mute>${state.goLive.muted ? 'Unmute Preview' : 'Mute Preview'}</button>
+      </div>
+      <p class="music-muted">${escapeHtml(state.goLive.connectionStatus || 'Choose an audio input before starting. Guests are coming later.')}</p>
+      ${state.goLive.streamId ? `
+        <div class="music-host-room">
+          <span class="music-live-badge">LIVE</span>
+          <h3>${escapeHtml(state.goLive.connectionStatus || 'Live stream started')}</h3>
+          <p class="music-muted">${escapeHtml(audioModeLabel(form.audioMode))} · heartbeat active</p>
+          <p>Share: <a href="${musicLiveStreamRoute(state.goLive.streamId)}">${musicLiveStreamRoute(state.goLive.streamId)}</a></p>
+          ${renderHostMetadataEditor(form)}
+          <button type="button" class="button button-danger" data-end-host-stream ${state.goLive.ending ? 'disabled' : ''}>${state.goLive.ending ? 'Ending...' : 'End Stream'}</button>
+        </div>
+      ` : ''}
+    </section>
+  `
+}
+
+function renderHostChatControls() {
+  return state.goLive.streamId
+    ? renderLiveChatPanel(state.goLive.streamId)
+    : `
+      <section class="music-panel music-live-chat music-host-control-section">
+        <p class="music-eyebrow">Live chat</p>
+        <h2>Chat</h2>
+        <p class="music-muted">Chat opens when the broadcast is live. The panel stays here so you can switch to it quickly after starting.</p>
+      </section>
+    `
+}
+
+function renderGoLiveWorkArea(form, categories) {
+  if (state.goLive.activeControl === 'audio') return renderAudioControls(form)
+  if (state.goLive.activeControl === 'sequence') return renderHostSequencePanel()
+  if (state.goLive.activeControl === 'chat') return renderHostChatControls()
+  return renderStreamDetailsControls(form, categories)
 }
 
 function renderGoLivePage() {
@@ -1067,77 +1334,32 @@ function renderGoLivePage() {
     </section>
     ${!isSignedIn ? signInAction('Sign in as an eligible creator to start a live stream.') : !permissionsReady ? emptyState('Checking live access', 'Loading your account permissions before opening the live setup.') : !canGoLive ? emptyState('Live streaming is limited to approved creators.', 'Ask the Melogic team to enable live streaming for your account before starting an audio stream.', `<a class="button button-muted" href="${ROUTES.musicLive}">Back to Live Streams</a>`) : `
       <section class="music-go-live-grid">
-        <article class="music-panel music-live-preview-card">
-          <p class="music-eyebrow">Listener Preview</p>
-          ${renderLiveArtwork({ title: form.title || 'Untitled live stream', coverArtURL: form.coverArtURL }, 'music-live-detail-art')}
-          <div>
-            <span class="music-live-badge">${state.goLive.streamId ? 'LIVE' : 'READY'}</span>
-            <span class="music-live-lock">${escapeHtml(liveAccessLabel(form))}</span>
-            <h2>${escapeHtml(form.title || 'Untitled live stream')}</h2>
-            <p>${escapeHtml(form.description || 'Your stream description will appear here.')}</p>
-            <div class="music-live-host"><span aria-hidden="true"></span><div><strong>${escapeHtml(state.currentUser?.displayName || 'Melogic Creator')}</strong><small>${escapeHtml(liveCategoryLabel(form.category))} · ${escapeHtml(listenerCountLabel(state.liveStream?.listenerCount || 0))}</small></div></div>
-          </div>
-        </article>
-        <form class="music-go-live-form music-panel" data-go-live-form>
-          <p class="music-eyebrow">Broadcast setup</p>
-          <h2>Stream Details</h2>
-          <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}" ${form.category === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
-          <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
-          <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
-          <label><span>Title</span><input name="title" maxlength="90" required placeholder="Tonight on Melogic..." value="${escapeHtml(form.title)}" /></label>
-          <label><span>Description</span><textarea name="description" rows="4" maxlength="1200" placeholder="Tell listeners what this stream is about.">${escapeHtml(form.description)}</textarea></label>
-          <div class="music-cover-tools">
-            <label><span>Cover image URL</span><input name="coverArtURL" placeholder="Optional image URL for this live stream" value="${escapeHtml(form.coverArtURL)}" /></label>
-            <div class="music-live-actions">
-              <label class="button button-muted music-upload-button"><input type="file" accept="image/*" data-live-cover-upload /> ${state.goLive.uploadingCover ? 'Uploading...' : 'Upload Image'}</label>
-              <button type="button" class="button button-muted" data-live-cover-clear>Clear Cover</button>
-            </div>
-            <p class="music-muted">Use a reliable HTTPS image URL or upload a cover. Uploaded covers replace the previous upload for this draft.</p>
-          </div>
-          <label><span>Tags</span><input name="tags" placeholder="radio, new music, behind the scenes" value="${escapeHtml(form.tags)}" /></label>
-          <div class="music-access-panel">
-            <label><span>Access</span><select name="accessMode"><option value="public" ${form.accessMode === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.accessMode === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.accessMode === 'private' ? 'selected' : ''}>Private</option><option value="password" ${form.accessMode === 'password' ? 'selected' : ''}>Password protected</option></select></label>
-            <input type="hidden" name="visibility" value="${form.accessMode === 'private' ? 'private' : form.accessMode === 'unlisted' ? 'unlisted' : 'public'}" />
-            ${form.accessMode === 'password' ? `<label><span>Listener password</span><input name="password" type="password" maxlength="200" value="${escapeHtml(form.password)}" placeholder="Listeners need this password to join." /></label><p class="music-muted">Listeners need this password to join. It is hashed server-side and is not stored as plaintext.</p>` : ''}
-          </div>
-          <div class="music-live-rules">
-            <strong>Live stream rules</strong>
-            <p>Stream only content you have rights to broadcast. No harmful, illegal, abusive, or unauthorized copyrighted audio. Melogic may remove streams that violate rules.</p>
-            <label class="music-checkbox"><input type="checkbox" name="rightsAccepted" required ${form.rightsAccepted ? 'checked' : ''} /> <span>I have the rights or permission to broadcast this audio and agree to Melogic live stream rules.</span></label>
-            <label class="music-checkbox"><input type="checkbox" name="archiveRequested" disabled ${form.archiveRequested ? 'checked' : ''} /> <span>Request archive after stream. Save as replay is coming soon.</span></label>
+        <section class="music-panel music-go-live-form music-host-work-area" data-go-live-form>
+          <div class="music-host-control-scroll">
+            ${renderGoLiveWorkArea(form, categories)}
           </div>
           ${state.goLive.formError ? `<p class="music-live-error">${escapeHtml(state.goLive.formError)}</p>` : ''}
-          <div class="music-live-actions">
-            <button class="button button-accent" type="submit" ${state.goLive.starting || state.goLive.streamId ? 'disabled' : ''}>${state.goLive.starting ? 'Starting...' : 'Start Live'}</button>
-            <a class="button button-muted" href="${ROUTES.musicLive}">Cancel</a>
-          </div>
-        </form>
-        <aside class="music-panel music-audio-setup">
-          <p class="music-eyebrow">Audio input</p>
-          <h2>Microphone / Interface</h2>
-          <select data-live-device-select>
-            <option value="">Browser default</option>
-            ${state.goLive.devices.map((device) => `<option value="${escapeHtml(device.deviceId)}" ${state.goLive.selectedDeviceId === device.deviceId ? 'selected' : ''}>${escapeHtml(device.label || `Audio input ${state.goLive.devices.indexOf(device) + 1}`)}</option>`).join('')}
-          </select>
-          <div class="music-meter" aria-label="Audio input level"><span style="width:${Math.round(state.goLive.level * 100)}%"></span></div>
-          <div class="music-live-actions">
-            <button type="button" class="button button-muted" data-refresh-audio-devices>Enable / Refresh Mic</button>
-            <button type="button" class="button button-muted" data-toggle-preview-mute>${state.goLive.muted ? 'Unmute Preview' : 'Mute Preview'}</button>
-          </div>
-          <p class="music-muted">${escapeHtml(state.goLive.connectionStatus || 'Choose an audio input before starting. Guests are coming later.')}</p>
-          ${state.goLive.streamId ? `
-            <div class="music-host-room">
-              <span class="music-live-badge">LIVE</span>
-              <h3>${escapeHtml(state.goLive.connectionStatus || 'Live stream started')}</h3>
-              <p class="music-muted">${escapeHtml(audioModeLabel(form.audioMode))} · heartbeat active</p>
-              <p>Share: <a href="${musicLiveStreamRoute(state.goLive.streamId)}">${musicLiveStreamRoute(state.goLive.streamId)}</a></p>
-              ${renderHostMetadataEditor(form)}
-              <button type="button" class="button button-danger" data-end-host-stream ${state.goLive.ending ? 'disabled' : ''}>${state.goLive.ending ? 'Ending...' : 'End Stream'}</button>
+          <div class="music-host-footer">
+            <div>
+              <strong>${escapeHtml(goLiveStatusLabel())}</strong>
+              <span>${escapeHtml(state.goLive.connectionStatus || 'Prepare details, sequence, and audio before starting.')}</span>
             </div>
-          ` : ''}
-        </aside>
-        ${state.goLive.streamId ? renderLiveChatPanel(state.goLive.streamId) : ''}
-        ${renderHostSequencePanel()}
+            <div class="music-live-actions">
+              <button class="button button-accent" type="button" data-start-host-broadcast ${state.goLive.starting || state.goLive.streamId ? 'disabled' : ''}>${state.goLive.starting ? 'Starting...' : 'Start Live'}</button>
+              ${state.goLive.streamId ? `<button type="button" class="button button-danger" data-end-host-stream ${state.goLive.ending ? 'disabled' : ''}>${state.goLive.ending ? 'Ending...' : 'End Stream'}</button>` : ''}
+              <a class="button button-muted" href="${ROUTES.musicLive}">Cancel</a>
+            </div>
+          </div>
+        </section>
+        ${renderHostListenerPreview(form)}
+        <nav class="music-host-control-rail" aria-label="Live stream controls">
+          ${[
+            ['details', 'Stream Details'],
+            ['audio', 'Microphone / Interface'],
+            ['sequence', 'Sequence'],
+            ['chat', 'Chat']
+          ].map(([value, label]) => `<button type="button" class="${state.goLive.activeControl === value ? 'is-active' : ''}" data-host-control="${value}">${escapeHtml(label)}</button>`).join('')}
+        </nav>
       </section>
     `}
   `)
@@ -1162,7 +1384,7 @@ function renderLiveDetailPage() {
         <h1>${escapeHtml(stream.title)}</h1>
         <p>${escapeHtml(stream.description || 'Audio-only live stream on Melogic Music.')}</p>
         <div class="music-live-host">
-          ${stream.hostPhotoURL ? `<img src="${escapeHtml(stream.hostPhotoURL)}" alt="" />` : '<span aria-hidden="true"></span>'}
+          ${renderAvatarImage({ src: stream.hostPhotoURL, name: stream.hostDisplayName, className: 'music-live-avatar' })}
           <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${escapeHtml(liveCategoryLabel(stream.category))} · ${escapeHtml(listenerCountLabel(stream.listenerCount))}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
         </div>
         ${renderNowPlaying(stream)}
@@ -1190,8 +1412,8 @@ function renderPlayer() {
     const meta = nowPlayingDisplay(state.liveStream)
     return `
       <aside class="music-player" data-music-player aria-label="Melogic Music live player">
-        <div class="music-player-art">
-          ${meta.artworkURL ? `<img src="${escapeHtml(meta.artworkURL)}" alt="" />` : '<span aria-hidden="true">LIVE</span>'}
+      <div class="music-player-art">
+          ${renderStableImage({ src: meta.artworkURL, alt: '', className: 'music-player-stable-art', fallback: 'LIVE', key: `player-live-${state.liveStream.id}` })}
         </div>
         <div class="music-player-meta">
           <strong>${escapeHtml(meta.title || state.liveStream.title)}</strong>
@@ -1238,6 +1460,7 @@ function rerender() {
   else if (state.route.mode === 'liveDetail') renderLiveDetailPage()
   else renderLandingPage()
   initShellChrome()
+  hydrateStableImages()
   bindMusicEvents()
   attachMusicHeroVideo()
 }
@@ -1372,24 +1595,32 @@ function stopPreviewStream() {
 
 function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) {
   if (!form) return
-  const data = new FormData(form)
-  const nextCoverURL = String(data.get('coverArtURL') || '').slice(0, 1000)
+  const controls = Array.from(form.querySelectorAll ? form.querySelectorAll('input, select, textarea') : [])
+    .filter((control) => !control.closest('[data-live-sequence-form], [data-live-chat-form], [data-live-edit-form]'))
+  const hasControl = (name) => controls.some((control) => control.name === name)
+  const read = (name, fallback = '') => {
+    const control = controls.find((item) => item.name === name)
+    if (!control) return fallback
+    if (control.type === 'checkbox') return control.checked ? 'on' : ''
+    return control.value
+  }
+  const nextCoverURL = String(read('coverArtURL', state.goLive.form.coverArtURL) || '').slice(0, 1000)
   const previousCoverURL = state.goLive.form.coverArtURL
   const previousCoverSource = state.goLive.form.coverArtSource
   state.goLive.form = {
-    category: String(data.get('category') || 'music'),
-    audioMode: String(data.get('audioMode') || state.goLive.form.audioMode || 'music') === 'voice' ? 'voice' : 'music',
-    accessMode: String(data.get('accessMode') || state.goLive.form.accessMode || 'public'),
-    password: String(data.get('password') || state.goLive.form.password || '').slice(0, 200),
-    title: String(data.get('title') || '').slice(0, 90),
-    description: String(data.get('description') || '').slice(0, 1200),
+    category: String(read('category', state.goLive.form.category) || 'music'),
+    audioMode: String(read('audioMode', state.goLive.form.audioMode) || 'music') === 'voice' ? 'voice' : 'music',
+    accessMode: String(read('accessMode', state.goLive.form.accessMode) || 'public'),
+    password: String(read('password', state.goLive.form.password) || '').slice(0, 200),
+    title: String(read('title', state.goLive.form.title) || '').slice(0, 90),
+    description: String(read('description', state.goLive.form.description) || '').slice(0, 1200),
     coverArtURL: nextCoverURL,
     coverArtPath: state.goLive.form.coverArtPath || '',
     coverArtSource: nextCoverURL ? (previousCoverSource === 'upload' && nextCoverURL === previousCoverURL ? 'upload' : 'url') : 'fallback',
-    tags: String(data.get('tags') || '').slice(0, 500),
-    visibility: String(data.get('visibility') || 'public'),
-    rightsAccepted: data.get('rightsAccepted') === 'on',
-    archiveRequested: data.get('archiveRequested') === 'on'
+    tags: String(read('tags', state.goLive.form.tags) || '').slice(0, 500),
+    visibility: String(read('visibility', state.goLive.form.visibility) || 'public'),
+    rightsAccepted: hasControl('rightsAccepted') ? read('rightsAccepted') === 'on' : state.goLive.form.rightsAccepted,
+    archiveRequested: hasControl('archiveRequested') ? read('archiveRequested') === 'on' : state.goLive.form.archiveRequested
   }
 }
 
@@ -1522,6 +1753,23 @@ function startLiveStreamSubscription(streamId) {
   )
 }
 
+function startHostStreamSubscription(streamId) {
+  stopLiveStreamSubscription()
+  if (!streamId) return
+  state.liveStreamUnsubscribe = subscribeMusicLiveStream(
+    streamId,
+    (stream) => {
+      state.liveStream = stream
+      if (stream?.currentNowPlaying) updateLiveMediaSession(stream)
+      rerender()
+    },
+    () => {
+      state.liveStream = null
+      rerender()
+    }
+  )
+}
+
 function startLiveSequenceSubscription(streamId) {
   stopLiveSequenceSubscription()
   if (!streamId) return
@@ -1536,6 +1784,30 @@ function startLiveSequenceSubscription(streamId) {
       rerender()
     }
   )
+}
+
+function activeHostStreamId() {
+  return state.goLive.streamId || state.goLive.draftStreamId || ''
+}
+
+async function ensureHostDraftStream() {
+  if (state.goLive.streamId) return state.goLive.streamId
+  if (state.goLive.draftStreamId) return state.goLive.draftStreamId
+  updateGoLiveFormState()
+  state.goLive.connectionStatus = 'Preparing draft controls...'
+  rerender()
+  const response = await prepareMusicLiveStreamDraft({
+    streamId: state.goLive.draftStreamId,
+    ...state.goLive.form
+  })
+  const streamId = response.streamId || ''
+  if (!streamId) throw new Error('Could not prepare a live draft.')
+  state.goLive.draftStreamId = streamId
+  startHostStreamSubscription(streamId)
+  startLiveSequenceSubscription(streamId)
+  state.goLive.connectionStatus = 'Draft controls ready.'
+  rerender()
+  return streamId
 }
 
 async function loadViewerState(streamId) {
@@ -1636,16 +1908,18 @@ function editSequenceItem(itemId = '') {
 }
 
 async function saveSequenceItem(form) {
-  if (!state.goLive.streamId) return
   const data = new FormData(form)
-  const payload = {
-    streamId: state.goLive.streamId,
-    itemId: String(data.get('itemId') || '').trim(),
+  const nextForm = {
     title: String(data.get('title') || '').trim().slice(0, 120),
     artist: String(data.get('artist') || '').trim().slice(0, 120),
     album: String(data.get('album') || '').trim().slice(0, 120),
     artworkURL: String(data.get('artworkURL') || '').trim().slice(0, 1000),
     notes: String(data.get('notes') || '').trim().slice(0, 600)
+  }
+  const payload = {
+    streamId: activeHostStreamId(),
+    itemId: String(data.get('itemId') || '').trim(),
+    ...nextForm
   }
   if (!payload.title) {
     state.liveSequence.error = 'Add a title for this now-playing item.'
@@ -1654,8 +1928,10 @@ async function saveSequenceItem(form) {
   }
   state.liveSequence.saving = true
   state.liveSequence.error = ''
+  state.liveSequence.form = nextForm
   rerender()
   try {
+    payload.streamId = payload.streamId || await ensureHostDraftStream()
     await upsertMusicLiveSequenceItem(payload)
     resetSequenceForm()
   } catch (error) {
@@ -1664,6 +1940,13 @@ async function saveSequenceItem(form) {
     state.liveSequence.saving = false
     rerender()
   }
+}
+
+async function setHostNowPlaying(itemId = '') {
+  if (!itemId && !activeHostStreamId()) return
+  const streamId = await ensureHostDraftStream()
+  await setMusicLiveNowPlaying(streamId, itemId)
+  if (!itemId) state.liveSequence.previewItemId = ''
 }
 
 async function startHostBroadcast(form) {
@@ -1677,6 +1960,7 @@ async function startHostBroadcast(form) {
   try {
     const formState = state.goLive.form
     const payload = {
+      streamId: state.goLive.draftStreamId || '',
       title: formState.title,
       description: formState.description,
       category: formState.category,
@@ -1698,6 +1982,7 @@ async function startHostBroadcast(form) {
     const room = new Room({ adaptiveStream: true, dynacast: true })
     state.goLive.room = room
     state.goLive.streamId = pendingStreamId
+    state.goLive.draftStreamId = pendingStreamId
     state.goLive.connectionStatus = 'Connecting host room...'
     room.on(RoomEvent.Connected, () => {
       state.goLive.connectionStatus = 'Host room connected. Publishing audio...'
@@ -1733,10 +2018,8 @@ async function startHostBroadcast(form) {
     await markMusicLiveStreamOnAir(pendingStreamId)
     startHostHeartbeat(pendingStreamId)
     startLiveChatSubscription(pendingStreamId)
-    if (formState.accessMode !== 'private') {
-      startLiveStreamSubscription(pendingStreamId)
-      startLiveSequenceSubscription(pendingStreamId)
-    }
+    startHostStreamSubscription(pendingStreamId)
+    startLiveSequenceSubscription(pendingStreamId)
     state.goLive.connectionStatus = 'Audio published. You are live.'
   } catch (error) {
     console.warn('[music] startMusicLiveStream failed', {
@@ -1787,9 +2070,11 @@ async function endHostBroadcast() {
     }
     await endMusicLiveStream(state.goLive.streamId)
     stopLiveChatSubscription()
+    stopLiveSequenceSubscription()
     stopPreviewStream()
     state.goLive.connectionStatus = 'Stream ended. Save as replay is coming soon.'
     state.goLive.streamId = ''
+    state.goLive.draftStreamId = ''
     state.goLive.unloadToken = ''
   } catch (error) {
     state.goLive.formError = error?.message || 'Could not end stream.'
@@ -1959,6 +2244,13 @@ function bindMusicEvents() {
       rerender()
     })
   })
+  app.querySelectorAll('[data-host-control]').forEach((button) => {
+    button.addEventListener('click', () => {
+      updateGoLiveFormState()
+      state.goLive.activeControl = button.dataset.hostControl || 'details'
+      rerender()
+    })
+  })
   app.querySelectorAll('[data-row-scroll]').forEach((button) => {
     button.addEventListener('click', () => {
       const row = app.querySelector(`[data-carousel="${button.dataset.rowScroll}"]`)
@@ -1991,6 +2283,7 @@ function bindMusicEvents() {
       deleteUploadedCover(previousPath).catch(() => {})
       state.goLive.form.coverArtPath = ''
     }
+    syncHostPreviewFromForm()
   })
   app.querySelector('[data-go-live-form]')?.addEventListener('change', (event) => {
     const previousPath = state.goLive.form.coverArtSource === 'upload' ? state.goLive.form.coverArtPath : ''
@@ -2000,6 +2293,7 @@ function bindMusicEvents() {
       deleteUploadedCover(previousPath).catch(() => {})
       state.goLive.form.coverArtPath = ''
     }
+    syncHostPreviewFromForm()
   })
   app.querySelector('[data-live-cover-upload]')?.addEventListener('change', (event) => {
     const file = event.target.files?.[0]
@@ -2020,9 +2314,8 @@ function bindMusicEvents() {
     if (state.goLive.previewStream) state.goLive.previewStream.getAudioTracks().forEach((track) => { track.enabled = !state.goLive.muted })
     rerender()
   })
-  app.querySelector('[data-go-live-form]')?.addEventListener('submit', (event) => {
-    event.preventDefault()
-    startHostBroadcast(event.currentTarget).catch(() => {})
+  app.querySelector('[data-start-host-broadcast]')?.addEventListener('click', () => {
+    startHostBroadcast(app.querySelector('[data-go-live-form]')).catch(() => {})
   })
   app.querySelectorAll('[data-toggle-live-edit]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -2136,15 +2429,54 @@ function bindMusicEvents() {
     saveSequenceItem(event.currentTarget).catch(() => {})
   })
   app.querySelector('[data-live-sequence-reset]')?.addEventListener('click', () => resetSequenceForm())
-  app.querySelector('[data-live-sequence-clear]')?.addEventListener('click', () => setMusicLiveNowPlaying(state.goLive.streamId, '').catch(() => {}))
+  app.querySelector('[data-live-studio-mode]')?.addEventListener('click', () => {
+    state.liveSequence.studioMode = !state.liveSequence.studioMode
+    rerender()
+  })
+  app.querySelectorAll('[data-live-sequence-clear]').forEach((button) => {
+    button.addEventListener('click', () => setHostNowPlaying('').catch((error) => {
+      state.liveSequence.error = error?.message || 'Could not clear the live item.'
+      rerender()
+    }))
+  })
+  app.querySelector('[data-live-sequence-clear-preview]')?.addEventListener('click', () => {
+    state.liveSequence.previewItemId = ''
+    rerender()
+  })
+  app.querySelector('[data-live-sequence-take]')?.addEventListener('click', () => {
+    const itemId = state.liveSequence.previewItemId
+    if (!itemId) return
+    setHostNowPlaying(itemId).then(() => {
+      state.liveSequence.previewItemId = ''
+    }).catch((error) => {
+      state.liveSequence.error = error?.message || 'Could not take preview live.'
+    }).finally(rerender)
+  })
+  app.querySelectorAll('[data-live-sequence-queue]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.liveSequence.previewItemId = button.dataset.liveSequenceQueue || ''
+      rerender()
+    })
+  })
   app.querySelectorAll('[data-live-sequence-set]').forEach((button) => {
-    button.addEventListener('click', () => setMusicLiveNowPlaying(state.goLive.streamId, button.dataset.liveSequenceSet || '').catch(() => {}))
+    button.addEventListener('click', () => setHostNowPlaying(button.dataset.liveSequenceSet || '').catch((error) => {
+      state.liveSequence.error = error?.message || 'Could not set this item live.'
+      rerender()
+    }))
   })
   app.querySelectorAll('[data-live-sequence-edit]').forEach((button) => {
     button.addEventListener('click', () => editSequenceItem(button.dataset.liveSequenceEdit || ''))
   })
   app.querySelectorAll('[data-live-sequence-delete]').forEach((button) => {
-    button.addEventListener('click', () => deleteMusicLiveSequenceItem(state.goLive.streamId, button.dataset.liveSequenceDelete || '').catch(() => {}))
+    button.addEventListener('click', () => {
+      const itemId = button.dataset.liveSequenceDelete || ''
+      const streamId = activeHostStreamId()
+      if (state.liveSequence.previewItemId === itemId) state.liveSequence.previewItemId = ''
+      deleteMusicLiveSequenceItem(streamId, itemId).catch((error) => {
+        state.liveSequence.error = error?.message || 'Could not remove this sequence item.'
+        rerender()
+      })
+    })
   })
   app.querySelectorAll('[data-play-release]').forEach((button) => {
     button.addEventListener('click', () => {
