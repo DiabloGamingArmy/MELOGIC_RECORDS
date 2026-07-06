@@ -15,6 +15,9 @@ const ELIGIBLE_ROLES = new Set(['creator', 'artist', 'founder', 'staff', 'admin'
 const STARTING_TIMEOUT_MS = 5 * 60 * 1000
 const HOST_HEARTBEAT_STALE_MS = 90 * 1000
 const CHAT_TEXT_MAX_LENGTH = 500
+const MAX_ACTIVE_LIVE_STREAMS_PER_HOST = 3
+const STAFF_ACTIVE_LIVE_STREAMS_PER_HOST = 10
+const MAX_CONFIGURED_LIVE_STREAMS_PER_HOST = 25
 
 function db() {
   return admin.firestore()
@@ -52,6 +55,20 @@ function isHeartbeatFresh(stream = {}) {
 
 function isAdminAuth(auth = null) {
   return auth?.token?.admin === true || ['owner', 'admin'].includes(cleanString(auth?.token?.adminRole, 40))
+}
+
+function accountRole(user = {}, profile = {}) {
+  return cleanString(user.role || user.accountType || user.roleLabel || profile.role || profile.roleLabel || profile.accountType || '', 40).toLowerCase()
+}
+
+function liveStreamLimitForHost({ user = {}, profile = {}, accountPermissions = null, auth = null } = {}) {
+  const rawLimit = accountPermissions?.permissions?.musicLiveMaxStreams
+  if (typeof rawLimit === 'number' && Number.isFinite(rawLimit)) {
+    return Math.max(0, Math.min(MAX_CONFIGURED_LIVE_STREAMS_PER_HOST, Math.floor(rawLimit)))
+  }
+  const role = accountRole(user, profile)
+  if (isAdminAuth(auth) || ['owner', 'admin', 'staff'].includes(role)) return STAFF_ACTIVE_LIVE_STREAMS_PER_HOST
+  return MAX_ACTIVE_LIVE_STREAMS_PER_HOST
 }
 
 function cleanStreamMetadata(data = {}) {
@@ -147,7 +164,7 @@ function assertEligible({ auth, user, profile, accountPermissions }) {
   if (accountPermissions?.restrictions?.liveSuspended === true || accountPermissions?.restrictions?.musicRestricted === true || accountPermissions?.restrictions?.suspended === true) {
     throw new HttpsError('permission-denied', 'Live streaming is disabled for this account.')
   }
-  const role = cleanString(user.role || user.accountType || profile.roleLabel || '', 40).toLowerCase()
+  const role = accountRole(user, profile)
   const roleLabel = cleanString(user.roleLabel || profile.roleLabel || '', 40).toLowerCase()
   const eligible = accountPermissions?.permissions?.musicLive === true || user.musicLiveEnabled === true || profile.musicLiveEnabled === true || ELIGIBLE_ROLES.has(role) || ELIGIBLE_ROLES.has(roleLabel)
   if (!eligible) throw new HttpsError('permission-denied', 'Live streaming is currently limited to eligible creators.')
@@ -231,23 +248,57 @@ const startMusicLiveStream = onCall(
       liveLog(stage, { uid, category, visibility, audioMode, hasCoverArtURL: Boolean(coverArtURL) })
 
       stage = 'active stream check started'
+      const maxActiveStreams = liveStreamLimitForHost({ user, profile, accountPermissions, auth: request.auth })
       const [liveActive, startingActive] = await Promise.all([
-        db().collection('musicLiveStreams').where('hostUid', '==', uid).where('status', '==', 'live').limit(1).get(),
-        db().collection('musicLiveStreams').where('hostUid', '==', uid).where('status', '==', 'starting').limit(5).get()
+        db().collection('musicLiveStreams').where('hostUid', '==', uid).where('status', '==', 'live').limit(maxActiveStreams + 5).get(),
+        db().collection('musicLiveStreams').where('hostUid', '==', uid).where('status', '==', 'starting').limit(maxActiveStreams + 5).get()
       ])
+      const freshLive = liveActive.docs.filter((docSnap) => {
+        const stream = docSnap.data() || {}
+        return stream.hostConnected === true && stream.audioPublished === true && isHeartbeatFresh(stream)
+      })
+      const staleLive = liveActive.docs.filter((docSnap) => !freshLive.includes(docSnap))
       const freshStarting = startingActive.docs.filter((docSnap) => {
         const started = docSnap.data()?.createdAt?.toMillis?.() || docSnap.data()?.updatedAt?.toMillis?.() || 0
         return started && Date.now() - started < STARTING_TIMEOUT_MS
       })
       const staleStarting = startingActive.docs.filter((docSnap) => !freshStarting.includes(docSnap))
-      await Promise.all(staleStarting.map((docSnap) => docSnap.ref.set({
-        status: 'error',
-        connectionStatus: 'error',
-        errorReason: 'starting_timeout',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      }, { merge: true })))
-      liveLog('active stream check completed', { uid, liveCount: liveActive.size, freshStartingCount: freshStarting.length, staleStartingCount: staleStarting.length })
-      if (!liveActive.empty || freshStarting.length) throw new HttpsError('failed-precondition', 'End your current live stream before starting another.', { stage })
+      const cleanupNow = admin.firestore.FieldValue.serverTimestamp()
+      await Promise.all([
+        ...staleLive.map((docSnap) => docSnap.ref.set({
+          status: 'ended',
+          connectionStatus: 'stale',
+          hostConnected: false,
+          audioPublished: false,
+          endedAt: cleanupNow,
+          endReason: 'heartbeat_stale',
+          updatedAt: cleanupNow,
+          listenerCount: 0
+        }, { merge: true })),
+        ...staleStarting.map((docSnap) => docSnap.ref.set({
+          status: 'error',
+          connectionStatus: 'error',
+          errorReason: 'starting_timeout',
+          updatedAt: cleanupNow
+        }, { merge: true }))
+      ])
+      const activeStreamCount = freshLive.length + freshStarting.length
+      liveLog('active stream check completed', {
+        uid,
+        maxActiveStreams,
+        activeStreamCount,
+        freshLiveCount: freshLive.length,
+        freshStartingCount: freshStarting.length,
+        staleLiveCount: staleLive.length,
+        staleStartingCount: staleStarting.length
+      })
+      if (activeStreamCount >= maxActiveStreams) {
+        throw new HttpsError('resource-exhausted', 'You have reached your active live stream limit. End one stream before starting another.', {
+          stage,
+          activeStreamCount,
+          maxActiveStreams
+        })
+      }
 
       stage = 'LiveKit config validated'
       const config = livekitConfig(stage)

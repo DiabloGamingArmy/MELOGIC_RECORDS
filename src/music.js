@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/music.css'
-import { Room, RoomEvent, createLocalAudioTrack } from 'livekit-client'
+import { AudioPresets, Room, RoomEvent, createLocalAudioTrack } from 'livekit-client'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState } from './firebase/auth'
@@ -676,10 +676,14 @@ function audioConstraintsForMode({ deviceId = '', relaxed = false } = {}) {
 
 function publishOptionsForAudioMode() {
   if (state.goLive.form.audioMode === 'voice') {
-    return { dtx: true, red: true }
+    return { audioPreset: AudioPresets.speech, dtx: true, red: true, forceStereo: false }
   }
-  // LiveKit/WebRTC live audio is high-quality Opus, not lossless. Replay-quality archives should use LiveKit Egress or a separate mastered upload later.
-  return { audioBitrate: 192000, dtx: false, red: true }
+  // LiveKit/WebRTC is real-time Opus transport. These supported options favor music quality,
+  // but browsers do not expose a reliable broadcast-style listener buffer here.
+  // Future Broadcast Delay Mode should use a server relay such as HLS/LL-HLS, Icecast-style
+  // streaming, LiveKit Egress, or another recording/transcoding pipeline when intentional
+  // radio-style delay and buffering matter more than interactivity.
+  return { audioPreset: AudioPresets.musicHighQualityStereo, dtx: false, red: true, forceStereo: true }
 }
 
 function isHostBroadcastActive() {
@@ -1397,6 +1401,8 @@ async function joinLiveListener() {
   rerender()
   try {
     const credentials = await joinMusicLiveStream(state.liveStream.id)
+    // LiveKit/WebRTC keeps audio interactive and handles jitter/reconnects internally.
+    // It does not expose a normal browser-side setting for a large intentional radio buffer.
     const room = new Room({ adaptiveStream: true, dynacast: true })
     state.listenerRoom = room
     room.on(RoomEvent.TrackSubscribed, (track) => {
