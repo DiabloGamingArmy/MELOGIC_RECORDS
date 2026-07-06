@@ -784,6 +784,86 @@
   color: var(--ml-accent);
 }
 
+.music-quality-note {
+  border: 1px solid rgba(110, 231, 255, 0.22);
+  border-radius: var(--ml-radius-md);
+  background: rgba(110, 231, 255, 0.06);
+  color: var(--ml-text-muted);
+  margin: 0;
+  padding: 0.7rem;
+}
+
+.music-live-edit-form,
+.music-live-chat,
+.music-live-chat-form {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.music-live-edit-form {
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: rgba(5, 9, 17, 0.42);
+  padding: 0.75rem;
+}
+
+.music-live-edit-form label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.music-live-edit-form input,
+.music-live-edit-form textarea,
+.music-live-edit-form select,
+.music-live-chat-form input {
+  width: 100%;
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: rgba(5, 9, 17, 0.86);
+  color: var(--ml-text);
+  font: inherit;
+  padding: 0.66rem 0.75rem;
+}
+
+.music-live-chat {
+  align-content: start;
+}
+
+.music-live-chat-messages {
+  display: grid;
+  gap: 0.55rem;
+  max-height: 22rem;
+  overflow: auto;
+  padding-right: 0.2rem;
+}
+
+.music-live-chat-message {
+  border: 1px solid var(--ml-border);
+  border-radius: var(--ml-radius-md);
+  background: rgba(5, 9, 17, 0.48);
+  padding: 0.62rem 0.7rem;
+}
+
+.music-live-chat-message div {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.music-live-chat-message time {
+  color: var(--ml-text-muted);
+  font-size: 0.76rem;
+}
+
+.music-live-chat-message p {
+  margin: 0.25rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.music-live-chat-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .music-live-error {
   border: 1px solid rgba(255, 107, 138, 0.34);
   border-radius: var(--ml-radius-md);

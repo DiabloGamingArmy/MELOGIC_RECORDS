@@ -1,10 +1,11 @@
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
+const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
 
 function toIsoDate(value) {
   if (!value) return ''
@@ -42,6 +43,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     coverArtURL: String(raw.coverArtURL || raw.coverURL || ''),
     status: String(raw.status || 'draft'),
     visibility: String(raw.visibility || 'private'),
+    audioMode: String(raw.audioMode || 'music'),
+    audioProfile: String(raw.audioProfile || ''),
     audioOnly: raw.audioOnly !== false,
     videoEnabled: raw.videoEnabled === true,
     hostConnected: raw.hostConnected === true,
@@ -54,6 +57,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     endedAt: toIsoDate(raw.endedAt),
     createdAt: toIsoDate(raw.createdAt),
     updatedAt: toIsoDate(raw.updatedAt),
+    lastHostHeartbeatAt: toIsoDate(raw.lastHostHeartbeatAt),
+    lastMetadataUpdateAt: toIsoDate(raw.lastMetadataUpdateAt),
     listenerCount: toNumber(raw.listenerCount),
     peakListenerCount: toNumber(raw.peakListenerCount),
     isRecordable: raw.isRecordable === true,
@@ -64,6 +69,22 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     moderationStatus: String(raw.moderationStatus || 'clear'),
     reportCount: toNumber(raw.reportCount)
   }
+}
+
+export function isLiveStreamFresh(stream = {}) {
+  const heartbeat = stream.lastHostHeartbeatAt || stream.startedAt || stream.updatedAt
+  const timestamp = heartbeat ? new Date(heartbeat).getTime() : 0
+  return Boolean(timestamp) && Number.isFinite(timestamp) && Date.now() - timestamp < LIVE_HEARTBEAT_STALE_MS
+}
+
+export function isPublicLiveStreamVisible(stream = {}) {
+  return stream.status === 'live'
+    && stream.visibility === 'public'
+    && stream.audioOnly !== false
+    && stream.hostConnected === true
+    && stream.audioPublished === true
+    && isLiveStreamFresh(stream)
+    && !['removed', 'blocked'].includes(stream.moderationStatus)
 }
 
 export async function listPublicLiveStreams({ category = '', limitCount = 20 } = {}) {
@@ -79,11 +100,59 @@ export async function listPublicLiveStreams({ category = '', limitCount = 20 } =
     const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.musicLiveStreams), ...constraints))
     return snapshot.docs
       .map((docSnap) => normalizeMusicLiveStream(docSnap))
-      .filter((stream) => stream.audioOnly !== false && stream.audioPublished === true && !['removed', 'blocked'].includes(stream.moderationStatus))
+      .filter(isPublicLiveStreamVisible)
   } catch (error) {
     console.warn('[musicLiveService] Public live streams could not be loaded.', error?.message || error)
     return []
   }
+}
+
+export function subscribeMusicLiveStream(streamId = '', onNext = () => {}, onError = () => {}) {
+  const id = String(streamId || '').trim()
+  if (!db || !id || id.includes('/')) return () => {}
+  return onSnapshot(
+    doc(db, FIRESTORE_COLLECTIONS.musicLiveStreams, id),
+    (snapshot) => onNext(snapshot.exists() ? normalizeMusicLiveStream(snapshot) : null),
+    (error) => {
+      console.warn('[musicLiveService] Live stream subscription failed.', error?.message || error)
+      onError(error)
+    }
+  )
+}
+
+export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError = () => {}) {
+  const id = String(streamId || '').trim()
+  if (!db || !id || id.includes('/')) return () => {}
+  const messagesQuery = query(
+    collection(db, FIRESTORE_COLLECTIONS.musicLiveStreams, id, 'chatMessages'),
+    where('status', '==', 'visible'),
+    orderBy('createdAt', 'desc'),
+    limit(80)
+  )
+  return onSnapshot(
+    messagesQuery,
+    (snapshot) => {
+      const messages = snapshot.docs.map((docSnap) => {
+        const raw = docSnap.data() || {}
+        return {
+          id: docSnap.id,
+          messageId: String(raw.messageId || docSnap.id),
+          streamId: String(raw.streamId || id),
+          uid: String(raw.uid || ''),
+          displayName: String(raw.displayName || 'Melogic Listener'),
+          photoURL: String(raw.photoURL || ''),
+          text: String(raw.text || ''),
+          createdAt: toIsoDate(raw.createdAt),
+          status: String(raw.status || 'visible')
+        }
+      }).reverse()
+      onNext(messages)
+    },
+    (error) => {
+      console.warn('[musicLiveService] Live chat subscription failed.', error?.message || error)
+      onError(error)
+    }
+  )
 }
 
 export async function getMusicLiveStream(streamId = '') {
@@ -110,6 +179,18 @@ export async function markMusicLiveStreamOnAir(streamId = '') {
   return result?.data || { ok: false }
 }
 
+export async function heartbeatMusicLiveStream(streamId = '', options = {}) {
+  const callable = httpsCallable(functions, 'heartbeatMusicLiveStream')
+  const result = await callable({ streamId, ...options })
+  return result?.data || { ok: false }
+}
+
+export async function updateMusicLiveStreamInfo(payload = {}) {
+  const callable = httpsCallable(functions, 'updateMusicLiveStreamInfo')
+  const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
 export async function joinMusicLiveStream(streamId = '') {
   const callable = httpsCallable(functions, 'joinMusicLiveStream')
   const result = await callable({ streamId })
@@ -120,4 +201,27 @@ export async function endMusicLiveStream(streamId = '') {
   const callable = httpsCallable(functions, 'endMusicLiveStream')
   const result = await callable({ streamId })
   return result?.data || { ok: false }
+}
+
+export async function sendMusicLiveChatMessage(streamId = '', text = '') {
+  const callable = httpsCallable(functions, 'sendMusicLiveChatMessage')
+  const result = await callable({ streamId, text })
+  return result?.data || { ok: false }
+}
+
+export function sendMusicLiveUnloadBeacon({ streamId = '', idToken = '', reason = 'host_unload' } = {}) {
+  const cleanStreamId = String(streamId || '').trim()
+  if (!cleanStreamId || !idToken) return false
+  const payload = JSON.stringify({ streamId: cleanStreamId, idToken, reason })
+  const url = 'https://us-central1-melogic-records.cloudfunctions.net/endMusicLiveStreamBeacon'
+  if (navigator.sendBeacon) {
+    return navigator.sendBeacon(url, new Blob([payload], { type: 'application/json' }))
+  }
+  fetch(url, {
+    method: 'POST',
+    body: payload,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${idToken}` },
+    keepalive: true
+  }).catch(() => {})
+  return true
 }

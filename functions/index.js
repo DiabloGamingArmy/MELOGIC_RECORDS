@@ -93,7 +93,16 @@ const {
   startCreatorAgeVerification
 } = require('./src/compliance/creatorAgeVerification')
 const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
-const { startMusicLiveStream, markMusicLiveStreamOnAir, joinMusicLiveStream, endMusicLiveStream } = require('./src/music/musicLiveStreams')
+const {
+  startMusicLiveStream,
+  markMusicLiveStreamOnAir,
+  heartbeatMusicLiveStream,
+  updateMusicLiveStreamInfo,
+  joinMusicLiveStream,
+  endMusicLiveStream,
+  endMusicLiveStreamBeacon,
+  sendMusicLiveChatMessage
+} = require('./src/music/musicLiveStreams')
 const { getPublicProfileStats, toggleProfileFollow } = require('./src/profiles/profileRelationships')
 const {
   dismissMutualUserSuggestion,
@@ -237,8 +246,12 @@ exports.listAdminEmailLogs = listAdminEmailLogs
 exports.createLiveKitToken = createLiveKitToken
 exports.startMusicLiveStream = startMusicLiveStream
 exports.markMusicLiveStreamOnAir = markMusicLiveStreamOnAir
+exports.heartbeatMusicLiveStream = heartbeatMusicLiveStream
+exports.updateMusicLiveStreamInfo = updateMusicLiveStreamInfo
 exports.joinMusicLiveStream = joinMusicLiveStream
 exports.endMusicLiveStream = endMusicLiveStream
+exports.endMusicLiveStreamBeacon = endMusicLiveStreamBeacon
+exports.sendMusicLiveChatMessage = sendMusicLiveChatMessage
 exports.getPublicProfileStats = getPublicProfileStats
 exports.toggleProfileFollow = toggleProfileFollow
 exports.getMutualUserSuggestions = getMutualUserSuggestions

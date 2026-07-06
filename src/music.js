@@ -9,10 +9,17 @@ import { getMyAccountPermissions } from './data/accountPermissionsService'
 import {
   endMusicLiveStream,
   getMusicLiveStream,
+  heartbeatMusicLiveStream,
+  isLiveStreamFresh,
   joinMusicLiveStream,
   listPublicLiveStreams,
   markMusicLiveStreamOnAir,
-  startMusicLiveStream
+  sendMusicLiveChatMessage,
+  sendMusicLiveUnloadBeacon,
+  startMusicLiveStream,
+  subscribeMusicLiveChat,
+  subscribeMusicLiveStream,
+  updateMusicLiveStreamInfo
 } from './data/musicLiveService'
 import {
   getMusicRelease,
@@ -75,13 +82,24 @@ const state = {
   },
   liveFilter: 'all',
   liveStream: null,
+  liveStreamUnsubscribe: null,
+  liveListRefreshTimer: 0,
   liveStatus: 'idle',
   liveError: '',
   listenerRoom: null,
   listenerAudioElement: null,
+  liveChat: {
+    messages: [],
+    text: '',
+    sending: false,
+    error: '',
+    unsubscribe: null,
+    lastSentAt: 0
+  },
   goLive: {
     form: {
       category: 'music',
+      audioMode: 'music',
       title: '',
       description: '',
       coverArtURL: '',
@@ -102,6 +120,11 @@ const state = {
     streamId: '',
     room: null,
     localTrack: null,
+    heartbeatTimer: 0,
+    unloadToken: '',
+    editOpen: false,
+    editSaving: false,
+    editError: '',
     starting: false,
     ending: false,
     formError: ''
@@ -624,6 +647,130 @@ function liveStatusLabel(stream = {}) {
   return 'Click Listen to join. Audio never autoplays.'
 }
 
+function audioModeLabel(mode = 'music') {
+  return mode === 'voice' ? 'Podcast / Voice' : 'High Quality Music'
+}
+
+function audioConstraintsForMode({ deviceId = '', relaxed = false } = {}) {
+  const mode = state.goLive.form.audioMode === 'voice' ? 'voice' : 'music'
+  const base = deviceId ? { deviceId: { exact: deviceId } } : {}
+  if (relaxed) return deviceId ? { deviceId: { exact: deviceId } } : true
+  if (mode === 'voice') {
+    return {
+      ...base,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      sampleRate: { ideal: 48000 }
+    }
+  }
+  return {
+    ...base,
+    channelCount: { ideal: 2 },
+    sampleRate: { ideal: 48000 },
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false
+  }
+}
+
+function publishOptionsForAudioMode() {
+  if (state.goLive.form.audioMode === 'voice') {
+    return { dtx: true, red: true }
+  }
+  // LiveKit/WebRTC live audio is high-quality Opus, not lossless. Replay-quality archives should use LiveKit Egress or a separate mastered upload later.
+  return { audioBitrate: 192000, dtx: false, red: true }
+}
+
+function isHostBroadcastActive() {
+  return Boolean(state.goLive.streamId && (state.goLive.starting || state.goLive.room || state.goLive.localTrack))
+}
+
+function formatChatTime(value = '') {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+function stopLiveChatSubscription() {
+  if (state.liveChat.unsubscribe) state.liveChat.unsubscribe()
+  state.liveChat.unsubscribe = null
+  state.liveChat.messages = []
+  state.liveChat.error = ''
+}
+
+function stopLiveStreamSubscription() {
+  if (state.liveStreamUnsubscribe) state.liveStreamUnsubscribe()
+  state.liveStreamUnsubscribe = null
+}
+
+function stopLiveListRefresh() {
+  if (state.liveListRefreshTimer) window.clearInterval(state.liveListRefreshTimer)
+  state.liveListRefreshTimer = 0
+}
+
+function renderLiveChatPanel(streamId = '') {
+  const signedIn = Boolean(state.currentUser)
+  return `
+    <aside class="music-panel music-live-chat">
+      <div class="music-row-heading">
+        <div>
+          <p class="music-eyebrow">Live chat</p>
+          <h2>Chat</h2>
+        </div>
+      </div>
+      <div class="music-live-chat-messages" data-live-chat-messages>
+        ${state.liveChat.messages.length ? state.liveChat.messages.map((message) => `
+          <article class="music-live-chat-message">
+            <div>
+              <strong>${escapeHtml(message.displayName)}</strong>
+              <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
+            </div>
+            <p>${escapeHtml(message.text)}</p>
+          </article>
+        `).join('') : '<p class="music-muted">No messages yet.</p>'}
+      </div>
+      ${state.liveChat.error ? `<p class="music-live-error">${escapeHtml(state.liveChat.error)}</p>` : ''}
+      ${signedIn ? `
+        <form class="music-live-chat-form" data-live-chat-form data-stream-id="${escapeHtml(streamId)}">
+          <input name="text" maxlength="500" placeholder="Send a message..." value="${escapeHtml(state.liveChat.text)}" />
+          <button class="button button-accent" type="submit" ${state.liveChat.sending ? 'disabled' : ''}>${state.liveChat.sending ? 'Sending...' : 'Send'}</button>
+        </form>
+      ` : '<p class="music-muted">Sign in to join live chat.</p>'}
+    </aside>
+  `
+}
+
+function renderHostMetadataEditor(form) {
+  if (!state.goLive.editOpen) {
+    return '<button type="button" class="button button-muted" data-toggle-live-edit>Edit stream info</button>'
+  }
+  const categories = [
+    ['music', 'Music'],
+    ['podcast', 'Podcast'],
+    ['radio', 'Radio station'],
+    ['interview', 'Interview'],
+    ['listening_party', 'Listening party'],
+    ['creator_talk', 'Creator talk'],
+    ['other', 'Other']
+  ]
+  return `
+    <form class="music-live-edit-form" data-live-edit-form>
+      <label><span>Title</span><input name="title" maxlength="90" required value="${escapeHtml(form.title)}" /></label>
+      <label><span>Description</span><textarea name="description" rows="3" maxlength="1200">${escapeHtml(form.description)}</textarea></label>
+      <label><span>Cover image URL</span><input name="coverArtURL" value="${escapeHtml(form.coverArtURL)}" /></label>
+      <label><span>Tags</span><input name="tags" value="${escapeHtml(form.tags)}" /></label>
+      <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}" ${form.category === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
+      ${state.goLive.editError ? `<p class="music-live-error">${escapeHtml(state.goLive.editError)}</p>` : ''}
+      <div class="music-live-actions">
+        <button class="button button-accent" type="submit" ${state.goLive.editSaving ? 'disabled' : ''}>${state.goLive.editSaving ? 'Saving...' : 'Save live updates'}</button>
+        <button class="button button-muted" type="button" data-toggle-live-edit>Close</button>
+      </div>
+    </form>
+  `
+}
+
 function renderGoLivePage() {
   const isSignedIn = Boolean(state.currentUser)
   const canGoLive = state.accountPermissions?.permissions?.musicLive === true
@@ -651,6 +798,8 @@ function renderGoLivePage() {
       <section class="music-go-live-grid">
         <form class="music-go-live-form music-panel" data-go-live-form>
           <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}" ${form.category === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+          <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
+          <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
           <label><span>Title</span><input name="title" maxlength="90" required placeholder="Tonight on Melogic..." value="${escapeHtml(form.title)}" /></label>
           <label><span>Description</span><textarea name="description" rows="4" maxlength="1200" placeholder="Tell listeners what this stream is about.">${escapeHtml(form.description)}</textarea></label>
           <label><span>Cover image URL</span><input name="coverArtURL" placeholder="Optional image URL for this live stream" value="${escapeHtml(form.coverArtURL)}" /></label>
@@ -685,11 +834,14 @@ function renderGoLivePage() {
             <div class="music-host-room">
               <span class="music-live-badge">LIVE</span>
               <h3>${escapeHtml(state.goLive.connectionStatus || 'Live stream started')}</h3>
+              <p class="music-muted">${escapeHtml(audioModeLabel(form.audioMode))} · heartbeat active</p>
               <p>Share: <a href="${musicLiveStreamRoute(state.goLive.streamId)}">${musicLiveStreamRoute(state.goLive.streamId)}</a></p>
+              ${renderHostMetadataEditor(form)}
               <button type="button" class="button button-danger" data-end-host-stream ${state.goLive.ending ? 'disabled' : ''}>${state.goLive.ending ? 'Ending...' : 'End Stream'}</button>
             </div>
           ` : ''}
         </aside>
+        ${state.goLive.streamId ? renderLiveChatPanel(state.goLive.streamId) : ''}
       </section>
     `}
   `)
@@ -705,11 +857,12 @@ function renderLiveDetailPage() {
     renderAppShell(emptyState('Live stream unavailable', 'This stream may have ended, been removed, or never existed.', `<a class="button button-accent" href="${ROUTES.musicLive}">Back to Live Streams</a>`))
     return
   }
+  const canListen = stream.status === 'live' && stream.hostConnected === true && stream.audioPublished === true && isLiveStreamFresh(stream)
   renderAppShell(`
     <section class="music-live-detail">
       ${renderLiveArtwork(stream, 'music-live-detail-art')}
       <div class="music-live-detail-copy">
-        <span class="music-live-badge">${stream.status === 'live' ? 'LIVE' : 'ENDED'}</span>
+        <span class="music-live-badge">${canListen ? 'LIVE' : 'ENDED'}</span>
         <h1>${escapeHtml(stream.title)}</h1>
         <p>${escapeHtml(stream.description || 'Audio-only live stream on Melogic Music.')}</p>
         <div class="music-live-host">
@@ -718,13 +871,14 @@ function renderLiveDetailPage() {
         </div>
         <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Live audio</span>'}</div>
         <div class="music-live-listener">
-          <button type="button" class="button button-accent" data-live-listen ${stream.status === 'live' ? '' : 'disabled'}>${['live', 'waiting'].includes(state.liveStatus) ? 'Pause / Leave' : 'Listen'}</button>
+          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${['live', 'waiting'].includes(state.liveStatus) ? 'Pause / Leave' : 'Listen'}</button>
           <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
           <button type="button" class="button button-muted" disabled>Report</button>
         </div>
-        ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(liveStatusLabel(stream))}</p>`}
+        ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : 'This stream has ended or is no longer public.')}</p>`}
       </div>
     </section>
+    ${renderLiveChatPanel(stream.id)}
   `)
 }
 
@@ -897,6 +1051,7 @@ function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) 
   const data = new FormData(form)
   state.goLive.form = {
     category: String(data.get('category') || 'music'),
+    audioMode: String(data.get('audioMode') || state.goLive.form.audioMode || 'music') === 'voice' ? 'voice' : 'music',
     title: String(data.get('title') || '').slice(0, 90),
     description: String(data.get('description') || '').slice(0, 1200),
     coverArtURL: String(data.get('coverArtURL') || '').slice(0, 1000),
@@ -915,14 +1070,20 @@ async function refreshAudioDevices() {
     return
   }
   stopPreviewStream()
-  const constraints = {
-    audio: state.goLive.selectedDeviceId
-      ? { deviceId: { exact: state.goLive.selectedDeviceId }, echoCancellation: true, noiseSuppression: true }
-      : { echoCancellation: true, noiseSuppression: true },
-    video: false
-  }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(constraints)
+    let stream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId }),
+        video: false
+      })
+    } catch (error) {
+      console.warn('[music] ideal audio constraints failed; retrying basic mic constraints.', error?.message || error)
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId, relaxed: true }),
+        video: false
+      })
+    }
     state.goLive.previewStream = stream
     stream.getAudioTracks().forEach((track) => { track.enabled = !state.goLive.muted })
     const devices = await navigator.mediaDevices.enumerateDevices()
@@ -934,6 +1095,154 @@ async function refreshAudioDevices() {
   } catch (error) {
     state.goLive.formError = error?.message || 'Microphone permission is required to go live.'
     state.goLive.connectionStatus = 'Mic permission missing.'
+    rerender()
+  }
+}
+
+async function refreshHostUnloadToken() {
+  if (!state.currentUser) return ''
+  state.goLive.unloadToken = await state.currentUser.getIdToken().catch(() => state.goLive.unloadToken || '')
+  return state.goLive.unloadToken
+}
+
+function stopHostHeartbeat() {
+  if (state.goLive.heartbeatTimer) window.clearInterval(state.goLive.heartbeatTimer)
+  state.goLive.heartbeatTimer = 0
+}
+
+function startHostHeartbeat(streamId) {
+  stopHostHeartbeat()
+  if (!streamId) return
+  const beat = () => {
+    heartbeatMusicLiveStream(streamId, {
+      audioPublished: Boolean(state.goLive.localTrack),
+      connectionStatus: state.goLive.connectionStatus === 'Reconnecting...' ? 'reconnecting' : 'live'
+    }).catch((error) => {
+      console.warn('[music] heartbeatMusicLiveStream failed', error?.message || error)
+    })
+    refreshHostUnloadToken().catch(() => {})
+  }
+  beat()
+  state.goLive.heartbeatTimer = window.setInterval(beat, 15000)
+}
+
+function sendHostUnloadSignal(reason = 'host_unload') {
+  if (!state.goLive.streamId) return
+  sendMusicLiveUnloadBeacon({
+    streamId: state.goLive.streamId,
+    idToken: state.goLive.unloadToken,
+    reason
+  })
+}
+
+function startLiveChatSubscription(streamId) {
+  stopLiveChatSubscription()
+  if (!streamId || !state.currentUser) return
+  state.liveChat.unsubscribe = subscribeMusicLiveChat(
+    streamId,
+    (messages) => {
+      const list = app.querySelector('[data-live-chat-messages]')
+      const shouldStick = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 80
+      state.liveChat.messages = messages
+      state.liveChat.error = ''
+      rerender()
+      if (shouldStick) {
+        requestAnimationFrame(() => {
+          const nextList = app.querySelector('[data-live-chat-messages]')
+          if (nextList) nextList.scrollTop = nextList.scrollHeight
+        })
+      }
+    },
+    () => {
+      state.liveChat.error = 'Live chat is unavailable for this stream.'
+      rerender()
+    }
+  )
+}
+
+function startLiveStreamSubscription(streamId) {
+  stopLiveStreamSubscription()
+  if (!streamId) return
+  state.liveStreamUnsubscribe = subscribeMusicLiveStream(
+    streamId,
+    (stream) => {
+      if (!stream || stream.visibility === 'private' || stream.status !== 'live' || stream.hostConnected !== true || stream.audioPublished !== true || !isLiveStreamFresh(stream)) {
+        disconnectLiveListener()
+        state.liveStream = stream
+        state.liveStatus = 'ended'
+        state.liveError = 'This stream has ended or is no longer public.'
+        stopLiveChatSubscription()
+        rerender()
+        return
+      }
+      state.liveStream = stream
+      state.liveError = ''
+      rerender()
+    },
+    () => {
+      disconnectLiveListener()
+      state.liveStream = null
+      state.liveStatus = 'ended'
+      state.liveError = 'This stream has ended or is no longer public.'
+      stopLiveChatSubscription()
+      rerender()
+    }
+  )
+}
+
+async function saveHostLiveMetadata(form) {
+  if (!state.goLive.streamId) return
+  const data = new FormData(form)
+  const payload = {
+    streamId: state.goLive.streamId,
+    title: String(data.get('title') || '').slice(0, 90),
+    description: String(data.get('description') || '').slice(0, 1200),
+    coverArtURL: String(data.get('coverArtURL') || '').slice(0, 1000),
+    tags: String(data.get('tags') || '').slice(0, 500),
+    category: String(data.get('category') || 'music'),
+    visibility: String(data.get('visibility') || 'public')
+  }
+  state.goLive.editSaving = true
+  state.goLive.editError = ''
+  rerender()
+  try {
+    await updateMusicLiveStreamInfo(payload)
+    state.goLive.form = {
+      ...state.goLive.form,
+      ...payload
+    }
+    delete state.goLive.form.streamId
+    state.goLive.editOpen = false
+  } catch (error) {
+    state.goLive.editError = error?.message || 'Could not update live stream info.'
+  } finally {
+    state.goLive.editSaving = false
+    rerender()
+  }
+}
+
+async function sendLiveChatMessage(form) {
+  const streamId = form?.dataset?.streamId || state.liveStream?.id || state.goLive.streamId
+  const text = String(new FormData(form).get('text') || '').trim().slice(0, 500)
+  if (!streamId || !text) return
+  const now = Date.now()
+  if (now - state.liveChat.lastSentAt < 1200) {
+    state.liveChat.error = 'Slow down a little before sending another message.'
+    rerender()
+    return
+  }
+  state.liveChat.sending = true
+  state.liveChat.error = ''
+  state.liveChat.text = text
+  rerender()
+  try {
+    await sendMusicLiveChatMessage(streamId, text)
+    state.liveChat.text = ''
+    state.liveChat.lastSentAt = Date.now()
+  } catch (error) {
+    state.liveChat.error = error?.message || 'Could not send chat message.'
+  } finally {
+    state.liveChat.sending = false
     rerender()
   }
 }
@@ -955,10 +1264,12 @@ async function startHostBroadcast(form) {
       visibility: formState.visibility,
       coverArtURL: formState.coverArtURL,
       tags: formState.tags,
+      audioMode: formState.audioMode,
       rightsAccepted: formState.rightsAccepted,
       archiveRequested: false,
       audioOnly: true
     }
+    await refreshHostUnloadToken()
     const response = await startMusicLiveStream(payload)
     pendingStreamId = response.streamId || ''
     const room = new Room({ adaptiveStream: true, dynacast: true })
@@ -975,19 +1286,30 @@ async function startHostBroadcast(form) {
     })
     room.on(RoomEvent.Disconnected, () => {
       state.goLive.connectionStatus = 'Disconnected.'
+      if (state.goLive.streamId && !state.goLive.ending) {
+        stopHostHeartbeat()
+        heartbeatMusicLiveStream(state.goLive.streamId, {
+          audioPublished: false,
+          connectionStatus: 'reconnecting'
+        }).catch(() => {})
+      }
       rerender()
     })
     await room.connect(response.url, response.hostToken)
     state.goLive.connectionStatus = 'Publishing selected audio input...'
     rerender()
-    const localTrack = await createLocalAudioTrack({
-      deviceId: state.goLive.selectedDeviceId || undefined,
-      echoCancellation: true,
-      noiseSuppression: true
-    })
+    let localTrack
+    try {
+      localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId }))
+    } catch (error) {
+      console.warn('[music] ideal publish audio constraints failed; retrying basic mic constraints.', error?.message || error)
+      localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId, relaxed: true }))
+    }
     state.goLive.localTrack = localTrack
-    await room.localParticipant.publishTrack(localTrack)
+    await room.localParticipant.publishTrack(localTrack, publishOptionsForAudioMode())
     await markMusicLiveStreamOnAir(pendingStreamId)
+    startHostHeartbeat(pendingStreamId)
+    startLiveChatSubscription(pendingStreamId)
     state.goLive.connectionStatus = 'Audio published. You are live.'
   } catch (error) {
     console.warn('[music] startMusicLiveStream failed', {
@@ -1000,6 +1322,8 @@ async function startHostBroadcast(form) {
       await endMusicLiveStream(pendingStreamId).catch(() => {})
       state.goLive.streamId = ''
     }
+    stopHostHeartbeat()
+    stopLiveChatSubscription()
     if (state.goLive.localTrack) {
       state.goLive.localTrack.stop()
       state.goLive.localTrack = null
@@ -1025,6 +1349,7 @@ async function endHostBroadcast() {
   state.goLive.connectionStatus = 'Ending stream...'
   rerender()
   try {
+    stopHostHeartbeat()
     if (state.goLive.localTrack) {
       state.goLive.localTrack.stop()
       state.goLive.localTrack = null
@@ -1034,9 +1359,11 @@ async function endHostBroadcast() {
       state.goLive.room = null
     }
     await endMusicLiveStream(state.goLive.streamId)
+    stopLiveChatSubscription()
     stopPreviewStream()
     state.goLive.connectionStatus = 'Stream ended. Save as replay is coming soon.'
     state.goLive.streamId = ''
+    state.goLive.unloadToken = ''
   } catch (error) {
     state.goLive.formError = error?.message || 'Could not end stream.'
   } finally {
@@ -1144,6 +1471,18 @@ async function loadLibraryView(view) {
   state.rows.library = state.currentUser ? await listUserLibraryMusic(state.currentUser.uid, view, 20) : []
 }
 
+function startLiveListRefresh() {
+  stopLiveListRefresh()
+  if (!['landing', 'liveList'].includes(state.route.mode) && state.activeView !== 'live') return
+  state.liveListRefreshTimer = window.setInterval(() => {
+    if (!['landing', 'liveList'].includes(state.route.mode) && state.activeView !== 'live') return
+    listPublicLiveStreams({ limitCount: 20 }).then((streams) => {
+      state.rows.liveStreams = streams
+      if (state.activeView === 'live' || state.activeView === 'home') rerender()
+    }).catch(() => {})
+  }, 15000)
+}
+
 function setActiveView(view) {
   if (!sidebarViews[view]) return
   state.activeView = view
@@ -1159,6 +1498,7 @@ function setActiveView(view) {
   } else {
     rerender()
   }
+  startLiveListRefresh()
 }
 
 function bindMusicEvents() {
@@ -1215,6 +1555,18 @@ function bindMusicEvents() {
     event.preventDefault()
     startHostBroadcast(event.currentTarget).catch(() => {})
   })
+  app.querySelectorAll('[data-toggle-live-edit]').forEach((button) => {
+    button.addEventListener('click', () => {
+      updateGoLiveFormState()
+      state.goLive.editOpen = !state.goLive.editOpen
+      state.goLive.editError = ''
+      rerender()
+    })
+  })
+  app.querySelector('[data-live-edit-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    saveHostLiveMetadata(event.currentTarget).catch(() => {})
+  })
   app.querySelector('[data-end-host-stream]')?.addEventListener('click', () => {
     endHostBroadcast().catch(() => {})
   })
@@ -1224,6 +1576,13 @@ function bindMusicEvents() {
   app.querySelector('[data-live-volume]')?.addEventListener('input', (event) => {
     state.player.volume = Number(event.target.value)
     if (state.listenerAudioElement) state.listenerAudioElement.volume = state.player.volume
+  })
+  app.querySelector('[data-live-chat-form]')?.addEventListener('input', (event) => {
+    state.liveChat.text = String(new FormData(event.currentTarget).get('text') || '').slice(0, 500)
+  })
+  app.querySelector('[data-live-chat-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    sendLiveChatMessage(event.currentTarget).catch(() => {})
   })
   app.querySelectorAll('[data-play-release]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -1288,6 +1647,9 @@ async function attachMusicHeroVideo() {
 }
 
 async function loadMusicPage() {
+  stopLiveStreamSubscription()
+  stopLiveChatSubscription()
+  stopLiveListRefresh()
   initShellChrome()
   state.currentUser = await waitForInitialAuthState().catch(() => null)
   state.accountPermissions = null
@@ -1317,6 +1679,10 @@ async function loadMusicPage() {
   if (state.route.mode === 'liveDetail') {
     state.activeView = 'live'
     state.liveStream = await getMusicLiveStream(state.route.id)
+    if (state.liveStream?.id) {
+      startLiveStreamSubscription(state.liveStream.id)
+      startLiveChatSubscription(state.liveStream.id)
+    }
     state.loading = false
     rerender()
     return
@@ -1352,13 +1718,26 @@ async function loadMusicPage() {
   }
   state.loading = false
   rerender()
+  startLiveListRefresh()
 }
 
 window.addEventListener('popstate', () => {
   disconnectLiveListener()
+  stopLiveStreamSubscription()
+  stopLiveChatSubscription()
   state.route = currentRouteMode()
   state.activeView = getInitialView()
-  rerender()
+  loadMusicPage().catch(() => rerender())
+})
+
+window.addEventListener('beforeunload', (event) => {
+  if (!isHostBroadcastActive()) return
+  event.preventDefault()
+  event.returnValue = ''
+})
+
+window.addEventListener('pagehide', () => {
+  if (isHostBroadcastActive()) sendHostUnloadSignal('host_pagehide')
 })
 
 loadMusicPage().catch((error) => {

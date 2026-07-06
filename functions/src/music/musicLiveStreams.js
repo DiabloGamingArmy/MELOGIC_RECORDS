@@ -1,5 +1,5 @@
 const admin = require('firebase-admin')
-const { onCall, HttpsError } = require('firebase-functions/v2/https')
+const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https')
 const { defineSecret } = require('firebase-functions/params')
 const { AccessToken, TrackSource } = require('livekit-server-sdk')
 const { resolvePermissionsForUid } = require('../account/accountPermissions')
@@ -10,8 +10,11 @@ const LIVEKIT_API_SECRET = defineSecret('LIVEKIT_API_SECRET')
 
 const ALLOWED_CATEGORIES = new Set(['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other'])
 const ALLOWED_VISIBILITIES = new Set(['public', 'unlisted', 'private'])
+const ALLOWED_AUDIO_MODES = new Set(['music', 'voice'])
 const ELIGIBLE_ROLES = new Set(['creator', 'artist', 'founder', 'staff', 'admin', 'owner'])
 const STARTING_TIMEOUT_MS = 5 * 60 * 1000
+const HOST_HEARTBEAT_STALE_MS = 90 * 1000
+const CHAT_TEXT_MAX_LENGTH = 500
 
 function db() {
   return admin.firestore()
@@ -28,6 +31,38 @@ function cleanRoomName(value) {
 function toTags(value) {
   if (Array.isArray(value)) return value.map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
   return String(value || '').split(',').map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
+}
+
+function normalizeAudioMode(value) {
+  return ALLOWED_AUDIO_MODES.has(value) ? value : 'music'
+}
+
+function timestampMillis(value) {
+  if (!value) return 0
+  if (typeof value.toMillis === 'function') return value.toMillis()
+  if (typeof value.toDate === 'function') return value.toDate().getTime()
+  const parsed = new Date(value).getTime()
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function isHeartbeatFresh(stream = {}) {
+  const lastHeartbeat = timestampMillis(stream.lastHostHeartbeatAt || stream.startedAt || stream.updatedAt)
+  return Boolean(lastHeartbeat) && Date.now() - lastHeartbeat < HOST_HEARTBEAT_STALE_MS
+}
+
+function isAdminAuth(auth = null) {
+  return auth?.token?.admin === true || ['owner', 'admin'].includes(cleanString(auth?.token?.adminRole, 40))
+}
+
+function cleanStreamMetadata(data = {}) {
+  const title = cleanString(data.title, 90)
+  const description = cleanString(data.description, 1200)
+  const category = ALLOWED_CATEGORIES.has(data.category) ? data.category : 'music'
+  const visibility = ALLOWED_VISIBILITIES.has(data.visibility) ? data.visibility : 'public'
+  const coverArtURL = sanitizeCoverArtURL(data.coverArtURL)
+  const coverArtPath = cleanString(data.coverArtPath, 500)
+  const tags = toTags(data.tags)
+  return { title, description, category, visibility, coverArtURL, coverArtPath, tags }
 }
 
 function liveLog(stage, extra = {}) {
@@ -118,6 +153,24 @@ function assertEligible({ auth, user, profile, accountPermissions }) {
   if (!eligible) throw new HttpsError('permission-denied', 'Live streaming is currently limited to eligible creators.')
 }
 
+function assertCanChat({ auth, user, profile, accountPermissions }) {
+  if (!auth) throw new HttpsError('unauthenticated', 'Sign in to join live chat.')
+  if (auth.token.email && auth.token.email_verified === false) {
+    throw new HttpsError('failed-precondition', 'Verify your email before joining live chat.')
+  }
+  if (user?.suspended === true || profile?.suspended === true || user?.accountStatus === 'suspended' || profile?.accountStatus === 'suspended') {
+    throw new HttpsError('permission-denied', 'This account cannot use live chat.')
+  }
+  const permissions = accountPermissions?.permissions || {}
+  const restrictions = accountPermissions?.restrictions || {}
+  if (accountPermissions?.suspended === true || restrictions.suspended === true || restrictions.communityRestricted === true || restrictions.musicRestricted === true) {
+    throw new HttpsError('permission-denied', 'Live chat is restricted for this account.')
+  }
+  if (permissions.musicLiveChat === false || permissions.communityMessage === false || permissions.communityPost === false) {
+    throw new HttpsError('permission-denied', 'Live chat is restricted for this account.')
+  }
+}
+
 async function createLiveKitJwt({ identity, name, roomName, role, canPublish, config }) {
   const token = new AccessToken(
     config.apiKey,
@@ -172,9 +225,10 @@ const startMusicLiveStream = onCall(
       const coverArtPath = cleanString(request.data?.coverArtPath, 500)
       const coverArtURL = sanitizeCoverArtURL(request.data?.coverArtURL)
       const tags = toTags(request.data?.tags)
+      const audioMode = normalizeAudioMode(request.data?.audioMode)
       if (title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.', { stage })
       if (request.data?.rightsAccepted !== true) throw new HttpsError('failed-precondition', 'You must accept the live stream rules before going live.', { stage })
-      liveLog(stage, { uid, category, visibility, hasCoverArtURL: Boolean(coverArtURL) })
+      liveLog(stage, { uid, category, visibility, audioMode, hasCoverArtURL: Boolean(coverArtURL) })
 
       stage = 'active stream check started'
       const [liveActive, startingActive] = await Promise.all([
@@ -234,6 +288,8 @@ const startMusicLiveStream = onCall(
         status: 'starting',
         connectionStatus: 'starting',
         visibility,
+        audioMode,
+        audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
         audioOnly: true,
         videoEnabled: false,
         hostConnected: false,
@@ -251,6 +307,7 @@ const startMusicLiveStream = onCall(
         isRecordable: false,
         archiveRequested: false,
         archiveStatus: 'none',
+        archiveNote: 'Live audio uses WebRTC Opus compression. Future high-quality replays should use LiveKit Egress, a server recording pipeline, or a separate mastered upload.',
         archiveTrackPath: '',
         archiveTrackURL: '',
         moderationStatus: 'clear',
@@ -316,6 +373,79 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   return { ok: true, streamId, status: 'live' }
 })
 
+const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to heartbeat a stream.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const snap = await streamRef.get()
+  if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+  const stream = snap.data() || {}
+  if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can heartbeat this stream.')
+  if (!['starting', 'live'].includes(stream.status)) throw new HttpsError('failed-precondition', 'This stream is no longer active.')
+
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  await streamRef.set({
+    connectionStatus: request.data?.connectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
+    hostConnected: true,
+    audioPublished: request.data?.audioPublished === false ? false : true,
+    lastHostHeartbeatAt: now,
+    updatedAt: now
+  }, { merge: true })
+
+  return { ok: true, streamId }
+})
+
+const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to update live stream info.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const snap = await streamRef.get()
+  if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+  const stream = snap.data() || {}
+  const adminAuth = isAdminAuth(request.auth)
+  if (stream.hostUid !== uid && !adminAuth) throw new HttpsError('permission-denied', 'Only the host can update this stream.')
+  if (stream.status === 'ended' && !adminAuth) throw new HttpsError('failed-precondition', 'Ended streams cannot be edited.')
+
+  const metadata = cleanStreamMetadata(request.data || {})
+  if (metadata.title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.')
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  await streamRef.set({
+    ...metadata,
+    updatedAt: now,
+    lastMetadataUpdateAt: now
+  }, { merge: true })
+
+  return { ok: true, streamId, ...metadata }
+})
+
+async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
+  const cleanStreamId = cleanString(streamId, 120)
+  if (!cleanStreamId || cleanStreamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const streamRef = db().collection('musicLiveStreams').doc(cleanStreamId)
+  const snap = await streamRef.get()
+  if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+  const stream = snap.data() || {}
+  if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can end this stream.')
+
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  await streamRef.set({
+    status: 'ended',
+    connectionStatus: reason === 'host_unload' || reason === 'host_pagehide' ? 'host_disconnected' : 'ended',
+    hostConnected: false,
+    audioPublished: false,
+    endedAt: now,
+    endReason: cleanString(reason, 80) || 'host_ended',
+    updatedAt: now,
+    listenerCount: 0
+  }, { merge: true })
+
+  return { ok: true, streamId: cleanStreamId, status: 'ended' }
+}
+
 const joinMusicLiveStream = onCall(
   {
     region: 'us-central1',
@@ -332,6 +462,19 @@ const joinMusicLiveStream = onCall(
     const stream = snap.data() || {}
     if (stream.status !== 'live') throw new HttpsError('failed-precondition', 'This stream is not live.')
     if (stream.visibility === 'private') throw new HttpsError('permission-denied', 'This stream is private.')
+    if (stream.hostConnected !== true || stream.audioPublished !== true || !isHeartbeatFresh(stream)) {
+      await streamRef.set({
+        status: 'ended',
+        connectionStatus: 'stale',
+        hostConnected: false,
+        audioPublished: false,
+        endedAt: admin.firestore.FieldValue.serverTimestamp(),
+        endReason: 'heartbeat_stale',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        listenerCount: 0
+      }, { merge: true })
+      throw new HttpsError('failed-precondition', 'This stream has ended.')
+    }
     if (!stream.livekitRoomName && !stream.roomName) throw new HttpsError('failed-precondition', 'This stream is missing its live room.')
 
     const uid = request.auth?.uid || ''
@@ -370,29 +513,101 @@ const endMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => 
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in to end a live stream.')
   const streamId = cleanString(request.data?.streamId, 120)
+  return endStreamByHost({ uid, streamId, reason: cleanString(request.data?.reason, 80) || 'host_ended' })
+})
+
+function parseBeaconBody(req) {
+  if (Buffer.isBuffer(req.body)) {
+    try {
+      return JSON.parse(req.body.toString('utf8'))
+    } catch {
+      return {}
+    }
+  }
+  if (req.body && typeof req.body === 'object') return req.body
+  const raw = req.rawBody ? req.rawBody.toString('utf8') : ''
+  if (!raw) return {}
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return {}
+  }
+}
+
+const endMusicLiveStreamBeacon = onRequest({ region: 'us-central1', cors: true }, async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('')
+    return
+  }
+  if (req.method !== 'POST') {
+    res.status(405).json({ ok: false, error: 'method-not-allowed' })
+    return
+  }
+  try {
+    const body = parseBeaconBody(req)
+    const authHeader = cleanString(req.headers.authorization || '', 2000)
+    const idToken = cleanString(authHeader.replace(/^Bearer\s+/i, '') || body.idToken, 2000)
+    const decoded = await admin.auth().verifyIdToken(idToken)
+    await endStreamByHost({
+      uid: decoded.uid,
+      streamId: body.streamId,
+      reason: cleanString(body.reason, 80) || 'host_unload'
+    })
+    res.status(200).json({ ok: true })
+  } catch (error) {
+    liveWarn('beacon end failed', { code: error?.code || 'internal', message: error?.message || String(error) })
+    res.status(200).json({ ok: false })
+  }
+})
+
+const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to join live chat.')
+  const streamId = cleanString(request.data?.streamId, 120)
   if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
-  const streamRef = db().collection('musicLiveStreams').doc(streamId)
-  const snap = await streamRef.get()
-  if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
-  const stream = snap.data() || {}
-  if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can end this stream.')
+  const text = cleanString(request.data?.text, CHAT_TEXT_MAX_LENGTH)
+  if (!text) throw new HttpsError('invalid-argument', 'Message text is required.')
 
-  await streamRef.set({
-    status: 'ended',
-    connectionStatus: 'ended',
-    hostConnected: false,
-    audioPublished: false,
-    endedAt: admin.firestore.FieldValue.serverTimestamp(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    listenerCount: 0
-  }, { merge: true })
+  const [{ user, profile, accountPermissions }, streamSnap] = await Promise.all([
+    loadAccount(uid),
+    db().collection('musicLiveStreams').doc(streamId).get()
+  ])
+  assertCanChat({ auth: request.auth, user, profile, accountPermissions })
+  if (!streamSnap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+  const stream = streamSnap.data() || {}
+  if (stream.status !== 'live' || !['public', 'unlisted'].includes(stream.visibility)) {
+    throw new HttpsError('failed-precondition', 'This live chat is closed.')
+  }
+  if (stream.hostConnected !== true || stream.audioPublished !== true || !isHeartbeatFresh(stream)) {
+    throw new HttpsError('failed-precondition', 'This live chat is closed.')
+  }
 
-  return { ok: true, streamId, status: 'ended' }
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  const messageRef = db().collection('musicLiveStreams').doc(streamId).collection('chatMessages').doc()
+  const displayName = cleanString(profile?.displayName || user?.displayName || request.auth.token.name || 'Melogic Listener', 80)
+  const photoURL = cleanString(profile?.avatarURL || user?.photoURL || request.auth.token.picture || '', 1000)
+  const message = {
+    messageId: messageRef.id,
+    streamId,
+    uid,
+    displayName,
+    photoURL,
+    text,
+    createdAt: now,
+    status: 'visible',
+    moderationFlags: []
+  }
+  await messageRef.set(message)
+  return { ok: true, messageId: messageRef.id }
 })
 
 module.exports = {
   startMusicLiveStream,
   markMusicLiveStreamOnAir,
+  heartbeatMusicLiveStream,
+  updateMusicLiveStreamInfo,
   joinMusicLiveStream,
-  endMusicLiveStream
+  endMusicLiveStream,
+  endMusicLiveStreamBeacon,
+  sendMusicLiveChatMessage
 }

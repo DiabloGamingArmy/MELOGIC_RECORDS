@@ -2132,7 +2132,61 @@ service cloud.firestore {
     match /musicLiveStreams/{streamId} {
       allow read: if resource.data.status == 'live'
         && resource.data.visibility in ['public', 'unlisted'];
-      allow write: if false;
+      allow update: if signedIn()
+        && (resource.data.hostUid == request.auth.uid || isAdminClaim())
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'title',
+          'description',
+          'coverArtURL',
+          'coverArtPath',
+          'tags',
+          'visibility',
+          'category',
+          'updatedAt',
+          'lastMetadataUpdateAt'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 3
+        && request.resource.data.title.size() <= 90
+        && request.resource.data.description is string
+        && request.resource.data.description.size() <= 1200
+        && request.resource.data.coverArtURL is string
+        && request.resource.data.coverArtURL.size() <= 1000
+        && request.resource.data.visibility in ['public', 'unlisted', 'private']
+        && request.resource.data.category in ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
+        && (resource.data.status != 'ended' || isAdminClaim());
+      allow create, delete: if false;
+
+      match /chatMessages/{messageId} {
+        allow read: if signedIn()
+          && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
+          && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
+          && resource.data.status == 'visible';
+        allow create: if signedIn()
+          && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
+          && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
+          && request.resource.data.keys().hasOnly([
+            'messageId',
+            'streamId',
+            'uid',
+            'displayName',
+            'photoURL',
+            'text',
+            'createdAt',
+            'status',
+            'moderationFlags'
+          ])
+          && request.resource.data.streamId == streamId
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.status == 'visible'
+          && (!exists(/databases/$(database)/documents/users/$(request.auth.uid))
+            || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.suspended != true
+              && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.accountStatus != 'suspended'));
+        allow update, delete: if false;
+      }
     }
 
     match /reports/{reportId} {

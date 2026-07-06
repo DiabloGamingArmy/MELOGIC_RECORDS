@@ -6,6 +6,7 @@ const LOW_COST_DEFAULTS = {
   communityPost: true,
   communityReact: true,
   communityMessage: true,
+  musicLiveChat: true,
   productInteract: true,
   productPurchase: true,
   productDownload: true,
