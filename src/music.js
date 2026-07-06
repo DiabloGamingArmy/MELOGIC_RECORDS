@@ -11,6 +11,7 @@ import {
   getMusicLiveStream,
   joinMusicLiveStream,
   listPublicLiveStreams,
+  markMusicLiveStreamOnAir,
   startMusicLiveStream
 } from './data/musicLiveService'
 import {
@@ -79,6 +80,16 @@ const state = {
   listenerRoom: null,
   listenerAudioElement: null,
   goLive: {
+    form: {
+      category: 'music',
+      title: '',
+      description: '',
+      coverArtURL: '',
+      tags: '',
+      visibility: 'public',
+      rightsAccepted: false,
+      archiveRequested: false
+    },
     devices: [],
     selectedDeviceId: '',
     previewStream: null,
@@ -181,7 +192,9 @@ function renderReleaseArtwork(release, className = 'music-release-art') {
 
 function renderLiveArtwork(stream, className = 'music-live-art') {
   const cover = stream?.coverArtURL || ''
-  if (cover) return `<img class="${className}" src="${escapeHtml(cover)}" alt="${escapeHtml(stream.title)} cover art" loading="lazy" />`
+  if (cover) {
+    return `<div class="${className} music-live-art-fallback music-live-art-with-image"><img src="${escapeHtml(cover)}" alt="${escapeHtml(stream.title)} cover art" loading="lazy" onerror="this.remove()" /><span aria-hidden="true">LIVE</span></div>`
+  }
   return `<div class="${className} music-live-art-fallback" aria-hidden="true"><span>LIVE</span></div>`
 }
 
@@ -602,10 +615,20 @@ function renderReleaseDetailPage() {
   renderAppShell(renderReleaseDetailContent())
 }
 
+function liveStatusLabel(stream = {}) {
+  if (state.liveStatus === 'live') return 'Live audio connected.'
+  if (state.liveStatus === 'waiting') return 'Connected - waiting for host audio.'
+  if (state.liveStatus === 'reconnecting') return 'Reconnecting...'
+  if (state.liveStatus === 'connecting') return 'Connecting to stream...'
+  if (state.liveStatus === 'ended' || stream.status !== 'live') return 'Stream ended.'
+  return 'Click Listen to join. Audio never autoplays.'
+}
+
 function renderGoLivePage() {
   const isSignedIn = Boolean(state.currentUser)
   const canGoLive = state.accountPermissions?.permissions?.musicLive === true
   const permissionsReady = !state.accountPermissionsLoading
+  const form = state.goLive.form
   const categories = [
     ['music', 'Music'],
     ['podcast', 'Podcast'],
@@ -627,17 +650,17 @@ function renderGoLivePage() {
     ${!isSignedIn ? signInAction('Sign in as an eligible creator to start a live stream.') : !permissionsReady ? emptyState('Checking live access', 'Loading your account permissions before opening the live setup.') : !canGoLive ? emptyState('Live streaming is limited to approved creators.', 'Ask the Melogic team to enable live streaming for your account before starting an audio stream.', `<a class="button button-muted" href="${ROUTES.musicLive}">Back to Live Streams</a>`) : `
       <section class="music-go-live-grid">
         <form class="music-go-live-form music-panel" data-go-live-form>
-          <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}</select></label>
-          <label><span>Title</span><input name="title" maxlength="90" required placeholder="Tonight on Melogic..." /></label>
-          <label><span>Description</span><textarea name="description" rows="4" maxlength="1200" placeholder="Tell listeners what this stream is about."></textarea></label>
-          <label><span>Cover image URL</span><input name="coverArtURL" placeholder="Optional image URL for this live stream" /></label>
-          <label><span>Tags</span><input name="tags" placeholder="radio, new music, behind the scenes" /></label>
-          <label><span>Visibility</span><select name="visibility"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label>
+          <label><span>Category</span><select name="category">${categories.map(([value, label]) => `<option value="${value}" ${form.category === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+          <label><span>Title</span><input name="title" maxlength="90" required placeholder="Tonight on Melogic..." value="${escapeHtml(form.title)}" /></label>
+          <label><span>Description</span><textarea name="description" rows="4" maxlength="1200" placeholder="Tell listeners what this stream is about.">${escapeHtml(form.description)}</textarea></label>
+          <label><span>Cover image URL</span><input name="coverArtURL" placeholder="Optional image URL for this live stream" value="${escapeHtml(form.coverArtURL)}" /></label>
+          <label><span>Tags</span><input name="tags" placeholder="radio, new music, behind the scenes" value="${escapeHtml(form.tags)}" /></label>
+          <label><span>Visibility</span><select name="visibility"><option value="public" ${form.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
           <div class="music-live-rules">
             <strong>Live stream rules</strong>
             <p>Stream only content you have rights to broadcast. No harmful, illegal, abusive, or unauthorized copyrighted audio. Melogic may remove streams that violate rules.</p>
-            <label class="music-checkbox"><input type="checkbox" name="rightsAccepted" required /> <span>I have the rights or permission to broadcast this audio and agree to Melogic live stream rules.</span></label>
-            <label class="music-checkbox"><input type="checkbox" name="archiveRequested" disabled /> <span>Request archive after stream. Save as replay is coming soon.</span></label>
+            <label class="music-checkbox"><input type="checkbox" name="rightsAccepted" required ${form.rightsAccepted ? 'checked' : ''} /> <span>I have the rights or permission to broadcast this audio and agree to Melogic live stream rules.</span></label>
+            <label class="music-checkbox"><input type="checkbox" name="archiveRequested" disabled ${form.archiveRequested ? 'checked' : ''} /> <span>Request archive after stream. Save as replay is coming soon.</span></label>
           </div>
           ${state.goLive.formError ? `<p class="music-live-error">${escapeHtml(state.goLive.formError)}</p>` : ''}
           <div class="music-live-actions">
@@ -695,11 +718,11 @@ function renderLiveDetailPage() {
         </div>
         <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Live audio</span>'}</div>
         <div class="music-live-listener">
-          <button type="button" class="button button-accent" data-live-listen ${stream.status === 'live' ? '' : 'disabled'}>${state.liveStatus === 'live' ? 'Pause / Leave' : 'Listen'}</button>
+          <button type="button" class="button button-accent" data-live-listen ${stream.status === 'live' ? '' : 'disabled'}>${['live', 'waiting'].includes(state.liveStatus) ? 'Pause / Leave' : 'Listen'}</button>
           <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
           <button type="button" class="button button-muted" disabled>Report</button>
         </div>
-        ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(state.liveStatus === 'live' ? 'Live audio connected.' : state.liveStatus === 'connecting' ? 'Connecting...' : stream.status === 'live' ? 'Click Listen to join. Audio never autoplays.' : 'Stream ended.')}</p>`}
+        ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(liveStatusLabel(stream))}</p>`}
       </div>
     </section>
   `)
@@ -869,7 +892,23 @@ function stopPreviewStream() {
   state.goLive.previewStream = null
 }
 
+function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) {
+  if (!form) return
+  const data = new FormData(form)
+  state.goLive.form = {
+    category: String(data.get('category') || 'music'),
+    title: String(data.get('title') || '').slice(0, 90),
+    description: String(data.get('description') || '').slice(0, 1200),
+    coverArtURL: String(data.get('coverArtURL') || '').slice(0, 1000),
+    tags: String(data.get('tags') || '').slice(0, 500),
+    visibility: String(data.get('visibility') || 'public'),
+    rightsAccepted: data.get('rightsAccepted') === 'on',
+    archiveRequested: data.get('archiveRequested') === 'on'
+  }
+}
+
 async function refreshAudioDevices() {
+  updateGoLiveFormState()
   if (!navigator.mediaDevices?.getUserMedia) {
     state.goLive.formError = 'This browser does not support audio input selection.'
     rerender()
@@ -901,30 +940,33 @@ async function refreshAudioDevices() {
 
 async function startHostBroadcast(form) {
   if (!state.currentUser) return
-  const formData = new FormData(form)
+  updateGoLiveFormState(form)
+  let pendingStreamId = ''
   state.goLive.starting = true
   state.goLive.formError = ''
   state.goLive.connectionStatus = 'Creating live stream...'
   rerender()
   try {
+    const formState = state.goLive.form
     const payload = {
-      title: formData.get('title'),
-      description: formData.get('description'),
-      category: formData.get('category'),
-      visibility: formData.get('visibility'),
-      coverArtURL: formData.get('coverArtURL'),
-      tags: formData.get('tags'),
-      rightsAccepted: formData.get('rightsAccepted') === 'on',
+      title: formState.title,
+      description: formState.description,
+      category: formState.category,
+      visibility: formState.visibility,
+      coverArtURL: formState.coverArtURL,
+      tags: formState.tags,
+      rightsAccepted: formState.rightsAccepted,
       archiveRequested: false,
       audioOnly: true
     }
     const response = await startMusicLiveStream(payload)
+    pendingStreamId = response.streamId || ''
     const room = new Room({ adaptiveStream: true, dynacast: true })
     state.goLive.room = room
-    state.goLive.streamId = response.streamId
+    state.goLive.streamId = pendingStreamId
     state.goLive.connectionStatus = 'Connecting host room...'
     room.on(RoomEvent.Connected, () => {
-      state.goLive.connectionStatus = 'Live and broadcasting audio.'
+      state.goLive.connectionStatus = 'Host room connected. Publishing audio...'
       rerender()
     })
     room.on(RoomEvent.Reconnecting, () => {
@@ -936,17 +978,40 @@ async function startHostBroadcast(form) {
       rerender()
     })
     await room.connect(response.url, response.hostToken)
+    state.goLive.connectionStatus = 'Publishing selected audio input...'
+    rerender()
     const localTrack = await createLocalAudioTrack({
       deviceId: state.goLive.selectedDeviceId || undefined,
       echoCancellation: true,
       noiseSuppression: true
     })
     state.goLive.localTrack = localTrack
-    if (state.goLive.muted) await localTrack.mute()
     await room.localParticipant.publishTrack(localTrack)
-    state.goLive.connectionStatus = 'Live and broadcasting audio.'
+    await markMusicLiveStreamOnAir(pendingStreamId)
+    state.goLive.connectionStatus = 'Audio published. You are live.'
   } catch (error) {
-    state.goLive.formError = error?.message || 'Could not start live stream.'
+    console.warn('[music] startMusicLiveStream failed', {
+      functionName: 'startMusicLiveStream',
+      code: error?.code || '',
+      message: error?.message || '',
+      details: error?.details || null
+    })
+    if (pendingStreamId) {
+      await endMusicLiveStream(pendingStreamId).catch(() => {})
+      state.goLive.streamId = ''
+    }
+    if (state.goLive.localTrack) {
+      state.goLive.localTrack.stop()
+      state.goLive.localTrack = null
+    }
+    if (state.goLive.room) {
+      state.goLive.room.disconnect()
+      state.goLive.room = null
+    }
+    const rawMessage = String(error?.message || '').trim()
+    state.goLive.formError = rawMessage && rawMessage.toLowerCase() !== 'internal'
+      ? rawMessage
+      : 'Unable to start stream. Please try again. If this keeps happening, contact support.'
     state.goLive.connectionStatus = 'Unable to start stream.'
   } finally {
     state.goLive.starting = false
@@ -994,7 +1059,7 @@ function disconnectLiveListener() {
 
 async function joinLiveListener() {
   if (!state.liveStream?.id) return
-  if (state.liveStatus === 'live' || state.liveStatus === 'connecting') {
+  if (['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
     disconnectLiveListener()
     rerender()
     return
@@ -1018,8 +1083,20 @@ async function joinLiveListener() {
       element.dataset.musicLiveAudio = 'true'
       document.body.appendChild(element)
       state.listenerAudioElement = element
-      element.play().catch(() => {})
+      element.play().catch(() => {
+        state.liveStatus = 'waiting'
+        updateLiveListenerControls()
+      })
       state.liveStatus = 'live'
+      updateLiveListenerControls()
+    })
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.kind !== 'audio') return
+      if (state.listenerAudioElement) {
+        state.listenerAudioElement.remove()
+        state.listenerAudioElement = null
+      }
+      state.liveStatus = 'waiting'
       updateLiveListenerControls()
     })
     room.on(RoomEvent.Reconnecting, () => {
@@ -1027,7 +1104,7 @@ async function joinLiveListener() {
       updateLiveListenerControls()
     })
     room.on(RoomEvent.Reconnected, () => {
-      state.liveStatus = 'live'
+      state.liveStatus = state.listenerAudioElement ? 'live' : 'waiting'
       updateLiveListenerControls()
     })
     room.on(RoomEvent.Disconnected, () => {
@@ -1035,6 +1112,10 @@ async function joinLiveListener() {
       updateLiveListenerControls()
     })
     await room.connect(credentials.url, credentials.listenerToken || credentials.token)
+    if (!state.listenerAudioElement) {
+      state.liveStatus = 'waiting'
+      updateLiveListenerControls()
+    }
   } catch (error) {
     state.liveError = error?.message || 'Unable to connect to this live stream.'
     state.liveStatus = 'idle'
@@ -1045,8 +1126,8 @@ async function joinLiveListener() {
 function updateLiveListenerControls() {
   const button = app.querySelector('[data-live-listen]')
   const status = app.querySelector('[data-live-status]')
-  if (button) button.textContent = state.liveStatus === 'live' ? 'Pause / Leave' : state.liveStatus === 'connecting' ? 'Connecting...' : 'Listen'
-  if (status) status.textContent = state.liveStatus === 'live' ? 'Live audio connected.' : state.liveStatus === 'reconnecting' ? 'Reconnecting...' : state.liveStatus === 'connecting' ? 'Connecting...' : 'Click Listen to join.'
+  if (button) button.textContent = ['live', 'waiting'].includes(state.liveStatus) ? 'Pause / Leave' : state.liveStatus === 'connecting' ? 'Connecting...' : 'Listen'
+  if (status) status.textContent = liveStatusLabel(state.liveStream || {})
 }
 
 async function runSearch(queryText) {
@@ -1110,19 +1191,24 @@ function bindMusicEvents() {
     runSearch(new FormData(event.currentTarget).get('q')).catch(() => {})
   })
   app.querySelector('[data-refresh-audio-devices]')?.addEventListener('click', () => {
+    updateGoLiveFormState()
     refreshAudioDevices().catch(() => {})
   })
   app.querySelector('[data-live-device-select]')?.addEventListener('change', (event) => {
+    updateGoLiveFormState()
     state.goLive.selectedDeviceId = event.target.value || ''
     refreshAudioDevices().catch(() => {})
   })
+  app.querySelector('[data-go-live-form]')?.addEventListener('input', (event) => {
+    updateGoLiveFormState(event.currentTarget)
+  })
+  app.querySelector('[data-go-live-form]')?.addEventListener('change', (event) => {
+    updateGoLiveFormState(event.currentTarget)
+  })
   app.querySelector('[data-toggle-preview-mute]')?.addEventListener('click', () => {
+    updateGoLiveFormState()
     state.goLive.muted = !state.goLive.muted
     if (state.goLive.previewStream) state.goLive.previewStream.getAudioTracks().forEach((track) => { track.enabled = !state.goLive.muted })
-    if (state.goLive.localTrack) {
-      const action = state.goLive.muted ? state.goLive.localTrack.mute() : state.goLive.localTrack.unmute()
-      Promise.resolve(action).catch(() => {})
-    }
     rerender()
   })
   app.querySelector('[data-go-live-form]')?.addEventListener('submit', (event) => {

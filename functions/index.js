@@ -93,7 +93,7 @@ const {
   startCreatorAgeVerification
 } = require('./src/compliance/creatorAgeVerification')
 const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
-const { startMusicLiveStream, joinMusicLiveStream, endMusicLiveStream } = require('./src/music/musicLiveStreams')
+const { startMusicLiveStream, markMusicLiveStreamOnAir, joinMusicLiveStream, endMusicLiveStream } = require('./src/music/musicLiveStreams')
 const { getPublicProfileStats, toggleProfileFollow } = require('./src/profiles/profileRelationships')
 const {
   dismissMutualUserSuggestion,
@@ -236,6 +236,7 @@ exports.getEmailAdminStatus = getEmailAdminStatus
 exports.listAdminEmailLogs = listAdminEmailLogs
 exports.createLiveKitToken = createLiveKitToken
 exports.startMusicLiveStream = startMusicLiveStream
+exports.markMusicLiveStreamOnAir = markMusicLiveStreamOnAir
 exports.joinMusicLiveStream = joinMusicLiveStream
 exports.endMusicLiveStream = endMusicLiveStream
 exports.getPublicProfileStats = getPublicProfileStats

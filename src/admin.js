@@ -5745,6 +5745,7 @@ async function loadAdminOverview({ silent = false } = {}) {
 }
 
 async function loadAdminSectionData(sectionKey = state.section, { silent = false, append = false } = {}) {
+  state.accountActionsMenuUid = ''
   const map = {
     products: async () => {
       const data = adminData('products')
@@ -8143,6 +8144,11 @@ function bindEvents() {
   app.querySelectorAll('[data-account-actions-menu]').forEach((menu) => {
     menu.addEventListener('click', (event) => event.stopPropagation())
   })
+  app.querySelectorAll('[data-account-actions-menu] .admin-account-menu-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      state.accountActionsMenuUid = ''
+    })
+  })
   app.querySelectorAll('[data-load-full-account]').forEach((button) => {
     button.addEventListener('click', () => {
       const data = adminData('users')
@@ -8942,6 +8948,7 @@ async function init() {
 
 window.addEventListener('popstate', () => {
   if (state.claims.admin === true) {
+    state.accountActionsMenuUid = ''
     render()
     if (currentSectionKey() === 'dashboard') {
       if (can('productReview') && !state.queueLoaded) loadQueue()

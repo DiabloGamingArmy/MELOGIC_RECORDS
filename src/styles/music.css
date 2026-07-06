@@ -320,6 +320,11 @@
   display: block;
 }
 
+.music-live-card {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
 .music-release-art,
 .music-live-art,
 .music-detail-art {
@@ -350,6 +355,26 @@
     rgba(10, 15, 28, 0.9);
 }
 
+.music-live-art-with-image {
+  overflow: hidden;
+}
+
+.music-live-art-with-image img,
+.music-live-art-with-image span {
+  grid-area: 1 / 1;
+}
+
+.music-live-art-with-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+.music-live-art-with-image span {
+  z-index: 0;
+}
+
 .music-live-art-fallback span {
   color: #fff;
   font-size: 1rem;
@@ -367,6 +392,11 @@
 .music-live-card-body,
 .music-release-card-actions {
   padding: 0.72rem;
+}
+
+.music-live-card-body {
+  display: grid;
+  gap: 0.45rem;
 }
 
 .music-release-card-meta,
@@ -390,6 +420,11 @@
 .music-live-card h3 {
   margin: 0.45rem 0 0.18rem;
   font-size: 0.98rem;
+}
+
+.music-live-card h3 {
+  margin: 0;
+  line-height: 1.25;
 }
 
 .music-release-card p,
@@ -417,7 +452,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.4rem;
-  margin-top: 0.5rem;
+  margin-top: 0.1rem;
 }
 
 .music-live-meta span {
@@ -467,6 +502,14 @@
   font: inherit;
   font-size: 0.8rem;
   font-weight: 700;
+}
+
+.music-live-card > .music-icon-link {
+  flex: none;
+  margin: 0 0.72rem 0.72rem;
+  min-height: 2.45rem;
+  border-color: rgba(110, 231, 255, 0.34);
+  background: linear-gradient(120deg, rgba(110, 231, 255, 0.2), rgba(143, 124, 255, 0.18));
 }
 
 .music-icon-button:disabled {

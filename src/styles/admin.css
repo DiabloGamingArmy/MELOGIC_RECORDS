@@ -3210,6 +3210,10 @@
   padding: 0.35rem;
 }
 
+.admin-account-actions-dropdown[hidden] {
+  display: none;
+}
+
 .admin-account-menu-item {
   width: 100%;
   border: 0;

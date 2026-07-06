@@ -44,6 +44,9 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     visibility: String(raw.visibility || 'private'),
     audioOnly: raw.audioOnly !== false,
     videoEnabled: raw.videoEnabled === true,
+    hostConnected: raw.hostConnected === true,
+    audioPublished: raw.audioPublished === true,
+    connectionStatus: String(raw.connectionStatus || raw.status || ''),
     roomName: String(raw.roomName || raw.livekitRoomName || ''),
     livekitRoomName: String(raw.livekitRoomName || raw.roomName || ''),
     livekitRoomSid: String(raw.livekitRoomSid || ''),
@@ -74,7 +77,9 @@ export async function listPublicLiveStreams({ category = '', limitCount = 20 } =
 
   try {
     const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.musicLiveStreams), ...constraints))
-    return snapshot.docs.map((docSnap) => normalizeMusicLiveStream(docSnap))
+    return snapshot.docs
+      .map((docSnap) => normalizeMusicLiveStream(docSnap))
+      .filter((stream) => stream.audioOnly !== false && stream.audioPublished === true && !['removed', 'blocked'].includes(stream.moderationStatus))
   } catch (error) {
     console.warn('[musicLiveService] Public live streams could not be loaded.', error?.message || error)
     return []
@@ -96,6 +101,12 @@ export async function getMusicLiveStream(streamId = '') {
 export async function startMusicLiveStream(payload = {}) {
   const callable = httpsCallable(functions, 'startMusicLiveStream')
   const result = await callable(payload)
+  return result?.data || { ok: false }
+}
+
+export async function markMusicLiveStreamOnAir(streamId = '') {
+  const callable = httpsCallable(functions, 'markMusicLiveStreamOnAir')
+  const result = await callable({ streamId })
   return result?.data || { ok: false }
 }
 

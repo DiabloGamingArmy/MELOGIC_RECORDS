@@ -1,7 +1,7 @@
 const admin = require('firebase-admin')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { defineSecret } = require('firebase-functions/params')
-const { AccessToken } = require('livekit-server-sdk')
+const { AccessToken, TrackSource } = require('livekit-server-sdk')
 const { resolvePermissionsForUid } = require('../account/accountPermissions')
 
 const LIVEKIT_URL = defineSecret('LIVEKIT_URL')
@@ -11,6 +11,7 @@ const LIVEKIT_API_SECRET = defineSecret('LIVEKIT_API_SECRET')
 const ALLOWED_CATEGORIES = new Set(['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other'])
 const ALLOWED_VISIBILITIES = new Set(['public', 'unlisted', 'private'])
 const ELIGIBLE_ROLES = new Set(['creator', 'artist', 'founder', 'staff', 'admin', 'owner'])
+const STARTING_TIMEOUT_MS = 5 * 60 * 1000
 
 function db() {
   return admin.firestore()
@@ -27,6 +28,52 @@ function cleanRoomName(value) {
 function toTags(value) {
   if (Array.isArray(value)) return value.map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
   return String(value || '').split(',').map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
+}
+
+function liveLog(stage, extra = {}) {
+  console.log('[musicLiveStreams]', {
+    stage,
+    ...extra
+  })
+}
+
+function liveWarn(stage, extra = {}) {
+  console.warn('[musicLiveStreams]', {
+    stage,
+    ...extra
+  })
+}
+
+function livekitConfig(stage = 'livekit config check') {
+  const url = cleanString(LIVEKIT_URL.value(), 1000)
+  const apiKey = cleanString(LIVEKIT_API_KEY.value(), 240)
+  const apiSecret = cleanString(LIVEKIT_API_SECRET.value(), 240)
+  liveLog(stage, {
+    livekitUrlPresent: Boolean(url),
+    livekitApiKeyPresent: Boolean(apiKey),
+    livekitApiSecretPresent: Boolean(apiSecret)
+  })
+  if (!url || !apiKey || !apiSecret) {
+    throw new HttpsError('failed-precondition', 'Live streaming is not configured yet.', {
+      stage,
+      livekitUrlPresent: Boolean(url),
+      livekitApiKeyPresent: Boolean(apiKey),
+      livekitApiSecretPresent: Boolean(apiSecret)
+    })
+  }
+  return { url, apiKey, apiSecret }
+}
+
+function sanitizeCoverArtURL(value = '') {
+  const url = cleanString(value, 1000)
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') return ''
+    return parsed.toString()
+  } catch {
+    return ''
+  }
 }
 
 function safeJson(value) {
@@ -71,10 +118,10 @@ function assertEligible({ auth, user, profile, accountPermissions }) {
   if (!eligible) throw new HttpsError('permission-denied', 'Live streaming is currently limited to eligible creators.')
 }
 
-async function createLiveKitJwt({ identity, name, roomName, role, canPublish }) {
+async function createLiveKitJwt({ identity, name, roomName, role, canPublish, config }) {
   const token = new AccessToken(
-    LIVEKIT_API_KEY.value(),
-    LIVEKIT_API_SECRET.value(),
+    config.apiKey,
+    config.apiSecret,
     {
       identity,
       name,
@@ -88,7 +135,7 @@ async function createLiveKitJwt({ identity, name, roomName, role, canPublish }) 
     canPublish,
     canSubscribe: true,
     canPublishData: false,
-    canPublishSources: canPublish ? ['microphone'] : []
+    canPublishSources: canPublish ? [TrackSource.MICROPHONE] : []
   })
 
   return token.toJwt()
@@ -102,88 +149,172 @@ const startMusicLiveStream = onCall(
     memory: '256MiB'
   },
   async (request) => {
-    const uid = request.auth?.uid
-    if (!uid) throw new HttpsError('unauthenticated', 'Sign in to go live.')
-    const { user, profile, accountPermissions } = await loadAccount(uid)
-    assertEligible({ auth: request.auth, user, profile, accountPermissions })
+    let stage = 'auth received'
+    let streamRef = null
+    try {
+      const uid = request.auth?.uid
+      liveLog(stage, { uidPresent: Boolean(uid) })
+      if (!uid) throw new HttpsError('unauthenticated', 'Sign in to go live.', { stage })
 
-    const title = cleanString(request.data?.title, 90)
-    const description = cleanString(request.data?.description, 1200)
-    const category = ALLOWED_CATEGORIES.has(request.data?.category) ? request.data.category : 'music'
-    const visibility = ALLOWED_VISIBILITIES.has(request.data?.visibility) ? request.data.visibility : 'public'
-    const coverArtPath = cleanString(request.data?.coverArtPath, 500)
-    const coverArtURL = cleanString(request.data?.coverArtURL, 1000)
-    const tags = toTags(request.data?.tags)
+      stage = 'eligibility loaded'
+      const { user, profile, accountPermissions } = await loadAccount(uid)
+      liveLog(stage, { uid, permissionsSource: accountPermissions?.source || 'unknown' })
 
-    if (title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.')
-    if (request.data?.rightsAccepted !== true) throw new HttpsError('failed-precondition', 'You must accept the live stream rules before going live.')
+      stage = 'eligibility check'
+      assertEligible({ auth: request.auth, user, profile, accountPermissions })
+      liveLog('eligibility passed', { uid })
 
-    const active = await db().collection('musicLiveStreams')
-      .where('hostUid', '==', uid)
-      .where('status', '==', 'live')
-      .limit(1)
-      .get()
-    if (!active.empty) throw new HttpsError('failed-precondition', 'End your current live stream before starting another.')
+      stage = 'payload validated'
+      const title = cleanString(request.data?.title, 90)
+      const description = cleanString(request.data?.description, 1200)
+      const category = ALLOWED_CATEGORIES.has(request.data?.category) ? request.data.category : 'music'
+      const visibility = ALLOWED_VISIBILITIES.has(request.data?.visibility) ? request.data.visibility : 'public'
+      const coverArtPath = cleanString(request.data?.coverArtPath, 500)
+      const coverArtURL = sanitizeCoverArtURL(request.data?.coverArtURL)
+      const tags = toTags(request.data?.tags)
+      if (title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.', { stage })
+      if (request.data?.rightsAccepted !== true) throw new HttpsError('failed-precondition', 'You must accept the live stream rules before going live.', { stage })
+      liveLog(stage, { uid, category, visibility, hasCoverArtURL: Boolean(coverArtURL) })
 
-    const streamRef = db().collection('musicLiveStreams').doc()
-    const streamId = streamRef.id
-    const roomName = cleanRoomName(`music-live-${streamId}`)
-    const now = admin.firestore.FieldValue.serverTimestamp()
-    const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
-    const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
+      stage = 'active stream check started'
+      const [liveActive, startingActive] = await Promise.all([
+        db().collection('musicLiveStreams').where('hostUid', '==', uid).where('status', '==', 'live').limit(1).get(),
+        db().collection('musicLiveStreams').where('hostUid', '==', uid).where('status', '==', 'starting').limit(5).get()
+      ])
+      const freshStarting = startingActive.docs.filter((docSnap) => {
+        const started = docSnap.data()?.createdAt?.toMillis?.() || docSnap.data()?.updatedAt?.toMillis?.() || 0
+        return started && Date.now() - started < STARTING_TIMEOUT_MS
+      })
+      const staleStarting = startingActive.docs.filter((docSnap) => !freshStarting.includes(docSnap))
+      await Promise.all(staleStarting.map((docSnap) => docSnap.ref.set({
+        status: 'error',
+        connectionStatus: 'error',
+        errorReason: 'starting_timeout',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true })))
+      liveLog('active stream check completed', { uid, liveCount: liveActive.size, freshStartingCount: freshStarting.length, staleStartingCount: staleStarting.length })
+      if (!liveActive.empty || freshStarting.length) throw new HttpsError('failed-precondition', 'End your current live stream before starting another.', { stage })
 
-    await streamRef.set({
-      streamId,
-      hostUid: uid,
-      hostDisplayName,
-      hostPhotoURL,
-      title,
-      description,
-      category,
-      tags,
-      coverArtPath,
-      coverArtURL,
-      status: 'live',
-      visibility,
-      audioOnly: true,
-      videoEnabled: false,
-      roomName,
-      livekitRoomName: roomName,
-      livekitRoomSid: '',
-      startedAt: now,
-      endedAt: null,
-      createdAt: now,
-      updatedAt: now,
-      listenerCount: 0,
-      peakListenerCount: 0,
-      isRecordable: false,
-      archiveRequested: request.data?.archiveRequested === true,
-      archiveStatus: request.data?.archiveRequested === true ? 'requested' : 'none',
-      archiveTrackPath: '',
-      archiveTrackURL: '',
-      moderationStatus: 'clear',
-      reportCount: 0
-    })
+      stage = 'LiveKit config validated'
+      const config = livekitConfig(stage)
 
-    const hostToken = await createLiveKitJwt({
-      identity: `host-${uid}`,
-      name: hostDisplayName,
-      roomName,
-      role: 'host',
-      canPublish: true
-    })
+      stage = 'stream doc id generated'
+      streamRef = db().collection('musicLiveStreams').doc()
+      const streamId = streamRef.id
+      const roomName = cleanRoomName(`music-live-${streamId}`)
+      liveLog(stage, { uid, streamId, roomName })
 
-    return {
-      ok: true,
-      streamId,
-      roomName,
-      livekitRoomName: roomName,
-      hostToken,
-      url: LIVEKIT_URL.value(),
-      listenerURL: `/music/live/${streamId}`
+      const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
+      const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
+
+      stage = 'host token creation started'
+      const hostToken = await createLiveKitJwt({
+        identity: `host-${uid}`,
+        name: hostDisplayName,
+        roomName,
+        role: 'host',
+        canPublish: true,
+        config
+      })
+      liveLog('host token creation completed', { uid, streamId, tokenPresent: Boolean(hostToken) })
+
+      stage = 'Firestore stream document created'
+      const now = admin.firestore.FieldValue.serverTimestamp()
+      await streamRef.set({
+        streamId,
+        hostUid: uid,
+        hostDisplayName,
+        hostPhotoURL,
+        title,
+        description,
+        category,
+        tags,
+        coverArtPath,
+        coverArtURL,
+        status: 'starting',
+        connectionStatus: 'starting',
+        visibility,
+        audioOnly: true,
+        videoEnabled: false,
+        hostConnected: false,
+        audioPublished: false,
+        roomName,
+        livekitRoomName: roomName,
+        livekitRoomSid: '',
+        startedAt: null,
+        endedAt: null,
+        createdAt: now,
+        updatedAt: now,
+        lastHostHeartbeatAt: null,
+        listenerCount: 0,
+        peakListenerCount: 0,
+        isRecordable: false,
+        archiveRequested: false,
+        archiveStatus: 'none',
+        archiveTrackPath: '',
+        archiveTrackURL: '',
+        moderationStatus: 'clear',
+        reportCount: 0
+      })
+      liveLog(stage, { uid, streamId, status: 'starting' })
+
+      liveLog('response returned', { uid, streamId })
+      return {
+        ok: true,
+        streamId,
+        roomName,
+        livekitRoomName: roomName,
+        hostToken,
+        url: config.url,
+        listenerURL: `/music/live/${streamId}`
+      }
+    } catch (error) {
+      liveWarn('error stage', {
+        stage,
+        code: error?.code || 'internal',
+        message: error?.message || 'Unknown live stream error',
+        hasStreamRef: Boolean(streamRef)
+      })
+      if (streamRef) {
+        await streamRef.set({
+          status: 'error',
+          connectionStatus: 'error',
+          errorStage: stage,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).catch((writeError) => liveWarn('error cleanup failed', { message: writeError?.message || String(writeError) }))
+      }
+      if (error instanceof HttpsError) throw error
+      throw new HttpsError('internal', 'Unable to start stream. Please try again. If this keeps happening, contact support.', { stage })
     }
   }
 )
+
+const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to mark a stream live.')
+  const streamId = cleanString(request.data?.streamId, 120)
+  if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const snap = await streamRef.get()
+  if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+  const stream = snap.data() || {}
+  if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can mark this stream live.')
+  if (!['starting', 'live'].includes(stream.status)) throw new HttpsError('failed-precondition', 'This stream cannot be marked live.')
+
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  await streamRef.set({
+    status: 'live',
+    connectionStatus: 'live',
+    hostConnected: true,
+    audioPublished: true,
+    startedAt: stream.startedAt || now,
+    updatedAt: now,
+    lastHostHeartbeatAt: now
+  }, { merge: true })
+
+  liveLog('stream marked live', { uid, streamId })
+  return { ok: true, streamId, status: 'live' }
+})
 
 const joinMusicLiveStream = onCall(
   {
@@ -208,19 +339,20 @@ const joinMusicLiveStream = onCall(
     const name = cleanString(request.auth?.token?.name || request.auth?.token?.email || 'Melogic Listener', 80)
     const roomName = cleanRoomName(stream.livekitRoomName || stream.roomName)
 
-    await streamRef.set({
-      listenerCount: admin.firestore.FieldValue.increment(1),
-      peakListenerCount: Math.max(Number(stream.peakListenerCount || 0), Number(stream.listenerCount || 0) + 1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true })
-
     const listenerToken = await createLiveKitJwt({
       identity,
       name,
       roomName,
       role: 'listener',
-      canPublish: false
+      canPublish: false,
+      config: livekitConfig('listener LiveKit config validated')
     })
+
+    await streamRef.set({
+      listenerCount: admin.firestore.FieldValue.increment(1),
+      peakListenerCount: Math.max(Number(stream.peakListenerCount || 0), Number(stream.listenerCount || 0) + 1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true })
 
     return {
       ok: true,
@@ -247,6 +379,9 @@ const endMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => 
 
   await streamRef.set({
     status: 'ended',
+    connectionStatus: 'ended',
+    hostConnected: false,
+    audioPublished: false,
     endedAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     listenerCount: 0
@@ -257,6 +392,7 @@ const endMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => 
 
 module.exports = {
   startMusicLiveStream,
+  markMusicLiveStreamOnAir,
   joinMusicLiveStream,
   endMusicLiveStream
 }
