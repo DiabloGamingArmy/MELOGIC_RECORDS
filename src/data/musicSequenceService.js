@@ -31,7 +31,15 @@ export const SEQUENCE_ASSET_CATEGORIES = [
   'other'
 ]
 
-export const SEQUENCE_ITEM_TYPES = ['audio', 'video', 'metadata_only', 'break', 'voice_track', 'stop_marker']
+export const SEQUENCE_ITEM_TYPES = ['audio', 'video', 'metadata_only', 'break', 'voice_track', 'stop_marker', 'action_bookmark']
+
+export const SEQUENCE_ACTION_TYPES = [
+  'operator_note',
+  'skip_to_next_playable',
+  'set_next_item',
+  'stop_after_current',
+  'top_of_hour'
+]
 
 function toIsoDate(value) {
   if (!value) return ''
@@ -126,6 +134,9 @@ function normalizeSequenceItem(raw = {}, id = '') {
     sequenceId: cleanString(raw.sequenceId, 120),
     assetId: cleanString(raw.assetId, 120),
     type: SEQUENCE_ITEM_TYPES.includes(raw.type) ? raw.type : 'audio',
+    bookmarkId: cleanString(raw.bookmarkId, 120),
+    actionType: SEQUENCE_ACTION_TYPES.includes(raw.actionType) ? raw.actionType : '',
+    configSnapshot: raw.configSnapshot && typeof raw.configSnapshot === 'object' ? raw.configSnapshot : {},
     categorySnapshot: cleanString(raw.categorySnapshot, 80),
     orderIndex: toNumber(raw.orderIndex),
     titleSnapshot: cleanString(raw.titleSnapshot || 'Untitled item', 160),
@@ -153,12 +164,32 @@ function normalizeSequenceItem(raw = {}, id = '') {
   }
 }
 
+function normalizeActionBookmark(raw = {}, id = '') {
+  const actionType = SEQUENCE_ACTION_TYPES.includes(raw.actionType) ? raw.actionType : 'operator_note'
+  return {
+    id,
+    bookmarkId: cleanString(raw.bookmarkId || id, 120),
+    ownerUid: cleanString(raw.ownerUid, 120),
+    name: cleanString(raw.name || 'Operator note', 120),
+    actionType,
+    color: cleanString(raw.color || '#6ee7ff', 20),
+    notes: cleanString(raw.notes, 1000),
+    config: raw.config && typeof raw.config === 'object' ? raw.config : {},
+    createdAt: toIsoDate(raw.createdAt),
+    updatedAt: toIsoDate(raw.updatedAt)
+  }
+}
+
 function assetCollection(uid) {
   return collection(db, 'users', uid, 'sequenceAssets')
 }
 
 function sequenceCollection(uid) {
   return collection(db, 'users', uid, 'sequences')
+}
+
+function actionBookmarkCollection(uid) {
+  return collection(db, 'users', uid, 'sequenceActionBookmarks')
 }
 
 export async function listSequenceAssets(uid = '', options = {}) {
@@ -291,6 +322,32 @@ export async function createSequence(uid = '', data = {}) {
   return { ...normalizeSequence(payload, ref.id), id: ref.id, sequenceId: ref.id }
 }
 
+export async function listSequenceActionBookmarks(uid = '') {
+  if (!db || !uid) return []
+  const snapshot = await getDocs(query(actionBookmarkCollection(uid), orderBy('updatedAt', 'desc'), limit(50)))
+  return snapshot.docs.map((docSnap) => normalizeActionBookmark(docSnap.data() || {}, docSnap.id))
+}
+
+export async function createSequenceActionBookmark(uid = '', data = {}) {
+  if (!db || !uid) throw new Error('Sign in to create action bookmarks.')
+  const ref = doc(actionBookmarkCollection(uid))
+  const now = serverTimestamp()
+  const actionType = SEQUENCE_ACTION_TYPES.includes(data.actionType) ? data.actionType : 'operator_note'
+  const payload = {
+    bookmarkId: ref.id,
+    ownerUid: uid,
+    name: cleanString(data.name || 'Operator note', 120),
+    actionType,
+    color: cleanString(data.color || '#6ee7ff', 20),
+    notes: cleanString(data.notes, 1000),
+    config: data.config && typeof data.config === 'object' ? data.config : {},
+    createdAt: now,
+    updatedAt: now
+  }
+  await setDoc(ref, payload)
+  return { ...normalizeActionBookmark(payload, ref.id), id: ref.id, bookmarkId: ref.id }
+}
+
 export async function getSequence(uid = '', sequenceId = '') {
   if (!db || !uid || !sequenceId) return null
   const snapshot = await getDoc(doc(db, 'users', uid, 'sequences', sequenceId))
@@ -352,6 +409,53 @@ export async function addAssetToSequence(uid = '', sequenceId = '', asset = {}, 
   await updateDoc(doc(db, 'users', uid, 'sequenceAssets', asset.assetId), {
     lastUsedAt: now,
     playCount: Math.max(0, Number(asset.playCount || 0) + 1),
+    updatedAt: now
+  }).catch(() => {})
+  return { ...normalizeSequenceItem(item, ref.id), id: ref.id, itemId: ref.id }
+}
+
+export async function addActionBookmarkToSequence(uid = '', sequenceId = '', bookmark = {}, sequence = {}) {
+  if (!db || !uid || !sequenceId || !bookmark?.bookmarkId) throw new Error('Choose a bookmark and sequence first.')
+  const ref = doc(collection(db, 'users', uid, 'sequences', sequenceId, 'items'))
+  const now = serverTimestamp()
+  const actionType = SEQUENCE_ACTION_TYPES.includes(bookmark.actionType) ? bookmark.actionType : 'operator_note'
+  const item = {
+    itemId: ref.id,
+    ownerUid: uid,
+    sequenceId,
+    assetId: '',
+    type: 'action_bookmark',
+    bookmarkId: bookmark.bookmarkId,
+    actionType,
+    configSnapshot: bookmark.config && typeof bookmark.config === 'object' ? bookmark.config : {},
+    categorySnapshot: actionType,
+    orderIndex: Date.now(),
+    titleSnapshot: bookmark.name || 'Operator action',
+    artistSnapshot: 'Action Bookmark',
+    albumSnapshot: '',
+    artworkURLSnapshot: '',
+    normalizedAudioURLSnapshot: '',
+    durationMs: 0,
+    startOffsetMs: 0,
+    endOffsetMs: 0,
+    introMs: 0,
+    outroMs: 0,
+    cueInMs: 0,
+    cueOutMs: 0,
+    fadeInMs: 0,
+    fadeOutMs: 0,
+    crossfadeMs: 0,
+    gainDb: 0,
+    playbackRate: 1,
+    enabled: true,
+    isPinned: false,
+    notes: bookmark.notes || '',
+    createdAt: now,
+    updatedAt: now
+  }
+  await setDoc(ref, item)
+  await updateDoc(doc(db, 'users', uid, 'sequences', sequenceId), {
+    itemCount: Math.max(0, Number(sequence.itemCount || 0) + 1),
     updatedAt: now
   }).catch(() => {})
   return { ...normalizeSequenceItem(item, ref.id), id: ref.id, itemId: ref.id }

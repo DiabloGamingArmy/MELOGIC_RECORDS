@@ -1052,6 +1052,20 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /sequenceActionBookmarks/{bookmarkId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.ownerUid == uid
+          && request.resource.data.bookmarkId == bookmarkId
+          && request.resource.data.name is string
+          && request.resource.data.name.size() >= 1
+          && request.resource.data.name.size() <= 120
+          && request.resource.data.actionType in ['operator_note', 'skip_to_next_playable', 'set_next_item', 'stop_after_current', 'top_of_hour']
+          && request.resource.data.color is string
+          && request.resource.data.color.size() <= 20;
+        allow delete: if isOwner(uid);
+      }
+
       match /sequences/{sequenceId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid)
@@ -1070,7 +1084,7 @@ service cloud.firestore {
             && request.resource.data.ownerUid == uid
             && request.resource.data.sequenceId == sequenceId
             && request.resource.data.itemId == itemId
-            && request.resource.data.type in ['audio', 'video', 'metadata_only', 'break', 'voice_track', 'stop_marker']
+            && request.resource.data.type in ['audio', 'video', 'metadata_only', 'break', 'voice_track', 'stop_marker', 'action_bookmark']
             && request.resource.data.titleSnapshot is string
             && request.resource.data.titleSnapshot.size() >= 1
             && request.resource.data.titleSnapshot.size() <= 160;

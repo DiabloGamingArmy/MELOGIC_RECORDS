@@ -9,7 +9,9 @@ function htmlRouteFallbackPlugin() {
     { prefix: '/music/live', html: 'music.html' },
     { prefix: '/music/go-live', html: 'music.html' },
     { prefix: '/music/sequence/', html: 'music.html' },
-    { prefix: '/music/sequence', html: 'music.html' }
+    { prefix: '/music/sequence', html: 'music.html' },
+    { prefix: '/studio/live/', html: 'studio.html' },
+    { prefix: '/studio/live', html: 'studio.html' }
   ]
 
   function findEntry(url = '') {

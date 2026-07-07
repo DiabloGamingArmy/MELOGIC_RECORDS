@@ -1,9 +1,25 @@
 import './styles/base.css'
 import './styles/studio.css'
+import { AudioPresets, Room, RoomEvent } from 'livekit-client'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
 import { ROUTES, authRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
+import { endMusicLiveStream, heartbeatMusicLiveStream, markMusicLiveStreamOnAir, startMusicLiveStream } from './data/musicLiveService'
+import {
+  SEQUENCE_ACTION_TYPES,
+  addActionBookmarkToSequence,
+  addAssetToSequence,
+  createSequence,
+  createSequenceActionBookmark,
+  duplicateSequenceItem,
+  formatMs,
+  listSequenceActionBookmarks,
+  listSequenceAssets,
+  listSequenceItems,
+  listSequences,
+  updateSequenceItem
+} from './data/musicSequenceService'
 import {
   createStudioProject,
   listAccessibleStudioProjects,
@@ -75,7 +91,28 @@ const state = {
   user: null,
   createError: '',
   daw: { projects: [], recentProjects: [], loading: false, error: '' },
-  stage: { projects: [], recentProjects: [], loading: false, error: '' }
+  stage: { projects: [], recentProjects: [], loading: false, error: '' },
+  live: {
+    loading: false,
+    error: '',
+    assets: [],
+    sequences: [],
+    bookmarks: [],
+    activeSequence: null,
+    items: [],
+    selectedItemId: '',
+    currentItemId: '',
+    nextItemId: '',
+    afterNextItemId: '',
+    activePlayers: [],
+    contextMenu: null,
+    streamId: '',
+    starting: false,
+    ending: false,
+    room: null,
+    localTrack: null,
+    outputStatus: 'Sequence Software input ready.'
+  }
 }
 
 const icon = (name) => {
@@ -89,6 +126,7 @@ function currentStudioSection() {
   const pathname = window.location.pathname || ''
   if (pathname === ROUTES.studio) return 'hub'
   if (pathname.startsWith(ROUTES.studioStagemaker)) return 'stagemaker'
+  if (pathname.startsWith(ROUTES.studioLive)) return 'live'
   return 'daw'
 }
 
@@ -463,9 +501,253 @@ function renderStagemaker() {
   `
 }
 
+const defaultLiveBookmarks = [
+  { bookmarkId: 'operator-note', name: 'Operator Note', actionType: 'operator_note', color: '#6ee7ff', notes: 'Log a note in the playout.' },
+  { bookmarkId: 'skip-next', name: 'Skip To Next', actionType: 'skip_to_next_playable', color: '#45f08a', notes: 'Advance to the next playable item.' },
+  { bookmarkId: 'stop-current', name: 'Stop After Current', actionType: 'stop_after_current', color: '#ff6b7a', notes: 'Arm stop after the active item.' },
+  { bookmarkId: 'top-hour', name: 'Top Of Hour', actionType: 'top_of_hour', color: '#ffd166', notes: 'Insert a top-of-hour marker.' }
+]
+
+function liveState() {
+  return state.live
+}
+
+function liveItems() {
+  return liveState().items || []
+}
+
+function liveItemById(itemId = '') {
+  return liveItems().find((item) => item.itemId === itemId || item.id === itemId) || null
+}
+
+function isPlayableLiveItem(item = {}) {
+  return item.enabled !== false && item.type !== 'action_bookmark' && Boolean(item.normalizedAudioURLSnapshot)
+}
+
+function liveBookmarks() {
+  return liveState().bookmarks.length ? liveState().bookmarks : defaultLiveBookmarks
+}
+
+function liveSelectedItem() {
+  return liveItemById(liveState().selectedItemId) || liveItems().find(isPlayableLiveItem) || null
+}
+
+function nextPlayableAfter(itemId = '') {
+  const items = liveItems()
+  const start = Math.max(0, items.findIndex((item) => item.itemId === itemId) + 1)
+  return items.slice(start).find(isPlayableLiveItem) || items.find(isPlayableLiveItem) || null
+}
+
+function refreshLiveDecks() {
+  const live = liveState()
+  const current = liveItemById(live.currentItemId)
+  const next = liveItemById(live.nextItemId) || nextPlayableAfter(current?.itemId || live.selectedItemId)
+  const afterNext = nextPlayableAfter(next?.itemId || '')
+  live.nextItemId = next?.itemId || ''
+  live.afterNextItemId = afterNext?.itemId || ''
+}
+
+function formatMilitaryStart(msOffset = 0) {
+  const date = new Date(Date.now() + Math.max(0, msOffset))
+  return `${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
+}
+
+function liveItemDuration(item = {}) {
+  return formatMs(item.durationMs || 0)
+}
+
+function liveItemArt(item = {}) {
+  if (item.artworkURLSnapshot) return `<img src="${esc(item.artworkURLSnapshot)}" alt="" loading="lazy" />`
+  return `<span>${esc((item.titleSnapshot || item.type || '?').slice(0, 1).toUpperCase())}</span>`
+}
+
+function renderLiveDeck(slot = 'current', label = 'CURRENT', item = null) {
+  const playing = item && liveState().activePlayers.some((player) => player.itemId === item.itemId)
+  const roleClass = slot === 'current' ? 'is-current' : slot === 'next' ? 'is-next' : 'is-after-next'
+  return `
+    <article class="studio-live-deck ${roleClass}">
+      <div class="studio-live-deck-label"><span>${label}</span><b>${playing ? 'ON AIR' : item ? 'CUED' : 'EMPTY'}</b></div>
+      <div class="studio-live-deck-main">
+        <div class="studio-live-deck-art">${item ? liveItemArt(item) : '<span>-</span>'}</div>
+        <div class="studio-live-deck-copy">
+          <h3>${esc(item?.titleSnapshot || 'No item loaded')}</h3>
+          <p>${esc(item?.artistSnapshot || item?.categorySnapshot || 'Sequence deck')}</p>
+          <small>${esc(item?.albumSnapshot || item?.type || 'Waiting')} - ${item ? liveItemDuration(item) : '0:00'}</small>
+          <div class="studio-live-progress"><i style="width:${playing ? '42%' : '0%'}"></i></div>
+        </div>
+      </div>
+      <div class="studio-live-deck-actions">
+        <button type="button" data-live-play-item="${esc(item?.itemId || '')}" ${item && isPlayableLiveItem(item) ? '' : 'disabled'} aria-label="Play ${esc(label)}">▶</button>
+        <button type="button" data-live-stop-item="${esc(item?.itemId || '')}" ${playing ? '' : 'disabled'} aria-label="Stop ${esc(label)}">■</button>
+        <button type="button" data-live-open-menu="${esc(item?.itemId || '')}" ${item ? '' : 'disabled'} aria-label="Deck menu">⋯</button>
+      </div>
+    </article>
+  `
+}
+
+function renderLiveActionBookmarks() {
+  return `
+    <section class="studio-live-library-section">
+      <div class="studio-live-panel-heading">
+        <h3>Action Bookmarks</h3>
+        <span>${liveBookmarks().length}</span>
+      </div>
+      <form class="studio-live-bookmark-form" data-live-bookmark-form>
+        <input name="name" maxlength="120" placeholder="New action" ${state.user ? '' : 'disabled'} />
+        <select name="actionType" ${state.user ? '' : 'disabled'}>
+          ${SEQUENCE_ACTION_TYPES.map((type) => `<option value="${esc(type)}">${esc(type.replaceAll('_', ' '))}</option>`).join('')}
+        </select>
+        <button type="submit" ${state.user ? '' : 'disabled'}>Add</button>
+      </form>
+      <div class="studio-live-bookmark-list">
+        ${liveBookmarks().map((bookmark) => `
+          <button type="button" class="studio-live-bookmark" data-live-add-bookmark="${esc(bookmark.bookmarkId)}" style="--bookmark-color:${esc(bookmark.color || '#6ee7ff')}" ${state.user && liveState().activeSequence ? '' : 'disabled'}>
+            <strong>${esc(bookmark.name)}</strong>
+            <span>${esc(bookmark.actionType.replaceAll('_', ' '))}</span>
+          </button>
+        `).join('')}
+      </div>
+    </section>
+  `
+}
+
+function renderLiveAssets() {
+  const live = liveState()
+  return `
+    <section class="studio-live-library-section studio-live-library-section--assets">
+      <div class="studio-live-panel-heading">
+        <h3>Media Assets</h3>
+        <span>${live.assets.length}</span>
+      </div>
+      <div class="studio-live-assets">
+        ${live.assets.length ? live.assets.map((asset) => `
+          <button type="button" class="studio-live-asset-row" data-live-add-asset="${esc(asset.assetId)}" ${state.user && live.activeSequence ? '' : 'disabled'}>
+            <span class="studio-live-row-art">${asset.artworkURL ? `<img src="${esc(asset.artworkURL)}" alt="" loading="lazy" />` : esc((asset.title || '?').slice(0, 1).toUpperCase())}</span>
+            <span><strong>${esc(asset.title)}</strong><small>${esc(asset.artist || asset.category || 'Media asset')}</small></span>
+            <b>${esc(asset.type)}</b>
+            <em>${formatMs(asset.durationMs)}</em>
+          </button>
+        `).join('') : `<p class="studio-live-empty">${state.user ? 'No sequence assets yet. Upload from Sequence Software, then build the show here.' : 'Sign in to load your media assets.'}</p>`}
+      </div>
+    </section>
+  `
+}
+
+function renderLiveSequenceRows() {
+  const live = liveState()
+  let offset = 0
+  if (!live.items.length) {
+    return `<div class="studio-live-empty studio-live-empty--log">${state.user ? 'Create or select a sequence, then add assets or action bookmarks.' : 'Sign in to operate saved sequences.'}</div>`
+  }
+  return live.items.map((item, index) => {
+    const playing = live.currentItemId === item.itemId || live.activePlayers.some((player) => player.itemId === item.itemId)
+    const selected = live.selectedItemId === item.itemId
+    const playable = isPlayableLiveItem(item)
+    const estimate = formatMilitaryStart(offset)
+    offset += playable ? Math.max(0, Number(item.durationMs || 0) - Number(item.crossfadeMs || 0)) : 0
+    return `
+      <button type="button" class="studio-live-sequence-row ${selected ? 'is-selected' : ''} ${playing ? 'is-playing' : ''} ${item.enabled === false ? 'is-disabled' : ''}" data-live-select-item="${esc(item.itemId)}" data-live-row-menu="${esc(item.itemId)}">
+        <span>${index + 1}</span>
+        <b>${playing ? 'PLAY' : item.enabled === false ? 'SKIP' : playable ? 'READY' : 'ACT'}</b>
+        <span class="studio-live-row-art">${liveItemArt(item)}</span>
+        <span>${esc(item.type)}</span>
+        <strong>${esc(item.titleSnapshot)}</strong>
+        <span>${esc(item.artistSnapshot || '-')}</span>
+        <span>${esc(item.albumSnapshot || '-')}</span>
+        <span>${esc(item.categorySnapshot || '-')}</span>
+        <span>${esc(liveItemDuration(item))}</span>
+        <span>${estimate}</span>
+        <span>${playing ? 'YES' : '-'}</span>
+        <span>${formatMs(item.fadeInMs || 0)} / ${formatMs(item.fadeOutMs || 0)} / ${formatMs(item.crossfadeMs || 0)}</span>
+        <span>${playable ? 'OK' : item.type === 'action_bookmark' ? 'ACTION' : 'MISSING'}</span>
+        <span>⋯</span>
+      </button>
+    `
+  }).join('')
+}
+
+function renderLiveStudio() {
+  const live = liveState()
+  refreshLiveDecks()
+  const current = liveItemById(live.currentItemId)
+  const next = liveItemById(live.nextItemId)
+  const afterNext = liveItemById(live.afterNextItemId)
+  return `
+    <section class="studio-live-main">
+      <header class="studio-live-header">
+        <div>
+          <p class="eyebrow">Studio Module</p>
+          <h1>Live Studio</h1>
+          <p>Operator playout, radio automation, and stream output for Melogic Music.</p>
+        </div>
+        <div class="studio-live-stream-controls">
+          <select data-live-sequence-select ${state.user ? '' : 'disabled'}>
+            <option value="">${state.user ? 'Select sequence' : 'Sign in to load sequences'}</option>
+            ${live.sequences.map((sequence) => `<option value="${esc(sequence.sequenceId)}" ${live.activeSequence?.sequenceId === sequence.sequenceId ? 'selected' : ''}>${esc(sequence.title)}</option>`).join('')}
+          </select>
+          <button type="button" data-live-create-sequence ${state.user ? '' : 'disabled'}>New Sequence</button>
+          <button type="button" data-live-start-stream ${state.user && !live.starting && !live.streamId ? '' : 'disabled'}>${live.starting ? 'Starting...' : live.streamId ? 'Live Created' : 'Start Live'}</button>
+          ${live.streamId ? `<button type="button" data-live-end-stream ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Live'}</button>` : ''}
+          <a href="${ROUTES.musicGoLive}">Quick Go Live</a>
+          <a href="${live.streamId ? `${ROUTES.musicLive}/${encodeURIComponent(live.streamId)}` : ROUTES.musicLive}">Public Live</a>
+        </div>
+      </header>
+
+      ${live.error ? `<p class="studio-live-error">${esc(live.error)}</p>` : ''}
+      <section class="studio-live-decks" aria-label="Live playout decks">
+        ${renderLiveDeck('current', 'CURRENT', current)}
+        ${renderLiveDeck('next', 'NEXT', next)}
+        ${renderLiveDeck('after', 'AFTER NEXT', afterNext)}
+      </section>
+
+      <section class="studio-live-workspace">
+        <aside class="studio-live-library">
+          ${renderLiveActionBookmarks()}
+          ${renderLiveAssets()}
+        </aside>
+        <section class="studio-live-playout">
+          <div class="studio-live-panel-heading">
+            <h3>Sequence Playout</h3>
+            <span>${esc(live.activeSequence?.title || 'No sequence')}</span>
+          </div>
+          <div class="studio-live-sequence-table">
+            <div class="studio-live-sequence-head">
+              <span>#</span><span>Status</span><span>Art</span><span>Type</span><span>Title</span><span>Artist</span><span>Album</span><span>Category</span><span>Dur</span><span>ETA</span><span>Playing</span><span>Fade I/O/X</span><span>Source</span><span>Actions</span>
+            </div>
+            <div class="studio-live-sequence-body">${live.loading ? '<div class="studio-live-empty studio-live-empty--log">Loading Live Studio...</div>' : renderLiveSequenceRows()}</div>
+          </div>
+        </section>
+      </section>
+
+      <footer class="studio-live-footer">
+        <div>
+          <strong>${esc(live.outputStatus)}</strong>
+          <span>${live.streamId ? `Live stream: ${esc(live.streamId)}` : 'Browser input source remains available from Quick Go Live.'}</span>
+        </div>
+        <button type="button" class="studio-live-transport-play" data-live-play-selected>▶ Play Selected</button>
+        <button type="button" class="studio-live-transport-stop" data-live-stop-all>■ Stop All</button>
+      </footer>
+      ${live.contextMenu ? renderLiveContextMenu(live.contextMenu) : ''}
+      <div data-studio-modal-root></div>
+    </section>
+  `
+}
+
+function renderLiveContextMenu(menu = {}) {
+  return `
+    <div class="studio-live-context-menu" style="left:${Math.max(8, menu.x || 0)}px;top:${Math.max(8, menu.y || 0)}px" data-live-context-menu>
+      <strong>${esc(liveItemById(menu.itemId)?.titleSnapshot || 'Sequence item')}</strong>
+      <button type="button" data-live-context-action="play" data-item-id="${esc(menu.itemId)}">Play now</button>
+      <button type="button" data-live-context-action="next" data-item-id="${esc(menu.itemId)}">Set as next</button>
+      <button type="button" data-live-context-action="duplicate" data-item-id="${esc(menu.itemId)}">Duplicate</button>
+      <button type="button" data-live-context-action="toggle" data-item-id="${esc(menu.itemId)}">Toggle skip</button>
+    </div>
+  `
+}
+
 function renderShell() {
   const active = currentStudioSection()
-  const content = active === 'hub' ? renderHub() : active === 'stagemaker' ? renderStagemaker() : renderDaw()
+  const content = active === 'hub' ? renderHub() : active === 'stagemaker' ? renderStagemaker() : active === 'live' ? renderLiveStudio() : renderDaw()
   app.innerHTML = `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active })}${content}</section></main>`
   initShellChrome()
   initStudioBrandLogo()
@@ -506,10 +788,52 @@ async function loadStageData() {
   }
 }
 
+async function loadLiveStudioItems() {
+  const live = liveState()
+  if (!state.user?.uid || !live.activeSequence?.sequenceId) {
+    live.items = []
+    return
+  }
+  live.items = await listSequenceItems(state.user.uid, live.activeSequence.sequenceId)
+  if (!live.selectedItemId && live.items.length) live.selectedItemId = live.items.find(isPlayableLiveItem)?.itemId || live.items[0].itemId
+  if (!live.currentItemId) live.currentItemId = ''
+  refreshLiveDecks()
+}
+
+async function loadLiveStudioData() {
+  const live = liveState()
+  live.loading = true
+  live.error = ''
+  try {
+    const [assets, sequences, bookmarks] = await Promise.all([
+      listSequenceAssets(state.user.uid, { limitCount: 50, status: 'ready', sort: 'updated_desc' }),
+      listSequences(state.user.uid, 50),
+      listSequenceActionBookmarks(state.user.uid)
+    ])
+    live.assets = assets
+    live.sequences = sequences
+    live.bookmarks = bookmarks
+    if (!live.activeSequence || !sequences.some((sequence) => sequence.sequenceId === live.activeSequence?.sequenceId)) {
+      live.activeSequence = sequences[0] || null
+      live.selectedItemId = ''
+      live.currentItemId = ''
+      live.nextItemId = ''
+      live.afterNextItemId = ''
+    }
+    await loadLiveStudioItems()
+  } catch (error) {
+    console.error('[studio-live] load failed', error)
+    live.error = 'Could not load Live Studio data.'
+  } finally {
+    live.loading = false
+  }
+}
+
 async function loadProjectsForCurrentRoute() {
   if (!state.user?.uid) {
     state.daw = { projects: [], recentProjects: [], loading: false, error: '' }
     state.stage = { projects: [], recentProjects: [], loading: false, error: '' }
+    state.live = { ...state.live, loading: false, error: '', assets: [], sequences: [], bookmarks: [], activeSequence: null, items: [], selectedItemId: '', currentItemId: '', nextItemId: '', afterNextItemId: '' }
     renderShell()
     return
   }
@@ -517,17 +841,21 @@ async function loadProjectsForCurrentRoute() {
   const active = currentStudioSection()
   const wantsDaw = active === 'hub' || active === 'daw'
   const wantsStage = active === 'hub' || active === 'stagemaker'
+  const wantsLive = active === 'live'
   if (wantsDaw) state.daw.loading = true
   if (wantsStage) state.stage.loading = true
+  if (wantsLive) state.live.loading = true
   renderShell()
 
   await Promise.allSettled([
     wantsDaw ? loadDawData() : Promise.resolve(),
-    wantsStage ? loadStageData() : Promise.resolve()
+    wantsStage ? loadStageData() : Promise.resolve(),
+    wantsLive ? loadLiveStudioData() : Promise.resolve()
   ])
 
   if (wantsDaw) state.daw.loading = false
   if (wantsStage) state.stage.loading = false
+  if (wantsLive) state.live.loading = false
   renderShell()
 }
 
@@ -539,6 +867,263 @@ function openDawProject(projectId) {
 function openStageProject(projectId) {
   touchStageProject(projectId).catch(() => {})
   window.location.href = stageProjectRoute(projectId)
+}
+
+function ensureLiveAudioGraph() {
+  const live = liveState()
+  if (live.audioContext && live.masterGain && live.destination) return live
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextCtor) throw new Error('This browser cannot run Live Studio audio.')
+  const context = new AudioContextCtor()
+  const masterGain = context.createGain()
+  const destination = context.createMediaStreamDestination()
+  masterGain.gain.value = 1
+  masterGain.connect(context.destination)
+  masterGain.connect(destination)
+  live.audioContext = context
+  live.masterGain = masterGain
+  live.destination = destination
+  live.outputTrack = destination.stream.getAudioTracks()[0] || null
+  return live
+}
+
+function stopLiveStudioPlayer(playerId = '') {
+  const live = liveState()
+  const player = live.activePlayers.find((entry) => entry.playerId === playerId || entry.itemId === playerId)
+  if (!player) return
+  try { player.audio.pause() } catch {}
+  try { player.source.disconnect() } catch {}
+  try { player.gain.disconnect() } catch {}
+  try {
+    player.audio.removeAttribute('src')
+    player.audio.load?.()
+  } catch {}
+  live.activePlayers = live.activePlayers.filter((entry) => entry !== player)
+  if (live.currentItemId === player.itemId) live.currentItemId = live.activePlayers[0]?.itemId || ''
+  live.outputStatus = live.activePlayers.length ? `${live.activePlayers.length} deck${live.activePlayers.length === 1 ? '' : 's'} playing.` : 'Sequence Software input ready.'
+}
+
+function stopLiveStudioAll() {
+  ;[...liveState().activePlayers].forEach((player) => stopLiveStudioPlayer(player.playerId))
+  liveState().currentItemId = ''
+  liveState().outputStatus = 'All decks stopped.'
+  renderShell()
+}
+
+async function playLiveStudioItem(itemId = '') {
+  const item = liveItemById(itemId)
+  const live = liveState()
+  if (!item || !isPlayableLiveItem(item)) {
+    live.outputStatus = 'Selected item has no playable audio source.'
+    renderShell()
+    return
+  }
+  const graph = ensureLiveAudioGraph()
+  if (graph.audioContext?.state === 'suspended') await graph.audioContext.resume()
+  const audio = new Audio(item.normalizedAudioURLSnapshot)
+  audio.crossOrigin = 'anonymous'
+  audio.preload = 'auto'
+  const source = graph.audioContext.createMediaElementSource(audio)
+  const gain = graph.audioContext.createGain()
+  const linearGain = Math.pow(10, Number(item.gainDb || 0) / 20)
+  gain.gain.value = Number.isFinite(linearGain) ? linearGain : 1
+  source.connect(gain)
+  gain.connect(graph.masterGain)
+  const playerId = `${item.itemId}-${Date.now()}`
+  const player = { playerId, itemId: item.itemId, audio, source, gain }
+  live.activePlayers.push(player)
+  live.currentItemId = item.itemId
+  live.selectedItemId = item.itemId
+  live.outputStatus = `Playing ${item.titleSnapshot || 'selected item'} through Live Studio output.`
+  audio.addEventListener('ended', () => {
+    stopLiveStudioPlayer(playerId)
+    const next = liveItemById(live.nextItemId)
+    live.currentItemId = ''
+    if (next && isPlayableLiveItem(next)) playLiveStudioItem(next.itemId).catch(() => {})
+    else renderShell()
+  }, { once: true })
+  try {
+    await audio.play()
+  } catch (error) {
+    stopLiveStudioPlayer(playerId)
+    live.outputStatus = 'Browser blocked playback. Click Play Selected again.'
+    console.warn('[studio-live] playback failed', error)
+  }
+  refreshLiveDecks()
+  renderShell()
+}
+
+async function setLiveSequence(sequenceId = '') {
+  const live = liveState()
+  live.activeSequence = live.sequences.find((sequence) => sequence.sequenceId === sequenceId) || null
+  live.selectedItemId = ''
+  live.currentItemId = ''
+  live.nextItemId = ''
+  live.afterNextItemId = ''
+  await loadLiveStudioItems()
+  renderShell()
+}
+
+async function createLiveSequence() {
+  if (!state.user?.uid) return
+  const title = `Live Studio ${new Date().toLocaleDateString()}`
+  const sequence = await createSequence(state.user.uid, { title, mode: 'manual' })
+  liveState().sequences = [sequence, ...liveState().sequences]
+  await setLiveSequence(sequence.sequenceId)
+}
+
+async function addLiveAsset(assetId = '') {
+  const live = liveState()
+  const asset = live.assets.find((entry) => entry.assetId === assetId)
+  if (!state.user?.uid || !live.activeSequence || !asset) return
+  await addAssetToSequence(state.user.uid, live.activeSequence.sequenceId, asset, live.activeSequence)
+  await loadLiveStudioData()
+  renderShell()
+}
+
+async function addLiveBookmark(bookmarkId = '') {
+  const live = liveState()
+  const bookmark = liveBookmarks().find((entry) => entry.bookmarkId === bookmarkId)
+  if (!state.user?.uid || !live.activeSequence || !bookmark) return
+  if (bookmarkId && defaultLiveBookmarks.some((entry) => entry.bookmarkId === bookmarkId) && !live.bookmarks.some((entry) => entry.bookmarkId === bookmarkId)) {
+    const saved = await createSequenceActionBookmark(state.user.uid, bookmark)
+    live.bookmarks = [saved, ...live.bookmarks]
+    await addActionBookmarkToSequence(state.user.uid, live.activeSequence.sequenceId, saved, live.activeSequence)
+  } else {
+    await addActionBookmarkToSequence(state.user.uid, live.activeSequence.sequenceId, bookmark, live.activeSequence)
+  }
+  await loadLiveStudioData()
+  renderShell()
+}
+
+async function duplicateLiveItem(itemId = '') {
+  const live = liveState()
+  const item = liveItemById(itemId)
+  if (!state.user?.uid || !live.activeSequence || !item) return
+  await duplicateSequenceItem(state.user.uid, live.activeSequence.sequenceId, item, live.activeSequence)
+  await loadLiveStudioData()
+  renderShell()
+}
+
+async function toggleLiveItemEnabled(itemId = '') {
+  const live = liveState()
+  const item = liveItemById(itemId)
+  if (!state.user?.uid || !live.activeSequence || !item) return
+  await updateSequenceItem(state.user.uid, live.activeSequence.sequenceId, item.itemId, { enabled: item.enabled === false })
+  await loadLiveStudioData()
+  renderShell()
+}
+
+async function startLiveStudioStream() {
+  const live = liveState()
+  if (!state.user?.uid || live.starting || live.streamId) return
+  live.starting = true
+  live.error = ''
+  live.outputStatus = 'Creating Melogic Music live stream...'
+  renderShell()
+  let pendingStreamId = ''
+  try {
+    const graph = ensureLiveAudioGraph()
+    if (graph.audioContext?.state === 'suspended') await graph.audioContext.resume()
+    if (!graph.outputTrack) throw new Error('Live Studio output track is not available.')
+    const response = await startMusicLiveStream({
+      streamId: '',
+      title: live.activeSequence?.title || 'Live Studio Broadcast',
+      description: 'Live Studio sequence output from Melogic Studio.',
+      category: 'radio',
+      visibility: 'public',
+      accessMode: 'public',
+      password: '',
+      coverArtURL: '',
+      coverArtPath: '',
+      coverArtSource: '',
+      tags: ['live-studio'],
+      audioMode: 'browser',
+      rightsAccepted: true,
+      archiveRequested: false,
+      audioOnly: true
+    })
+    pendingStreamId = response.streamId || ''
+    const room = new Room({ adaptiveStream: true, dynacast: true })
+    live.room = room
+    live.streamId = pendingStreamId
+    live.outputStatus = 'Connecting Live Studio host room...'
+    room.on(RoomEvent.Connected, () => {
+      live.outputStatus = 'Host room connected. Publishing Sequence Software output...'
+      renderShell()
+    })
+    room.on(RoomEvent.Reconnecting, () => {
+      live.outputStatus = 'Reconnecting Live Studio host room...'
+      renderShell()
+    })
+    room.on(RoomEvent.Disconnected, () => {
+      live.outputStatus = live.ending ? 'Live Studio disconnected.' : 'Live Studio disconnected unexpectedly.'
+      live.room = null
+      live.localTrack = null
+      if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
+      live.heartbeatTimer = 0
+      renderShell()
+    })
+    await room.connect(response.url, response.hostToken)
+    live.localTrack = graph.outputTrack
+    await room.localParticipant.publishTrack(graph.outputTrack, {
+      audioPreset: AudioPresets.musicHighQualityStereo,
+      dtx: false,
+      red: true,
+      forceStereo: true
+    })
+    await markMusicLiveStreamOnAir(pendingStreamId)
+    if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
+    live.heartbeatTimer = window.setInterval(() => {
+      if (!live.streamId) return
+      heartbeatMusicLiveStream(live.streamId, {
+        audioPublished: true,
+        connectionStatus: 'connected'
+      }).catch(() => {})
+    }, 25000)
+    live.outputStatus = 'On air. Sequence Software output is publishing to Melogic Music.'
+  } catch (error) {
+    console.error('[studio-live] start stream failed', error)
+    if (pendingStreamId) await endMusicLiveStream(pendingStreamId).catch(() => {})
+    live.streamId = ''
+    live.room?.disconnect?.()
+    live.room = null
+    live.localTrack = null
+    live.error = error?.message || 'Could not start Live Studio stream.'
+    live.outputStatus = 'Live stream start failed.'
+  } finally {
+    live.starting = false
+    renderShell()
+  }
+}
+
+async function endLiveStudioStream() {
+  const live = liveState()
+  if (!live.streamId || live.ending) return
+  const streamId = live.streamId
+  live.ending = true
+  live.outputStatus = 'Ending Live Studio stream...'
+  renderShell()
+  try {
+    if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
+    live.heartbeatTimer = 0
+    try {
+      if (live.localTrack) await live.room?.localParticipant?.unpublishTrack?.(live.localTrack, true)
+    } catch {}
+    live.room?.disconnect?.()
+    await endMusicLiveStream(streamId)
+    live.streamId = ''
+    live.room = null
+    live.localTrack = null
+    live.outputStatus = 'Live Studio stream ended.'
+  } catch (error) {
+    console.error('[studio-live] end stream failed', error)
+    live.error = error?.message || 'Could not end Live Studio stream.'
+    live.outputStatus = 'Live Studio end failed.'
+  } finally {
+    live.ending = false
+    renderShell()
+  }
 }
 
 function renderCreateModal(kind = 'daw', loading = false, initialTitle = '', selectedStageType = 'Blank Stage') {
@@ -592,7 +1177,110 @@ function renderCreateModal(kind = 'daw', loading = false, initialTitle = '', sel
   })
 }
 
+function bindLiveStudioControls() {
+  const live = liveState()
+  app.querySelector('[data-live-sequence-select]')?.addEventListener('change', (e) => {
+    setLiveSequence(e.currentTarget.value).catch((error) => {
+      console.error('[studio-live] sequence select failed', error)
+      live.error = 'Could not open that sequence.'
+      renderShell()
+    })
+  })
+  app.querySelector('[data-live-create-sequence]')?.addEventListener('click', () => {
+    createLiveSequence().catch((error) => {
+      console.error('[studio-live] sequence create failed', error)
+      live.error = 'Could not create a sequence.'
+      renderShell()
+    })
+  })
+  app.querySelector('[data-live-start-stream]')?.addEventListener('click', () => startLiveStudioStream())
+  app.querySelector('[data-live-end-stream]')?.addEventListener('click', () => endLiveStudioStream())
+  app.querySelectorAll('[data-live-add-asset]').forEach((el) => el.addEventListener('click', () => {
+    addLiveAsset(el.dataset.liveAddAsset).catch((error) => {
+      console.error('[studio-live] add asset failed', error)
+      live.error = 'Could not add that asset.'
+      renderShell()
+    })
+  }))
+  app.querySelectorAll('[data-live-add-bookmark]').forEach((el) => el.addEventListener('click', () => {
+    addLiveBookmark(el.dataset.liveAddBookmark).catch((error) => {
+      console.error('[studio-live] add bookmark failed', error)
+      live.error = 'Could not add that action bookmark.'
+      renderShell()
+    })
+  }))
+  app.querySelector('[data-live-bookmark-form]')?.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    if (!state.user?.uid) return
+    const data = new FormData(e.currentTarget)
+    const name = String(data.get('name') || '').trim()
+    if (!name) return
+    try {
+      const bookmark = await createSequenceActionBookmark(state.user.uid, {
+        name,
+        actionType: String(data.get('actionType') || 'operator_note'),
+        color: '#6ee7ff',
+        notes: ''
+      })
+      live.bookmarks = [bookmark, ...live.bookmarks]
+      renderShell()
+    } catch (error) {
+      console.error('[studio-live] bookmark create failed', error)
+      live.error = 'Could not create that action bookmark.'
+      renderShell()
+    }
+  })
+  app.querySelectorAll('[data-live-select-item]').forEach((el) => {
+    el.addEventListener('click', () => {
+      live.selectedItemId = el.dataset.liveSelectItem || ''
+      live.contextMenu = null
+      refreshLiveDecks()
+      renderShell()
+    })
+    el.addEventListener('dblclick', () => {
+      live.nextItemId = el.dataset.liveSelectItem || ''
+      refreshLiveDecks()
+      renderShell()
+    })
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault()
+      live.selectedItemId = el.dataset.liveSelectItem || ''
+      live.contextMenu = { itemId: el.dataset.liveSelectItem || '', x: e.clientX, y: e.clientY }
+      renderShell()
+    })
+  })
+  app.querySelectorAll('[data-live-play-item]').forEach((el) => el.addEventListener('click', () => playLiveStudioItem(el.dataset.livePlayItem)))
+  app.querySelectorAll('[data-live-stop-item]').forEach((el) => el.addEventListener('click', () => {
+    stopLiveStudioPlayer(el.dataset.liveStopItem)
+    refreshLiveDecks()
+    renderShell()
+  }))
+  app.querySelector('[data-live-play-selected]')?.addEventListener('click', () => {
+    const item = liveItemById(live.selectedItemId) || liveSelectedItem()
+    playLiveStudioItem(item?.itemId || '').catch(() => {})
+  })
+  app.querySelector('[data-live-stop-all]')?.addEventListener('click', () => stopLiveStudioAll())
+  app.querySelectorAll('[data-live-context-action]').forEach((el) => el.addEventListener('click', async () => {
+    const itemId = el.dataset.itemId || ''
+    const action = el.dataset.liveContextAction || ''
+    live.contextMenu = null
+    if (action === 'play') await playLiveStudioItem(itemId)
+    else if (action === 'next') {
+      live.nextItemId = itemId
+      refreshLiveDecks()
+      renderShell()
+    } else if (action === 'duplicate') await duplicateLiveItem(itemId)
+    else if (action === 'toggle') await toggleLiveItemEnabled(itemId)
+  }))
+  document.addEventListener('click', (e) => {
+    if (!live.contextMenu || e.target.closest?.('[data-live-context-menu]')) return
+    live.contextMenu = null
+    renderShell()
+  }, { once: true })
+}
+
 function bind() {
+  if (currentStudioSection() === 'live') bindLiveStudioControls()
   app.querySelector('[data-new-daw-project]')?.addEventListener('click', (e) => {
     if (!state.user) return
     e.preventDefault()

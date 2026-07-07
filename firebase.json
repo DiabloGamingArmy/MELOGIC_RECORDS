@@ -526,6 +526,14 @@
         "destination": "/stage.html"
       },
       {
+        "source": "/studio/live",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/live/**",
+        "destination": "/studio.html"
+      },
+      {
         "source": "/stage",
         "destination": "/stage.html"
       },
