@@ -47,6 +47,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     accessMode: String(raw.accessMode || raw.visibility || 'private'),
     passwordProtected: raw.passwordProtected === true || raw.accessMode === 'password',
     audioMode: String(raw.audioMode || 'music'),
+    selectedInputSource: raw.selectedInputSource === 'sequence' ? 'sequence' : 'browser',
+    selectedSequenceId: String(raw.selectedSequenceId || ''),
     audioProfile: String(raw.audioProfile || ''),
     audioOnly: raw.audioOnly !== false,
     videoEnabled: raw.videoEnabled === true,
@@ -211,6 +213,24 @@ export async function getMusicLiveStream(streamId = '') {
   } catch (error) {
     console.warn('[musicLiveService] Live stream could not be loaded.', error?.message || error)
     return null
+  }
+}
+
+export async function listHostMusicLiveStreams(uid = '', { limitCount = 20 } = {}) {
+  const hostUid = String(uid || '').trim()
+  if (!db || !hostUid) return []
+  try {
+    const snapshot = await getDocs(query(
+      collection(db, FIRESTORE_COLLECTIONS.musicLiveStreams),
+      where('hostUid', '==', hostUid),
+      limit(Math.max(1, Math.min(30, Number(limitCount) || 20)))
+    ))
+    return snapshot.docs
+      .map((docSnap) => normalizeMusicLiveStream(docSnap))
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0).getTime() - new Date(a.updatedAt || a.createdAt || 0).getTime())
+  } catch (error) {
+    console.warn('[musicLiveService] Host live streams could not be loaded.', error?.message || error)
+    return []
   }
 }
 

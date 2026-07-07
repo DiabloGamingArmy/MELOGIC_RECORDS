@@ -1,8 +1,9 @@
 const admin = require('firebase-admin')
 const crypto = require('crypto')
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https')
+const { onSchedule } = require('firebase-functions/v2/scheduler')
 const { defineSecret } = require('firebase-functions/params')
-const { AccessToken, TrackSource } = require('livekit-server-sdk')
+const { AccessToken } = require('livekit-server-sdk')
 const { resolvePermissionsForUid } = require('../account/accountPermissions')
 
 const LIVEKIT_URL = defineSecret('LIVEKIT_URL')
@@ -46,6 +47,10 @@ function toTags(value) {
 
 function normalizeAudioMode(value) {
   return ALLOWED_AUDIO_MODES.has(value) ? value : 'music'
+}
+
+function normalizeInputSource(value) {
+  return value === 'sequence' ? 'sequence' : 'browser'
 }
 
 function normalizeAccessMode(data = {}) {
@@ -276,13 +281,25 @@ async function createLiveKitJwt({ identity, name, roomName, role, canPublish, co
     }
   )
 
-  token.addGrant({
+  const grant = {
     room: roomName,
     roomJoin: true,
     canPublish,
     canSubscribe: true,
-    canPublishData: false,
-    canPublishSources: canPublish ? [TrackSource.MICROPHONE] : []
+    canPublishData: canPublish === true,
+    canUpdateOwnMetadata: canPublish === true
+  }
+  if (canPublish === false) grant.canPublishSources = []
+
+  token.addGrant(grant)
+
+  liveLog('LiveKit token grant prepared', {
+    role,
+    roomName,
+    canPublish: canPublish === true,
+    canSubscribe: true,
+    canPublishData: canPublish === true,
+    sourceRestricted: canPublish === false ? 'none' : 'unrestricted_audio_host'
   })
 
   return token.toJwt()
@@ -317,6 +334,8 @@ const startMusicLiveStream = onCall(
       const metadata = cleanStreamMetadata(request.data || {})
       const { category, visibility, accessMode, coverArtPath, coverArtURL, coverArtSource, tags } = metadata
       const audioMode = normalizeAudioMode(request.data?.audioMode)
+      const selectedInputSource = normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource)
+      const selectedSequenceId = cleanId(request.data?.sequenceId || request.data?.selectedSequenceId, 160)
       if (title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.', { stage })
       if (request.data?.rightsAccepted !== true) throw new HttpsError('failed-precondition', 'You must accept the live stream rules before going live.', { stage })
       if (accessMode === 'password' && !cleanString(request.data?.password, 200)) {
@@ -349,6 +368,7 @@ const startMusicLiveStream = onCall(
           audioPublished: false,
           endedAt: cleanupNow,
           endReason: 'heartbeat_stale',
+          cleanupSource: 'start_stream_guard',
           updatedAt: cleanupNow,
           listenerCount: 0
         }, { merge: true })),
@@ -433,6 +453,8 @@ const startMusicLiveStream = onCall(
         accessMode,
         passwordProtected: accessMode === 'password',
         audioMode,
+        selectedInputSource,
+        selectedSequenceId,
         audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
         audioOnly: true,
         videoEnabled: false,
@@ -522,6 +544,9 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   }
 
   const metadata = cleanStreamMetadata(request.data || {})
+  const audioMode = normalizeAudioMode(request.data?.audioMode)
+  const selectedInputSource = normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource)
+  const selectedSequenceId = cleanId(request.data?.sequenceId || request.data?.selectedSequenceId, 160)
   const now = admin.firestore.FieldValue.serverTimestamp()
   const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
   const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
@@ -545,8 +570,10 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     visibility: metadata.visibility,
     accessMode: metadata.accessMode,
     passwordProtected: metadata.accessMode === 'password',
-    audioMode: normalizeAudioMode(request.data?.audioMode),
-    audioProfile: normalizeAudioMode(request.data?.audioMode) === 'music' ? 'high_quality_music' : 'podcast_voice',
+    audioMode,
+    selectedInputSource,
+    selectedSequenceId,
+    audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
     audioOnly: true,
     videoEnabled: false,
     hostConnected: false,
@@ -675,6 +702,8 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
   }
   await streamRef.set({
     ...metadata,
+    selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource),
+    selectedSequenceId: cleanId(request.data?.sequenceId || request.data?.selectedSequenceId || stream.selectedSequenceId, 160),
     updatedAt: now,
     lastMetadataUpdateAt: now
   }, { merge: true })
@@ -699,6 +728,7 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
     audioPublished: false,
     endedAt: now,
     endReason: cleanString(reason, 80) || 'host_ended',
+    cleanupSource: reason === 'host_unload' || reason === 'host_pagehide' ? 'heartbeat' : 'host_end',
     updatedAt: now,
     listenerCount: 0
   }, { merge: true })
@@ -731,6 +761,7 @@ const joinMusicLiveStream = onCall(
         audioPublished: false,
         endedAt: admin.firestore.FieldValue.serverTimestamp(),
         endReason: 'heartbeat_stale',
+        cleanupSource: 'join_guard',
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         listenerCount: 0
       }, { merge: true })
@@ -1091,6 +1122,66 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   return { ok: true, messageId: messageRef.id }
 })
 
+async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
+  const stream = docSnap.data() || {}
+  if (stream.status === 'live') {
+    const stale = stream.hostConnected !== true || stream.audioPublished !== true || !isHeartbeatFresh(stream)
+    if (!stale) return false
+    await docSnap.ref.set({
+      status: 'ended',
+      connectionStatus: 'stale',
+      hostConnected: false,
+      audioPublished: false,
+      endedAt: now,
+      endReason: stream.lastHostHeartbeatAt ? 'heartbeat_timeout' : 'empty_room',
+      cleanupSource: 'scheduled',
+      updatedAt: now,
+      listenerCount: 0
+    }, { merge: true })
+    return true
+  }
+  if (stream.status === 'starting') {
+    const updatedAt = timestampMillis(stream.updatedAt || stream.createdAt)
+    if (updatedAt && Date.now() - updatedAt < STARTING_TIMEOUT_MS) return false
+    await docSnap.ref.set({
+      status: 'error',
+      connectionStatus: 'error',
+      hostConnected: false,
+      audioPublished: false,
+      errorReason: 'starting_timeout',
+      cleanupSource: 'scheduled',
+      updatedAt: now
+    }, { merge: true })
+    return true
+  }
+  return false
+}
+
+const cleanupStaleMusicLiveStreams = onSchedule(
+  {
+    region: 'us-central1',
+    schedule: 'every 5 minutes',
+    timeoutSeconds: 60,
+    memory: '256MiB'
+  },
+  async () => {
+    const now = admin.firestore.FieldValue.serverTimestamp()
+    const [liveSnap, startingSnap] = await Promise.all([
+      db().collection('musicLiveStreams').where('status', '==', 'live').limit(80).get(),
+      db().collection('musicLiveStreams').where('status', '==', 'starting').limit(40).get()
+    ])
+    let cleaned = 0
+    for (const docSnap of [...liveSnap.docs, ...startingSnap.docs]) {
+      if (await cleanupMusicLiveStreamSnapshot(docSnap, now)) cleaned += 1
+    }
+    liveLog('scheduled cleanup completed', {
+      liveChecked: liveSnap.size,
+      startingChecked: startingSnap.size,
+      cleaned
+    })
+  }
+)
+
 module.exports = {
   prepareMusicLiveStreamDraft,
   startMusicLiveStream,
@@ -1108,5 +1199,6 @@ module.exports = {
   deleteMusicLiveSequenceItem,
   setMusicLiveNowPlaying,
   endMusicLiveStreamBeacon,
-  sendMusicLiveChatMessage
+  sendMusicLiveChatMessage,
+  cleanupStaleMusicLiveStreams
 }

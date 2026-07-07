@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/music.css'
-import { AudioPresets, Room, RoomEvent, createLocalAudioTrack } from 'livekit-client'
+import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
@@ -1074,15 +1074,16 @@ function audioConstraintsForMode({ deviceId = '', relaxed = false } = {}) {
 }
 
 function publishOptionsForAudioMode() {
+  const source = Track?.Source?.Microphone || 'microphone'
   if (state.goLive.form.audioMode === 'voice') {
-    return { audioPreset: AudioPresets.speech, dtx: true, red: true, forceStereo: false }
+    return { audioPreset: AudioPresets.speech, dtx: true, red: true, forceStereo: false, source }
   }
   // LiveKit/WebRTC is real-time Opus transport. These supported options favor music quality,
   // but browsers do not expose a reliable broadcast-style listener buffer here.
   // Future Broadcast Delay Mode should use a server relay such as HLS/LL-HLS, Icecast-style
   // streaming, LiveKit Egress, or another recording/transcoding pipeline when intentional
   // radio-style delay and buffering matter more than interactivity.
-  return { audioPreset: AudioPresets.musicHighQualityStereo, dtx: false, red: true, forceStereo: true }
+  return { audioPreset: AudioPresets.musicHighQualityStereo, dtx: false, red: true, forceStereo: true, source }
 }
 
 function isHostBroadcastActive() {

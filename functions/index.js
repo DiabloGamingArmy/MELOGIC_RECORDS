@@ -110,7 +110,8 @@ const {
   deleteMusicLiveSequenceItem,
   setMusicLiveNowPlaying,
   endMusicLiveStreamBeacon,
-  sendMusicLiveChatMessage
+  sendMusicLiveChatMessage,
+  cleanupStaleMusicLiveStreams
 } = require('./src/music/musicLiveStreams')
 const { getPublicProfileStats, toggleProfileFollow } = require('./src/profiles/profileRelationships')
 const {
@@ -270,6 +271,7 @@ exports.deleteMusicLiveSequenceItem = deleteMusicLiveSequenceItem
 exports.setMusicLiveNowPlaying = setMusicLiveNowPlaying
 exports.endMusicLiveStreamBeacon = endMusicLiveStreamBeacon
 exports.sendMusicLiveChatMessage = sendMusicLiveChatMessage
+exports.cleanupStaleMusicLiveStreams = cleanupStaleMusicLiveStreams
 exports.getPublicProfileStats = getPublicProfileStats
 exports.toggleProfileFollow = toggleProfileFollow
 exports.getMutualUserSuggestions = getMutualUserSuggestions

@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/studio.css'
-import { AudioPresets, Room, RoomEvent, createLocalAudioTrack } from 'livekit-client'
+import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
@@ -9,7 +9,9 @@ import {
   deleteMusicLiveSequenceItem,
   endMusicLiveStream,
   heartbeatMusicLiveStream,
+  listHostMusicLiveStreams,
   markMusicLiveStreamOnAir,
+  prepareMusicLiveStreamDraft,
   sendMusicLiveChatMessage,
   setMusicLiveNowPlaying,
   startMusicLiveStream,
@@ -123,12 +125,14 @@ const state = {
     activePlayers: [],
     contextMenu: null,
     streamId: '',
+    draftStreamId: '',
     starting: false,
     ending: false,
     room: null,
     localTrack: null,
     sourceTrack: null,
     heartbeatTimer: 0,
+    draftSaveTimer: 0,
     stream: null,
     streamUnsubscribe: null,
     chatUnsubscribe: null,
@@ -707,11 +711,6 @@ function renderLiveDeck(slot = 'current', label = 'CURRENT', item = null) {
           <h3>${esc(item?.titleSnapshot || 'No item loaded')}</h3>
           <p>${esc(item?.artistSnapshot || item?.categorySnapshot || 'Sequence deck')}</p>
           <small>${esc(item?.albumSnapshot || item?.type || 'Waiting')} - ${item ? liveItemDuration(item) : '0:00'}</small>
-          <label class="studio-live-progress">
-            <span><i style="width:${progress.percent}%"></i><b style="left:${progress.percent}%"></b></span>
-            <input type="range" min="0" max="1000" value="${progress.value}" data-live-scrub-item="${esc(item?.itemId || '')}" ${player && progress.duration > 0 ? '' : 'disabled'} aria-label="Scrub ${esc(label)}" />
-          </label>
-          <small>${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)}</small>
         </div>
       </div>
       <div class="studio-live-deck-actions">
@@ -719,6 +718,11 @@ function renderLiveDeck(slot = 'current', label = 'CURRENT', item = null) {
         <button type="button" data-live-pause-item="${esc(item?.itemId || '')}" ${player ? '' : 'disabled'} aria-label="Pause ${esc(label)}">Ⅱ</button>
         <button type="button" data-live-stop-item="${esc(item?.itemId || '')}" ${player ? '' : 'disabled'} aria-label="Stop ${esc(label)}">■</button>
         <button type="button" data-live-deck-menu="${esc(item?.itemId || '')}" ${item ? '' : 'disabled'} aria-label="Deck menu">⋯</button>
+        <label class="studio-live-progress">
+          <span><i style="width:${progress.percent}%"></i><b style="left:${progress.percent}%"></b></span>
+          <input type="range" min="0" max="1000" value="${progress.value}" data-live-scrub-item="${esc(item?.itemId || '')}" ${player && progress.duration > 0 ? '' : 'disabled'} aria-label="Scrub ${esc(label)}" />
+        </label>
+        <small>${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)}</small>
       </div>
     </article>
   `
@@ -1115,10 +1119,16 @@ function renderLiveContextMenu(menu = {}) {
           ['play', 'Play / Resume'],
           ['pause', livePlayerForItem(menu.itemId)?.paused ? 'Resume' : 'Pause'],
           ['stop', 'Stop Deck'],
+          ['restart', 'Restart'],
+          ['cueBeginning', 'Cue from Beginning'],
           ['current', 'Set as Current'],
           ['next', 'Set as Next'],
+          ['removeDeck', 'Remove from Deck'],
+          ['monitor', 'Preview / Monitor This Item'],
           ['copy', 'Copy Metadata'],
-          ['reveal', 'Reveal in Sequence']
+          ['reveal', 'Reveal in Sequence'],
+          ['revealAsset', 'Reveal Asset'],
+          ['edit', 'Edit Item']
         ]
     : [
         ['play', 'Play'],
@@ -1261,6 +1271,50 @@ async function loadLiveStudioItems() {
   refreshLiveDecks()
 }
 
+function hydrateLiveStudioFromStream(stream = null) {
+  if (!stream) return
+  const live = liveState()
+  const isActive = ['starting', 'live'].includes(stream.status)
+  live.stream = stream
+  live.streamId = isActive ? stream.streamId || stream.id || '' : ''
+  live.draftStreamId = stream.streamId || stream.id || live.draftStreamId || ''
+  live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
+  live.streamForm = {
+    ...live.streamForm,
+    title: stream.title || live.streamForm.title,
+    description: stream.description || '',
+    category: stream.category || live.streamForm.category,
+    tags: Array.isArray(stream.tags) ? stream.tags.join(', ') : live.streamForm.tags,
+    visibility: stream.visibility || live.streamForm.visibility,
+    accessMode: stream.accessMode || live.streamForm.accessMode,
+    password: live.streamForm.password || '',
+    coverArtURL: stream.coverArtURL || '',
+    audioMode: stream.audioMode === 'voice' ? 'voice' : 'music'
+  }
+  if (stream.selectedSequenceId) {
+    const sequence = live.sequences.find((entry) => entry.sequenceId === stream.selectedSequenceId)
+    if (sequence) live.activeSequence = sequence
+  }
+  live.outputStatus = isActive
+    ? `Restored ${stream.status} Live Studio stream.`
+    : 'Restored Live Studio draft details.'
+}
+
+async function restoreLiveStudioRuntimeState() {
+  const live = liveState()
+  if (!state.user?.uid || live.streamId || live.draftStreamId) return
+  const streams = await listHostMusicLiveStreams(state.user.uid, { limitCount: 20 })
+  const active = streams.find((stream) => ['live', 'starting'].includes(stream.status) && stream.hostUid === state.user.uid)
+  const draft = streams.find((stream) => ['draft', 'setup', 'error'].includes(stream.status) && stream.hostUid === state.user.uid)
+  const stream = active || draft || null
+  if (!stream) return
+  hydrateLiveStudioFromStream(stream)
+  if (active) {
+    subscribeLiveStudioStream(active.streamId)
+    subscribeLiveStudioChat(active.streamId)
+  }
+}
+
 async function loadLiveStudioData() {
   const live = liveState()
   live.loading = true
@@ -1281,6 +1335,7 @@ async function loadLiveStudioData() {
       live.nextItemId = ''
       live.afterNextItemId = ''
     }
+    await restoreLiveStudioRuntimeState()
     await loadLiveStudioItems()
   } catch (error) {
     console.error('[studio-live] load failed', error)
@@ -1294,7 +1349,7 @@ async function loadProjectsForCurrentRoute() {
   if (!state.user?.uid) {
     state.daw = { projects: [], recentProjects: [], loading: false, error: '' }
     state.stage = { projects: [], recentProjects: [], loading: false, error: '' }
-    state.live = { ...state.live, loading: false, error: '', assets: [], sequences: [], bookmarks: [], activeSequence: null, items: [], selectedItemId: '', currentItemId: '', nextItemId: '', afterNextItemId: '' }
+    state.live = { ...state.live, loading: false, error: '', assets: [], sequences: [], bookmarks: [], activeSequence: null, items: [], selectedItemId: '', currentItemId: '', nextItemId: '', afterNextItemId: '', streamId: '', draftStreamId: '', stream: null }
     renderShell()
     return
   }
@@ -1502,10 +1557,11 @@ async function getLivePublishTrack() {
 
 function publishOptionsForLiveSource() {
   const live = liveState()
+  const source = Track?.Source?.Microphone || 'microphone'
   if (live.streamForm.audioMode === 'voice') {
-    return { audioPreset: AudioPresets.speech, dtx: true, red: true, forceStereo: false }
+    return { audioPreset: AudioPresets.speech, dtx: true, red: true, forceStereo: false, source }
   }
-  return { audioPreset: AudioPresets.musicHighQualityStereo, dtx: false, red: true, forceStereo: true }
+  return { audioPreset: AudioPresets.musicHighQualityStereo, dtx: false, red: true, forceStereo: true, source }
 }
 
 function stopLiveStudioPlayer(playerId = '') {
@@ -1773,6 +1829,7 @@ function setLiveInputSource(source = 'browser') {
   }
   live.inputSource = source === 'sequence' ? 'sequence' : 'browser'
   live.sourceMessage = live.inputSource === 'sequence' ? 'Sequence Editor selected as input source.' : 'Browser Input Source selected.'
+  scheduleLiveStudioDraftSave()
   renderShell()
 }
 
@@ -1803,6 +1860,21 @@ async function handleSequenceContextAction(action = '', itemId = '') {
     stopLiveStudioPlayer(itemId)
     refreshLiveDecks()
   }
+  else if (action === 'restart') {
+    const player = livePlayerForItem(itemId)
+    if (player?.audio) {
+      player.audio.currentTime = 0
+      if (player.paused) await pauseLiveStudioPlayer(itemId)
+    } else {
+      await playLiveStudioItem(itemId)
+    }
+  }
+  else if (action === 'cueBeginning') {
+    const player = livePlayerForItem(itemId)
+    if (player?.audio) player.audio.currentTime = 0
+    live.selectedItemId = itemId
+    live.outputStatus = 'Deck cued from beginning.'
+  }
   else if (action === 'current') {
     live.currentItemId = itemId
     live.selectedItemId = itemId
@@ -1814,6 +1886,14 @@ async function handleSequenceContextAction(action = '', itemId = '') {
     refreshLiveDecks()
   } else if (action === 'duplicate') await duplicateLiveItem(itemId)
   else if (action === 'remove') await removeLiveItem(itemId)
+  else if (action === 'removeDeck') {
+    stopLiveStudioPlayer(itemId)
+    if (live.currentItemId === itemId) live.currentItemId = ''
+    if (live.nextItemId === itemId) live.nextItemId = ''
+    if (live.afterNextItemId === itemId) live.afterNextItemId = ''
+    refreshLiveDecks()
+    live.outputStatus = 'Deck item removed.'
+  }
   else if (action === 'toggle') await toggleLiveItemEnabled(itemId)
   else if (action === 'moveTop') await moveLiveItemToEdge(itemId, 'top')
   else if (action === 'moveBottom') await moveLiveItemToEdge(itemId, 'bottom')
@@ -1824,6 +1904,15 @@ async function handleSequenceContextAction(action = '', itemId = '') {
   } else if (action === 'reveal') {
     live.selectedItemId = itemId
     live.outputStatus = 'Sequence item selected.'
+  } else if (action === 'monitor') {
+    live.selectedItemId = itemId
+    openLiveMonitor()
+  } else if (action === 'revealAsset') {
+    live.selectedItemId = itemId
+    live.outputStatus = 'Asset reveal is ready from the sequence row.'
+  } else if (action === 'edit') {
+    live.selectedItemId = itemId
+    live.outputStatus = 'Edit item workflow is ready from the sequence menu.'
   } else {
     live.outputStatus = `${action.replace(/([A-Z])/g, ' $1').trim()} is ready for the sequence editor workflow.`
   }
@@ -1857,31 +1946,44 @@ function updateLiveListenerPreviewDom() {
   if (cover) cover.innerHTML = form.coverArtURL ? `<img src="${esc(form.coverArtURL)}" alt="" />` : '<span>MR</span>'
 }
 
+function liveStreamPayload() {
+  const live = liveState()
+  const form = live.streamForm
+  return {
+    streamId: live.streamId || live.draftStreamId || '',
+    title: form.title,
+    description: form.description,
+    category: form.category,
+    visibility: form.visibility,
+    accessMode: form.accessMode,
+    password: form.password,
+    coverArtURL: form.coverArtURL,
+    coverArtPath: '',
+    coverArtSource: form.coverArtURL ? 'url' : 'fallback',
+    tags: form.tags,
+    audioMode: form.audioMode,
+    inputSource: live.inputSource,
+    selectedInputSource: live.inputSource,
+    sequenceId: live.activeSequence?.sequenceId || '',
+    selectedSequenceId: live.activeSequence?.sequenceId || ''
+  }
+}
+
 async function saveLiveStreamInfo() {
   const live = liveState()
-  if (!live.streamId) {
-    live.outputStatus = 'Draft stream details saved locally.'
-    renderShell()
-    return
-  }
   live.savingInfo = true
   renderShell()
   try {
-    const form = live.streamForm
-    await updateMusicLiveStreamInfo({
-      streamId: live.streamId,
-      title: form.title,
-      description: form.description,
-      category: form.category,
-      visibility: form.visibility,
-      accessMode: form.accessMode,
-      password: form.password,
-      coverArtURL: form.coverArtURL,
-      coverArtPath: '',
-      coverArtSource: form.coverArtURL ? 'url' : 'fallback',
-      tags: form.tags
-    })
-    live.outputStatus = 'Stream info updated.'
+    const payload = liveStreamPayload()
+    if (live.streamId) {
+      await updateMusicLiveStreamInfo(payload)
+      live.outputStatus = 'Stream info updated.'
+    } else {
+      const response = await prepareMusicLiveStreamDraft(payload)
+      live.draftStreamId = response.streamId || live.draftStreamId
+      if (live.draftStreamId) subscribeLiveStudioStream(live.draftStreamId)
+      live.outputStatus = 'Draft stream details saved.'
+    }
   } catch (error) {
     console.error('[studio-live] update stream failed', error)
     live.error = error?.message || 'Could not update stream info.'
@@ -1889,6 +1991,22 @@ async function saveLiveStreamInfo() {
     live.savingInfo = false
     renderShell()
   }
+}
+
+function scheduleLiveStudioDraftSave() {
+  const live = liveState()
+  if (!state.user?.uid || live.streamId || live.starting || live.ending) return
+  if (live.draftSaveTimer) window.clearTimeout(live.draftSaveTimer)
+  live.draftSaveTimer = window.setTimeout(async () => {
+    live.draftSaveTimer = 0
+    if (live.streamId || live.starting || live.ending) return
+    try {
+      const response = await prepareMusicLiveStreamDraft(liveStreamPayload())
+      live.draftStreamId = response.streamId || live.draftStreamId
+    } catch (error) {
+      console.warn('[studio-live] draft autosave failed', error?.message || error)
+    }
+  }, 1400)
 }
 
 async function startLiveStudioStream() {
@@ -1901,20 +2019,15 @@ async function startLiveStudioStream() {
   let pendingStreamId = ''
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
+    live.outputStatus = 'Saving Live Studio stream details...'
+    renderShell()
+    const draftResponse = await prepareMusicLiveStreamDraft(liveStreamPayload())
+    live.draftStreamId = draftResponse.streamId || live.draftStreamId
+    if (!live.draftStreamId) throw new Error('Could not save live stream draft.')
     const localTrack = await getLivePublishTrack()
     const response = await startMusicLiveStream({
-      streamId: '',
-      title: live.streamForm.title,
-      description: live.streamForm.description,
-      category: live.streamForm.category,
-      visibility: live.streamForm.visibility,
-      accessMode: live.streamForm.accessMode,
-      password: live.streamForm.password,
-      coverArtURL: live.streamForm.coverArtURL,
-      coverArtPath: '',
-      coverArtSource: live.streamForm.coverArtURL ? 'url' : 'fallback',
-      tags: live.streamForm.tags,
-      audioMode: live.streamForm.audioMode,
+      ...liveStreamPayload(),
+      streamId: live.draftStreamId,
       rightsAccepted: true,
       archiveRequested: false,
       audioOnly: true
@@ -1946,6 +2059,7 @@ async function startLiveStudioStream() {
     live.localTrack = localTrack
     await room.localParticipant.publishTrack(localTrack, publishOptionsForLiveSource())
     await markMusicLiveStreamOnAir(pendingStreamId)
+    live.draftStreamId = pendingStreamId
     subscribeLiveStudioStream(pendingStreamId)
     subscribeLiveStudioChat(pendingStreamId)
     if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
@@ -1953,9 +2067,9 @@ async function startLiveStudioStream() {
       if (!live.streamId) return
       heartbeatMusicLiveStream(live.streamId, {
         audioPublished: true,
-        connectionStatus: 'connected'
+        connectionStatus: 'live'
       }).catch(() => {})
-    }, 25000)
+    }, 15000)
     live.outputStatus = live.inputSource === 'sequence'
       ? 'On air. Sequence Software output is publishing to Melogic Music.'
       : 'On air. Browser input source is publishing to Melogic Music.'
@@ -1963,6 +2077,13 @@ async function startLiveStudioStream() {
     console.error('[studio-live] start stream failed', error)
     if (pendingStreamId) await endMusicLiveStream(pendingStreamId).catch(() => {})
     live.streamId = ''
+    live.draftStreamId = ''
+    try {
+      const draft = await prepareMusicLiveStreamDraft({ ...liveStreamPayload(), streamId: '' })
+      live.draftStreamId = draft.streamId || ''
+    } catch (draftError) {
+      console.warn('[studio-live] failed-start draft restore failed', draftError?.message || draftError)
+    }
     live.room?.disconnect?.()
     live.room = null
     live.localTrack = null
@@ -1991,6 +2112,7 @@ async function endLiveStudioStream() {
     await endMusicLiveStream(streamId)
     unsubscribeLiveStudioRuntime()
     live.streamId = ''
+    live.draftStreamId = ''
     live.room = null
     live.localTrack = null
     live.outputStatus = 'Live Studio stream ended.'
@@ -2162,6 +2284,7 @@ function bindLiveStudioControls() {
   app.querySelector('[data-live-stream-form]')?.addEventListener('input', (e) => {
     updateLiveStreamFormFromElement(e.currentTarget)
     updateLiveListenerPreviewDom()
+    scheduleLiveStudioDraftSave()
   })
   app.querySelector('[data-live-start-stream]')?.addEventListener('click', () => {
     updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
@@ -2191,6 +2314,7 @@ function bindLiveStudioControls() {
     live.sourceTrack = null
     live.streamForm.audioMode = e.currentTarget.value === 'voice' ? 'voice' : 'music'
     live.micPrepared = false
+    scheduleLiveStudioDraftSave()
     renderShell()
   })
   app.querySelectorAll('[data-live-set-source]').forEach((el) => el.addEventListener('click', () => setLiveInputSource(el.dataset.liveSetSource)))
@@ -2228,7 +2352,7 @@ function bindLiveStudioControls() {
       console.error('[studio-live] sequence select failed', error)
       live.error = 'Could not open that sequence.'
       renderShell()
-    })
+    }).finally(() => scheduleLiveStudioDraftSave())
   })
   app.querySelector('[data-live-create-sequence]')?.addEventListener('click', () => {
     createLiveSequence().catch((error) => {
