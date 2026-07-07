@@ -166,7 +166,16 @@ const state = {
       saving: false
     },
     chatDraft: '',
-    outputStatus: 'Sequence Software input ready.'
+    outputStatus: 'Sequence Software input ready.',
+    monitorEnabled: false,
+    monitorVolume: 0.85,
+    monitorConnected: false,
+    micLevel: 0,
+    micMeterTimer: 0,
+    micMeterContext: null,
+    micMeterAnalyser: null,
+    micMeterSource: null,
+    playbackTimer: 0
   }
 }
 
@@ -659,30 +668,57 @@ function liveItemDuration(item = {}) {
   return formatMs(item.durationMs || 0)
 }
 
+function livePlayerForItem(itemId = '') {
+  return liveState().activePlayers.find((player) => player.itemId === itemId) || null
+}
+
+function livePlayerProgress(player = null, item = {}) {
+  const audio = player?.audio
+  const duration = Number.isFinite(audio?.duration) && audio.duration > 0
+    ? audio.duration
+    : Math.max(0, Number(item.durationMs || 0) / 1000)
+  const current = Math.min(duration || 0, Math.max(0, Number(audio?.currentTime || 0)))
+  const ratio = duration > 0 ? current / duration : 0
+  return {
+    current,
+    duration,
+    percent: Math.max(0, Math.min(100, ratio * 100)),
+    value: Math.round(Math.max(0, Math.min(1000, ratio * 1000)))
+  }
+}
+
 function liveItemArt(item = {}) {
   if (item.artworkURLSnapshot) return `<img src="${esc(item.artworkURLSnapshot)}" alt="" loading="lazy" />`
   return `<span>${esc((item.titleSnapshot || item.type || '?').slice(0, 1).toUpperCase())}</span>`
 }
 
 function renderLiveDeck(slot = 'current', label = 'CURRENT', item = null) {
-  const playing = item && liveState().activePlayers.some((player) => player.itemId === item.itemId)
+  const player = item ? livePlayerForItem(item.itemId) : null
+  const playing = Boolean(player && !player.paused)
+  const paused = Boolean(player?.paused)
+  const progress = livePlayerProgress(player, item || {})
   const roleClass = slot === 'current' ? 'is-current' : slot === 'next' ? 'is-next' : 'is-after-next'
   return `
     <article class="studio-live-deck ${roleClass}">
-      <div class="studio-live-deck-label"><span>${label}</span><b>${playing ? 'ON AIR' : item ? 'CUED' : 'EMPTY'}</b></div>
+      <div class="studio-live-deck-label"><span>${label}</span><b>${playing ? 'ON AIR' : paused ? 'PAUSED' : item ? 'CUED' : 'EMPTY'}</b></div>
       <div class="studio-live-deck-main">
         <div class="studio-live-deck-art">${item ? liveItemArt(item) : '<span>-</span>'}</div>
         <div class="studio-live-deck-copy">
           <h3>${esc(item?.titleSnapshot || 'No item loaded')}</h3>
           <p>${esc(item?.artistSnapshot || item?.categorySnapshot || 'Sequence deck')}</p>
           <small>${esc(item?.albumSnapshot || item?.type || 'Waiting')} - ${item ? liveItemDuration(item) : '0:00'}</small>
-          <div class="studio-live-progress"><i style="width:${playing ? '42%' : '0%'}"></i></div>
+          <label class="studio-live-progress">
+            <span><i style="width:${progress.percent}%"></i><b style="left:${progress.percent}%"></b></span>
+            <input type="range" min="0" max="1000" value="${progress.value}" data-live-scrub-item="${esc(item?.itemId || '')}" ${player && progress.duration > 0 ? '' : 'disabled'} aria-label="Scrub ${esc(label)}" />
+          </label>
+          <small>${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)}</small>
         </div>
       </div>
       <div class="studio-live-deck-actions">
-        <button type="button" data-live-play-item="${esc(item?.itemId || '')}" ${item && isPlayableLiveItem(item) ? '' : 'disabled'} aria-label="Play ${esc(label)}">▶</button>
-        <button type="button" data-live-stop-item="${esc(item?.itemId || '')}" ${playing ? '' : 'disabled'} aria-label="Stop ${esc(label)}">■</button>
-        <button type="button" data-live-open-menu="${esc(item?.itemId || '')}" ${item ? '' : 'disabled'} aria-label="Deck menu">⋯</button>
+        <button type="button" data-live-play-item="${esc(item?.itemId || '')}" ${item && isPlayableLiveItem(item) ? '' : 'disabled'} aria-label="${paused ? 'Resume' : 'Play'} ${esc(label)}">▶</button>
+        <button type="button" data-live-pause-item="${esc(item?.itemId || '')}" ${player ? '' : 'disabled'} aria-label="Pause ${esc(label)}">Ⅱ</button>
+        <button type="button" data-live-stop-item="${esc(item?.itemId || '')}" ${player ? '' : 'disabled'} aria-label="Stop ${esc(label)}">■</button>
+        <button type="button" data-live-deck-menu="${esc(item?.itemId || '')}" ${item ? '' : 'disabled'} aria-label="Deck menu">⋯</button>
       </div>
     </article>
   `
@@ -781,6 +817,36 @@ function statusBadge(stream = liveState().stream || {}) {
   return `<span class="studio-live-status-badge is-${esc(status)}">${esc(status)}</span>`
 }
 
+function renderListenerPreviewPanel() {
+  const live = liveState()
+  const form = live.streamForm
+  const item = liveItemById(live.currentItemId)
+  const link = publicLiveLink()
+  return `
+    <aside class="studio-live-listener-preview" aria-label="Listener page preview">
+      <div class="studio-live-listener-art" data-live-preview-cover>
+        ${form.coverArtURL ? `<img src="${esc(form.coverArtURL)}" alt="" />` : '<span>MR</span>'}
+      </div>
+      <div class="studio-live-listener-copy">
+        <p class="eyebrow">Public Listener Preview</p>
+        <h2 data-live-preview-title>${esc(form.title || 'Live Studio Broadcast')}</h2>
+        <p data-live-preview-description>${esc(form.description || 'Listeners will see stream details here when the broadcast is live.')}</p>
+      </div>
+      <div class="studio-live-listener-meta">
+        <span data-live-preview-status>${esc(live.stream?.status || (live.streamId ? 'starting' : 'draft'))}</span>
+        <span data-live-preview-category>${esc(form.category || 'radio')}</span>
+        <span data-live-preview-access>${esc(form.accessMode || form.visibility || 'public')}</span>
+      </div>
+      <div class="studio-live-now-playing-preview">
+        <strong>Now playing</strong>
+        <span>${esc(item?.titleSnapshot || live.metadata.title || 'Waiting for sequence metadata')}</span>
+        <small>${esc(item?.artistSnapshot || live.metadata.artist || live.outputStatus)}</small>
+      </div>
+      ${link ? `<a href="${esc(link)}" target="_blank" rel="noreferrer">Open public listener page</a>` : '<small>Public link appears after Start Live.</small>'}
+    </aside>
+  `
+}
+
 function renderStreamDetailsPanel() {
   const live = liveState()
   const form = live.streamForm
@@ -798,25 +864,28 @@ function renderStreamDetailsPanel() {
           <span>${Number(live.stream?.listenerCount || 0)} viewers</span>
         </div>
       </header>
-      <form class="studio-live-details-form" data-live-stream-form>
-        <label>Stream title<input name="title" maxlength="90" required value="${esc(form.title)}" /></label>
-        <label>Description<textarea name="description" maxlength="1200">${esc(form.description)}</textarea></label>
-        <div class="studio-live-form-grid">
-          <label>Category<select name="category">${['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other'].map((category) => `<option value="${category}" ${form.category === category ? 'selected' : ''}>${esc(category.replaceAll('_', ' '))}</option>`).join('')}</select></label>
-          <label>Visibility<select name="visibility"><option value="public" ${form.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
-          <label>Access<select name="accessMode"><option value="public" ${form.accessMode === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.accessMode === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="password" ${form.accessMode === 'password' ? 'selected' : ''}>Password</option><option value="private" ${form.accessMode === 'private' ? 'selected' : ''}>Private</option></select></label>
-          <label>Password<input name="password" type="password" autocomplete="new-password" value="${esc(form.password)}" placeholder="${form.accessMode === 'password' ? 'Required for new password streams' : 'Only used for password access'}" /></label>
-        </div>
-        <label>Tags<input name="tags" value="${esc(form.tags)}" placeholder="radio, release party, talk" /></label>
-        <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
-        <label class="studio-live-check"><input name="rightsAccepted" type="checkbox" ${form.rightsAccepted ? 'checked' : ''} /> I have the rights and permissions required to broadcast this stream.</label>
-        <div class="studio-live-action-bar">
-          <button type="submit" data-live-save-info ${live.savingInfo ? 'disabled' : ''}>${live.streamId ? 'Save / Update Stream Info' : 'Save Draft Details'}</button>
-          <button type="button" data-live-start-stream ${state.user && !live.starting && !live.streamId ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Live'}</button>
-          ${live.streamId ? `<button type="button" data-live-end-stream ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Stream'}</button>` : ''}
-          ${link ? `<button type="button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
-        </div>
-      </form>
+      <div class="studio-live-stream-layout">
+        <form class="studio-live-details-form" data-live-stream-form>
+          <label>Stream title<input name="title" maxlength="90" required value="${esc(form.title)}" /></label>
+          <label>Description<textarea name="description" maxlength="1200">${esc(form.description)}</textarea></label>
+          <div class="studio-live-form-grid">
+            <label>Category<select name="category">${['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other'].map((category) => `<option value="${category}" ${form.category === category ? 'selected' : ''}>${esc(category.replaceAll('_', ' '))}</option>`).join('')}</select></label>
+            <label>Visibility<select name="visibility"><option value="public" ${form.visibility === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.visibility === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="private" ${form.visibility === 'private' ? 'selected' : ''}>Private</option></select></label>
+            <label>Access<select name="accessMode"><option value="public" ${form.accessMode === 'public' ? 'selected' : ''}>Public</option><option value="unlisted" ${form.accessMode === 'unlisted' ? 'selected' : ''}>Unlisted</option><option value="password" ${form.accessMode === 'password' ? 'selected' : ''}>Password</option><option value="private" ${form.accessMode === 'private' ? 'selected' : ''}>Private</option></select></label>
+            <label>Password<input name="password" type="password" autocomplete="new-password" value="${esc(form.password)}" placeholder="${form.accessMode === 'password' ? 'Required for new password streams' : 'Only used for password access'}" /></label>
+          </div>
+          <label>Tags<input name="tags" value="${esc(form.tags)}" placeholder="radio, release party, talk" /></label>
+          <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
+          <label class="studio-live-check"><input name="rightsAccepted" type="checkbox" ${form.rightsAccepted ? 'checked' : ''} /> I have the rights and permissions required to broadcast this stream.</label>
+          <div class="studio-live-action-bar">
+            <button type="submit" data-live-save-info ${live.savingInfo ? 'disabled' : ''}>${live.streamId ? 'Save / Update Stream Info' : 'Save Draft Details'}</button>
+            <button type="button" data-live-start-stream ${state.user && !live.starting && !live.streamId ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Live'}</button>
+            ${live.streamId ? `<button type="button" data-live-end-stream ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Stream'}</button>` : ''}
+            ${link ? `<button type="button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
+          </div>
+        </form>
+        ${renderListenerPreviewPanel()}
+      </div>
     </section>
   `
 }
@@ -843,7 +912,7 @@ function renderInputSourcePanel() {
             ${live.devices.map((device) => `<option value="${esc(device.deviceId)}" ${live.selectedDeviceId === device.deviceId ? 'selected' : ''}>${esc(device.label || `Input ${device.deviceId.slice(0, 6)}`)}</option>`).join('')}
           </select></label>
           <label>Audio quality<select data-live-audio-mode><option value="music" ${live.streamForm.audioMode === 'music' ? 'selected' : ''}>Music quality stereo</option><option value="voice" ${live.streamForm.audioMode === 'voice' ? 'selected' : ''}>Voice optimized</option></select></label>
-          <div class="studio-live-meter"><i style="width:${live.micPrepared ? '42%' : '4%'}"></i></div>
+          <div class="studio-live-meter" aria-label="Browser input level"><i data-live-meter-fill style="width:${Math.round((live.micLevel || 0) * 100)}%"></i></div>
           <div class="studio-live-action-bar">
             <button type="button" data-live-set-source="browser" ${live.inputSource === 'browser' ? 'disabled' : ''}>Use Browser Input</button>
             <button type="button" data-live-refresh-devices>${live.devicesLoading ? 'Refreshing...' : 'Refresh Mic'}</button>
@@ -926,8 +995,10 @@ function renderSequenceEditorPanel() {
       <footer class="studio-live-footer">
         <div>
           <strong>${esc(live.outputStatus)}</strong>
-          <span>${live.inputSource === 'sequence' ? 'Sequence output feeds Start Live.' : 'Set Input Source to Sequence Editor before broadcasting this playout.'}</span>
+          <span>${live.inputSource === 'sequence' ? 'Sequence output feeds Start Live.' : 'Set Input Source to Sequence Editor before broadcasting this playout.'} Local monitor is ${live.monitorEnabled ? 'on' : 'off'}.</span>
         </div>
+        <label class="studio-live-monitor-toggle"><input type="checkbox" data-live-toggle-monitor ${live.monitorEnabled ? 'checked' : ''} /> Monitor</label>
+        <label class="studio-live-monitor-volume"><span>Vol</span><input type="range" min="0" max="1" step="0.01" value="${Number(live.monitorVolume || 0.85)}" data-live-monitor-volume /></label>
         <button type="button" class="studio-live-transport-play" data-live-play-selected>▶ Play Selected</button>
         <button type="button" class="studio-live-transport-stop" data-live-stop-all>■ Stop All</button>
       </footer>
@@ -1022,6 +1093,7 @@ function renderLiveStudio() {
 
 function renderLiveContextMenu(menu = {}) {
   const isAsset = menu.kind === 'asset'
+  const isDeck = menu.kind === 'deck'
   const target = isAsset
     ? liveState().assets.find((asset) => asset.assetId === menu.itemId)
     : liveItemById(menu.itemId)
@@ -1038,6 +1110,16 @@ function renderLiveContextMenu(menu = {}) {
         ['deleteAsset', 'Delete Asset'],
         ['debugAsset', 'Reveal Storage Path / Debug Info']
       ]
+    : isDeck
+      ? [
+          ['play', 'Play / Resume'],
+          ['pause', livePlayerForItem(menu.itemId)?.paused ? 'Resume' : 'Pause'],
+          ['stop', 'Stop Deck'],
+          ['current', 'Set as Current'],
+          ['next', 'Set as Next'],
+          ['copy', 'Copy Metadata'],
+          ['reveal', 'Reveal in Sequence']
+        ]
     : [
         ['play', 'Play'],
         ['next', 'Set as Next'],
@@ -1098,6 +1180,24 @@ function renderLiveMonitorPage() {
   `
 }
 
+function renderLiveStatusBar() {
+  const live = liveState()
+  const current = liveItemById(live.currentItemId)
+  const sourceReady = live.inputSource === 'sequence'
+    ? Boolean(live.outputTrack || live.destination)
+    : Boolean(live.sourceTrack)
+  return `
+    <div class="studio-live-statusbar">
+      <span>${esc(live.streamId ? 'ON AIR' : 'OFF AIR')}</span>
+      <span>Input: ${esc(live.inputSource === 'sequence' ? 'Sequence Output' : 'Browser Input')}</span>
+      <span>Source: ${sourceReady ? 'healthy' : 'not prepared'}</span>
+      <span>Monitor: ${live.monitorEnabled ? 'on' : 'off'}</span>
+      <span>Decks: ${live.activePlayers.length}</span>
+      <span>Now: ${esc(current?.titleSnapshot || 'none')}</span>
+    </div>
+  `
+}
+
 function renderShell() {
   const active = currentStudioSection()
   if (active === 'live' && isLiveMonitorRoute()) {
@@ -1108,7 +1208,7 @@ function renderShell() {
   }
   const content = active === 'hub' ? renderHub() : active === 'stagemaker' ? renderStagemaker() : active === 'live' ? renderLiveStudio() : renderDaw()
   app.innerHTML = active === 'live'
-    ? `${navShell({ currentPage: 'studio' })}<main class="studio-page studio-live-page"><section class="studio-live-shell">${renderLiveRail(currentLivePanel())}<section class="studio-live-content">${content}</section></section></main>`
+    ? `${navShell({ currentPage: 'studio' })}<main class="studio-page studio-live-page"><section class="studio-live-shell">${renderLiveRail(currentLivePanel())}<section class="studio-live-content">${content}${renderLiveStatusBar()}</section></section></main>`
     : `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active })}${content}</section></main>`
   initShellChrome()
   if (active !== 'live') initStudioBrandLogo()
@@ -1237,15 +1337,80 @@ function ensureLiveAudioGraph() {
   if (!AudioContextCtor) throw new Error('This browser cannot run Live Studio audio.')
   const context = new AudioContextCtor()
   const masterGain = context.createGain()
+  const monitorGain = context.createGain()
   const destination = context.createMediaStreamDestination()
   masterGain.gain.value = 1
-  masterGain.connect(context.destination)
+  monitorGain.gain.value = Number(live.monitorVolume || 0.85)
+  masterGain.connect(monitorGain)
   masterGain.connect(destination)
   live.audioContext = context
   live.masterGain = masterGain
+  live.monitorGain = monitorGain
   live.destination = destination
   live.outputTrack = destination.stream.getAudioTracks()[0] || null
+  syncLiveMonitorRoute()
   return live
+}
+
+function syncLiveMonitorRoute() {
+  const live = liveState()
+  if (!live.audioContext || !live.monitorGain) return
+  live.monitorGain.gain.value = Number(live.monitorVolume || 0)
+  if (live.monitorEnabled && !live.monitorConnected) {
+    try {
+      live.monitorGain.connect(live.audioContext.destination)
+      live.monitorConnected = true
+    } catch {}
+  } else if (!live.monitorEnabled && live.monitorConnected) {
+    try { live.monitorGain.disconnect(live.audioContext.destination) } catch {}
+    live.monitorConnected = false
+  }
+}
+
+function stopLiveMicMeter() {
+  const live = liveState()
+  if (live.micMeterTimer) window.clearInterval(live.micMeterTimer)
+  live.micMeterTimer = 0
+  try { live.micMeterSource?.disconnect?.() } catch {}
+  try { live.micMeterAnalyser?.disconnect?.() } catch {}
+  try { live.micMeterContext?.close?.() } catch {}
+  live.micMeterSource = null
+  live.micMeterAnalyser = null
+  live.micMeterContext = null
+  live.micLevel = 0
+}
+
+function updateLiveMicMeterDom() {
+  const fill = app.querySelector('[data-live-meter-fill]')
+  if (fill) fill.style.width = `${Math.round((liveState().micLevel || 0) * 100)}%`
+}
+
+function startLiveMicMeter() {
+  const live = liveState()
+  stopLiveMicMeter()
+  const rawTrack = live.sourceTrack?.mediaStreamTrack || live.sourceTrack
+  if (!rawTrack) return
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextCtor) return
+  const context = new AudioContextCtor()
+  const analyser = context.createAnalyser()
+  analyser.fftSize = 512
+  analyser.smoothingTimeConstant = 0.75
+  const stream = new MediaStream([rawTrack])
+  const source = context.createMediaStreamSource(stream)
+  const data = new Float32Array(analyser.fftSize)
+  source.connect(analyser)
+  live.micMeterContext = context
+  live.micMeterAnalyser = analyser
+  live.micMeterSource = source
+  live.micMeterTimer = window.setInterval(() => {
+    analyser.getFloatTimeDomainData(data)
+    let sum = 0
+    for (const sample of data) sum += sample * sample
+    const rms = Math.sqrt(sum / data.length)
+    live.micLevel = Math.max(0, Math.min(1, rms * 5))
+    updateLiveMicMeterDom()
+  }, 120)
 }
 
 function audioConstraintsForLiveSource({ relaxed = false } = {}) {
@@ -1297,6 +1462,7 @@ async function prepareLiveMicSource() {
   renderShell()
   try {
     if (live.sourceTrack) {
+      stopLiveMicMeter()
       live.sourceTrack.stop?.()
       live.sourceTrack = null
     }
@@ -1308,10 +1474,12 @@ async function prepareLiveMicSource() {
     live.micPrepared = true
     live.inputSource = 'browser'
     live.sourceMessage = 'Browser input source is ready.'
+    startLiveMicMeter()
     await refreshLiveInputDevices()
   } catch (error) {
     console.warn('[studio-live] mic prepare failed', error)
     live.micPrepared = false
+    stopLiveMicMeter()
     live.sourceMessage = error?.message || 'Could not prepare browser input.'
   } finally {
     live.micPreparing = false
@@ -1354,6 +1522,10 @@ function stopLiveStudioPlayer(playerId = '') {
   live.activePlayers = live.activePlayers.filter((entry) => entry !== player)
   if (live.currentItemId === player.itemId) live.currentItemId = live.activePlayers[0]?.itemId || ''
   live.outputStatus = live.activePlayers.length ? `${live.activePlayers.length} deck${live.activePlayers.length === 1 ? '' : 's'} playing.` : 'Sequence Software input ready.'
+  if (!live.activePlayers.length && live.playbackTimer) {
+    window.clearInterval(live.playbackTimer)
+    live.playbackTimer = 0
+  }
 }
 
 function stopLiveStudioAll() {
@@ -1363,12 +1535,59 @@ function stopLiveStudioAll() {
   renderShell()
 }
 
+function ensureLivePlaybackTicker() {
+  const live = liveState()
+  if (live.playbackTimer) return
+  live.playbackTimer = window.setInterval(() => {
+    if (!live.activePlayers.length) {
+      window.clearInterval(live.playbackTimer)
+      live.playbackTimer = 0
+      return
+    }
+    if (currentStudioSection() === 'live' && (currentLivePanel() === 'sequence' || currentLivePanel() === 'preview')) renderShell()
+  }, 500)
+}
+
+async function pauseLiveStudioPlayer(itemId = '') {
+  const live = liveState()
+  const player = live.activePlayers.find((entry) => entry.playerId === itemId || entry.itemId === itemId)
+  if (!player) return
+  if (player.paused) {
+    try {
+      await player.audio.play()
+      player.paused = false
+      live.outputStatus = `Resumed ${liveItemById(player.itemId)?.titleSnapshot || 'deck'}.`
+    } catch (error) {
+      console.warn('[studio-live] resume failed', error)
+      live.outputStatus = 'Browser blocked resume. Press Play again.'
+    }
+  } else {
+    try { player.audio.pause() } catch {}
+    player.paused = true
+    live.outputStatus = `Paused ${liveItemById(player.itemId)?.titleSnapshot || 'deck'}.`
+  }
+  renderShell()
+}
+
+function scrubLiveStudioPlayer(itemId = '', value = 0) {
+  const player = livePlayerForItem(itemId)
+  if (!player?.audio) return
+  const duration = Number(player.audio.duration || 0)
+  if (!Number.isFinite(duration) || duration <= 0) return
+  player.audio.currentTime = duration * (Math.max(0, Math.min(1000, Number(value || 0))) / 1000)
+}
+
 async function playLiveStudioItem(itemId = '') {
   const item = liveItemById(itemId)
   const live = liveState()
   if (!item || !isPlayableLiveItem(item)) {
     live.outputStatus = 'Selected item has no playable audio source.'
     renderShell()
+    return
+  }
+  const existing = livePlayerForItem(item.itemId)
+  if (existing?.paused) {
+    await pauseLiveStudioPlayer(item.itemId)
     return
   }
   const graph = ensureLiveAudioGraph()
@@ -1383,7 +1602,7 @@ async function playLiveStudioItem(itemId = '') {
   source.connect(gain)
   gain.connect(graph.masterGain)
   const playerId = `${item.itemId}-${Date.now()}`
-  const player = { playerId, itemId: item.itemId, audio, source, gain }
+  const player = { playerId, itemId: item.itemId, audio, source, gain, paused: false }
   live.activePlayers.push(player)
   live.currentItemId = item.itemId
   live.selectedItemId = item.itemId
@@ -1397,6 +1616,7 @@ async function playLiveStudioItem(itemId = '') {
   }, { once: true })
   try {
     await audio.play()
+    ensureLivePlaybackTicker()
   } catch (error) {
     stopLiveStudioPlayer(playerId)
     live.outputStatus = 'Browser blocked playback. Click Play Selected again.'
@@ -1578,6 +1798,16 @@ async function handleSequenceContextAction(action = '', itemId = '') {
   const live = liveState()
   live.contextMenu = null
   if (action === 'play' || action === 'preview') await playLiveStudioItem(itemId)
+  else if (action === 'pause') await pauseLiveStudioPlayer(itemId)
+  else if (action === 'stop') {
+    stopLiveStudioPlayer(itemId)
+    refreshLiveDecks()
+  }
+  else if (action === 'current') {
+    live.currentItemId = itemId
+    live.selectedItemId = itemId
+    refreshLiveDecks()
+  }
   else if (action === 'next' || action === 'cue') {
     live.nextItemId = itemId
     live.selectedItemId = itemId
@@ -1591,6 +1821,9 @@ async function handleSequenceContextAction(action = '', itemId = '') {
     const item = liveItemById(itemId)
     await navigator.clipboard?.writeText(JSON.stringify(item || {}, null, 2))
     live.outputStatus = 'Sequence item metadata copied.'
+  } else if (action === 'reveal') {
+    live.selectedItemId = itemId
+    live.outputStatus = 'Sequence item selected.'
   } else {
     live.outputStatus = `${action.replace(/([A-Z])/g, ' $1').trim()} is ready for the sequence editor workflow.`
   }
@@ -1610,6 +1843,18 @@ function updateLiveStreamFormFromElement(formEl) {
   form.password = String(data.get('password') || '')
   form.coverArtURL = String(data.get('coverArtURL') || '').trim()
   form.rightsAccepted = data.get('rightsAccepted') === 'on'
+}
+
+function updateLiveListenerPreviewDom() {
+  const live = liveState()
+  const form = live.streamForm
+  app.querySelector('[data-live-preview-title]')?.replaceChildren(document.createTextNode(form.title || 'Live Studio Broadcast'))
+  app.querySelector('[data-live-preview-description]')?.replaceChildren(document.createTextNode(form.description || 'Listeners will see stream details here when the broadcast is live.'))
+  app.querySelector('[data-live-preview-status]')?.replaceChildren(document.createTextNode(live.stream?.status || (live.streamId ? 'starting' : 'draft')))
+  app.querySelector('[data-live-preview-category]')?.replaceChildren(document.createTextNode(form.category || 'radio'))
+  app.querySelector('[data-live-preview-access]')?.replaceChildren(document.createTextNode(form.accessMode || form.visibility || 'public'))
+  const cover = app.querySelector('[data-live-preview-cover]')
+  if (cover) cover.innerHTML = form.coverArtURL ? `<img src="${esc(form.coverArtURL)}" alt="" />` : '<span>MR</span>'
 }
 
 async function saveLiveStreamInfo() {
@@ -1740,7 +1985,7 @@ async function endLiveStudioStream() {
     if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
     live.heartbeatTimer = 0
     try {
-      if (live.localTrack) await live.room?.localParticipant?.unpublishTrack?.(live.localTrack, true)
+      if (live.localTrack) await live.room?.localParticipant?.unpublishTrack?.(live.localTrack, false)
     } catch {}
     live.room?.disconnect?.()
     await endMusicLiveStream(streamId)
@@ -1887,6 +2132,22 @@ function renderCreateModal(kind = 'daw', loading = false, initialTitle = '', sel
   })
 }
 
+function handleLiveStudioHotkey(e) {
+  const tag = e.target?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable) return
+  if (currentStudioSection() !== 'live') return
+  const live = liveState()
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault()
+    const item = liveItemById(live.selectedItemId) || liveSelectedItem()
+    if (e.key === ' ' && item && livePlayerForItem(item.itemId)) pauseLiveStudioPlayer(item.itemId)
+    else playLiveStudioItem(item?.itemId || '').catch(() => {})
+  } else if ((e.key === 'Backspace' || e.key === 'Delete') && live.selectedItemId) {
+    e.preventDefault()
+    if (window.confirm('Remove selected item from this sequence?')) removeLiveItem(live.selectedItemId)
+  }
+}
+
 function bindLiveStudioControls() {
   const live = liveState()
   app.querySelectorAll('[data-live-panel]').forEach((el) => el.addEventListener('click', (e) => {
@@ -1898,23 +2159,36 @@ function bindLiveStudioControls() {
     updateLiveStreamFormFromElement(e.currentTarget)
     await saveLiveStreamInfo()
   })
+  app.querySelector('[data-live-stream-form]')?.addEventListener('input', (e) => {
+    updateLiveStreamFormFromElement(e.currentTarget)
+    updateLiveListenerPreviewDom()
+  })
   app.querySelector('[data-live-start-stream]')?.addEventListener('click', () => {
     updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
     startLiveStudioStream()
   })
-  app.querySelector('[data-live-end-stream]')?.addEventListener('click', () => endLiveStudioStream())
+  app.querySelector('[data-live-end-stream]')?.addEventListener('click', () => {
+    if (!window.confirm('End this live stream for listeners?')) return
+    endLiveStudioStream()
+  })
   app.querySelector('[data-copy-live-link]')?.addEventListener('click', async (e) => {
     await navigator.clipboard?.writeText(e.currentTarget.dataset.copyLiveLink || '')
     live.outputStatus = 'Public listener link copied.'
     renderShell()
   })
   app.querySelector('[data-live-device-select]')?.addEventListener('change', (e) => {
+    stopLiveMicMeter()
+    live.sourceTrack?.stop?.()
+    live.sourceTrack = null
     live.selectedDeviceId = e.currentTarget.value || ''
     live.micPrepared = false
     live.sourceMessage = 'Input device changed. Enable Mic again before starting.'
     renderShell()
   })
   app.querySelector('[data-live-audio-mode]')?.addEventListener('change', (e) => {
+    stopLiveMicMeter()
+    live.sourceTrack?.stop?.()
+    live.sourceTrack = null
     live.streamForm.audioMode = e.currentTarget.value === 'voice' ? 'voice' : 'music'
     live.micPrepared = false
     renderShell()
@@ -2042,17 +2316,39 @@ function bindLiveStudioControls() {
     live.contextMenu = { kind: 'sequence', itemId: el.dataset.liveSequenceMenu || '', x: rect.left, y: rect.bottom + 4 }
     renderShell()
   }))
+  app.querySelectorAll('[data-live-deck-menu]').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const rect = el.getBoundingClientRect()
+    live.contextMenu = { kind: 'deck', itemId: el.dataset.liveDeckMenu || '', x: rect.left, y: rect.bottom + 4 }
+    renderShell()
+  }))
   app.querySelectorAll('[data-live-play-item]').forEach((el) => el.addEventListener('click', () => playLiveStudioItem(el.dataset.livePlayItem)))
+  app.querySelectorAll('[data-live-pause-item]').forEach((el) => el.addEventListener('click', () => pauseLiveStudioPlayer(el.dataset.livePauseItem)))
   app.querySelectorAll('[data-live-stop-item]').forEach((el) => el.addEventListener('click', () => {
     stopLiveStudioPlayer(el.dataset.liveStopItem)
     refreshLiveDecks()
     renderShell()
   }))
+  app.querySelectorAll('[data-live-scrub-item]').forEach((el) => el.addEventListener('input', () => scrubLiveStudioPlayer(el.dataset.liveScrubItem, el.value)))
+  app.querySelector('[data-live-toggle-monitor]')?.addEventListener('change', (e) => {
+    live.monitorEnabled = Boolean(e.currentTarget.checked)
+    ensureLiveAudioGraph()
+    syncLiveMonitorRoute()
+    live.outputStatus = live.monitorEnabled ? 'Local monitor enabled. Program output is unchanged.' : 'Local monitor muted. Program output is unchanged.'
+    renderShell()
+  })
+  app.querySelector('[data-live-monitor-volume]')?.addEventListener('input', (e) => {
+    live.monitorVolume = Number(e.currentTarget.value || 0)
+    syncLiveMonitorRoute()
+  })
   app.querySelector('[data-live-play-selected]')?.addEventListener('click', () => {
     const item = liveItemById(live.selectedItemId) || liveSelectedItem()
     playLiveStudioItem(item?.itemId || '').catch(() => {})
   })
-  app.querySelector('[data-live-stop-all]')?.addEventListener('click', () => stopLiveStudioAll())
+  app.querySelector('[data-live-stop-all]')?.addEventListener('click', () => {
+    if (live.streamId && live.inputSource === 'sequence' && !window.confirm('Stop all sequence decks while the sequence output is live?')) return
+    stopLiveStudioAll()
+  })
   app.querySelectorAll('[data-live-context-action]').forEach((el) => el.addEventListener('click', async () => {
     const itemId = el.dataset.itemId || ''
     const action = el.dataset.liveContextAction || ''
@@ -2072,6 +2368,8 @@ function bindLiveStudioControls() {
     live.sequenceMenuOpen = false
     renderShell()
   }, { once: true })
+  document.removeEventListener('keydown', handleLiveStudioHotkey)
+  document.addEventListener('keydown', handleLiveStudioHotkey)
 }
 
 function bind() {
@@ -2120,4 +2418,10 @@ subscribeToAuthState(async (user) => {
 
 window.addEventListener('popstate', () => {
   if (currentStudioSection() === 'live') renderShell()
+})
+
+window.addEventListener('beforeunload', (event) => {
+  if (!liveState().streamId && !liveState().activePlayers.length) return
+  event.preventDefault()
+  event.returnValue = ''
 })

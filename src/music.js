@@ -467,7 +467,6 @@ function renderSidebar() {
           ${navButton('new', 'New')}
           ${navButton('radio', 'Radio')}
           ${navButton('live', 'Live Streams')}
-          ${navButton('sequence', 'Sequence Software')}
           ${navButton('search', 'Search')}
         </section>
         <details open>
