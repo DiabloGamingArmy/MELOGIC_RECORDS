@@ -222,6 +222,7 @@ const state = {
       autoplay: true,
       loop: false,
       shuffle: false,
+      stopAfterItem: false,
       monitor: true,
       outputTrack: null
     }
@@ -665,8 +666,12 @@ function renderSequenceAssetLibrary() {
           <h2>Sequence Assets</h2>
         </div>
         <label class="button button-muted music-upload-button">
-          <input type="file" accept="audio/*,video/*" data-sequence-asset-upload />
-          Upload
+          <input type="file" accept="audio/*" data-sequence-asset-upload />
+          Upload Audio
+        </label>
+        <label class="button button-muted music-upload-button">
+          <input type="file" accept="video/*" data-sequence-asset-upload />
+          Add Video
         </label>
       </div>
       <form class="music-sequence-upload-fields" data-sequence-upload-fields>
@@ -748,7 +753,7 @@ function renderSequenceRows() {
             <input type="number" min="0" step="100" value="${item.crossfadeMs}" data-sequence-item-field="${escapeHtml(item.itemId)}" data-field="crossfadeMs" />
             <span class="music-sequence-status">${item.normalizedAudioURLSnapshot ? 'Ready' : 'Missing'}</span>
             <span class="music-automation-actions">
-              <button type="button" class="button button-muted" data-sequence-preview-item="${escapeHtml(item.itemId)}">Play</button>
+              <button type="button" class="button button-muted" data-sequence-preview-item="${escapeHtml(item.itemId)}">Preview</button>
               <button type="button" class="button button-muted" data-sequence-set-next="${escapeHtml(item.itemId)}">Set Next</button>
               <button type="button" class="button button-muted" data-sequence-move="${escapeHtml(item.itemId)}" data-direction="-1">Up</button>
               <button type="button" class="button button-muted" data-sequence-move="${escapeHtml(item.itemId)}" data-direction="1">Down</button>
@@ -791,7 +796,7 @@ function renderSequenceWorkspacePage() {
               ${workspace.sequences.map((sequence) => `<option value="${escapeHtml(sequence.sequenceId)}" ${workspace.activeSequence?.sequenceId === sequence.sequenceId ? 'selected' : ''}>${escapeHtml(sequence.title)}</option>`).join('')}
             </select>
             <input data-new-sequence-title value="${escapeHtml(workspace.newSequenceTitle)}" placeholder="New sequence title" />
-            <button type="button" class="button button-muted" data-create-sequence>Create</button>
+            <button type="button" class="button button-muted" data-create-sequence>Create Sequence</button>
           </div>
         </div>
         <div class="music-playout-transport">
@@ -799,9 +804,11 @@ function renderSequenceWorkspacePage() {
           <button type="button" class="button button-muted" data-sequence-pause>${playback.paused ? 'Resume' : 'Pause'}</button>
           <button type="button" class="button button-muted" data-sequence-stop>Stop</button>
           <button type="button" class="button button-muted" data-sequence-next>Next</button>
+          <button type="button" class="button button-muted" data-sequence-next>Preview Transition</button>
           <button type="button" class="button button-muted ${playback.autoplay ? 'is-active' : ''}" data-sequence-toggle="autoplay">Autoplay</button>
           <button type="button" class="button button-muted ${playback.loop ? 'is-active' : ''}" data-sequence-toggle="loop">Loop</button>
           <button type="button" class="button button-muted ${playback.shuffle ? 'is-active' : ''}" data-sequence-toggle="shuffle">Shuffle</button>
+          <button type="button" class="button button-muted ${playback.stopAfterItem ? 'is-active' : ''}" data-sequence-toggle="stopAfterItem">Stop after item</button>
           <button type="button" class="button button-muted ${playback.monitor ? 'is-active' : ''}" data-sequence-toggle="monitor">Monitor</button>
         </div>
         <div class="music-automation-status">
@@ -1164,13 +1171,13 @@ function ensureSequenceAudioGraph() {
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext
   if (!AudioContextCtor) throw new Error('This browser cannot run Sequence Software audio.')
   const context = new AudioContextCtor()
-  const masterGain = context.createGain()
+  const sequenceMasterGain = context.createGain()
   const destination = context.createMediaStreamDestination()
-  masterGain.gain.value = 1
-  masterGain.connect(destination)
-  if (playback.monitor) masterGain.connect(context.destination)
+  sequenceMasterGain.gain.value = 1
+  sequenceMasterGain.connect(destination)
+  if (playback.monitor) sequenceMasterGain.connect(context.destination)
   playback.context = context
-  playback.masterGain = masterGain
+  playback.masterGain = sequenceMasterGain
   playback.destination = destination
   playback.outputTrack = destination.stream.getAudioTracks()[0] || null
   return playback
@@ -1295,7 +1302,7 @@ async function playSequenceItem(item = null, { fromTransition = false } = {}) {
   const next = nextSequenceItem(item.itemId)
   preloadSequenceItem(next)
   audio.onended = () => {
-    if (!playback.autoplay) {
+    if (!playback.autoplay || playback.stopAfterItem) {
       stopSequencePlayback()
       return
     }
@@ -1306,7 +1313,7 @@ async function playSequenceItem(item = null, { fromTransition = false } = {}) {
   await audio.play()
   const durationMs = Number(item.durationMs || 0)
   const crossfadeMs = Math.max(0, Number(item.crossfadeMs || state.sequenceWorkspace.activeSequence?.defaultCrossfadeMs || 0))
-  if (playback.autoplay && durationMs > 0 && crossfadeMs > 0) {
+  if (playback.autoplay && !playback.stopAfterItem && durationMs > 0 && crossfadeMs > 0) {
     const fireIn = Math.max(250, durationMs - crossfadeMs)
     playback.timer = window.setTimeout(() => {
       const following = nextSequenceItem(item.itemId)
@@ -1837,7 +1844,7 @@ function renderAudioControls(form) {
         <label><span>Sequence</span><select name="sequenceId" data-live-sequence-source>
           ${state.sequenceWorkspace.sequences.map((sequence) => `<option value="${escapeHtml(sequence.sequenceId)}" ${form.sequenceId === sequence.sequenceId ? 'selected' : ''}>${escapeHtml(sequence.title)}</option>`).join('')}
         </select></label>
-        <div class="music-quality-note">Sequence Software creates a Web Audio output track and publishes that one host-side feed to listeners. Listeners do not fetch your sequence asset files.</div>
+        <div class="music-quality-note">Sequence Software creates a Web Audio output track and publishes that one host-side feed to listeners. Audio quality mode is inherited from the selected live stream profile. Listeners do not fetch your sequence asset files.</div>
         <div class="music-live-actions">
           <button type="button" class="button button-muted" data-sequence-play>Play Sequence</button>
           <button type="button" class="button button-muted" data-sequence-stop>Stop Sequence</button>
@@ -3172,17 +3179,19 @@ function bindMusicEvents() {
       })
     })
   })
-  app.querySelector('[data-sequence-asset-upload]')?.addEventListener('change', (event) => {
-    const file = event.target.files?.[0]
-    if (!file) return
-    const fieldsForm = app.querySelector('[data-sequence-upload-fields]')
-    const data = fieldsForm ? new FormData(fieldsForm) : new FormData()
-    uploadSequenceAssetFromFile(file, {
-      title: data.get('title'),
-      artist: data.get('artist'),
-      category: data.get('category'),
-      videoAudioMode: data.get('videoAudioMode')
-    }).catch(() => {})
+  app.querySelectorAll('[data-sequence-asset-upload]').forEach((input) => {
+    input.addEventListener('change', (event) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+      const fieldsForm = app.querySelector('[data-sequence-upload-fields]')
+      const data = fieldsForm ? new FormData(fieldsForm) : new FormData()
+      uploadSequenceAssetFromFile(file, {
+        title: data.get('title'),
+        artist: data.get('artist'),
+        category: data.get('category'),
+        videoAudioMode: data.get('videoAudioMode')
+      }).catch(() => {})
+    })
   })
   app.querySelector('[data-sequence-search]')?.addEventListener('input', (event) => {
     state.sequenceWorkspace.search = event.target.value || ''

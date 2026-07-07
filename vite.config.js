@@ -7,7 +7,9 @@ function htmlRouteFallbackPlugin() {
     { prefix: '/music/releases/', html: 'music.html' },
     { prefix: '/music/live/', html: 'music.html' },
     { prefix: '/music/live', html: 'music.html' },
-    { prefix: '/music/go-live', html: 'music.html' }
+    { prefix: '/music/go-live', html: 'music.html' },
+    { prefix: '/music/sequence/', html: 'music.html' },
+    { prefix: '/music/sequence', html: 'music.html' }
   ]
 
   function findEntry(url = '') {
