@@ -1110,7 +1110,7 @@
 
 .music-sequence-workspace {
   display: grid;
-  grid-template-columns: minmax(300px, 0.38fr) minmax(0, 1fr);
+  grid-template-columns: minmax(340px, 0.36fr) minmax(0, 1fr);
   gap: 1rem;
   min-height: min(760px, calc(100vh - var(--nav-offset) - 8rem));
 }
@@ -1121,6 +1121,31 @@
   gap: 0.75rem;
   align-content: start;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.music-sequence-library .music-row-heading,
+.music-sequence-playout .music-row-heading {
+  align-items: start;
+  flex-wrap: wrap;
+}
+
+.music-sequence-library .music-row-heading {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.music-sequence-upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.music-sequence-upload-actions .music-upload-button {
+  flex: 0 0 auto;
 }
 
 .music-sequence-upload-fields,
@@ -1134,11 +1159,12 @@
 }
 
 .music-sequence-upload-fields {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .music-sequence-upload-fields input,
 .music-sequence-upload-fields select,
+.music-sequence-upload-fields input[type="file"],
 .music-sequence-filters input,
 .music-sequence-filters select,
 .music-row-heading select,
@@ -1212,7 +1238,7 @@
 
 .music-automation-row {
   display: grid;
-  grid-template-columns: 4.5rem 2.4rem minmax(9rem, 1.2fr) minmax(7rem, 0.8fr) minmax(7rem, 0.8fr) 5rem 4rem 4.8rem 4.8rem 4.8rem 4.5rem minmax(22rem, auto);
+  grid-template-columns: 4.5rem 2.4rem minmax(9rem, 1.2fr) minmax(7rem, 0.8fr) minmax(7rem, 0.8fr) 5.8rem 6rem 4rem 4.8rem 4.8rem 4.8rem 4.5rem minmax(27rem, auto);
   align-items: center;
   gap: 0.45rem;
   min-height: 2.9rem;
@@ -1250,6 +1276,7 @@
 
 .music-automation-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.35rem;
 }
 

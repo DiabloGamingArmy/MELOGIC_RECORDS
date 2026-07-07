@@ -126,6 +126,7 @@ function normalizeSequenceItem(raw = {}, id = '') {
     sequenceId: cleanString(raw.sequenceId, 120),
     assetId: cleanString(raw.assetId, 120),
     type: SEQUENCE_ITEM_TYPES.includes(raw.type) ? raw.type : 'audio',
+    categorySnapshot: cleanString(raw.categorySnapshot, 80),
     orderIndex: toNumber(raw.orderIndex),
     titleSnapshot: cleanString(raw.titleSnapshot || 'Untitled item', 160),
     artistSnapshot: cleanString(raw.artistSnapshot, 160),
@@ -317,6 +318,7 @@ export async function addAssetToSequence(uid = '', sequenceId = '', asset = {}, 
     sequenceId,
     assetId: asset.assetId,
     type: asset.type === 'video' ? 'video' : 'audio',
+    categorySnapshot: asset.category || 'other',
     orderIndex,
     titleSnapshot: asset.title,
     artistSnapshot: asset.artist,
@@ -353,6 +355,29 @@ export async function addAssetToSequence(uid = '', sequenceId = '', asset = {}, 
     updatedAt: now
   }).catch(() => {})
   return { ...normalizeSequenceItem(item, ref.id), id: ref.id, itemId: ref.id }
+}
+
+export async function duplicateSequenceItem(uid = '', sequenceId = '', item = {}, sequence = {}) {
+  if (!db || !uid || !sequenceId || !item?.itemId) throw new Error('Choose a sequence item first.')
+  const ref = doc(collection(db, 'users', uid, 'sequences', sequenceId, 'items'))
+  const now = serverTimestamp()
+  const { id: _id, itemId: _itemId, createdAt: _createdAt, updatedAt: _updatedAt, ...copyableItem } = item
+  const payload = {
+    ...copyableItem,
+    itemId: ref.id,
+    ownerUid: uid,
+    sequenceId,
+    orderIndex: Date.now(),
+    createdAt: now,
+    updatedAt: now
+  }
+  await setDoc(ref, payload)
+  await updateDoc(doc(db, 'users', uid, 'sequences', sequenceId), {
+    itemCount: Math.max(0, Number(sequence.itemCount || 0) + 1),
+    totalDurationMs: Math.max(0, Number(sequence.totalDurationMs || 0) + Number(item.durationMs || 0)),
+    updatedAt: now
+  }).catch(() => {})
+  return { ...normalizeSequenceItem(payload, ref.id), id: ref.id, itemId: ref.id }
 }
 
 export async function updateSequenceItem(uid = '', sequenceId = '', itemId = '', data = {}) {

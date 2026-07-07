@@ -14,6 +14,7 @@ import {
   createSequence,
   createSequenceAssetShell,
   deleteSequenceItem,
+  duplicateSequenceItem,
   formatMs,
   getSequence,
   listSequenceAssets,
@@ -223,7 +224,13 @@ const state = {
       loop: false,
       shuffle: false,
       stopAfterItem: false,
+      repeatItem: false,
+      skipDisabled: true,
       monitor: true,
+      transitionPreviewAudios: [],
+      transitionPreviewTimer: 0,
+      transitionPreviewInterval: 0,
+      previewingTransition: false,
       outputTrack: null
     }
   },
@@ -318,12 +325,27 @@ function renderReleaseArtwork(release, className = 'music-release-art') {
   return `<div class="${className} music-release-art-fallback" aria-hidden="true"><span>MR</span></div>`
 }
 
+function normalizeImageSrc(src = '', key = '') {
+  const raw = String(src || '').trim()
+  if (!raw) return ''
+  if (/^(data:image\/|blob:)/i.test(raw)) return raw
+  try {
+    const parsed = new URL(raw, window.location.origin)
+    if (!['https:', 'http:'].includes(parsed.protocol)) return ''
+    if (parsed.protocol === 'http:' && parsed.hostname !== window.location.hostname) return ''
+    return parsed.href
+  } catch (error) {
+    if (import.meta.env?.DEV) console.warn('[music:image] invalid image URL', { key, reason: error?.message || 'parse_failed' })
+    return ''
+  }
+}
+
 function renderStableImage({ src = '', alt = '', className = '', fallback = 'MR', key = '' } = {}) {
-  const cleanSrc = String(src || '').trim()
+  const cleanSrc = normalizeImageSrc(src, key)
   const failed = cleanSrc && stableImageCache.get(cleanSrc) === 'failed'
   const loaded = cleanSrc && stableImageCache.get(cleanSrc) === 'loaded'
   return `
-    <span class="${escapeHtml(className)} music-stable-image ${loaded ? 'is-loaded' : ''} ${failed || !cleanSrc ? 'is-fallback' : ''}" ${cleanSrc && !failed ? `data-stable-image data-src="${escapeHtml(cleanSrc)}" data-alt="${escapeHtml(alt)}" data-image-key="${escapeHtml(key || cleanSrc)}"` : ''}>
+    <span class="${escapeHtml(className)} music-stable-image ${loaded ? 'is-loaded' : ''} ${failed || !cleanSrc ? 'is-fallback' : ''}" ${cleanSrc ? `data-stable-image data-src="${escapeHtml(cleanSrc)}" data-alt="${escapeHtml(alt)}" data-image-key="${escapeHtml(key || cleanSrc)}"` : ''}>
       ${loaded ? `<img src="${escapeHtml(cleanSrc)}" alt="${escapeHtml(alt)}" loading="lazy" />` : ''}
       <span class="music-stable-fallback" aria-hidden="true">${escapeHtml(fallback)}</span>
     </span>
@@ -665,14 +687,16 @@ function renderSequenceAssetLibrary() {
           <p class="music-eyebrow">Asset Library</p>
           <h2>Sequence Assets</h2>
         </div>
-        <label class="button button-muted music-upload-button">
-          <input type="file" accept="audio/*" data-sequence-asset-upload />
-          Upload Audio
-        </label>
-        <label class="button button-muted music-upload-button">
-          <input type="file" accept="video/*" data-sequence-asset-upload />
-          Add Video
-        </label>
+        <div class="music-sequence-upload-actions">
+          <label class="button button-muted music-upload-button">
+            <input type="file" accept="audio/*" data-sequence-asset-upload />
+            Upload Audio
+          </label>
+          <label class="button button-muted music-upload-button">
+            <input type="file" accept="video/*" data-sequence-asset-upload />
+            Add Video
+          </label>
+        </div>
       </div>
       <form class="music-sequence-upload-fields" data-sequence-upload-fields>
         <input name="title" maxlength="160" placeholder="Title override" />
@@ -680,8 +704,10 @@ function renderSequenceAssetLibrary() {
         <select name="category">${SEQUENCE_ASSET_CATEGORIES.map((category) => `<option value="${category}">${escapeHtml(titleCase(category))}</option>`).join('')}</select>
         <select name="videoAudioMode">
           <option value="use_video_audio">Video: use video audio</option>
+          <option value="separate_audio">Video: upload separate audio</option>
           <option value="no_audio">Video: metadata only / no audio</option>
         </select>
+        <input name="separateAudioFile" type="file" accept="audio/*" />
       </form>
       <div class="music-sequence-filters">
         <input type="search" data-sequence-search value="${escapeHtml(workspace.search)}" placeholder="Search title, artist, album, filename, tags..." />
@@ -734,7 +760,7 @@ function renderSequenceRows() {
   return `
     <div class="music-automation-table" role="table" aria-label="Sequence playout log">
       <div class="music-automation-row is-header" role="row">
-        <span>Status</span><span>Art</span><span>Title</span><span>Artist</span><span>Album</span><span>Type</span><span>Dur</span><span>Fade In</span><span>Fade Out</span><span>Xfade</span><span>File</span><span>Actions</span>
+        <span>Status</span><span>Art</span><span>Title</span><span>Artist</span><span>Album</span><span>Category</span><span>Media</span><span>Dur</span><span>Fade In</span><span>Fade Out</span><span>Xfade</span><span>File</span><span>Actions</span>
       </div>
       ${workspace.items.length ? workspace.items.map((item, index) => {
         const isPlaying = playback.currentItemId === item.itemId
@@ -746,7 +772,8 @@ function renderSequenceRows() {
             <strong>${escapeHtml(item.titleSnapshot)}</strong>
             <span>${escapeHtml(item.artistSnapshot || '-')}</span>
             <span>${escapeHtml(item.albumSnapshot || '-')}</span>
-            <span>${escapeHtml(titleCase(item.type))}</span>
+            <span>${escapeHtml(titleCase(item.categorySnapshot || item.type))}</span>
+            <span>${escapeHtml(item.type === 'video' ? 'Video audio' : titleCase(item.type))}</span>
             <span>${escapeHtml(formatMs(item.durationMs))}</span>
             <input type="number" min="0" step="100" value="${item.fadeInMs}" data-sequence-item-field="${escapeHtml(item.itemId)}" data-field="fadeInMs" />
             <input type="number" min="0" step="100" value="${item.fadeOutMs}" data-sequence-item-field="${escapeHtml(item.itemId)}" data-field="fadeOutMs" />
@@ -754,7 +781,9 @@ function renderSequenceRows() {
             <span class="music-sequence-status">${item.normalizedAudioURLSnapshot ? 'Ready' : 'Missing'}</span>
             <span class="music-automation-actions">
               <button type="button" class="button button-muted" data-sequence-preview-item="${escapeHtml(item.itemId)}">Preview</button>
+              <button type="button" class="button button-muted" data-sequence-cue-item="${escapeHtml(item.itemId)}">Cue</button>
               <button type="button" class="button button-muted" data-sequence-set-next="${escapeHtml(item.itemId)}">Set Next</button>
+              <button type="button" class="button button-muted" data-sequence-duplicate-item="${escapeHtml(item.itemId)}">Duplicate</button>
               <button type="button" class="button button-muted" data-sequence-move="${escapeHtml(item.itemId)}" data-direction="-1">Up</button>
               <button type="button" class="button button-muted" data-sequence-move="${escapeHtml(item.itemId)}" data-direction="1">Down</button>
               <button type="button" class="button button-danger" data-sequence-remove-item="${escapeHtml(item.itemId)}">Remove</button>
@@ -769,10 +798,6 @@ function renderSequenceRows() {
 function renderSequenceWorkspacePage() {
   const signedIn = Boolean(state.currentUser)
   const workspace = state.sequenceWorkspace
-  if (!signedIn) {
-    renderAppShell(signInAction('Sign in to build Sequence Software assets and playout logs.'))
-    return
-  }
   const playback = workspace.playback
   renderAppShell(`
     <section class="music-view-header music-live-header">
@@ -783,6 +808,7 @@ function renderSequenceWorkspacePage() {
       </div>
       <a class="button button-accent" href="${ROUTES.musicGoLive}">Use in Go Live</a>
     </section>
+    ${signedIn ? '' : emptyState('Sign in required', 'The Sequence Software workspace is visible here. Sign in to upload assets, save sequences, and publish sequence output into Live Streams.', `<a class="button button-accent" href="${authRoute({ redirect: ROUTES.musicSequence })}">Sign In</a>`)}
     <section class="music-sequence-workspace">
       ${renderSequenceAssetLibrary()}
       <section class="music-panel music-sequence-playout">
@@ -803,11 +829,16 @@ function renderSequenceWorkspacePage() {
           <button type="button" class="button button-accent" data-sequence-play>${playback.playing ? 'Playing' : 'Play'}</button>
           <button type="button" class="button button-muted" data-sequence-pause>${playback.paused ? 'Resume' : 'Pause'}</button>
           <button type="button" class="button button-muted" data-sequence-stop>Stop</button>
+          <button type="button" class="button button-muted" data-sequence-previous>Previous</button>
           <button type="button" class="button button-muted" data-sequence-next>Next</button>
-          <button type="button" class="button button-muted" data-sequence-next>Preview Transition</button>
+          <button type="button" class="button button-muted ${playback.previewingTransition ? 'is-active' : ''}" data-sequence-preview-transition>Preview Transition</button>
+          <button type="button" class="button button-muted" data-sequence-cue-selected>Cue Selected</button>
+          <button type="button" class="button button-muted" data-sequence-set-selected-next>Set Selected as Next</button>
           <button type="button" class="button button-muted ${playback.autoplay ? 'is-active' : ''}" data-sequence-toggle="autoplay">Autoplay</button>
           <button type="button" class="button button-muted ${playback.loop ? 'is-active' : ''}" data-sequence-toggle="loop">Loop</button>
           <button type="button" class="button button-muted ${playback.shuffle ? 'is-active' : ''}" data-sequence-toggle="shuffle">Shuffle</button>
+          <button type="button" class="button button-muted ${playback.repeatItem ? 'is-active' : ''}" data-sequence-toggle="repeatItem">Repeat item</button>
+          <button type="button" class="button button-muted ${playback.skipDisabled ? 'is-active' : ''}" data-sequence-toggle="skipDisabled">Skip disabled</button>
           <button type="button" class="button button-muted ${playback.stopAfterItem ? 'is-active' : ''}" data-sequence-toggle="stopAfterItem">Stop after item</button>
           <button type="button" class="button button-muted ${playback.monitor ? 'is-active' : ''}" data-sequence-toggle="monitor">Monitor</button>
         </div>
@@ -815,6 +846,7 @@ function renderSequenceWorkspacePage() {
           <span>Current: ${escapeHtml(workspace.items.find((item) => item.itemId === playback.currentItemId)?.titleSnapshot || 'None')}</span>
           <span>Next: ${escapeHtml(workspace.items.find((item) => item.itemId === playback.nextItemId)?.titleSnapshot || 'Not cued')}</span>
           <span>Mode: ${playback.autoplay ? 'Autoplay' : 'Manual Assist'}</span>
+          <span>${playback.previewingTransition ? 'Local transition preview active' : 'Preview is local monitor only'}</span>
         </div>
         ${renderSequenceRows()}
       </section>
@@ -901,15 +933,14 @@ function hydrateStableImages() {
   app.querySelectorAll('[data-stable-image]').forEach((container) => {
     const src = container.dataset.src || ''
     if (!src || container.querySelector('img')) return
-    if (stableImageCache.get(src) === 'failed') {
-      container.classList.add('is-fallback')
-      return
-    }
+    const failedBefore = stableImageCache.get(src) === 'failed'
+    if (failedBefore) container.classList.add('is-fallback')
     const image = new Image()
     image.alt = container.dataset.alt || ''
     image.loading = 'lazy'
     image.onload = () => {
       stableImageCache.set(src, 'loaded')
+      if (import.meta.env?.DEV) console.info('[music:image] loaded', { src: src.split('?')[0], key: container.dataset.imageKey || '' })
       if (container.dataset.src !== src || container.querySelector('img')) return
       container.prepend(image)
       container.classList.add('is-loaded')
@@ -1203,6 +1234,7 @@ async function getSequenceOutputTrack() {
 
 function stopSequencePlayback({ keepPreload = false } = {}) {
   const playback = sequencePlaybackState()
+  stopTransitionPreview()
   if (playback.timer) window.clearTimeout(playback.timer)
   playback.timer = 0
   ;[playback.currentAudio, keepPreload ? null : playback.nextAudio].filter(Boolean).forEach((audio) => {
@@ -1223,6 +1255,21 @@ function stopSequencePlayback({ keepPreload = false } = {}) {
   rerender()
 }
 
+function stopTransitionPreview() {
+  const playback = sequencePlaybackState()
+  if (playback.transitionPreviewTimer) window.clearTimeout(playback.transitionPreviewTimer)
+  if (playback.transitionPreviewInterval) window.clearInterval(playback.transitionPreviewInterval)
+  playback.transitionPreviewTimer = 0
+  playback.transitionPreviewInterval = 0
+  ;(playback.transitionPreviewAudios || []).filter(Boolean).forEach((audio) => {
+    audio.pause()
+    audio.removeAttribute('src')
+    audio.load?.()
+  })
+  playback.transitionPreviewAudios = []
+  playback.previewingTransition = false
+}
+
 function gainFromDb(dbValue = 0) {
   return Math.pow(10, Number(dbValue || 0) / 20)
 }
@@ -1238,17 +1285,30 @@ function connectSequenceAudioElement(audio, item = {}) {
 }
 
 function sequencePlayableItems() {
-  return state.sequenceWorkspace.items.filter((item) => item.enabled !== false && item.normalizedAudioURLSnapshot && !['stop_marker', 'break'].includes(item.type))
+  const playback = sequencePlaybackState()
+  return state.sequenceWorkspace.items.filter((item) => {
+    if (playback.skipDisabled && item.enabled === false) return false
+    return item.normalizedAudioURLSnapshot && !['stop_marker', 'break'].includes(item.type)
+  })
 }
 
 function nextSequenceItem(afterItemId = '') {
   const items = sequencePlayableItems()
   if (!items.length) return null
+  if (sequencePlaybackState().repeatItem && afterItemId) return items.find((item) => item.itemId === afterItemId) || items[0]
   if (sequencePlaybackState().shuffle) return items[Math.floor(Math.random() * items.length)]
   const index = Math.max(0, items.findIndex((item) => item.itemId === afterItemId))
   const next = items[index + 1]
   if (next) return next
   return sequencePlaybackState().loop ? items[0] : null
+}
+
+function previousSequenceItem(beforeItemId = '') {
+  const items = sequencePlayableItems()
+  if (!items.length) return null
+  if (sequencePlaybackState().shuffle) return items[Math.floor(Math.random() * items.length)]
+  const index = items.findIndex((item) => item.itemId === beforeItemId)
+  return index > 0 ? items[index - 1] : items[0]
 }
 
 function preloadSequenceItem(item = null) {
@@ -1265,6 +1325,67 @@ function preloadSequenceItem(item = null) {
   audio.crossOrigin = 'anonymous'
   playback.nextAudio = audio
   playback.nextItemId = item.itemId
+}
+
+async function previewSequenceTransition() {
+  const playback = sequencePlaybackState()
+  stopTransitionPreview()
+  const current = state.sequenceWorkspace.items.find((entry) => entry.itemId === playback.currentItemId)
+    || state.sequenceWorkspace.items.find((entry) => entry.itemId === state.sequenceWorkspace.selectedItemId)
+    || sequencePlayableItems()[0]
+  const next = nextSequenceItem(current?.itemId || '')
+  if (!current?.normalizedAudioURLSnapshot || !next?.normalizedAudioURLSnapshot || current.itemId === next.itemId) {
+    state.sequenceWorkspace.error = 'Choose two ready sequence items to preview a transition.'
+    rerender()
+    return
+  }
+  const crossfadeMs = Math.max(500, Number(current.crossfadeMs || state.sequenceWorkspace.activeSequence?.defaultCrossfadeMs || 2500))
+  const previewWindowMs = Math.min(15000, Math.max(crossfadeMs + 4000, 7000))
+  const currentAudio = new Audio(current.normalizedAudioURLSnapshot)
+  const nextAudio = new Audio(next.normalizedAudioURLSnapshot)
+  ;[currentAudio, nextAudio].forEach((audio) => {
+    audio.controls = false
+    audio.preload = 'auto'
+    audio.crossOrigin = 'anonymous'
+  })
+  nextAudio.volume = 0
+  playback.transitionPreviewAudios = [currentAudio, nextAudio]
+  playback.previewingTransition = true
+  state.sequenceWorkspace.error = ''
+  state.sequenceWorkspace.uploadStatus = `Previewing transition: ${current.titleSnapshot} into ${next.titleSnapshot}`
+  currentAudio.addEventListener('loadedmetadata', () => {
+    if (Number.isFinite(currentAudio.duration) && currentAudio.duration > previewWindowMs / 1000) {
+      currentAudio.currentTime = Math.max(0, currentAudio.duration - previewWindowMs / 1000)
+    }
+  }, { once: true })
+  const transitionDelay = Math.max(500, previewWindowMs - crossfadeMs)
+  playback.transitionPreviewTimer = window.setTimeout(() => {
+    nextAudio.play().catch(() => {})
+    const startedAt = Date.now()
+    playback.transitionPreviewInterval = window.setInterval(() => {
+      const progress = Math.min(1, (Date.now() - startedAt) / crossfadeMs)
+      currentAudio.volume = Math.max(0, 1 - progress)
+      nextAudio.volume = progress
+      if (progress >= 1) {
+        currentAudio.pause()
+        window.clearInterval(playback.transitionPreviewInterval)
+        playback.transitionPreviewInterval = 0
+      }
+    }, 50)
+  }, transitionDelay)
+  currentAudio.onended = () => {
+    if (!nextAudio.paused) return
+    stopTransitionPreview()
+    state.sequenceWorkspace.uploadStatus = ''
+    rerender()
+  }
+  nextAudio.onended = () => {
+    stopTransitionPreview()
+    state.sequenceWorkspace.uploadStatus = ''
+    rerender()
+  }
+  await currentAudio.play()
+  rerender()
 }
 
 async function playSequenceItem(item = null, { fromTransition = false } = {}) {
@@ -1487,6 +1608,7 @@ async function uploadSequenceAssetFromFile(file, fields = {}) {
   rerender()
   let shell
   try {
+    const videoAudioMode = isVideo ? fields.videoAudioMode || state.sequenceWorkspace.videoAudioMode : ''
     shell = await createSequenceAssetShell(uid, {
       type: isVideo ? 'video' : 'audio',
       title: fields.title || file.name.replace(/\.[^.]+$/, ''),
@@ -1496,7 +1618,7 @@ async function uploadSequenceAssetFromFile(file, fields = {}) {
       notes: fields.notes,
       originalFileName: file.name,
       originalMimeType: file.type,
-      videoAudioMode: isVideo ? fields.videoAudioMode || state.sequenceWorkspace.videoAudioMode : '',
+      videoAudioMode,
       fileSizeBytes: file.size,
       status: 'processing'
     })
@@ -1506,7 +1628,7 @@ async function uploadSequenceAssetFromFile(file, fields = {}) {
       rerender()
       videoUpload = await uploadSequenceAssetFile(uid, shell.assetId, file, 'video')
     }
-    if (isVideo && (fields.videoAudioMode || state.sequenceWorkspace.videoAudioMode) === 'no_audio') {
+    if (isVideo && videoAudioMode === 'no_audio') {
       await updateSequenceAsset(uid, shell.assetId, {
         status: 'ready',
         videoPath: videoUpload?.path || '',
@@ -1514,7 +1636,11 @@ async function uploadSequenceAssetFromFile(file, fields = {}) {
         processingError: ''
       })
     } else {
-      const normalized = await normalizeAudioFileToWav(file)
+      const playbackSourceFile = isVideo && videoAudioMode === 'separate_audio' ? fields.separateAudioFile : file
+      if (isVideo && videoAudioMode === 'separate_audio' && !playbackSourceFile?.size) {
+        throw new Error('Choose a separate audio file for this video asset.')
+      }
+      const normalized = await normalizeAudioFileToWav(playbackSourceFile)
       state.sequenceWorkspace.uploadStatus = 'Uploading normalized playback file...'
       rerender()
       const normalizedUpload = await uploadSequenceAssetFile(uid, shell.assetId, normalized.file, 'normalized')
@@ -1871,7 +1997,6 @@ function renderAudioControls(form) {
           <h3>${escapeHtml(state.goLive.connectionStatus || 'Live stream started')}</h3>
           <p class="music-muted">${escapeHtml(audioModeLabel(form.audioMode))} · heartbeat active</p>
           <p>Share: <a href="${musicLiveStreamRoute(state.goLive.streamId)}">${musicLiveStreamRoute(state.goLive.streamId)}</a></p>
-          ${renderHostMetadataEditor(form)}
           <button type="button" class="button button-danger" data-end-host-stream ${state.goLive.ending ? 'disabled' : ''}>${state.goLive.ending ? 'Ending...' : 'End Stream'}</button>
         </div>
       ` : ''}
@@ -3189,7 +3314,8 @@ function bindMusicEvents() {
         title: data.get('title'),
         artist: data.get('artist'),
         category: data.get('category'),
-        videoAudioMode: data.get('videoAudioMode')
+        videoAudioMode: data.get('videoAudioMode'),
+        separateAudioFile: data.get('separateAudioFile')
       }).catch(() => {})
     })
   })
@@ -3267,10 +3393,27 @@ function bindMusicEvents() {
   app.querySelectorAll('[data-sequence-preview-item]').forEach((button) => {
     button.addEventListener('click', () => {
       const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === button.dataset.sequencePreviewItem)
+      state.sequenceWorkspace.selectedItemId = item?.itemId || state.sequenceWorkspace.selectedItemId
       playSequenceItem(item).catch((error) => {
         state.sequenceWorkspace.error = error?.message || 'Sequence item could not be played.'
         rerender()
       })
+    })
+  })
+  app.querySelectorAll('[data-sequence-item-row]').forEach((row) => {
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('button,input,select,textarea')) return
+      state.sequenceWorkspace.selectedItemId = row.dataset.sequenceItemRow || ''
+      rerender()
+    })
+  })
+  app.querySelectorAll('[data-sequence-cue-item]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === button.dataset.sequenceCueItem)
+      if (!item) return
+      state.sequenceWorkspace.selectedItemId = item.itemId
+      preloadSequenceItem(item)
+      rerender()
     })
   })
   app.querySelectorAll('[data-sequence-set-next]').forEach((button) => {
@@ -3278,6 +3421,17 @@ function bindMusicEvents() {
       const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === button.dataset.sequenceSetNext)
       preloadSequenceItem(item)
       rerender()
+    })
+  })
+  app.querySelectorAll('[data-sequence-duplicate-item]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!state.currentUser || !state.sequenceWorkspace.activeSequence) return
+      const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === button.dataset.sequenceDuplicateItem)
+      if (!item) return
+      await duplicateSequenceItem(state.currentUser.uid, state.sequenceWorkspace.activeSequence.sequenceId, item, state.sequenceWorkspace.activeSequence).catch((error) => {
+        state.sequenceWorkspace.error = error?.message || 'Sequence item could not be duplicated.'
+      })
+      await loadSequenceWorkspace(state.sequenceWorkspace.activeSequence.sequenceId).catch(() => {})
     })
   })
   app.querySelectorAll('[data-sequence-move]').forEach((button) => {
@@ -3314,12 +3468,35 @@ function bindMusicEvents() {
     else pauseSequencePlayback()
   })
   app.querySelector('[data-sequence-stop]')?.addEventListener('click', () => stopSequencePlayback())
+  app.querySelector('[data-sequence-previous]')?.addEventListener('click', () => {
+    const previous = previousSequenceItem(state.sequenceWorkspace.playback.currentItemId || state.sequenceWorkspace.selectedItemId)
+    playSequenceItem(previous).catch((error) => {
+      state.sequenceWorkspace.error = error?.message || 'Previous item could not play.'
+      rerender()
+    })
+  })
   app.querySelector('[data-sequence-next]')?.addEventListener('click', () => {
     const next = nextSequenceItem(state.sequenceWorkspace.playback.currentItemId)
     playSequenceItem(next).catch((error) => {
       state.sequenceWorkspace.error = error?.message || 'Next item could not play.'
       rerender()
     })
+  })
+  app.querySelector('[data-sequence-preview-transition]')?.addEventListener('click', () => {
+    previewSequenceTransition().catch((error) => {
+      state.sequenceWorkspace.error = error?.message || 'Transition could not be previewed.'
+      rerender()
+    })
+  })
+  app.querySelector('[data-sequence-cue-selected]')?.addEventListener('click', () => {
+    const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === state.sequenceWorkspace.selectedItemId)
+    preloadSequenceItem(item)
+    rerender()
+  })
+  app.querySelector('[data-sequence-set-selected-next]')?.addEventListener('click', () => {
+    const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === state.sequenceWorkspace.selectedItemId)
+    preloadSequenceItem(item)
+    rerender()
   })
   app.querySelectorAll('[data-sequence-toggle]').forEach((button) => {
     button.addEventListener('click', () => {
