@@ -806,7 +806,7 @@ function renderSequenceWorkspacePage() {
         <h1>Sequence Software</h1>
         <p>Upload normalized account assets, build dense playout logs, and feed sequence output into Melogic Music Live.</p>
       </div>
-      <a class="button button-accent" href="${ROUTES.musicGoLive}">Use in Go Live</a>
+      <a class="button button-accent" href="${ROUTES.studioLive}?panel=sequence">Open Live Studio</a>
     </section>
     ${signedIn ? '' : emptyState('Sign in required', 'The Sequence Software workspace is visible here. Sign in to upload assets, save sequences, and publish sequence output into Live Streams.', `<a class="button button-accent" href="${authRoute({ redirect: ROUTES.musicSequence })}">Sign In</a>`)}
     <section class="music-sequence-workspace">

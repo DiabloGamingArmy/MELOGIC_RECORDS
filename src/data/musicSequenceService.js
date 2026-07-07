@@ -322,6 +322,61 @@ export async function createSequence(uid = '', data = {}) {
   return { ...normalizeSequence(payload, ref.id), id: ref.id, sequenceId: ref.id }
 }
 
+export async function updateSequence(uid = '', sequenceId = '', data = {}) {
+  if (!db || !uid || !sequenceId) throw new Error('A sequence is required.')
+  const payload = {}
+  if ('title' in data) payload.title = cleanString(data.title || 'Untitled Sequence', 160)
+  if ('description' in data) payload.description = cleanString(data.description, 1000)
+  if ('status' in data && ['draft', 'ready', 'active', 'archived'].includes(data.status)) payload.status = data.status
+  if ('mode' in data && ['manual', 'autoplay', 'loop', 'shuffle', 'scheduled'].includes(data.mode)) payload.mode = data.mode
+  if ('notes' in data) payload.notes = cleanString(data.notes, 1000)
+  if (!Object.keys(payload).length) return
+  await updateDoc(doc(db, 'users', uid, 'sequences', sequenceId), {
+    ...payload,
+    updatedAt: serverTimestamp()
+  })
+}
+
+export async function deleteSequence(uid = '', sequenceId = '') {
+  if (!db || !uid || !sequenceId) throw new Error('A sequence is required.')
+  await deleteDoc(doc(db, 'users', uid, 'sequences', sequenceId))
+}
+
+export async function duplicateSequence(uid = '', sequence = {}, items = []) {
+  if (!db || !uid || !sequence?.sequenceId) throw new Error('Choose a sequence first.')
+  const copy = await createSequence(uid, {
+    title: `${cleanString(sequence.title || 'Untitled Sequence', 140)} Copy`,
+    description: sequence.description,
+    mode: sequence.mode,
+    defaultFadeInMs: sequence.defaultFadeInMs,
+    defaultFadeOutMs: sequence.defaultFadeOutMs,
+    defaultCrossfadeMs: sequence.defaultCrossfadeMs,
+    defaultGapMs: sequence.defaultGapMs,
+    notes: sequence.notes
+  })
+  for (const item of items) {
+    const ref = doc(collection(db, 'users', uid, 'sequences', copy.sequenceId, 'items'))
+    const now = serverTimestamp()
+    const { id: _id, itemId: _itemId, sequenceId: _sequenceId, createdAt: _createdAt, updatedAt: _updatedAt, ...copyableItem } = item
+    await setDoc(ref, {
+      ...copyableItem,
+      itemId: ref.id,
+      ownerUid: uid,
+      sequenceId: copy.sequenceId,
+      createdAt: now,
+      updatedAt: now
+    })
+  }
+  if (items.length) {
+    await updateDoc(doc(db, 'users', uid, 'sequences', copy.sequenceId), {
+      itemCount: items.length,
+      totalDurationMs: items.reduce((sum, item) => sum + Math.max(0, Number(item.durationMs || 0)), 0),
+      updatedAt: serverTimestamp()
+    }).catch(() => {})
+  }
+  return copy
+}
+
 export async function listSequenceActionBookmarks(uid = '') {
   if (!db || !uid) return []
   const snapshot = await getDocs(query(actionBookmarkCollection(uid), orderBy('updatedAt', 'desc'), limit(50)))
