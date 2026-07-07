@@ -307,9 +307,39 @@ service firebase.storage {
         );
     }
 
-    // User-owned profile media uploads (avatar/banner).
-    match /users/{uid}/{allPaths=**} {
+    match /users/{uid}/avatar/{fileName} {
       allow read: if true;
+      allow write: if signedIn() && request.auth.uid == uid && isImageUpload(8 * 1024 * 1024);
+    }
+
+    match /users/{uid}/banner/{fileName} {
+      allow read: if true;
+      allow write: if signedIn() && request.auth.uid == uid && isImageUpload(15 * 1024 * 1024);
+    }
+
+    match /users/{uid}/musicLiveUploads/{allPaths=**} {
+      allow read: if true;
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid}/sequenceAssets/{assetId}/{folder}/{fileName} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn()
+        && request.auth.uid == uid
+        && request.resource != null
+        && request.resource.size <= 1024 * 1024 * 1024
+        && (
+          request.resource.contentType.matches('audio/.*')
+          || request.resource.contentType.matches('video/.*')
+          || request.resource.contentType.matches('image/.*')
+          || request.resource.contentType.matches('application/octet-stream')
+        );
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // User-owned media uploads. Specific public media paths above remain publicly readable.
+    match /users/{uid}/{allPaths=**} {
+      allow read: if signedIn() && request.auth.uid == uid;
       allow write: if signedIn() && request.auth.uid == uid;
     }
 

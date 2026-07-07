@@ -9,6 +9,22 @@ import { getSiteAssetURL } from './firebase/siteAssets'
 import { storage } from './firebase/storage'
 import { getMyAccountPermissions } from './data/accountPermissionsService'
 import {
+  SEQUENCE_ASSET_CATEGORIES,
+  addAssetToSequence,
+  createSequence,
+  createSequenceAssetShell,
+  deleteSequenceItem,
+  formatMs,
+  getSequence,
+  listSequenceAssets,
+  listSequenceItems,
+  listSequences,
+  moveSequenceItem,
+  updateSequenceAsset,
+  updateSequenceItem,
+  uploadSequenceAssetFile
+} from './data/musicSequenceService'
+import {
   deleteMusicLiveSequenceItem,
   endMusicLiveStream,
   getMusicLiveStream,
@@ -53,6 +69,7 @@ const sidebarViews = {
   new: 'New',
   radio: 'Radio',
   live: 'Live Streams',
+  sequence: 'Sequence Software',
   search: 'Search',
   recentlyAdded: 'Recently Added',
   artists: 'Artists',
@@ -133,6 +150,8 @@ const state = {
     form: {
       category: 'music',
       audioMode: 'music',
+      inputSource: 'browser',
+      sequenceId: '',
       accessMode: 'public',
       password: '',
       title: '',
@@ -169,6 +188,43 @@ const state = {
     starting: false,
     ending: false,
     formError: ''
+  },
+  sequenceWorkspace: {
+    assets: [],
+    sequences: [],
+    activeSequence: null,
+    items: [],
+    selectedAssetId: '',
+    selectedItemId: '',
+    search: '',
+    filterType: 'all',
+    filterCategory: 'all',
+    filterStatus: 'all',
+    sort: 'created_desc',
+    loading: false,
+    uploadStatus: '',
+    error: '',
+    newSequenceTitle: '',
+    videoAudioMode: 'use_video_audio',
+    playback: {
+      context: null,
+      masterGain: null,
+      destination: null,
+      currentAudio: null,
+      currentSource: null,
+      currentGain: null,
+      nextAudio: null,
+      nextItemId: '',
+      currentItemId: '',
+      timer: 0,
+      playing: false,
+      paused: false,
+      autoplay: true,
+      loop: false,
+      shuffle: false,
+      monitor: true,
+      outputTrack: null
+    }
   },
   release: null,
   tracks: [],
@@ -222,6 +278,8 @@ function currentRouteMode() {
   if (liveMatch) return { mode: 'liveDetail', id: decodeURIComponent(liveMatch[1]) }
   if (path === '/music/live') return { mode: 'liveList', id: '' }
   if (path === '/music/go-live') return { mode: 'goLive', id: '' }
+  const sequenceMatch = path.match(/^\/music\/sequence\/?([^/]*)/)
+  if (sequenceMatch) return { mode: 'sequence', id: decodeURIComponent(sequenceMatch[1] || '') }
   const releaseMatch = path.match(/^\/music\/releases\/([^/]+)/)
   return releaseMatch ? { mode: 'release', id: decodeURIComponent(releaseMatch[1]) } : { mode: 'landing', id: '' }
 }
@@ -386,6 +444,7 @@ function renderSidebar() {
           ${navButton('new', 'New')}
           ${navButton('radio', 'Radio')}
           ${navButton('live', 'Live Streams')}
+          ${navButton('sequence', 'Sequence Software')}
           ${navButton('search', 'Search')}
         </section>
         <details open>
@@ -582,6 +641,180 @@ function renderLiveStreamsView() {
   `
 }
 
+function sequenceAssetMatches(asset = {}) {
+  const workspace = state.sequenceWorkspace
+  if (workspace.filterType !== 'all' && asset.type !== workspace.filterType) return false
+  if (workspace.filterCategory !== 'all' && asset.category !== workspace.filterCategory) return false
+  if (workspace.filterStatus !== 'all' && asset.status !== workspace.filterStatus) return false
+  const search = workspace.search.trim().toLowerCase()
+  if (!search) return true
+  return [asset.title, asset.artist, asset.album, asset.originalFileName, asset.tags?.join(' '), asset.notes]
+    .join(' ')
+    .toLowerCase()
+    .includes(search)
+}
+
+function renderSequenceAssetLibrary() {
+  const workspace = state.sequenceWorkspace
+  const assets = workspace.assets.filter(sequenceAssetMatches)
+  return `
+    <aside class="music-panel music-sequence-library">
+      <div class="music-row-heading">
+        <div>
+          <p class="music-eyebrow">Asset Library</p>
+          <h2>Sequence Assets</h2>
+        </div>
+        <label class="button button-muted music-upload-button">
+          <input type="file" accept="audio/*,video/*" data-sequence-asset-upload />
+          Upload
+        </label>
+      </div>
+      <form class="music-sequence-upload-fields" data-sequence-upload-fields>
+        <input name="title" maxlength="160" placeholder="Title override" />
+        <input name="artist" maxlength="160" placeholder="Artist" />
+        <select name="category">${SEQUENCE_ASSET_CATEGORIES.map((category) => `<option value="${category}">${escapeHtml(titleCase(category))}</option>`).join('')}</select>
+        <select name="videoAudioMode">
+          <option value="use_video_audio">Video: use video audio</option>
+          <option value="no_audio">Video: metadata only / no audio</option>
+        </select>
+      </form>
+      <div class="music-sequence-filters">
+        <input type="search" data-sequence-search value="${escapeHtml(workspace.search)}" placeholder="Search title, artist, album, filename, tags..." />
+        <select data-sequence-filter-type>
+          ${['all', 'audio', 'video', 'metadata_only'].map((value) => `<option value="${value}" ${workspace.filterType === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'All types' : titleCase(value))}</option>`).join('')}
+        </select>
+        <select data-sequence-filter-category>
+          ${['all', ...SEQUENCE_ASSET_CATEGORIES].map((value) => `<option value="${value}" ${workspace.filterCategory === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'All categories' : titleCase(value))}</option>`).join('')}
+        </select>
+        <select data-sequence-filter-status>
+          ${['all', 'ready', 'processing', 'failed'].map((value) => `<option value="${value}" ${workspace.filterStatus === value ? 'selected' : ''}>${escapeHtml(value === 'all' ? 'All statuses' : titleCase(value))}</option>`).join('')}
+        </select>
+        <select data-sequence-sort>
+          ${[
+            ['created_desc', 'Date added newest'],
+            ['created_asc', 'Date added oldest'],
+            ['updated_desc', 'Date edited newest'],
+            ['title_asc', 'Title A-Z'],
+            ['artist_asc', 'Artist A-Z'],
+            ['duration_asc', 'Duration shortest'],
+            ['duration_desc', 'Duration longest'],
+            ['used_desc', 'Recently used']
+          ].map(([value, label]) => `<option value="${value}" ${workspace.sort === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+        </select>
+      </div>
+      ${workspace.uploadStatus ? `<p class="music-muted">${escapeHtml(workspace.uploadStatus)}</p>` : ''}
+      ${workspace.error ? `<p class="music-live-error">${escapeHtml(workspace.error)}</p>` : ''}
+      <div class="music-sequence-asset-list">
+        ${assets.length ? assets.map((asset) => `
+          <article class="music-sequence-asset-row ${workspace.selectedAssetId === asset.assetId ? 'is-selected' : ''}">
+            ${renderStableImage({ src: asset.artworkURL, alt: '', className: 'music-sequence-art', fallback: asset.type === 'video' ? 'VID' : 'AUD', key: `asset-${asset.assetId}` })}
+            <div>
+              <strong>${escapeHtml(asset.title)}</strong>
+              <span>${escapeHtml([asset.artist, asset.album].filter(Boolean).join(' · ') || asset.originalFileName || 'Sequence asset')}</span>
+            </div>
+            <span>${escapeHtml(titleCase(asset.category))}</span>
+            <span>${escapeHtml(formatMs(asset.durationMs))}</span>
+            <span class="music-sequence-status">${escapeHtml(titleCase(asset.status))}</span>
+            <button type="button" class="button button-muted" data-sequence-add-asset="${escapeHtml(asset.assetId)}" ${asset.status === 'ready' && asset.normalizedAudioURL ? '' : 'disabled'}>Add</button>
+          </article>
+        `).join('') : '<p class="music-muted">Upload audio or video assets to build a reusable automation library.</p>'}
+      </div>
+    </aside>
+  `
+}
+
+function renderSequenceRows() {
+  const workspace = state.sequenceWorkspace
+  const playback = workspace.playback
+  return `
+    <div class="music-automation-table" role="table" aria-label="Sequence playout log">
+      <div class="music-automation-row is-header" role="row">
+        <span>Status</span><span>Art</span><span>Title</span><span>Artist</span><span>Album</span><span>Type</span><span>Dur</span><span>Fade In</span><span>Fade Out</span><span>Xfade</span><span>File</span><span>Actions</span>
+      </div>
+      ${workspace.items.length ? workspace.items.map((item, index) => {
+        const isPlaying = playback.currentItemId === item.itemId
+        const isNext = playback.nextItemId === item.itemId
+        return `
+          <article class="music-automation-row ${isPlaying ? 'is-playing' : ''} ${isNext ? 'is-next' : ''} ${workspace.selectedItemId === item.itemId ? 'is-selected' : ''}" data-sequence-item-row="${escapeHtml(item.itemId)}" role="row">
+            <span>${isPlaying ? 'On Air' : isNext ? 'Next' : item.enabled ? String(index + 1) : 'Off'}</span>
+            ${renderStableImage({ src: item.artworkURLSnapshot, alt: '', className: 'music-sequence-art', fallback: 'NP', key: `row-${item.itemId}` })}
+            <strong>${escapeHtml(item.titleSnapshot)}</strong>
+            <span>${escapeHtml(item.artistSnapshot || '-')}</span>
+            <span>${escapeHtml(item.albumSnapshot || '-')}</span>
+            <span>${escapeHtml(titleCase(item.type))}</span>
+            <span>${escapeHtml(formatMs(item.durationMs))}</span>
+            <input type="number" min="0" step="100" value="${item.fadeInMs}" data-sequence-item-field="${escapeHtml(item.itemId)}" data-field="fadeInMs" />
+            <input type="number" min="0" step="100" value="${item.fadeOutMs}" data-sequence-item-field="${escapeHtml(item.itemId)}" data-field="fadeOutMs" />
+            <input type="number" min="0" step="100" value="${item.crossfadeMs}" data-sequence-item-field="${escapeHtml(item.itemId)}" data-field="crossfadeMs" />
+            <span class="music-sequence-status">${item.normalizedAudioURLSnapshot ? 'Ready' : 'Missing'}</span>
+            <span class="music-automation-actions">
+              <button type="button" class="button button-muted" data-sequence-preview-item="${escapeHtml(item.itemId)}">Play</button>
+              <button type="button" class="button button-muted" data-sequence-set-next="${escapeHtml(item.itemId)}">Set Next</button>
+              <button type="button" class="button button-muted" data-sequence-move="${escapeHtml(item.itemId)}" data-direction="-1">Up</button>
+              <button type="button" class="button button-muted" data-sequence-move="${escapeHtml(item.itemId)}" data-direction="1">Down</button>
+              <button type="button" class="button button-danger" data-sequence-remove-item="${escapeHtml(item.itemId)}">Remove</button>
+            </span>
+          </article>
+        `
+      }).join('') : '<p class="music-muted">Add ready assets to this sequence to build a playout log.</p>'}
+    </div>
+  `
+}
+
+function renderSequenceWorkspacePage() {
+  const signedIn = Boolean(state.currentUser)
+  const workspace = state.sequenceWorkspace
+  if (!signedIn) {
+    renderAppShell(signInAction('Sign in to build Sequence Software assets and playout logs.'))
+    return
+  }
+  const playback = workspace.playback
+  renderAppShell(`
+    <section class="music-view-header music-live-header">
+      <div>
+        <p class="music-eyebrow">Radio automation</p>
+        <h1>Sequence Software</h1>
+        <p>Upload normalized account assets, build dense playout logs, and feed sequence output into Melogic Music Live.</p>
+      </div>
+      <a class="button button-accent" href="${ROUTES.musicGoLive}">Use in Go Live</a>
+    </section>
+    <section class="music-sequence-workspace">
+      ${renderSequenceAssetLibrary()}
+      <section class="music-panel music-sequence-playout">
+        <div class="music-row-heading">
+          <div>
+            <p class="music-eyebrow">Playout Log</p>
+            <h2>${escapeHtml(workspace.activeSequence?.title || 'Sequence')}</h2>
+          </div>
+          <div class="music-live-actions">
+            <select data-active-sequence-select>
+              ${workspace.sequences.map((sequence) => `<option value="${escapeHtml(sequence.sequenceId)}" ${workspace.activeSequence?.sequenceId === sequence.sequenceId ? 'selected' : ''}>${escapeHtml(sequence.title)}</option>`).join('')}
+            </select>
+            <input data-new-sequence-title value="${escapeHtml(workspace.newSequenceTitle)}" placeholder="New sequence title" />
+            <button type="button" class="button button-muted" data-create-sequence>Create</button>
+          </div>
+        </div>
+        <div class="music-playout-transport">
+          <button type="button" class="button button-accent" data-sequence-play>${playback.playing ? 'Playing' : 'Play'}</button>
+          <button type="button" class="button button-muted" data-sequence-pause>${playback.paused ? 'Resume' : 'Pause'}</button>
+          <button type="button" class="button button-muted" data-sequence-stop>Stop</button>
+          <button type="button" class="button button-muted" data-sequence-next>Next</button>
+          <button type="button" class="button button-muted ${playback.autoplay ? 'is-active' : ''}" data-sequence-toggle="autoplay">Autoplay</button>
+          <button type="button" class="button button-muted ${playback.loop ? 'is-active' : ''}" data-sequence-toggle="loop">Loop</button>
+          <button type="button" class="button button-muted ${playback.shuffle ? 'is-active' : ''}" data-sequence-toggle="shuffle">Shuffle</button>
+          <button type="button" class="button button-muted ${playback.monitor ? 'is-active' : ''}" data-sequence-toggle="monitor">Monitor</button>
+        </div>
+        <div class="music-automation-status">
+          <span>Current: ${escapeHtml(workspace.items.find((item) => item.itemId === playback.currentItemId)?.titleSnapshot || 'None')}</span>
+          <span>Next: ${escapeHtml(workspace.items.find((item) => item.itemId === playback.nextItemId)?.titleSnapshot || 'Not cued')}</span>
+          <span>Mode: ${playback.autoplay ? 'Autoplay' : 'Manual Assist'}</span>
+        </div>
+        ${renderSequenceRows()}
+      </section>
+    </section>
+  `)
+}
+
 function renderSearchView() {
   return `
     <section class="music-view-header">
@@ -677,6 +910,7 @@ function hydrateStableImages() {
     }
     image.onerror = () => {
       stableImageCache.set(src, 'failed')
+      if (import.meta.env?.DEV) console.warn('[music:image] fallback after load error', { src: src.split('?')[0], key: container.dataset.imageKey || '' })
       if (container.dataset.src === src) container.classList.add('is-fallback')
     }
     image.src = src
@@ -920,6 +1154,192 @@ function updateLiveMediaSession(stream = state.liveStream) {
   })
 }
 
+function sequencePlaybackState() {
+  return state.sequenceWorkspace.playback
+}
+
+function ensureSequenceAudioGraph() {
+  const playback = sequencePlaybackState()
+  if (playback.context && playback.destination && playback.masterGain) return playback
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextCtor) throw new Error('This browser cannot run Sequence Software audio.')
+  const context = new AudioContextCtor()
+  const masterGain = context.createGain()
+  const destination = context.createMediaStreamDestination()
+  masterGain.gain.value = 1
+  masterGain.connect(destination)
+  if (playback.monitor) masterGain.connect(context.destination)
+  playback.context = context
+  playback.masterGain = masterGain
+  playback.destination = destination
+  playback.outputTrack = destination.stream.getAudioTracks()[0] || null
+  return playback
+}
+
+function setSequenceMonitor(enabled = true) {
+  const playback = sequencePlaybackState()
+  playback.monitor = enabled
+  if (!playback.context || !playback.masterGain) return
+  try {
+    playback.masterGain.disconnect(playback.context.destination)
+  } catch {}
+  if (enabled) playback.masterGain.connect(playback.context.destination)
+}
+
+async function getSequenceOutputTrack() {
+  const playback = ensureSequenceAudioGraph()
+  if (playback.context?.state === 'suspended') await playback.context.resume()
+  playback.outputTrack = playback.destination?.stream?.getAudioTracks?.()[0] || playback.outputTrack
+  if (!playback.outputTrack) throw new Error('Sequence Software output track is not available.')
+  return playback.outputTrack
+}
+
+function stopSequencePlayback({ keepPreload = false } = {}) {
+  const playback = sequencePlaybackState()
+  if (playback.timer) window.clearTimeout(playback.timer)
+  playback.timer = 0
+  ;[playback.currentAudio, keepPreload ? null : playback.nextAudio].filter(Boolean).forEach((audio) => {
+    audio.pause()
+    audio.removeAttribute('src')
+    audio.load?.()
+  })
+  playback.currentAudio = null
+  playback.currentSource = null
+  playback.currentGain = null
+  if (!keepPreload) {
+    playback.nextAudio = null
+    playback.nextItemId = ''
+  }
+  playback.currentItemId = ''
+  playback.playing = false
+  playback.paused = false
+  rerender()
+}
+
+function gainFromDb(dbValue = 0) {
+  return Math.pow(10, Number(dbValue || 0) / 20)
+}
+
+function connectSequenceAudioElement(audio, item = {}) {
+  const playback = ensureSequenceAudioGraph()
+  const source = playback.context.createMediaElementSource(audio)
+  const gain = playback.context.createGain()
+  gain.gain.value = gainFromDb(item.gainDb)
+  source.connect(gain)
+  gain.connect(playback.masterGain)
+  return { source, gain }
+}
+
+function sequencePlayableItems() {
+  return state.sequenceWorkspace.items.filter((item) => item.enabled !== false && item.normalizedAudioURLSnapshot && !['stop_marker', 'break'].includes(item.type))
+}
+
+function nextSequenceItem(afterItemId = '') {
+  const items = sequencePlayableItems()
+  if (!items.length) return null
+  if (sequencePlaybackState().shuffle) return items[Math.floor(Math.random() * items.length)]
+  const index = Math.max(0, items.findIndex((item) => item.itemId === afterItemId))
+  const next = items[index + 1]
+  if (next) return next
+  return sequencePlaybackState().loop ? items[0] : null
+}
+
+function preloadSequenceItem(item = null) {
+  const playback = sequencePlaybackState()
+  if (!item?.normalizedAudioURLSnapshot) return
+  if (playback.nextItemId === item.itemId && playback.nextAudio) return
+  if (playback.nextAudio) {
+    playback.nextAudio.pause()
+    playback.nextAudio.removeAttribute('src')
+  }
+  const audio = new Audio(item.normalizedAudioURLSnapshot)
+  audio.controls = false
+  audio.preload = 'auto'
+  audio.crossOrigin = 'anonymous'
+  playback.nextAudio = audio
+  playback.nextItemId = item.itemId
+}
+
+async function playSequenceItem(item = null, { fromTransition = false } = {}) {
+  if (!item?.normalizedAudioURLSnapshot) {
+    state.sequenceWorkspace.error = 'This sequence item does not have a ready audio file.'
+    rerender()
+    return
+  }
+  const playback = ensureSequenceAudioGraph()
+  await playback.context.resume()
+  if (playback.timer) window.clearTimeout(playback.timer)
+  if (!fromTransition && playback.currentAudio) stopSequencePlayback({ keepPreload: true })
+  const reusedPreload = playback.nextItemId === item.itemId && playback.nextAudio
+  const audio = reusedPreload ? playback.nextAudio : new Audio(item.normalizedAudioURLSnapshot)
+  audio.controls = false
+  audio.preload = 'auto'
+  audio.crossOrigin = 'anonymous'
+  playback.nextAudio = null
+  playback.nextItemId = ''
+  const { source, gain } = connectSequenceAudioElement(audio, item)
+  const now = playback.context.currentTime
+  const baseGain = gainFromDb(item.gainDb)
+  const fadeIn = Math.max(0, Number(item.fadeInMs || 0)) / 1000
+  if (fadeIn) {
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.linearRampToValueAtTime(baseGain, now + fadeIn)
+  }
+  playback.currentAudio = audio
+  playback.currentSource = source
+  playback.currentGain = gain
+  playback.currentItemId = item.itemId
+  playback.playing = true
+  playback.paused = false
+  state.sequenceWorkspace.selectedItemId = item.itemId
+  const next = nextSequenceItem(item.itemId)
+  preloadSequenceItem(next)
+  audio.onended = () => {
+    if (!playback.autoplay) {
+      stopSequencePlayback()
+      return
+    }
+    const following = nextSequenceItem(item.itemId)
+    if (following) playSequenceItem(following, { fromTransition: true }).catch(() => {})
+    else stopSequencePlayback()
+  }
+  await audio.play()
+  const durationMs = Number(item.durationMs || 0)
+  const crossfadeMs = Math.max(0, Number(item.crossfadeMs || state.sequenceWorkspace.activeSequence?.defaultCrossfadeMs || 0))
+  if (playback.autoplay && durationMs > 0 && crossfadeMs > 0) {
+    const fireIn = Math.max(250, durationMs - crossfadeMs)
+    playback.timer = window.setTimeout(() => {
+      const following = nextSequenceItem(item.itemId)
+      if (!following) return
+      if (playback.currentGain) {
+        const fadeNow = playback.context.currentTime
+        playback.currentGain.gain.cancelScheduledValues(fadeNow)
+        playback.currentGain.gain.setValueAtTime(playback.currentGain.gain.value, fadeNow)
+        playback.currentGain.gain.linearRampToValueAtTime(0.0001, fadeNow + crossfadeMs / 1000)
+      }
+      playSequenceItem(following, { fromTransition: true }).catch(() => {})
+    }, fireIn)
+  }
+  rerender()
+}
+
+function pauseSequencePlayback() {
+  const playback = sequencePlaybackState()
+  playback.currentAudio?.pause()
+  playback.playing = false
+  playback.paused = true
+  rerender()
+}
+
+function resumeSequencePlayback() {
+  const playback = sequencePlaybackState()
+  playback.currentAudio?.play?.().then(() => {
+    playback.playing = true
+    playback.paused = false
+    rerender()
+  }).catch(() => {})
+}
+
 function shouldShowGlobalMusicPlayer() {
   if (state.listenerRoom && state.liveStream?.id) return state.route.mode !== 'liveDetail' || state.route.id !== state.liveStream.id
   if (!state.player.track) return false
@@ -971,6 +1391,151 @@ async function uploadLiveCoverFile(file) {
     state.goLive.formError = error?.message || 'Cover image could not be uploaded.'
   } finally {
     state.goLive.uploadingCover = false
+    rerender()
+  }
+}
+
+function audioBufferToWav(buffer) {
+  const channels = Math.min(2, Math.max(1, buffer.numberOfChannels || 1))
+  const length = buffer.length * channels * 2
+  const arrayBuffer = new ArrayBuffer(44 + length)
+  const view = new DataView(arrayBuffer)
+  const writeString = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index))
+  }
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + length, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, channels, true)
+  view.setUint32(24, 44100, true)
+  view.setUint32(28, 44100 * channels * 2, true)
+  view.setUint16(32, channels * 2, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, length, true)
+  let offset = 44
+  const channelData = Array.from({ length: channels }, (_, index) => buffer.getChannelData(Math.min(index, buffer.numberOfChannels - 1)))
+  for (let sample = 0; sample < buffer.length; sample += 1) {
+    for (let channel = 0; channel < channels; channel += 1) {
+      const value = Math.max(-1, Math.min(1, channelData[channel][sample] || 0))
+      view.setInt16(offset, value < 0 ? value * 0x8000 : value * 0x7fff, true)
+      offset += 2
+    }
+  }
+  return new Blob([arrayBuffer], { type: 'audio/wav' })
+}
+
+async function normalizeAudioFileToWav(file) {
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextCtor || typeof window.OfflineAudioContext !== 'function') {
+    throw new Error('This browser cannot normalize audio files yet.')
+  }
+  const arrayBuffer = await file.arrayBuffer()
+  const context = new AudioContextCtor()
+  let decoded
+  try {
+    decoded = await context.decodeAudioData(arrayBuffer.slice(0))
+  } finally {
+    context.close?.().catch(() => {})
+  }
+  const channels = Math.min(2, Math.max(1, decoded.numberOfChannels || 1))
+  const length = Math.ceil(decoded.duration * 44100)
+  const offline = new window.OfflineAudioContext(channels, length, 44100)
+  const source = offline.createBufferSource()
+  source.buffer = decoded
+  source.connect(offline.destination)
+  source.start(0)
+  const rendered = await offline.startRendering()
+  return {
+    file: new File([audioBufferToWav(rendered)], `${(file.name || 'sequence-audio').replace(/\.[^.]+$/, '') || 'sequence-audio'}-44100-16bit.wav`, { type: 'audio/wav' }),
+    durationMs: Math.round(rendered.duration * 1000),
+    sampleRate: 44100,
+    bitDepth: 16,
+    channels
+  }
+}
+
+async function uploadSequenceAssetFromFile(file, fields = {}) {
+  if (!state.currentUser || !file) return
+  const uid = state.currentUser.uid
+  const isVideo = file.type.startsWith('video/')
+  const isAudio = file.type.startsWith('audio/') || isVideo
+  const maxAudioSize = 500 * 1024 * 1024
+  const maxVideoSize = 1024 * 1024 * 1024
+  if (!isAudio) {
+    state.sequenceWorkspace.error = 'Upload an audio file, or a video file with audio for future video-capable sequencing.'
+    rerender()
+    return
+  }
+  if ((!isVideo && file.size > maxAudioSize) || (isVideo && file.size > maxVideoSize)) {
+    state.sequenceWorkspace.error = isVideo ? 'Video sequence assets must be 1 GB or smaller.' : 'Audio sequence assets must be 500 MB or smaller.'
+    rerender()
+    return
+  }
+  state.sequenceWorkspace.error = ''
+  state.sequenceWorkspace.uploadStatus = 'Normalizing to 44.1 kHz / 16-bit...'
+  rerender()
+  let shell
+  try {
+    shell = await createSequenceAssetShell(uid, {
+      type: isVideo ? 'video' : 'audio',
+      title: fields.title || file.name.replace(/\.[^.]+$/, ''),
+      artist: fields.artist,
+      album: fields.album,
+      category: fields.category || (isVideo ? 'recorded_show' : 'song'),
+      notes: fields.notes,
+      originalFileName: file.name,
+      originalMimeType: file.type,
+      videoAudioMode: isVideo ? fields.videoAudioMode || state.sequenceWorkspace.videoAudioMode : '',
+      fileSizeBytes: file.size,
+      status: 'processing'
+    })
+    let videoUpload = null
+    if (isVideo) {
+      state.sequenceWorkspace.uploadStatus = 'Uploading video reference for future video sequencing...'
+      rerender()
+      videoUpload = await uploadSequenceAssetFile(uid, shell.assetId, file, 'video')
+    }
+    if (isVideo && (fields.videoAudioMode || state.sequenceWorkspace.videoAudioMode) === 'no_audio') {
+      await updateSequenceAsset(uid, shell.assetId, {
+        status: 'ready',
+        videoPath: videoUpload?.path || '',
+        videoURL: videoUpload?.url || '',
+        processingError: ''
+      })
+    } else {
+      const normalized = await normalizeAudioFileToWav(file)
+      state.sequenceWorkspace.uploadStatus = 'Uploading normalized playback file...'
+      rerender()
+      const normalizedUpload = await uploadSequenceAssetFile(uid, shell.assetId, normalized.file, 'normalized')
+      await updateSequenceAsset(uid, shell.assetId, {
+        status: 'ready',
+        normalizedAudioPath: normalizedUpload.path,
+        normalizedAudioURL: normalizedUpload.url,
+        videoPath: videoUpload?.path || '',
+        videoURL: videoUpload?.url || '',
+        durationMs: normalized.durationMs,
+        sampleRate: normalized.sampleRate,
+        bitDepth: normalized.bitDepth,
+        channels: normalized.channels,
+        processingError: ''
+      })
+    }
+    state.sequenceWorkspace.uploadStatus = 'Asset ready.'
+    await loadSequenceAssets()
+  } catch (error) {
+    if (shell?.assetId) {
+      await updateSequenceAsset(uid, shell.assetId, {
+        status: 'failed',
+        processingError: error?.message || 'Audio normalization failed.'
+      }).catch(() => {})
+    }
+    state.sequenceWorkspace.error = error?.message || 'Sequence asset could not be processed.'
+    state.sequenceWorkspace.uploadStatus = ''
+  } finally {
     rerender()
   }
 }
@@ -1253,6 +1818,9 @@ function renderStreamDetailsControls(form, categories) {
         <label class="music-checkbox"><input type="checkbox" name="rightsAccepted" required ${form.rightsAccepted ? 'checked' : ''} /> <span>I have the rights or permission to broadcast this audio and agree to Melogic live stream rules.</span></label>
         <label class="music-checkbox"><input type="checkbox" name="archiveRequested" disabled ${form.archiveRequested ? 'checked' : ''} /> <span>Request archive after stream. Save as replay is coming soon.</span></label>
       </div>
+      <div class="music-live-actions">
+        <button type="button" class="button button-muted" data-save-host-details>${state.goLive.streamId ? 'Update Live Info' : state.goLive.draftStreamId ? 'Save Draft' : 'Create Draft'}</button>
+      </div>
     </section>
   `
 }
@@ -1262,19 +1830,33 @@ function renderAudioControls(form) {
     <section class="music-host-control-section">
       <div>
         <p class="music-eyebrow">Audio input</p>
-        <h2>Microphone / Interface</h2>
+        <h2>Broadcast Source</h2>
       </div>
+      <label><span>Input Source</span><select name="inputSource" data-live-input-source><option value="browser" ${form.inputSource !== 'sequence' ? 'selected' : ''}>Browser Input Source</option><option value="sequence" ${form.inputSource === 'sequence' ? 'selected' : ''}>Sequence Software</option></select></label>
+      ${form.inputSource === 'sequence' ? `
+        <label><span>Sequence</span><select name="sequenceId" data-live-sequence-source>
+          ${state.sequenceWorkspace.sequences.map((sequence) => `<option value="${escapeHtml(sequence.sequenceId)}" ${form.sequenceId === sequence.sequenceId ? 'selected' : ''}>${escapeHtml(sequence.title)}</option>`).join('')}
+        </select></label>
+        <div class="music-quality-note">Sequence Software creates a Web Audio output track and publishes that one host-side feed to listeners. Listeners do not fetch your sequence asset files.</div>
+        <div class="music-live-actions">
+          <button type="button" class="button button-muted" data-sequence-play>Play Sequence</button>
+          <button type="button" class="button button-muted" data-sequence-stop>Stop Sequence</button>
+          <a class="button button-muted" href="${ROUTES.musicSequence}">Open Full Sequence Workspace</a>
+        </div>
+      ` : ''}
       <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
       <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
-      <select data-live-device-select>
-        <option value="">Browser default</option>
-        ${state.goLive.devices.map((device) => `<option value="${escapeHtml(device.deviceId)}" ${state.goLive.selectedDeviceId === device.deviceId ? 'selected' : ''}>${escapeHtml(device.label || `Audio input ${state.goLive.devices.indexOf(device) + 1}`)}</option>`).join('')}
-      </select>
-      <div class="music-meter" aria-label="Audio input level"><span style="width:${Math.round(state.goLive.level * 100)}%"></span></div>
-      <div class="music-live-actions">
-        <button type="button" class="button button-muted" data-refresh-audio-devices>Enable / Refresh Mic</button>
-        <button type="button" class="button button-muted" data-toggle-preview-mute>${state.goLive.muted ? 'Unmute Preview' : 'Mute Preview'}</button>
-      </div>
+      ${form.inputSource === 'sequence' ? '' : `
+        <select data-live-device-select>
+          <option value="">Browser default</option>
+          ${state.goLive.devices.map((device) => `<option value="${escapeHtml(device.deviceId)}" ${state.goLive.selectedDeviceId === device.deviceId ? 'selected' : ''}>${escapeHtml(device.label || `Audio input ${state.goLive.devices.indexOf(device) + 1}`)}</option>`).join('')}
+        </select>
+        <div class="music-meter" aria-label="Audio input level"><span style="width:${Math.round(state.goLive.level * 100)}%"></span></div>
+        <div class="music-live-actions">
+          <button type="button" class="button button-muted" data-refresh-audio-devices>Enable / Refresh Mic</button>
+          <button type="button" class="button button-muted" data-toggle-preview-mute>${state.goLive.muted ? 'Unmute Preview' : 'Mute Preview'}</button>
+        </div>
+      `}
       <p class="music-muted">${escapeHtml(state.goLive.connectionStatus || 'Choose an audio input before starting. Guests are coming later.')}</p>
       ${state.goLive.streamId ? `
         <div class="music-host-room">
@@ -1457,6 +2039,7 @@ function renderPlayer() {
 function rerender() {
   if (state.route.mode === 'release') renderReleaseDetailPage()
   else if (state.route.mode === 'goLive') renderGoLivePage()
+  else if (state.route.mode === 'sequence') renderSequenceWorkspacePage()
   else if (state.route.mode === 'liveDetail') renderLiveDetailPage()
   else renderLandingPage()
   initShellChrome()
@@ -1610,6 +2193,8 @@ function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) 
   state.goLive.form = {
     category: String(read('category', state.goLive.form.category) || 'music'),
     audioMode: String(read('audioMode', state.goLive.form.audioMode) || 'music') === 'voice' ? 'voice' : 'music',
+    inputSource: String(read('inputSource', state.goLive.form.inputSource) || 'browser') === 'sequence' ? 'sequence' : 'browser',
+    sequenceId: String(read('sequenceId', state.goLive.form.sequenceId) || state.goLive.form.sequenceId || ''),
     accessMode: String(read('accessMode', state.goLive.form.accessMode) || 'public'),
     password: String(read('password', state.goLive.form.password) || '').slice(0, 200),
     title: String(read('title', state.goLive.form.title) || '').slice(0, 90),
@@ -1859,6 +2444,37 @@ async function saveHostLiveMetadata(form) {
   }
 }
 
+async function saveHostDetails() {
+  updateGoLiveFormState()
+  const payload = {
+    streamId: activeHostStreamId(),
+    ...state.goLive.form
+  }
+  state.goLive.editSaving = true
+  state.goLive.editError = ''
+  state.goLive.formError = ''
+  rerender()
+  try {
+    if (state.goLive.streamId) {
+      await updateMusicLiveStreamInfo(payload)
+      state.goLive.connectionStatus = 'Live stream info updated.'
+    } else {
+      const response = await prepareMusicLiveStreamDraft(payload)
+      state.goLive.draftStreamId = response.streamId || state.goLive.draftStreamId
+      if (state.goLive.draftStreamId) {
+        startHostStreamSubscription(state.goLive.draftStreamId)
+        startLiveSequenceSubscription(state.goLive.draftStreamId)
+      }
+      state.goLive.connectionStatus = 'Draft details saved.'
+    }
+  } catch (error) {
+    state.goLive.formError = error?.message || 'Stream details could not be saved.'
+  } finally {
+    state.goLive.editSaving = false
+    rerender()
+  }
+}
+
 async function sendLiveChatMessage(form) {
   const streamId = form?.dataset?.streamId || state.liveStream?.id || state.goLive.streamId
   const text = String(new FormData(form).get('text') || '').trim().slice(0, 500)
@@ -2004,14 +2620,21 @@ async function startHostBroadcast(form) {
       rerender()
     })
     await room.connect(response.url, response.hostToken)
-    state.goLive.connectionStatus = 'Publishing selected audio input...'
+    state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Publishing Sequence Software output...' : 'Publishing selected audio input...'
     rerender()
     let localTrack
-    try {
-      localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId }))
-    } catch (error) {
-      console.warn('[music] ideal publish audio constraints failed; retrying basic mic constraints.', error?.message || error)
-      localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId, relaxed: true }))
+    if (formState.inputSource === 'sequence') {
+      if (formState.sequenceId && formState.sequenceId !== state.sequenceWorkspace.activeSequence?.sequenceId) {
+        await loadSequenceWorkspace(formState.sequenceId)
+      }
+      localTrack = await getSequenceOutputTrack()
+    } else {
+      try {
+        localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId }))
+      } catch (error) {
+        console.warn('[music] ideal publish audio constraints failed; retrying basic mic constraints.', error?.message || error)
+        localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId, relaxed: true }))
+      }
     }
     state.goLive.localTrack = localTrack
     await room.localParticipant.publishTrack(localTrack, publishOptionsForAudioMode())
@@ -2020,7 +2643,7 @@ async function startHostBroadcast(form) {
     startLiveChatSubscription(pendingStreamId)
     startHostStreamSubscription(pendingStreamId)
     startLiveSequenceSubscription(pendingStreamId)
-    state.goLive.connectionStatus = 'Audio published. You are live.'
+    state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Sequence Software output live.' : 'Audio published. You are live.'
   } catch (error) {
     console.warn('[music] startMusicLiveStream failed', {
       functionName: 'startMusicLiveStream',
@@ -2034,7 +2657,7 @@ async function startHostBroadcast(form) {
     }
     stopHostHeartbeat()
     stopLiveChatSubscription()
-    if (state.goLive.localTrack) {
+    if (state.goLive.localTrack && state.goLive.form.inputSource !== 'sequence') {
       state.goLive.localTrack.stop()
       state.goLive.localTrack = null
     }
@@ -2060,10 +2683,10 @@ async function endHostBroadcast() {
   rerender()
   try {
     stopHostHeartbeat()
-    if (state.goLive.localTrack) {
+    if (state.goLive.localTrack && state.goLive.form.inputSource !== 'sequence') {
       state.goLive.localTrack.stop()
-      state.goLive.localTrack = null
     }
+    state.goLive.localTrack = null
     if (state.goLive.room) {
       state.goLive.room.disconnect()
       state.goLive.room = null
@@ -2200,6 +2823,58 @@ async function loadLibraryView(view) {
   state.rows.library = state.currentUser ? await listUserLibraryMusic(state.currentUser.uid, view, 20) : []
 }
 
+async function loadSequenceAssets() {
+  if (!state.currentUser) return
+  state.sequenceWorkspace.assets = await listSequenceAssets(state.currentUser.uid, {
+    search: state.sequenceWorkspace.search,
+    type: state.sequenceWorkspace.filterType,
+    category: state.sequenceWorkspace.filterCategory,
+    status: state.sequenceWorkspace.filterStatus,
+    sort: state.sequenceWorkspace.sort,
+    limitCount: 50
+  })
+}
+
+async function loadActiveSequenceItems() {
+  if (!state.currentUser || !state.sequenceWorkspace.activeSequence?.sequenceId) {
+    state.sequenceWorkspace.items = []
+    return
+  }
+  state.sequenceWorkspace.items = await listSequenceItems(state.currentUser.uid, state.sequenceWorkspace.activeSequence.sequenceId)
+}
+
+async function loadSequenceWorkspace(sequenceId = state.route.id || state.goLive.form.sequenceId || '') {
+  if (!state.currentUser) return
+  state.sequenceWorkspace.loading = true
+  state.sequenceWorkspace.error = ''
+  try {
+    const [assets, sequences] = await Promise.all([
+      listSequenceAssets(state.currentUser.uid, {
+        search: state.sequenceWorkspace.search,
+        type: state.sequenceWorkspace.filterType,
+        category: state.sequenceWorkspace.filterCategory,
+        status: state.sequenceWorkspace.filterStatus,
+        sort: state.sequenceWorkspace.sort,
+        limitCount: 50
+      }),
+      listSequences(state.currentUser.uid, 50)
+    ])
+    state.sequenceWorkspace.assets = assets
+    state.sequenceWorkspace.sequences = sequences
+    let active = sequenceId ? sequences.find((sequence) => sequence.sequenceId === sequenceId) || await getSequence(state.currentUser.uid, sequenceId) : null
+    if (!active && sequences.length) active = sequences[0]
+    if (!active) active = await createSequence(state.currentUser.uid, { title: 'Main Sequence', mode: 'manual' })
+    state.sequenceWorkspace.activeSequence = active
+    state.goLive.form.sequenceId = active.sequenceId
+    await loadActiveSequenceItems()
+  } catch (error) {
+    state.sequenceWorkspace.error = error?.message || 'Sequence Software could not load.'
+  } finally {
+    state.sequenceWorkspace.loading = false
+    rerender()
+  }
+}
+
 function startLiveListRefresh() {
   stopLiveListRefresh()
   if (!['landing', 'liveList'].includes(state.route.mode) && state.activeView !== 'live') return
@@ -2216,6 +2891,13 @@ function setActiveView(view) {
   if (!sidebarViews[view]) return
   state.activeView = view
   state.sidebarOpen = false
+  if (view === 'sequence') {
+    window.history.pushState({}, '', ROUTES.musicSequence)
+    state.route = { mode: 'sequence', id: '' }
+    loadSequenceWorkspace().catch(() => rerender())
+    rerender()
+    return
+  }
   if (state.route.mode !== 'landing') {
     window.history.pushState({}, '', `${ROUTES.music}#${view}`)
     state.route = { mode: 'landing', id: '' }
@@ -2275,6 +2957,15 @@ function bindMusicEvents() {
     state.goLive.selectedDeviceId = event.target.value || ''
     refreshAudioDevices().catch(() => {})
   })
+  app.querySelector('[data-live-input-source]')?.addEventListener('change', (event) => {
+    updateGoLiveFormState()
+    if (event.target.value === 'sequence' && state.currentUser) loadSequenceWorkspace(state.goLive.form.sequenceId).catch(() => {})
+    rerender()
+  })
+  app.querySelector('[data-live-sequence-source]')?.addEventListener('change', (event) => {
+    updateGoLiveFormState()
+    loadSequenceWorkspace(event.target.value || '').catch(() => {})
+  })
   app.querySelector('[data-go-live-form]')?.addEventListener('input', (event) => {
     const previousPath = state.goLive.form.coverArtSource === 'upload' ? state.goLive.form.coverArtPath : ''
     const previousURL = state.goLive.form.coverArtURL
@@ -2328,6 +3019,9 @@ function bindMusicEvents() {
   app.querySelector('[data-live-edit-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     saveHostLiveMetadata(event.currentTarget).catch(() => {})
+  })
+  app.querySelector('[data-save-host-details]')?.addEventListener('click', () => {
+    saveHostDetails().catch(() => {})
   })
   app.querySelector('[data-end-host-stream]')?.addEventListener('click', () => {
     endHostBroadcast().catch(() => {})
@@ -2478,6 +3172,154 @@ function bindMusicEvents() {
       })
     })
   })
+  app.querySelector('[data-sequence-asset-upload]')?.addEventListener('change', (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const fieldsForm = app.querySelector('[data-sequence-upload-fields]')
+    const data = fieldsForm ? new FormData(fieldsForm) : new FormData()
+    uploadSequenceAssetFromFile(file, {
+      title: data.get('title'),
+      artist: data.get('artist'),
+      category: data.get('category'),
+      videoAudioMode: data.get('videoAudioMode')
+    }).catch(() => {})
+  })
+  app.querySelector('[data-sequence-search]')?.addEventListener('input', (event) => {
+    state.sequenceWorkspace.search = event.target.value || ''
+    rerender()
+  })
+  app.querySelector('[data-sequence-filter-type]')?.addEventListener('change', (event) => {
+    state.sequenceWorkspace.filterType = event.target.value || 'all'
+    loadSequenceAssets().then(rerender).catch(() => rerender())
+  })
+  app.querySelector('[data-sequence-filter-category]')?.addEventListener('change', (event) => {
+    state.sequenceWorkspace.filterCategory = event.target.value || 'all'
+    loadSequenceAssets().then(rerender).catch(() => rerender())
+  })
+  app.querySelector('[data-sequence-filter-status]')?.addEventListener('change', (event) => {
+    state.sequenceWorkspace.filterStatus = event.target.value || 'all'
+    loadSequenceAssets().then(rerender).catch(() => rerender())
+  })
+  app.querySelector('[data-sequence-sort]')?.addEventListener('change', (event) => {
+    state.sequenceWorkspace.sort = event.target.value || 'created_desc'
+    loadSequenceAssets().then(rerender).catch(() => rerender())
+  })
+  app.querySelector('[data-create-sequence]')?.addEventListener('click', async () => {
+    if (!state.currentUser) return
+    const input = app.querySelector('[data-new-sequence-title]')
+    const title = String(input?.value || state.sequenceWorkspace.newSequenceTitle || '').trim() || 'Untitled sequence'
+    try {
+      const sequence = await createSequence(state.currentUser.uid, { title, mode: 'manual' })
+      state.sequenceWorkspace.newSequenceTitle = ''
+      state.sequenceWorkspace.activeSequence = sequence
+      state.goLive.form.sequenceId = sequence.sequenceId
+      await loadSequenceWorkspace(sequence.sequenceId)
+    } catch (error) {
+      state.sequenceWorkspace.error = error?.message || 'Sequence could not be created.'
+      rerender()
+    }
+  })
+  app.querySelector('[data-new-sequence-title]')?.addEventListener('input', (event) => {
+    state.sequenceWorkspace.newSequenceTitle = event.target.value || ''
+  })
+  app.querySelector('[data-active-sequence-select]')?.addEventListener('change', (event) => {
+    const sequenceId = event.target.value || ''
+    state.goLive.form.sequenceId = sequenceId
+    loadSequenceWorkspace(sequenceId).catch(() => {})
+    if (state.route.mode === 'sequence' && sequenceId) window.history.replaceState({}, '', `${ROUTES.musicSequence}/${encodeURIComponent(sequenceId)}`)
+  })
+  app.querySelectorAll('[data-sequence-add-asset]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!state.currentUser || !state.sequenceWorkspace.activeSequence) return
+      const asset = state.sequenceWorkspace.assets.find((item) => item.assetId === button.dataset.sequenceAddAsset)
+      if (!asset) return
+      try {
+        await addAssetToSequence(state.currentUser.uid, state.sequenceWorkspace.activeSequence.sequenceId, asset, state.sequenceWorkspace.activeSequence)
+        await loadSequenceWorkspace(state.sequenceWorkspace.activeSequence.sequenceId)
+      } catch (error) {
+        state.sequenceWorkspace.error = error?.message || 'Asset could not be added to sequence.'
+        rerender()
+      }
+    })
+  })
+  app.querySelectorAll('[data-sequence-item-field]').forEach((input) => {
+    input.addEventListener('change', async () => {
+      if (!state.currentUser || !state.sequenceWorkspace.activeSequence) return
+      const itemId = input.dataset.sequenceItemField || ''
+      const field = input.dataset.field || ''
+      if (!['fadeInMs', 'fadeOutMs', 'crossfadeMs'].includes(field)) return
+      await updateSequenceItem(state.currentUser.uid, state.sequenceWorkspace.activeSequence.sequenceId, itemId, { [field]: Math.max(0, Math.round(Number(input.value) || 0)) }).catch((error) => {
+        state.sequenceWorkspace.error = error?.message || 'Sequence item could not be updated.'
+      })
+      await loadActiveSequenceItems().catch(() => {})
+      rerender()
+    })
+  })
+  app.querySelectorAll('[data-sequence-preview-item]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === button.dataset.sequencePreviewItem)
+      playSequenceItem(item).catch((error) => {
+        state.sequenceWorkspace.error = error?.message || 'Sequence item could not be played.'
+        rerender()
+      })
+    })
+  })
+  app.querySelectorAll('[data-sequence-set-next]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === button.dataset.sequenceSetNext)
+      preloadSequenceItem(item)
+      rerender()
+    })
+  })
+  app.querySelectorAll('[data-sequence-move]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!state.currentUser || !state.sequenceWorkspace.activeSequence) return
+      const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === button.dataset.sequenceMove)
+      if (!item) return
+      await moveSequenceItem(state.currentUser.uid, state.sequenceWorkspace.activeSequence.sequenceId, item, Number(button.dataset.direction || 0), state.sequenceWorkspace.items).catch((error) => {
+        state.sequenceWorkspace.error = error?.message || 'Sequence item could not be moved.'
+      })
+      await loadActiveSequenceItems().catch(() => {})
+      rerender()
+    })
+  })
+  app.querySelectorAll('[data-sequence-remove-item]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!state.currentUser || !state.sequenceWorkspace.activeSequence) return
+      await deleteSequenceItem(state.currentUser.uid, state.sequenceWorkspace.activeSequence.sequenceId, button.dataset.sequenceRemoveItem || '').catch((error) => {
+        state.sequenceWorkspace.error = error?.message || 'Sequence item could not be removed.'
+      })
+      await loadActiveSequenceItems().catch(() => {})
+      rerender()
+    })
+  })
+  app.querySelector('[data-sequence-play]')?.addEventListener('click', () => {
+    const item = state.sequenceWorkspace.items.find((entry) => entry.itemId === state.sequenceWorkspace.selectedItemId) || sequencePlayableItems()[0]
+    playSequenceItem(item).catch((error) => {
+      state.sequenceWorkspace.error = error?.message || 'Sequence could not start.'
+      rerender()
+    })
+  })
+  app.querySelector('[data-sequence-pause]')?.addEventListener('click', () => {
+    if (state.sequenceWorkspace.playback.paused) resumeSequencePlayback()
+    else pauseSequencePlayback()
+  })
+  app.querySelector('[data-sequence-stop]')?.addEventListener('click', () => stopSequencePlayback())
+  app.querySelector('[data-sequence-next]')?.addEventListener('click', () => {
+    const next = nextSequenceItem(state.sequenceWorkspace.playback.currentItemId)
+    playSequenceItem(next).catch((error) => {
+      state.sequenceWorkspace.error = error?.message || 'Next item could not play.'
+      rerender()
+    })
+  })
+  app.querySelectorAll('[data-sequence-toggle]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.sequenceToggle
+      if (key === 'monitor') setSequenceMonitor(!state.sequenceWorkspace.playback.monitor)
+      else if (key && key in state.sequenceWorkspace.playback) state.sequenceWorkspace.playback[key] = !state.sequenceWorkspace.playback[key]
+      rerender()
+    })
+  })
   app.querySelectorAll('[data-play-release]').forEach((button) => {
     button.addEventListener('click', () => {
       const release = allPublicReleases().find((item) => item.id === button.dataset.playRelease)
@@ -2587,7 +3429,16 @@ async function loadMusicPage() {
 
   if (state.route.mode === 'goLive') {
     state.activeView = 'live'
+    if (state.currentUser) await loadSequenceWorkspace(state.goLive.form.sequenceId).catch(() => {})
     state.loading = false
+    rerender()
+    return
+  }
+
+  if (state.route.mode === 'sequence') {
+    state.activeView = 'sequence'
+    state.loading = false
+    await loadSequenceWorkspace(state.route.id).catch(() => {})
     rerender()
     return
   }

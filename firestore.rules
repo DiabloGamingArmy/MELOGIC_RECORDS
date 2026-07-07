@@ -1038,6 +1038,46 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /sequenceAssets/{assetId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.ownerUid == uid
+          && request.resource.data.assetId == assetId
+          && request.resource.data.type in ['audio', 'video', 'image', 'metadata_only']
+          && request.resource.data.category in ['song', 'jingle', 'sweeper', 'promo', 'commercial', 'station_id', 'bed', 'recorded_show', 'podcast_segment', 'voice_track', 'other']
+          && request.resource.data.status in ['uploading', 'processing', 'ready', 'failed', 'archived']
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 1
+          && request.resource.data.title.size() <= 160;
+        allow delete: if isOwner(uid);
+      }
+
+      match /sequences/{sequenceId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.ownerUid == uid
+          && request.resource.data.sequenceId == sequenceId
+          && request.resource.data.status in ['draft', 'ready', 'active', 'archived']
+          && request.resource.data.mode in ['manual', 'autoplay', 'loop', 'shuffle', 'scheduled']
+          && request.resource.data.title is string
+          && request.resource.data.title.size() >= 1
+          && request.resource.data.title.size() <= 160;
+        allow delete: if isOwner(uid);
+
+        match /items/{itemId} {
+          allow read: if isOwner(uid);
+          allow create, update: if isOwner(uid)
+            && request.resource.data.ownerUid == uid
+            && request.resource.data.sequenceId == sequenceId
+            && request.resource.data.itemId == itemId
+            && request.resource.data.type in ['audio', 'video', 'metadata_only', 'break', 'voice_track', 'stop_marker']
+            && request.resource.data.titleSnapshot is string
+            && request.resource.data.titleSnapshot.size() >= 1
+            && request.resource.data.titleSnapshot.size() <= 160;
+          allow delete: if isOwner(uid);
+        }
+      }
+
       match /focusedCommunities/{communityId} {
         allow read: if isOwner(uid);
         allow write: if false;

@@ -3,6 +3,7 @@ export const ROUTES = {
   music: '/music',
   musicLive: '/music/live',
   musicGoLive: '/music/go-live',
+  musicSequence: '/music/sequence',
   products: '/products',
   productDetail: '/product',
   cart: '/cart',
