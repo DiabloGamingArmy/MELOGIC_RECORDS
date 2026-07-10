@@ -64,6 +64,8 @@ import {
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 
 const app = document.querySelector('#app')
+let musicMonitorVisualizerCleanup = null
+let musicMonitorControlsTimer = 0
 
 const sidebarViews = {
   home: 'Home',
@@ -120,8 +122,13 @@ const state = {
   liveError: '',
   listenerRoom: null,
   listenerAudioElement: null,
+  listenerVideoElement: null,
   listenerPresenceId: '',
   listenerPresenceTimer: 0,
+  liveMonitor: {
+    muted: true
+  },
+  liveVideoExpanded: false,
   livePassword: '',
   liveActionMessage: '',
   liveViewer: {
@@ -282,8 +289,8 @@ function formatDuration(seconds = 0) {
 
 function currentRouteMode() {
   const path = window.location.pathname
-  const liveMatch = path.match(/^\/music\/live\/([^/]+)/)
   const liveMonitorMatch = path.match(/^\/music\/live\/([^/]+)\/monitor$/)
+  const liveMatch = path.match(/^\/music\/live\/([^/]+)$/)
   if (liveMonitorMatch) return { mode: 'liveMonitor', id: decodeURIComponent(liveMonitorMatch[1]) }
   if (liveMatch) return { mode: 'liveDetail', id: decodeURIComponent(liveMatch[1]) }
   if (path === '/music/live') return { mode: 'liveList', id: '' }
@@ -347,11 +354,14 @@ function normalizeImageSrc(src = '', key = '') {
 
 function renderStableImage({ src = '', alt = '', className = '', fallback = 'MR', key = '' } = {}) {
   const cleanSrc = normalizeImageSrc(src, key)
+  const logicalKey = key || cleanSrc
+  const keyed = logicalKey ? stableImageCache.get(`key:${logicalKey}`) : null
   const failed = cleanSrc && stableImageCache.get(cleanSrc) === 'failed'
   const loaded = cleanSrc && stableImageCache.get(cleanSrc) === 'loaded'
+  const displaySrc = loaded ? cleanSrc : (keyed?.lastGoodSrc || '')
   return `
-    <span class="${escapeHtml(className)} music-stable-image ${loaded ? 'is-loaded' : ''} ${failed || !cleanSrc ? 'is-fallback' : ''}" ${cleanSrc ? `data-stable-image data-src="${escapeHtml(cleanSrc)}" data-alt="${escapeHtml(alt)}" data-image-key="${escapeHtml(key || cleanSrc)}"` : ''}>
-      ${loaded ? `<img src="${escapeHtml(cleanSrc)}" alt="${escapeHtml(alt)}" loading="lazy" />` : ''}
+    <span class="${escapeHtml(className)} music-stable-image ${displaySrc ? 'is-loaded' : ''} ${failed || (!cleanSrc && !displaySrc) ? 'is-fallback' : ''}" ${cleanSrc ? `data-stable-image data-src="${escapeHtml(cleanSrc)}" data-alt="${escapeHtml(alt)}" data-image-key="${escapeHtml(logicalKey)}"` : ''}>
+      ${displaySrc ? `<img src="${escapeHtml(displaySrc)}" alt="${escapeHtml(alt)}" loading="lazy" />` : ''}
       <span class="music-stable-fallback" aria-hidden="true">${escapeHtml(fallback)}</span>
     </span>
   `
@@ -937,7 +947,10 @@ function renderAppShell(content) {
 function hydrateStableImages() {
   app.querySelectorAll('[data-stable-image]').forEach((container) => {
     const src = container.dataset.src || ''
-    if (!src || container.querySelector('img')) return
+    const imageKey = container.dataset.imageKey || src
+    const currentImg = container.querySelector('img')
+    if (!src) return
+    if (currentImg?.getAttribute('src') === src) return
     const failedBefore = stableImageCache.get(src) === 'failed'
     if (failedBefore) container.classList.add('is-fallback')
     const image = new Image()
@@ -945,8 +958,10 @@ function hydrateStableImages() {
     image.loading = 'lazy'
     image.onload = () => {
       stableImageCache.set(src, 'loaded')
-      if (import.meta.env?.DEV) console.info('[music:image] loaded', { src: src.split('?')[0], key: container.dataset.imageKey || '' })
-      if (container.dataset.src !== src || container.querySelector('img')) return
+      stableImageCache.set(`key:${imageKey}`, { lastGoodSrc: src })
+      if (import.meta.env?.DEV) console.info('[music:image] loaded', { src: src.split('?')[0], key: imageKey || '' })
+      if (container.dataset.src !== src) return
+      currentImg?.remove()
       container.prepend(image)
       container.classList.add('is-loaded')
       container.classList.remove('is-fallback')
@@ -1169,6 +1184,22 @@ function nowPlayingDisplay(stream = {}) {
         album: 'Melogic Music Live',
         artworkURL: stream.coverArtURL
       }
+}
+
+function streamHasVideoFoundation(stream = state.liveStream) {
+  return Boolean(
+    state.listenerVideoElement ||
+    stream?.videoPublished === true ||
+    stream?.videoEnabled === true ||
+    stream?.currentNowPlaying?.videoURL ||
+    stream?.videoURL
+  )
+}
+
+function liveMetaLine(meta = {}, stream = {}) {
+  const artist = meta.artist || stream.hostDisplayName || 'Melogic Records'
+  const album = meta.album || liveCategoryLabel(stream.category || 'music')
+  return album ? `${artist} - ${album}` : artist
 }
 
 function updateLiveMediaSession(stream = state.liveStream) {
@@ -2089,25 +2120,185 @@ function renderGoLivePage() {
 function renderPublicLiveMonitorPage() {
   const stream = state.liveStream
   const meta = nowPlayingDisplay(stream || {})
-  const dots = Array.from({ length: 30 }, (_, index) => `<i style="--i:${index};--x:${(index * 37) % 100}%;--y:${(index * 23) % 100}%"></i>`).join('')
+  const hasVideo = streamHasVideoFoundation(stream)
+  const metaLine = liveMetaLine(meta, stream || {})
+  const brand = '<div class="music-live-monitor-brand">MELOGIC STREAMING</div>'
+  const controls = `
+    <div class="music-live-monitor-controls" data-live-monitor-controls>
+      <button type="button" class="button button-muted" data-live-monitor-audio-toggle>${state.liveMonitor.muted ? 'Unmute music audio' : 'Mute music audio'}</button>
+      ${hasVideo ? '<button type="button" class="button button-muted" data-live-monitor-video-fullscreen>Show Video Stream Fullscreen</button>' : ''}
+    </div>
+  `
   app.innerHTML = `
     <main class="music-live-monitor-page">
-      <section class="music-live-monitor-surface is-audio">
-        <div class="music-live-monitor-ambience" aria-hidden="true">${dots}</div>
-        <div class="music-live-monitor-core">
-          ${renderStableImage({ src: meta.artworkURL, alt: '', className: 'music-live-monitor-art artwork-square', fallback: 'LIVE', key: `public-monitor-${stream?.id || meta.artworkURL || 'live'}` })}
-          <div class="music-live-monitor-copy">
-            <span>${stream?.status === 'live' ? 'LIVE' : 'MONITOR'}</span>
-            <h1>${escapeHtml(meta.title || stream?.title || 'Melogic Music Live')}</h1>
-            <p>${escapeHtml(meta.artist || stream?.hostDisplayName || 'Melogic Records')}</p>
-            <small>${escapeHtml(meta.album || liveCategoryLabel(stream?.category || 'music'))}</small>
+      <section class="music-live-monitor-surface ${hasVideo ? 'is-audio-video' : 'is-audio-only'}" data-live-monitor-root>
+        <canvas class="music-live-monitor-canvas" data-live-monitor-canvas aria-hidden="true"></canvas>
+        ${brand}
+        ${hasVideo ? `
+          <div class="music-live-monitor-video-layout">
+            <div class="music-live-monitor-video-frame" data-live-monitor-video-mount>
+              <div class="music-live-monitor-video-empty">Video stream</div>
+            </div>
+            <aside class="music-live-monitor-side">
+              ${renderStableImage({ src: meta.artworkURL, alt: '', className: 'music-live-monitor-art artwork-square', fallback: 'LIVE', key: `public-monitor-${stream?.id || meta.artworkURL || 'live'}` })}
+              <div class="music-live-monitor-copy">
+                <h1>${escapeHtml(meta.title || stream?.title || 'Melogic Music Live')}</h1>
+                <p>${escapeHtml(metaLine)}</p>
+                <small>${escapeHtml(stream?.hostDisplayName || 'Streamer Display Name')}</small>
+              </div>
+            </aside>
           </div>
-          <div class="music-live-monitor-progress" aria-hidden="true"><span></span></div>
-        </div>
+        ` : `
+          <div class="music-live-monitor-core">
+            ${renderStableImage({ src: meta.artworkURL, alt: '', className: 'music-live-monitor-art artwork-square', fallback: 'LIVE', key: `public-monitor-${stream?.id || meta.artworkURL || 'live'}` })}
+            <div class="music-live-monitor-copy">
+              <h1>${escapeHtml(meta.title || stream?.title || 'Melogic Music Live')}</h1>
+              <p>${escapeHtml(metaLine)}</p>
+              <small>${escapeHtml(stream?.hostDisplayName || 'Streamer Display Name')}</small>
+            </div>
+            <div class="music-live-monitor-progress" aria-hidden="true"><span></span></div>
+          </div>
+        `}
+        ${controls}
       </section>
     </main>
   `
   hydrateStableImages()
+  attachLiveVideoElement()
+  bindLiveMonitorControls()
+  startMusicLiveMonitorVisualizer()
+}
+
+function attachLiveVideoElement(root = app) {
+  const video = state.listenerVideoElement
+  if (!video) return
+  video.controls = false
+  video.autoplay = true
+  video.playsInline = true
+  const mount = root.querySelector('[data-live-video-mount], [data-live-monitor-video-mount]')
+  if (!mount) return
+  if (video.parentElement !== mount) {
+    mount.innerHTML = ''
+    mount.appendChild(video)
+  }
+  video.play?.().catch(() => {})
+}
+
+function bindLiveMonitorControls() {
+  const root = app.querySelector('[data-live-monitor-root]')
+  if (!root) return
+  const controls = app.querySelector('[data-live-monitor-controls]')
+  const showControls = () => {
+    controls?.classList.add('is-visible')
+    if (musicMonitorControlsTimer) window.clearTimeout(musicMonitorControlsTimer)
+    musicMonitorControlsTimer = window.setTimeout(() => controls?.classList.remove('is-visible'), 2600)
+  }
+  root.addEventListener('mousemove', showControls)
+  root.addEventListener('pointerdown', showControls)
+  showControls()
+  app.querySelector('[data-live-monitor-audio-toggle]')?.addEventListener('click', (event) => {
+    state.liveMonitor.muted = !state.liveMonitor.muted
+    if (state.listenerAudioElement) {
+      state.listenerAudioElement.muted = state.liveMonitor.muted
+      state.listenerAudioElement.volume = state.player.volume
+      if (!state.liveMonitor.muted) state.listenerAudioElement.play?.().catch(() => {})
+    }
+    event.currentTarget.textContent = state.liveMonitor.muted ? 'Unmute music audio' : 'Mute music audio'
+    showControls()
+  })
+  app.querySelector('[data-live-monitor-video-fullscreen]')?.addEventListener('click', () => {
+    const target = state.listenerVideoElement || app.querySelector('[data-live-monitor-root]')
+    target?.requestFullscreen?.().catch(() => {})
+  })
+}
+
+function startMusicLiveMonitorVisualizer() {
+  if (musicMonitorVisualizerCleanup) musicMonitorVisualizerCleanup()
+  const canvas = app.querySelector('[data-live-monitor-canvas]')
+  if (!canvas) return
+  const context = canvas.getContext('2d')
+  if (!context) return
+  let frame = 0
+  let animationId = 0
+  let analyser = null
+  let frequencyData = null
+  let audioContext = null
+  try {
+    if (state.listenerAudioElement && (window.AudioContext || window.webkitAudioContext)) {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+      audioContext = new AudioContextCtor()
+      analyser = audioContext.createAnalyser()
+      analyser.fftSize = 128
+      const sourceStream = state.listenerAudioElement.srcObject instanceof MediaStream ? state.listenerAudioElement.srcObject : null
+      if (!sourceStream) throw new Error('monitor_audio_stream_unavailable')
+      const source = audioContext.createMediaStreamSource(sourceStream)
+      source.connect(analyser)
+      frequencyData = new Uint8Array(analyser.frequencyBinCount)
+    }
+  } catch {
+    analyser = null
+    frequencyData = null
+    audioContext?.close?.().catch(() => {})
+    audioContext = null
+  }
+  const resize = () => {
+    const scale = Math.min(2, window.devicePixelRatio || 1)
+    canvas.width = Math.max(1, Math.floor(canvas.clientWidth * scale))
+    canvas.height = Math.max(1, Math.floor(canvas.clientHeight * scale))
+    context.setTransform(scale, 0, 0, scale, 0, 0)
+  }
+  const draw = () => {
+    frame += 1
+    const width = canvas.clientWidth || window.innerWidth
+    const height = canvas.clientHeight || window.innerHeight
+    if (canvas.width !== Math.floor(width * Math.min(2, window.devicePixelRatio || 1))) resize()
+    let low = 0.32
+    let mid = 0.24
+    let high = 0.2
+    if (analyser && frequencyData) {
+      analyser.getByteFrequencyData(frequencyData)
+      const avg = (from, to) => {
+        const slice = frequencyData.slice(from, to)
+        return slice.reduce((sum, value) => sum + value, 0) / Math.max(1, slice.length) / 255
+      }
+      low = avg(0, 10)
+      mid = avg(10, 28)
+      high = avg(28, frequencyData.length)
+    } else {
+      low = 0.28 + Math.sin(frame * 0.018) * 0.14
+      mid = 0.24 + Math.sin(frame * 0.026 + 2) * 0.1
+      high = 0.18 + Math.sin(frame * 0.04 + 5) * 0.08
+    }
+    context.clearRect(0, 0, width, height)
+    context.fillStyle = '#000'
+    context.fillRect(0, 0, width, height)
+    const blobs = [
+      ['rgba(103,242,170,', 0.18 + low * 0.28, 0.28, 0.32, 0.18 + low * 0.15],
+      ['rgba(139,230,255,', 0.12 + high * 0.24, 0.72, 0.25, 0.12 + high * 0.12],
+      ['rgba(205,60,203,', 0.1 + mid * 0.22, 0.42, 0.7, 0.16 + mid * 0.12],
+      ['rgba(255,255,255,', 0.06 + high * 0.1, 0.62, 0.58, 0.08 + high * 0.08]
+    ]
+    blobs.forEach(([color, alpha, xBase, yBase, radiusBase], index) => {
+      const x = width * (xBase + Math.sin(frame * (0.006 + index * 0.002) + index) * 0.08)
+      const y = height * (yBase + Math.cos(frame * (0.005 + index * 0.002) + index * 2) * 0.1)
+      const radius = Math.max(width, height) * (radiusBase + (index === 0 ? low : index === 1 ? high : mid) * 0.16)
+      const gradient = context.createRadialGradient(x, y, 0, x, y, radius)
+      gradient.addColorStop(0, `${color}${alpha})`)
+      gradient.addColorStop(1, `${color}0)`)
+      context.fillStyle = gradient
+      context.fillRect(0, 0, width, height)
+    })
+    animationId = window.requestAnimationFrame(draw)
+  }
+  resize()
+  window.addEventListener('resize', resize)
+  draw()
+  musicMonitorVisualizerCleanup = () => {
+    window.cancelAnimationFrame(animationId)
+    window.removeEventListener('resize', resize)
+    audioContext?.close?.().catch(() => {})
+    musicMonitorVisualizerCleanup = null
+  }
 }
 
 function renderLiveDetailPage() {
@@ -2121,9 +2312,16 @@ function renderLiveDetailPage() {
     return
   }
   const canListen = stream.status === 'live' && stream.hostConnected === true && stream.audioPublished === true && isLiveStreamFresh(stream)
+  const hasVideo = streamHasVideoFoundation(stream)
+  const visual = hasVideo
+    ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'Show video stream' : 'Click to watch stream'}"><span>Click to watch stream</span><div data-live-video-mount></div></button>`
+    : renderLiveArtwork(stream, 'music-live-detail-art')
   renderAppShell(`
-    <section class="music-live-detail">
-      ${renderLiveArtwork(stream, 'music-live-detail-art')}
+    <section class="music-live-detail ${hasVideo ? 'has-video-foundation' : ''} ${state.liveVideoExpanded ? 'is-video-expanded' : ''}">
+      <div class="music-live-visual-shell">
+        ${visual}
+        ${hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
+      </div>
       <div class="music-live-detail-copy">
         <span class="music-live-badge">${canListen ? 'LIVE' : 'ENDED'}</span>
         <h1>${escapeHtml(stream.title)}</h1>
@@ -2200,6 +2398,7 @@ function renderPlayer() {
 }
 
 function rerender() {
+  if (state.route.mode !== 'liveMonitor' && musicMonitorVisualizerCleanup) musicMonitorVisualizerCleanup()
   if (state.route.mode === 'release') renderReleaseDetailPage()
   else if (state.route.mode === 'liveMonitor') {
     renderPublicLiveMonitorPage()
@@ -2211,6 +2410,7 @@ function rerender() {
   else renderLandingPage()
   initShellChrome()
   hydrateStableImages()
+  attachLiveVideoElement()
   bindMusicEvents()
   attachMusicHeroVideo()
 }
@@ -2884,6 +3084,10 @@ function disconnectLiveListener() {
     state.listenerAudioElement.remove()
     state.listenerAudioElement = null
   }
+  if (state.listenerVideoElement) {
+    state.listenerVideoElement.remove()
+    state.listenerVideoElement = null
+  }
   if (state.listenerRoom) {
     state.listenerRoom.disconnect()
     state.listenerRoom = null
@@ -2892,19 +3096,21 @@ function disconnectLiveListener() {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
 }
 
-async function joinLiveListener() {
+async function joinLiveListener(options = {}) {
   if (!state.liveStream?.id) return
+  const monitorMode = options.monitor === true || state.route.mode === 'liveMonitor'
   if (['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
+    if (monitorMode || options.forceJoin) return
     disconnectLiveListener()
     rerender()
     return
   }
-  clearPlayer()
+  if (!monitorMode) clearPlayer()
   state.liveStatus = 'connecting'
   state.liveError = ''
   rerender()
   try {
-    const presenceId = livePresenceId(state.liveStream.id)
+    const presenceId = monitorMode ? `${livePresenceId(state.liveStream.id)}-monitor` : livePresenceId(state.liveStream.id)
     const credentials = await joinMusicLiveStream(state.liveStream.id, {
       password: state.livePassword,
       presenceId,
@@ -2917,12 +3123,25 @@ async function joinLiveListener() {
     const room = new Room({ adaptiveStream: true, dynacast: true })
     state.listenerRoom = room
     room.on(RoomEvent.TrackSubscribed, (track) => {
+      const element = track.attach()
+      if (track.kind === 'video') {
+        if (state.listenerVideoElement) state.listenerVideoElement.remove()
+        element.controls = false
+        element.autoplay = true
+        element.muted = true
+        element.playsInline = true
+        element.dataset.musicLiveVideo = 'true'
+        state.listenerVideoElement = element
+        attachLiveVideoElement()
+        rerender()
+        return
+      }
       if (track.kind !== 'audio') return
       if (state.listenerAudioElement) state.listenerAudioElement.remove()
-      const element = track.attach()
       element.controls = false
-      element.autoplay = false
-      element.volume = state.player.volume
+      element.autoplay = monitorMode
+      element.muted = monitorMode ? state.liveMonitor.muted : false
+      element.volume = monitorMode ? state.player.volume : state.player.volume
       element.style.display = 'none'
       element.dataset.musicLiveAudio = 'true'
       document.body.appendChild(element)
@@ -2934,8 +3153,17 @@ async function joinLiveListener() {
       state.liveStatus = 'live'
       updateLiveMediaSession(state.liveStream)
       updateLiveListenerControls()
+      if (state.route.mode === 'liveMonitor') startMusicLiveMonitorVisualizer()
     })
     room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.kind === 'video') {
+        if (state.listenerVideoElement) {
+          state.listenerVideoElement.remove()
+          state.listenerVideoElement = null
+        }
+        rerender()
+        return
+      }
       if (track.kind !== 'audio') return
       if (state.listenerAudioElement) {
         state.listenerAudioElement.remove()
@@ -3197,6 +3425,19 @@ function bindMusicEvents() {
     const passwordForm = app.querySelector('[data-live-password-form]')
     if (passwordForm) state.livePassword = String(new FormData(passwordForm).get('password') || '')
     joinLiveListener().catch(() => {})
+  })
+  app.querySelector('[data-live-video-hero]')?.addEventListener('click', () => {
+    if (!['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
+      const passwordForm = app.querySelector('[data-live-password-form]')
+      if (passwordForm) state.livePassword = String(new FormData(passwordForm).get('password') || '')
+      joinLiveListener().catch(() => {})
+    }
+    state.liveVideoExpanded = true
+    rerender()
+  })
+  app.querySelector('[data-live-hide-video]')?.addEventListener('click', () => {
+    state.liveVideoExpanded = false
+    rerender()
   })
   app.querySelector('[data-live-password-form]')?.addEventListener('input', (event) => {
     state.livePassword = String(new FormData(event.currentTarget).get('password') || '')
@@ -3651,6 +3892,9 @@ async function loadMusicPage() {
     }
     state.loading = false
     rerender()
+    if (state.route.mode === 'liveMonitor' && state.liveStream?.id) {
+      joinLiveListener({ monitor: true, forceJoin: true }).catch(() => {})
+    }
     return
   }
 

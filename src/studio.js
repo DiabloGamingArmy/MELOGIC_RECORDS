@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/studio.css'
-import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
+import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack, createLocalVideoTrack } from 'livekit-client'
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
@@ -64,6 +64,7 @@ import { initStudioBrandLogo } from './components/studioBrandLogo'
 import { stageTypes, templateCards } from './stage/app/stageState'
 
 const app = document.querySelector('#app')
+let studioMonitorVisualizerCleanup = null
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 const stableImageCache = new Map()
@@ -73,9 +74,10 @@ function renderStudioStableImage({ src = '', fallback = '', className = '', key 
   const cacheKey = key || cleanSrc || fallback || 'studio-image'
   const cached = stableImageCache.get(cacheKey)
   const canUseCached = cleanSrc && cached?.status === 'loaded' && cached.src === cleanSrc
+  const displaySrc = canUseCached ? cleanSrc : cached?.lastGoodSrc || ''
   return `
     <span class="studio-stable-image ${esc(className)}" data-studio-stable-image data-stable-image-key="${esc(cacheKey)}" data-stable-image-src="${esc(cleanSrc)}">
-      ${canUseCached ? `<img src="${esc(cleanSrc)}" alt="" loading="lazy" decoding="async" />` : `<span class="studio-stable-image-fallback">${esc(fallback || '?')}</span>`}
+      ${displaySrc ? `<img src="${esc(displaySrc)}" alt="" loading="lazy" decoding="async" />` : `<span class="studio-stable-image-fallback">${esc(fallback || '?')}</span>`}
     </span>
   `
 }
@@ -182,6 +184,7 @@ const state = {
     ending: false,
     room: null,
     localTrack: null,
+    localVideoTrack: null,
     sourceTrack: null,
     heartbeatTimer: 0,
     draftSaveTimer: 0,
@@ -205,6 +208,9 @@ const state = {
       sequenceMuted: false
     },
     selectedDeviceId: '',
+    selectedVideoDeviceId: '',
+    videoPreviewError: '',
+    videoPreviewActive: false,
     devices: [],
     videoDevices: [],
     devicesLoading: false,
@@ -1299,14 +1305,17 @@ function renderInputSourcePanel() {
           </select></label>
           <label>Camera / Screen<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
             <option value="">Default camera or screen source</option>
-            ${live.videoDevices.map((device) => `<option value="${esc(device.deviceId)}">${esc(device.label || `Video input ${live.videoDevices.indexOf(device) + 1}`)}</option>`).join('')}
+            ${live.videoDevices.map((device) => `<option value="${esc(device.deviceId)}" ${live.selectedVideoDeviceId === device.deviceId ? 'selected' : ''}>${esc(device.label || `Video input ${live.videoDevices.indexOf(device) + 1}`)}</option>`).join('')}
           </select></label>
           <label>Transition<select data-live-video-transition><option value="cut" ${live.videoTransition === 'cut' ? 'selected' : ''}>Cut</option><option value="fade" ${live.videoTransition === 'fade' ? 'selected' : ''}>Fade</option></select></label>
-          <p class="studio-live-source-status">${esc(live.activeSequence?.title || 'No sequence selected')}</p>
-          <p class="studio-live-source-status">Video foundation ready. Live public video publishing needs the next backend/client video publish pass.</p>
+          <div class="studio-live-video-preview ${live.videoPreviewActive ? 'is-active' : ''}" data-live-video-preview-mount>
+            <span>${esc(live.videoPreviewError || (live.videoPreviewActive ? 'Video input preview active' : 'No video input preview'))}</span>
+          </div>
+          <p class="studio-live-source-status">${esc(live.videoPreviewError || (live.localVideoTrack ? `Video input ready. Transition: ${live.videoTransition}.` : 'Choose a camera/source and click Use Input to preview and publish while live.'))}</p>
           <div class="studio-live-action-bar">
-            <button type="button" data-live-set-source="sequence" ${live.inputSource === 'sequence' ? 'disabled' : ''}>Use Sequence Output</button>
-            <a href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>
+            <button type="button" data-live-use-video-input>${live.localVideoTrack ? 'Use Input Again' : 'Use Input'}</button>
+            <button type="button" data-live-refresh-video>${live.devicesLoading ? 'Refreshing...' : 'Refresh Video'}</button>
+            <a class="studio-live-button" href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>
           </div>
         </article>
       </div>
@@ -1425,11 +1434,15 @@ function renderChatPanel() {
 function renderPreviewPanel() {
   const live = liveState()
   const item = liveItemById(live.currentItemId) || liveSelectedItem()
+  const videoURL = item?.videoURLSnapshot || item?.videoURL || ''
+  const previewMedia = videoURL
+    ? `<button type="button" class="studio-live-sequence-video-preview" data-live-preview-fullscreen aria-label="Open video preview fullscreen"><video muted playsinline preload="metadata" src="${esc(videoURL)}"></video></button>`
+    : `<div class="studio-live-deck-art">${item ? liveItemArt(item) : '<span>-</span>'}</div>`
   return `
     <section class="studio-live-panel">
       <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Preview / Monitor</h1><p>Detached monitor windows are monitor-only and do not publish output.</p></div></header>
       <div class="studio-live-monitor-preview">
-        <div class="studio-live-deck-art">${item ? liveItemArt(item) : '<span>-</span>'}</div>
+        ${previewMedia}
         <div><h2>${esc(item?.titleSnapshot || 'No item loaded')}</h2><p>${esc(item?.type === 'video' ? 'Video preview' : 'Audio-only preview')}</p><span>${esc(live.outputStatus)}</span></div>
       </div>
       <div class="studio-live-action-bar"><button type="button" data-live-open-monitor>Open Monitor</button></div>
@@ -1654,29 +1667,98 @@ function renderLiveMonitorPage() {
   const isVideo = item?.type === 'video' && (item.videoURLSnapshot || item.videoURL)
   const station = snapshot.stream || liveState().stream || liveState().streamForm || {}
   const progress = snapshot.progress || { percent: 0, current: 0, duration: Number(item?.durationMs || 0) / 1000 }
-  const dots = Array.from({ length: 28 }, (_, index) => `<i style="--i:${index};--x:${(index * 37) % 100}%;--y:${(index * 23) % 100}%"></i>`).join('')
+  const title = item?.titleSnapshot || item?.title || station.title || 'Live Studio Broadcast'
+  const artist = item?.artistSnapshot || item?.artist || station.hostDisplayName || 'Melogic Music Live'
+  const album = item?.albumSnapshot || item?.album || station.category || ''
+  const streamer = station.hostDisplayName || state.user?.displayName || 'Streamer Display Name'
+  const metaLine = album ? `${artist} - ${album}` : artist
+  const artwork = renderStudioStableImage({ src: item?.artworkURLSnapshot || item?.artworkURL || station.coverArtURL || '', fallback: 'Audio', key: `live-monitor-${item?.itemId || item?.assetId || station.streamId || 'audio'}` })
   if (isVideo) {
     return `
-      <section class="studio-live-monitor-surface is-video">
-        <video autoplay playsinline muted src="${esc(item.videoURLSnapshot || item.videoURL)}"></video>
+      <section class="studio-live-monitor-surface is-audio-video" data-studio-monitor-root>
+        <canvas class="studio-live-monitor-canvas" data-studio-monitor-canvas aria-hidden="true"></canvas>
+        <div class="studio-live-monitor-brand">MELOGIC STREAMING</div>
+        <div class="studio-live-monitor-video-layout">
+          <div class="studio-live-monitor-video-frame">
+            <video autoplay playsinline muted src="${esc(item.videoURLSnapshot || item.videoURL)}"></video>
+          </div>
+          <aside class="studio-live-monitor-side">
+            <div class="studio-live-monitor-art artwork-square">${artwork}</div>
+            <div class="studio-live-monitor-copy">
+              <h2>${esc(title)}</h2>
+              <p>${esc(metaLine)}</p>
+              <small>${esc(streamer)}</small>
+            </div>
+          </aside>
+        </div>
       </section>
     `
   }
   return `
-    <section class="studio-live-monitor-surface is-audio">
-      <div class="studio-live-monitor-ambience" aria-hidden="true">${dots}</div>
-      <main>
-        <div class="studio-live-monitor-art artwork-square">${renderStudioStableImage({ src: item?.artworkURLSnapshot || item?.artworkURL || station.coverArtURL || '', fallback: 'Audio', key: `live-monitor-${item?.itemId || item?.assetId || station.streamId || 'audio'}` })}</div>
+    <section class="studio-live-monitor-surface is-audio-only" data-studio-monitor-root>
+      <canvas class="studio-live-monitor-canvas" data-studio-monitor-canvas aria-hidden="true"></canvas>
+      <div class="studio-live-monitor-brand">MELOGIC STREAMING</div>
+      <main class="studio-live-monitor-core">
+        <div class="studio-live-monitor-art artwork-square">${artwork}</div>
         <div class="studio-live-monitor-copy">
-          <h2>${esc(item?.titleSnapshot || item?.title || station.title || 'Live Studio Broadcast')}</h2>
-          <p>${esc(item?.artistSnapshot || item?.artist || station.hostDisplayName || 'Melogic Music Live')}</p>
-          <small>${esc(item?.albumSnapshot || item?.album || snapshot.status || station.category || 'Monitor-only preview')}</small>
+          <h2>${esc(title)}</h2>
+          <p>${esc(metaLine)}</p>
+          <small>${esc(streamer)}</small>
         </div>
         <div class="studio-live-monitor-progress" aria-hidden="true"><span style="width:${Math.max(0, Math.min(100, Number(progress.percent || 0)))}%"></span></div>
         <small>${esc(formatMs(Number(progress.current || 0) * 1000))} / ${esc(formatMs(Number(progress.duration || 0) * 1000))}</small>
       </main>
     </section>
   `
+}
+
+function startStudioLiveMonitorVisualizer() {
+  if (studioMonitorVisualizerCleanup) studioMonitorVisualizerCleanup()
+  const canvas = app.querySelector('[data-studio-monitor-canvas]')
+  if (!canvas) return
+  const context = canvas.getContext('2d')
+  if (!context) return
+  let frame = 0
+  let animationId = 0
+  const resize = () => {
+    const scale = Math.min(2, window.devicePixelRatio || 1)
+    canvas.width = Math.max(1, Math.floor(canvas.clientWidth * scale))
+    canvas.height = Math.max(1, Math.floor(canvas.clientHeight * scale))
+    context.setTransform(scale, 0, 0, scale, 0, 0)
+  }
+  const draw = () => {
+    frame += 1
+    const width = canvas.clientWidth || window.innerWidth
+    const height = canvas.clientHeight || window.innerHeight
+    if (canvas.width !== Math.floor(width * Math.min(2, window.devicePixelRatio || 1))) resize()
+    context.clearRect(0, 0, width, height)
+    context.fillStyle = '#000'
+    context.fillRect(0, 0, width, height)
+    const pulse = 0.5 + Math.sin(frame * 0.028) * 0.5
+    ;[
+      ['rgba(103,242,170,', 0.18 + pulse * 0.16, 0.5, 0.42, 0.24],
+      ['rgba(139,230,255,', 0.12 + pulse * 0.12, 0.74, 0.25, 0.16],
+      ['rgba(205,60,203,', 0.1 + pulse * 0.14, 0.28, 0.72, 0.2]
+    ].forEach(([color, alpha, xBase, yBase, radiusBase], index) => {
+      const x = width * (xBase + Math.sin(frame * (0.007 + index * 0.002) + index) * 0.09)
+      const y = height * (yBase + Math.cos(frame * (0.006 + index * 0.002) + index * 2) * 0.12)
+      const radius = Math.max(width, height) * (radiusBase + pulse * 0.1)
+      const gradient = context.createRadialGradient(x, y, 0, x, y, radius)
+      gradient.addColorStop(0, `${color}${alpha})`)
+      gradient.addColorStop(1, `${color}0)`)
+      context.fillStyle = gradient
+      context.fillRect(0, 0, width, height)
+    })
+    animationId = window.requestAnimationFrame(draw)
+  }
+  resize()
+  window.addEventListener('resize', resize)
+  draw()
+  studioMonitorVisualizerCleanup = () => {
+    window.cancelAnimationFrame(animationId)
+    window.removeEventListener('resize', resize)
+    studioMonitorVisualizerCleanup = null
+  }
 }
 
 function renderLiveStatusBar() {
@@ -1702,9 +1784,11 @@ function renderShell() {
   if (active === 'live' && isLiveMonitorRoute()) {
     app.innerHTML = `<main class="studio-live-monitor-page">${renderLiveMonitorPage()}</main>`
     hydrateStudioStableImages(app)
+    startStudioLiveMonitorVisualizer()
     bind()
     return
   }
+  if (studioMonitorVisualizerCleanup) studioMonitorVisualizerCleanup()
   const content = active === 'hub' ? renderHub() : active === 'stagemaker' ? renderStagemaker() : active === 'live' ? renderLiveStudio() : renderDaw()
   app.innerHTML = active === 'live'
     ? `${navShell({ currentPage: 'studio' })}<main class="studio-page studio-live-page"><section class="studio-live-shell">${renderLiveRail(currentLivePanel())}<section class="studio-live-content">${content}${renderLiveStatusBar()}</section></section></main>`
@@ -1712,6 +1796,7 @@ function renderShell() {
   initShellChrome()
   if (active !== 'live') initStudioBrandLogo()
   hydrateStudioStableImages(app)
+  if (active === 'live') attachLiveVideoPreview()
   bind()
 }
 
@@ -2661,6 +2746,70 @@ function setLiveAvEnabled(kind = 'audio', enabled = true) {
   renderShell()
 }
 
+function attachLiveVideoPreview() {
+  const live = liveState()
+  const mount = app.querySelector('[data-live-video-preview-mount]')
+  if (!mount || !live.localVideoTrack) return
+  let video = mount.querySelector('video')
+  if (!video) {
+    mount.innerHTML = ''
+    video = document.createElement('video')
+    video.autoplay = true
+    video.muted = true
+    video.playsInline = true
+    video.controls = false
+    mount.appendChild(video)
+  }
+  try {
+    live.localVideoTrack.attach(video)
+    video.play?.().catch(() => {})
+  } catch {
+    live.videoPreviewError = 'Video preview could not attach.'
+  }
+}
+
+async function useLiveVideoInput() {
+  const live = liveState()
+  live.videoPreviewError = ''
+  live.sourceMessage = ''
+  renderShell()
+  try {
+    if (live.localVideoTrack) {
+      await live.room?.localParticipant?.unpublishTrack?.(live.localVideoTrack, false).catch(() => {})
+      live.localVideoTrack.stop?.()
+    }
+    live.localVideoTrack = null
+    if (live.videoSource === 'sequence') {
+      const item = liveItemById(live.currentItemId) || liveSelectedItem()
+      if (!item?.videoURLSnapshot && !item?.videoURL) throw new Error('Select or play a sequence video item before using sequence video.')
+      live.videoPreviewActive = true
+      live.videoPreviewError = 'Sequence video preview is shown in the Sequence Editor preview.'
+      renderShell()
+      return
+    }
+    const constraints = live.selectedVideoDeviceId ? { deviceId: live.selectedVideoDeviceId } : {}
+    const track = await createLocalVideoTrack(constraints)
+    live.localVideoTrack = track
+    live.videoPreviewActive = true
+    if (live.room && live.videoEnabled) {
+      await live.room.localParticipant.publishTrack(track, {
+        source: Track?.Source?.Camera || 'camera',
+        name: 'melogic-live-video'
+      })
+      live.outputStatus = `Video input publishing with ${live.videoTransition} transition preference.`
+    } else {
+      live.sourceMessage = 'Video input preview is local. Enable Video and go live to publish this source.'
+    }
+    renderShell()
+    attachLiveVideoPreview()
+  } catch (error) {
+    live.videoPreviewActive = false
+    live.localVideoTrack = null
+    live.videoPreviewError = error?.message || 'Selected video source could not be opened.'
+    renderShell()
+  }
+}
+
 function updateLiveMixerValue(key = '', value = 1) {
   const live = liveState()
   if (!['browserGain', 'sequenceGain', 'masterGain'].includes(key)) return
@@ -2878,7 +3027,7 @@ async function startLiveStudioStream() {
       streamId: live.draftStreamId,
       rightsAccepted: true,
       archiveRequested: false,
-      audioOnly: true
+      audioOnly: !live.videoEnabled
     })
     pendingStreamId = response.streamId || ''
     const room = new Room({ adaptiveStream: true, dynacast: true })
@@ -2899,6 +3048,7 @@ async function startLiveStudioStream() {
       live.outputStatus = live.ending ? 'Live Studio disconnected.' : 'Live Studio disconnected unexpectedly.'
       live.room = null
       live.localTrack = null
+      live.localVideoTrack = live.videoPreviewActive ? live.localVideoTrack : null
       if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
       live.heartbeatTimer = 0
       renderShell()
@@ -2906,6 +3056,12 @@ async function startLiveStudioStream() {
     await room.connect(response.url, response.hostToken)
     live.localTrack = localTrack
     await room.localParticipant.publishTrack(localTrack, publishOptionsForLiveSource())
+    if (live.videoEnabled && live.localVideoTrack) {
+      await room.localParticipant.publishTrack(live.localVideoTrack, {
+        source: Track?.Source?.Camera || 'camera',
+        name: 'melogic-live-video'
+      })
+    }
     await markMusicLiveStreamOnAir(pendingStreamId)
     live.draftStreamId = pendingStreamId
     subscribeLiveStudioStream(pendingStreamId)
@@ -2915,6 +3071,7 @@ async function startLiveStudioStream() {
       if (!live.streamId) return
       heartbeatMusicLiveStream(live.streamId, {
         audioPublished: true,
+        videoPublished: Boolean(live.videoEnabled && live.localVideoTrack),
         connectionStatus: 'live'
       }).catch(() => {})
     }, 15000)
@@ -2955,6 +3112,7 @@ async function endLiveStudioStream() {
     live.heartbeatTimer = 0
     try {
       if (live.localTrack) await live.room?.localParticipant?.unpublishTrack?.(live.localTrack, false)
+      if (live.localVideoTrack) await live.room?.localParticipant?.unpublishTrack?.(live.localVideoTrack, false)
     } catch {}
     live.room?.disconnect?.()
     await endMusicLiveStream(streamId)
@@ -3238,12 +3396,34 @@ function bindLiveStudioControls() {
     live.videoSource = e.currentTarget.value === 'sequence' ? 'sequence' : 'browser'
     renderShell()
   })
+  app.querySelector('[data-live-video-device]')?.addEventListener('change', (e) => {
+    live.selectedVideoDeviceId = e.currentTarget.value || ''
+    live.videoPreviewActive = false
+    live.videoPreviewError = ''
+    live.localVideoTrack?.stop?.()
+    live.localVideoTrack = null
+    renderShell()
+  })
   app.querySelector('[data-live-video-transition]')?.addEventListener('change', (e) => {
     live.videoTransition = e.currentTarget.value === 'fade' ? 'fade' : 'cut'
+  })
+  app.querySelector('[data-live-use-video-input]')?.addEventListener('click', () => {
+    useLiveVideoInput().catch(() => {})
+  })
+  app.querySelector('[data-live-refresh-video]')?.addEventListener('click', () => {
+    refreshLiveInputDevices().then(() => {
+      if (live.selectedVideoDeviceId || live.videoSource === 'browser') return useLiveVideoInput()
+      return null
+    }).catch(() => {})
   })
   app.querySelector('[data-live-refresh-devices]')?.addEventListener('click', () => refreshLiveInputDevices())
   app.querySelector('[data-live-prepare-mic]')?.addEventListener('click', () => prepareLiveMicSource())
   app.querySelector('[data-live-open-monitor]')?.addEventListener('click', () => openLiveMonitor())
+  app.querySelector('[data-live-preview-fullscreen]')?.addEventListener('click', (e) => {
+    const video = e.currentTarget.querySelector('video') || e.currentTarget
+    video.requestFullscreen?.().catch(() => {})
+    video.play?.().catch(() => {})
+  })
   app.querySelector('[data-live-metadata-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const data = new FormData(e.currentTarget)
