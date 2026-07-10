@@ -1,9 +1,11 @@
 import './styles/base.css'
 import './styles/studio.css'
 import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
+import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { waitForInitialAuthState, subscribeToAuthState } from './firebase/auth'
+import { storage } from './firebase/storage'
 import { ROUTES, authRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
 import {
   deleteMusicLiveSequenceItem,
@@ -189,8 +191,22 @@ const state = {
     chatMessages: [],
     panel: '',
     inputSource: 'browser',
+    audioEnabled: true,
+    videoEnabled: false,
+    browserInputEnabled: true,
+    sequenceInputEnabled: false,
+    videoSource: 'browser',
+    videoTransition: 'cut',
+    mixer: {
+      browserGain: 1,
+      sequenceGain: 1,
+      masterGain: 1,
+      browserMuted: false,
+      sequenceMuted: false
+    },
     selectedDeviceId: '',
     devices: [],
+    videoDevices: [],
     devicesLoading: false,
     micPrepared: false,
     micPreparing: false,
@@ -204,9 +220,12 @@ const state = {
       accessMode: 'public',
       password: '',
       coverArtURL: '',
+      coverArtPath: '',
+      coverArtSource: 'fallback',
       rightsAccepted: false,
       audioMode: 'music'
     },
+    uploadingCover: false,
     savingInfo: false,
     sequenceMenuOpen: false,
     menu: null,
@@ -226,6 +245,7 @@ const state = {
     monitorEnabled: false,
     monitorVolume: 0.85,
     monitorConnected: false,
+    micProgramSource: null,
     micLevel: 0,
     micMeterTimer: 0,
     micMeterContext: null,
@@ -809,6 +829,74 @@ function stopLiveAssetPreview({ render = true } = {}) {
   if (render) renderShell()
 }
 
+async function squareCoverFile(file) {
+  if (!file?.type?.startsWith('image/')) throw new Error('Cover upload must be an image file.')
+  if (file.size > 8 * 1024 * 1024) throw new Error('Cover image must be 8 MB or smaller.')
+  const bitmap = await createImageBitmap(file)
+  const size = 1080
+  const sourceSize = Math.min(bitmap.width, bitmap.height)
+  const sx = Math.max(0, Math.floor((bitmap.width - sourceSize) / 2))
+  const sy = Math.max(0, Math.floor((bitmap.height - sourceSize) / 2))
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const context = canvas.getContext('2d')
+  context.drawImage(bitmap, sx, sy, sourceSize, sourceSize, 0, 0, size, size)
+  bitmap.close?.()
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob((nextBlob) => nextBlob ? resolve(nextBlob) : reject(new Error('Could not prepare square cover image.')), 'image/jpeg', 0.88)
+  })
+  return new File([blob], 'cover-1080.jpg', { type: 'image/jpeg' })
+}
+
+async function deleteLiveCover(path = '') {
+  if (!storage || !path) return
+  await deleteObject(storageRef(storage, path)).catch(() => {})
+}
+
+async function ensureLiveDraftIdForUpload() {
+  const live = liveState()
+  if (live.streamId || live.draftStreamId) return live.streamId || live.draftStreamId
+  const response = await prepareMusicLiveStreamDraft(liveStreamPayload())
+  live.draftStreamId = response.streamId || live.draftStreamId
+  if (!live.draftStreamId) throw new Error('Save a stream draft before uploading cover art.')
+  return live.draftStreamId
+}
+
+async function uploadLiveStudioCover(file) {
+  const live = liveState()
+  if (!state.user?.uid || !storage || !file) return
+  live.uploadingCover = true
+  live.error = ''
+  live.outputStatus = 'Preparing square cover image...'
+  renderShell()
+  try {
+    const streamId = await ensureLiveDraftIdForUpload()
+    const squareFile = await squareCoverFile(file)
+    if (live.streamForm.coverArtSource === 'upload') await deleteLiveCover(live.streamForm.coverArtPath)
+    live.outputStatus = 'Uploading station cover...'
+    renderShell()
+    const path = `users/${state.user.uid}/liveStudio/${streamId}/cover/cover-1080.jpg`
+    const ref = storageRef(storage, path)
+    await uploadBytes(ref, squareFile, {
+      contentType: 'image/jpeg',
+      customMetadata: { ownerUid: state.user.uid, streamId, type: 'music-live-cover' }
+    })
+    const url = await getDownloadURL(ref)
+    live.streamForm.coverArtURL = url
+    live.streamForm.coverArtPath = path
+    live.streamForm.coverArtSource = 'upload'
+    await updateMusicLiveStreamInfo(liveStreamPayload()).catch(() => {})
+    live.outputStatus = 'Station cover uploaded.'
+  } catch (error) {
+    console.error('[studio-live] cover upload failed', error)
+    live.error = error?.message || 'Cover image could not be uploaded.'
+  } finally {
+    live.uploadingCover = false
+    renderShell()
+  }
+}
+
 function updateLiveAssetPreviewDom() {
   const preview = liveState().assetPreview
   if (!preview.audio) return
@@ -1137,7 +1225,17 @@ function renderStreamDetailsPanel() {
             <label>Password<input name="password" type="password" autocomplete="new-password" value="${esc(form.password)}" placeholder="${form.accessMode === 'password' ? 'Required for new password streams' : 'Only used for password access'}" /></label>
           </div>
           <label>Tags<input name="tags" value="${esc(form.tags)}" placeholder="radio, release party, talk" /></label>
-          <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
+          <div class="studio-live-cover-tools">
+            <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
+            <div class="studio-live-action-bar">
+              <label class="studio-live-upload-button">
+                <input type="file" accept="image/*" data-live-cover-upload />
+                ${live.uploadingCover ? 'Uploading...' : 'Upload Cover'}
+              </label>
+              <button type="button" data-live-cover-clear ${form.coverArtURL || form.coverArtPath ? '' : 'disabled'}>Clear Cover</button>
+            </div>
+            <small>${form.coverArtSource === 'upload' ? 'Using uploaded square cover.' : form.coverArtURL ? 'Using linked cover URL.' : 'No cover selected yet.'}</small>
+          </div>
           <label class="studio-live-check"><input name="rightsAccepted" type="checkbox" ${form.rightsAccepted ? 'checked' : ''} /> I have the rights and permissions required to broadcast this stream.</label>
           <div class="studio-live-action-bar">
             <button type="submit" data-live-save-info ${live.savingInfo ? 'disabled' : ''}>${live.streamId ? 'Save / Update Stream Info' : 'Save Draft Details'}</button>
@@ -1163,30 +1261,49 @@ function renderInputSourcePanel() {
           <p>Choose what feeds the Melogic Music listener stream.</p>
         </div>
       </header>
-      <div class="studio-live-source-grid">
+      <div class="studio-live-source-grid studio-live-source-grid--foundation">
         <article class="studio-live-source-option ${live.inputSource === 'browser' ? 'is-active' : ''}">
-          <div>
-            <h2>Browser Input Source</h2>
-            <p>Use a microphone, audio interface, virtual cable, or mixer exposed to the browser.</p>
-          </div>
+          <header class="studio-live-source-card-header">
+            <div><h2>Audio Program</h2><p>Mix browser mic/interface and Sequence Editor output into one program bus.</p></div>
+            <label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="audio" ${live.audioEnabled ? 'checked' : ''} /><span></span>Enable Audio</label>
+          </header>
+          <label class="studio-live-check"><input type="checkbox" data-live-audio-route="browser" ${live.browserInputEnabled ? 'checked' : ''} /> Browser Audio Input</label>
+          <label class="studio-live-check"><input type="checkbox" data-live-audio-route="sequence" ${live.sequenceInputEnabled || live.inputSource === 'sequence' ? 'checked' : ''} /> Sequence Audio Output</label>
           <label>Device<select data-live-device-select ${live.devicesLoading ? 'disabled' : ''}>
             <option value="">Default input</option>
             ${live.devices.map((device) => `<option value="${esc(device.deviceId)}" ${live.selectedDeviceId === device.deviceId ? 'selected' : ''}>${esc(device.label || `Input ${device.deviceId.slice(0, 6)}`)}</option>`).join('')}
           </select></label>
           <label>Audio quality<select data-live-audio-mode><option value="music" ${live.streamForm.audioMode === 'music' ? 'selected' : ''}>Music quality stereo</option><option value="voice" ${live.streamForm.audioMode === 'voice' ? 'selected' : ''}>Voice optimized</option></select></label>
           <div class="studio-live-meter" aria-label="Browser input level"><i data-live-meter-fill style="width:${Math.round((live.micLevel || 0) * 100)}%"></i></div>
+          <div class="studio-live-mixer">
+            <label><span>Browser</span><input type="range" min="0" max="1.25" step="0.01" value="${Number(live.mixer.browserGain ?? 1)}" data-live-mixer="browserGain" /></label>
+            <button type="button" class="${live.mixer.browserMuted ? 'is-active' : ''}" data-live-mixer-mute="browser">${live.mixer.browserMuted ? 'Unmute Mic' : 'Mute Mic'}</button>
+            <label><span>Sequence</span><input type="range" min="0" max="1.25" step="0.01" value="${Number(live.mixer.sequenceGain ?? 1)}" data-live-mixer="sequenceGain" /></label>
+            <button type="button" class="${live.mixer.sequenceMuted ? 'is-active' : ''}" data-live-mixer-mute="sequence">${live.mixer.sequenceMuted ? 'Unmute Seq' : 'Mute Seq'}</button>
+            <label><span>Master</span><input type="range" min="0" max="1.25" step="0.01" value="${Number(live.mixer.masterGain ?? 1)}" data-live-mixer="masterGain" /></label>
+          </div>
           <div class="studio-live-action-bar">
             <button type="button" data-live-set-source="browser" ${live.inputSource === 'browser' ? 'disabled' : ''}>Use Browser Input</button>
             <button type="button" data-live-refresh-devices>${live.devicesLoading ? 'Refreshing...' : 'Refresh Mic'}</button>
             <button type="button" data-live-prepare-mic ${live.micPreparing ? 'disabled' : ''}>${live.micPrepared ? 'Mic Ready' : live.micPreparing ? 'Preparing...' : 'Enable Mic'}</button>
           </div>
         </article>
-        <article class="studio-live-source-option ${live.inputSource === 'sequence' ? 'is-active' : ''}">
-          <div>
-            <h2>Sequence Editor / Sequence Software</h2>
-            <p>Use the internal playout engine as the stream source. No microphone is required.</p>
-          </div>
+        <article class="studio-live-source-option ${live.videoEnabled ? 'is-active' : ''}">
+          <header class="studio-live-source-card-header">
+            <div><h2>Video Foundation</h2><p>Prepare browser or sequence video source selection. Public video broadcasting is coming soon.</p></div>
+            <label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="video" ${live.videoEnabled ? 'checked' : ''} /><span></span>Enable Video</label>
+          </header>
+          <label>Video source<select data-live-video-source>
+            <option value="browser" ${live.videoSource === 'browser' ? 'selected' : ''}>Browser Video Input</option>
+            <option value="sequence" ${live.videoSource === 'sequence' ? 'selected' : ''}>Sequence Video Source</option>
+          </select></label>
+          <label>Camera / Screen<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
+            <option value="">Default camera or screen source</option>
+            ${live.videoDevices.map((device) => `<option value="${esc(device.deviceId)}">${esc(device.label || `Video input ${live.videoDevices.indexOf(device) + 1}`)}</option>`).join('')}
+          </select></label>
+          <label>Transition<select data-live-video-transition><option value="cut" ${live.videoTransition === 'cut' ? 'selected' : ''}>Cut</option><option value="fade" ${live.videoTransition === 'fade' ? 'selected' : ''}>Fade</option></select></label>
           <p class="studio-live-source-status">${esc(live.activeSequence?.title || 'No sequence selected')}</p>
+          <p class="studio-live-source-status">Video foundation ready. Live public video publishing needs the next backend/client video publish pass.</p>
           <div class="studio-live-action-bar">
             <button type="button" data-live-set-source="sequence" ${live.inputSource === 'sequence' ? 'disabled' : ''}>Use Sequence Output</button>
             <a href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>
@@ -1535,12 +1652,13 @@ function renderLiveMonitorPage() {
   } catch {}
   const item = snapshot.item || liveItemById(liveState().currentItemId) || liveSelectedItem()
   const isVideo = item?.type === 'video' && (item.videoURLSnapshot || item.videoURL)
+  const station = snapshot.stream || liveState().stream || liveState().streamForm || {}
   const progress = snapshot.progress || { percent: 0, current: 0, duration: Number(item?.durationMs || 0) / 1000 }
   const dots = Array.from({ length: 28 }, (_, index) => `<i style="--i:${index};--x:${(index * 37) % 100}%;--y:${(index * 23) % 100}%"></i>`).join('')
   if (isVideo) {
     return `
       <section class="studio-live-monitor-surface is-video">
-        <video controls autoplay playsinline src="${esc(item.videoURLSnapshot || item.videoURL)}"></video>
+        <video autoplay playsinline muted src="${esc(item.videoURLSnapshot || item.videoURL)}"></video>
       </section>
     `
   }
@@ -1548,11 +1666,11 @@ function renderLiveMonitorPage() {
     <section class="studio-live-monitor-surface is-audio">
       <div class="studio-live-monitor-ambience" aria-hidden="true">${dots}</div>
       <main>
-        <div class="studio-live-monitor-art">${renderStudioStableImage({ src: item?.artworkURLSnapshot || item?.artworkURL || '', fallback: 'Audio', key: `live-monitor-${item?.itemId || item?.assetId || 'audio'}` })}</div>
+        <div class="studio-live-monitor-art artwork-square">${renderStudioStableImage({ src: item?.artworkURLSnapshot || item?.artworkURL || station.coverArtURL || '', fallback: 'Audio', key: `live-monitor-${item?.itemId || item?.assetId || station.streamId || 'audio'}` })}</div>
         <div class="studio-live-monitor-copy">
-          <h2>${esc(item?.titleSnapshot || item?.title || 'No item loaded')}</h2>
-          <p>${esc(item?.artistSnapshot || item?.artist || 'Monitoring Sequence Output')}</p>
-          <small>${esc(item?.albumSnapshot || item?.album || snapshot.status || 'Monitor-only preview')}</small>
+          <h2>${esc(item?.titleSnapshot || item?.title || station.title || 'Live Studio Broadcast')}</h2>
+          <p>${esc(item?.artistSnapshot || item?.artist || station.hostDisplayName || 'Melogic Music Live')}</p>
+          <small>${esc(item?.albumSnapshot || item?.album || snapshot.status || station.category || 'Monitor-only preview')}</small>
         </div>
         <div class="studio-live-monitor-progress" aria-hidden="true"><span style="width:${Math.max(0, Math.min(100, Number(progress.percent || 0)))}%"></span></div>
         <small>${esc(formatMs(Number(progress.current || 0) * 1000))} / ${esc(formatMs(Number(progress.duration || 0) * 1000))}</small>
@@ -1582,8 +1700,7 @@ function renderLiveStatusBar() {
 function renderShell() {
   const active = currentStudioSection()
   if (active === 'live' && isLiveMonitorRoute()) {
-    app.innerHTML = `${navShell({ currentPage: 'studio' })}<main class="studio-live-monitor-page">${renderLiveMonitorPage()}</main>`
-    initShellChrome()
+    app.innerHTML = `<main class="studio-live-monitor-page">${renderLiveMonitorPage()}</main>`
     hydrateStudioStableImages(app)
     bind()
     return
@@ -1662,6 +1779,8 @@ function hydrateLiveStudioFromStream(stream = null) {
     accessMode: stream.accessMode || live.streamForm.accessMode,
     password: live.streamForm.password || '',
     coverArtURL: stream.coverArtURL || '',
+    coverArtPath: stream.coverArtPath || '',
+    coverArtSource: stream.coverArtSource || (stream.coverArtURL ? 'url' : 'fallback'),
     audioMode: stream.audioMode === 'voice' ? 'voice' : 'music'
   }
   if (stream.selectedSequenceId) {
@@ -1784,14 +1903,22 @@ function ensureLiveAudioGraph() {
   if (!AudioContextCtor) throw new Error('This browser cannot run Live Studio audio.')
   const context = new AudioContextCtor()
   const masterGain = context.createGain()
+  const micGain = context.createGain()
+  const sequenceGain = context.createGain()
   const monitorGain = context.createGain()
   const destination = context.createMediaStreamDestination()
-  masterGain.gain.value = 1
+  masterGain.gain.value = live.audioEnabled ? Number(live.mixer.masterGain ?? 1) : 0
+  micGain.gain.value = live.browserInputEnabled && !live.mixer.browserMuted ? Number(live.mixer.browserGain ?? 1) : 0
+  sequenceGain.gain.value = (live.sequenceInputEnabled || live.inputSource === 'sequence') && !live.mixer.sequenceMuted ? Number(live.mixer.sequenceGain ?? 1) : 0
   monitorGain.gain.value = Number(live.monitorVolume || 0.85)
+  micGain.connect(masterGain)
+  sequenceGain.connect(masterGain)
   masterGain.connect(monitorGain)
   masterGain.connect(destination)
   live.audioContext = context
   live.masterGain = masterGain
+  live.micGain = micGain
+  live.sequenceGain = sequenceGain
   live.monitorGain = monitorGain
   live.destination = destination
   live.outputTrack = destination.stream.getAudioTracks()[0] || null
@@ -1802,6 +1929,9 @@ function ensureLiveAudioGraph() {
 function syncLiveMonitorRoute() {
   const live = liveState()
   if (!live.audioContext || !live.monitorGain) return
+  if (live.masterGain) live.masterGain.gain.value = live.audioEnabled ? Number(live.mixer.masterGain ?? 1) : 0
+  if (live.micGain) live.micGain.gain.value = live.browserInputEnabled && !live.mixer.browserMuted ? Number(live.mixer.browserGain ?? 1) : 0
+  if (live.sequenceGain) live.sequenceGain.gain.value = (live.sequenceInputEnabled || live.inputSource === 'sequence') && !live.mixer.sequenceMuted ? Number(live.mixer.sequenceGain ?? 1) : 0
   live.monitorGain.gain.value = Number(live.monitorVolume || 0)
   if (live.monitorEnabled && !live.monitorConnected) {
     try {
@@ -1814,6 +1944,22 @@ function syncLiveMonitorRoute() {
   }
 }
 
+function syncLiveMicProgramRoute() {
+  const live = liveState()
+  const graph = ensureLiveAudioGraph()
+  try { live.micProgramSource?.disconnect?.() } catch {}
+  live.micProgramSource = null
+  const rawTrack = live.sourceTrack?.mediaStreamTrack || live.sourceTrack
+  if (!rawTrack || !graph.micGain) return
+  try {
+    live.micProgramSource = graph.audioContext.createMediaStreamSource(new MediaStream([rawTrack]))
+    live.micProgramSource.connect(graph.micGain)
+  } catch (error) {
+    console.warn('[studio-live] mic program route failed', error)
+  }
+  syncLiveMonitorRoute()
+}
+
 function stopLiveMicMeter() {
   const live = liveState()
   if (live.micMeterTimer) window.clearInterval(live.micMeterTimer)
@@ -1821,9 +1967,11 @@ function stopLiveMicMeter() {
   try { live.micMeterSource?.disconnect?.() } catch {}
   try { live.micMeterAnalyser?.disconnect?.() } catch {}
   try { live.micMeterContext?.close?.() } catch {}
+  try { live.micProgramSource?.disconnect?.() } catch {}
   live.micMeterSource = null
   live.micMeterAnalyser = null
   live.micMeterContext = null
+  live.micProgramSource = null
   live.micLevel = 0
 }
 
@@ -1892,6 +2040,7 @@ async function refreshLiveInputDevices() {
   try {
     const devices = await navigator.mediaDevices.enumerateDevices()
     live.devices = devices.filter((device) => device.kind === 'audioinput')
+    live.videoDevices = devices.filter((device) => device.kind === 'videoinput')
     live.sourceMessage = ''
   } catch (error) {
     console.warn('[studio-live] device list failed', error)
@@ -1920,8 +2069,10 @@ async function prepareLiveMicSource() {
     }
     live.micPrepared = true
     live.inputSource = 'browser'
+    live.browserInputEnabled = true
     live.sourceMessage = 'Browser input source is ready.'
     startLiveMicMeter()
+    syncLiveMicProgramRoute()
     await refreshLiveInputDevices()
   } catch (error) {
     console.warn('[studio-live] mic prepare failed', error)
@@ -1936,15 +2087,13 @@ async function prepareLiveMicSource() {
 
 async function getLivePublishTrack() {
   const live = liveState()
-  if (live.inputSource === 'sequence') {
-    const graph = ensureLiveAudioGraph()
-    if (graph.audioContext?.state === 'suspended') await graph.audioContext.resume()
-    if (!graph.outputTrack) throw new Error('Live Studio sequence output track is not available.')
-    return graph.outputTrack
-  }
-  if (!live.sourceTrack) await prepareLiveMicSource()
-  if (!live.sourceTrack) throw new Error('Browser input source is not ready.')
-  return live.sourceTrack
+  const graph = ensureLiveAudioGraph()
+  if (graph.audioContext?.state === 'suspended') await graph.audioContext.resume()
+  if (live.browserInputEnabled && !live.sourceTrack) await prepareLiveMicSource()
+  if (live.browserInputEnabled) syncLiveMicProgramRoute()
+  syncLiveMonitorRoute()
+  if (!graph.outputTrack) throw new Error('Live Studio program output track is not available.')
+  return graph.outputTrack
 }
 
 function publishOptionsForLiveSource() {
@@ -2085,7 +2234,7 @@ async function playLiveStudioItem(itemId = '') {
   const linearGain = Math.pow(10, Number(item.gainDb || 0) / 20)
   gain.gain.value = Number.isFinite(linearGain) ? linearGain : 1
   source.connect(gain)
-  gain.connect(graph.masterGain)
+  gain.connect(graph.sequenceGain || graph.masterGain)
   const playerId = `${item.itemId}-${Date.now()}`
   const player = { playerId, itemId: item.itemId, audio, source, gain, paused: false }
   live.activePlayers.push(player)
@@ -2470,6 +2619,7 @@ function writeLiveMonitorSnapshot() {
     window.localStorage.setItem('melogicLiveMonitorSnapshot', JSON.stringify({
       status: liveState().outputStatus,
       streamId: liveState().streamId,
+      stream: liveState().stream || liveState().streamForm,
       progress,
       item
     }))
@@ -2489,9 +2639,33 @@ function setLiveInputSource(source = 'browser') {
     return
   }
   live.inputSource = source === 'sequence' ? 'sequence' : 'browser'
+  if (live.inputSource === 'sequence') live.sequenceInputEnabled = true
+  if (live.inputSource === 'browser') live.browserInputEnabled = true
+  syncLiveMonitorRoute()
   live.sourceMessage = live.inputSource === 'sequence' ? 'Sequence Editor selected as input source.' : 'Browser Input Source selected.'
   scheduleLiveStudioDraftSave()
   renderShell()
+}
+
+function setLiveAvEnabled(kind = 'audio', enabled = true) {
+  const live = liveState()
+  if (kind === 'audio') live.audioEnabled = Boolean(enabled)
+  if (kind === 'video') live.videoEnabled = Boolean(enabled)
+  if (!live.audioEnabled && !live.videoEnabled) {
+    if (kind === 'audio') live.videoEnabled = true
+    else live.audioEnabled = true
+    live.sourceMessage = 'At least one of Audio or Video must stay enabled.'
+  }
+  syncLiveMonitorRoute()
+  scheduleLiveStudioDraftSave()
+  renderShell()
+}
+
+function updateLiveMixerValue(key = '', value = 1) {
+  const live = liveState()
+  if (!['browserGain', 'sequenceGain', 'masterGain'].includes(key)) return
+  live.mixer[key] = Math.max(0, Math.min(1.25, Number(value || 0)))
+  syncLiveMonitorRoute()
 }
 
 function handleAssetContextAction(action = '', assetId = '') {
@@ -2592,7 +2766,16 @@ function updateLiveStreamFormFromElement(formEl) {
   form.visibility = String(data.get('visibility') || 'public')
   form.accessMode = String(data.get('accessMode') || form.visibility)
   form.password = String(data.get('password') || '')
-  form.coverArtURL = String(data.get('coverArtURL') || '').trim()
+  const nextCoverURL = String(data.get('coverArtURL') || '').trim()
+  if (nextCoverURL !== form.coverArtURL && form.coverArtSource === 'upload') {
+    const oldPath = form.coverArtPath
+    form.coverArtPath = ''
+    form.coverArtSource = nextCoverURL ? 'url' : 'fallback'
+    deleteLiveCover(oldPath).catch(() => {})
+  } else if (form.coverArtSource !== 'upload') {
+    form.coverArtSource = nextCoverURL ? 'url' : 'fallback'
+  }
+  form.coverArtURL = nextCoverURL
   form.rightsAccepted = data.get('rightsAccepted') === 'on'
 }
 
@@ -2623,8 +2806,8 @@ function liveStreamPayload() {
     accessMode: form.accessMode,
     password: form.password,
     coverArtURL: form.coverArtURL,
-    coverArtPath: '',
-    coverArtSource: form.coverArtURL ? 'url' : 'fallback',
+    coverArtPath: form.coverArtPath || '',
+    coverArtSource: form.coverArtSource || (form.coverArtURL ? 'url' : 'fallback'),
     tags: form.tags,
     audioMode: form.audioMode,
     inputSource: live.inputSource,
@@ -2814,6 +2997,8 @@ function subscribeLiveStudioStream(streamId = '') {
       live.streamForm.visibility = stream.visibility || live.streamForm.visibility
       live.streamForm.accessMode = stream.accessMode || live.streamForm.accessMode
       live.streamForm.coverArtURL = stream.coverArtURL || ''
+      live.streamForm.coverArtPath = stream.coverArtPath || ''
+      live.streamForm.coverArtSource = stream.coverArtSource || (stream.coverArtURL ? 'url' : 'fallback')
     }
     renderShell()
   })
@@ -2987,6 +3172,20 @@ function bindLiveStudioControls() {
     updateLiveListenerPreviewDom()
     scheduleLiveStudioDraftSave()
   })
+  app.querySelector('[data-live-cover-upload]')?.addEventListener('change', (e) => {
+    const file = e.currentTarget.files?.[0]
+    if (file) uploadLiveStudioCover(file).catch(() => {})
+    e.currentTarget.value = ''
+  })
+  app.querySelector('[data-live-cover-clear]')?.addEventListener('click', () => {
+    const oldPath = live.streamForm.coverArtSource === 'upload' ? live.streamForm.coverArtPath : ''
+    live.streamForm.coverArtURL = ''
+    live.streamForm.coverArtPath = ''
+    live.streamForm.coverArtSource = 'fallback'
+    if (oldPath) deleteLiveCover(oldPath).catch(() => {})
+    scheduleLiveStudioDraftSave()
+    renderShell()
+  })
   app.querySelector('[data-live-start-stream]')?.addEventListener('click', () => {
     updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
     startLiveStudioStream()
@@ -3019,6 +3218,29 @@ function bindLiveStudioControls() {
     renderShell()
   })
   app.querySelectorAll('[data-live-set-source]').forEach((el) => el.addEventListener('click', () => setLiveInputSource(el.dataset.liveSetSource)))
+  app.querySelectorAll('[data-live-av-toggle]').forEach((el) => el.addEventListener('change', (e) => setLiveAvEnabled(el.dataset.liveAvToggle, e.currentTarget.checked)))
+  app.querySelectorAll('[data-live-audio-route]').forEach((el) => el.addEventListener('change', (e) => {
+    const route = el.dataset.liveAudioRoute || ''
+    if (route === 'browser') live.browserInputEnabled = Boolean(e.currentTarget.checked)
+    if (route === 'sequence') live.sequenceInputEnabled = Boolean(e.currentTarget.checked)
+    syncLiveMonitorRoute()
+    renderShell()
+  }))
+  app.querySelectorAll('[data-live-mixer]').forEach((el) => el.addEventListener('input', (e) => updateLiveMixerValue(el.dataset.liveMixer, e.currentTarget.value)))
+  app.querySelectorAll('[data-live-mixer-mute]').forEach((el) => el.addEventListener('click', () => {
+    const target = el.dataset.liveMixerMute
+    if (target === 'browser') live.mixer.browserMuted = !live.mixer.browserMuted
+    if (target === 'sequence') live.mixer.sequenceMuted = !live.mixer.sequenceMuted
+    syncLiveMonitorRoute()
+    renderShell()
+  }))
+  app.querySelector('[data-live-video-source]')?.addEventListener('change', (e) => {
+    live.videoSource = e.currentTarget.value === 'sequence' ? 'sequence' : 'browser'
+    renderShell()
+  })
+  app.querySelector('[data-live-video-transition]')?.addEventListener('change', (e) => {
+    live.videoTransition = e.currentTarget.value === 'fade' ? 'fade' : 'cut'
+  })
   app.querySelector('[data-live-refresh-devices]')?.addEventListener('click', () => refreshLiveInputDevices())
   app.querySelector('[data-live-prepare-mic]')?.addEventListener('click', () => prepareLiveMicSource())
   app.querySelector('[data-live-open-monitor]')?.addEventListener('click', () => openLiveMonitor())
