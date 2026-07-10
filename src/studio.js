@@ -21,10 +21,12 @@ import {
   upsertMusicLiveSequenceItem
 } from './data/musicLiveService'
 import {
+  SEQUENCE_ASSET_CATEGORIES,
   SEQUENCE_ACTION_TYPES,
   addActionBookmarkToSequence,
   addAssetToSequence,
   createSequence,
+  createSequenceAssetShell,
   createSequenceActionBookmark,
   deleteSequence,
   deleteSequenceItem,
@@ -35,6 +37,8 @@ import {
   listSequenceAssets,
   listSequenceItems,
   listSequences,
+  uploadSequenceAssetFile,
+  updateSequenceAsset,
   updateSequence,
   updateSequenceItem
 } from './data/musicSequenceService'
@@ -60,6 +64,52 @@ import { stageTypes, templateCards } from './stage/app/stageState'
 const app = document.querySelector('#app')
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+const stableImageCache = new Map()
+
+function renderStudioStableImage({ src = '', fallback = '', className = '', key = '' } = {}) {
+  const cleanSrc = String(src || '').trim()
+  const cacheKey = key || cleanSrc || fallback || 'studio-image'
+  const cached = stableImageCache.get(cacheKey)
+  const canUseCached = cleanSrc && cached?.status === 'loaded' && cached.src === cleanSrc
+  return `
+    <span class="studio-stable-image ${esc(className)}" data-studio-stable-image data-stable-image-key="${esc(cacheKey)}" data-stable-image-src="${esc(cleanSrc)}">
+      ${canUseCached ? `<img src="${esc(cleanSrc)}" alt="" loading="lazy" decoding="async" />` : `<span class="studio-stable-image-fallback">${esc(fallback || '?')}</span>`}
+    </span>
+  `
+}
+
+function hydrateStudioStableImages(root = app) {
+  root?.querySelectorAll?.('[data-studio-stable-image]').forEach((el) => {
+    const src = String(el.dataset.stableImageSrc || '').trim()
+    const key = String(el.dataset.stableImageKey || src || '').trim()
+    if (!src || !key) return
+    const cached = stableImageCache.get(key)
+    if (cached?.status === 'loaded' && cached.src === src) {
+      if (!el.querySelector('img')) el.innerHTML = `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" />`
+      return
+    }
+    if (cached?.status === 'loading' && cached.src === src) return
+    stableImageCache.set(key, { status: 'loading', src, lastGoodSrc: cached?.lastGoodSrc || (cached?.status === 'loaded' ? cached.src : '') })
+    const image = new Image()
+    image.decoding = 'async'
+    image.onload = () => {
+      stableImageCache.set(key, { status: 'loaded', src, lastGoodSrc: src })
+      root.querySelectorAll?.(`[data-stable-image-key="${CSS.escape(key)}"][data-stable-image-src="${CSS.escape(src)}"]`).forEach((target) => {
+        target.innerHTML = `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" />`
+      })
+    }
+    image.onerror = () => {
+      const previous = stableImageCache.get(key)
+      stableImageCache.set(key, { status: 'failed', src, lastGoodSrc: previous?.lastGoodSrc || '' })
+      if (previous?.lastGoodSrc) {
+        root.querySelectorAll?.(`[data-stable-image-key="${CSS.escape(key)}"][data-stable-image-src="${CSS.escape(src)}"]`).forEach((target) => {
+          target.innerHTML = `<img src="${esc(previous.lastGoodSrc)}" alt="" loading="lazy" decoding="async" />`
+        })
+      }
+    }
+    image.src = src
+  })
+}
 
 const STUDIO_TOOL_LABELS = {
   daw: 'Soura',
@@ -167,6 +217,8 @@ const state = {
       artworkURL: '',
       notes: '',
       override: false,
+      autoMatchSequencer: false,
+      lastAutoMatchedItemId: '',
       saving: false
     },
     chatDraft: '',
@@ -179,7 +231,31 @@ const state = {
     micMeterContext: null,
     micMeterAnalyser: null,
     micMeterSource: null,
-    playbackTimer: 0
+    playbackTimer: 0,
+    assetPreview: {
+      assetId: '',
+      title: '',
+      audio: null,
+      playing: false,
+      paused: false,
+      current: 0,
+      duration: 0,
+      timer: 0,
+      volume: 0.85
+    },
+    assetEditor: {
+      assetId: '',
+      saving: false,
+      error: '',
+      dirty: false
+    },
+    assetAdd: {
+      open: false,
+      uploading: false,
+      mode: 'audio',
+      status: '',
+      error: ''
+    }
   }
 }
 
@@ -225,6 +301,7 @@ function livePanelHref(panel = 'stream') {
 
 function setLivePanel(panel = 'stream', { replace = false } = {}) {
   const clean = livePanels.some(([key]) => key === panel) ? panel : 'stream'
+  if (clean !== 'sequence') stopLiveAssetPreview({ render: false })
   state.live.panel = clean
   const url = livePanelHref(clean)
   if (replace) window.history.replaceState({ livePanel: clean }, '', url)
@@ -691,9 +768,164 @@ function livePlayerProgress(player = null, item = {}) {
   }
 }
 
+function liveAssetById(assetId = '') {
+  return liveState().assets.find((asset) => asset.assetId === assetId || asset.id === assetId) || null
+}
+
+function updateLiveAssetPreviewState() {
+  const preview = liveState().assetPreview
+  const audio = preview.audio
+  if (!audio) return
+  const duration = Number.isFinite(audio.duration) && audio.duration > 0
+    ? audio.duration
+    : Number(preview.duration || 0)
+  preview.current = Math.max(0, Number(audio.currentTime || 0))
+  preview.duration = Math.max(0, duration || 0)
+  preview.paused = Boolean(audio.paused)
+  preview.playing = !audio.paused && !audio.ended
+}
+
+function clearLiveAssetPreviewTimer() {
+  const preview = liveState().assetPreview
+  if (preview.timer) window.clearInterval(preview.timer)
+  preview.timer = 0
+}
+
+function stopLiveAssetPreview({ render = true } = {}) {
+  const preview = liveState().assetPreview
+  clearLiveAssetPreviewTimer()
+  try { preview.audio?.pause?.() } catch {}
+  try {
+    preview.audio?.removeAttribute?.('src')
+    preview.audio?.load?.()
+  } catch {}
+  preview.assetId = ''
+  preview.title = ''
+  preview.audio = null
+  preview.playing = false
+  preview.paused = false
+  preview.current = 0
+  preview.duration = 0
+  if (render) renderShell()
+}
+
+function updateLiveAssetPreviewDom() {
+  const preview = liveState().assetPreview
+  if (!preview.audio) return
+  const progress = liveAssetPreviewProgress()
+  const percent = `${progress.percent}%`
+  app.querySelector('[data-live-preview-progress] [data-live-progress-fill]')?.style?.setProperty('width', percent)
+  app.querySelector('[data-live-preview-progress] [data-live-progress-knob]')?.style?.setProperty('left', percent)
+  const time = app.querySelector('[data-live-preview-time]')
+  if (time) time.textContent = `${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)} · Local monitor only`
+}
+
+function ensureLiveAssetPreviewTicker() {
+  const live = liveState()
+  const preview = live.assetPreview
+  if (preview.timer) return
+  preview.timer = window.setInterval(() => {
+    if (!preview.audio) {
+      clearLiveAssetPreviewTimer()
+      return
+    }
+    updateLiveAssetPreviewState()
+    if (preview.audio.ended) {
+      stopLiveAssetPreview({ render: currentStudioSection() === 'live' && currentLivePanel() === 'sequence' })
+      return
+    }
+    if (currentStudioSection() === 'live' && currentLivePanel() === 'sequence') updateLiveAssetPreviewDom()
+  }, 500)
+}
+
+function liveAssetPreviewProgress() {
+  const preview = liveState().assetPreview
+  updateLiveAssetPreviewState()
+  const duration = Number(preview.duration || 0)
+  const current = Math.min(duration || 0, Math.max(0, Number(preview.current || 0)))
+  const ratio = duration > 0 ? current / duration : 0
+  return {
+    current,
+    duration,
+    percent: Math.max(0, Math.min(100, ratio * 100))
+  }
+}
+
+async function startLiveAssetPreview(assetId = '') {
+  const live = liveState()
+  const asset = liveAssetById(assetId)
+  stopLiveAssetPreview({ render: false })
+  if (!asset?.normalizedAudioURL) {
+    live.outputStatus = 'That asset does not have previewable audio yet.'
+    renderShell()
+    return
+  }
+  const audio = new Audio(asset.normalizedAudioURL)
+  audio.preload = 'auto'
+  audio.crossOrigin = 'anonymous'
+  audio.volume = Math.max(0, Math.min(1, Number(live.assetPreview.volume || 0.85)))
+  live.assetPreview.assetId = asset.assetId
+  live.assetPreview.title = asset.title || 'Media asset'
+  live.assetPreview.audio = audio
+  live.assetPreview.duration = Math.max(0, Number(asset.durationMs || 0) / 1000)
+  live.assetPreview.current = 0
+  live.assetPreview.playing = false
+  live.assetPreview.paused = false
+  live.outputStatus = `Previewing ${asset.title || 'media asset'} locally.`
+  audio.addEventListener('loadedmetadata', () => {
+    updateLiveAssetPreviewState()
+    if (currentStudioSection() === 'live' && currentLivePanel() === 'sequence') renderShell()
+  })
+  audio.addEventListener('ended', () => stopLiveAssetPreview({ render: currentStudioSection() === 'live' && currentLivePanel() === 'sequence' }), { once: true })
+  renderShell()
+  try {
+    await audio.play()
+    updateLiveAssetPreviewState()
+    ensureLiveAssetPreviewTicker()
+  } catch (error) {
+    console.warn('[studio-live] asset preview failed', error)
+    stopLiveAssetPreview({ render: false })
+    live.outputStatus = 'Browser blocked preview playback. Try Preview again.'
+  }
+  renderShell()
+}
+
+async function toggleLiveAssetPreviewPause() {
+  const live = liveState()
+  const preview = live.assetPreview
+  if (!preview.audio) return
+  if (preview.audio.paused) {
+    try {
+      await preview.audio.play()
+      preview.paused = false
+      preview.playing = true
+      ensureLiveAssetPreviewTicker()
+    } catch (error) {
+      console.warn('[studio-live] preview resume failed', error)
+      live.outputStatus = 'Browser blocked preview resume.'
+    }
+  } else {
+    try { preview.audio.pause() } catch {}
+    preview.paused = true
+    preview.playing = false
+  }
+  updateLiveAssetPreviewState()
+  renderShell()
+}
+
+function setLiveAssetPreviewVolume(value = 0.85) {
+  const preview = liveState().assetPreview
+  preview.volume = Math.max(0, Math.min(1, Number(value || 0)))
+  if (preview.audio) preview.audio.volume = preview.volume
+}
+
 function liveItemArt(item = {}) {
-  if (item.artworkURLSnapshot) return `<img src="${esc(item.artworkURLSnapshot)}" alt="" loading="lazy" />`
-  return `<span>${esc((item.titleSnapshot || item.type || '?').slice(0, 1).toUpperCase())}</span>`
+  const fallback = (item.titleSnapshot || item.title || item.type || '?').slice(0, 1).toUpperCase()
+  return renderStudioStableImage({
+    src: item.artworkURLSnapshot || item.artworkURL || '',
+    fallback,
+    key: `live-item-art-${item.itemId || item.assetId || fallback}`
+  })
 }
 
 function renderLiveDeck(slot = 'current', label = 'CURRENT', item = null) {
@@ -714,17 +946,39 @@ function renderLiveDeck(slot = 'current', label = 'CURRENT', item = null) {
         </div>
       </div>
       <div class="studio-live-deck-actions">
-        <button type="button" data-live-play-item="${esc(item?.itemId || '')}" ${item && isPlayableLiveItem(item) ? '' : 'disabled'} aria-label="${paused ? 'Resume' : 'Play'} ${esc(label)}">▶</button>
-        <button type="button" data-live-pause-item="${esc(item?.itemId || '')}" ${player ? '' : 'disabled'} aria-label="Pause ${esc(label)}">Ⅱ</button>
-        <button type="button" data-live-stop-item="${esc(item?.itemId || '')}" ${player ? '' : 'disabled'} aria-label="Stop ${esc(label)}">■</button>
-        <button type="button" data-live-deck-menu="${esc(item?.itemId || '')}" ${item ? '' : 'disabled'} aria-label="Deck menu">⋯</button>
-        <label class="studio-live-progress">
-          <span><i style="width:${progress.percent}%"></i><b style="left:${progress.percent}%"></b></span>
+        <div class="studio-live-deck-buttons">
+          <button type="button" data-live-play-item="${esc(item?.itemId || '')}" ${item && isPlayableLiveItem(item) ? '' : 'disabled'} aria-label="${paused ? 'Resume' : 'Play'} ${esc(label)}">▶</button>
+          <button type="button" data-live-pause-item="${esc(item?.itemId || '')}" ${player && !paused ? '' : 'disabled'} aria-label="Pause ${esc(label)}">Ⅱ</button>
+          <button type="button" data-live-stop-item="${esc(item?.itemId || '')}" ${player ? '' : 'disabled'} aria-label="Stop ${esc(label)}">■</button>
+          <button type="button" data-live-deck-menu="${esc(item?.itemId || '')}" ${item ? '' : 'disabled'} aria-label="Deck menu">⋯</button>
+        </div>
+        <label class="studio-live-progress" data-live-deck-progress="${esc(item?.itemId || '')}">
+          <span><i data-live-progress-fill style="width:${progress.percent}%"></i><b data-live-progress-knob style="left:${progress.percent}%"></b></span>
           <input type="range" min="0" max="1000" value="${progress.value}" data-live-scrub-item="${esc(item?.itemId || '')}" ${player && progress.duration > 0 ? '' : 'disabled'} aria-label="Scrub ${esc(label)}" />
         </label>
-        <small>${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)}</small>
+        <small data-live-deck-time="${esc(item?.itemId || '')}">${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)}</small>
       </div>
     </article>
+  `
+}
+
+function renderLiveAssetPreviewControl() {
+  const preview = liveState().assetPreview
+  if (!preview.audio) return ''
+  const progress = liveAssetPreviewProgress()
+  return `
+    <div class="studio-live-asset-preview" data-live-asset-preview>
+      <div>
+        <strong>Previewing: ${esc(preview.title || 'Media asset')}</strong>
+        <span data-live-preview-time>${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)} · Local monitor only</span>
+      </div>
+      <label class="studio-live-progress" data-live-preview-progress>
+        <span><i data-live-progress-fill style="width:${progress.percent}%"></i><b data-live-progress-knob style="left:${progress.percent}%"></b></span>
+      </label>
+      <button type="button" data-live-pause-preview>${preview.paused ? 'Resume Preview' : 'Pause Preview'}</button>
+      <button type="button" data-live-stop-preview>Stop Preview</button>
+      <label class="studio-live-preview-volume"><span>Vol</span><input type="range" min="0" max="1" step="0.01" value="${Number(preview.volume || 0.85)}" data-live-preview-volume /></label>
+    </div>
   `
 }
 
@@ -760,13 +1014,17 @@ function renderLiveAssets() {
     <section class="studio-live-library-section studio-live-library-section--assets">
       <div class="studio-live-panel-heading">
         <h3>Media Assets</h3>
-        <span>${live.assets.length}</span>
+        <div class="studio-live-heading-actions">
+          <span>${live.assets.length}</span>
+          <button type="button" data-live-add-asset-open ${state.user ? '' : 'disabled'}>Add</button>
+        </div>
       </div>
+      ${renderLiveAssetPreviewControl()}
       <div class="studio-live-assets">
         ${live.loading ? '<p class="studio-live-empty">Loading asset metadata...</p>' : live.assets.length ? live.assets.map((asset) => `
           <div class="studio-live-asset-row" data-live-asset-row="${esc(asset.assetId)}">
             <button type="button" class="studio-live-asset-main" data-live-add-asset="${esc(asset.assetId)}" ${state.user && live.activeSequence ? '' : 'disabled'}>
-              <span class="studio-live-row-art">${asset.artworkURL ? `<img src="${esc(asset.artworkURL)}" alt="" loading="lazy" />` : esc((asset.title || '?').slice(0, 1).toUpperCase())}</span>
+              <span class="studio-live-row-art">${renderStudioStableImage({ src: asset.artworkURL, fallback: (asset.title || '?').slice(0, 1).toUpperCase(), key: `live-asset-art-${asset.assetId}` })}</span>
               <span><strong>${esc(asset.title)}</strong><small>${esc(asset.artist || asset.category || 'Media asset')}</small></span>
               <b>${esc(asset.type)}</b>
               <em>${formatMs(asset.durationMs)}</em>
@@ -829,7 +1087,7 @@ function renderListenerPreviewPanel() {
   return `
     <aside class="studio-live-listener-preview" aria-label="Listener page preview">
       <div class="studio-live-listener-art" data-live-preview-cover>
-        ${form.coverArtURL ? `<img src="${esc(form.coverArtURL)}" alt="" />` : '<span>MR</span>'}
+        ${renderStudioStableImage({ src: form.coverArtURL, fallback: 'MR', key: 'live-stream-cover-preview' })}
       </div>
       <div class="studio-live-listener-copy">
         <p class="eyebrow">Public Listener Preview</p>
@@ -1019,6 +1277,10 @@ function renderManualMetadataPanel() {
       <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Manual Metadata</h1><p>Set the public now-playing card without using sequence rows.</p></div></header>
       <form class="studio-live-details-form studio-live-metadata-form" data-live-metadata-form>
         <label class="studio-live-check"><input name="override" type="checkbox" ${meta.override ? 'checked' : ''} /> Manual override ${sequenceControlled ? '(sequence metadata is currently available)' : ''}</label>
+        <label class="studio-live-check studio-live-check--stacked">
+          <span><input name="autoMatchSequencer" type="checkbox" ${meta.autoMatchSequencer ? 'checked' : ''} /> Match sequencer now playing</span>
+          <small>When enabled, live metadata follows the currently playing sequence item. You can still send a manual override at any time.</small>
+        </label>
         <label>Now playing title<input name="title" value="${esc(meta.title)}" /></label>
         <label>Artist<input name="artist" value="${esc(meta.artist)}" /></label>
         <label>Album<input name="album" value="${esc(meta.album)}" /></label>
@@ -1058,6 +1320,49 @@ function renderPreviewPanel() {
   `
 }
 
+function renderLiveAssetAddModal() {
+  const live = liveState()
+  const add = live.assetAdd || {}
+  if (!add.open) return ''
+  return `
+    <div class="studio-modal" data-live-asset-add-backdrop>
+      <form class="studio-modal-panel studio-live-asset-editor" data-live-asset-add-form>
+        <header class="studio-live-modal-header">
+          <div>
+            <p class="eyebrow">Media Assets</p>
+            <h3>Add Asset</h3>
+          </div>
+          <button type="button" data-close-live-asset-add aria-label="Close add asset">×</button>
+        </header>
+        ${add.error ? `<p class="studio-live-error">${esc(add.error)}</p>` : ''}
+        ${add.status ? `<p class="studio-live-upload-status">${esc(add.status)}</p>` : ''}
+        <div class="studio-live-modal-grid">
+          <label>Type
+            <select name="mode">
+              <option value="audio" ${add.mode === 'audio' ? 'selected' : ''}>Upload Audio</option>
+              <option value="video" ${add.mode === 'video' ? 'selected' : ''}>Upload Video</option>
+              <option value="audio_video" ${add.mode === 'audio_video' ? 'selected' : ''}>Upload Audio + Video</option>
+              <option value="metadata_only" ${add.mode === 'metadata_only' ? 'selected' : ''}>Add Metadata Only</option>
+            </select>
+          </label>
+          <label>Category<select name="category">${SEQUENCE_ASSET_CATEGORIES.map((category) => `<option value="${esc(category)}">${esc(category.replaceAll('_', ' '))}</option>`).join('')}</select></label>
+          <label>Title<input name="title" maxlength="160" placeholder="Asset title" /></label>
+          <label>Artist<input name="artist" maxlength="160" /></label>
+          <label>Album<input name="album" maxlength="160" /></label>
+          <label>Artwork URL<input name="artworkURL" placeholder="https://..." /></label>
+          <label>Audio file<input name="audioFile" type="file" accept="audio/*" /></label>
+          <label>Video file<input name="videoFile" type="file" accept="video/*" /></label>
+        </div>
+        <label>Notes<textarea name="notes" maxlength="1000" placeholder="Optional notes"></textarea></label>
+        <div class="studio-modal-actions">
+          <button type="button" class="button button-muted" data-close-live-asset-add>Cancel</button>
+          <button type="submit" class="button" ${add.uploading ? 'disabled' : ''}>${add.uploading ? 'Adding...' : 'Add Asset'}</button>
+        </div>
+      </form>
+    </div>
+  `
+}
+
 function renderSafetyPanel() {
   return `
     <section class="studio-live-panel">
@@ -1067,9 +1372,54 @@ function renderSafetyPanel() {
   `
 }
 
+function renderLiveAssetEditorModal() {
+  const live = liveState()
+  const editor = live.assetEditor || {}
+  const asset = editor.assetId ? liveAssetById(editor.assetId) : null
+  if (!asset) return ''
+  return `
+    <div class="studio-modal" data-live-asset-editor-backdrop>
+      <form class="studio-modal-panel studio-live-asset-editor" data-live-asset-editor-form data-asset-id="${esc(asset.assetId)}">
+        <header class="studio-live-modal-header">
+          <div>
+            <p class="eyebrow">Media Asset</p>
+            <h3>Edit Metadata</h3>
+          </div>
+          <button type="button" data-close-live-asset-editor aria-label="Close metadata editor">×</button>
+        </header>
+        ${editor.error ? `<p class="studio-live-error">${esc(editor.error)}</p>` : ''}
+        <div class="studio-live-modal-grid">
+          <label>Title<input name="title" maxlength="160" value="${esc(asset.title)}" required /></label>
+          <label>Artist<input name="artist" maxlength="160" value="${esc(asset.artist)}" /></label>
+          <label>Album<input name="album" maxlength="160" value="${esc(asset.album)}" /></label>
+          <label>Category<select name="category">${SEQUENCE_ASSET_CATEGORIES.map((category) => `<option value="${esc(category)}" ${asset.category === category ? 'selected' : ''}>${esc(category.replaceAll('_', ' '))}</option>`).join('')}</select></label>
+          <label>Tags<input name="tags" value="${esc((asset.tags || []).join(', '))}" placeholder="radio, bumper, release" /></label>
+          <label>Artwork URL<input name="artworkURL" value="${esc(asset.artworkURL)}" placeholder="https://..." /></label>
+          <label>Fade In (seconds)<input name="defaultFadeInSeconds" type="number" min="0" max="60" step="0.1" value="${esc(Number(asset.defaultFadeInMs || 0) / 1000)}" /></label>
+          <label>Fade Out (seconds)<input name="defaultFadeOutSeconds" type="number" min="0" max="60" step="0.1" value="${esc(Number(asset.defaultFadeOutMs || 0) / 1000)}" /></label>
+          <label>Default Crossfade (seconds)<input name="defaultCrossfadeSeconds" type="number" min="0" max="60" step="0.1" value="${esc(Number(asset.defaultCrossfadeMs || 0) / 1000)}" /></label>
+          <label>Gain Trim (dB)<input name="gainDb" type="number" min="-24" max="24" step="0.1" value="${esc(Number(asset.gainDb || 0))}" /></label>
+        </div>
+        <label>Notes<textarea name="notes" maxlength="1000">${esc(asset.notes)}</textarea></label>
+        <details class="studio-live-asset-details">
+          <summary>File details</summary>
+          <p>Duration: ${formatMs(asset.durationMs || 0)}</p>
+          <p>Type: ${esc(asset.type || 'audio')}</p>
+          <p>Audio: ${esc(asset.normalizedAudioPath || asset.originalFileName || 'Ready asset')}</p>
+        </details>
+        <div class="studio-modal-actions">
+          <button type="button" class="button button-muted" data-close-live-asset-editor>Cancel</button>
+          <button type="submit" class="button" ${editor.saving ? 'disabled' : ''}>${editor.saving ? 'Saving...' : 'Save Changes'}</button>
+        </div>
+      </form>
+    </div>
+  `
+}
+
 function renderLiveStudio() {
   const live = liveState()
   const panel = currentLivePanel()
+  if (panel !== 'sequence' && live.assetPreview.audio) stopLiveAssetPreview({ render: false })
   live.panel = panel
   const panelContent = panel === 'input'
     ? renderInputSourcePanel()
@@ -1090,9 +1440,21 @@ function renderLiveStudio() {
       ${panelContent}
       ${live.contextMenu ? renderLiveContextMenu(live.contextMenu) : ''}
       ${live.menu ? renderLiveGenericMenu(live.menu) : ''}
-      <div data-studio-modal-root></div>
+      <div data-studio-modal-root>${renderLiveAssetAddModal()}${renderLiveAssetEditorModal()}</div>
     </section>
   `
+}
+
+function liveMenuStyle(menu = {}, actionCount = 0) {
+  const width = 240
+  const viewportWidth = Math.max(320, Number(window.innerWidth || 1024))
+  const viewportHeight = Math.max(320, Number(window.innerHeight || 720))
+  const maxHeight = Math.min(360, viewportHeight - 32)
+  const estimatedHeight = Math.min(maxHeight, 44 + actionCount * 33 + 16)
+  const x = Math.max(8, Math.min(Number(menu.x || 0), viewportWidth - width - 8))
+  let y = Math.max(8, Number(menu.y || 0))
+  if (y + estimatedHeight > viewportHeight - 8) y = Math.max(8, viewportHeight - estimatedHeight - 8)
+  return `left:${Math.round(x)}px;top:${Math.round(y)}px;max-height:${Math.round(maxHeight)}px`
 }
 
 function renderLiveContextMenu(menu = {}) {
@@ -1149,7 +1511,7 @@ function renderLiveContextMenu(menu = {}) {
         ['copy', 'Copy Metadata']
       ]
   return `
-    <div class="studio-live-context-menu" style="left:${Math.max(8, menu.x || 0)}px;top:${Math.max(8, menu.y || 0)}px" data-live-context-menu>
+    <div class="studio-live-context-menu" style="${liveMenuStyle(menu, actions.length)}" data-live-context-menu>
       <strong>${esc(target?.title || target?.titleSnapshot || (isAsset ? 'Media asset' : 'Sequence item'))}</strong>
       ${actions.map(([action, label]) => `<button type="button" data-live-context-action="${esc(action)}" data-item-id="${esc(menu.itemId)}">${esc(label)}</button>`).join('')}
     </div>
@@ -1157,10 +1519,11 @@ function renderLiveContextMenu(menu = {}) {
 }
 
 function renderLiveGenericMenu(menu = {}) {
+  const actions = menu.actions || []
   return `
-    <div class="studio-live-context-menu" style="left:${Math.max(8, menu.x || 0)}px;top:${Math.max(8, menu.y || 0)}px" data-live-context-menu>
+    <div class="studio-live-context-menu" style="${liveMenuStyle(menu, actions.length)}" data-live-context-menu>
       <strong>${esc(menu.title || 'Live Studio')}</strong>
-      ${(menu.actions || []).map((action) => `<button type="button" data-live-context-action="${esc(action.action)}" data-item-id="${esc(action.itemId || '')}">${esc(action.label)}</button>`).join('')}
+      ${actions.map((action) => `<button type="button" data-live-context-action="${esc(action.action)}" data-item-id="${esc(action.itemId || '')}">${esc(action.label)}</button>`).join('')}
     </div>
   `
 }
@@ -1172,19 +1535,27 @@ function renderLiveMonitorPage() {
   } catch {}
   const item = snapshot.item || liveItemById(liveState().currentItemId) || liveSelectedItem()
   const isVideo = item?.type === 'video' && (item.videoURLSnapshot || item.videoURL)
+  const progress = snapshot.progress || { percent: 0, current: 0, duration: Number(item?.durationMs || 0) / 1000 }
+  const dots = Array.from({ length: 28 }, (_, index) => `<i style="--i:${index};--x:${(index * 37) % 100}%;--y:${(index * 23) % 100}%"></i>`).join('')
+  if (isVideo) {
+    return `
+      <section class="studio-live-monitor-surface is-video">
+        <video controls autoplay playsinline src="${esc(item.videoURLSnapshot || item.videoURL)}"></video>
+      </section>
+    `
+  }
   return `
-    <section class="studio-live-monitor-surface">
-      <header>
-        <div><p class="eyebrow">Live Studio Monitor</p><h1>${isVideo ? 'Video preview' : 'Audio-only preview'}</h1></div>
-        <span>${esc(snapshot.status || liveState().outputStatus || 'Monitoring Sequence Output')}</span>
-      </header>
+    <section class="studio-live-monitor-surface is-audio">
+      <div class="studio-live-monitor-ambience" aria-hidden="true">${dots}</div>
       <main>
-        ${isVideo ? `<video controls playsinline src="${esc(item.videoURLSnapshot || item.videoURL)}"></video>` : `<div class="studio-live-monitor-art">${item?.artworkURLSnapshot || item?.artworkURL ? `<img src="${esc(item.artworkURLSnapshot || item.artworkURL)}" alt="" />` : '<span>Audio-only preview</span>'}</div>`}
+        <div class="studio-live-monitor-art">${renderStudioStableImage({ src: item?.artworkURLSnapshot || item?.artworkURL || '', fallback: 'Audio', key: `live-monitor-${item?.itemId || item?.assetId || 'audio'}` })}</div>
         <div class="studio-live-monitor-copy">
           <h2>${esc(item?.titleSnapshot || item?.title || 'No item loaded')}</h2>
           <p>${esc(item?.artistSnapshot || item?.artist || 'Monitoring Sequence Output')}</p>
-          <small>${esc(item?.albumSnapshot || item?.album || 'Monitor-only. Not publishing duplicate output.')}</small>
+          <small>${esc(item?.albumSnapshot || item?.album || snapshot.status || 'Monitor-only preview')}</small>
         </div>
+        <div class="studio-live-monitor-progress" aria-hidden="true"><span style="width:${Math.max(0, Math.min(100, Number(progress.percent || 0)))}%"></span></div>
+        <small>${esc(formatMs(Number(progress.current || 0) * 1000))} / ${esc(formatMs(Number(progress.duration || 0) * 1000))}</small>
       </main>
     </section>
   `
@@ -1213,6 +1584,7 @@ function renderShell() {
   if (active === 'live' && isLiveMonitorRoute()) {
     app.innerHTML = `${navShell({ currentPage: 'studio' })}<main class="studio-live-monitor-page">${renderLiveMonitorPage()}</main>`
     initShellChrome()
+    hydrateStudioStableImages(app)
     bind()
     return
   }
@@ -1222,6 +1594,7 @@ function renderShell() {
     : `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active })}${content}</section></main>`
   initShellChrome()
   if (active !== 'live') initStudioBrandLogo()
+  hydrateStudioStableImages(app)
   bind()
 }
 
@@ -1347,9 +1720,28 @@ async function loadLiveStudioData() {
 
 async function loadProjectsForCurrentRoute() {
   if (!state.user?.uid) {
+    stopLiveAssetPreview({ render: false })
     state.daw = { projects: [], recentProjects: [], loading: false, error: '' }
     state.stage = { projects: [], recentProjects: [], loading: false, error: '' }
-    state.live = { ...state.live, loading: false, error: '', assets: [], sequences: [], bookmarks: [], activeSequence: null, items: [], selectedItemId: '', currentItemId: '', nextItemId: '', afterNextItemId: '', streamId: '', draftStreamId: '', stream: null }
+    state.live = {
+      ...state.live,
+      loading: false,
+      error: '',
+      assets: [],
+      sequences: [],
+      bookmarks: [],
+      activeSequence: null,
+      items: [],
+      selectedItemId: '',
+      currentItemId: '',
+      nextItemId: '',
+      afterNextItemId: '',
+      streamId: '',
+      draftStreamId: '',
+      stream: null,
+      assetEditor: { assetId: '', saving: false, error: '', dirty: false },
+      assetAdd: { open: false, uploading: false, mode: 'audio', status: '', error: '' }
+    }
     renderShell()
     return
   }
@@ -1591,6 +1983,24 @@ function stopLiveStudioAll() {
   renderShell()
 }
 
+function updateLiveDeckProgressDom() {
+  if (currentStudioSection() !== 'live') return
+  liveState().activePlayers.forEach((player) => {
+    const item = liveItemById(player.itemId) || {}
+    const progress = livePlayerProgress(player, item)
+    app.querySelectorAll(`[data-live-deck-progress="${CSS.escape(player.itemId)}"]`).forEach((el) => {
+      const percent = `${progress.percent}%`
+      el.querySelector('[data-live-progress-fill]')?.style?.setProperty('width', percent)
+      el.querySelector('[data-live-progress-knob]')?.style?.setProperty('left', percent)
+      const input = el.querySelector('input')
+      if (input && document.activeElement !== input) input.value = String(progress.value)
+    })
+    app.querySelectorAll(`[data-live-deck-time="${CSS.escape(player.itemId)}"]`).forEach((el) => {
+      el.textContent = `${formatMs(progress.current * 1000)} / ${formatMs(progress.duration * 1000)}`
+    })
+  })
+}
+
 function ensureLivePlaybackTicker() {
   const live = liveState()
   if (live.playbackTimer) return
@@ -1600,29 +2010,43 @@ function ensureLivePlaybackTicker() {
       live.playbackTimer = 0
       return
     }
-    if (currentStudioSection() === 'live' && (currentLivePanel() === 'sequence' || currentLivePanel() === 'preview')) renderShell()
+    if (currentStudioSection() === 'live' && (currentLivePanel() === 'sequence' || currentLivePanel() === 'preview')) {
+      updateLiveDeckProgressDom()
+      if (live.monitorEnabled) writeLiveMonitorSnapshot()
+    }
   }, 500)
 }
 
 async function pauseLiveStudioPlayer(itemId = '') {
   const live = liveState()
   const player = live.activePlayers.find((entry) => entry.playerId === itemId || entry.itemId === itemId)
-  if (!player) return
-  if (player.paused) {
-    try {
-      await player.audio.play()
-      player.paused = false
-      live.outputStatus = `Resumed ${liveItemById(player.itemId)?.titleSnapshot || 'deck'}.`
-    } catch (error) {
-      console.warn('[studio-live] resume failed', error)
-      live.outputStatus = 'Browser blocked resume. Press Play again.'
-    }
-  } else {
-    try { player.audio.pause() } catch {}
-    player.paused = true
-    live.outputStatus = `Paused ${liveItemById(player.itemId)?.titleSnapshot || 'deck'}.`
-  }
+  if (!player || player.paused) return
+  try { player.audio.pause() } catch {}
+  player.paused = true
+  live.outputStatus = `Paused ${liveItemById(player.itemId)?.titleSnapshot || 'deck'}.`
   renderShell()
+}
+
+async function resumeLiveStudioPlayer(itemId = '') {
+  const live = liveState()
+  const player = live.activePlayers.find((entry) => entry.playerId === itemId || entry.itemId === itemId)
+  if (!player) return false
+  if (!player.paused) return true
+  try {
+    await player.audio.play()
+    player.paused = false
+    live.currentItemId = player.itemId
+    live.outputStatus = `Resumed ${liveItemById(player.itemId)?.titleSnapshot || 'deck'}.`
+    ensureLivePlaybackTicker()
+    autoMatchLiveMetadataFromSequence(liveItemById(player.itemId)).catch(() => {})
+    renderShell()
+    return true
+  } catch (error) {
+    console.warn('[studio-live] resume failed', error)
+    live.outputStatus = 'Browser blocked resume. Press Play again.'
+    renderShell()
+    return false
+  }
 }
 
 function scrubLiveStudioPlayer(itemId = '', value = 0) {
@@ -1643,7 +2067,12 @@ async function playLiveStudioItem(itemId = '') {
   }
   const existing = livePlayerForItem(item.itemId)
   if (existing?.paused) {
-    await pauseLiveStudioPlayer(item.itemId)
+    await resumeLiveStudioPlayer(item.itemId)
+    return
+  }
+  if (existing) {
+    live.outputStatus = `${item.titleSnapshot || 'Selected item'} is already playing.`
+    renderShell()
     return
   }
   const graph = ensureLiveAudioGraph()
@@ -1663,6 +2092,7 @@ async function playLiveStudioItem(itemId = '') {
   live.currentItemId = item.itemId
   live.selectedItemId = item.itemId
   live.outputStatus = `Playing ${item.titleSnapshot || 'selected item'} through Live Studio output.`
+  autoMatchLiveMetadataFromSequence(item).catch(() => {})
   audio.addEventListener('ended', () => {
     stopLiveStudioPlayer(playerId)
     const next = liveItemById(live.nextItemId)
@@ -1701,12 +2131,240 @@ async function createLiveSequence() {
   await setLiveSequence(sequence.sequenceId)
 }
 
+function openLiveAssetAddModal() {
+  const live = liveState()
+  live.assetAdd = { open: true, uploading: false, mode: 'audio', status: '', error: '' }
+  renderShell()
+}
+
+function closeLiveAssetAddModal() {
+  const live = liveState()
+  if (live.assetAdd?.uploading) return
+  live.assetAdd = { open: false, uploading: false, mode: 'audio', status: '', error: '' }
+  renderShell()
+}
+
+function audioBufferToWav(buffer) {
+  const channels = Math.min(2, Math.max(1, buffer.numberOfChannels || 1))
+  const length = buffer.length * channels * 2
+  const arrayBuffer = new ArrayBuffer(44 + length)
+  const view = new DataView(arrayBuffer)
+  const writeString = (offset, value) => {
+    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index))
+  }
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + length, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, channels, true)
+  view.setUint32(24, 44100, true)
+  view.setUint32(28, 44100 * channels * 2, true)
+  view.setUint16(32, channels * 2, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, length, true)
+  let offset = 44
+  const channelData = Array.from({ length: channels }, (_, index) => buffer.getChannelData(Math.min(index, buffer.numberOfChannels - 1)))
+  for (let sample = 0; sample < buffer.length; sample += 1) {
+    for (let channel = 0; channel < channels; channel += 1) {
+      const value = Math.max(-1, Math.min(1, channelData[channel][sample] || 0))
+      view.setInt16(offset, value < 0 ? value * 0x8000 : value * 0x7fff, true)
+      offset += 2
+    }
+  }
+  return new Blob([arrayBuffer], { type: 'audio/wav' })
+}
+
+async function normalizeAudioFileToWav(file) {
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextCtor || typeof window.OfflineAudioContext !== 'function') throw new Error('This browser cannot normalize audio files yet.')
+  const arrayBuffer = await file.arrayBuffer()
+  const context = new AudioContextCtor()
+  let decoded
+  try {
+    decoded = await context.decodeAudioData(arrayBuffer.slice(0))
+  } finally {
+    context.close?.().catch(() => {})
+  }
+  const channels = Math.min(2, Math.max(1, decoded.numberOfChannels || 1))
+  const length = Math.ceil(decoded.duration * 44100)
+  const offline = new window.OfflineAudioContext(channels, length, 44100)
+  const source = offline.createBufferSource()
+  source.buffer = decoded
+  source.connect(offline.destination)
+  source.start(0)
+  const rendered = await offline.startRendering()
+  return {
+    file: new File([audioBufferToWav(rendered)], `${(file.name || 'live-asset').replace(/\.[^.]+$/, '') || 'live-asset'}-44100-16bit.wav`, { type: 'audio/wav' }),
+    durationMs: Math.round(rendered.duration * 1000),
+    sampleRate: 44100,
+    bitDepth: 16,
+    channels
+  }
+}
+
+async function addLiveAssetFromForm(formEl) {
+  const live = liveState()
+  if (!state.user?.uid || !formEl) return
+  const data = new FormData(formEl)
+  const mode = String(data.get('mode') || 'audio')
+  const audioFile = data.get('audioFile') instanceof File && data.get('audioFile').size ? data.get('audioFile') : null
+  const videoFile = data.get('videoFile') instanceof File && data.get('videoFile').size ? data.get('videoFile') : null
+  const category = String(data.get('category') || 'other')
+  const type = mode === 'video' || mode === 'audio_video' ? 'video' : mode === 'metadata_only' ? 'metadata_only' : 'audio'
+  if (mode === 'audio' && !audioFile) live.assetAdd.error = 'Choose an audio file.'
+  else if (mode === 'video' && !videoFile) live.assetAdd.error = 'Choose a video file.'
+  else if (mode === 'audio_video' && (!audioFile || !videoFile)) live.assetAdd.error = 'Choose both audio and video files.'
+  if (live.assetAdd.error) {
+    renderShell()
+    return
+  }
+  live.assetAdd = { ...live.assetAdd, uploading: true, mode, status: 'Creating asset...', error: '' }
+  renderShell()
+  let shell
+  try {
+    const title = String(data.get('title') || audioFile?.name || videoFile?.name || 'Untitled asset').replace(/\.[^.]+$/, '').trim()
+    shell = await createSequenceAssetShell(state.user.uid, {
+      type,
+      title,
+      artist: String(data.get('artist') || '').trim(),
+      album: String(data.get('album') || '').trim(),
+      category: SEQUENCE_ASSET_CATEGORIES.includes(category) ? category : 'other',
+      notes: String(data.get('notes') || '').trim(),
+      artworkURL: String(data.get('artworkURL') || '').trim(),
+      originalFileName: audioFile?.name || videoFile?.name || '',
+      originalMimeType: audioFile?.type || videoFile?.type || '',
+      videoAudioMode: mode === 'audio_video' ? 'separate_audio' : mode === 'video' ? 'no_audio' : '',
+      fileSizeBytes: Number(audioFile?.size || 0) + Number(videoFile?.size || 0),
+      status: mode === 'metadata_only' ? 'ready' : 'processing'
+    })
+    let videoUpload = null
+    if (videoFile) {
+      live.assetAdd.status = 'Uploading video...'
+      renderShell()
+      videoUpload = await uploadSequenceAssetFile(state.user.uid, shell.assetId, videoFile, 'video')
+    }
+    if (audioFile) {
+      live.assetAdd.status = 'Normalizing audio...'
+      renderShell()
+      const normalized = await normalizeAudioFileToWav(audioFile)
+      live.assetAdd.status = 'Uploading normalized audio...'
+      renderShell()
+      const normalizedUpload = await uploadSequenceAssetFile(state.user.uid, shell.assetId, normalized.file, 'normalized')
+      await updateSequenceAsset(state.user.uid, shell.assetId, {
+        status: 'ready',
+        normalizedAudioPath: normalizedUpload.path,
+        normalizedAudioURL: normalizedUpload.url,
+        videoPath: videoUpload?.path || '',
+        videoURL: videoUpload?.url || '',
+        durationMs: normalized.durationMs,
+        sampleRate: normalized.sampleRate,
+        bitDepth: normalized.bitDepth,
+        channels: normalized.channels,
+        processingError: ''
+      })
+    } else if (videoUpload) {
+      await updateSequenceAsset(state.user.uid, shell.assetId, { status: 'ready', videoPath: videoUpload.path, videoURL: videoUpload.url, processingError: '' })
+    }
+    live.assetAdd = { open: false, uploading: false, mode: 'audio', status: '', error: '' }
+    await loadLiveStudioData()
+  } catch (error) {
+    console.error('[studio-live] add asset failed', error)
+    if (shell?.assetId) await updateSequenceAsset(state.user.uid, shell.assetId, { status: 'failed', processingError: error?.message || 'Asset upload failed.' }).catch(() => {})
+    live.assetAdd = { ...live.assetAdd, uploading: false, status: '', error: error?.message || 'Could not add asset.' }
+    renderShell()
+  }
+}
+
 async function addLiveAsset(assetId = '') {
   const live = liveState()
   const asset = live.assets.find((entry) => entry.assetId === assetId)
   if (!state.user?.uid || !live.activeSequence || !asset) return
   await addAssetToSequence(state.user.uid, live.activeSequence.sequenceId, asset, live.activeSequence)
   await loadLiveStudioData()
+  renderShell()
+}
+
+function openLiveAssetEditor(assetId = '') {
+  const live = liveState()
+  if (!liveAssetById(assetId)) {
+    live.outputStatus = 'Choose a media asset to edit.'
+    renderShell()
+    return
+  }
+  live.assetEditor = { assetId, saving: false, error: '', dirty: false }
+  renderShell()
+}
+
+function closeLiveAssetEditor({ force = false } = {}) {
+  const live = liveState()
+  if (!force && live.assetEditor?.dirty && !window.confirm('Discard unsaved asset metadata changes?')) return
+  live.assetEditor = { assetId: '', saving: false, error: '', dirty: false }
+  renderShell()
+}
+
+function secondsFieldToMs(value, maxSeconds = 60) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return 0
+  return Math.round(Math.max(0, Math.min(maxSeconds, number)) * 1000)
+}
+
+function assetEditorPayload(formEl) {
+  const data = new FormData(formEl)
+  const category = String(data.get('category') || 'other')
+  return {
+    title: String(data.get('title') || 'Untitled asset').trim().slice(0, 160),
+    artist: String(data.get('artist') || '').trim().slice(0, 160),
+    album: String(data.get('album') || '').trim().slice(0, 160),
+    category: SEQUENCE_ASSET_CATEGORIES.includes(category) ? category : 'other',
+    tags: String(data.get('tags') || '').split(',').map((tag) => tag.trim()).filter(Boolean).slice(0, 20),
+    artworkURL: String(data.get('artworkURL') || '').trim().slice(0, 1400),
+    defaultFadeInMs: secondsFieldToMs(data.get('defaultFadeInSeconds')),
+    defaultFadeOutMs: secondsFieldToMs(data.get('defaultFadeOutSeconds')),
+    defaultCrossfadeMs: secondsFieldToMs(data.get('defaultCrossfadeSeconds')),
+    gainDb: Math.max(-24, Math.min(24, Number(data.get('gainDb') || 0))),
+    notes: String(data.get('notes') || '').trim().slice(0, 1000)
+  }
+}
+
+async function saveLiveAssetEditor(formEl) {
+  const live = liveState()
+  const assetId = formEl?.dataset?.assetId || live.assetEditor?.assetId || ''
+  const asset = liveAssetById(assetId)
+  if (!state.user?.uid || !asset) return
+  const payload = assetEditorPayload(formEl)
+  live.assetEditor = { ...live.assetEditor, saving: true, error: '' }
+  renderShell()
+  try {
+    await updateSequenceAsset(state.user.uid, assetId, payload)
+    live.assets = live.assets.map((entry) => entry.assetId === assetId ? { ...entry, ...payload } : entry)
+    const snapshotUpdates = live.activeSequence
+      ? live.items
+        .filter((item) => item.assetId === assetId)
+        .map((item) => updateSequenceItem(state.user.uid, live.activeSequence.sequenceId, item.itemId, {
+          titleSnapshot: payload.title,
+          artistSnapshot: payload.artist,
+          albumSnapshot: payload.album,
+          categorySnapshot: payload.category,
+          artworkURLSnapshot: payload.artworkURL
+        }))
+      : []
+    await Promise.all(snapshotUpdates)
+    if (snapshotUpdates.length) await loadLiveStudioItems()
+    live.outputStatus = snapshotUpdates.length
+      ? 'Asset metadata updated and visible sequence snapshots refreshed.'
+      : 'Asset metadata updated.'
+    live.assetEditor = { assetId: '', saving: false, error: '', dirty: false }
+  } catch (error) {
+    console.error('[studio-live] asset metadata update failed', error)
+    live.assetEditor = {
+      ...live.assetEditor,
+      saving: false,
+      error: error?.message || 'Could not update asset metadata.'
+    }
+  }
   renderShell()
 }
 
@@ -1806,10 +2464,13 @@ async function handleLiveSequenceAction(action = '') {
 
 function writeLiveMonitorSnapshot() {
   const item = liveItemById(liveState().currentItemId) || liveSelectedItem()
+  const player = item ? livePlayerForItem(item.itemId) : null
+  const progress = livePlayerProgress(player, item || {})
   try {
     window.localStorage.setItem('melogicLiveMonitorSnapshot', JSON.stringify({
       status: liveState().outputStatus,
       streamId: liveState().streamId,
+      progress,
       item
     }))
   } catch {}
@@ -1837,14 +2498,11 @@ function handleAssetContextAction(action = '', assetId = '') {
   const live = liveState()
   live.contextMenu = null
   if (action === 'addAsset') return addLiveAsset(assetId)
-  if (action === 'previewAsset') {
-    live.outputStatus = 'Preparing audio preview...'
-    const asset = live.assets.find((entry) => entry.assetId === assetId)
-    if (asset?.normalizedAudioURL) {
-      const audio = new Audio(asset.normalizedAudioURL)
-      audio.preload = 'auto'
-      audio.play().catch(() => {})
-    }
+  if (action === 'previewAsset') return startLiveAssetPreview(assetId)
+  if (action === 'editAsset' || action === 'detailsAsset') return openLiveAssetEditor(assetId)
+  if (action === 'debugAsset') {
+    const asset = liveAssetById(assetId)
+    live.outputStatus = asset?.normalizedAudioPath || asset?.sourceUploadPath || asset?.originalFileName || 'No asset file details available.'
   } else {
     live.outputStatus = `${action.replace(/Asset$/, '').replace(/([A-Z])/g, ' $1').trim()} action is ready for the asset editor workflow.`
   }
@@ -1855,7 +2513,11 @@ async function handleSequenceContextAction(action = '', itemId = '') {
   const live = liveState()
   live.contextMenu = null
   if (action === 'play' || action === 'preview') await playLiveStudioItem(itemId)
-  else if (action === 'pause') await pauseLiveStudioPlayer(itemId)
+  else if (action === 'pause') {
+    const player = livePlayerForItem(itemId)
+    if (player?.paused) await resumeLiveStudioPlayer(itemId)
+    else await pauseLiveStudioPlayer(itemId)
+  }
   else if (action === 'stop') {
     stopLiveStudioPlayer(itemId)
     refreshLiveDecks()
@@ -1864,7 +2526,7 @@ async function handleSequenceContextAction(action = '', itemId = '') {
     const player = livePlayerForItem(itemId)
     if (player?.audio) {
       player.audio.currentTime = 0
-      if (player.paused) await pauseLiveStudioPlayer(itemId)
+      if (player.paused) await resumeLiveStudioPlayer(itemId)
     } else {
       await playLiveStudioItem(itemId)
     }
@@ -1943,7 +2605,10 @@ function updateLiveListenerPreviewDom() {
   app.querySelector('[data-live-preview-category]')?.replaceChildren(document.createTextNode(form.category || 'radio'))
   app.querySelector('[data-live-preview-access]')?.replaceChildren(document.createTextNode(form.accessMode || form.visibility || 'public'))
   const cover = app.querySelector('[data-live-preview-cover]')
-  if (cover) cover.innerHTML = form.coverArtURL ? `<img src="${esc(form.coverArtURL)}" alt="" />` : '<span>MR</span>'
+  if (cover) {
+    cover.innerHTML = renderStudioStableImage({ src: form.coverArtURL, fallback: 'MR', key: 'live-stream-cover-preview' })
+    hydrateStudioStableImages(cover)
+  }
 }
 
 function liveStreamPayload() {
@@ -2194,6 +2859,40 @@ async function setManualLiveMetadata() {
   }
 }
 
+function mergedSequenceMetadata(item = {}) {
+  const live = liveState()
+  const current = live.metadata || {}
+  return {
+    title: item.titleSnapshot || current.title || live.streamForm.title || '',
+    artist: item.artistSnapshot || current.artist || '',
+    album: item.albumSnapshot || current.album || '',
+    artworkURL: item.artworkURLSnapshot || current.artworkURL || live.streamForm.coverArtURL || '',
+    notes: item.notes || current.notes || ''
+  }
+}
+
+async function autoMatchLiveMetadataFromSequence(item = {}) {
+  const live = liveState()
+  if (!live.metadata.autoMatchSequencer || !live.streamId || !item?.itemId) return
+  if (live.metadata.lastAutoMatchedItemId === item.itemId) return
+  live.metadata.lastAutoMatchedItemId = item.itemId
+  const payload = mergedSequenceMetadata(item)
+  live.metadata.title = payload.title
+  live.metadata.artist = payload.artist
+  live.metadata.album = payload.album
+  live.metadata.artworkURL = payload.artworkURL
+  live.metadata.notes = payload.notes
+  try {
+    const itemId = `sequence-${item.itemId}`
+    await upsertMusicLiveSequenceItem({ streamId: live.streamId, itemId, ...payload })
+    await setMusicLiveNowPlaying(live.streamId, itemId)
+    live.outputStatus = `Live metadata matched ${payload.title || 'sequence item'}.`
+  } catch (error) {
+    console.error('[studio-live] auto metadata update failed', error)
+    live.outputStatus = 'Could not auto-match live metadata.'
+  }
+}
+
 async function clearManualLiveMetadata() {
   const live = liveState()
   if (!live.streamId) return
@@ -2262,7 +2961,9 @@ function handleLiveStudioHotkey(e) {
   if (e.key === ' ' || e.key === 'Enter') {
     e.preventDefault()
     const item = liveItemById(live.selectedItemId) || liveSelectedItem()
-    if (e.key === ' ' && item && livePlayerForItem(item.itemId)) pauseLiveStudioPlayer(item.itemId)
+    const player = item ? livePlayerForItem(item.itemId) : null
+    if (e.key === ' ' && player?.paused) resumeLiveStudioPlayer(item.itemId)
+    else if (e.key === ' ' && player) pauseLiveStudioPlayer(item.itemId)
     else playLiveStudioItem(item?.itemId || '').catch(() => {})
   } else if ((e.key === 'Backspace' || e.key === 'Delete') && live.selectedItemId) {
     e.preventDefault()
@@ -2330,9 +3031,31 @@ function bindLiveStudioControls() {
     live.metadata.artworkURL = String(data.get('artworkURL') || '').trim()
     live.metadata.notes = String(data.get('notes') || '').trim()
     live.metadata.override = data.get('override') === 'on'
+    live.metadata.autoMatchSequencer = data.get('autoMatchSequencer') === 'on'
     await setManualLiveMetadata()
   })
+  app.querySelector('[name="autoMatchSequencer"]')?.addEventListener('change', (e) => {
+    live.metadata.autoMatchSequencer = Boolean(e.currentTarget.checked)
+    live.metadata.lastAutoMatchedItemId = ''
+    const current = liveItemById(live.currentItemId)
+    if (live.metadata.autoMatchSequencer && current) {
+      autoMatchLiveMetadataFromSequence(current).then(() => renderShell()).catch(() => renderShell())
+    } else {
+      renderShell()
+    }
+  })
   app.querySelector('[data-live-clear-metadata]')?.addEventListener('click', () => clearManualLiveMetadata())
+  app.querySelector('[data-live-asset-editor-form]')?.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    await saveLiveAssetEditor(e.currentTarget)
+  })
+  app.querySelector('[data-live-asset-editor-form]')?.addEventListener('input', () => {
+    live.assetEditor.dirty = true
+  })
+  app.querySelectorAll('[data-close-live-asset-editor]').forEach((el) => el.addEventListener('click', () => closeLiveAssetEditor()))
+  app.querySelector('[data-live-asset-editor-backdrop]')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeLiveAssetEditor()
+  })
   app.querySelector('[data-live-chat-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const text = String(new FormData(e.currentTarget).get('message') || '').trim()
@@ -2368,6 +3091,18 @@ function bindLiveStudioControls() {
       renderShell()
     })
   }))
+  app.querySelector('[data-live-add-asset-open]')?.addEventListener('click', () => openLiveAssetAddModal())
+  app.querySelector('[data-live-asset-add-form]')?.addEventListener('submit', async (e) => {
+    e.preventDefault()
+    await addLiveAssetFromForm(e.currentTarget)
+  })
+  app.querySelector('[data-live-asset-add-form] select[name="mode"]')?.addEventListener('change', (e) => {
+    live.assetAdd.mode = e.currentTarget.value || 'audio'
+  })
+  app.querySelectorAll('[data-close-live-asset-add]').forEach((el) => el.addEventListener('click', () => closeLiveAssetAddModal()))
+  app.querySelector('[data-live-asset-add-backdrop]')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeLiveAssetAddModal()
+  })
   app.querySelectorAll('[data-live-asset-row]').forEach((el) => el.addEventListener('contextmenu', (e) => {
     e.preventDefault()
     live.contextMenu = { kind: 'asset', itemId: el.dataset.liveAssetRow || '', x: e.clientX, y: e.clientY }
@@ -2454,6 +3189,9 @@ function bindLiveStudioControls() {
     renderShell()
   }))
   app.querySelectorAll('[data-live-scrub-item]').forEach((el) => el.addEventListener('input', () => scrubLiveStudioPlayer(el.dataset.liveScrubItem, el.value)))
+  app.querySelector('[data-live-stop-preview]')?.addEventListener('click', () => stopLiveAssetPreview())
+  app.querySelector('[data-live-pause-preview]')?.addEventListener('click', () => toggleLiveAssetPreviewPause())
+  app.querySelector('[data-live-preview-volume]')?.addEventListener('input', (e) => setLiveAssetPreviewVolume(e.currentTarget.value))
   app.querySelector('[data-live-toggle-monitor]')?.addEventListener('change', (e) => {
     live.monitorEnabled = Boolean(e.currentTarget.checked)
     ensureLiveAudioGraph()
@@ -2488,6 +3226,14 @@ function bindLiveStudioControls() {
   }, { once: true })
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return
+    if (live.assetEditor?.assetId) {
+      closeLiveAssetEditor()
+      return
+    }
+    if (live.assetAdd?.open) {
+      closeLiveAssetAddModal()
+      return
+    }
     live.contextMenu = null
     live.sequenceMenuOpen = false
     renderShell()
