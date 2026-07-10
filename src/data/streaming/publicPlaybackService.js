@@ -1,0 +1,45 @@
+import { antMediaPlaybackUrls } from './antMediaProvider'
+import { PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
+
+export function getPublicPlaybackInfo(stream = {}) {
+  const provider = stream.provider === STREAM_PROVIDERS.antMedia ? STREAM_PROVIDERS.antMedia : STREAM_PROVIDERS.livekit
+  if (provider === STREAM_PROVIDERS.antMedia) {
+    const urls = antMediaPlaybackUrls({
+      baseUrl: stream.antMediaBaseUrl || stream.publicPlaybackBaseUrl || '',
+      appName: stream.antMediaAppName || 'live',
+      streamId: stream.antMediaStreamId || ''
+    })
+    const resolvedUrls = {
+      hlsUrl: stream.hlsUrl || urls.hlsUrl,
+      llhlsUrl: stream.llhlsUrl || urls.llhlsUrl,
+      webRtcPlaybackUrl: stream.webRtcPlaybackUrl || urls.webRtcPlaybackUrl
+    }
+    const playbackMode = stream.playbackMode || PLAYBACK_MODES.hls
+    const url = playbackMode === PLAYBACK_MODES.llhls ? resolvedUrls.llhlsUrl : playbackMode === PLAYBACK_MODES.webrtc ? resolvedUrls.webRtcPlaybackUrl : resolvedUrls.hlsUrl
+    return {
+      provider,
+      playbackMode,
+      playable: Boolean(stream.status === 'live' && url),
+      url,
+      message: url ? '' : 'Ant Media is not configured.'
+    }
+  }
+  return {
+    provider: STREAM_PROVIDERS.livekit,
+    playbackMode: PLAYBACK_MODES.webrtc,
+    playable: Boolean(stream.status === 'live'
+      && stream.hostConnected
+      && (stream.audioPublished === true || stream.videoPublished === true || stream.programHasAudio === true || stream.programHasVideo === true)),
+    url: '',
+    message: ''
+  }
+}
+
+export function isPublicStreamPlayable(stream = {}) {
+  const info = getPublicPlaybackInfo(stream)
+  return stream.status === 'live'
+    && !['removed', 'blocked'].includes(stream.moderationStatus)
+    && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
+    && info.playable
+    && (stream.programHasAudio === true || stream.programHasVideo === true || stream.audioPublished === true || stream.videoPublished === true)
+}

@@ -50,6 +50,7 @@ import {
   upsertMusicLiveSequenceItem,
   updateMusicLiveStreamInfo
 } from './data/musicLiveService'
+import { getPublicPlaybackInfo, isPublicStreamPlayable } from './data/streaming/publicPlaybackService'
 import {
   getMusicRelease,
   listFeaturedArtists,
@@ -669,7 +670,7 @@ function renderLiveStreamsView() {
       <div>
         <p class="music-eyebrow">Live Streams</p>
         <h1>Live Streams</h1>
-        <p>Audio-only live broadcasts from Melogic creators.</p>
+        <p>Live audio and video broadcasts from Melogic creators.</p>
       </div>
     </section>
     <div class="music-live-tabs">
@@ -1059,8 +1060,8 @@ function renderReleaseDetailPage() {
 }
 
 function liveStatusLabel(stream = {}) {
-  if (state.liveStatus === 'live') return 'Live audio connected.'
-  if (state.liveStatus === 'waiting') return 'Connected - waiting for host audio.'
+  if (state.liveStatus === 'live') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
+  if (state.liveStatus === 'waiting') return streamHasVideoFoundation(stream) ? 'Connected - waiting for media.' : 'Connected - waiting for host audio.'
   if (state.liveStatus === 'reconnecting') return 'Reconnecting...'
   if (state.liveStatus === 'connecting') return 'Connecting to stream...'
   if (state.liveStatus === 'ended' || stream.status !== 'live') return 'Stream ended.'
@@ -1187,10 +1188,12 @@ function nowPlayingDisplay(stream = {}) {
 }
 
 function streamHasVideoFoundation(stream = state.liveStream) {
+  if (!stream) return Boolean(state.listenerVideoElement)
+  if (stream.videoEnabled !== true && !state.listenerVideoElement) return false
   return Boolean(
-    state.listenerVideoElement ||
+    (state.listenerVideoElement && stream.videoEnabled === true) ||
     stream?.videoPublished === true ||
-    stream?.videoEnabled === true ||
+    stream?.programHasVideo === true ||
     stream?.currentNowPlaying?.videoURL ||
     stream?.videoURL
   )
@@ -2172,6 +2175,12 @@ function renderPublicLiveMonitorPage() {
 function attachLiveVideoElement(root = app) {
   const video = state.listenerVideoElement
   if (!video) return
+  if (state.liveStream?.videoEnabled === false) {
+    video.remove()
+    state.listenerVideoElement = null
+    state.liveVideoExpanded = false
+    return
+  }
   video.controls = false
   video.autoplay = true
   video.playsInline = true
@@ -2311,10 +2320,10 @@ function renderLiveDetailPage() {
     renderAppShell(emptyState('Live stream unavailable', 'This stream may have ended, been removed, or never existed.', `<a class="button button-accent" href="${ROUTES.musicLive}">Back to Live Streams</a>`))
     return
   }
-  const canListen = stream.status === 'live' && stream.hostConnected === true && stream.audioPublished === true && isLiveStreamFresh(stream)
+  const canListen = stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
   const hasVideo = streamHasVideoFoundation(stream)
   const visual = hasVideo
-    ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'Show video stream' : 'Click to watch stream'}"><span>Click to watch stream</span><div data-live-video-mount></div></button>`
+    ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
     : renderLiveArtwork(stream, 'music-live-detail-art')
   renderAppShell(`
     <section class="music-live-detail ${hasVideo ? 'has-video-foundation' : ''} ${state.liveVideoExpanded ? 'is-video-expanded' : ''}">
@@ -2323,15 +2332,16 @@ function renderLiveDetailPage() {
         ${hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
       </div>
       <div class="music-live-detail-copy">
-        <span class="music-live-badge">${canListen ? 'LIVE' : 'ENDED'}</span>
+        ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge">${canListen ? 'LIVE' : 'ENDED'}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
+        ${hasVideo ? '' : `<span class="music-live-badge">${canListen ? 'LIVE' : 'ENDED'}</span>`}
         <h1>${escapeHtml(stream.title)}</h1>
-        <p>${escapeHtml(stream.description || 'Audio-only live stream on Melogic Music.')}</p>
+        <p>${escapeHtml(stream.description || 'Live stream on Melogic Music.')}</p>
         <div class="music-live-host">
           ${renderAvatarImage({ src: stream.hostPhotoURL, name: stream.hostDisplayName, className: 'music-live-avatar' })}
           <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${escapeHtml(liveCategoryLabel(stream.category))} · ${escapeHtml(listenerCountLabel(stream.listenerCount))}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
         </div>
         ${renderNowPlaying(stream)}
-        <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Live audio</span>'}</div>
+        <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : `<span>${hasVideo ? 'Live stream' : 'Live audio'}</span>`}</div>
         ${stream.passwordProtected && !['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? `
           <form class="music-password-form" data-live-password-form>
             <label><span>Stream password</span><input name="password" type="password" value="${escapeHtml(state.livePassword)}" placeholder="Enter password to listen" /></label>
@@ -2680,7 +2690,13 @@ function startLiveStreamSubscription(streamId) {
   state.liveStreamUnsubscribe = subscribeMusicLiveStream(
     streamId,
     (stream) => {
-      if (!stream || stream.visibility === 'private' || stream.status !== 'live' || stream.hostConnected !== true || stream.audioPublished !== true || !isLiveStreamFresh(stream)) {
+      if (stream?.videoEnabled !== true && state.listenerVideoElement) {
+        state.listenerVideoElement.remove()
+        state.listenerVideoElement = null
+        state.liveVideoExpanded = false
+      }
+      const playable = Boolean(stream && stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream))
+      if (!playable) {
         disconnectLiveListener()
         state.liveStream = stream
         state.liveStatus = 'ended'
@@ -3106,6 +3122,15 @@ async function joinLiveListener(options = {}) {
     return
   }
   if (!monitorMode) clearPlayer()
+  const playbackInfo = getPublicPlaybackInfo(state.liveStream)
+  if (playbackInfo.provider === 'antMedia') {
+    state.liveError = playbackInfo.playable
+      ? 'Ant Media playback URLs are ready, but the browser playback adapter is not installed in this build.'
+      : playbackInfo.message || 'Ant Media playback is not configured.'
+    state.liveStatus = 'idle'
+    rerender()
+    return
+  }
   state.liveStatus = 'connecting'
   state.liveError = ''
   rerender()
@@ -3133,6 +3158,7 @@ async function joinLiveListener(options = {}) {
         element.dataset.musicLiveVideo = 'true'
         state.listenerVideoElement = element
         attachLiveVideoElement()
+        if (state.liveStream?.programHasAudio !== true && state.liveStream?.audioPublished !== true) state.liveStatus = 'live'
         rerender()
         return
       }
@@ -3186,7 +3212,10 @@ async function joinLiveListener(options = {}) {
       updateLiveListenerControls()
     })
     await room.connect(credentials.url, credentials.listenerToken || credentials.token)
-    if (!state.listenerAudioElement) {
+    if (!state.listenerAudioElement && state.listenerVideoElement) {
+      state.liveStatus = 'live'
+      updateLiveListenerControls()
+    } else if (!state.listenerAudioElement) {
       state.liveStatus = 'waiting'
       updateLiveListenerControls()
     }

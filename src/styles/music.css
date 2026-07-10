@@ -1608,14 +1608,14 @@
 .music-live-monitor-canvas{position:absolute;inset:0;width:100%;height:100%;opacity:.82}
 .music-live-monitor-brand{position:absolute;z-index:2;top:clamp(20px,3vw,38px);left:clamp(22px,3vw,42px);color:rgba(255,255,255,.58);font-size:12px;font-weight:900;letter-spacing:.14em}
 .music-live-monitor-core{position:relative;z-index:1;min-height:100%;width:auto;display:grid;align-content:center;justify-items:center;text-align:center;gap:clamp(14px,2vh,22px);padding:clamp(28px,5vh,64px)}
-.music-live-monitor-art{width:min(43vh,24vw,460px);min-width:220px;border-radius:clamp(18px,3vw,58px);overflow:hidden;background:#20bf3b;box-shadow:0 30px 90px rgba(0,0,0,.5)}
+.music-live-monitor-art{width:min(43vh,24vw,460px);min-width:220px;border-radius:clamp(18px,3vw,58px);overflow:hidden;background:#05080f;box-shadow:0 30px 90px rgba(0,0,0,.5)}
 .music-live-monitor-copy h1{margin:0;color:#fff;font-size:clamp(48px,5.2vw,92px);line-height:1;font-weight:950;letter-spacing:0;text-transform:uppercase}
 .music-live-monitor-copy p{margin:.35rem 0 0;color:#fff;font-size:clamp(30px,3.25vw,58px);line-height:1.05}
 .music-live-monitor-copy small{display:block;margin-top:.7rem;color:rgba(255,255,255,.9);font-size:clamp(18px,1.8vw,34px)}
 .music-live-monitor-progress{width:min(42vw,540px);height:5px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.16)}
 .music-live-monitor-progress span{display:block;width:42%;height:100%;border-radius:inherit;background:#67f2aa;animation:musicMonitorPulse 2.8s ease-in-out infinite alternate}
 .music-live-monitor-video-layout{position:relative;z-index:1;min-height:100%;display:grid;grid-template-columns:minmax(360px,1fr) minmax(310px,456px);align-items:center;gap:clamp(36px,4.5vw,82px);padding:clamp(54px,8vh,110px) clamp(56px,4.4vw,84px)}
-.music-live-monitor-video-frame{aspect-ratio:16/9;border-radius:clamp(38px,5.8vw,106px);overflow:hidden;background:#c83ad1;box-shadow:0 34px 100px rgba(0,0,0,.58)}
+.music-live-monitor-video-frame{aspect-ratio:16/9;border-radius:clamp(38px,5.8vw,106px);overflow:hidden;background:#05080f;box-shadow:0 34px 100px rgba(0,0,0,.58)}
 .music-live-monitor-video-frame video,.music-live-monitor-video-empty{width:100%;height:100%;object-fit:cover}
 .music-live-monitor-video-empty{display:grid;place-items:center;color:rgba(255,255,255,.65)}
 .music-live-monitor-side{display:grid;align-content:center;justify-items:start;gap:clamp(24px,3vh,38px)}
@@ -1626,3 +1626,25 @@
 .music-live-monitor-controls{position:absolute;z-index:3;left:clamp(18px,3vw,42px);bottom:clamp(18px,3vw,42px);display:flex;gap:10px;flex-wrap:wrap;opacity:0;transform:translateY(8px);transition:opacity .18s ease,transform .18s ease}
 .music-live-monitor-controls.is-visible{opacity:1;transform:translateY(0)}
 @media (max-width:980px){.music-live-detail.has-video-foundation{grid-template-columns:1fr}.music-live-monitor-video-layout{grid-template-columns:1fr;align-content:center;padding:70px 24px 32px}.music-live-monitor-side{justify-items:center;text-align:center}.music-live-monitor-side .music-live-monitor-copy{text-align:center}}
+
+.music-live-detail.has-video-foundation{position:relative;display:grid;grid-template-columns:1fr;align-items:end;min-height:calc(100dvh - 132px);padding:clamp(280px,44vw,520px) clamp(18px,4vw,56px) clamp(28px,6vh,64px);overflow:hidden;background:#02050a}
+.music-live-detail.has-video-foundation .music-live-visual-shell{position:absolute;z-index:0;inset:0 0 auto 0;display:block;min-height:clamp(320px,52vw,620px)}
+.music-live-detail.has-video-foundation .music-live-visual-shell::after{content:"";position:absolute;inset:35% 0 -1px;background:linear-gradient(180deg,rgba(2,5,10,0),rgba(2,5,10,.76) 54%,#02050a);pointer-events:none}
+.music-live-detail.has-video-foundation .music-live-visual{height:clamp(320px,52vw,620px);border-radius:0;box-shadow:none;background:#05080f;opacity:.88}
+.music-live-detail.has-video-foundation .music-live-visual::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.08),rgba(0,0,0,.42));pointer-events:none}
+.music-live-detail.has-video-foundation .music-live-visual>span{bottom:clamp(24px,6vw,72px);font-size:13px}
+.music-live-detail.has-video-foundation .music-live-detail-copy{position:relative;z-index:1;width:min(960px,100%);gap:1rem}
+.music-live-detail.has-video-foundation .music-live-detail-copy h1{font-size:clamp(2.5rem,7vw,6.4rem)}
+.music-live-detail.has-video-foundation .music-live-host{max-width:680px}
+.music-live-detail.is-video-expanded{min-height:0;padding:0 0 clamp(28px,6vh,64px);gap:clamp(20px,4vw,42px);align-items:start}
+.music-live-detail.is-video-expanded .music-live-visual-shell{position:relative;min-height:0;width:100%}
+.music-live-detail.is-video-expanded .music-live-visual-shell::after{inset:auto 0 0;height:24%;background:linear-gradient(180deg,rgba(2,5,10,0),rgba(2,5,10,.58))}
+.music-live-detail.is-video-expanded .music-live-visual{height:auto;min-height:0;aspect-ratio:16/9}
+.music-live-detail.is-video-expanded .music-live-detail-copy{width:min(1040px,calc(100% - 36px));margin:0 auto}
+.music-live-hide-video{position:relative;z-index:2;margin:10px 0 0 clamp(12px,3vw,32px)}
+.music-live-video-identity{display:flex;align-items:center;gap:12px}
+.music-live-video-cover{width:64px;height:64px;border-radius:8px;overflow:hidden;background:#08101b;box-shadow:0 12px 36px rgba(0,0,0,.35)}
+.music-live-video-identity>div{display:grid;gap:6px}
+.music-live-video-identity strong{color:#dfe8fb}
+.music-live-monitor-art,.music-live-monitor-video-frame{background:#05080f}
+@media (max-width:760px){.music-live-detail.has-video-foundation{padding-top:clamp(230px,68vw,420px)}.music-live-detail.has-video-foundation .music-live-visual,.music-live-detail.has-video-foundation .music-live-visual-shell{min-height:clamp(250px,72vw,420px)}.music-live-video-cover{width:54px;height:54px}.music-live-detail.is-video-expanded .music-live-detail-copy{width:calc(100% - 28px)}}

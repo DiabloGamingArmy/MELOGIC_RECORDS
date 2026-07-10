@@ -14,6 +14,9 @@ const ALLOWED_CATEGORIES = new Set(['music', 'podcast', 'radio', 'interview', 'l
 const ALLOWED_VISIBILITIES = new Set(['public', 'unlisted', 'private'])
 const ALLOWED_ACCESS_MODES = new Set(['public', 'unlisted', 'private', 'password'])
 const ALLOWED_AUDIO_MODES = new Set(['music', 'voice'])
+const ALLOWED_PROVIDERS = new Set(['livekit', 'antMedia'])
+const ALLOWED_INGEST_MODES = new Set(['browser-webrtc', 'rtmp', 'srt', 'none'])
+const ALLOWED_PLAYBACK_MODES = new Set(['webrtc', 'hls', 'llhls', 'none'])
 const ALLOWED_REACTIONS = new Set(['like', 'dislike', 'none'])
 const ELIGIBLE_ROLES = new Set(['creator', 'artist', 'founder', 'staff', 'admin', 'owner'])
 const STARTING_TIMEOUT_MS = 5 * 60 * 1000
@@ -51,6 +54,83 @@ function normalizeAudioMode(value) {
 
 function normalizeInputSource(value) {
   return value === 'sequence' ? 'sequence' : 'browser'
+}
+
+function normalizeProvider(value) {
+  return value === 'antMedia' ? 'antMedia' : 'livekit'
+}
+
+function normalizeIngestMode(value) {
+  return ALLOWED_INGEST_MODES.has(value) ? value : 'browser-webrtc'
+}
+
+function normalizePlaybackMode(value, provider = 'livekit') {
+  if (ALLOWED_PLAYBACK_MODES.has(value)) return value
+  return provider === 'antMedia' ? 'hls' : 'webrtc'
+}
+
+function isStreamPublishing(stream = {}) {
+  return stream.audioPublished === true || stream.videoPublished === true || stream.programHasAudio === true || stream.programHasVideo === true
+}
+
+function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource = 'browser', defaultAudioPublished = false } = {}) {
+  const provider = normalizeProvider(data.provider || existing.provider)
+  const audioEnabled = data.audioEnabled === false ? false : data.audioEnabled === true ? true : existing.audioEnabled !== false
+  const videoEnabled = data.videoEnabled === true ? true : data.videoEnabled === false ? false : existing.videoEnabled === true
+  const audioPublished = Boolean(audioEnabled && (data.audioPublished === true || (defaultAudioPublished && data.audioPublished !== false)))
+  const videoPublished = Boolean(videoEnabled && data.videoPublished === true)
+  const programHasAudio = Boolean(audioEnabled && (data.programHasAudio === true || (data.programHasAudio !== false && audioPublished)))
+  const programHasVideo = Boolean(videoEnabled && (data.programHasVideo === true || videoPublished))
+  const activeAudioSources = data.activeAudioSources && typeof data.activeAudioSources === 'object'
+    ? {
+        browser: data.activeAudioSources.browser !== false,
+        sequence: data.activeAudioSources.sequence === true
+      }
+    : {
+        browser: selectedInputSource !== 'sequence',
+        sequence: selectedInputSource === 'sequence'
+      }
+  const programState = data.programState && typeof data.programState === 'object'
+    ? {
+        activeSceneId: cleanId(data.programState.activeSceneId || existing.programState?.activeSceneId || 'audio-only', 120),
+        selectedSourceId: cleanId(data.programState.selectedSourceId || existing.programState?.selectedSourceId || '', 120),
+        outputResolution: cleanString(data.programState.outputResolution || existing.programState?.outputResolution || '1280x720', 40),
+        fps: Math.max(1, Math.min(60, Number(data.programState.fps || existing.programState?.fps || 30))),
+        mode: data.programState.mode === 'preview' ? 'preview' : 'program'
+      }
+    : existing.programState || { activeSceneId: 'audio-only', selectedSourceId: '', outputResolution: '1280x720', fps: 30, mode: 'program' }
+  const providerDiagnostics = data.providerDiagnostics && typeof data.providerDiagnostics === 'object'
+    ? {
+        connectionState: cleanString(data.providerDiagnostics.connectionState, 80),
+        roomName: cleanString(data.providerDiagnostics.roomName, 120),
+        roomId: cleanString(data.providerDiagnostics.roomId, 120),
+        audioTrackId: cleanString(data.providerDiagnostics.audioTrackId, 120),
+        videoTrackId: cleanString(data.providerDiagnostics.videoTrackId, 120),
+        lastMediaEvent: cleanString(data.providerDiagnostics.lastMediaEvent, 160)
+      }
+    : existing.providerDiagnostics || {}
+  return {
+    provider,
+    ingestMode: normalizeIngestMode(data.ingestMode || existing.ingestMode),
+    playbackMode: normalizePlaybackMode(data.playbackMode || existing.playbackMode, provider),
+    antMediaStreamId: cleanId(data.antMediaStreamId || existing.antMediaStreamId || '', 160),
+    antMediaAppName: cleanString(data.antMediaAppName || existing.antMediaAppName || '', 120).replace(/^\/+|\/+$/g, ''),
+    antMediaBaseUrl: sanitizeCoverArtURL(data.antMediaBaseUrl || existing.antMediaBaseUrl || ''),
+    hlsUrl: sanitizeCoverArtURL(data.hlsUrl || existing.hlsUrl || ''),
+    llhlsUrl: sanitizeCoverArtURL(data.llhlsUrl || existing.llhlsUrl || ''),
+    webRtcPlaybackUrl: sanitizeCoverArtURL(data.webRtcPlaybackUrl || existing.webRtcPlaybackUrl || ''),
+    audioEnabled,
+    videoEnabled,
+    activeAudioSources,
+    activeVideoSource: videoEnabled ? normalizeInputSource(data.activeVideoSource || existing.activeVideoSource || 'browser') : '',
+    programHasAudio,
+    programHasVideo,
+    audioPublished,
+    videoPublished,
+    audioOnly: !programHasVideo,
+    programState,
+    providerDiagnostics
+  }
 }
 
 function normalizeAccessMode(data = {}) {
@@ -128,7 +208,7 @@ function isPubliclyJoinable(stream = {}) {
     && ['public', 'unlisted', 'password'].includes(accessMode)
     && stream.visibility !== 'private'
     && stream.hostConnected === true
-    && stream.audioPublished === true
+    && isStreamPublishing(stream)
     && isHeartbeatFresh(stream)
 }
 
@@ -336,6 +416,7 @@ const startMusicLiveStream = onCall(
       const audioMode = normalizeAudioMode(request.data?.audioMode)
       const selectedInputSource = normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource)
       const selectedSequenceId = cleanId(request.data?.sequenceId || request.data?.selectedSequenceId, 160)
+      const programOutputState = cleanProgramOutputState(request.data || {}, { selectedInputSource })
       if (title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.', { stage })
       if (request.data?.rightsAccepted !== true) throw new HttpsError('failed-precondition', 'You must accept the live stream rules before going live.', { stage })
       if (accessMode === 'password' && !cleanString(request.data?.password, 200)) {
@@ -351,7 +432,7 @@ const startMusicLiveStream = onCall(
       ])
       const freshLive = liveActive.docs.filter((docSnap) => {
         const stream = docSnap.data() || {}
-        return stream.hostConnected === true && stream.audioPublished === true && isHeartbeatFresh(stream)
+        return stream.hostConnected === true && isStreamPublishing(stream) && isHeartbeatFresh(stream)
       })
       const staleLive = liveActive.docs.filter((docSnap) => !freshLive.includes(docSnap))
       const freshStarting = startingActive.docs.filter((docSnap) => {
@@ -366,6 +447,9 @@ const startMusicLiveStream = onCall(
           connectionStatus: 'stale',
           hostConnected: false,
           audioPublished: false,
+          videoPublished: false,
+          programHasAudio: false,
+          programHasVideo: false,
           endedAt: cleanupNow,
           endReason: 'heartbeat_stale',
           cleanupSource: 'start_stream_guard',
@@ -456,10 +540,12 @@ const startMusicLiveStream = onCall(
         selectedInputSource,
         selectedSequenceId,
         audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
-        audioOnly: true,
-        videoEnabled: false,
-        hostConnected: false,
+        ...programOutputState,
         audioPublished: false,
+        videoPublished: false,
+        programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
+        programHasVideo: programOutputState.videoEnabled && programOutputState.programHasVideo,
+        hostConnected: false,
         roomName,
         livekitRoomName: roomName,
         livekitRoomSid: '',
@@ -547,6 +633,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   const audioMode = normalizeAudioMode(request.data?.audioMode)
   const selectedInputSource = normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource)
   const selectedSequenceId = cleanId(request.data?.sequenceId || request.data?.selectedSequenceId, 160)
+  const programOutputState = cleanProgramOutputState(request.data || {}, { selectedInputSource })
   const now = admin.firestore.FieldValue.serverTimestamp()
   const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
   const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
@@ -574,10 +661,12 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     selectedInputSource,
     selectedSequenceId,
     audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
-    audioOnly: true,
-    videoEnabled: false,
-    hostConnected: false,
+    ...programOutputState,
     audioPublished: false,
+    videoPublished: false,
+    programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
+    programHasVideo: programOutputState.videoEnabled && programOutputState.programHasVideo,
+    hostConnected: false,
     roomName,
     livekitRoomName: roomName,
     livekitRoomSid: '',
@@ -625,11 +714,16 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   if (!['starting', 'live'].includes(stream.status)) throw new HttpsError('failed-precondition', 'This stream cannot be marked live.')
 
   const now = admin.firestore.FieldValue.serverTimestamp()
+  const programOutputState = cleanProgramOutputState(request.data || {}, {
+    existing: stream,
+    selectedInputSource: stream.selectedInputSource || 'browser',
+    defaultAudioPublished: true
+  })
   await streamRef.set({
     status: 'live',
     connectionStatus: 'live',
     hostConnected: true,
-    audioPublished: true,
+    ...programOutputState,
     startedAt: stream.startedAt || now,
     updatedAt: now,
     lastHostHeartbeatAt: now
@@ -652,10 +746,15 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
   if (!['starting', 'live'].includes(stream.status)) throw new HttpsError('failed-precondition', 'This stream is no longer active.')
 
   const now = admin.firestore.FieldValue.serverTimestamp()
+  const programOutputState = cleanProgramOutputState(request.data || {}, {
+    existing: stream,
+    selectedInputSource: stream.selectedInputSource || 'browser',
+    defaultAudioPublished: true
+  })
   await streamRef.set({
     connectionStatus: request.data?.connectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
     hostConnected: true,
-    audioPublished: request.data?.audioPublished === false ? false : true,
+    ...programOutputState,
     lastHostHeartbeatAt: now,
     updatedAt: now
   }, { merge: true })
@@ -704,6 +803,10 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
     ...metadata,
     selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource),
     selectedSequenceId: cleanId(request.data?.sequenceId || request.data?.selectedSequenceId || stream.selectedSequenceId, 160),
+    ...cleanProgramOutputState(request.data || {}, {
+      existing: stream,
+      selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource)
+    }),
     updatedAt: now,
     lastMetadataUpdateAt: now
   }, { merge: true })
@@ -726,6 +829,9 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
     connectionStatus: reason === 'host_unload' || reason === 'host_pagehide' ? 'host_disconnected' : 'ended',
     hostConnected: false,
     audioPublished: false,
+    videoPublished: false,
+    programHasAudio: false,
+    programHasVideo: false,
     endedAt: now,
     endReason: cleanString(reason, 80) || 'host_ended',
     cleanupSource: reason === 'host_unload' || reason === 'host_pagehide' ? 'heartbeat' : 'host_end',
@@ -753,12 +859,15 @@ const joinMusicLiveStream = onCall(
     if (stream.status !== 'live') throw new HttpsError('failed-precondition', 'This stream is not live.')
     const accessMode = stream.accessMode || stream.visibility || 'private'
     if (accessMode === 'private' || stream.visibility === 'private') throw new HttpsError('permission-denied', 'This stream is private.')
-    if (stream.hostConnected !== true || stream.audioPublished !== true || !isHeartbeatFresh(stream)) {
+    if (stream.hostConnected !== true || !isStreamPublishing(stream) || !isHeartbeatFresh(stream)) {
       await streamRef.set({
         status: 'ended',
         connectionStatus: 'stale',
         hostConnected: false,
         audioPublished: false,
+        videoPublished: false,
+        programHasAudio: false,
+        programHasVideo: false,
         endedAt: admin.firestore.FieldValue.serverTimestamp(),
         endReason: 'heartbeat_stale',
         cleanupSource: 'join_guard',
@@ -808,6 +917,12 @@ const joinMusicLiveStream = onCall(
       ok: true,
       streamId,
       roomName,
+      provider: stream.provider || 'livekit',
+      playbackMode: stream.playbackMode || 'webrtc',
+      audioPublished: stream.audioPublished === true,
+      videoPublished: stream.videoPublished === true,
+      programHasAudio: stream.programHasAudio === true,
+      programHasVideo: stream.programHasVideo === true,
       listenerToken,
       token: listenerToken,
       url: LIVEKIT_URL.value(),
@@ -1099,7 +1214,7 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   if (stream.status !== 'live' || !['public', 'unlisted'].includes(stream.visibility)) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
-  if (stream.hostConnected !== true || stream.audioPublished !== true || !isHeartbeatFresh(stream)) {
+  if (stream.hostConnected !== true || !isStreamPublishing(stream) || !isHeartbeatFresh(stream)) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
 
@@ -1125,13 +1240,16 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
 async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
   const stream = docSnap.data() || {}
   if (stream.status === 'live') {
-    const stale = stream.hostConnected !== true || stream.audioPublished !== true || !isHeartbeatFresh(stream)
+    const stale = stream.hostConnected !== true || !isStreamPublishing(stream) || !isHeartbeatFresh(stream)
     if (!stale) return false
     await docSnap.ref.set({
       status: 'ended',
       connectionStatus: 'stale',
       hostConnected: false,
       audioPublished: false,
+      videoPublished: false,
+      programHasAudio: false,
+      programHasVideo: false,
       endedAt: now,
       endReason: stream.lastHostHeartbeatAt ? 'heartbeat_timeout' : 'empty_room',
       cleanupSource: 'scheduled',
@@ -1148,6 +1266,9 @@ async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
       connectionStatus: 'error',
       hostConnected: false,
       audioPublished: false,
+      videoPublished: false,
+      programHasAudio: false,
+      programHasVideo: false,
       errorReason: 'starting_timeout',
       cleanupSource: 'scheduled',
       updatedAt: now

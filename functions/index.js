@@ -113,6 +113,15 @@ const {
   sendMusicLiveChatMessage,
   cleanupStaleMusicLiveStreams
 } = require('./src/music/musicLiveStreams')
+const {
+  createAntMediaStreamSession,
+  getAntMediaPublishAuthorization,
+  getAntMediaPlaybackAuthorization,
+  stopAntMediaStreamSession,
+  antMediaPublishWebhook,
+  antMediaPlayWebhook,
+  antMediaWebhookHealthCheck
+} = require('./src/streaming/antMediaAccess')
 const { getPublicProfileStats, toggleProfileFollow } = require('./src/profiles/profileRelationships')
 const {
   dismissMutualUserSuggestion,
@@ -272,6 +281,13 @@ exports.setMusicLiveNowPlaying = setMusicLiveNowPlaying
 exports.endMusicLiveStreamBeacon = endMusicLiveStreamBeacon
 exports.sendMusicLiveChatMessage = sendMusicLiveChatMessage
 exports.cleanupStaleMusicLiveStreams = cleanupStaleMusicLiveStreams
+exports.createAntMediaStreamSession = createAntMediaStreamSession
+exports.getAntMediaPublishAuthorization = getAntMediaPublishAuthorization
+exports.getAntMediaPlaybackAuthorization = getAntMediaPlaybackAuthorization
+exports.stopAntMediaStreamSession = stopAntMediaStreamSession
+exports.antMediaPublishWebhook = antMediaPublishWebhook
+exports.antMediaPlayWebhook = antMediaPlayWebhook
+exports.antMediaWebhookHealthCheck = antMediaWebhookHealthCheck
 exports.getPublicProfileStats = getPublicProfileStats
 exports.toggleProfileFollow = toggleProfileFollow
 exports.getMutualUserSuggestions = getMutualUserSuggestions

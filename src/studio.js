@@ -23,6 +23,15 @@ import {
   upsertMusicLiveSequenceItem
 } from './data/musicLiveService'
 import {
+  deleteProgramScene,
+  listProgramScenes,
+  listProgramSources,
+  saveProgramScene,
+  saveProgramSource
+} from './data/liveStudioProgramService'
+import { DEFAULT_PROGRAM_SCENES, DEFAULT_PROGRAM_SOURCES, ProgramMixer } from './data/streaming/programMixer'
+import { getStreamingProvider, listStreamingProviderOptions, preferredStreamingProviderId } from './data/streaming/streamingProviderRegistry'
+import {
   SEQUENCE_ASSET_CATEGORIES,
   SEQUENCE_ACTION_TYPES,
   addActionBookmarkToSequence,
@@ -65,6 +74,7 @@ import { stageTypes, templateCards } from './stage/app/stageState'
 
 const app = document.querySelector('#app')
 let studioMonitorVisualizerCleanup = null
+let studioProgramMixer = null
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 const stableImageCache = new Map()
@@ -185,6 +195,8 @@ const state = {
     room: null,
     localTrack: null,
     localVideoTrack: null,
+    audioPublishedToProvider: false,
+    videoPublishedToProvider: false,
     sourceTrack: null,
     heartbeatTimer: 0,
     draftSaveTimer: 0,
@@ -200,6 +212,20 @@ const state = {
     sequenceInputEnabled: false,
     videoSource: 'browser',
     videoTransition: 'cut',
+    providerId: preferredStreamingProviderId(),
+    providerDiagnostics: {},
+    programMixer: {
+      loading: false,
+      loaded: false,
+      scenes: DEFAULT_PROGRAM_SCENES.map((scene) => ({ ...scene })),
+      sources: DEFAULT_PROGRAM_SOURCES.map((source) => ({ ...source })),
+      activeSceneId: 'audio-only',
+      selectedSourceId: 'browser-camera',
+      outputResolution: '1280x720',
+      fps: 30,
+      mode: 'program',
+      notice: ''
+    },
     mixer: {
       browserGain: 1,
       sequenceGain: 1,
@@ -308,6 +334,7 @@ function isLiveMonitorRoute() {
 const livePanels = [
   ['stream', 'Stream Details'],
   ['input', 'Input Source'],
+  ['program', 'Program Mixer'],
   ['sequence', 'Sequence Editor'],
   ['metadata', 'Manual Metadata'],
   ['chat', 'Chat'],
@@ -1270,7 +1297,7 @@ function renderInputSourcePanel() {
       <div class="studio-live-source-grid studio-live-source-grid--foundation">
         <article class="studio-live-source-option ${live.inputSource === 'browser' ? 'is-active' : ''}">
           <header class="studio-live-source-card-header">
-            <div><h2>Audio Program</h2><p>Mix browser mic/interface and Sequence Editor output into one program bus.</p></div>
+            <div><h2>Audio Input</h2><p>Mix browser mic/interface and Sequence Editor output into one program bus.</p></div>
             <label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="audio" ${live.audioEnabled ? 'checked' : ''} /><span></span>Enable Audio</label>
           </header>
           <label class="studio-live-check"><input type="checkbox" data-live-audio-route="browser" ${live.browserInputEnabled ? 'checked' : ''} /> Browser Audio Input</label>
@@ -1294,28 +1321,30 @@ function renderInputSourcePanel() {
             <button type="button" data-live-prepare-mic ${live.micPreparing ? 'disabled' : ''}>${live.micPrepared ? 'Mic Ready' : live.micPreparing ? 'Preparing...' : 'Enable Mic'}</button>
           </div>
         </article>
-        <article class="studio-live-source-option ${live.videoEnabled ? 'is-active' : ''}">
+        <article class="studio-live-source-option studio-live-video-input-card ${live.videoEnabled ? 'is-active' : ''}">
           <header class="studio-live-source-card-header">
-            <div><h2>Video Foundation</h2><p>Prepare browser or sequence video source selection. Public video broadcasting is coming soon.</p></div>
+            <div><h2>Video Input</h2><p>Choose the local visual source that can feed program output when Video is enabled.</p></div>
             <label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="video" ${live.videoEnabled ? 'checked' : ''} /><span></span>Enable Video</label>
           </header>
-          <label>Video source<select data-live-video-source>
-            <option value="browser" ${live.videoSource === 'browser' ? 'selected' : ''}>Browser Video Input</option>
-            <option value="sequence" ${live.videoSource === 'sequence' ? 'selected' : ''}>Sequence Video Source</option>
-          </select></label>
-          <label>Camera / Screen<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
-            <option value="">Default camera or screen source</option>
-            ${live.videoDevices.map((device) => `<option value="${esc(device.deviceId)}" ${live.selectedVideoDeviceId === device.deviceId ? 'selected' : ''}>${esc(device.label || `Video input ${live.videoDevices.indexOf(device) + 1}`)}</option>`).join('')}
-          </select></label>
-          <label>Transition<select data-live-video-transition><option value="cut" ${live.videoTransition === 'cut' ? 'selected' : ''}>Cut</option><option value="fade" ${live.videoTransition === 'fade' ? 'selected' : ''}>Fade</option></select></label>
-          <div class="studio-live-video-preview ${live.videoPreviewActive ? 'is-active' : ''}" data-live-video-preview-mount>
-            <span>${esc(live.videoPreviewError || (live.videoPreviewActive ? 'Video input preview active' : 'No video input preview'))}</span>
-          </div>
-          <p class="studio-live-source-status">${esc(live.videoPreviewError || (live.localVideoTrack ? `Video input ready. Transition: ${live.videoTransition}.` : 'Choose a camera/source and click Use Input to preview and publish while live.'))}</p>
-          <div class="studio-live-action-bar">
-            <button type="button" data-live-use-video-input>${live.localVideoTrack ? 'Use Input Again' : 'Use Input'}</button>
-            <button type="button" data-live-refresh-video>${live.devicesLoading ? 'Refreshing...' : 'Refresh Video'}</button>
-            <a class="studio-live-button" href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>
+          <div class="studio-live-video-input-scroll">
+            <label>Video source<select data-live-video-source>
+              <option value="browser" ${live.videoSource === 'browser' ? 'selected' : ''}>Browser Video Input</option>
+              <option value="sequence" ${live.videoSource === 'sequence' ? 'selected' : ''}>Sequence Video Source</option>
+            </select></label>
+            <label>Camera / Screen<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
+              <option value="">Default camera or screen source</option>
+              ${live.videoDevices.map((device) => `<option value="${esc(device.deviceId)}" ${live.selectedVideoDeviceId === device.deviceId ? 'selected' : ''}>${esc(device.label || `Video input ${live.videoDevices.indexOf(device) + 1}`)}</option>`).join('')}
+            </select></label>
+            <label>Transition<select data-live-video-transition><option value="cut" ${live.videoTransition === 'cut' ? 'selected' : ''}>Cut</option><option value="fade" ${live.videoTransition === 'fade' ? 'selected' : ''}>Fade</option></select></label>
+            <div class="studio-live-video-preview ${live.videoPreviewActive ? 'is-active' : ''}" data-live-video-preview-mount>
+              <span>${esc(live.videoPreviewError || (live.videoPreviewActive ? 'Video input preview active' : 'No video input preview'))}</span>
+            </div>
+            <p class="studio-live-source-status">${esc(live.videoPreviewError || (live.localVideoTrack ? `Video input ready. Transition: ${live.videoTransition}.` : 'Choose a camera/source and click Use Input to preview and publish while live.'))}</p>
+            <div class="studio-live-action-bar">
+              <button type="button" data-live-use-video-input ${live.videoEnabled ? '' : 'disabled'}>${live.localVideoTrack ? 'Use Input Again' : 'Use Input'}</button>
+              <button type="button" data-live-refresh-video>${live.devicesLoading ? 'Refreshing...' : 'Refresh Video'}</button>
+              <a class="studio-live-button" href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>
+            </div>
           </div>
         </article>
       </div>
@@ -1546,6 +1575,314 @@ function renderLiveAssetEditorModal() {
   `
 }
 
+function ensureProgramMixerData() {
+  const live = liveState()
+  const mixer = live.programMixer
+  if (!state.user?.uid || mixer.loaded || mixer.loading) return
+  mixer.loading = true
+  Promise.all([
+    listProgramScenes(state.user.uid),
+    listProgramSources(state.user.uid)
+  ]).then(([scenes, sources]) => {
+    mixer.scenes = scenes.length ? scenes : DEFAULT_PROGRAM_SCENES.map((scene) => ({ ...scene }))
+    mixer.sources = sources.length ? sources : DEFAULT_PROGRAM_SOURCES.map((source) => ({ ...source }))
+    if (!mixer.scenes.some((scene) => scene.sceneId === mixer.activeSceneId)) mixer.activeSceneId = mixer.scenes[0]?.sceneId || 'audio-only'
+    if (!mixer.sources.some((source) => source.sourceId === mixer.selectedSourceId)) mixer.selectedSourceId = mixer.sources[0]?.sourceId || 'browser-mic'
+    mixer.loaded = true
+    mixer.loading = false
+    renderShell()
+  }).catch((error) => {
+    mixer.notice = error?.message || 'Program Mixer scenes could not load.'
+    mixer.loading = false
+    mixer.loaded = true
+    renderShell()
+  })
+}
+
+function renderProviderStrip() {
+  const live = liveState()
+  const provider = getStreamingProvider(live.providerId)
+  const options = listStreamingProviderOptions()
+  const selectedOption = options.find((option) => option.id === live.providerId) || options[0]
+  const diagnostics = provider.getDiagnostics?.() || live.providerDiagnostics || {}
+  return `
+    <div class="studio-program-status-strip">
+      <label>Provider
+        <select data-live-provider-select>
+          ${options.map((option) => `<option value="${esc(option.id)}" ${option.id === live.providerId ? 'selected' : ''} ${option.id === 'antMedia' && option.configured === false ? 'disabled' : ''}>${esc(option.label)}${option.configured === false ? ' (not configured)' : ''}</option>`).join('')}
+        </select>
+      </label>
+      <span>${esc(selectedOption?.label || 'LiveKit')}</span>
+      <span>${esc(live.stream?.status || (live.streamId ? 'starting' : 'draft'))}</span>
+      <span>Audio ${live.audioEnabled ? 'on' : 'off'}</span>
+      <span>Video ${live.videoEnabled ? 'on' : 'off'}</span>
+      <span>${esc(live.programMixer.outputResolution)} @ ${Number(live.programMixer.fps || 30)}fps</span>
+      <span>${esc(diagnostics.connectionState || 'idle')}</span>
+    </div>
+  `
+}
+
+function liveProgramOutputState() {
+  const live = liveState()
+  const mixer = live.programMixer || {}
+  const provider = getStreamingProvider(live.providerId)
+  const configured = provider.config || {}
+  const hasEnabledVideoSource = (mixer.sources || []).some((source) => {
+    if (source.enabled === false || source.visible === false) return false
+    return ['browser-camera', 'sequence-video', 'now-playing-card'].includes(source.type)
+  })
+  const programHasAudio = Boolean(live.audioEnabled && (
+    (live.browserInputEnabled && !live.mixer.browserMuted) ||
+    ((live.sequenceInputEnabled || live.inputSource === 'sequence') && !live.mixer.sequenceMuted)
+  ))
+  const programHasVideo = Boolean(live.videoEnabled && (
+    live.localVideoTrack ||
+    live.videoSource === 'sequence' ||
+    hasEnabledVideoSource
+  ))
+  return {
+    provider: live.providerId,
+    ingestMode: 'browser-webrtc',
+    playbackMode: live.providerId === 'antMedia' ? 'hls' : 'webrtc',
+    antMediaAppName: configured.appName || '',
+    antMediaBaseUrl: configured.publicBaseUrl || '',
+    audioEnabled: live.audioEnabled,
+    videoEnabled: live.videoEnabled,
+    audioOnly: !programHasVideo,
+    activeAudioSources: {
+      browser: Boolean(live.browserInputEnabled),
+      sequence: Boolean(live.sequenceInputEnabled || live.inputSource === 'sequence')
+    },
+    activeVideoSource: live.videoEnabled ? live.videoSource : '',
+    programHasAudio,
+    programHasVideo,
+    audioPublished: Boolean(live.audioPublishedToProvider && programHasAudio),
+    videoPublished: Boolean(live.videoPublishedToProvider && live.videoEnabled && live.localVideoTrack),
+    programState: {
+      activeSceneId: mixer.activeSceneId || 'audio-only',
+      selectedSourceId: mixer.selectedSourceId || '',
+      outputResolution: mixer.outputResolution || '1280x720',
+      fps: Number(mixer.fps || 30),
+      mode: mixer.mode || 'program'
+    },
+    providerDiagnostics: provider.getDiagnostics?.() || live.providerDiagnostics || {}
+  }
+}
+
+async function heartbeatLiveProgramState(extra = {}) {
+  const live = liveState()
+  if (!live.streamId) return
+  await heartbeatMusicLiveStream(live.streamId, {
+    ...liveProgramOutputState(),
+    connectionStatus: extra.connectionStatus || 'live'
+  })
+}
+
+function ensureStudioProgramMixer() {
+  const live = liveState()
+  const [width, height] = String(live.programMixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
+  if (!studioProgramMixer) {
+    studioProgramMixer = new ProgramMixer({ width: width || 1280, height: height || 720, fps: Number(live.programMixer.fps || 30) })
+  }
+  studioProgramMixer.width = width || 1280
+  studioProgramMixer.height = height || 720
+  studioProgramMixer.fps = Number(live.programMixer.fps || 30)
+  studioProgramMixer.sources = new Map((live.programMixer.sources || []).map((source) => [source.sourceId, { ...source }]))
+  studioProgramMixer.setScene(live.programMixer.activeSceneId)
+  if (live.audioEnabled) studioProgramMixer.enableAudio()
+  else studioProgramMixer.disableAudio()
+  if (live.videoEnabled) studioProgramMixer.enableVideo()
+  else studioProgramMixer.disableVideo()
+  return studioProgramMixer
+}
+
+function attachProgramMixerPreview() {
+  const canvas = app.querySelector('[data-program-preview-canvas]')
+  if (!canvas) return
+  const mixer = ensureStudioProgramMixer()
+  mixer.attachCanvas(canvas)
+  if (liveState().videoEnabled) mixer.startRenderLoop()
+  else mixer.drawPlaceholder()
+}
+
+function selectedProgramSource() {
+  const mixer = liveState().programMixer
+  return mixer.sources.find((source) => source.sourceId === mixer.selectedSourceId) || mixer.sources[0] || null
+}
+
+function persistProgramSource(source = null) {
+  if (!state.user?.uid || !source) return
+  saveProgramSource(state.user.uid, source).catch((error) => {
+    liveState().programMixer.notice = error?.message || 'Program source could not be saved.'
+    renderShell()
+  })
+}
+
+function updateProgramSource(sourceId = '', patch = {}, { persist = true } = {}) {
+  const live = liveState()
+  const mixer = live.programMixer
+  let updated = null
+  mixer.sources = mixer.sources.map((source) => {
+    if (source.sourceId !== sourceId) return source
+    updated = { ...source, ...patch }
+    return updated
+  })
+  if (!updated) return
+  studioProgramMixer?.sources?.set?.(sourceId, { ...updated })
+  if (persist) persistProgramSource(updated)
+  heartbeatLiveProgramState().catch(() => {})
+  renderShell()
+}
+
+async function handleProgramSceneAction(action = '') {
+  const live = liveState()
+  const mixer = live.programMixer
+  const activeScene = mixer.scenes.find((scene) => scene.sceneId === mixer.activeSceneId) || mixer.scenes[0]
+  if (action === 'create') {
+    const name = window.prompt('Scene name', 'New Scene')
+    if (!name) return
+    const scene = {
+      sceneId: `scene_${Date.now().toString(36)}`,
+      name: name.trim().slice(0, 80) || 'New Scene',
+      transitionPreference: 'fade',
+      sources: mixer.sources.map((source) => source.sourceId)
+    }
+    mixer.scenes = [scene, ...mixer.scenes]
+    mixer.activeSceneId = scene.sceneId
+    if (state.user?.uid) await saveProgramScene(state.user.uid, scene).catch(() => {})
+  } else if (action === 'rename' && activeScene) {
+    const name = window.prompt('Rename scene', activeScene.name || 'Untitled Scene')
+    if (!name) return
+    const scene = { ...activeScene, name: name.trim().slice(0, 80) || activeScene.name }
+    mixer.scenes = mixer.scenes.map((entry) => entry.sceneId === scene.sceneId ? scene : entry)
+    if (state.user?.uid) await saveProgramScene(state.user.uid, scene).catch(() => {})
+  } else if (action === 'duplicate' && activeScene) {
+    const scene = {
+      ...activeScene,
+      sceneId: `scene_${Date.now().toString(36)}`,
+      name: `${activeScene.name || 'Scene'} Copy`.slice(0, 80)
+    }
+    mixer.scenes = [scene, ...mixer.scenes]
+    mixer.activeSceneId = scene.sceneId
+    if (state.user?.uid) await saveProgramScene(state.user.uid, scene).catch(() => {})
+  } else if (action === 'delete' && activeScene) {
+    if (mixer.scenes.length <= 1) {
+      mixer.notice = 'Keep at least one Program Mixer scene.'
+      renderShell()
+      return
+    }
+    if (!window.confirm(`Delete "${activeScene.name}"?`)) return
+    mixer.scenes = mixer.scenes.filter((scene) => scene.sceneId !== activeScene.sceneId)
+    mixer.activeSceneId = mixer.scenes[0]?.sceneId || 'audio-only'
+    if (state.user?.uid) await deleteProgramScene(state.user.uid, activeScene.sceneId).catch(() => {})
+  }
+  studioProgramMixer?.setScene?.(mixer.activeSceneId)
+  mixer.notice = ''
+  heartbeatLiveProgramState().catch(() => {})
+  renderShell()
+}
+
+function handleProgramSourceAction(action = '') {
+  const source = selectedProgramSource()
+  if (!source || source.locked) return
+  const zIndex = Number(source.zIndex || 0)
+  if (action === 'forward') updateProgramSource(source.sourceId, { zIndex: zIndex + 1 })
+  else if (action === 'backward') updateProgramSource(source.sourceId, { zIndex: zIndex - 1 })
+  else if (action === 'fit' || action === 'fill') updateProgramSource(source.sourceId, { objectFit: action === 'fit' ? 'contain' : 'cover' })
+  else if (action === 'center') updateProgramSource(source.sourceId, { transform: { ...(source.transform || {}), x: 48, y: 48 } })
+  else if (action === 'reset') updateProgramSource(source.sourceId, { opacity: 1, objectFit: 'cover', transform: {}, zIndex: source.type === 'now-playing-card' ? 3 : 1 })
+}
+
+function renderProgramMixerPanel() {
+  const live = liveState()
+  ensureProgramMixerData()
+  const mixer = live.programMixer
+  const activeScene = mixer.scenes.find((scene) => scene.sceneId === mixer.activeSceneId) || mixer.scenes[0] || DEFAULT_PROGRAM_SCENES[0]
+  const selectedSource = mixer.sources.find((source) => source.sourceId === mixer.selectedSourceId) || mixer.sources[0] || DEFAULT_PROGRAM_SOURCES[0]
+  return `
+    <section class="studio-live-panel studio-program-panel">
+      <header class="studio-live-subheader">
+        <div>
+          <p class="eyebrow">Live Studio</p>
+          <h1>Program Mixer</h1>
+          <p>Build the final browser-mixed program output that the selected provider receives.</p>
+        </div>
+      </header>
+      ${renderProviderStrip()}
+      ${mixer.notice ? `<p class="studio-live-error">${esc(mixer.notice)}</p>` : ''}
+      <div class="studio-program-workspace">
+        <aside class="studio-program-left">
+          <section>
+            <header><h2>Scenes</h2><button type="button" data-program-scene-action="create">New</button></header>
+            <div class="studio-program-list">
+              ${mixer.scenes.map((scene) => `<button type="button" class="${scene.sceneId === activeScene.sceneId ? 'is-active' : ''}" data-program-scene="${esc(scene.sceneId)}"><strong>${esc(scene.name)}</strong><small>${esc(scene.transitionPreference || scene.transition || 'fade')}</small></button>`).join('')}
+            </div>
+            <div class="studio-program-mini-actions">
+              <button type="button" data-program-scene-action="rename">Rename</button>
+              <button type="button" data-program-scene-action="duplicate">Duplicate</button>
+              <button type="button" data-program-scene-action="delete">Delete</button>
+            </div>
+          </section>
+          <section>
+            <header><h2>Sources</h2></header>
+            <div class="studio-program-list studio-program-source-list">
+              ${mixer.sources.map((source) => `<button type="button" class="${source.sourceId === selectedSource.sourceId ? 'is-active' : ''}" data-program-source="${esc(source.sourceId)}"><strong>${esc(source.label)}</strong><small>${esc(source.type)} · ${source.enabled === false ? 'off' : 'on'}</small></button>`).join('')}
+            </div>
+          </section>
+        </aside>
+        <main class="studio-program-center">
+          <div class="studio-program-toolbar">
+            <button type="button" data-program-mode="preview" class="${mixer.mode === 'preview' ? 'is-active' : ''}">Preview</button>
+            <button type="button" data-program-mode="program" class="${mixer.mode === 'program' ? 'is-active' : ''}">Program</button>
+            <button type="button" data-program-take>Take</button>
+            <button type="button" data-program-cut>Cut</button>
+            <button type="button" data-program-fade>Fade</button>
+          </div>
+          <div class="studio-program-preview-shell">
+            <canvas class="studio-program-preview" width="1280" height="720" data-program-preview-canvas></canvas>
+          </div>
+          <div class="studio-program-output-note">
+            <strong>Stream Output Status</strong>
+            <span>${esc(live.videoEnabled ? 'Canvas video output can be captured for provider publishing.' : 'Video master is off. No program video track will be published.')}</span>
+          </div>
+        </main>
+        <aside class="studio-program-inspector">
+          <section>
+            <h2>Selected Source</h2>
+            <strong>${esc(selectedSource.label)}</strong>
+            <small>${esc(selectedSource.type)}</small>
+            <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="enabled" ${selectedSource.enabled === false ? '' : 'checked'} /> Enabled</label>
+            <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="visible" ${selectedSource.visible === false ? '' : 'checked'} /> Visible</label>
+            <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="muted" ${selectedSource.muted === true ? 'checked' : ''} /> Muted</label>
+            <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="locked" ${selectedSource.locked === true ? 'checked' : ''} /> Locked</label>
+            <label>Opacity<input type="range" min="0" max="1" step="0.01" value="${Number(selectedSource.opacity ?? 1)}" data-program-source-range="opacity" aria-label="Selected source opacity" /></label>
+            <div class="studio-program-mini-actions">
+              <button type="button" data-program-source-action="forward">Bring Forward</button>
+              <button type="button" data-program-source-action="backward">Send Backward</button>
+              <button type="button" data-program-source-action="fit">Fit</button>
+              <button type="button" data-program-source-action="fill">Fill</button>
+              <button type="button" data-program-source-action="center">Center</button>
+              <button type="button" data-program-source-action="reset">Reset</button>
+            </div>
+          </section>
+        </aside>
+      </div>
+      <section class="studio-program-audio-mixer">
+        <header><h2>Audio Mixer</h2><span>Program and monitor sends are separate.</span></header>
+        ${mixer.sources.filter((source) => source.type.includes('microphone') || source.type.includes('audio')).map((source) => `
+          <article>
+            <strong>${esc(source.label)}</strong>
+            <label><span>Program</span><input type="checkbox" data-program-audio-route="${esc(source.sourceId)}" data-route="program" ${source.programEnabled === false ? '' : 'checked'} /></label>
+            <label><span>Monitor</span><input type="checkbox" data-program-audio-route="${esc(source.sourceId)}" data-route="monitor" ${source.monitorEnabled === true ? 'checked' : ''} /></label>
+            <label><span>Gain</span><input type="range" min="0" max="1.5" step="0.01" value="${Number(source.gain ?? 1)}" data-program-audio-gain="${esc(source.sourceId)}" aria-label="${esc(source.label)} gain" /></label>
+            <meter min="0" max="1" value="${source.enabled === false || source.muted ? 0 : 0.35}"></meter>
+          </article>
+        `).join('')}
+      </section>
+    </section>
+  `
+}
+
 function renderLiveStudio() {
   const live = liveState()
   const panel = currentLivePanel()
@@ -1553,17 +1890,19 @@ function renderLiveStudio() {
   live.panel = panel
   const panelContent = panel === 'input'
     ? renderInputSourcePanel()
-    : panel === 'sequence'
-      ? renderSequenceEditorPanel()
-      : panel === 'metadata'
-        ? renderManualMetadataPanel()
-        : panel === 'chat'
-          ? renderChatPanel()
-          : panel === 'preview'
-            ? renderPreviewPanel()
-            : panel === 'settings'
-              ? renderSafetyPanel()
-              : renderStreamDetailsPanel()
+    : panel === 'program'
+      ? renderProgramMixerPanel()
+      : panel === 'sequence'
+        ? renderSequenceEditorPanel()
+        : panel === 'metadata'
+          ? renderManualMetadataPanel()
+          : panel === 'chat'
+            ? renderChatPanel()
+            : panel === 'preview'
+              ? renderPreviewPanel()
+              : panel === 'settings'
+                ? renderSafetyPanel()
+                : renderStreamDetailsPanel()
   return `
     <section class="studio-live-main">
       ${live.error ? `<p class="studio-live-error">${esc(live.error)}</p>` : ''}
@@ -1789,6 +2128,10 @@ function renderShell() {
     return
   }
   if (studioMonitorVisualizerCleanup) studioMonitorVisualizerCleanup()
+  if (active !== 'live' && studioProgramMixer) {
+    studioProgramMixer.destroy()
+    studioProgramMixer = null
+  }
   const content = active === 'hub' ? renderHub() : active === 'stagemaker' ? renderStagemaker() : active === 'live' ? renderLiveStudio() : renderDaw()
   app.innerHTML = active === 'live'
     ? `${navShell({ currentPage: 'studio' })}<main class="studio-page studio-live-page"><section class="studio-live-shell">${renderLiveRail(currentLivePanel())}<section class="studio-live-content">${content}${renderLiveStatusBar()}</section></section></main>`
@@ -1796,7 +2139,10 @@ function renderShell() {
   initShellChrome()
   if (active !== 'live') initStudioBrandLogo()
   hydrateStudioStableImages(app)
-  if (active === 'live') attachLiveVideoPreview()
+  if (active === 'live') {
+    attachLiveVideoPreview()
+    attachProgramMixerPreview()
+  }
   bind()
 }
 
@@ -1854,6 +2200,18 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.streamId = isActive ? stream.streamId || stream.id || '' : ''
   live.draftStreamId = stream.streamId || stream.id || live.draftStreamId || ''
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
+  live.providerId = stream.provider || live.providerId
+  live.audioEnabled = stream.audioEnabled !== false
+  live.videoEnabled = stream.videoEnabled === true
+  live.audioPublishedToProvider = stream.audioPublished === true
+  live.videoPublishedToProvider = stream.videoPublished === true
+  live.browserInputEnabled = stream.activeAudioSources?.browser !== false
+  live.sequenceInputEnabled = stream.activeAudioSources?.sequence === true || live.inputSource === 'sequence'
+  live.videoSource = stream.activeVideoSource === 'sequence' ? 'sequence' : 'browser'
+  live.programMixer.activeSceneId = stream.programState?.activeSceneId || live.programMixer.activeSceneId
+  live.programMixer.selectedSourceId = stream.programState?.selectedSourceId || live.programMixer.selectedSourceId
+  live.programMixer.mode = stream.programState?.mode || live.programMixer.mode
+  live.providerDiagnostics = stream.providerDiagnostics || live.providerDiagnostics
   live.streamForm = {
     ...live.streamForm,
     title: stream.title || live.streamForm.title,
@@ -2732,16 +3090,75 @@ function setLiveInputSource(source = 'browser') {
   renderShell()
 }
 
-function setLiveAvEnabled(kind = 'audio', enabled = true) {
+async function stopLiveVideoInput({ render = true } = {}) {
+  const live = liveState()
+  const track = live.localVideoTrack
+  if (track) {
+    await live.room?.localParticipant?.unpublishTrack?.(track, false).catch(() => {})
+    try { track.detach?.().forEach((element) => element.remove?.()) } catch {}
+    track.stop?.()
+  }
+  live.localVideoTrack = null
+  live.videoPreviewActive = false
+  live.videoPublishedToProvider = false
+  if (live.videoPreviewError && !live.videoEnabled) live.videoPreviewError = ''
+  if (live.streamId) await heartbeatLiveProgramState().catch(() => {})
+  if (render) renderShell()
+}
+
+async function publishLiveVideoTrackIfNeeded() {
+  const live = liveState()
+  if (!live.room || !live.videoEnabled || !live.localVideoTrack || live.videoPublishedToProvider) return
+  await live.room.localParticipant.publishTrack(live.localVideoTrack, {
+    source: Track?.Source?.Camera || 'camera',
+    name: 'melogic-live-video'
+  })
+  live.videoPublishedToProvider = true
+}
+
+async function syncLiveProviderTrackGates() {
+  const live = liveState()
+  if (!live.room) return
+  if (live.audioEnabled) {
+    if (live.localTrack && !live.audioPublishedToProvider) {
+      await live.room.localParticipant.publishTrack(live.localTrack, publishOptionsForLiveSource())
+      live.audioPublishedToProvider = true
+    }
+  } else if (live.localTrack && live.audioPublishedToProvider) {
+    await live.room.localParticipant.unpublishTrack(live.localTrack, false).catch(() => {})
+    live.audioPublishedToProvider = false
+  }
+  if (live.videoEnabled) await publishLiveVideoTrackIfNeeded()
+  else if (live.localVideoTrack) await stopLiveVideoInput({ render: false })
+  await heartbeatLiveProgramState().catch(() => {})
+}
+
+async function setLiveAvEnabled(kind = 'audio', enabled = true) {
   const live = liveState()
   if (kind === 'audio') live.audioEnabled = Boolean(enabled)
   if (kind === 'video') live.videoEnabled = Boolean(enabled)
   if (!live.audioEnabled && !live.videoEnabled) {
     if (kind === 'audio') live.videoEnabled = true
     else live.audioEnabled = true
-    live.sourceMessage = 'At least one of Audio or Video must stay enabled.'
+    live.sourceMessage = 'A live stream needs audio or video enabled.'
+    renderShell()
+    return
+  }
+  if (kind === 'video' && !live.videoEnabled) {
+    live.sourceMessage = 'Video Input is off. Camera/video tracks were removed from program output.'
+    await stopLiveVideoInput({ render: false })
+  } else if (kind === 'video' && live.videoEnabled) {
+    live.sourceMessage = 'Video Input is enabled. Use Input to prepare a local video source.'
+    await publishLiveVideoTrackIfNeeded().catch((error) => {
+      live.videoPreviewError = error?.message || 'Video track could not be published.'
+    })
+  } else if (kind === 'audio') {
+    live.sourceMessage = live.audioEnabled ? 'Audio Input is enabled.' : 'Audio Input is off. Audio tracks were removed from program output.'
   }
   syncLiveMonitorRoute()
+  await syncLiveProviderTrackGates().catch((error) => {
+    live.sourceMessage = error?.message || 'Provider track gates could not update.'
+  })
   scheduleLiveStudioDraftSave()
   renderShell()
 }
@@ -2777,6 +3194,7 @@ async function useLiveVideoInput() {
     if (live.localVideoTrack) {
       await live.room?.localParticipant?.unpublishTrack?.(live.localVideoTrack, false).catch(() => {})
       live.localVideoTrack.stop?.()
+      live.videoPublishedToProvider = false
     }
     live.localVideoTrack = null
     if (live.videoSource === 'sequence') {
@@ -2792,11 +3210,9 @@ async function useLiveVideoInput() {
     live.localVideoTrack = track
     live.videoPreviewActive = true
     if (live.room && live.videoEnabled) {
-      await live.room.localParticipant.publishTrack(track, {
-        source: Track?.Source?.Camera || 'camera',
-        name: 'melogic-live-video'
-      })
+      await publishLiveVideoTrackIfNeeded()
       live.outputStatus = `Video input publishing with ${live.videoTransition} transition preference.`
+      await heartbeatLiveProgramState().catch(() => {})
     } else {
       live.sourceMessage = 'Video input preview is local. Enable Video and go live to publish this source.'
     }
@@ -2962,7 +3378,8 @@ function liveStreamPayload() {
     inputSource: live.inputSource,
     selectedInputSource: live.inputSource,
     sequenceId: live.activeSequence?.sequenceId || '',
-    selectedSequenceId: live.activeSequence?.sequenceId || ''
+    selectedSequenceId: live.activeSequence?.sequenceId || '',
+    ...liveProgramOutputState()
   }
 }
 
@@ -3016,18 +3433,23 @@ async function startLiveStudioStream() {
   let pendingStreamId = ''
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
+    if (live.providerId !== 'livekit') {
+      const provider = getStreamingProvider(live.providerId)
+      const session = provider.createStreamSession?.(liveProgramOutputState()) || {}
+      live.providerDiagnostics = session.diagnostics || provider.getDiagnostics?.() || {}
+      throw new Error(session.message || 'Ant Media publishing is a secure foundation in this build. Switch Provider to LiveKit to go live now.')
+    }
     live.outputStatus = 'Saving Live Studio stream details...'
     renderShell()
     const draftResponse = await prepareMusicLiveStreamDraft(liveStreamPayload())
     live.draftStreamId = draftResponse.streamId || live.draftStreamId
     if (!live.draftStreamId) throw new Error('Could not save live stream draft.')
-    const localTrack = await getLivePublishTrack()
+    const localTrack = live.audioEnabled ? await getLivePublishTrack() : null
     const response = await startMusicLiveStream({
       ...liveStreamPayload(),
       streamId: live.draftStreamId,
       rightsAccepted: true,
-      archiveRequested: false,
-      audioOnly: !live.videoEnabled
+      archiveRequested: false
     })
     pendingStreamId = response.streamId || ''
     const room = new Room({ adaptiveStream: true, dynacast: true })
@@ -3049,20 +3471,28 @@ async function startLiveStudioStream() {
       live.room = null
       live.localTrack = null
       live.localVideoTrack = live.videoPreviewActive ? live.localVideoTrack : null
+      live.audioPublishedToProvider = false
+      live.videoPublishedToProvider = false
       if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
       live.heartbeatTimer = 0
       renderShell()
     })
     await room.connect(response.url, response.hostToken)
     live.localTrack = localTrack
-    await room.localParticipant.publishTrack(localTrack, publishOptionsForLiveSource())
+    live.audioPublishedToProvider = false
+    live.videoPublishedToProvider = false
+    if (localTrack) {
+      await room.localParticipant.publishTrack(localTrack, publishOptionsForLiveSource())
+      live.audioPublishedToProvider = true
+    }
     if (live.videoEnabled && live.localVideoTrack) {
       await room.localParticipant.publishTrack(live.localVideoTrack, {
         source: Track?.Source?.Camera || 'camera',
         name: 'melogic-live-video'
       })
+      live.videoPublishedToProvider = true
     }
-    await markMusicLiveStreamOnAir(pendingStreamId)
+    await markMusicLiveStreamOnAir(pendingStreamId, liveProgramOutputState())
     live.draftStreamId = pendingStreamId
     subscribeLiveStudioStream(pendingStreamId)
     subscribeLiveStudioChat(pendingStreamId)
@@ -3070,11 +3500,11 @@ async function startLiveStudioStream() {
     live.heartbeatTimer = window.setInterval(() => {
       if (!live.streamId) return
       heartbeatMusicLiveStream(live.streamId, {
-        audioPublished: true,
-        videoPublished: Boolean(live.videoEnabled && live.localVideoTrack),
+        ...liveProgramOutputState(),
         connectionStatus: 'live'
       }).catch(() => {})
     }, 15000)
+    heartbeatLiveProgramState().catch(() => {})
     live.outputStatus = live.inputSource === 'sequence'
       ? 'On air. Sequence Software output is publishing to Melogic Music.'
       : 'On air. Browser input source is publishing to Melogic Music.'
@@ -3092,6 +3522,8 @@ async function startLiveStudioStream() {
     live.room?.disconnect?.()
     live.room = null
     live.localTrack = null
+    live.audioPublishedToProvider = false
+    live.videoPublishedToProvider = false
     live.error = error?.message || 'Could not start Live Studio stream.'
     live.outputStatus = 'Live stream start failed.'
   } finally {
@@ -3121,6 +3553,8 @@ async function endLiveStudioStream() {
     live.draftStreamId = ''
     live.room = null
     live.localTrack = null
+    live.audioPublishedToProvider = false
+    live.videoPublishedToProvider = false
     live.outputStatus = 'Live Studio stream ended.'
   } catch (error) {
     console.error('[studio-live] end stream failed', error)
@@ -3376,12 +3810,96 @@ function bindLiveStudioControls() {
     renderShell()
   })
   app.querySelectorAll('[data-live-set-source]').forEach((el) => el.addEventListener('click', () => setLiveInputSource(el.dataset.liveSetSource)))
-  app.querySelectorAll('[data-live-av-toggle]').forEach((el) => el.addEventListener('change', (e) => setLiveAvEnabled(el.dataset.liveAvToggle, e.currentTarget.checked)))
+  app.querySelectorAll('[data-live-av-toggle]').forEach((el) => el.addEventListener('change', (e) => {
+    setLiveAvEnabled(el.dataset.liveAvToggle, e.currentTarget.checked).catch((error) => {
+      live.sourceMessage = error?.message || 'Input gate could not update.'
+      renderShell()
+    })
+  }))
+  app.querySelector('[data-live-provider-select]')?.addEventListener('change', (e) => {
+    if (live.streamId) {
+      live.programMixer.notice = 'End the current stream before switching providers.'
+      renderShell()
+      return
+    }
+    live.providerId = e.currentTarget.value === 'antMedia' ? 'antMedia' : 'livekit'
+    const provider = getStreamingProvider(live.providerId)
+    live.providerDiagnostics = provider.getDiagnostics?.() || {}
+    live.programMixer.notice = live.providerId === 'antMedia'
+      ? 'Ant Media provider foundation is selected. Publishing stays disabled until the secure server session is fully wired.'
+      : ''
+    scheduleLiveStudioDraftSave()
+    renderShell()
+  })
+  app.querySelectorAll('[data-program-scene]').forEach((el) => el.addEventListener('click', () => {
+    live.programMixer.activeSceneId = el.dataset.programScene || live.programMixer.activeSceneId
+    studioProgramMixer?.setScene?.(live.programMixer.activeSceneId)
+    heartbeatLiveProgramState().catch(() => {})
+    renderShell()
+  }))
+  app.querySelectorAll('[data-program-scene-action]').forEach((el) => el.addEventListener('click', () => {
+    handleProgramSceneAction(el.dataset.programSceneAction || '').catch((error) => {
+      live.programMixer.notice = error?.message || 'Scene action failed.'
+      renderShell()
+    })
+  }))
+  app.querySelectorAll('[data-program-source]').forEach((el) => el.addEventListener('click', () => {
+    live.programMixer.selectedSourceId = el.dataset.programSource || live.programMixer.selectedSourceId
+    renderShell()
+  }))
+  app.querySelectorAll('[data-program-mode]').forEach((el) => el.addEventListener('click', () => {
+    live.programMixer.mode = el.dataset.programMode === 'preview' ? 'preview' : 'program'
+    heartbeatLiveProgramState().catch(() => {})
+    renderShell()
+  }))
+  app.querySelector('[data-program-take]')?.addEventListener('click', () => {
+    live.programMixer.mode = 'program'
+    live.outputStatus = 'Program Mixer preview taken to program.'
+    heartbeatLiveProgramState().catch(() => {})
+    renderShell()
+  })
+  app.querySelector('[data-program-cut]')?.addEventListener('click', () => {
+    live.outputStatus = 'Program Mixer cut transition armed.'
+    renderShell()
+  })
+  app.querySelector('[data-program-fade]')?.addEventListener('click', () => {
+    live.outputStatus = 'Program Mixer fade transition armed.'
+    renderShell()
+  })
+  app.querySelectorAll('[data-program-source-toggle]').forEach((el) => el.addEventListener('change', (e) => {
+    const source = selectedProgramSource()
+    if (!source) return
+    updateProgramSource(source.sourceId, { [el.dataset.programSourceToggle]: Boolean(e.currentTarget.checked) })
+  }))
+  app.querySelectorAll('[data-program-source-range]').forEach((el) => el.addEventListener('input', (e) => {
+    const source = selectedProgramSource()
+    if (!source) return
+    updateProgramSource(source.sourceId, { [el.dataset.programSourceRange]: Math.max(0, Math.min(1, Number(e.currentTarget.value || 0))) }, { persist: false })
+  }))
+  app.querySelectorAll('[data-program-source-range]').forEach((el) => el.addEventListener('change', (e) => {
+    const source = selectedProgramSource()
+    if (!source) return
+    updateProgramSource(source.sourceId, { [el.dataset.programSourceRange]: Math.max(0, Math.min(1, Number(e.currentTarget.value || 0))) })
+  }))
+  app.querySelectorAll('[data-program-source-action]').forEach((el) => el.addEventListener('click', () => handleProgramSourceAction(el.dataset.programSourceAction || '')))
+  app.querySelectorAll('[data-program-audio-route]').forEach((el) => el.addEventListener('change', (e) => {
+    const sourceId = el.dataset.programAudioRoute || ''
+    const field = el.dataset.route === 'monitor' ? 'monitorEnabled' : 'programEnabled'
+    updateProgramSource(sourceId, { [field]: Boolean(e.currentTarget.checked) })
+  }))
+  app.querySelectorAll('[data-program-audio-gain]').forEach((el) => el.addEventListener('input', (e) => {
+    updateProgramSource(el.dataset.programAudioGain || '', { gain: Math.max(0, Math.min(1.5, Number(e.currentTarget.value || 0))) }, { persist: false })
+  }))
+  app.querySelectorAll('[data-program-audio-gain]').forEach((el) => el.addEventListener('change', (e) => {
+    updateProgramSource(el.dataset.programAudioGain || '', { gain: Math.max(0, Math.min(1.5, Number(e.currentTarget.value || 0))) })
+  }))
   app.querySelectorAll('[data-live-audio-route]').forEach((el) => el.addEventListener('change', (e) => {
     const route = el.dataset.liveAudioRoute || ''
     if (route === 'browser') live.browserInputEnabled = Boolean(e.currentTarget.checked)
     if (route === 'sequence') live.sequenceInputEnabled = Boolean(e.currentTarget.checked)
     syncLiveMonitorRoute()
+    heartbeatLiveProgramState().catch(() => {})
+    scheduleLiveStudioDraftSave()
     renderShell()
   }))
   app.querySelectorAll('[data-live-mixer]').forEach((el) => el.addEventListener('input', (e) => updateLiveMixerValue(el.dataset.liveMixer, e.currentTarget.value)))

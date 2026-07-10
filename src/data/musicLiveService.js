@@ -3,6 +3,7 @@ import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
+import { isPublicStreamPlayable } from './streaming/publicPlaybackService'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
@@ -51,9 +52,34 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     selectedSequenceId: String(raw.selectedSequenceId || ''),
     audioProfile: String(raw.audioProfile || ''),
     audioOnly: raw.audioOnly !== false,
+    provider: String(raw.provider || 'livekit'),
+    ingestMode: String(raw.ingestMode || 'browser-webrtc'),
+    playbackMode: String(raw.playbackMode || (raw.provider === 'antMedia' ? 'hls' : 'webrtc')),
+    antMediaStreamId: String(raw.antMediaStreamId || ''),
+    antMediaAppName: String(raw.antMediaAppName || ''),
+    antMediaBaseUrl: String(raw.antMediaBaseUrl || raw.publicPlaybackBaseUrl || ''),
+    hlsUrl: String(raw.hlsUrl || ''),
+    llhlsUrl: String(raw.llhlsUrl || ''),
+    webRtcPlaybackUrl: String(raw.webRtcPlaybackUrl || ''),
     videoEnabled: raw.videoEnabled === true,
+    audioEnabled: raw.audioEnabled !== false,
     hostConnected: raw.hostConnected === true,
     audioPublished: raw.audioPublished === true,
+    videoPublished: raw.videoPublished === true,
+    programHasAudio: raw.programHasAudio === true,
+    programHasVideo: raw.programHasVideo === true,
+    activeVideoSource: String(raw.activeVideoSource || ''),
+    activeAudioSources: raw.activeAudioSources && typeof raw.activeAudioSources === 'object'
+      ? {
+          browser: raw.activeAudioSources.browser !== false,
+          sequence: raw.activeAudioSources.sequence === true
+        }
+      : {
+          browser: raw.selectedInputSource !== 'sequence',
+          sequence: raw.selectedInputSource === 'sequence'
+        },
+    programState: raw.programState && typeof raw.programState === 'object' ? raw.programState : {},
+    providerDiagnostics: raw.providerDiagnostics && typeof raw.providerDiagnostics === 'object' ? raw.providerDiagnostics : {},
     connectionStatus: String(raw.connectionStatus || raw.status || ''),
     roomName: String(raw.roomName || raw.livekitRoomName || ''),
     livekitRoomName: String(raw.livekitRoomName || raw.roomName || ''),
@@ -98,9 +124,8 @@ export function isLiveStreamFresh(stream = {}) {
 export function isPublicLiveStreamVisible(stream = {}) {
   return stream.status === 'live'
     && (stream.visibility === 'public' || stream.accessMode === 'password')
-    && stream.audioOnly !== false
     && stream.hostConnected === true
-    && stream.audioPublished === true
+    && isPublicStreamPlayable(stream)
     && isLiveStreamFresh(stream)
     && !['removed', 'blocked'].includes(stream.moderationStatus)
 }
@@ -246,9 +271,9 @@ export async function prepareMusicLiveStreamDraft(payload = {}) {
   return result?.data || { ok: false }
 }
 
-export async function markMusicLiveStreamOnAir(streamId = '') {
+export async function markMusicLiveStreamOnAir(streamId = '', options = {}) {
   const callable = httpsCallable(functions, 'markMusicLiveStreamOnAir')
-  const result = await callable({ streamId })
+  const result = await callable({ streamId, ...options })
   return result?.data || { ok: false }
 }
 

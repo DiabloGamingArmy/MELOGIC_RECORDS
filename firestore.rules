@@ -1038,6 +1038,14 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /liveStudio/{studioDoc} {
+        allow read, create, update, delete: if isOwner(uid);
+
+        match /items/{itemId} {
+          allow read, create, update, delete: if isOwner(uid);
+        }
+      }
+
       match /sequenceAssets/{assetId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid)
