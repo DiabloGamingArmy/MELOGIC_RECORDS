@@ -117,6 +117,9 @@ const {
   createAntMediaStreamSession,
   getAntMediaPublishAuthorization,
   getAntMediaPlaybackAuthorization,
+  getAntMediaPublishToken,
+  getAntMediaPlaybackToken,
+  getStreamingProviderStatus,
   stopAntMediaStreamSession,
   antMediaPublishWebhook,
   antMediaPlayWebhook,
@@ -284,6 +287,9 @@ exports.cleanupStaleMusicLiveStreams = cleanupStaleMusicLiveStreams
 exports.createAntMediaStreamSession = createAntMediaStreamSession
 exports.getAntMediaPublishAuthorization = getAntMediaPublishAuthorization
 exports.getAntMediaPlaybackAuthorization = getAntMediaPlaybackAuthorization
+exports.getAntMediaPublishToken = getAntMediaPublishToken
+exports.getAntMediaPlaybackToken = getAntMediaPlaybackToken
+exports.getStreamingProviderStatus = getStreamingProviderStatus
 exports.stopAntMediaStreamSession = stopAntMediaStreamSession
 exports.antMediaPublishWebhook = antMediaPublishWebhook
 exports.antMediaPlayWebhook = antMediaPlayWebhook

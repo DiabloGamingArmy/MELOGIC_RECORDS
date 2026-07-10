@@ -100,6 +100,8 @@ const getAntMediaPublishAuthorization = onCall({ region: 'us-central1' }, async 
   return publishUnavailable(antMediaConfig())
 })
 
+const getAntMediaPublishToken = getAntMediaPublishAuthorization
+
 const getAntMediaPlaybackAuthorization = onCall({ region: 'us-central1' }, async (request) => {
   const streamId = cleanId(request.data?.streamId, 120)
   if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
@@ -119,6 +121,36 @@ const getAntMediaPlaybackAuthorization = onCall({ region: 'us-central1' }, async
     playbackMode: stream.playbackMode || 'hls',
     ...urls,
     message: urls.hlsUrl ? 'Playback URLs are available.' : 'Ant Media playback is not configured.'
+  }
+})
+
+const getAntMediaPlaybackToken = getAntMediaPlaybackAuthorization
+
+const getStreamingProviderStatus = onCall({ region: 'us-central1' }, async () => {
+  const config = antMediaConfig()
+  const liveKitConfigured = Boolean(process.env.LIVEKIT_URL || process.env.LIVEKIT_API_KEY || process.env.LIVEKIT_API_SECRET)
+  return {
+    ok: true,
+    providers: {
+      livekit: {
+        provider: 'livekit',
+        label: 'LiveKit',
+        configured: liveKitConfigured,
+        ingestMode: 'browser-webrtc',
+        playbackMode: 'webrtc',
+        missingConfigKeys: liveKitConfigured ? [] : ['LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET']
+      },
+      antMedia: {
+        provider: 'antMedia',
+        label: 'Ant Media',
+        configured: Boolean(config.publicBaseUrl),
+        ingestMode: 'browser-webrtc-pending',
+        playbackMode: 'hls',
+        appName: config.appName,
+        publicBaseUrl: config.publicBaseUrl,
+        missingConfigKeys: config.publicBaseUrl ? [] : ['ANT_MEDIA_PUBLIC_BASE_URL']
+      }
+    }
   }
 })
 
@@ -195,6 +227,9 @@ module.exports = {
   createAntMediaStreamSession,
   getAntMediaPublishAuthorization,
   getAntMediaPlaybackAuthorization,
+  getAntMediaPublishToken,
+  getAntMediaPlaybackToken,
+  getStreamingProviderStatus,
   stopAntMediaStreamSession,
   antMediaPublishWebhook,
   antMediaPlayWebhook,

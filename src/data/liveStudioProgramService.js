@@ -1,6 +1,5 @@
 import { collection, deleteDoc, doc, getDocs, orderBy, query, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
-import { DEFAULT_PROGRAM_SCENES, DEFAULT_PROGRAM_SOURCES } from './streaming/programMixer'
 
 function cleanId(value = '') {
   return String(value || '').trim().replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 120)
@@ -15,10 +14,10 @@ function sourcesCollection(uid = '') {
 }
 
 export async function listProgramScenes(uid = '') {
-  if (!db || !uid) return DEFAULT_PROGRAM_SCENES.map((scene) => ({ ...scene }))
+  if (!db || !uid) return []
   const snapshot = await getDocs(query(scenesCollection(uid), orderBy('updatedAt', 'desc'))).catch(() => null)
   const rows = snapshot?.docs?.map((docSnap) => ({ sceneId: docSnap.id, ...(docSnap.data() || {}) })) || []
-  return rows.length ? rows : DEFAULT_PROGRAM_SCENES.map((scene) => ({ ...scene }))
+  return rows
 }
 
 export async function saveProgramScene(uid = '', scene = {}) {
@@ -45,10 +44,10 @@ export async function deleteProgramScene(uid = '', sceneId = '') {
 }
 
 export async function listProgramSources(uid = '') {
-  if (!db || !uid) return DEFAULT_PROGRAM_SOURCES.map((source) => ({ ...source }))
+  if (!db || !uid) return []
   const snapshot = await getDocs(query(sourcesCollection(uid), orderBy('updatedAt', 'desc'))).catch(() => null)
   const rows = snapshot?.docs?.map((docSnap) => ({ sourceId: docSnap.id, ...(docSnap.data() || {}) })) || []
-  return rows.length ? rows : DEFAULT_PROGRAM_SOURCES.map((source) => ({ ...source }))
+  return rows
 }
 
 export async function saveProgramSource(uid = '', source = {}) {
@@ -64,6 +63,7 @@ export async function saveProgramSource(uid = '', source = {}) {
     locked: source.locked === true,
     programEnabled: source.programEnabled !== false,
     monitorEnabled: source.monitorEnabled === true,
+    gain: Number(source.gain ?? 1),
     zIndex: Number(source.zIndex || 0),
     opacity: Number(source.opacity ?? 1),
     objectFit: String(source.objectFit || 'cover'),

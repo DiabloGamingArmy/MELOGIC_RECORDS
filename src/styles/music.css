@@ -1648,3 +1648,20 @@
 .music-live-video-identity strong{color:#dfe8fb}
 .music-live-monitor-art,.music-live-monitor-video-frame{background:#05080f}
 @media (max-width:760px){.music-live-detail.has-video-foundation{padding-top:clamp(230px,68vw,420px)}.music-live-detail.has-video-foundation .music-live-visual,.music-live-detail.has-video-foundation .music-live-visual-shell{min-height:clamp(250px,72vw,420px)}.music-live-video-cover{width:54px;height:54px}.music-live-detail.is-video-expanded .music-live-detail-copy{width:calc(100% - 28px)}}
+.music-live-guest-card{max-width:1180px;margin:18px auto;display:flex;align-items:center;justify-content:space-between;gap:16px;border:1px solid rgba(130,160,220,.2);border-radius:8px;background:#0d1420;padding:16px;color:#eef4ff}
+.music-live-guest-card h2{margin:5px 0;font-size:22px}
+.music-live-guest-card p{margin:0;color:#aebbd4}
+.music-live-guest-card small{color:#9fadca}
+.music-live-guest-actions{display:flex;gap:8px;flex-wrap:wrap}
+.music-modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:rgba(2,5,10,.72);padding:18px}
+.music-modal-panel{width:min(520px,calc(100vw - 32px));border:1px solid rgba(130,160,220,.24);border-radius:8px;background:#0f1724;color:#eef4ff;padding:16px;box-shadow:0 24px 80px rgba(0,0,0,.46)}
+.music-live-guest-setup{display:grid;gap:12px}
+.music-live-guest-setup header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.music-live-guest-setup header h3{margin:4px 0 0;font-size:24px}
+.music-live-guest-setup header button{width:32px;height:32px;border:1px solid rgba(130,160,220,.24);border-radius:6px;background:#172235;color:#eef4ff;font-size:20px}
+.music-live-guest-setup label{display:grid;gap:6px;color:#dfe8fb;font-size:12px;font-weight:900;text-transform:uppercase}
+.music-live-guest-setup input[type=text],.music-live-guest-setup input:not([type]){height:36px;border:1px solid rgba(130,160,220,.24);border-radius:6px;background:#101827;color:#eef4ff;padding:0 10px}
+.music-live-check{display:flex!important;align-items:center;gap:8px;text-transform:none!important}
+.music-live-check input{accent-color:#67f2aa}
+.music-modal-actions{display:flex;justify-content:flex-end;gap:8px}
+@media (max-width:720px){.music-live-guest-card{align-items:flex-start;flex-direction:column}.music-live-guest-actions{width:100%}.music-live-guest-actions .button{flex:1}}

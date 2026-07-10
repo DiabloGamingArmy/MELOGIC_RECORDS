@@ -1,18 +1,28 @@
-export const DEFAULT_PROGRAM_SCENES = [
-  { sceneId: 'audio-only', name: 'Audio Only', transition: 'fade' },
-  { sceneId: 'camera-fullscreen', name: 'Camera Fullscreen', transition: 'cut' },
-  { sceneId: 'camera-artwork', name: 'Camera + Artwork', transition: 'fade' },
-  { sceneId: 'sequence-visual', name: 'Sequence Visual', transition: 'fade' },
-  { sceneId: 'starting-soon', name: 'Starting Soon', transition: 'fade' },
-  { sceneId: 'brb', name: 'Be Right Back', transition: 'fade' }
+export const DEFAULT_PROGRAM_SCENES = []
+
+export const DEFAULT_PROGRAM_SOURCES = []
+
+export const PROGRAM_SCENE_TEMPLATES = [
+  { templateId: 'blank', name: 'Blank', sourceTypes: [] },
+  { templateId: 'audio-only', name: 'Audio Only', sourceTypes: ['browser-microphone', 'now-playing-card'] },
+  { templateId: 'camera-fullscreen', name: 'Camera Fullscreen', sourceTypes: ['browser-camera', 'browser-microphone'] },
+  { templateId: 'camera-artwork', name: 'Camera + Artwork', sourceTypes: ['browser-camera', 'now-playing-card', 'browser-microphone'] },
+  { templateId: 'sequence-visual', name: 'Sequence Audio/Video', sourceTypes: ['sequence-video', 'sequence-audio', 'now-playing-card'] },
+  { templateId: 'starting-soon', name: 'Starting Soon', sourceTypes: ['text-lower-third'] },
+  { templateId: 'brb', name: 'Be Right Back', sourceTypes: ['text-lower-third'] }
 ]
 
-export const DEFAULT_PROGRAM_SOURCES = [
-  { sourceId: 'browser-mic', type: 'browser-microphone', label: 'Browser Microphone', enabled: true, muted: false, visible: false, programEnabled: true, monitorEnabled: false, gain: 1 },
-  { sourceId: 'sequence-audio', type: 'sequence-audio', label: 'Sequence Audio', enabled: true, muted: false, visible: false, programEnabled: true, monitorEnabled: true, gain: 1 },
-  { sourceId: 'browser-camera', type: 'browser-camera', label: 'Browser Camera', enabled: false, muted: false, visible: true, zIndex: 1, opacity: 1, objectFit: 'cover' },
-  { sourceId: 'sequence-video', type: 'sequence-video', label: 'Sequence Video', enabled: false, muted: false, visible: true, zIndex: 2, opacity: 1, objectFit: 'cover' },
-  { sourceId: 'now-playing-card', type: 'now-playing-card', label: 'Now Playing Card', enabled: true, visible: true, zIndex: 3, opacity: 1 }
+export const PROGRAM_SOURCE_TYPES = [
+  { type: 'browser-microphone', label: 'Browser Microphone', media: 'audio' },
+  { type: 'browser-camera', label: 'Browser Camera', media: 'video' },
+  { type: 'sequence-audio', label: 'Sequence Audio', media: 'audio' },
+  { type: 'sequence-video', label: 'Sequence Video', media: 'video' },
+  { type: 'now-playing-card', label: 'Now Playing Card', media: 'visual' },
+  { type: 'image', label: 'Image', media: 'visual' },
+  { type: 'text-lower-third', label: 'Text / Lower Third', media: 'visual' },
+  { type: 'screen-share', label: 'Screen Share', media: 'video', future: true },
+  { type: 'guest-audio', label: 'Invited Guest Audio', media: 'audio' },
+  { type: 'guest-video', label: 'Invited Guest Video', media: 'video' }
 ]
 
 export class ProgramMixer {
@@ -29,8 +39,9 @@ export class ProgramMixer {
     this.audioContext = null
     this.programDestination = null
     this.monitorDestination = null
-    this.sources = new Map(DEFAULT_PROGRAM_SOURCES.map((source) => [source.sourceId, { ...source }]))
-    this.activeSceneId = DEFAULT_PROGRAM_SCENES[0].sceneId
+    this.sources = new Map()
+    this.activeSceneId = ''
+    this.activeScene = null
   }
 
   attachCanvas(canvas) {
@@ -50,7 +61,7 @@ export class ProgramMixer {
       return
     }
     const draw = () => {
-      this.drawProgramFrame()
+      this.drawProgramFrame(this.activeScene)
       this.animationId = window.requestAnimationFrame(draw)
     }
     draw()
@@ -61,7 +72,7 @@ export class ProgramMixer {
     this.animationId = 0
   }
 
-  drawPlaceholder() {
+  drawPlaceholder(message = '') {
     if (!this.context) return
     this.context.clearRect(0, 0, this.width, this.height)
     this.context.fillStyle = '#05080f'
@@ -69,16 +80,21 @@ export class ProgramMixer {
     this.context.fillStyle = '#9fb0d0'
     this.context.font = '700 30px system-ui, sans-serif'
     this.context.textAlign = 'center'
-    this.context.fillText(this.videoEnabled ? 'Program Preview' : 'Video output disabled', this.width / 2, this.height / 2)
+    this.context.fillText(message || (this.videoEnabled ? 'No program scene selected' : 'Video output disabled'), this.width / 2, this.height / 2)
   }
 
-  drawProgramFrame() {
+  drawProgramFrame(scene = null) {
     if (!this.context) return
     this.context.fillStyle = '#05080f'
     this.context.fillRect(0, 0, this.width, this.height)
+    const allowedSourceIds = Array.isArray(scene?.sources) ? new Set(scene.sources) : null
     const activeSources = Array.from(this.sources.values())
-      .filter((source) => source.enabled !== false && source.visible !== false)
+      .filter((source) => source.enabled !== false && source.visible !== false && (!allowedSourceIds || allowedSourceIds.has(source.sourceId)))
       .sort((a, b) => Number(a.zIndex || 0) - Number(b.zIndex || 0))
+    if (!activeSources.length) {
+      this.drawPlaceholder(scene ? 'Scene has no visible sources' : 'No program scene selected')
+      return
+    }
     activeSources.forEach((source, index) => {
       const x = source.transform?.x ?? 48 + index * 36
       const y = source.transform?.y ?? 48 + index * 30
@@ -136,7 +152,10 @@ export class ProgramMixer {
     this.stopRenderLoop()
     this.drawPlaceholder()
   }
-  setScene(sceneId) { this.activeSceneId = sceneId || this.activeSceneId }
+  setScene(sceneId, scene = null) {
+    this.activeSceneId = sceneId || this.activeSceneId
+    this.activeScene = scene
+  }
   setSourceTransform(sourceId, transform = {}) {
     const source = this.sources.get(sourceId)
     if (source) this.sources.set(sourceId, { ...source, transform: { ...(source.transform || {}), ...transform } })

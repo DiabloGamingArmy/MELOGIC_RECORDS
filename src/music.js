@@ -52,6 +52,10 @@ import {
 } from './data/musicLiveService'
 import { getPublicPlaybackInfo, isPublicStreamPlayable } from './data/streaming/publicPlaybackService'
 import {
+  subscribeMyLiveStudioGuestInvite,
+  updateLiveStudioGuestInviteStatus
+} from './data/liveStudioGuestService'
+import {
   getMusicRelease,
   listFeaturedArtists,
   listFeaturedMusicReleases,
@@ -137,6 +141,10 @@ const state = {
     saved: false,
     loading: false
   },
+  guestInvite: null,
+  guestInviteUnsubscribe: null,
+  guestSetupOpen: false,
+  guestSetupStatus: '',
   liveChat: {
     messages: [],
     text: '',
@@ -1128,6 +1136,9 @@ function stopLiveChatSubscription() {
 function stopLiveStreamSubscription() {
   if (state.liveStreamUnsubscribe) state.liveStreamUnsubscribe()
   state.liveStreamUnsubscribe = null
+  if (state.guestInviteUnsubscribe) state.guestInviteUnsubscribe()
+  state.guestInviteUnsubscribe = null
+  state.guestInvite = null
 }
 
 function stopLiveListRefresh() {
@@ -2355,8 +2366,52 @@ function renderLiveDetailPage() {
         ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : 'This stream has ended or is no longer public.')}</p>`}
       </div>
     </section>
+    ${renderLiveGuestInvitePrompt(stream)}
     ${renderLiveChatPanel(stream.id)}
   `)
+}
+
+function renderLiveGuestInvitePrompt(stream = {}) {
+  const invite = state.guestInvite
+  if (!invite || ['dismissed', 'declined'].includes(invite.status)) return ''
+  return `
+    <section class="music-live-guest-card">
+      <div>
+        <span class="music-live-badge">BACKSTAGE</span>
+        <h2>You were invited as a guest</h2>
+        <p>The host can add your audio or video to their private Program Mixer. You never publish directly to the public stream.</p>
+        <small>Status: ${escapeHtml(invite.status || 'invited')}</small>
+      </div>
+      <div class="music-live-guest-actions">
+        <button type="button" class="button button-accent" data-open-guest-setup>${invite.status === 'ready' ? 'Update Setup' : 'Set Up Guest'}</button>
+        <button type="button" class="button button-muted" data-dismiss-guest-invite>Dismiss</button>
+      </div>
+    </section>
+    ${state.guestSetupOpen ? renderLiveGuestSetupModal(stream, invite) : ''}
+  `
+}
+
+function renderLiveGuestSetupModal(stream = {}, invite = {}) {
+  return `
+    <div class="music-modal" data-guest-setup-modal>
+      <form class="music-modal-panel music-live-guest-setup" data-guest-setup-form>
+        <header>
+          <div><span class="music-live-badge">BACKSTAGE</span><h3>Guest Setup</h3></div>
+          <button type="button" data-close-guest-setup aria-label="Close guest setup">×</button>
+        </header>
+        <label>Display name<input name="displayName" maxlength="80" value="${escapeHtml(invite.guestDisplayName || state.currentUser?.displayName || '')}" /></label>
+        <label class="music-live-check"><input type="checkbox" name="audioReady" checked /> Audio ready</label>
+        <label class="music-live-check"><input type="checkbox" name="videoReady" /> Video ready</label>
+        <label class="music-live-check"><input type="checkbox" name="muted" /> Join muted</label>
+        <p class="music-muted">Ready status tells ${escapeHtml(stream.hostDisplayName || 'the host')} you are available backstage. Public routing stays under host control.</p>
+        ${state.guestSetupStatus ? `<p class="music-muted">${escapeHtml(state.guestSetupStatus)}</p>` : ''}
+        <div class="music-modal-actions">
+          <button type="button" class="button button-muted" data-close-guest-setup>Cancel</button>
+          <button type="submit" class="button button-accent">Mark Ready</button>
+        </div>
+      </form>
+    </div>
+  `
 }
 
 function renderPlayer() {
@@ -2414,7 +2469,11 @@ function rerender() {
     renderPublicLiveMonitorPage()
     return
   }
-  else if (state.route.mode === 'goLive') renderGoLivePage()
+  else if (state.route.mode === 'goLive') {
+    state.route = { mode: 'liveList', id: '' }
+    window.history.replaceState({}, '', ROUTES.musicLive)
+    renderLandingPage()
+  }
   else if (state.route.mode === 'sequence') renderSequenceWorkspacePage()
   else if (state.route.mode === 'liveDetail') renderLiveDetailPage()
   else renderLandingPage()
@@ -3468,6 +3527,43 @@ function bindMusicEvents() {
     state.liveVideoExpanded = false
     rerender()
   })
+  app.querySelector('[data-open-guest-setup]')?.addEventListener('click', () => {
+    state.guestSetupOpen = true
+    state.guestSetupStatus = ''
+    rerender()
+  })
+  app.querySelectorAll('[data-close-guest-setup]').forEach((button) => button.addEventListener('click', () => {
+    state.guestSetupOpen = false
+    rerender()
+  }))
+  app.querySelector('[data-dismiss-guest-invite]')?.addEventListener('click', async () => {
+    if (!state.liveStream?.id || !state.guestInvite?.inviteId) return
+    await updateLiveStudioGuestInviteStatus(state.liveStream.id, state.guestInvite.inviteId, 'dismissed', state.guestInvite.setup || {}).catch(() => {})
+    state.guestInvite = { ...state.guestInvite, status: 'dismissed' }
+    rerender()
+  })
+  app.querySelector('[data-guest-setup-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    if (!state.liveStream?.id || !state.guestInvite?.inviteId) return
+    const data = new FormData(event.currentTarget)
+    const setup = {
+      displayName: String(data.get('displayName') || '').trim().slice(0, 80),
+      audioReady: data.get('audioReady') === 'on',
+      videoReady: data.get('videoReady') === 'on',
+      muted: data.get('muted') === 'on'
+    }
+    state.guestSetupStatus = 'Saving guest readiness...'
+    rerender()
+    try {
+      await updateLiveStudioGuestInviteStatus(state.liveStream.id, state.guestInvite.inviteId, 'ready', setup)
+      state.guestInvite = { ...state.guestInvite, status: 'ready', setup }
+      state.guestSetupOpen = false
+      state.guestSetupStatus = ''
+    } catch (error) {
+      state.guestSetupStatus = error?.message || 'Could not update guest readiness.'
+    }
+    rerender()
+  })
   app.querySelector('[data-live-password-form]')?.addEventListener('input', (event) => {
     state.livePassword = String(new FormData(event.currentTarget).get('password') || '')
   })
@@ -3917,6 +4013,12 @@ async function loadMusicPage() {
         startLiveChatSubscription(state.liveStream.id)
         startLiveSequenceSubscription(state.liveStream.id)
         await loadViewerState(state.liveStream.id)
+        if (state.currentUser?.uid) {
+          state.guestInviteUnsubscribe = subscribeMyLiveStudioGuestInvite(state.liveStream.id, state.currentUser.uid, (invite) => {
+            state.guestInvite = invite
+            rerender()
+          })
+        }
       }
     }
     state.loading = false

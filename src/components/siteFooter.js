@@ -24,6 +24,7 @@ const PUBLIC_FOOTER_BLOCKED_PREFIXES = [
   '/products/new',
   '/products/dashboard',
   '/studio/daw',
+  '/studio/live',
   '/studio/stagemaker/project',
   '/stage'
 ]
@@ -49,7 +50,10 @@ export function renderSiteFooter() {
 }
 
 export function ensureSiteFooter({ pathname = window.location.pathname } = {}) {
-  if (!shouldRenderSiteFooter(pathname)) return
+  if (!shouldRenderSiteFooter(pathname)) {
+    document.querySelector('[data-site-footer]')?.remove()
+    return
+  }
   if (document.querySelector('[data-site-footer]')) return
   const main = document.querySelector('main')
   if (!main) return
