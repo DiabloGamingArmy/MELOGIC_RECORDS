@@ -77,6 +77,14 @@ export function buildProviderDiagnostics(base = {}) {
     reconnectCount: Number(base.reconnectCount || 0),
     lastMediaEvent: String(base.lastMediaEvent || ''),
     packetLoss: Number.isFinite(Number(base.packetLoss)) ? Number(base.packetLoss) : null,
-    quality: String(base.quality || '')
+    quality: String(base.quality || ''),
+    recorderState: String(base.recorderState || ''),
+    selectedMimeType: String(base.selectedMimeType || ''),
+    segmentIndex: Number.isFinite(Number(base.segmentIndex)) ? Number(base.segmentIndex) : null,
+    lastBlobSize: Number.isFinite(Number(base.lastBlobSize)) ? Number(base.lastBlobSize) : null,
+    lastUploadPath: String(base.lastUploadPath || ''),
+    lastUploadError: String(base.lastUploadError || ''),
+    newestAvailableSegmentIndex: Number.isFinite(Number(base.newestAvailableSegmentIndex)) ? Number(base.newestAvailableSegmentIndex) : null,
+    hasPlayableSegments: base.hasPlayableSegments === true
   }
 }

@@ -928,7 +928,10 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
   await streamRef.set({
     status: 'ended',
     connectionStatus: reason === 'host_unload' || reason === 'host_pagehide' ? 'host_disconnected' : 'ended',
+    broadcastState: 'ended',
+    hostActive: false,
     hostConnected: false,
+    'nativeStreaming.status': 'ended',
     audioPublished: false,
     videoPublished: false,
     programHasAudio: false,
@@ -1308,7 +1311,8 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   if (stream.status !== 'live' || !['public', 'unlisted'].includes(stream.visibility)) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
-  if (stream.hostConnected !== true || !isStreamPublishing(stream) || !isHeartbeatFresh(stream)) {
+  const isNativeStreaming = normalizeProvider(stream.provider) === 'nativeStreaming'
+  if (stream.hostConnected !== true || (!isNativeStreaming && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
 
@@ -1334,7 +1338,8 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
 async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
   const stream = docSnap.data() || {}
   if (stream.status === 'live') {
-    const stale = stream.hostConnected !== true || !isStreamPublishing(stream) || !isHeartbeatFresh(stream)
+    const isNativeStreaming = normalizeProvider(stream.provider) === 'nativeStreaming'
+    const stale = stream.hostConnected !== true || (!isNativeStreaming && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)
     if (!stale) return false
     await docSnap.ref.set({
       status: 'ended',

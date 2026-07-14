@@ -2230,8 +2230,7 @@ service cloud.firestore {
       allow create, delete: if false;
 
       match /chatMessages/{messageId} {
-        allow read: if signedIn()
-          && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
+        allow read: if get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
           && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
           && resource.data.status == 'visible';
         allow create: if signedIn()

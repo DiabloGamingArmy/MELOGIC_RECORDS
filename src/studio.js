@@ -215,6 +215,7 @@ const state = {
     nativeRecorderRunning: false,
     nativePlaybackDemandCount: 0,
     nativeStreamingStatus: 'idleNoListeners',
+    nativeInterruptedStreamId: '',
     draftSaveTimer: 0,
     stream: null,
     streamUnsubscribe: null,
@@ -1265,6 +1266,7 @@ function renderStreamDetailsPanel() {
   if (!live.providerStatus && !live.providerStatusLoading) refreshStreamingProviderStatus().catch(() => {})
   const form = live.streamForm
   const link = publicLiveLink()
+  const isNativeRecovery = Boolean(live.nativeInterruptedStreamId && !live.streamId)
   return `
     <section class="studio-live-panel studio-live-stream-panel">
       <header class="studio-live-subheader">
@@ -1302,9 +1304,12 @@ function renderStreamDetailsPanel() {
           </div>
           <label class="studio-live-check"><input name="rightsAccepted" type="checkbox" ${form.rightsAccepted ? 'checked' : ''} /> I have the rights and permissions required to broadcast this stream.</label>
           ${renderAdvancedStreamingSettings()}
+          ${isNativeRecovery ? '<p class="studio-live-error">This Native Streaming session was interrupted because the browser host session ended. Resume to create a new host session, or end it for listeners.</p>' : ''}
           <div class="studio-live-action-bar">
             <button type="submit" data-live-save-info ${live.savingInfo ? 'disabled' : ''}>${live.streamId ? 'Save / Update Stream Info' : 'Save Draft Details'}</button>
-            <button type="button" data-live-start-stream ${state.user && !live.starting && !live.streamId ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Live'}</button>
+            ${isNativeRecovery
+              ? `<button type="button" data-live-resume-native ${live.starting ? 'disabled' : ''}>${live.starting ? 'Resuming...' : 'Resume Stream'}</button><button type="button" data-live-end-interrupted ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Interrupted Stream'}</button>`
+              : `<button type="button" data-live-start-stream ${state.user && !live.starting && !live.streamId ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Live'}</button>`}
             ${live.streamId ? `<button type="button" data-live-end-stream ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Stream'}</button>` : ''}
             ${link ? `<button type="button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
           </div>
@@ -1322,6 +1327,7 @@ function renderAdvancedStreamingSettings() {
   const nativeStatus = providerRows.nativeStreaming || {}
   const livekitStatus = providerRows.livekit || {}
   const current = options.find((option) => option.id === live.providerId) || options[0]
+  const diagnostics = live.providerDiagnostics || {}
   return `
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
       <summary>Advanced Streaming Settings</summary>
@@ -1360,6 +1366,23 @@ function renderAdvancedStreamingSettings() {
         </article>
       </div>
       <p class="studio-muted">Native Streaming is not a WebRTC room. Guest/backstage feeds go through the host Program Mixer first, then the final Program output is recorded into Firebase segments only when listeners request playback.</p>
+      <div class="studio-live-provider-copy">
+        <article>
+          <h2>Native Diagnostics</h2>
+          <ul>
+            <li>Demand count: ${Number(live.nativePlaybackDemandCount || 0)}</li>
+            <li>Host heartbeat: ${esc(live.streamId ? 'active' : live.nativeInterruptedStreamId ? 'interrupted' : 'inactive')}</li>
+            <li>Recorder: ${esc(diagnostics.recorderState || (live.nativeRecorderRunning ? 'recording' : 'idle'))}</li>
+            <li>MIME: ${esc(diagnostics.selectedMimeType || 'none')}</li>
+            <li>Segment index: ${diagnostics.segmentIndex ?? 'none'}</li>
+            <li>Last blob: ${diagnostics.lastBlobSize ?? 0} bytes</li>
+            <li>Last upload: ${esc(diagnostics.lastUploadPath || 'none')}</li>
+            <li>Upload error: ${esc(diagnostics.lastUploadError || 'none')}</li>
+            <li>Newest available: ${diagnostics.newestAvailableSegmentIndex ?? live.stream?.nativeStreaming?.newestAvailableSegmentIndex ?? 'none'}</li>
+            <li>Playable segments: ${diagnostics.hasPlayableSegments || live.stream?.nativeStreaming?.hasPlayableSegments ? 'yes' : 'no'}</li>
+          </ul>
+        </article>
+      </div>
     </details>
   `
 }
@@ -2547,8 +2570,10 @@ function hydrateLiveStudioFromStream(stream = null) {
   if (!stream) return
   const live = liveState()
   const isActive = ['starting', 'live'].includes(stream.status)
+  const interruptedNative = isActive && stream.provider !== 'livekit' && !live.streamId && !live.nativeRecorderRunning
   live.stream = stream
-  live.streamId = isActive ? stream.streamId || stream.id || '' : ''
+  live.streamId = isActive && !interruptedNative ? stream.streamId || stream.id || '' : ''
+  live.nativeInterruptedStreamId = interruptedNative ? stream.streamId || stream.id || '' : ''
   live.draftStreamId = stream.streamId || stream.id || live.draftStreamId || ''
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
   live.providerId = stream.provider === 'livekit' ? 'livekit' : 'nativeStreaming'
@@ -2584,7 +2609,9 @@ function hydrateLiveStudioFromStream(stream = null) {
     const sequence = live.sequences.find((entry) => entry.sequenceId === stream.selectedSequenceId)
     if (sequence) live.activeSequence = sequence
   }
-  live.outputStatus = isActive
+  live.outputStatus = interruptedNative
+    ? 'This Native Streaming session was interrupted because the browser host session ended. Resume or end it.'
+    : isActive
     ? `Restored ${stream.status} Live Studio stream.`
     : 'Restored Live Studio draft details.'
 }
@@ -2977,6 +3004,34 @@ function observeNativePlaybackDemand(streamId = '') {
     }).catch(() => {})
     if (currentStudioSection() === 'live') renderShell()
   }) || null
+}
+
+async function activateNativeLiveSession(streamId = '') {
+  const live = liveState()
+  if (!streamId) throw new Error('A stream id is required to activate Native Streaming.')
+  live.streamId = streamId
+  live.draftStreamId = streamId
+  live.nativeInterruptedStreamId = ''
+  live.localTrack = null
+  live.audioPublishedToProvider = false
+  live.videoPublishedToProvider = false
+  live.nativeStreamingStatus = live.nativePlaybackDemandCount > 0 ? 'warmingBuffer' : 'idleNoListeners'
+  subscribeLiveStudioStream(streamId)
+  subscribeLiveStudioChat(streamId)
+  observeNativePlaybackDemand(streamId)
+  await writeNativeHostPresence({ streamId, uid: state.user.uid, state: 'online', broadcasting: false }).catch(() => {})
+  if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
+  const beat = () => {
+    if (!live.streamId) return
+    heartbeatMusicLiveStream(live.streamId, {
+      ...liveProgramOutputState(),
+      broadcastState: live.nativeRecorderRunning ? 'broadcasting' : live.nativePlaybackDemandCount > 0 ? 'warmingBuffer' : 'idleNoListeners',
+      connectionStatus: 'live'
+    }).catch(() => {})
+    writeNativeHostPresence({ streamId: live.streamId, uid: state.user.uid, state: 'online', broadcasting: live.nativeRecorderRunning }).catch(() => {})
+  }
+  beat()
+  live.heartbeatTimer = window.setInterval(beat, 15000)
 }
 
 function publishOptionsForLiveSource() {
@@ -3919,31 +3974,12 @@ async function startLiveStudioStream() {
     })
     pendingStreamId = response.streamId || ''
     if (live.providerId !== 'livekit') {
-      live.streamId = pendingStreamId
-      live.localTrack = null
-      live.audioPublishedToProvider = false
-      live.videoPublishedToProvider = false
-      live.nativeStreamingStatus = 'idleNoListeners'
       await markMusicLiveStreamOnAir(pendingStreamId, {
         ...liveProgramOutputState(),
         broadcastState: 'idleNoListeners'
       })
-      live.draftStreamId = pendingStreamId
-      subscribeLiveStudioStream(pendingStreamId)
-      subscribeLiveStudioChat(pendingStreamId)
-      observeNativePlaybackDemand(pendingStreamId)
-      await writeNativeHostPresence({ streamId: pendingStreamId, uid: state.user.uid, state: 'online', broadcasting: false }).catch(() => {})
-      if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
-      live.heartbeatTimer = window.setInterval(() => {
-        if (!live.streamId) return
-        heartbeatMusicLiveStream(live.streamId, {
-          ...liveProgramOutputState(),
-          broadcastState: live.nativeRecorderRunning ? 'broadcasting' : live.nativePlaybackDemandCount > 0 ? 'warmingBuffer' : 'idleNoListeners',
-          connectionStatus: 'live'
-        }).catch(() => {})
-        writeNativeHostPresence({ streamId: live.streamId, uid: state.user.uid, state: 'online', broadcasting: live.nativeRecorderRunning }).catch(() => {})
-      }, 15000)
-      live.outputStatus = 'On air with Native Streaming. Media chunks start after a listener clicks Listen.'
+      await activateNativeLiveSession(pendingStreamId)
+      live.outputStatus = 'Live - waiting for listeners. Media chunks start after a listener clicks Listen.'
       return
     }
     const localTrack = live.audioEnabled ? await getLivePublishTrack() : null
@@ -4046,6 +4082,7 @@ async function endLiveStudioStream() {
     unsubscribeLiveStudioRuntime()
     live.streamId = ''
     live.draftStreamId = ''
+    live.nativeInterruptedStreamId = ''
     live.room = null
     live.localTrack = null
     live.programVideoTrack = null
@@ -4056,6 +4093,58 @@ async function endLiveStudioStream() {
     console.error('[studio-live] end stream failed', error)
     live.error = error?.message || 'Could not end Live Studio stream.'
     live.outputStatus = 'Live Studio end failed.'
+  } finally {
+    live.ending = false
+    renderShell()
+  }
+}
+
+async function resumeInterruptedNativeStream() {
+  const live = liveState()
+  const streamId = live.nativeInterruptedStreamId || live.draftStreamId || live.stream?.streamId || live.stream?.id || ''
+  if (!state.user?.uid || !streamId || live.starting || live.streamId) return
+  live.starting = true
+  live.error = ''
+  live.outputStatus = 'Resuming Native Streaming host session...'
+  renderShell()
+  try {
+    await markMusicLiveStreamOnAir(streamId, {
+      ...liveProgramOutputState(),
+      streamId,
+      broadcastState: 'idleNoListeners'
+    })
+    await activateNativeLiveSession(streamId)
+    live.outputStatus = 'Live - waiting for listeners. Media chunks start after a listener clicks Listen.'
+  } catch (error) {
+    console.error('[studio-live] resume native stream failed', error)
+    live.error = error?.message || 'Could not resume Native Streaming.'
+    live.outputStatus = 'Native Streaming resume failed.'
+  } finally {
+    live.starting = false
+    renderShell()
+  }
+}
+
+async function endInterruptedNativeStream() {
+  const live = liveState()
+  const streamId = live.nativeInterruptedStreamId || live.draftStreamId || live.stream?.streamId || live.stream?.id || ''
+  if (!state.user?.uid || !streamId || live.ending) return
+  live.ending = true
+  live.error = ''
+  live.outputStatus = 'Ending interrupted Native Streaming session...'
+  renderShell()
+  try {
+    await writeNativeHostPresence({ streamId, uid: state.user.uid, state: 'offline', broadcasting: false }).catch(() => {})
+    await endMusicLiveStream(streamId)
+    unsubscribeLiveStudioRuntime()
+    live.streamId = ''
+    live.draftStreamId = ''
+    live.nativeInterruptedStreamId = ''
+    live.outputStatus = 'Interrupted Native Streaming session ended.'
+  } catch (error) {
+    console.error('[studio-live] end interrupted native stream failed', error)
+    live.error = error?.message || 'Could not end interrupted Native Streaming session.'
+    live.outputStatus = 'Native Streaming end failed.'
   } finally {
     live.ending = false
     renderShell()
@@ -4282,6 +4371,14 @@ function bindLiveStudioControls() {
   app.querySelector('[data-live-start-stream]')?.addEventListener('click', () => {
     updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
     startLiveStudioStream()
+  })
+  app.querySelector('[data-live-resume-native]')?.addEventListener('click', () => {
+    updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
+    resumeInterruptedNativeStream()
+  })
+  app.querySelector('[data-live-end-interrupted]')?.addEventListener('click', () => {
+    if (!window.confirm('End this interrupted Native Streaming session for listeners?')) return
+    endInterruptedNativeStream()
   })
   app.querySelector('[data-live-end-stream]')?.addEventListener('click', () => {
     if (!window.confirm('End this live stream for listeners?')) return
@@ -4580,8 +4677,12 @@ function bindLiveStudioControls() {
     e.preventDefault()
     const text = String(new FormData(e.currentTarget).get('message') || '').trim()
     if (!text || !live.streamId) return
-    await sendMusicLiveChatMessage(live.streamId, text)
-    live.chatDraft = ''
+    try {
+      await sendMusicLiveChatMessage(live.streamId, text)
+      live.chatDraft = ''
+    } catch (error) {
+      live.error = error?.message || 'Live chat message could not be sent.'
+    }
     renderShell()
   })
   app.querySelector('[data-live-sequence-menu-toggle]')?.addEventListener('click', (e) => {

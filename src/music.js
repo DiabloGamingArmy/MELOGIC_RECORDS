@@ -1098,6 +1098,17 @@ function liveStatusLabel(stream = {}) {
   return 'Click Listen to join. Audio never autoplays.'
 }
 
+function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
+  const native = stream.nativeStreaming || {}
+  const hostFresh = stream.hostConnected === true && isLiveStreamFresh(stream)
+  if (stream.status !== 'live') return 'This stream has ended or is no longer public.'
+  if (!hostFresh) return 'The host is not currently broadcasting. Stay on this page or check back in a moment.'
+  if (native.lastUploadError) return `The host is live, but segment upload is failing: ${native.lastUploadError}`
+  if (elapsedMs >= 90000) return 'No playable stream data has arrived yet. You can retry Listen or stop listening.'
+  if (elapsedMs >= 35000) return 'Waiting for stream data from the host. Demand is connected, but no playable segments are available yet.'
+  return 'Starting stream buffer...'
+}
+
 function nativeLiveStatusLabel(stream = {}) {
   if (stream.provider !== STREAM_PROVIDERS.nativeStreaming) return 'LIVE'
   const status = stream.nativeStreaming?.status || ''
@@ -2787,13 +2798,19 @@ function startLiveStreamSubscription(streamId) {
         state.listenerVideoElement = null
         state.liveVideoExpanded = false
       }
+      const isNativeStream = stream?.provider === STREAM_PROVIDERS.nativeStreaming
       const playable = Boolean(stream && stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream))
       if (!playable) {
-        disconnectLiveListener()
         state.liveStream = stream
-        state.liveStatus = 'ended'
-        state.liveError = 'This stream has ended or is no longer public.'
-        stopLiveChatSubscription()
+        if (isNativeStream && stream?.status === 'live') {
+          state.liveStatus = ['live', 'buffering', 'waiting'].includes(state.liveStatus) ? state.liveStatus : 'idle'
+          state.liveError = nativePlaybackWaitMessage(stream)
+        } else {
+          disconnectLiveListener()
+          state.liveStatus = 'ended'
+          state.liveError = 'This stream has ended or is no longer public.'
+          stopLiveChatSubscription()
+        }
         rerender()
         return
       }
@@ -3215,6 +3232,7 @@ function disconnectLiveListener() {
 async function startNativeListenerPlayback(credentials = {}, { monitorMode = false } = {}) {
   const streamId = state.liveStream?.id || credentials.streamId || ''
   if (!streamId) return
+  const startedAt = Date.now()
   state.nativeViewerSessionId = nativeViewerSessionId(streamId)
   await writePlaybackDemand({
     streamId,
@@ -3227,6 +3245,13 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   state.liveStatus = 'buffering'
   state.liveError = ''
   updateLiveListenerControls()
+  const updateNativeListenerStatus = (status, message = '') => {
+    const changed = state.liveStatus !== status || state.liveError !== message
+    state.liveStatus = status
+    state.liveError = message
+    if (changed) rerender()
+    else updateLiveListenerControls()
+  }
   const playSegment = async (segment) => {
     if (!segment?.downloadURL) return false
     let audio = state.listenerAudioElement
@@ -3261,8 +3286,7 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
     let started = true
     await audio.play().catch(() => { started = false })
     if (!started) {
-      state.liveStatus = 'waiting'
-      updateLiveListenerControls()
+      updateNativeListenerStatus('waiting', 'Browser playback is waiting for a user gesture. Click Listen again to start audio.')
       return false
     }
     return true
@@ -3278,8 +3302,7 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       .filter((segment) => segment.downloadURL)
       .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
     if (playable.length < minSegments && !state.listenerAudioElement) {
-      state.liveStatus = 'buffering'
-      updateLiveListenerControls()
+      updateNativeListenerStatus('buffering', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
       return
     }
     if (!state.listenerAudioElement) {
@@ -3291,6 +3314,7 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       if (next) await playSegment(next)
     }
     state.liveStatus = 'live'
+    state.liveError = ''
     await updatePlaybackDemandState({
       streamId,
       viewerSessionId: state.nativeViewerSessionId,
