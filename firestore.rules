@@ -2265,7 +2265,7 @@ service cloud.firestore {
             get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
             && (
               get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
-              || get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted', 'password']
+              || get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted']
             )
           )
           || (signedIn()
@@ -2289,6 +2289,7 @@ service cloud.firestore {
           && request.resource.data.type in ['audio', 'video', 'av']
           && request.resource.data.storagePath is string
           && request.resource.data.storagePath.size() <= 500
+          && request.resource.data.storagePath.matches('liveSegments/[A-Za-z0-9_-]+/(audio|video|av)/[0-9]+[.]webm')
           && request.resource.data.index is number
           && request.resource.data.ready is bool;
         allow delete: if signedIn()

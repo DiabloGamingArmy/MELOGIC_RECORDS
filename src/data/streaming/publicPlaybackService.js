@@ -9,6 +9,7 @@ export function getPublicPlaybackInfo(stream = {}) {
       : STREAM_PROVIDERS.nativeStreaming
   if (provider === STREAM_PROVIDERS.nativeStreaming) {
     const native = stream.nativeStreaming || {}
+    const status = native.status || stream.broadcastState || (native.hasPlayableSegments ? 'broadcasting' : 'idleNoListeners')
     return {
       provider,
       playbackMode: PLAYBACK_MODES.firebaseSegments,
@@ -16,7 +17,7 @@ export function getPublicPlaybackInfo(stream = {}) {
       hasPlayableSegments: native.hasPlayableSegments === true,
       targetLatencyMs: Number(native.targetLatencyMs || 30000),
       minPlaybackBufferMs: Number(native.minPlaybackBufferMs || 20000),
-      status: native.status || (native.hasPlayableSegments ? 'broadcasting' : 'idleNoListeners'),
+      status,
       url: '',
       message: native.hasPlayableSegments ? '' : 'Starting stream buffer...'
     }

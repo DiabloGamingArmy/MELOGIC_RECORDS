@@ -140,6 +140,7 @@ const state = {
   nativeViewerSessionId: '',
   nativePlaybackTimer: 0,
   nativePlaybackQueue: [],
+  nativePlaybackNextIndex: null,
   listenerPresenceTimer: 0,
   liveMonitor: {
     muted: true
@@ -1088,9 +1089,10 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'ended' || stream.status !== 'live') return 'Stream ended.'
   if (stream.provider === STREAM_PROVIDERS.nativeStreaming) {
     const status = stream.nativeStreaming?.status || ''
-    if (status === 'idleNoListeners') return 'Waiting for listeners.'
+    if (status === 'idleNoListeners' || status === 'idle_no_listeners') return 'Waiting for listeners.'
     if (status === 'warmingBuffer') return 'Buffering.'
-    if (status === 'pausedNoListeners') return 'Paused, no listeners.'
+    if (status === 'pausedNoListeners' || status === 'paused_no_listeners') return 'Paused, no listeners.'
+    if (status === 'error') return 'Stream error.'
     return 'Live.'
   }
   return 'Click Listen to join. Audio never autoplays.'
@@ -1099,9 +1101,10 @@ function liveStatusLabel(stream = {}) {
 function nativeLiveStatusLabel(stream = {}) {
   if (stream.provider !== STREAM_PROVIDERS.nativeStreaming) return 'LIVE'
   const status = stream.nativeStreaming?.status || ''
-  if (status === 'idleNoListeners') return 'Waiting for listeners'
+  if (status === 'idleNoListeners' || status === 'idle_no_listeners') return 'Waiting for listeners'
   if (status === 'warmingBuffer') return 'Buffering'
-  if (status === 'pausedNoListeners') return 'Paused no listeners'
+  if (status === 'pausedNoListeners' || status === 'paused_no_listeners') return 'Paused no listeners'
+  if (status === 'error') return 'Error'
   return 'Live'
 }
 
@@ -3188,6 +3191,7 @@ function disconnectLiveListener() {
   }
   state.nativeViewerSessionId = ''
   state.nativePlaybackQueue = []
+  state.nativePlaybackNextIndex = null
   if (state.liveStream?.id && state.listenerPresenceId) {
     leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
   }
@@ -3223,19 +3227,11 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   state.liveStatus = 'buffering'
   state.liveError = ''
   updateLiveListenerControls()
-  const poll = async () => {
-    const native = credentials.nativeStreaming || state.liveStream?.nativeStreaming || {}
-    const queue = await getNativePlaybackQueue(streamId, native).catch(() => [])
-    state.nativePlaybackQueue = queue
-    if (!queue.length) {
-      state.liveStatus = 'buffering'
-      updateLiveListenerControls()
-      return
-    }
-    const first = queue.find((segment) => segment.downloadURL)
-    if (!first?.downloadURL) return
-    if (!state.listenerAudioElement) {
-      const audio = new Audio(first.downloadURL)
+  const playSegment = async (segment) => {
+    if (!segment?.downloadURL) return false
+    let audio = state.listenerAudioElement
+    if (!audio) {
+      audio = new Audio()
       audio.controls = false
       audio.autoplay = !monitorMode
       audio.muted = monitorMode ? state.liveMonitor.muted : false
@@ -3243,15 +3239,56 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       audio.style.display = 'none'
       document.body.appendChild(audio)
       state.listenerAudioElement = audio
-      audio.addEventListener('ended', () => {
-        const currentIndex = Number(first.index || 0)
-        const next = state.nativePlaybackQueue.find((segment) => Number(segment.index || 0) > currentIndex && segment.downloadURL)
-        if (next?.downloadURL) {
-          audio.src = next.downloadURL
-          audio.play().catch(() => {})
-        }
-      })
-      await audio.play().catch(() => {})
+    }
+    const currentIndex = Number(segment.index || 0)
+    state.nativePlaybackNextIndex = currentIndex + 1
+    audio.onended = () => {
+      const next = state.nativePlaybackQueue
+        .filter((entry) => entry.downloadURL)
+        .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
+        .find((entry) => Number(entry.index || 0) >= Number(state.nativePlaybackNextIndex || 0))
+      if (next?.downloadURL) playSegment(next).catch(() => {})
+      else {
+        state.liveStatus = state.liveStream?.status === 'live' ? 'buffering' : 'ended'
+        updateLiveListenerControls()
+      }
+    }
+    audio.onerror = () => {
+      state.liveStatus = state.liveStream?.status === 'live' ? 'buffering' : 'ended'
+      updateLiveListenerControls()
+    }
+    if (audio.src !== segment.downloadURL) audio.src = segment.downloadURL
+    let started = true
+    await audio.play().catch(() => { started = false })
+    if (!started) {
+      state.liveStatus = 'waiting'
+      updateLiveListenerControls()
+      return false
+    }
+    return true
+  }
+  const poll = async () => {
+    const native = credentials.nativeStreaming || state.liveStream?.nativeStreaming || {}
+    const queue = await getNativePlaybackQueue(streamId, native).catch(() => [])
+    state.nativePlaybackQueue = queue
+    const segmentDurationMs = Number(native.segmentDurationMs || 4000)
+    const minPlaybackBufferMs = Number(native.minPlaybackBufferMs || 20000)
+    const minSegments = Math.max(1, Math.ceil(minPlaybackBufferMs / segmentDurationMs))
+    const playable = queue
+      .filter((segment) => segment.downloadURL)
+      .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
+    if (playable.length < minSegments && !state.listenerAudioElement) {
+      state.liveStatus = 'buffering'
+      updateLiveListenerControls()
+      return
+    }
+    if (!state.listenerAudioElement) {
+      const first = playable[0]
+      const started = await playSegment(first)
+      if (!started) return
+    } else if (state.liveStatus === 'buffering') {
+      const next = playable.find((segment) => Number(segment.index || 0) >= Number(state.nativePlaybackNextIndex || 0))
+      if (next) await playSegment(next)
     }
     state.liveStatus = 'live'
     await updatePlaybackDemandState({
@@ -3281,6 +3318,12 @@ async function joinLiveListener(options = {}) {
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
   if (playbackInfo.provider === STREAM_PROVIDERS.nativeStreaming) {
+    if (state.liveStream.accessMode === 'password' || state.liveStream.passwordProtected) {
+      state.liveStatus = 'idle'
+      state.liveError = 'Password-protected Native Streaming playback needs authorized segment delivery before audio can start.'
+      rerender()
+      return
+    }
     state.liveStatus = 'buffering'
     state.liveError = ''
     rerender()

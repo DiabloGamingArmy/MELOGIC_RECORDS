@@ -1803,6 +1803,7 @@ async function heartbeatLiveProgramState(extra = {}) {
   if (!live.streamId) return
   await heartbeatMusicLiveStream(live.streamId, {
     ...liveProgramOutputState(),
+    ...extra,
     connectionStatus: extra.connectionStatus || 'live'
   })
 }
@@ -2914,14 +2915,16 @@ async function startNativeSegmentRecorderIfNeeded() {
   const result = provider.startSegmentRecorder?.(programStream, {
     streamId: live.streamId,
     segmentDurationMs: 4000,
-    rollingRetentionMs: 300000
+    rollingRetentionMs: 300000,
+    shouldUploadSegment: () => liveState().nativePlaybackDemandCount > 0,
+    isStreamActive: () => Boolean(liveState().streamId === live.streamId && !liveState().ending)
   }) || { ok: false }
   live.providerDiagnostics = result.diagnostics || provider.getDiagnostics?.() || live.providerDiagnostics
   if (result.ok) {
     live.nativeRecorderRunning = true
     live.nativeStreamingStatus = 'warmingBuffer'
     live.outputStatus = 'Native Streaming buffer is warming for active listeners.'
-    heartbeatLiveProgramState({ connectionStatus: 'live' }).catch(() => {})
+    heartbeatLiveProgramState({ broadcastState: 'warmingBuffer', connectionStatus: 'live' }).catch(() => {})
   } else {
     live.nativeStreamingStatus = 'error'
     live.outputStatus = result.error || 'Native Streaming recorder could not start.'
@@ -2938,7 +2941,7 @@ function stopNativeSegmentRecorder({ status = 'pausedNoListeners' } = {}) {
   live.outputStatus = status === 'idleNoListeners'
     ? 'Native Streaming is idle until a listener clicks Listen.'
     : 'Native Streaming paused because no listeners are requesting playback.'
-  heartbeatLiveProgramState({ connectionStatus: 'live' }).catch(() => {})
+  heartbeatLiveProgramState({ broadcastState: status, connectionStatus: 'live' }).catch(() => {})
 }
 
 function observeNativePlaybackDemand(streamId = '') {
@@ -3922,7 +3925,7 @@ async function startLiveStudioStream() {
       live.nativeStreamingStatus = 'idleNoListeners'
       await markMusicLiveStreamOnAir(pendingStreamId, {
         ...liveProgramOutputState(),
-        broadcastState: 'waiting_for_playback_demand'
+        broadcastState: 'idleNoListeners'
       })
       live.draftStreamId = pendingStreamId
       subscribeLiveStudioStream(pendingStreamId)
@@ -3934,7 +3937,7 @@ async function startLiveStudioStream() {
         if (!live.streamId) return
         heartbeatMusicLiveStream(live.streamId, {
           ...liveProgramOutputState(),
-          broadcastState: live.nativeRecorderRunning ? 'broadcasting' : live.nativePlaybackDemandCount > 0 ? 'warming_buffer' : 'waiting_for_playback_demand',
+          broadcastState: live.nativeRecorderRunning ? 'broadcasting' : live.nativePlaybackDemandCount > 0 ? 'warmingBuffer' : 'idleNoListeners',
           connectionStatus: 'live'
         }).catch(() => {})
         writeNativeHostPresence({ streamId: live.streamId, uid: state.user.uid, state: 'online', broadcasting: live.nativeRecorderRunning }).catch(() => {})

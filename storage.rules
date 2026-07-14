@@ -326,11 +326,12 @@ service firebase.storage {
       allow read: if firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
         && (
           firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
-          || firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted', 'password']
+          || firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted']
         );
       allow write: if signedIn()
         && firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.hostUid == request.auth.uid
         && segmentType in ['audio', 'video', 'av']
+        && fileName.matches('[0-9]+[.]webm')
         && request.resource != null
         && request.resource.size <= 25 * 1024 * 1024
         && request.resource.contentType.matches('(audio|video)/webm.*');

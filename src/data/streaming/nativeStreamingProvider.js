@@ -1,4 +1,4 @@
-import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp, Timestamp, where } from 'firebase/firestore'
+import { addDoc, collection, doc, getDocs, limit, orderBy, query, serverTimestamp, Timestamp, updateDoc, where } from 'firebase/firestore'
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { db } from '../../firebase/firestore'
 import { storage } from '../../firebase/storage'
@@ -114,11 +114,17 @@ export function startSegmentRecorder(programMediaStream, options = {}) {
     startedAt: Date.now(),
     mimeType,
     segmentDurationMs: Number(options.segmentDurationMs || DEFAULT_NATIVE_OPTIONS.segmentDurationMs),
-    uploading: false
+    uploading: false,
+    shouldUploadSegment: typeof options.shouldUploadSegment === 'function' ? options.shouldUploadSegment : () => true,
+    isStreamActive: typeof options.isStreamActive === 'function' ? options.isStreamActive : () => true
   }
   recorderState = state
   recorder.addEventListener('dataavailable', (event) => {
     if (!event.data || event.data.size <= 0) return
+    if (!state.shouldUploadSegment() || !state.isStreamActive()) {
+      diagnostics = buildProviderDiagnostics({ ...diagnostics, lastMediaEvent: 'segment-skipped-no-demand' })
+      return
+    }
     const index = state.index
     state.index += 1
     uploadSegment(event.data, {
@@ -128,7 +134,8 @@ export function startSegmentRecorder(programMediaStream, options = {}) {
       mimeType,
       durationMs: state.segmentDurationMs,
       programTimeMs: Date.now() - state.startedAt,
-      rollingRetentionMs: Number(options.rollingRetentionMs || DEFAULT_NATIVE_OPTIONS.rollingRetentionMs)
+      rollingRetentionMs: Number(options.rollingRetentionMs || DEFAULT_NATIVE_OPTIONS.rollingRetentionMs),
+      isStreamActive: state.isStreamActive
     }).catch((error) => {
       diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', lastMediaEvent: error?.message || 'segment upload failed' })
     })
@@ -163,6 +170,10 @@ export async function uploadSegment(segmentBlob, metadata = {}) {
     contentType: metadata.mimeType || segmentBlob.type || 'audio/webm',
     customMetadata: { streamId, provider: STREAM_PROVIDERS.nativeStreaming, segmentIndex: String(index), type }
   })
+  if (typeof metadata.isStreamActive === 'function' && !metadata.isStreamActive()) {
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, lastMediaEvent: 'segment-uploaded-metadata-skipped-inactive' })
+    return { ok: false, skipped: true, storagePath: path }
+  }
   const downloadURL = await getDownloadURL(upload.ref).catch(() => '')
   const expiresAt = Timestamp.fromMillis(Date.now() + Number(metadata.rollingRetentionMs || DEFAULT_NATIVE_OPTIONS.rollingRetentionMs))
   return writeSegmentMetadata({
@@ -189,6 +200,15 @@ export async function writeSegmentMetadata(segmentDoc = {}) {
   if (!db || !streamId) throw new Error('Cannot write segment metadata without Firestore and stream id.')
   const { streamId: _streamId, ...payload } = segmentDoc
   const docRef = await addDoc(segmentCollection(streamId), payload)
+  await updateDoc(doc(db, 'musicLiveStreams', streamId), {
+    broadcastState: 'broadcasting',
+    'nativeStreaming.status': 'broadcasting',
+    'nativeStreaming.hasPlayableSegments': true,
+    'nativeStreaming.newestAvailableSegmentIndex': Number(payload.index || 0),
+    'nativeStreaming.currentSegmentIndex': Number(payload.index || 0),
+    'nativeStreaming.lastSegmentAt': serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true }).catch(() => {})
   return { ok: true, segmentId: docRef.id, ...payload }
 }
 

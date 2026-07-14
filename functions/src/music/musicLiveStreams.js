@@ -65,6 +65,8 @@ function normalizeIngestMode(value) {
 }
 
 function normalizePlaybackMode(value, provider = 'livekit') {
+  if (provider === 'nativeStreaming') return 'firebaseSegments'
+  if (provider === 'livekit') return 'webrtc'
   if (ALLOWED_PLAYBACK_MODES.has(value)) return value
   return provider === 'livekit' ? 'webrtc' : 'firebaseSegments'
 }
@@ -74,7 +76,6 @@ function providerLabel(provider = 'nativeStreaming') {
 }
 
 function normalizeIngestModeForProvider(value, provider = 'nativeStreaming') {
-  if (ALLOWED_INGEST_MODES.has(value)) return value
   return provider === 'livekit' ? 'livekit-webrtc' : 'browser-media-recorder'
 }
 
@@ -221,7 +222,32 @@ function cleanStreamMetadata(data = {}) {
   const coverArtPath = cleanString(data.coverArtPath, 500)
   const coverArtSource = ['url', 'upload', 'fallback'].includes(data.coverArtSource) ? data.coverArtSource : (coverArtURL ? 'url' : 'fallback')
   const tags = toTags(data.tags)
-  return { title, description, category, visibility, accessMode, passwordProtected: accessMode === 'password', coverArtURL, coverArtPath, coverArtSource, tags }
+  return {
+    title,
+    description,
+    category,
+    visibility,
+    accessMode,
+    passwordProtected: accessMode === 'password',
+    coverArtURL,
+    coverImageURL: coverArtURL,
+    coverArtPath,
+    coverStoragePath: coverArtPath,
+    coverArtSource,
+    tags
+  }
+}
+
+function nowPlayingPayload(item = {}, itemId = '', now = admin.firestore.FieldValue.serverTimestamp()) {
+  return {
+    ...item,
+    sequenceItemId: itemId,
+    sourceType: itemId ? 'sequenceItem' : cleanString(item.sourceType || 'manual', 40),
+    sourceId: itemId || cleanId(item.sourceId || '', 120),
+    startedAt: now,
+    updatedAt: now,
+    durationMs: Math.max(0, Number(item.durationMs || 0))
+  }
 }
 
 function hashPassword(password = '', salt = crypto.randomBytes(16).toString('hex')) {
@@ -550,6 +576,7 @@ const startMusicLiveStream = onCall(
 
       const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
       const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
+      const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
 
       let hostToken = ''
       if (selectedProvider === 'livekit') {
@@ -573,17 +600,21 @@ const startMusicLiveStream = onCall(
         streamId,
         hostUid: uid,
         hostDisplayName,
+        hostUsername,
         hostPhotoURL,
+        hostAvatarURL: hostPhotoURL,
         title,
         description,
         category,
         tags,
         coverArtPath,
         coverArtURL,
+        coverImageURL: coverArtURL,
+        coverStoragePath: coverArtPath,
         coverArtSource,
         status: 'starting',
         connectionStatus: 'starting',
-        broadcastState: selectedProvider === 'nativeStreaming' ? 'waiting_for_playback_demand' : 'connecting',
+        broadcastState: selectedProvider === 'nativeStreaming' ? 'idleNoListeners' : 'connecting',
         visibility,
         accessMode,
         passwordProtected: accessMode === 'password',
@@ -693,6 +724,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   const now = admin.firestore.FieldValue.serverTimestamp()
   const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
   const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
+  const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
   const title = cleanString(request.data?.title, 90) || 'Untitled live stream'
   const roomName = cleanRoomName(`music-live-${streamId}`)
 
@@ -700,17 +732,21 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     streamId,
     hostUid: uid,
     hostDisplayName,
+    hostUsername,
     hostPhotoURL,
+    hostAvatarURL: hostPhotoURL,
     title,
     description: metadata.description,
     category: metadata.category,
     tags: metadata.tags,
     coverArtPath: metadata.coverArtPath,
     coverArtURL: metadata.coverArtURL,
+    coverImageURL: metadata.coverImageURL,
+    coverStoragePath: metadata.coverStoragePath,
     coverArtSource: metadata.coverArtSource,
     status: 'draft',
     connectionStatus: 'draft',
-    broadcastState: programOutputState.provider === 'nativeStreaming' ? 'idle_no_listeners' : 'draft',
+    broadcastState: programOutputState.provider === 'nativeStreaming' ? 'idleNoListeners' : 'draft',
     visibility: metadata.visibility,
     accessMode: metadata.accessMode,
     passwordProtected: metadata.accessMode === 'password',
@@ -781,7 +817,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   await streamRef.set({
     status: 'live',
     connectionStatus: 'live',
-    broadcastState: programOutputState.provider === 'nativeStreaming' ? 'waiting_for_playback_demand' : 'broadcasting',
+    broadcastState: programOutputState.provider === 'nativeStreaming' ? 'idleNoListeners' : 'broadcasting',
     hostConnected: true,
     ...programOutputState,
     startedAt: stream.startedAt || now,
@@ -814,7 +850,7 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
   await streamRef.set({
     connectionStatus: request.data?.connectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
     broadcastState: programOutputState.provider === 'nativeStreaming'
-      ? cleanString(request.data?.broadcastState || stream.broadcastState || 'waiting_for_playback_demand', 80)
+      ? cleanString(request.data?.broadcastState || stream.broadcastState || 'idleNoListeners', 80)
       : 'broadcasting',
     hostConnected: true,
     ...programOutputState,
@@ -1157,11 +1193,7 @@ const upsertMusicLiveSequenceItem = onCall({ region: 'us-central1' }, async (req
   await streamRef.collection('sequenceItems').doc(itemId).set(payload, { merge: true })
   if (stream.currentNowPlaying?.sequenceItemId === itemId) {
     await streamRef.set({
-      currentNowPlaying: {
-        ...item,
-        sequenceItemId: itemId,
-        updatedAt: now
-      },
+      currentNowPlaying: nowPlayingPayload(item, itemId, now),
       lastMetadataUpdateAt: now,
       updatedAt: now
     }, { merge: true })
@@ -1207,15 +1239,11 @@ const setMusicLiveNowPlaying = onCall({ region: 'us-central1' }, async (request)
   if (!itemSnap.exists) throw new HttpsError('not-found', 'Sequence item not found.')
   const item = cleanSequenceItem(itemSnap.data() || {})
   await streamRef.set({
-    currentNowPlaying: {
-      ...item,
-      sequenceItemId: itemId,
-      updatedAt: now
-    },
+    currentNowPlaying: nowPlayingPayload(item, itemId, now),
     lastMetadataUpdateAt: now,
     updatedAt: now
   }, { merge: true })
-  return { ok: true, streamId, currentNowPlaying: { ...item, sequenceItemId: itemId } }
+  return { ok: true, streamId, currentNowPlaying: nowPlayingPayload(item, itemId, new Date().toISOString()) }
 })
 
 function parseBeaconBody(req) {

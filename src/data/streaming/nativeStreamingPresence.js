@@ -1,6 +1,8 @@
 import { get, onDisconnect, onValue, ref, remove, set } from 'firebase/database'
 import { realtimeDatabase } from '../../firebase/realtimeDatabase'
 
+const runtimeViewerSessions = new Map()
+
 function cleanId(value = '', fallback = '') {
   const clean = String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 80)
   return clean || fallback
@@ -11,15 +13,18 @@ function nowMs() {
 }
 
 export function nativeViewerSessionId(streamId = '') {
+  const cleanStreamId = cleanId(streamId, 'stream')
+  if (runtimeViewerSessions.has(cleanStreamId)) return runtimeViewerSessions.get(cleanStreamId)
   const storageKey = `melogicNativeViewer:${cleanId(streamId, 'stream')}`
   try {
-    const existing = window.sessionStorage.getItem(storageKey)
-    if (existing) return cleanId(existing, existing)
-    const created = `viewer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+    const created = `viewer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
     window.sessionStorage.setItem(storageKey, created)
+    runtimeViewerSessions.set(cleanStreamId, created)
     return created
   } catch {
-    return `viewer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+    const created = `viewer_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+    runtimeViewerSessions.set(cleanStreamId, created)
+    return created
   }
 }
 
@@ -36,8 +41,8 @@ export async function writePlaybackDemand({ streamId = '', viewerSessionId = '',
     tabId: cleanId(tabId, cleanSessionId),
     ...(userAgentHash ? { userAgentHash: String(userAgentHash).slice(0, 160) } : {})
   }
-  await set(pathRef, payload)
   await onDisconnect(pathRef).remove()
+  await set(pathRef, payload)
   return { ok: true, streamId: cleanStreamId, viewerSessionId: cleanSessionId }
 }
 
@@ -59,7 +64,8 @@ export function observePlaybackDemand(streamId = '', onNext = () => {}) {
   return onValue(ref(realtimeDatabase, `livePresence/${cleanStreamId}/playbackDemand`), (snapshot) => {
     const value = snapshot.val() || {}
     const sessions = Object.entries(value).map(([id, row]) => ({ viewerSessionId: id, ...(row || {}) }))
-    onNext({ count: sessions.length, sessions })
+    const activeSessions = sessions.filter((session) => session.state === 'buffering' || session.state === 'listening')
+    onNext({ count: activeSessions.length, sessions, activeSessions })
   }, () => onNext({ count: 0, sessions: [] }))
 }
 
@@ -67,7 +73,8 @@ export async function getPlaybackDemandCount(streamId = '') {
   const cleanStreamId = cleanId(streamId)
   if (!realtimeDatabase || !cleanStreamId) return 0
   const snapshot = await get(ref(realtimeDatabase, `livePresence/${cleanStreamId}/playbackDemand`)).catch(() => null)
-  return snapshot?.exists?.() ? Object.keys(snapshot.val() || {}).length : 0
+  if (!snapshot?.exists?.()) return 0
+  return Object.values(snapshot.val() || {}).filter((row) => row?.state === 'buffering' || row?.state === 'listening').length
 }
 
 export async function writeNativeHostPresence({ streamId = '', uid = '', state = 'online', broadcasting = false } = {}) {
@@ -75,17 +82,18 @@ export async function writeNativeHostPresence({ streamId = '', uid = '', state =
   const cleanUid = cleanId(uid)
   if (!realtimeDatabase || !cleanStreamId || !cleanUid) return { ok: false }
   const pathRef = ref(realtimeDatabase, `livePresence/${cleanStreamId}/host`)
-  await set(pathRef, {
+  const payload = {
     uid: cleanUid,
     state: state === 'offline' ? 'offline' : 'online',
     lastSeenAt: nowMs(),
     broadcasting: Boolean(broadcasting)
-  })
+  }
   await onDisconnect(pathRef).set({
     uid: cleanUid,
     state: 'offline',
     lastSeenAt: nowMs(),
     broadcasting: false
   })
+  await set(pathRef, payload)
   return { ok: true }
 }
