@@ -218,21 +218,37 @@ function isAdminAuth(auth = null) {
 function markLiveValidationDetails({ streamId = '', provider = 'nativeStreaming', stream = {}, requestData = {}, targetStatus = 'live' } = {}) {
   const validationBranch = provider === 'nativeStreaming' ? 'nativeStreaming' : 'livekit'
   const broadcastState = cleanString(requestData.broadcastState || stream.broadcastState || '', 80)
+  const nativeStatus = cleanString(requestData.nativeStreaming?.status || stream.nativeStreaming?.status || '', 80)
+  const currentStatus = cleanString(stream.status || '', 80)
+  const safeTitle = cleanString(requestData.title || stream.title || 'Untitled live stream', 90)
+  const safeVisibility = cleanString(requestData.visibility || stream.visibility || 'public', 40)
+  const hostSessionId = cleanString(requestData.hostSessionId || stream.hostSessionId || '', 120)
   const missingRequiredFields = []
+  const failedConditions = []
   if (!streamId) missingRequiredFields.push('streamId')
   if (!stream.hostUid) missingRequiredFields.push('hostUid')
-  if (!cleanString(requestData.title || stream.title, 90)) missingRequiredFields.push('title')
-  if (!cleanString(requestData.visibility || stream.visibility, 40)) missingRequiredFields.push('visibility')
-  if (validationBranch === 'nativeStreaming' && !cleanString(requestData.hostSessionId || stream.hostSessionId, 120)) missingRequiredFields.push('hostSessionId')
+  if (provider !== 'nativeStreaming' && provider !== 'livekit') failedConditions.push(`unsupported provider: ${provider}`)
+  if (targetStatus !== 'live') failedConditions.push(`targetStatus must be live, got ${targetStatus}`)
+  if (validationBranch === 'nativeStreaming') {
+    if (!hostSessionId) missingRequiredFields.push('hostSessionId')
+    if (broadcastState && broadcastState !== 'liveIdleNoListeners') failedConditions.push(`native broadcastState must be liveIdleNoListeners, got ${broadcastState}`)
+    if (nativeStatus && nativeStatus !== 'idleNoListeners') failedConditions.push(`nativeStreaming.status must be idleNoListeners, got ${nativeStatus}`)
+  }
   if (validationBranch === 'livekit' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
   return {
     functionName: 'markMusicLiveStreamOnAir',
+    functionFile: 'functions/src/music/musicLiveStreams.js',
     streamId,
     provider,
-    currentStatus: cleanString(stream.status || '', 80),
+    currentStatus,
     targetStatus,
     broadcastState,
+    nativeStreamingStatus: nativeStatus,
+    safeTitle,
+    safeVisibility,
+    hostSessionId,
     missingRequiredFields,
+    failedConditions,
     validationBranch
   }
 }
@@ -849,9 +865,16 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   const diagnostics = markLiveValidationDetails({ streamId, provider: requestedProvider, stream, requestData: request.data || {} })
   const allowedNativeStatuses = new Set(['draft', 'setup', 'error', 'starting', 'live', 'ended'])
   const allowedLiveKitStatuses = new Set(['starting', 'live'])
+  const nativeCanStartIdle = requestedProvider === 'nativeStreaming'
+    && allowedNativeStatuses.has(stream.status || 'draft')
+    && diagnostics.targetStatus === 'live'
+    && (diagnostics.broadcastState || 'liveIdleNoListeners') === 'liveIdleNoListeners'
+    && (diagnostics.nativeStreamingStatus || 'idleNoListeners') === 'idleNoListeners'
+    && diagnostics.missingRequiredFields.length === 0
+    && diagnostics.failedConditions.length === 0
   const canMarkLive = requestedProvider === 'nativeStreaming'
-    ? allowedNativeStatuses.has(stream.status || 'draft') && diagnostics.missingRequiredFields.length === 0
-    : allowedLiveKitStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0
+    ? nativeCanStartIdle
+    : allowedLiveKitStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
   if (!canMarkLive) {
     liveWarn('mark live validation failed', diagnostics)
     throw new HttpsError('failed-precondition', 'This stream cannot be marked live.', diagnostics)
@@ -863,8 +886,19 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
+  const safeLiveTitle = cleanString(request.data?.title || stream.title || 'Untitled live stream', 90)
+  const safeLiveVisibility = ALLOWED_VISIBILITIES.has(request.data?.visibility)
+    ? request.data.visibility
+    : ALLOWED_VISIBILITIES.has(stream.visibility) ? stream.visibility : 'public'
+  const safeLiveAccessMode = ALLOWED_ACCESS_MODES.has(request.data?.accessMode)
+    ? request.data.accessMode
+    : ALLOWED_ACCESS_MODES.has(stream.accessMode) ? stream.accessMode : safeLiveVisibility
   await streamRef.set({
     status: 'live',
+    title: safeLiveTitle,
+    visibility: safeLiveVisibility,
+    accessMode: safeLiveAccessMode,
+    passwordProtected: safeLiveAccessMode === 'password',
     connectionStatus: 'live',
     broadcastState: programOutputState.provider === 'nativeStreaming'
       ? cleanString(request.data?.broadcastState || 'liveIdleNoListeners', 80)
