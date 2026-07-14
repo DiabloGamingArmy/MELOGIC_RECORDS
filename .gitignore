@@ -54,3 +54,7 @@ node_modules/
 # Local skill/tooling files
 skills/
 skills-lock.json
+
+# Large local/server archives
+ams_community.zip
+*.zip
