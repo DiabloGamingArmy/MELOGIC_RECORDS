@@ -217,8 +217,8 @@ function isAdminAuth(auth = null) {
 
 function markLiveValidationDetails({ streamId = '', provider = 'nativeStreaming', stream = {}, requestData = {}, targetStatus = 'live' } = {}) {
   const validationBranch = provider === 'nativeStreaming' ? 'nativeStreaming' : 'livekit'
-  const broadcastState = cleanString(requestData.broadcastState || stream.broadcastState || '', 80)
-  const nativeStatus = cleanString(requestData.nativeStreaming?.status || stream.nativeStreaming?.status || '', 80)
+  const broadcastState = cleanString(requestData.broadcastState || (validationBranch === 'nativeStreaming' ? 'liveIdleNoListeners' : stream.broadcastState) || '', 80)
+  const nativeStatus = cleanString(requestData.nativeStreaming?.status || (validationBranch === 'nativeStreaming' ? 'idleNoListeners' : stream.nativeStreaming?.status) || '', 80)
   const currentStatus = cleanString(stream.status || '', 80)
   const safeTitle = cleanString(requestData.title || stream.title || 'Untitled live stream', 90)
   const safeVisibility = cleanString(requestData.visibility || stream.visibility || 'public', 40)

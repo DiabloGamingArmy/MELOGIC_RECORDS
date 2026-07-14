@@ -3986,6 +3986,49 @@ function liveStreamPayload() {
   }
 }
 
+function nativeStartLivePayload(streamId = '', hostSessionId = '') {
+  const basePayload = liveStreamPayload()
+  const programState = liveProgramOutputState()
+  return {
+    ...basePayload,
+    ...programState,
+    streamId,
+    hostSessionId,
+    hostActive: true,
+    provider: 'nativeStreaming',
+    providerLabel: 'Native Streaming',
+    ingestMode: 'browser-media-recorder',
+    playbackMode: 'firebaseSegments',
+    broadcastState: 'liveIdleNoListeners',
+    nativeStreaming: {
+      ...(basePayload.nativeStreaming || {}),
+      ...(programState.nativeStreaming || {}),
+      status: 'idleNoListeners',
+      hasPlayableSegments: false,
+      newestAvailableSegmentIndex: null,
+      currentSegmentIndex: null
+    }
+  }
+}
+
+function jsonSafeCopy(value) {
+  try {
+    return JSON.parse(JSON.stringify(value ?? null))
+  } catch {
+    return String(value ?? '')
+  }
+}
+
+function firebaseErrorDetails(error = null) {
+  return {
+    code: error?.code || '',
+    message: error?.message || '',
+    details: jsonSafeCopy(error?.details || null),
+    customData: jsonSafeCopy(error?.customData || null),
+    raw: jsonSafeCopy(error)
+  }
+}
+
 async function saveLiveStreamInfo() {
   const live = liveState()
   live.savingInfo = true
@@ -4045,17 +4088,7 @@ async function startLiveStudioStream() {
       pendingStreamId = live.draftStreamId
       const hostSessionId = nativeHostSessionId(pendingStreamId)
       live.nativeHostSessionId = hostSessionId
-      await markMusicLiveStreamOnAir(pendingStreamId, {
-        ...liveProgramOutputState(),
-        streamId: pendingStreamId,
-        hostSessionId,
-        hostActive: true,
-        broadcastState: 'liveIdleNoListeners',
-        nativeStreaming: {
-          ...liveProgramOutputState().nativeStreaming,
-          status: 'idleNoListeners'
-        }
-      })
+      await markMusicLiveStreamOnAir(pendingStreamId, nativeStartLivePayload(pendingStreamId, hostSessionId))
       await activateNativeLiveSession(pendingStreamId)
       live.outputStatus = 'Live - waiting for listeners. Media chunks start after a listener clicks Listen.'
       return
@@ -4120,15 +4153,21 @@ async function startLiveStudioStream() {
       ? 'On air. Sequence Software output is publishing to Melogic Music.'
       : 'On air. Browser input source is publishing to Melogic Music.'
   } catch (error) {
+    const firebaseDetails = firebaseErrorDetails(error)
     console.error('[studio-live] start stream failed', {
       error,
+      errorCode: firebaseDetails.code,
+      errorMessage: firebaseDetails.message,
+      errorDetails: firebaseDetails.details,
+      errorCustomData: firebaseDetails.customData,
+      errorJson: firebaseDetails.raw,
       streamId: pendingStreamId || live.draftStreamId || live.streamId || '',
       provider: live.providerId,
       currentStatus: live.stream?.status || '',
       targetStatus: 'live',
       broadcastState: live.providerId === 'nativeStreaming' ? 'liveIdleNoListeners' : 'broadcasting',
       validationBranch: live.providerId === 'nativeStreaming' ? 'nativeStreaming' : 'livekit',
-      callableDetails: error?.details || error?.customData || null,
+      callableDetails: firebaseDetails.details || firebaseDetails.customData || null,
       functionName: 'startLiveStudioStream'
     })
     if (pendingStreamId) await endMusicLiveStream(pendingStreamId).catch(() => {})
@@ -4220,17 +4259,7 @@ async function resumeInterruptedNativeStream() {
   try {
     const hostSessionId = nativeHostSessionId(streamId)
     live.nativeHostSessionId = hostSessionId
-    await markMusicLiveStreamOnAir(streamId, {
-      ...liveProgramOutputState(),
-      streamId,
-      hostSessionId,
-      hostActive: true,
-      broadcastState: 'liveIdleNoListeners',
-      nativeStreaming: {
-        ...liveProgramOutputState().nativeStreaming,
-        status: 'idleNoListeners'
-      }
-    })
+    await markMusicLiveStreamOnAir(streamId, nativeStartLivePayload(streamId, hostSessionId))
     await activateNativeLiveSession(streamId)
     live.outputStatus = 'Live - waiting for listeners. Media chunks start after a listener clicks Listen.'
   } catch (error) {
