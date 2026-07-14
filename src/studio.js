@@ -1735,6 +1735,7 @@ function liveProgramOutputState() {
   const live = liveState()
   const mixer = live.programMixer || {}
   const providerId = live.providerId === 'livekit' ? 'livekit' : 'nativeStreaming'
+  const provider = getStreamingProvider(providerId)
   const programScene = (mixer.scenes || []).find((scene) => scene.sceneId === mixer.programSceneId)
   const programSourceIds = new Set(Array.isArray(programScene?.sources) ? programScene.sources : [])
   const programSources = (mixer.sources || []).filter((source) => programSourceIds.has(source.sourceId))
