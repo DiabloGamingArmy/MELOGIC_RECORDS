@@ -215,6 +215,28 @@ function isAdminAuth(auth = null) {
   return auth?.token?.admin === true || ['owner', 'admin'].includes(cleanString(auth?.token?.adminRole, 40))
 }
 
+function markLiveValidationDetails({ streamId = '', provider = 'nativeStreaming', stream = {}, requestData = {}, targetStatus = 'live' } = {}) {
+  const validationBranch = provider === 'nativeStreaming' ? 'nativeStreaming' : 'livekit'
+  const broadcastState = cleanString(requestData.broadcastState || stream.broadcastState || '', 80)
+  const missingRequiredFields = []
+  if (!streamId) missingRequiredFields.push('streamId')
+  if (!stream.hostUid) missingRequiredFields.push('hostUid')
+  if (!cleanString(requestData.title || stream.title, 90)) missingRequiredFields.push('title')
+  if (!cleanString(requestData.visibility || stream.visibility, 40)) missingRequiredFields.push('visibility')
+  if (validationBranch === 'nativeStreaming' && !cleanString(requestData.hostSessionId || stream.hostSessionId, 120)) missingRequiredFields.push('hostSessionId')
+  if (validationBranch === 'livekit' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
+  return {
+    functionName: 'markMusicLiveStreamOnAir',
+    streamId,
+    provider,
+    currentStatus: cleanString(stream.status || '', 80),
+    targetStatus,
+    broadcastState,
+    missingRequiredFields,
+    validationBranch
+  }
+}
+
 function accountRole(user = {}, profile = {}) {
   return cleanString(user.role || user.accountType || user.roleLabel || profile.role || profile.roleLabel || profile.accountType || '', 40).toLowerCase()
 }
@@ -824,8 +846,16 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   const stream = snap.data() || {}
   if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can mark this stream live.')
   const requestedProvider = normalizeProvider(request.data?.provider || stream.provider)
-  const canMarkLive = ['starting', 'live'].includes(stream.status) || (requestedProvider === 'nativeStreaming' && ['draft', 'setup', 'error'].includes(stream.status || 'draft'))
-  if (!canMarkLive) throw new HttpsError('failed-precondition', 'This stream cannot be marked live.')
+  const diagnostics = markLiveValidationDetails({ streamId, provider: requestedProvider, stream, requestData: request.data || {} })
+  const allowedNativeStatuses = new Set(['draft', 'setup', 'error', 'starting', 'live', 'ended'])
+  const allowedLiveKitStatuses = new Set(['starting', 'live'])
+  const canMarkLive = requestedProvider === 'nativeStreaming'
+    ? allowedNativeStatuses.has(stream.status || 'draft') && diagnostics.missingRequiredFields.length === 0
+    : allowedLiveKitStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0
+  if (!canMarkLive) {
+    liveWarn('mark live validation failed', diagnostics)
+    throw new HttpsError('failed-precondition', 'This stream cannot be marked live.', diagnostics)
+  }
 
   const now = admin.firestore.FieldValue.serverTimestamp()
   const programOutputState = cleanProgramOutputState(request.data || {}, {
@@ -839,10 +869,10 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     broadcastState: programOutputState.provider === 'nativeStreaming'
       ? cleanString(request.data?.broadcastState || 'liveIdleNoListeners', 80)
       : 'broadcasting',
-    hostActive: true,
-    hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || '', 120),
     hostConnected: true,
     ...programOutputState,
+    hostActive: true,
+    hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || '', 120),
     nativeStreaming: nativeStreamingDefaults({
       ...(stream.nativeStreaming || {}),
       ...(request.data?.nativeStreaming || {}),
@@ -850,12 +880,15 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
         ? cleanString(request.data?.nativeStreaming?.status || 'idleNoListeners', 40)
         : stream.nativeStreaming?.status
     }),
-    startedAt: stream.startedAt || now,
+    startedAt: now,
+    endedAt: null,
+    endReason: '',
+    cleanupSource: '',
     updatedAt: now,
     lastHostHeartbeatAt: now
   }, { merge: true })
 
-  liveLog('stream marked live', { uid, streamId })
+  liveLog('stream marked live', { uid, streamId, provider: requestedProvider, validationBranch: diagnostics.validationBranch, broadcastState: request.data?.broadcastState || 'liveIdleNoListeners' })
   return { ok: true, streamId, status: 'live' }
 })
 

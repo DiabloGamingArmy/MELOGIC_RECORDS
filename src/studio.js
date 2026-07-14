@@ -4120,7 +4120,17 @@ async function startLiveStudioStream() {
       ? 'On air. Sequence Software output is publishing to Melogic Music.'
       : 'On air. Browser input source is publishing to Melogic Music.'
   } catch (error) {
-    console.error('[studio-live] start stream failed', error)
+    console.error('[studio-live] start stream failed', {
+      error,
+      streamId: pendingStreamId || live.draftStreamId || live.streamId || '',
+      provider: live.providerId,
+      currentStatus: live.stream?.status || '',
+      targetStatus: 'live',
+      broadcastState: live.providerId === 'nativeStreaming' ? 'liveIdleNoListeners' : 'broadcasting',
+      validationBranch: live.providerId === 'nativeStreaming' ? 'nativeStreaming' : 'livekit',
+      callableDetails: error?.details || error?.customData || null,
+      functionName: 'startLiveStudioStream'
+    })
     if (pendingStreamId) await endMusicLiveStream(pendingStreamId).catch(() => {})
     live.streamId = ''
     live.draftStreamId = ''
