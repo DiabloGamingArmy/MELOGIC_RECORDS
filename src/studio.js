@@ -2643,7 +2643,7 @@ async function restoreLiveStudioRuntimeState() {
   const stream = active || draft || null
   if (!stream) return
   hydrateLiveStudioFromStream(stream)
-  if (active?.provider !== 'livekit') {
+  if (active && active.provider !== 'livekit') {
     const hostPresence = await getNativeHostPresence(active.streamId).catch(() => null)
     const freshHostPresence = Boolean(hostPresence?.lastSeenAt && Date.now() - Number(hostPresence.lastSeenAt || 0) < 30000 && hostPresence.state === 'online')
     live.providerDiagnostics = {
