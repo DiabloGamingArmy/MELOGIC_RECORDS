@@ -55,6 +55,7 @@ import { getNativePlaybackQueue } from './data/streaming/nativeStreamingProvider
 import {
   clearPlaybackDemand,
   nativeViewerSessionId,
+  observeNativeHostPresence,
   updatePlaybackDemandState,
   writePlaybackDemand
 } from './data/streaming/nativeStreamingPresence'
@@ -138,9 +139,11 @@ const state = {
   listenerVideoElement: null,
   listenerPresenceId: '',
   nativeViewerSessionId: '',
+  nativeHostUnsubscribe: null,
   nativePlaybackTimer: 0,
   nativePlaybackQueue: [],
   nativePlaybackNextIndex: null,
+  nativeListenerDiagnostics: {},
   listenerPresenceTimer: 0,
   liveMonitor: {
     muted: true
@@ -1082,6 +1085,11 @@ function renderReleaseDetailPage() {
 
 function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'live') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
+  if (state.liveStatus === 'playing') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
+  if (state.liveStatus === 'requestingPlayback') return 'Requesting playback...'
+  if (state.liveStatus === 'waitingForHost') return 'Host is not currently broadcasting.'
+  if (state.liveStatus === 'waitingForSegments') return 'Waiting for stream data...'
+  if (state.liveStatus === 'interrupted') return 'Stream interrupted.'
   if (state.liveStatus === 'waiting') return streamHasVideoFoundation(stream) ? 'Connected - waiting for media.' : 'Connected - waiting for host audio.'
   if (state.liveStatus === 'reconnecting') return 'Reconnecting...'
   if (state.liveStatus === 'connecting') return 'Connecting to stream...'
@@ -1098,14 +1106,19 @@ function liveStatusLabel(stream = {}) {
   return 'Click Listen to join. Audio never autoplays.'
 }
 
+function isLiveListeningStatus(status = state.liveStatus) {
+  return ['live', 'playing', 'waiting', 'buffering', 'requestingPlayback', 'waitingForHost', 'waitingForSegments', 'connecting', 'reconnecting'].includes(status)
+}
+
 function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
   const native = stream.nativeStreaming || {}
-  const hostFresh = stream.hostConnected === true && isLiveStreamFresh(stream)
+  const hostFresh = state.nativeListenerDiagnostics.hostHeartbeatFresh === true || (stream.hostConnected === true && isLiveStreamFresh(stream))
   if (stream.status !== 'live') return 'This stream has ended or is no longer public.'
   if (!hostFresh) return 'The host is not currently broadcasting. Stay on this page or check back in a moment.'
+  if (state.nativeListenerDiagnostics.lastSegmentError) return `Stream segment lookup failed: ${state.nativeListenerDiagnostics.lastSegmentError}`
   if (native.lastUploadError) return `The host is live, but segment upload is failing: ${native.lastUploadError}`
-  if (elapsedMs >= 90000) return 'No playable stream data has arrived yet. You can retry Listen or stop listening.'
-  if (elapsedMs >= 35000) return 'Waiting for stream data from the host. Demand is connected, but no playable segments are available yet.'
+  if (elapsedMs >= 45000) return 'Still waiting for the host to produce audio. You can retry Listen or stop listening.'
+  if (elapsedMs >= 10000) return 'Waiting for stream data from the host. Demand is connected, but no playable segments are available yet.'
   return 'Starting stream buffer...'
 }
 
@@ -1271,9 +1284,9 @@ function updateLiveMediaSession(stream = state.liveStream) {
   })
   navigator.mediaSession.playbackState = state.liveStatus === 'ended' || stream.status === 'ended'
     ? 'none'
-    : ['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'playing' : 'paused'
+    : isLiveListeningStatus() ? 'playing' : 'paused'
   navigator.mediaSession.setActionHandler('play', () => {
-    if (!['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus)) joinLiveListener().catch(() => {})
+    if (!isLiveListeningStatus()) joinLiveListener().catch(() => {})
     else state.listenerAudioElement?.play?.().catch(() => {})
   })
   navigator.mediaSession.setActionHandler('pause', () => {
@@ -2374,10 +2387,13 @@ function renderLiveDetailPage() {
     renderAppShell(emptyState('Live stream unavailable', 'This stream may have ended, been removed, or never existed.', `<a class="button button-accent" href="${ROUTES.musicLive}">Back to Live Streams</a>`))
     return
   }
-  const canListen = stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
+  const isNativeStream = stream.provider === STREAM_PROVIDERS.nativeStreaming
+  const canListen = isNativeStream
+    ? stream.status === 'live' && !['removed', 'blocked'].includes(stream.moderationStatus) && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
+    : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
   const hasVideo = streamHasVideoFoundation(stream)
   const visual = hasVideo
-    ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
+    ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${isLiveListeningStatus() ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
     : renderLiveArtwork(stream, 'music-live-detail-art')
   const liveBadge = canListen ? nativeLiveStatusLabel(stream) : 'ENDED'
   renderAppShell(`
@@ -2397,13 +2413,13 @@ function renderLiveDetailPage() {
         </div>
         ${renderNowPlaying(stream)}
         <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : `<span>${hasVideo ? 'Live stream' : 'Live audio'}</span>`}</div>
-        ${stream.passwordProtected && !['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus) ? `
+        ${stream.passwordProtected && !isLiveListeningStatus() ? `
           <form class="music-password-form" data-live-password-form>
             <label><span>Stream password</span><input name="password" type="password" value="${escapeHtml(state.livePassword)}" placeholder="Enter password to listen" /></label>
           </form>
         ` : ''}
         <div class="music-live-listener">
-          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${['live', 'waiting', 'buffering'].includes(state.liveStatus) ? 'Pause / Leave' : 'Listen'}</button>
+          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${isLiveListeningStatus() ? 'Pause / Leave' : 'Listen'}</button>
           <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
         </div>
         ${renderLiveActions(stream)}
@@ -2471,7 +2487,7 @@ function renderPlayer() {
           <strong>${escapeHtml(meta.title || state.liveStream.title)}</strong>
           <span>${escapeHtml(meta.artist || state.liveStream.hostDisplayName)} · Live</span>
         </div>
-        <button type="button" class="button button-accent" data-live-global-toggle>${['live', 'waiting', 'buffering'].includes(state.liveStatus) ? 'Pause' : 'Play'}</button>
+        <button type="button" class="button button-accent" data-live-global-toggle>${isLiveListeningStatus() ? 'Pause' : 'Play'}</button>
         <span class="music-live-badge">LIVE</span>
         <label class="music-player-volume">
           <span>Volume</span>
@@ -3203,10 +3219,13 @@ function disconnectLiveListener() {
   stopListenerPresenceHeartbeat()
   if (state.nativePlaybackTimer) window.clearInterval(state.nativePlaybackTimer)
   state.nativePlaybackTimer = 0
+  state.nativeHostUnsubscribe?.()
+  state.nativeHostUnsubscribe = null
   if (state.liveStream?.id && state.nativeViewerSessionId) {
     clearPlaybackDemand(state.liveStream.id, state.nativeViewerSessionId).catch(() => {})
   }
   state.nativeViewerSessionId = ''
+  state.nativeListenerDiagnostics = {}
   state.nativePlaybackQueue = []
   state.nativePlaybackNextIndex = null
   if (state.liveStream?.id && state.listenerPresenceId) {
@@ -3234,20 +3253,48 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   if (!streamId) return
   const startedAt = Date.now()
   state.nativeViewerSessionId = nativeViewerSessionId(streamId)
-  await writePlaybackDemand({
+  state.nativeListenerDiagnostics = {
+    streamId,
+    provider: STREAM_PROVIDERS.nativeStreaming,
+    listenerState: 'requestingPlayback',
+    demandSessionId: state.nativeViewerSessionId,
+    demandWriteSucceeded: false,
+    hostHeartbeatFresh: false,
+    readySegmentCount: 0,
+    newestAvailableSegmentIndex: null,
+    minBufferSegments: null,
+    lastSegmentError: ''
+  }
+  state.liveStatus = 'requestingPlayback'
+  state.liveError = ''
+  updateLiveListenerControls()
+  const demandResult = await writePlaybackDemand({
     streamId,
     viewerSessionId: state.nativeViewerSessionId,
     uid: state.currentUser?.uid || null,
     state: 'buffering',
     tabId: state.nativeViewerSessionId
   })
+  if (!demandResult?.ok) throw new Error('Could not create Native Streaming playback demand.')
+  state.nativeListenerDiagnostics.demandWriteSucceeded = true
   state.listenerPresenceId = credentials.presenceId || state.nativeViewerSessionId
-  state.liveStatus = 'buffering'
-  state.liveError = ''
+  state.liveStatus = 'waitingForHost'
+  state.nativeHostUnsubscribe?.()
+  state.nativeHostUnsubscribe = observeNativeHostPresence(streamId, (host = null) => {
+    const fresh = Boolean(host?.lastSeenAt && Date.now() - Number(host.lastSeenAt || 0) < 30000 && host.state === 'online')
+    state.nativeListenerDiagnostics.hostHeartbeatFresh = fresh
+    state.nativeListenerDiagnostics.hostSessionId = host?.hostSessionId || ''
+    if (!fresh && ['requestingPlayback', 'waitingForHost', 'waitingForSegments', 'buffering'].includes(state.liveStatus)) {
+      state.liveStatus = 'waitingForHost'
+      state.liveError = nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt)
+      updateLiveListenerControls()
+    }
+  })
   updateLiveListenerControls()
   const updateNativeListenerStatus = (status, message = '') => {
     const changed = state.liveStatus !== status || state.liveError !== message
     state.liveStatus = status
+    state.nativeListenerDiagnostics.listenerState = status
     state.liveError = message
     if (changed) rerender()
     else updateLiveListenerControls()
@@ -3279,8 +3326,7 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       }
     }
     audio.onerror = () => {
-      state.liveStatus = state.liveStream?.status === 'live' ? 'buffering' : 'ended'
-      updateLiveListenerControls()
+      updateNativeListenerStatus(state.liveStream?.status === 'live' ? 'buffering' : 'ended', state.liveStream?.status === 'live' ? 'Segment playback failed; waiting for the next segment.' : 'Stream ended.')
     }
     if (audio.src !== segment.downloadURL) audio.src = segment.downloadURL
     let started = true
@@ -3293,7 +3339,10 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   }
   const poll = async () => {
     const native = credentials.nativeStreaming || state.liveStream?.nativeStreaming || {}
-    const queue = await getNativePlaybackQueue(streamId, native).catch(() => [])
+    const queue = await getNativePlaybackQueue(streamId, native).catch((error) => {
+      state.nativeListenerDiagnostics.lastSegmentError = error?.message || 'Segment lookup failed.'
+      return []
+    })
     state.nativePlaybackQueue = queue
     const segmentDurationMs = Number(native.segmentDurationMs || 4000)
     const minPlaybackBufferMs = Number(native.minPlaybackBufferMs || 20000)
@@ -3301,8 +3350,16 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
     const playable = queue
       .filter((segment) => segment.downloadURL)
       .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
+    state.nativeListenerDiagnostics.readySegmentCount = playable.length
+    state.nativeListenerDiagnostics.newestAvailableSegmentIndex = playable.length ? Number(playable[playable.length - 1].index || 0) : native.newestAvailableSegmentIndex ?? null
+    state.nativeListenerDiagnostics.minBufferSegments = minSegments
+    console.info('[music-live] Native listener diagnostics', state.nativeListenerDiagnostics)
+    if (state.nativeListenerDiagnostics.hostHeartbeatFresh !== true) {
+      updateNativeListenerStatus('waitingForHost', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
+      return
+    }
     if (playable.length < minSegments && !state.listenerAudioElement) {
-      updateNativeListenerStatus('buffering', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
+      updateNativeListenerStatus(playable.length ? 'buffering' : 'waitingForSegments', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
       return
     }
     if (!state.listenerAudioElement) {
@@ -3313,7 +3370,8 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       const next = playable.find((segment) => Number(segment.index || 0) >= Number(state.nativePlaybackNextIndex || 0))
       if (next) await playSegment(next)
     }
-    state.liveStatus = 'live'
+    state.liveStatus = 'playing'
+    state.nativeListenerDiagnostics.listenerState = 'playing'
     state.liveError = ''
     await updatePlaybackDemandState({
       streamId,
@@ -3333,7 +3391,7 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
 async function joinLiveListener(options = {}) {
   if (!state.liveStream?.id) return
   const monitorMode = options.monitor === true || state.route.mode === 'liveMonitor'
-  if (['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
+  if (isLiveListeningStatus()) {
     if (monitorMode || options.forceJoin) return
     disconnectLiveListener()
     rerender()
@@ -3353,16 +3411,16 @@ async function joinLiveListener(options = {}) {
     rerender()
     try {
       const presenceId = monitorMode ? `${livePresenceId(state.liveStream.id)}-monitor` : livePresenceId(state.liveStream.id)
-      const credentials = await joinMusicLiveStream(state.liveStream.id, {
-        password: state.livePassword,
+      await startNativeListenerPlayback({
+        streamId: state.liveStream.id,
+        nativeStreaming: state.liveStream.nativeStreaming || {},
         presenceId,
         anonId: listenerAnonId()
-      })
-      await startNativeListenerPlayback(credentials, { monitorMode })
+      }, { monitorMode })
       rerender()
     } catch (error) {
       state.liveError = error?.message || 'Unable to start the Native Streaming buffer.'
-      state.liveStatus = 'idle'
+      state.liveStatus = 'error'
       rerender()
     }
     return
@@ -3473,7 +3531,7 @@ async function joinLiveListener(options = {}) {
 function updateLiveListenerControls() {
   const button = app.querySelector('[data-live-listen]')
   const status = app.querySelector('[data-live-status]')
-  if (button) button.textContent = ['live', 'waiting', 'buffering'].includes(state.liveStatus)
+  if (button) button.textContent = isLiveListeningStatus()
     ? 'Pause / Leave'
     : state.liveStatus === 'connecting' || state.liveStatus === 'reconnecting'
       ? 'Connecting...'
@@ -3704,7 +3762,7 @@ function bindMusicEvents() {
     joinLiveListener().catch(() => {})
   })
   app.querySelector('[data-live-video-hero]')?.addEventListener('click', () => {
-    if (!['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
+    if (!isLiveListeningStatus()) {
       const passwordForm = app.querySelector('[data-live-password-form]')
       if (passwordForm) state.livePassword = String(new FormData(passwordForm).get('password') || '')
       joinLiveListener().catch(() => {})

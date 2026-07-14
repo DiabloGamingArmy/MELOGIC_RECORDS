@@ -70,6 +70,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     videoEnabled: raw.videoEnabled === true,
     audioEnabled: raw.audioEnabled !== false,
     hostConnected: raw.hostConnected === true,
+    hostActive: raw.hostActive === true,
+    hostSessionId: String(raw.hostSessionId || ''),
     audioPublished: raw.audioPublished === true,
     videoPublished: raw.videoPublished === true,
     programHasAudio: raw.programHasAudio === true,
@@ -201,7 +203,11 @@ export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError
       onNext(messages)
     },
     (error) => {
-      console.warn('[musicLiveService] Live chat subscription failed.', error?.message || error)
+      if (error?.code === 'permission-denied') {
+        console.info('[musicLiveService] Live chat unavailable for this viewer.')
+      } else {
+        console.warn('[musicLiveService] Live chat subscription failed.', error?.message || error)
+      }
       onError(error)
     }
   )

@@ -28,6 +28,20 @@ export function nativeViewerSessionId(streamId = '') {
   }
 }
 
+export function nativeHostSessionId(streamId = '') {
+  const cleanStreamId = cleanId(streamId, 'stream')
+  const storageKey = `melogicNativeHost:${cleanStreamId}`
+  try {
+    const existing = window.sessionStorage.getItem(storageKey)
+    if (existing) return existing
+    const created = `host_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+    window.sessionStorage.setItem(storageKey, created)
+    return created
+  } catch {
+    return `host_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+  }
+}
+
 export async function writePlaybackDemand({ streamId = '', viewerSessionId = '', uid = null, state = 'buffering', tabId = '', userAgentHash = '' } = {}) {
   const cleanStreamId = cleanId(streamId)
   const cleanSessionId = cleanId(viewerSessionId || nativeViewerSessionId(streamId))
@@ -61,12 +75,13 @@ export async function clearPlaybackDemand(streamId = '', viewerSessionId = '') {
 export function observePlaybackDemand(streamId = '', onNext = () => {}) {
   const cleanStreamId = cleanId(streamId)
   if (!realtimeDatabase || !cleanStreamId) return () => {}
-  return onValue(ref(realtimeDatabase, `livePresence/${cleanStreamId}/playbackDemand`), (snapshot) => {
+  const path = `livePresence/${cleanStreamId}/playbackDemand`
+  return onValue(ref(realtimeDatabase, path), (snapshot) => {
     const value = snapshot.val() || {}
     const sessions = Object.entries(value).map(([id, row]) => ({ viewerSessionId: id, ...(row || {}) }))
     const activeSessions = sessions.filter((session) => session.state === 'buffering' || session.state === 'listening')
-    onNext({ count: activeSessions.length, sessions, activeSessions })
-  }, () => onNext({ count: 0, sessions: [] }))
+    onNext({ count: activeSessions.length, sessions, activeSessions, path })
+  }, (error) => onNext({ count: 0, sessions: [], activeSessions: [], path, error: error?.message || 'RTDB playback demand read failed' }))
 }
 
 export async function getPlaybackDemandCount(streamId = '') {
@@ -77,23 +92,40 @@ export async function getPlaybackDemandCount(streamId = '') {
   return Object.values(snapshot.val() || {}).filter((row) => row?.state === 'buffering' || row?.state === 'listening').length
 }
 
-export async function writeNativeHostPresence({ streamId = '', uid = '', state = 'online', broadcasting = false } = {}) {
+export async function writeNativeHostPresence({ streamId = '', uid = '', state = 'online', broadcasting = false, hostSessionId = '' } = {}) {
   const cleanStreamId = cleanId(streamId)
   const cleanUid = cleanId(uid)
   if (!realtimeDatabase || !cleanStreamId || !cleanUid) return { ok: false }
   const pathRef = ref(realtimeDatabase, `livePresence/${cleanStreamId}/host`)
   const payload = {
     uid: cleanUid,
+    hostSessionId: cleanId(hostSessionId, nativeHostSessionId(streamId)),
     state: state === 'offline' ? 'offline' : 'online',
     lastSeenAt: nowMs(),
     broadcasting: Boolean(broadcasting)
   }
   await onDisconnect(pathRef).set({
     uid: cleanUid,
+    hostSessionId: payload.hostSessionId,
     state: 'offline',
     lastSeenAt: nowMs(),
     broadcasting: false
   })
   await set(pathRef, payload)
-  return { ok: true }
+  return { ok: true, hostSessionId: payload.hostSessionId }
+}
+
+export function observeNativeHostPresence(streamId = '', onNext = () => {}) {
+  const cleanStreamId = cleanId(streamId)
+  if (!realtimeDatabase || !cleanStreamId) return () => {}
+  return onValue(ref(realtimeDatabase, `livePresence/${cleanStreamId}/host`), (snapshot) => {
+    onNext(snapshot.val() || null)
+  }, () => onNext(null))
+}
+
+export async function getNativeHostPresence(streamId = '') {
+  const cleanStreamId = cleanId(streamId)
+  if (!realtimeDatabase || !cleanStreamId) return null
+  const snapshot = await get(ref(realtimeDatabase, `livePresence/${cleanStreamId}/host`)).catch(() => null)
+  return snapshot?.exists?.() ? snapshot.val() || null : null
 }

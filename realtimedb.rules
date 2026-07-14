@@ -35,8 +35,8 @@
         },
         "host": {
           ".read": true,
-          ".write": "auth !== null && newData.hasChildren(['uid', 'state', 'lastSeenAt', 'broadcasting']) && newData.child('uid').isString() && newData.child('uid').val() === auth.uid",
-          ".validate": "newData.hasChildren(['uid', 'state', 'lastSeenAt', 'broadcasting'])",
+          ".write": "auth !== null && newData.hasChildren(['uid', 'state', 'lastSeenAt', 'broadcasting', 'hostSessionId']) && newData.child('uid').isString() && newData.child('uid').val() === auth.uid",
+          ".validate": "newData.hasChildren(['uid', 'state', 'lastSeenAt', 'broadcasting', 'hostSessionId'])",
           "uid": {
             ".validate": "newData.isString() && newData.val() === auth.uid"
           },
@@ -48,6 +48,9 @@
           },
           "broadcasting": {
             ".validate": "newData.isBoolean()"
+          },
+          "hostSessionId": {
+            ".validate": "newData.isString() && newData.val().matches(/^host_[A-Za-z0-9_-]{8,80}$/)"
           },
           "$other": {
             ".validate": false

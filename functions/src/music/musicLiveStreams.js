@@ -136,7 +136,22 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
         roomId: cleanString(data.providerDiagnostics.roomId, 120),
         audioTrackId: cleanString(data.providerDiagnostics.audioTrackId, 120),
         videoTrackId: cleanString(data.providerDiagnostics.videoTrackId, 120),
-        lastMediaEvent: cleanString(data.providerDiagnostics.lastMediaEvent, 160)
+        lastMediaEvent: cleanString(data.providerDiagnostics.lastMediaEvent, 160),
+        recorderState: cleanString(data.providerDiagnostics.recorderState, 80),
+        selectedMimeType: cleanString(data.providerDiagnostics.selectedMimeType, 120),
+        segmentIndex: Number.isFinite(Number(data.providerDiagnostics.segmentIndex)) ? Number(data.providerDiagnostics.segmentIndex) : null,
+        lastBlobSize: Number.isFinite(Number(data.providerDiagnostics.lastBlobSize)) ? Number(data.providerDiagnostics.lastBlobSize) : null,
+        lastUploadPath: cleanString(data.providerDiagnostics.lastUploadPath, 300),
+        lastUploadError: cleanString(data.providerDiagnostics.lastUploadError, 240),
+        newestAvailableSegmentIndex: Number.isFinite(Number(data.providerDiagnostics.newestAvailableSegmentIndex)) ? Number(data.providerDiagnostics.newestAvailableSegmentIndex) : null,
+        hasPlayableSegments: data.providerDiagnostics.hasPlayableSegments === true,
+        demandCount: Number.isFinite(Number(data.providerDiagnostics.demandCount)) ? Number(data.providerDiagnostics.demandCount) : 0,
+        demandPath: cleanString(data.providerDiagnostics.demandPath, 220),
+        lastDemandChangeAt: cleanString(data.providerDiagnostics.lastDemandChangeAt, 80),
+        lastDemandError: cleanString(data.providerDiagnostics.lastDemandError, 240),
+        trackCount: Number.isFinite(Number(data.providerDiagnostics.trackCount)) ? Number(data.providerDiagnostics.trackCount) : null,
+        recorderStartReason: cleanString(data.providerDiagnostics.recorderStartReason, 120),
+        recorderStopReason: cleanString(data.providerDiagnostics.recorderStopReason, 120)
       }
     : existing.providerDiagnostics || {}
   return {
@@ -169,6 +184,8 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
     audioPublished,
     videoPublished,
     audioOnly: !programHasVideo,
+    hostActive: data.hostActive === true || existing.hostActive === true,
+    hostSessionId: cleanString(data.hostSessionId || existing.hostSessionId || '', 120),
     programState,
     providerDiagnostics
   }
@@ -806,7 +823,9 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
   const stream = snap.data() || {}
   if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can mark this stream live.')
-  if (!['starting', 'live'].includes(stream.status)) throw new HttpsError('failed-precondition', 'This stream cannot be marked live.')
+  const requestedProvider = normalizeProvider(request.data?.provider || stream.provider)
+  const canMarkLive = ['starting', 'live'].includes(stream.status) || (requestedProvider === 'nativeStreaming' && ['draft', 'setup', 'error'].includes(stream.status || 'draft'))
+  if (!canMarkLive) throw new HttpsError('failed-precondition', 'This stream cannot be marked live.')
 
   const now = admin.firestore.FieldValue.serverTimestamp()
   const programOutputState = cleanProgramOutputState(request.data || {}, {
@@ -817,9 +836,20 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   await streamRef.set({
     status: 'live',
     connectionStatus: 'live',
-    broadcastState: programOutputState.provider === 'nativeStreaming' ? 'idleNoListeners' : 'broadcasting',
+    broadcastState: programOutputState.provider === 'nativeStreaming'
+      ? cleanString(request.data?.broadcastState || 'liveIdleNoListeners', 80)
+      : 'broadcasting',
+    hostActive: true,
+    hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || '', 120),
     hostConnected: true,
     ...programOutputState,
+    nativeStreaming: nativeStreamingDefaults({
+      ...(stream.nativeStreaming || {}),
+      ...(request.data?.nativeStreaming || {}),
+      status: programOutputState.provider === 'nativeStreaming'
+        ? cleanString(request.data?.nativeStreaming?.status || 'idleNoListeners', 40)
+        : stream.nativeStreaming?.status
+    }),
     startedAt: stream.startedAt || now,
     updatedAt: now,
     lastHostHeartbeatAt: now
@@ -852,6 +882,8 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
     broadcastState: programOutputState.provider === 'nativeStreaming'
       ? cleanString(request.data?.broadcastState || stream.broadcastState || 'idleNoListeners', 80)
       : 'broadcasting',
+    hostActive: true,
+    hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || stream.hostSessionId || '', 120),
     hostConnected: true,
     ...programOutputState,
     lastHostHeartbeatAt: now,
@@ -930,6 +962,7 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
     connectionStatus: reason === 'host_unload' || reason === 'host_pagehide' ? 'host_disconnected' : 'ended',
     broadcastState: 'ended',
     hostActive: false,
+    hostSessionId: '',
     hostConnected: false,
     'nativeStreaming.status': 'ended',
     audioPublished: false,

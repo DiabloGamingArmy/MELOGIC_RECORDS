@@ -85,6 +85,15 @@ export function buildProviderDiagnostics(base = {}) {
     lastUploadPath: String(base.lastUploadPath || ''),
     lastUploadError: String(base.lastUploadError || ''),
     newestAvailableSegmentIndex: Number.isFinite(Number(base.newestAvailableSegmentIndex)) ? Number(base.newestAvailableSegmentIndex) : null,
-    hasPlayableSegments: base.hasPlayableSegments === true
+    hasPlayableSegments: base.hasPlayableSegments === true,
+    demandCount: Number.isFinite(Number(base.demandCount)) ? Number(base.demandCount) : 0,
+    demandPath: String(base.demandPath || ''),
+    lastDemandChangeAt: String(base.lastDemandChangeAt || ''),
+    lastDemandError: String(base.lastDemandError || ''),
+    hostSessionId: String(base.hostSessionId || ''),
+    hostHeartbeatFresh: base.hostHeartbeatFresh === true,
+    trackCount: Number.isFinite(Number(base.trackCount)) ? Number(base.trackCount) : null,
+    recorderStartReason: String(base.recorderStartReason || ''),
+    recorderStopReason: String(base.recorderStopReason || '')
   }
 }
