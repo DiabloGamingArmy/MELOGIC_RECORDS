@@ -3,7 +3,7 @@ import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
-import { isPublicStreamPlayable } from './streaming/publicPlaybackService'
+import { STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
@@ -52,9 +52,11 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     selectedSequenceId: String(raw.selectedSequenceId || ''),
     audioProfile: String(raw.audioProfile || ''),
     audioOnly: raw.audioOnly !== false,
-    provider: String(raw.provider || 'livekit'),
-    ingestMode: String(raw.ingestMode || 'browser-webrtc'),
-    playbackMode: String(raw.playbackMode || (raw.provider === 'antMedia' ? 'hls' : 'webrtc')),
+    provider: String(raw.provider || STREAM_PROVIDERS.nativeStreaming),
+    providerLabel: String(raw.providerLabel || (raw.provider === STREAM_PROVIDERS.livekit ? 'LiveKit' : 'Native Streaming')),
+    ingestMode: String(raw.ingestMode || (raw.provider === STREAM_PROVIDERS.livekit ? 'livekit-webrtc' : 'browser-media-recorder')),
+    playbackMode: String(raw.playbackMode || (raw.provider === STREAM_PROVIDERS.livekit ? 'webrtc' : 'firebaseSegments')),
+    nativeStreaming: raw.nativeStreaming && typeof raw.nativeStreaming === 'object' ? raw.nativeStreaming : {},
     antMediaStreamId: String(raw.antMediaStreamId || ''),
     antMediaAppName: String(raw.antMediaAppName || ''),
     antMediaBaseUrl: String(raw.antMediaBaseUrl || raw.publicPlaybackBaseUrl || ''),
@@ -125,7 +127,6 @@ export function isPublicLiveStreamVisible(stream = {}) {
   return stream.status === 'live'
     && (stream.visibility === 'public' || stream.accessMode === 'password')
     && stream.hostConnected === true
-    && isPublicStreamPlayable(stream)
     && isLiveStreamFresh(stream)
     && !['removed', 'blocked'].includes(stream.moderationStatus)
 }

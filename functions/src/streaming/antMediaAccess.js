@@ -132,6 +132,21 @@ const getStreamingProviderStatus = onCall({ region: 'us-central1' }, async () =>
   return {
     ok: true,
     providers: {
+      nativeStreaming: {
+        provider: 'nativeStreaming',
+        label: 'Native Streaming',
+        configured: true,
+        ingestMode: 'browser-media-recorder',
+        playbackMode: 'firebaseSegments',
+        targetLatencyMs: 30000,
+        segmentDurationMs: 4000,
+        minPlaybackBufferMs: 20000,
+        maxPlaybackBufferMs: 60000,
+        idleWhenNoListeners: true,
+        audioFirst: true,
+        videoEnabled: false,
+        missingConfigKeys: []
+      },
       livekit: {
         provider: 'livekit',
         label: 'LiveKit',

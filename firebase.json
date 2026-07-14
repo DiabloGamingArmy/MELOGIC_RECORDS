@@ -562,6 +562,9 @@
   "storage": {
     "rules": "storage.rules"
   },
+  "database": {
+    "rules": "realtimedb.rules"
+  },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"

@@ -2,7 +2,25 @@ import { antMediaPlaybackUrls } from './antMediaProvider'
 import { PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
 
 export function getPublicPlaybackInfo(stream = {}) {
-  const provider = stream.provider === STREAM_PROVIDERS.antMedia ? STREAM_PROVIDERS.antMedia : STREAM_PROVIDERS.livekit
+  const provider = stream.provider === STREAM_PROVIDERS.livekit
+    ? STREAM_PROVIDERS.livekit
+    : stream.provider === STREAM_PROVIDERS.antMedia
+      ? STREAM_PROVIDERS.antMedia
+      : STREAM_PROVIDERS.nativeStreaming
+  if (provider === STREAM_PROVIDERS.nativeStreaming) {
+    const native = stream.nativeStreaming || {}
+    return {
+      provider,
+      playbackMode: PLAYBACK_MODES.firebaseSegments,
+      playable: Boolean(stream.status === 'live' && stream.hostConnected),
+      hasPlayableSegments: native.hasPlayableSegments === true,
+      targetLatencyMs: Number(native.targetLatencyMs || 30000),
+      minPlaybackBufferMs: Number(native.minPlaybackBufferMs || 20000),
+      status: native.status || (native.hasPlayableSegments ? 'broadcasting' : 'idleNoListeners'),
+      url: '',
+      message: native.hasPlayableSegments ? '' : 'Starting stream buffer...'
+    }
+  }
   if (provider === STREAM_PROVIDERS.antMedia) {
     const urls = antMediaPlaybackUrls({
       baseUrl: stream.antMediaBaseUrl || stream.publicPlaybackBaseUrl || '',
@@ -41,5 +59,11 @@ export function isPublicStreamPlayable(stream = {}) {
     && !['removed', 'blocked'].includes(stream.moderationStatus)
     && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
     && info.playable
-    && (stream.programHasAudio === true || stream.programHasVideo === true || stream.audioPublished === true || stream.videoPublished === true)
+    && (
+      info.provider === STREAM_PROVIDERS.nativeStreaming
+      || stream.programHasAudio === true
+      || stream.programHasVideo === true
+      || stream.audioPublished === true
+      || stream.videoPublished === true
+    )
 }

@@ -448,6 +448,14 @@
   padding: 0.18rem 0.48rem;
 }
 
+.music-live-badge.is-native {
+  border-color: rgba(110, 231, 255, 0.44);
+  background: rgba(110, 231, 255, 0.12);
+  color: #c9f8ff;
+  letter-spacing: 0.08em;
+  white-space: normal;
+}
+
 .music-live-meta {
   display: flex;
   flex-wrap: wrap;

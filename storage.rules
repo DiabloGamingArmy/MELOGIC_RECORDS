@@ -322,6 +322,22 @@ service firebase.storage {
       allow write: if signedIn() && request.auth.uid == uid;
     }
 
+    match /liveSegments/{streamId}/{segmentType}/{fileName} {
+      allow read: if firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
+        && (
+          firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
+          || firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted', 'password']
+        );
+      allow write: if signedIn()
+        && firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.hostUid == request.auth.uid
+        && segmentType in ['audio', 'video', 'av']
+        && request.resource != null
+        && request.resource.size <= 25 * 1024 * 1024
+        && request.resource.contentType.matches('(audio|video)/webm.*');
+      allow delete: if signedIn()
+        && firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.hostUid == request.auth.uid;
+    }
+
     match /users/{uid}/sequenceAssets/{assetId}/{folder}/{fileName} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if signedIn()

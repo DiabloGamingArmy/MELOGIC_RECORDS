@@ -51,6 +51,14 @@ import {
   updateMusicLiveStreamInfo
 } from './data/musicLiveService'
 import { getPublicPlaybackInfo, isPublicStreamPlayable } from './data/streaming/publicPlaybackService'
+import { getNativePlaybackQueue } from './data/streaming/nativeStreamingProvider'
+import {
+  clearPlaybackDemand,
+  nativeViewerSessionId,
+  updatePlaybackDemandState,
+  writePlaybackDemand
+} from './data/streaming/nativeStreamingPresence'
+import { STREAM_PROVIDERS } from './data/streaming/streamingProviderTypes'
 import {
   subscribeMyLiveStudioGuestInvite,
   updateLiveStudioGuestInviteStatus
@@ -129,6 +137,9 @@ const state = {
   listenerAudioElement: null,
   listenerVideoElement: null,
   listenerPresenceId: '',
+  nativeViewerSessionId: '',
+  nativePlaybackTimer: 0,
+  nativePlaybackQueue: [],
   listenerPresenceTimer: 0,
   liveMonitor: {
     muted: true
@@ -642,12 +653,13 @@ function renderNowPlaying(stream = {}) {
 }
 
 function liveStreamCard(stream) {
+  const liveBadge = nativeLiveStatusLabel(stream)
   return `
     <article class="music-live-card">
       <a href="${musicLiveStreamRoute(stream)}" class="music-live-card-link">
         ${renderLiveArtwork(stream)}
         <div class="music-live-card-body">
-          <span class="music-live-badge">LIVE</span>
+          <span class="music-live-badge ${stream.provider === STREAM_PROVIDERS.nativeStreaming ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>
           ${stream.passwordProtected ? '<span class="music-live-lock">Locked</span>' : ''}
           <h3>${escapeHtml(stream.title)}</h3>
           <p>${escapeHtml(stream.hostDisplayName)}</p>
@@ -1072,8 +1084,25 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'waiting') return streamHasVideoFoundation(stream) ? 'Connected - waiting for media.' : 'Connected - waiting for host audio.'
   if (state.liveStatus === 'reconnecting') return 'Reconnecting...'
   if (state.liveStatus === 'connecting') return 'Connecting to stream...'
+  if (state.liveStatus === 'buffering') return 'Starting stream buffer...'
   if (state.liveStatus === 'ended' || stream.status !== 'live') return 'Stream ended.'
+  if (stream.provider === STREAM_PROVIDERS.nativeStreaming) {
+    const status = stream.nativeStreaming?.status || ''
+    if (status === 'idleNoListeners') return 'Waiting for listeners.'
+    if (status === 'warmingBuffer') return 'Buffering.'
+    if (status === 'pausedNoListeners') return 'Paused, no listeners.'
+    return 'Live.'
+  }
   return 'Click Listen to join. Audio never autoplays.'
+}
+
+function nativeLiveStatusLabel(stream = {}) {
+  if (stream.provider !== STREAM_PROVIDERS.nativeStreaming) return 'LIVE'
+  const status = stream.nativeStreaming?.status || ''
+  if (status === 'idleNoListeners') return 'Waiting for listeners'
+  if (status === 'warmingBuffer') return 'Buffering'
+  if (status === 'pausedNoListeners') return 'Paused no listeners'
+  return 'Live'
 }
 
 function audioModeLabel(mode = 'music') {
@@ -1228,9 +1257,9 @@ function updateLiveMediaSession(stream = state.liveStream) {
   })
   navigator.mediaSession.playbackState = state.liveStatus === 'ended' || stream.status === 'ended'
     ? 'none'
-    : ['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'playing' : 'paused'
+    : ['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'playing' : 'paused'
   navigator.mediaSession.setActionHandler('play', () => {
-    if (!['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) joinLiveListener().catch(() => {})
+    if (!['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus)) joinLiveListener().catch(() => {})
     else state.listenerAudioElement?.play?.().catch(() => {})
   })
   navigator.mediaSession.setActionHandler('pause', () => {
@@ -2334,8 +2363,9 @@ function renderLiveDetailPage() {
   const canListen = stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
   const hasVideo = streamHasVideoFoundation(stream)
   const visual = hasVideo
-    ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
+    ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus) ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
     : renderLiveArtwork(stream, 'music-live-detail-art')
+  const liveBadge = canListen ? nativeLiveStatusLabel(stream) : 'ENDED'
   renderAppShell(`
     <section class="music-live-detail ${hasVideo ? 'has-video-foundation' : ''} ${state.liveVideoExpanded ? 'is-video-expanded' : ''}">
       <div class="music-live-visual-shell">
@@ -2343,8 +2373,8 @@ function renderLiveDetailPage() {
         ${hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
       </div>
       <div class="music-live-detail-copy">
-        ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge">${canListen ? 'LIVE' : 'ENDED'}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
-        ${hasVideo ? '' : `<span class="music-live-badge">${canListen ? 'LIVE' : 'ENDED'}</span>`}
+        ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge ${stream.provider === STREAM_PROVIDERS.nativeStreaming ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
+        ${hasVideo ? '' : `<span class="music-live-badge ${stream.provider === STREAM_PROVIDERS.nativeStreaming ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>`}
         <h1>${escapeHtml(stream.title)}</h1>
         <p>${escapeHtml(stream.description || 'Live stream on Melogic Music.')}</p>
         <div class="music-live-host">
@@ -2353,13 +2383,13 @@ function renderLiveDetailPage() {
         </div>
         ${renderNowPlaying(stream)}
         <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : `<span>${hasVideo ? 'Live stream' : 'Live audio'}</span>`}</div>
-        ${stream.passwordProtected && !['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus) ? `
+        ${stream.passwordProtected && !['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus) ? `
           <form class="music-password-form" data-live-password-form>
             <label><span>Stream password</span><input name="password" type="password" value="${escapeHtml(state.livePassword)}" placeholder="Enter password to listen" /></label>
           </form>
         ` : ''}
         <div class="music-live-listener">
-          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${['live', 'waiting'].includes(state.liveStatus) ? 'Pause / Leave' : 'Listen'}</button>
+          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${['live', 'waiting', 'buffering'].includes(state.liveStatus) ? 'Pause / Leave' : 'Listen'}</button>
           <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
         </div>
         ${renderLiveActions(stream)}
@@ -2427,7 +2457,7 @@ function renderPlayer() {
           <strong>${escapeHtml(meta.title || state.liveStream.title)}</strong>
           <span>${escapeHtml(meta.artist || state.liveStream.hostDisplayName)} · Live</span>
         </div>
-        <button type="button" class="button button-accent" data-live-global-toggle>${['live', 'waiting'].includes(state.liveStatus) ? 'Pause' : 'Play'}</button>
+        <button type="button" class="button button-accent" data-live-global-toggle>${['live', 'waiting', 'buffering'].includes(state.liveStatus) ? 'Pause' : 'Play'}</button>
         <span class="music-live-badge">LIVE</span>
         <label class="music-player-volume">
           <span>Volume</span>
@@ -3151,6 +3181,13 @@ async function endHostBroadcast() {
 
 function disconnectLiveListener() {
   stopListenerPresenceHeartbeat()
+  if (state.nativePlaybackTimer) window.clearInterval(state.nativePlaybackTimer)
+  state.nativePlaybackTimer = 0
+  if (state.liveStream?.id && state.nativeViewerSessionId) {
+    clearPlaybackDemand(state.liveStream.id, state.nativeViewerSessionId).catch(() => {})
+  }
+  state.nativeViewerSessionId = ''
+  state.nativePlaybackQueue = []
   if (state.liveStream?.id && state.listenerPresenceId) {
     leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
   }
@@ -3171,10 +3208,71 @@ function disconnectLiveListener() {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'
 }
 
+async function startNativeListenerPlayback(credentials = {}, { monitorMode = false } = {}) {
+  const streamId = state.liveStream?.id || credentials.streamId || ''
+  if (!streamId) return
+  state.nativeViewerSessionId = nativeViewerSessionId(streamId)
+  await writePlaybackDemand({
+    streamId,
+    viewerSessionId: state.nativeViewerSessionId,
+    uid: state.currentUser?.uid || null,
+    state: 'buffering',
+    tabId: state.nativeViewerSessionId
+  })
+  state.listenerPresenceId = credentials.presenceId || state.nativeViewerSessionId
+  state.liveStatus = 'buffering'
+  state.liveError = ''
+  updateLiveListenerControls()
+  const poll = async () => {
+    const native = credentials.nativeStreaming || state.liveStream?.nativeStreaming || {}
+    const queue = await getNativePlaybackQueue(streamId, native).catch(() => [])
+    state.nativePlaybackQueue = queue
+    if (!queue.length) {
+      state.liveStatus = 'buffering'
+      updateLiveListenerControls()
+      return
+    }
+    const first = queue.find((segment) => segment.downloadURL)
+    if (!first?.downloadURL) return
+    if (!state.listenerAudioElement) {
+      const audio = new Audio(first.downloadURL)
+      audio.controls = false
+      audio.autoplay = !monitorMode
+      audio.muted = monitorMode ? state.liveMonitor.muted : false
+      audio.volume = state.player.volume
+      audio.style.display = 'none'
+      document.body.appendChild(audio)
+      state.listenerAudioElement = audio
+      audio.addEventListener('ended', () => {
+        const currentIndex = Number(first.index || 0)
+        const next = state.nativePlaybackQueue.find((segment) => Number(segment.index || 0) > currentIndex && segment.downloadURL)
+        if (next?.downloadURL) {
+          audio.src = next.downloadURL
+          audio.play().catch(() => {})
+        }
+      })
+      await audio.play().catch(() => {})
+    }
+    state.liveStatus = 'live'
+    await updatePlaybackDemandState({
+      streamId,
+      viewerSessionId: state.nativeViewerSessionId,
+      uid: state.currentUser?.uid || null,
+      state: 'listening',
+      tabId: state.nativeViewerSessionId
+    }).catch(() => {})
+    updateLiveMediaSession(state.liveStream)
+    updateLiveListenerControls()
+  }
+  await poll()
+  if (state.nativePlaybackTimer) window.clearInterval(state.nativePlaybackTimer)
+  state.nativePlaybackTimer = window.setInterval(() => { poll().catch(() => {}) }, 4000)
+}
+
 async function joinLiveListener(options = {}) {
   if (!state.liveStream?.id) return
   const monitorMode = options.monitor === true || state.route.mode === 'liveMonitor'
-  if (['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
+  if (['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
     if (monitorMode || options.forceJoin) return
     disconnectLiveListener()
     rerender()
@@ -3182,6 +3280,26 @@ async function joinLiveListener(options = {}) {
   }
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
+  if (playbackInfo.provider === STREAM_PROVIDERS.nativeStreaming) {
+    state.liveStatus = 'buffering'
+    state.liveError = ''
+    rerender()
+    try {
+      const presenceId = monitorMode ? `${livePresenceId(state.liveStream.id)}-monitor` : livePresenceId(state.liveStream.id)
+      const credentials = await joinMusicLiveStream(state.liveStream.id, {
+        password: state.livePassword,
+        presenceId,
+        anonId: listenerAnonId()
+      })
+      await startNativeListenerPlayback(credentials, { monitorMode })
+      rerender()
+    } catch (error) {
+      state.liveError = error?.message || 'Unable to start the Native Streaming buffer.'
+      state.liveStatus = 'idle'
+      rerender()
+    }
+    return
+  }
   if (playbackInfo.provider === 'antMedia') {
     state.liveError = playbackInfo.playable
       ? 'Ant Media playback URLs are ready, but the browser playback adapter is not installed in this build.'
@@ -3288,7 +3406,11 @@ async function joinLiveListener(options = {}) {
 function updateLiveListenerControls() {
   const button = app.querySelector('[data-live-listen]')
   const status = app.querySelector('[data-live-status]')
-  if (button) button.textContent = ['live', 'waiting'].includes(state.liveStatus) ? 'Pause / Leave' : state.liveStatus === 'connecting' ? 'Connecting...' : 'Listen'
+  if (button) button.textContent = ['live', 'waiting', 'buffering'].includes(state.liveStatus)
+    ? 'Pause / Leave'
+    : state.liveStatus === 'connecting' || state.liveStatus === 'reconnecting'
+      ? 'Connecting...'
+      : 'Listen'
   if (status) status.textContent = liveStatusLabel(state.liveStream || {})
 }
 
@@ -3515,7 +3637,7 @@ function bindMusicEvents() {
     joinLiveListener().catch(() => {})
   })
   app.querySelector('[data-live-video-hero]')?.addEventListener('click', () => {
-    if (!['live', 'waiting', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
+    if (!['live', 'waiting', 'buffering', 'connecting', 'reconnecting'].includes(state.liveStatus)) {
       const passwordForm = app.querySelector('[data-live-password-form]')
       if (passwordForm) state.livePassword = String(new FormData(passwordForm).get('password') || '')
       joinLiveListener().catch(() => {})
