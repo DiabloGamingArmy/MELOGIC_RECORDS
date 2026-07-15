@@ -3279,6 +3279,18 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   if (!demandResult?.ok) throw new Error('Could not create Native Streaming playback demand.')
   state.nativeListenerDiagnostics.demandWriteSucceeded = true
   state.listenerPresenceId = credentials.presenceId || state.nativeViewerSessionId
+  await joinMusicLiveStream(streamId, {
+    presenceId: state.listenerPresenceId,
+    anonId: credentials.anonId || listenerAnonId()
+  }).then((joinResult = {}) => {
+    state.listenerPresenceId = joinResult.presenceId || state.listenerPresenceId
+    if (state.liveStream) {
+      state.liveStream.listenerCount = Number(joinResult.listenerCount ?? state.liveStream.listenerCount ?? 0)
+    }
+    startListenerPresenceHeartbeat(streamId, state.listenerPresenceId)
+  }).catch((error) => {
+    state.nativeListenerDiagnostics.lastPresenceError = error?.message || 'Listener presence write failed.'
+  })
   state.liveStatus = 'waitingForHost'
   state.nativeHostUnsubscribe?.()
   state.nativeHostUnsubscribe = observeNativeHostPresence(streamId, (host = null) => {

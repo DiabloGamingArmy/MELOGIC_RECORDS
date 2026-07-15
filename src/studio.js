@@ -1242,6 +1242,14 @@ function statusBadge(stream = liveState().stream || {}) {
   return `<span class="studio-live-status-badge is-${esc(status)}">${esc(status)}</span>`
 }
 
+function liveHostViewerCount() {
+  const live = liveState()
+  if (live.providerId === 'nativeStreaming' && (live.streamId || live.stream?.status === 'live')) {
+    return Number(live.nativePlaybackDemandCount || live.stream?.listenerCount || 0)
+  }
+  return Number(live.stream?.listenerCount || 0)
+}
+
 function renderListenerPreviewPanel() {
   const live = liveState()
   const form = live.streamForm
@@ -1298,7 +1306,7 @@ function renderStreamDetailsPanel() {
         </div>
         <div class="studio-live-status-cluster">
           ${statusBadge()}
-          <span>${Number(live.stream?.listenerCount || 0)} viewers</span>
+          <span>${liveHostViewerCount()} viewers</span>
         </div>
       </header>
       <div class="studio-live-stream-layout">
@@ -1392,7 +1400,12 @@ function renderAdvancedStreamingSettings() {
         <article>
           <h2>Native Diagnostics</h2>
           <ul>
+            <li>streamId: ${esc(live.stream?.streamId || live.stream?.id || 'none')}</li>
+            <li>live.streamId: ${esc(live.streamId || 'none')}</li>
+            <li>Status: ${esc(live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
+            <li>Broadcast state: ${esc(live.stream?.broadcastState || 'none')}</li>
             <li>Demand count: ${Number(live.nativePlaybackDemandCount || 0)}</li>
+            <li>Listener count: ${liveHostViewerCount()}</li>
             <li>Demand path: ${live.streamId ? `livePresence/${esc(live.streamId)}/playbackDemand` : 'none'}</li>
             <li>Last demand: ${esc(live.nativeLastDemandChangeAt || 'none')}</li>
             <li>Demand observe/write: ${live.streamId ? 'observing playbackDemand' : 'inactive'}</li>
@@ -1400,6 +1413,7 @@ function renderAdvancedStreamingSettings() {
             <li>Host session: ${esc(live.nativeHostSessionId || 'none')}</li>
             <li>Host heartbeat: ${esc(live.streamId ? 'active' : live.nativeInterruptedStreamId ? 'interrupted' : 'inactive')}</li>
             <li>Recorder: ${esc(diagnostics.recorderState || (live.nativeRecorderRunning ? 'recording' : 'idle'))}</li>
+            <li>Recorder running: ${live.nativeRecorderRunning ? 'yes' : 'no'}</li>
             <li>Recorder start: ${esc(live.nativeRecorderStartReason || 'none')}</li>
             <li>Recorder stop: ${esc(live.nativeRecorderStopReason || 'none')}</li>
             <li>MIME: ${esc(diagnostics.selectedMimeType || 'none')}</li>
@@ -1590,7 +1604,7 @@ function renderChatPanel() {
   const live = liveState()
   return `
     <section class="studio-live-panel studio-live-chat-panel">
-      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><span>${Number(live.stream?.listenerCount || 0)} viewers</span></div></header>
+      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><span>${liveHostViewerCount()} viewers</span></div></header>
       <div class="studio-live-chat-log">
         ${live.streamId ? live.chatMessages.map((message) => `<article><strong>${esc(message.displayName)}</strong><span>${esc(message.text)}</span><small>${esc(message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : '')}</small></article>`).join('') || '<p class="studio-live-empty">No chat messages yet.</p>' : '<p class="studio-live-empty">Chat opens after Start Live.</p>'}
       </div>
@@ -3101,6 +3115,7 @@ function observeNativePlaybackDemand(streamId = '') {
   live.nativeDemandUnsubscribe = provider.observePlaybackDemand?.(streamId, ({ count = 0, path = '', error = '' } = {}) => {
     live.nativePlaybackDemandCount = count
     live.nativeLastDemandChangeAt = new Date().toLocaleTimeString()
+    if (live.stream) live.stream = { ...live.stream, listenerCount: count }
     live.providerDiagnostics = {
       ...(live.providerDiagnostics || {}),
       demandCount: count,
@@ -4316,16 +4331,7 @@ async function endLiveStudioStream() {
       live.nativeStopWarning = error?.message || 'Ending the stream timed out. Local cleanup completed.'
     })
     unsubscribeLiveStudioRuntime()
-    clearNativeHostSessionMarker(streamId)
-    live.streamId = ''
-    live.draftStreamId = ''
-    live.nativeInterruptedStreamId = ''
-    live.nativeHostSessionId = ''
-    live.room = null
-    live.localTrack = null
-    live.programVideoTrack = null
-    live.audioPublishedToProvider = false
-    live.videoPublishedToProvider = false
+    clearEndedLiveHostState(streamId)
     live.outputStatus = live.nativeStopWarning || 'Live Studio stream ended.'
   } catch (error) {
     console.error('[studio-live] end stream failed', error)
@@ -4391,11 +4397,7 @@ async function endInterruptedNativeStream() {
       live.nativeStopWarning = error?.message || 'Ending the interrupted stream timed out.'
     })
     unsubscribeLiveStudioRuntime()
-    clearNativeHostSessionMarker(streamId)
-    live.streamId = ''
-    live.draftStreamId = ''
-    live.nativeInterruptedStreamId = ''
-    live.nativeHostSessionId = ''
+    clearEndedLiveHostState(streamId)
     live.outputStatus = live.nativeStopWarning || 'Interrupted Native Streaming session ended.'
   } catch (error) {
     console.error('[studio-live] end interrupted native stream failed', error)
@@ -4421,6 +4423,28 @@ function unsubscribeLiveStudioRuntime() {
   live.nativeRecorderRunning = false
   if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
   live.heartbeatTimer = 0
+}
+
+function clearEndedLiveHostState(streamId = '') {
+  const live = liveState()
+  if (streamId) clearNativeHostSessionMarker(streamId)
+  live.streamId = ''
+  live.draftStreamId = ''
+  live.stream = null
+  live.nativeInterruptedStreamId = ''
+  live.nativeHostSessionId = ''
+  live.nativePlaybackDemandCount = 0
+  live.nativeStreamingStatus = 'idleNoListeners'
+  live.nativeRecorderRunning = false
+  live.nativeRecorderStartReason = ''
+  live.nativeRecorderStopReason = ''
+  live.nativeLastDemandChangeAt = ''
+  live.providerDiagnostics = {}
+  live.room = null
+  live.localTrack = null
+  live.programVideoTrack = null
+  live.audioPublishedToProvider = false
+  live.videoPublishedToProvider = false
 }
 
 function subscribeLiveStudioStream(streamId = '') {
@@ -5172,7 +5196,13 @@ window.addEventListener('popstate', () => {
 })
 
 window.addEventListener('beforeunload', (event) => {
-  if (!liveState().streamId && !liveState().activePlayers.length) return
+  const live = liveState()
+  const activeHostSession = Boolean(
+    live.streamId &&
+    !live.ending &&
+    (live.nativeHostSessionId || live.stream?.status === 'live' || ['liveIdleNoListeners', 'liveWarmingBuffer', 'liveBroadcasting'].includes(live.stream?.broadcastState || ''))
+  )
+  if (!activeHostSession) return
   event.preventDefault()
   event.returnValue = ''
 })
