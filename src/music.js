@@ -1131,7 +1131,7 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'readyToPlay') return 'Ready to play - press Resume Audio.'
   if (state.liveStatus === 'playbackBlocked') return 'Press Resume Audio.'
   if (state.liveStatus === 'stalled') return 'Live stream stalled. Reconnecting...'
-  if (state.liveStatus === 'error') return isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls' ? 'Live stream error.' : 'Live audio error.'
+  if (state.liveStatus === 'error') return isBufferedBroadcastProvider(stream.provider) ? 'Live stream error.' : 'Live audio error.'
   if (state.liveStatus === 'waitingForHost') return 'Host is not currently broadcasting.'
   if (state.liveStatus === 'waitingForSegments') return 'Connected to host. Waiting for audio chunks...'
   if (state.liveStatus === 'interrupted') return 'Stream interrupted.'
@@ -1148,7 +1148,7 @@ function liveStatusLabel(stream = {}) {
     if (status === 'error') return 'Stream error.'
     return 'Live.'
   }
-  if (isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls') return 'Click Play to begin. Sound never autoplays.'
+  if (isBufferedBroadcastProvider(stream.provider)) return 'Click Play to begin. Sound never autoplays.'
   return 'Click Listen to join. Audio never autoplays.'
 }
 
@@ -1645,7 +1645,7 @@ function updateLiveKitListenerDiagnostics(eventName = '') {
   const audio = state.listenerAudioElement
   state.nativeListenerDiagnostics = {
     ...(state.nativeListenerDiagnostics || {}),
-    provider: STREAM_PROVIDERS.webrtc,
+    provider: STREAM_PROVIDERS.nativeWeb,
     ...(eventName ? { lastAudioEvent: eventName } : {}),
     audioElementExists: Boolean(audio),
     audioPaused: audio ? audio.paused === true : null,
@@ -1695,7 +1695,7 @@ async function playLiveKitListenerAudio({ userGesture = false } = {}) {
   if (!audio) return false
   state.nativeListenerDiagnostics = {
     ...(state.nativeListenerDiagnostics || {}),
-    provider: STREAM_PROVIDERS.webrtc,
+    provider: STREAM_PROVIDERS.nativeWeb,
     ...(userGesture ? { userGestureUnlockAttempted: true } : {}),
     lastPlayAttemptAt: new Date().toISOString(),
     lastPlayErrorName: '',
@@ -1759,7 +1759,7 @@ function ensureLiveKitListenerAudioMounted() {
 }
 
 function isBufferedHlsStream(stream = state.liveStream) {
-  return Boolean(stream && (isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls'))
+  return Boolean(stream && isBufferedBroadcastProvider(stream.provider))
 }
 
 function currentHlsPlaybackMode() {
@@ -3284,7 +3284,7 @@ function renderLiveKitReceiverAudioDebug() {
     (audio && audio.paused === true && isLiveListeningStatus())
   )
   const rows = [
-    ['provider', diagnostics.provider || STREAM_PROVIDERS.webrtc],
+    ['provider', diagnostics.provider || STREAM_PROVIDERS.nativeWeb],
     ['room connection state', diagnostics.roomConnectionState || state.listenerRoom?.state || state.listenerRoom?.connectionState || 'disconnected'],
     ['token received', diagnostics.tokenReceived === true ? 'yes' : diagnostics.tokenReceived === false ? 'no' : 'unknown'],
     ['playbackDemand write succeeded', diagnostics.demandWriteSucceeded === true ? 'yes' : diagnostics.demandWriteSucceeded === false ? 'no' : 'unknown'],
@@ -3828,7 +3828,7 @@ async function ensureHostDraftStream() {
   rerender()
   const response = await prepareMusicLiveStreamDraft({
     streamId: state.goLive.draftStreamId,
-    provider: STREAM_PROVIDERS.webrtc,
+    provider: STREAM_PROVIDERS.nativeWeb,
     transportProvider: 'livekit',
     ingestMode: 'browser-webrtc',
     playbackMode: 'webrtc',
@@ -3897,7 +3897,7 @@ async function saveHostDetails() {
   updateGoLiveFormState()
   const payload = {
     streamId: activeHostStreamId(),
-    provider: STREAM_PROVIDERS.webrtc,
+    provider: STREAM_PROVIDERS.nativeWeb,
     transportProvider: 'livekit',
     ingestMode: 'browser-webrtc',
     playbackMode: 'webrtc',
@@ -4044,7 +4044,7 @@ async function startHostBroadcast(form) {
       rightsAccepted: formState.rightsAccepted,
       archiveRequested: false,
       audioOnly: true,
-      provider: STREAM_PROVIDERS.webrtc,
+      provider: STREAM_PROVIDERS.nativeWeb,
       transportProvider: 'livekit',
       ingestMode: 'browser-webrtc',
       playbackMode: 'webrtc'
@@ -4363,14 +4363,14 @@ async function joinLiveListener(options = {}) {
   }
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
-  if (playbackInfo.provider === STREAM_PROVIDERS.bufferedBroadcast || playbackInfo.playbackMode === 'hls') {
+  if (playbackInfo.provider === STREAM_PROVIDERS.bufferedBroadcast) {
     await startHlsListenerPlayback(playbackInfo)
     return
   }
   if (playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments) {
     if (!firebaseSegmentStreamingEnabled()) {
       state.liveStatus = 'idle'
-      state.liveError = 'Firebase segment streaming is disabled. LiveKit/WebRTC is the production live audio transport.'
+      state.liveError = 'This legacy website-native stream uses Firebase Segments, which is not available in this build.'
       rerender()
       return
     }
@@ -4412,7 +4412,7 @@ async function joinLiveListener(options = {}) {
   state.liveError = ''
   state.nativeViewerSessionId = nativeViewerSessionId(state.liveStream.id)
   state.nativeListenerDiagnostics = {
-    provider: STREAM_PROVIDERS.webrtc,
+    provider: STREAM_PROVIDERS.nativeWeb,
     listenerState: 'requestingPlayback',
     demandSessionId: state.nativeViewerSessionId,
     demandWriteSucceeded: false,
@@ -4475,7 +4475,7 @@ async function joinLiveListener(options = {}) {
       state.listenerAudioElement = element
       state.nativeListenerDiagnostics = {
         ...(state.nativeListenerDiagnostics || {}),
-        provider: STREAM_PROVIDERS.webrtc,
+        provider: STREAM_PROVIDERS.nativeWeb,
         subscribedAudioTrack: true,
         remoteParticipantIdentity: participant?.identity || '',
         remoteTrackSid: publication?.trackSid || publication?.sid || '',
@@ -4536,7 +4536,10 @@ async function joinLiveListener(options = {}) {
       updateLiveListenerControls()
     }
   } catch (error) {
-    state.liveError = error?.message || 'Unable to connect to this live stream.'
+    const message = error?.message || ''
+    state.liveError = /LiveKit|WebRTC\/LiveKit|website-native/i.test(message)
+      ? 'This website-native stream requires WebRTC playback, which is not configured yet.'
+      : message || 'Unable to connect to this live stream.'
     state.liveStatus = 'idle'
     rerender()
   }

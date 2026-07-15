@@ -1,5 +1,6 @@
 export const STREAM_PROVIDERS = Object.freeze({
   bufferedBroadcast: 'bufferedBroadcast',
+  nativeWeb: 'nativeWeb',
   webrtc: 'webrtc',
   firebaseSegments: 'firebaseSegments',
   nativeStreaming: 'nativeStreaming',
@@ -31,8 +32,8 @@ export function firebaseSegmentStreamingEnabled() {
 
 export function normalizeProviderId(value = '') {
   if (value === STREAM_PROVIDERS.bufferedBroadcast) return STREAM_PROVIDERS.bufferedBroadcast
-  if ([STREAM_PROVIDERS.webrtc, STREAM_PROVIDERS.livekit].includes(value)) return STREAM_PROVIDERS.webrtc
-  if ([STREAM_PROVIDERS.firebaseSegments, STREAM_PROVIDERS.nativeStreaming].includes(value) && firebaseSegmentStreamingEnabled()) {
+  if ([STREAM_PROVIDERS.nativeWeb, STREAM_PROVIDERS.webrtc, STREAM_PROVIDERS.livekit].includes(value)) return STREAM_PROVIDERS.nativeWeb
+  if ([STREAM_PROVIDERS.firebaseSegments, STREAM_PROVIDERS.nativeStreaming].includes(value)) {
     return STREAM_PROVIDERS.firebaseSegments
   }
   if (value === STREAM_PROVIDERS.antMedia) return STREAM_PROVIDERS.antMedia
@@ -44,7 +45,7 @@ export function isBufferedBroadcastProvider(value = '') {
 }
 
 export function isWebrtcProvider(value = '') {
-  return normalizeProviderId(value) === STREAM_PROVIDERS.webrtc
+  return normalizeProviderId(value) === STREAM_PROVIDERS.nativeWeb
 }
 
 export function isFirebaseSegmentProvider(value = '') {
@@ -84,7 +85,7 @@ export function providerCapabilities(provider = STREAM_PROVIDERS.bufferedBroadca
     }
   }
   return {
-    provider: normalizedProvider === STREAM_PROVIDERS.antMedia ? STREAM_PROVIDERS.antMedia : STREAM_PROVIDERS.webrtc,
+    provider: normalizedProvider === STREAM_PROVIDERS.antMedia ? STREAM_PROVIDERS.antMedia : STREAM_PROVIDERS.nativeWeb,
     ingestMode: INGEST_MODES.browserWebrtc,
     playbackMode: PLAYBACK_MODES.webrtc,
     supportsAudio: true,

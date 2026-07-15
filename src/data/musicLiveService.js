@@ -33,8 +33,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
   const provider = normalizeProviderId(raw.provider)
   const providerDefaults = provider === STREAM_PROVIDERS.bufferedBroadcast
     ? { label: 'Buffered Broadcast', ingestMode: 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
-    : provider === STREAM_PROVIDERS.webrtc
-      ? { label: 'WebRTC Live', ingestMode: 'browser-webrtc', playbackMode: 'webrtc', transportProvider: 'livekit' }
+    : provider === STREAM_PROVIDERS.nativeWeb
+      ? { label: 'Website Live', ingestMode: 'browser-webrtc', playbackMode: 'webrtc', transportProvider: 'livekit' }
       : { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: 'firebaseSegments', transportProvider: 'firebase' }
   return {
     id,

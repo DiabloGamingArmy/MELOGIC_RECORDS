@@ -42,12 +42,12 @@ const createLiveKitToken = onCall(
 
     const livekitUrl = String(LIVEKIT_URL.value() || '').trim()
     if (!/^wss?:\/\//i.test(livekitUrl)) {
-      throw new HttpsError('failed-precondition', 'WebRTC Live is not configured. Missing LiveKit server URL.', {
+      throw new HttpsError('failed-precondition', 'Website Live requires WebRTC/LiveKit configuration. Use Buffered Broadcast with OBS for now.', {
         suggestion: 'Use Buffered Broadcast for OBS/HLS streaming.'
       })
     }
     if (!String(LIVEKIT_API_KEY.value() || '').trim() || !String(LIVEKIT_API_SECRET.value() || '').trim()) {
-      throw new HttpsError('failed-precondition', 'WebRTC Live is not configured. Missing LiveKit credentials.', {
+      throw new HttpsError('failed-precondition', 'Website Live requires WebRTC/LiveKit configuration. Use Buffered Broadcast with OBS for now.', {
         suggestion: 'Use Buffered Broadcast for OBS/HLS streaming.'
       })
     }

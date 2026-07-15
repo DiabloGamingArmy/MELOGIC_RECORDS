@@ -1374,7 +1374,7 @@ function renderAdvancedStreamingSettings() {
   const options = listStreamingProviderOptions()
   const providerRows = live.providerStatus?.providers || {}
   const nativeStatus = providerRows.firebaseSegments || providerRows.nativeStreaming || {}
-  const livekitStatus = providerRows.webrtc || providerRows.livekit || {}
+  const livekitStatus = providerRows.nativeWeb || providerRows.webrtc || providerRows.livekit || {}
   const current = options.find((option) => option.id === live.providerId) || options[0]
   const diagnostics = live.providerDiagnostics || {}
   const showNativeDebug = firebaseSegmentStreamingEnabled()
@@ -1390,21 +1390,22 @@ function renderAdvancedStreamingSettings() {
         <label>Streaming Method
           <select name="provider" data-streaming-method ${live.streamId ? 'disabled' : ''}>
             ${options.map((option) => {
-              const unavailableWebrtc = option.id === STREAM_PROVIDERS.webrtc && livekitStatus.configured !== true
-              return `<option value="${esc(option.id)}" ${option.id === live.providerId ? 'selected' : ''} ${unavailableWebrtc ? 'disabled' : ''}>${esc(option.label)}${unavailableWebrtc ? ' (not configured)' : ''}</option>`
+              const unavailableWebrtc = option.id === STREAM_PROVIDERS.nativeWeb && livekitStatus.configured !== true
+              return `<option value="${esc(option.id)}" ${option.id === live.providerId ? 'selected' : ''}>${esc(option.label)}${unavailableWebrtc ? ' (not available yet)' : ''}</option>`
             }).join('')}
           </select>
         </label>
         <div class="studio-live-provider-status">
           <strong>${esc(current?.label || 'Native Streaming')}</strong>
-          <span>${esc(live.providerStatusLoading ? 'Checking provider status...' : (providerRows[live.providerId]?.configured === false ? 'Configuration missing' : 'Ready'))}</span>
+          <span>${esc(live.providerStatusLoading ? 'Checking provider status...' : (providerRows[live.providerId]?.configured === false ? 'Not available yet' : 'Ready'))}</span>
+          <small>${esc(current?.description || '')}</small>
           <small>${esc(live.streamId ? 'Streaming method is locked for the active stream.' : 'The selected method is saved to the stream draft.')}</small>
         </div>
       </div>
       <div class="studio-live-provider-copy">
         <article>
           <h2>Buffered Broadcast</h2>
-          <p>Use OBS or another RTMP encoder. Public playback is served through Melogic's HLS edge network.</p>
+          <p>Use OBS/RTMP. Smooth HLS playback with a 20-30 second delay.</p>
           <ul>
             <li>Server: ${esc(ingestServer || 'Set VITE_BUFFERED_BROADCAST_INGEST_SERVER')}</li>
             <li>Stream Key: ${esc(streamKey || 'missing')}</li>
@@ -1424,10 +1425,10 @@ function renderAdvancedStreamingSettings() {
           </ul>
         </article>` : ''}
         <article>
-          <h2>WebRTC Live</h2>
-          <p>Uses realtime WebRTC playback for the final Live Studio program audio mix.</p>
+          <h2>Website Live</h2>
+          <p>Stream directly from this browser. Requires WebRTC provider setup and never uses the OBS/HLS playback path.</p>
           <ul>
-            <li>Status: ${livekitStatus.configured ? 'Configured' : 'Fallback unavailable until LiveKit secrets are configured'}</li>
+            <li>Status: ${livekitStatus.configured ? 'Available' : 'Not available yet - LiveKit is not configured'}</li>
             <li>Playback mode: WebRTC</li>
             <li>Latency: low-latency realtime</li>
           </ul>
@@ -1445,7 +1446,7 @@ function renderAdvancedStreamingSettings() {
             <li>No LiveKit attempted: ${diagnostics.noLiveKitAttempted === false ? 'no' : 'yes'}</li>
           </ul>
         </article>` : isWebrtc ? `<article>
-          <h2>WebRTC Diagnostics</h2>
+          <h2>Website Live Diagnostics</h2>
           <ul>
             <li>Provider: ${esc(live.providerId || STREAM_PROVIDERS.bufferedBroadcast)}</li>
             <li>Room state: ${esc(live.room?.state || live.room?.connectionState || 'disconnected')}</li>
@@ -1468,7 +1469,7 @@ function renderAdvancedStreamingSettings() {
           </ul>
         </article>` : ''}
       </div>
-      <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Buffered Broadcast uses the Melogic HLS edge for public playback; WebRTC Live remains available for realtime rooms.</p>
+      <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Buffered Broadcast uses OBS and the Melogic HLS edge. Website Live uses LiveKit WebRTC only when configured.</p>
       ${showNativeDebug ? `<div class="studio-live-provider-copy">
         <article>
           <h2>Native Diagnostics</h2>
@@ -1872,6 +1873,10 @@ async function refreshStreamingProviderStatus() {
   }
 }
 
+function livekitStatusConfigured(live = liveState()) {
+  return (live.providerStatus?.providers?.nativeWeb || live.providerStatus?.providers?.webrtc || live.providerStatus?.providers?.livekit)?.configured === true
+}
+
 function liveProgramOutputState() {
   const live = liveState()
   const mixer = live.programMixer || {}
@@ -1902,7 +1907,7 @@ function liveProgramOutputState() {
   const programHasVideo = Boolean(live.videoEnabled && hasEnabledVideoSource && programScene)
   return {
     provider: providerId,
-    providerLabel: isBuffered ? 'Buffered Broadcast' : isWebrtc ? 'WebRTC Live' : 'Firebase Segments',
+    providerLabel: isBuffered ? 'Buffered Broadcast' : isWebrtc ? 'Website Live' : 'Firebase Segments',
     transportProvider: isBuffered ? 'hls-edge' : isWebrtc ? 'livekit' : 'firebase',
     ingestMode: isBuffered ? 'rtmp-obs' : isWebrtc ? 'browser-webrtc' : 'browser-media-recorder',
     playbackMode: isBuffered ? 'hls' : isWebrtc ? 'webrtc' : 'firebaseSegments',
@@ -2715,9 +2720,7 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.draftStreamId = streamId || live.draftStreamId || ''
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
   const restoredProviderId = normalizeProviderId(stream.provider)
-  live.providerId = !isActive && isWebrtcProvider(restoredProviderId)
-    ? STREAM_PROVIDERS.bufferedBroadcast
-    : restoredProviderId
+  live.providerId = restoredProviderId
   live.nativeStreamingStatus = stream.nativeStreaming?.status || live.nativeStreamingStatus || 'idleNoListeners'
   live.audioEnabled = stream.audioEnabled !== false
   live.videoEnabled = stream.videoEnabled === true
@@ -4239,7 +4242,7 @@ function liveStreamPayload() {
     tags: form.tags,
     audioMode: form.audioMode,
     provider: providerId,
-    providerLabel: isBuffered ? 'Buffered Broadcast' : isWebrtc ? 'WebRTC Live' : 'Firebase Segments',
+    providerLabel: isBuffered ? 'Buffered Broadcast' : isWebrtc ? 'Website Live' : 'Firebase Segments',
     transportProvider: isBuffered ? 'hls-edge' : isWebrtc ? 'livekit' : 'firebase',
     ingestMode: isBuffered ? 'rtmp-obs' : isWebrtc ? 'browser-webrtc' : 'browser-media-recorder',
     playbackMode: isBuffered ? 'hls' : isWebrtc ? 'webrtc' : 'firebaseSegments',
@@ -4375,8 +4378,8 @@ async function startLiveStudioStream() {
       if (!streamKey) throw new Error('Buffered Broadcast requires a stream key.')
       live.streamForm.streamKey = streamKey
     }
-    if (isWebrtcProvider(live.providerId) && live.providerStatus?.providers?.webrtc?.configured === false) {
-      throw new Error('WebRTC Live is not configured. Missing LiveKit server URL. Use Buffered Broadcast for OBS/HLS streaming.')
+    if (isWebrtcProvider(live.providerId) && !livekitStatusConfigured(live)) {
+      throw new Error('Website Live requires WebRTC/LiveKit configuration. Use Buffered Broadcast with OBS for now.')
     }
     const programTrack = isWebrtcProvider(live.providerId) && live.audioEnabled ? await getLivePublishTrack() : null
     if (isWebrtcProvider(live.providerId) && (!programTrack || programTrack.readyState !== 'live')) {
@@ -5031,20 +5034,15 @@ function bindLiveStudioControls() {
       return
     }
     const requestedProvider = normalizeProviderId(e.currentTarget.value)
-    if (isWebrtcProvider(requestedProvider) && live.providerStatus?.providers?.webrtc?.configured !== true) {
-      live.providerId = STREAM_PROVIDERS.bufferedBroadcast
-      live.error = 'WebRTC Live is not configured. Missing LiveKit server URL. Use Buffered Broadcast for OBS/HLS streaming.'
-      live.outputStatus = 'Buffered Broadcast remains selected.'
-      renderShell()
-      return
-    }
     live.providerId = requestedProvider
     const provider = getStreamingProvider(live.providerId)
     live.providerDiagnostics = provider.getDiagnostics?.() || {}
     live.outputStatus = isBufferedBroadcastProvider(live.providerId)
       ? 'Buffered Broadcast selected. Configure OBS with the stream key below.'
       : isWebrtcProvider(live.providerId)
-        ? 'WebRTC Live selected for this stream draft.'
+        ? (livekitStatusConfigured(live)
+            ? 'Website Live selected. Browser media will use LiveKit WebRTC.'
+            : 'Website Live selected, but WebRTC/LiveKit is not configured yet.')
         : 'Firebase segment streaming is experimental and may stall.'
     scheduleLiveStudioDraftSave()
     renderShell()

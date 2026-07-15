@@ -4,7 +4,7 @@ import { normalizeProviderId, PLAYBACK_MODES, STREAM_PROVIDERS } from './streami
 
 export function getPublicPlaybackInfo(stream = {}) {
   const provider = normalizeProviderId(stream.provider)
-  if (provider === STREAM_PROVIDERS.bufferedBroadcast || stream.playbackMode === PLAYBACK_MODES.hls) {
+  if (provider === STREAM_PROVIDERS.bufferedBroadcast) {
     const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
     const configuredUrlAllowed = isAllowedHlsPlaybackUrl(configuredUrl)
     const keyUrl = buildHlsPlaybackUrl(stream.streamKey)
@@ -61,13 +61,15 @@ export function getPublicPlaybackInfo(stream = {}) {
     }
   }
   return {
-    provider: STREAM_PROVIDERS.webrtc,
+    provider: STREAM_PROVIDERS.nativeWeb,
     playbackMode: PLAYBACK_MODES.webrtc,
     playable: Boolean(stream.status === 'live'
       && stream.hostConnected
       && (stream.audioPublished === true || stream.videoPublished === true || stream.programHasAudio === true || stream.programHasVideo === true)),
     url: '',
-    message: ''
+    message: stream.status === 'live' && !stream.hostConnected
+      ? 'This website-native stream requires WebRTC playback, which is not configured yet.'
+      : ''
   }
 }
 

@@ -11,7 +11,7 @@ export function createBufferedBroadcastProvider() {
   return {
     id: STREAM_PROVIDERS.bufferedBroadcast,
     label: 'Buffered Broadcast',
-    description: "Smooth public playback through Melogic's HLS edge network.",
+    description: 'Use OBS/RTMP. Smooth HLS playback with 20-30 second delay.',
     transportProvider: 'hls-edge',
     ingestMode: 'rtmp-obs',
     playbackMode: 'hls',

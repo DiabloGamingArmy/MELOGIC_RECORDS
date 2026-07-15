@@ -31,9 +31,9 @@ export function fallbackStreamingProviderStatus(error = null) {
         videoEnabled: false,
         localFallback: true
       },
-      webrtc: {
-        provider: 'webrtc',
-        label: 'WebRTC Live',
+      nativeWeb: {
+        provider: 'nativeWeb',
+        label: 'Website Live',
         configured: false,
         ingestMode: 'browser-webrtc',
         playbackMode: 'webrtc',

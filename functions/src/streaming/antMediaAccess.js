@@ -168,9 +168,9 @@ const getStreamingProviderStatus = onCall({
         videoEnabled: false,
         missingConfigKeys: []
       },
-      webrtc: {
-        provider: 'webrtc',
-        label: 'WebRTC Live',
+      nativeWeb: {
+        provider: 'nativeWeb',
+        label: 'Website Live',
         configured: liveKitConfigured,
         ingestMode: 'browser-webrtc',
         playbackMode: 'webrtc',

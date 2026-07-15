@@ -14,7 +14,7 @@ const ALLOWED_CATEGORIES = new Set(['music', 'podcast', 'radio', 'interview', 'l
 const ALLOWED_VISIBILITIES = new Set(['public', 'unlisted', 'private'])
 const ALLOWED_ACCESS_MODES = new Set(['public', 'unlisted', 'private', 'password'])
 const ALLOWED_AUDIO_MODES = new Set(['music', 'voice'])
-const ALLOWED_PROVIDERS = new Set(['bufferedBroadcast', 'webrtc', 'firebaseSegments', 'nativeStreaming', 'livekit'])
+const ALLOWED_PROVIDERS = new Set(['bufferedBroadcast', 'nativeWeb', 'webrtc', 'firebaseSegments', 'nativeStreaming', 'livekit'])
 const ALLOWED_INGEST_MODES = new Set(['browser-media-recorder', 'livekit-webrtc', 'browser-webrtc', 'rtmp-obs', 'rtmp', 'srt', 'none'])
 const ALLOWED_PLAYBACK_MODES = new Set(['firebaseSegments', 'webrtc', 'hls', 'llhls', 'none'])
 const ALLOWED_REACTIONS = new Set(['like', 'dislike', 'none'])
@@ -99,7 +99,7 @@ function normalizeInputSource(value) {
 
 function normalizeProvider(value) {
   if (value === 'bufferedBroadcast') return 'bufferedBroadcast'
-  if (value === 'webrtc' || value === 'livekit') return 'webrtc'
+  if (value === 'nativeWeb' || value === 'webrtc' || value === 'livekit') return 'nativeWeb'
   if (value === 'firebaseSegments' || value === 'nativeStreaming') return 'firebaseSegments'
   return 'bufferedBroadcast'
 }
@@ -110,20 +110,20 @@ function normalizeIngestMode(value) {
 
 function normalizePlaybackMode(value, provider = 'bufferedBroadcast') {
   if (provider === 'firebaseSegments') return 'firebaseSegments'
-  if (provider === 'webrtc') return 'webrtc'
+  if (provider === 'nativeWeb') return 'webrtc'
   if (provider === 'bufferedBroadcast') return 'hls'
   if (ALLOWED_PLAYBACK_MODES.has(value)) return value
   return 'hls'
 }
 
 function providerLabel(provider = 'bufferedBroadcast') {
-  if (provider === 'webrtc') return 'WebRTC Live'
+  if (provider === 'nativeWeb') return 'Website Live'
   if (provider === 'firebaseSegments') return 'Firebase Segments'
   return 'Buffered Broadcast'
 }
 
 function normalizeIngestModeForProvider(value, provider = 'bufferedBroadcast') {
-  if (provider === 'webrtc') return 'browser-webrtc'
+  if (provider === 'nativeWeb') return 'browser-webrtc'
   if (provider === 'firebaseSegments') return 'browser-media-recorder'
   return 'rtmp-obs'
 }
@@ -164,7 +164,9 @@ function isStreamPublishing(stream = {}) {
 
 function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource = 'browser', defaultAudioPublished = false } = {}) {
   const provider = normalizeProvider(data.provider || existing.provider)
-  const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || (provider === 'bufferedBroadcast' ? 'mystream' : ''))
+  const streamKey = provider === 'bufferedBroadcast'
+    ? sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
+    : ''
   const hlsPlaybackUrl = provider === 'bufferedBroadcast'
     ? buildHlsPlaybackUrl(streamKey)
     : ''
@@ -220,7 +222,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
   return {
     provider,
     providerLabel: providerLabel(provider),
-    transportProvider: provider === 'bufferedBroadcast' ? 'hls-edge' : provider === 'webrtc' ? 'livekit' : 'firebase',
+    transportProvider: provider === 'bufferedBroadcast' ? 'hls-edge' : provider === 'nativeWeb' ? 'livekit' : 'firebase',
     ingestMode: normalizeIngestModeForProvider(data.ingestMode || existing.ingestMode, provider),
     playbackMode: normalizePlaybackMode(data.playbackMode || existing.playbackMode, provider),
     latencyProfile: provider === 'bufferedBroadcast' ? 'buffered' : 'realtime',
@@ -233,7 +235,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
       videoEnabled
     }),
     livekit: {
-      enabled: provider === 'webrtc',
+      enabled: provider === 'nativeWeb',
       roomName: cleanRoomName(data.livekit?.roomName || existing.livekit?.roomName || existing.livekitRoomName || existing.roomName || ''),
       playbackMode: 'webrtc'
     },
@@ -295,14 +297,14 @@ function markLiveValidationDetails({ streamId = '', provider = 'bufferedBroadcas
   const failedConditions = []
   if (!streamId) missingRequiredFields.push('streamId')
   if (!stream.hostUid) missingRequiredFields.push('hostUid')
-  if (!['bufferedBroadcast', 'webrtc', 'firebaseSegments'].includes(provider)) failedConditions.push(`unsupported provider: ${provider}`)
+  if (!['bufferedBroadcast', 'nativeWeb', 'firebaseSegments'].includes(provider)) failedConditions.push(`unsupported provider: ${provider}`)
   if (targetStatus !== 'live') failedConditions.push(`targetStatus must be live, got ${targetStatus}`)
   if (validationBranch === 'firebaseSegments') {
     if (!hostSessionId) missingRequiredFields.push('hostSessionId')
     if (broadcastState && broadcastState !== 'liveIdleNoListeners') failedConditions.push(`native broadcastState must be liveIdleNoListeners, got ${broadcastState}`)
     if (nativeStatus && nativeStatus !== 'idleNoListeners') failedConditions.push(`nativeStreaming.status must be idleNoListeners, got ${nativeStatus}`)
   }
-  if (validationBranch === 'webrtc' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
+  if (validationBranch === 'nativeWeb' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
   if (validationBranch === 'bufferedBroadcast') {
     const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || 'mystream') || 'mystream'
     const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
@@ -449,9 +451,10 @@ function livekitConfig(stage = 'livekit config check') {
   })
   const urlValid = /^wss?:\/\//i.test(url)
   if (!urlValid || !apiKey || !apiSecret) {
-    throw new HttpsError('failed-precondition', !urlValid
-      ? 'WebRTC Live is not configured. Missing LiveKit server URL.'
-      : 'WebRTC Live is not configured. Missing LiveKit credentials.', {
+    const listenerRequest = String(stage || '').toLowerCase().includes('listener')
+    throw new HttpsError('failed-precondition', listenerRequest
+      ? 'This website-native stream requires WebRTC playback, which is not configured yet.'
+      : 'Website Live requires WebRTC/LiveKit configuration. Use Buffered Broadcast with OBS for now.', {
       stage,
       livekitUrlPresent: Boolean(url),
       livekitUrlValid: urlValid,
@@ -683,7 +686,7 @@ const startMusicLiveStream = onCall(
 
       const selectedProvider = programOutputState.provider
       let config = null
-      if (selectedProvider === 'webrtc') {
+      if (selectedProvider === 'nativeWeb') {
         stage = 'LiveKit config validated'
         config = livekitConfig(stage)
       } else {
@@ -705,7 +708,7 @@ const startMusicLiveStream = onCall(
         }
       }
       const streamId = streamRef.id
-      const roomName = selectedProvider === 'webrtc' ? cleanRoomName(`music-live-${streamId}`) : ''
+      const roomName = selectedProvider === 'nativeWeb' ? cleanRoomName(`music-live-${streamId}`) : ''
       liveLog(stage, { uid, streamId, roomName })
 
       const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
@@ -713,7 +716,7 @@ const startMusicLiveStream = onCall(
       const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
 
       let hostToken = ''
-      if (selectedProvider === 'webrtc') {
+      if (selectedProvider === 'nativeWeb') {
         stage = 'host token creation started'
         hostToken = await createLiveKitJwt({
           identity: `host-${uid}`,
@@ -865,7 +868,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
   const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
   const title = cleanString(request.data?.title, 90) || 'Untitled live stream'
-  const roomName = programOutputState.provider === 'webrtc' ? cleanRoomName(`music-live-${streamId}`) : ''
+  const roomName = programOutputState.provider === 'nativeWeb' ? cleanRoomName(`music-live-${streamId}`) : ''
 
   await streamRef.set({
     streamId,
@@ -1218,15 +1221,15 @@ const joinMusicLiveStream = onCall(
         throw new HttpsError('permission-denied', 'Incorrect stream password.')
       }
     }
-    if (provider === 'webrtc' && !stream.livekitRoomName && !stream.roomName) throw new HttpsError('failed-precondition', 'This stream is missing its live room.')
+    if (provider === 'nativeWeb' && !stream.livekitRoomName && !stream.roomName) throw new HttpsError('failed-precondition', 'This website-native stream is missing its LiveKit room.')
 
     const uid = request.auth?.uid || ''
     const anonId = cleanId(request.data?.anonId, 80) || cleanId(request.data?.presenceId, 80) || `${Date.now()}${Math.random().toString(36).slice(2, 8)}`
     const presenceId = cleanId(request.data?.presenceId, 120) || (uid ? `uid-${uid}` : `anon-${anonId}`)
     const identity = uid ? `listener-${uid}` : `listener-anon-${anonId}`
     const name = cleanString(request.auth?.token?.name || request.auth?.token?.email || 'Melogic Listener', 80)
-    const roomName = provider === 'webrtc' ? cleanRoomName(stream.livekitRoomName || stream.roomName) : ''
-    const listenerToken = provider !== 'webrtc' ? '' : await createLiveKitJwt({
+    const roomName = provider === 'nativeWeb' ? cleanRoomName(stream.livekitRoomName || stream.roomName) : ''
+    const listenerToken = provider !== 'nativeWeb' ? '' : await createLiveKitJwt({
       identity,
       name,
       roomName,
@@ -1263,7 +1266,7 @@ const joinMusicLiveStream = onCall(
       programHasVideo: stream.programHasVideo === true,
       listenerToken,
       token: listenerToken,
-      url: provider === 'webrtc' ? LIVEKIT_URL.value() : '',
+      url: provider === 'nativeWeb' ? LIVEKIT_URL.value() : '',
       identity,
       presenceId,
       listenerCount

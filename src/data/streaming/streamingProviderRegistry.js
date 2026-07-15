@@ -7,7 +7,7 @@ import { firebaseSegmentStreamingEnabled, normalizeProviderId, STREAM_PROVIDERS 
 const providerFactories = {
   [STREAM_PROVIDERS.bufferedBroadcast]: createBufferedBroadcastProvider,
   [STREAM_PROVIDERS.firebaseSegments]: createNativeStreamingProvider,
-  [STREAM_PROVIDERS.webrtc]: createLiveKitProvider,
+  [STREAM_PROVIDERS.nativeWeb]: createLiveKitProvider,
   [STREAM_PROVIDERS.antMedia]: createAntMediaProvider
 }
 
@@ -33,8 +33,8 @@ export function getStreamingProvider(id = preferredStreamingProviderId()) {
 
 export function listStreamingProviderOptions() {
   const ids = firebaseSegmentStreamingEnabled()
-    ? [STREAM_PROVIDERS.bufferedBroadcast, STREAM_PROVIDERS.webrtc, STREAM_PROVIDERS.firebaseSegments]
-    : [STREAM_PROVIDERS.bufferedBroadcast, STREAM_PROVIDERS.webrtc]
+    ? [STREAM_PROVIDERS.bufferedBroadcast, STREAM_PROVIDERS.nativeWeb, STREAM_PROVIDERS.firebaseSegments]
+    : [STREAM_PROVIDERS.bufferedBroadcast, STREAM_PROVIDERS.nativeWeb]
   return ids.map((id) => {
     const provider = getStreamingProviders()[id]
     return {

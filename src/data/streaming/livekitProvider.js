@@ -1,16 +1,14 @@
 import { Room } from 'livekit-client'
 import { buildProviderDiagnostics, providerCapabilities, STREAM_PROVIDERS } from './streamingProviderTypes'
 
-const WEBRTC_FALLBACK_SUGGESTION = 'Use Buffered Broadcast for OBS/HLS streaming.'
-
 export function validateLiveKitConnectionConfig({ url = '', token = '' } = {}) {
   const cleanUrl = String(url || '').trim()
   const cleanToken = String(token || '').trim()
   const urlValid = /^wss?:\/\//i.test(cleanUrl)
   const errorMessage = !urlValid
-    ? `WebRTC Live is not configured. Missing LiveKit server URL. ${WEBRTC_FALLBACK_SUGGESTION}`
+    ? 'Website Live requires WebRTC/LiveKit configuration. Use Buffered Broadcast with OBS for now.'
     : !cleanToken
-      ? `WebRTC Live is not configured. Missing LiveKit access token. ${WEBRTC_FALLBACK_SUGGESTION}`
+      ? 'Website Live requires WebRTC/LiveKit configuration. Use Buffered Broadcast with OBS for now.'
       : ''
   return {
     url: cleanUrl,
@@ -30,24 +28,24 @@ export function assertLiveKitConnectionConfig(config = {}) {
 
 export function createLiveKitProvider() {
   let room = null
-  let diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.webrtc })
+  let diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.nativeWeb })
 
   return {
-    id: STREAM_PROVIDERS.webrtc,
-    label: 'WebRTC Live',
-    description: 'Low-latency realtime rooms and backstage.',
+    id: STREAM_PROVIDERS.nativeWeb,
+    label: 'Website Live',
+    description: 'Stream directly from this browser. Requires WebRTC provider setup.',
     transportProvider: 'livekit',
     ingestMode: 'browser-webrtc',
     playbackMode: 'webrtc',
     configured: true,
-    capabilities: providerCapabilities(STREAM_PROVIDERS.webrtc),
+    capabilities: providerCapabilities(STREAM_PROVIDERS.nativeWeb),
     createStreamSession(options = {}) {
       diagnostics = buildProviderDiagnostics({
-        provider: STREAM_PROVIDERS.webrtc,
+        provider: STREAM_PROVIDERS.nativeWeb,
         roomName: options.roomName || options.livekitRoomName || '',
         connectionState: 'session-ready'
       })
-      return { ok: true, provider: STREAM_PROVIDERS.webrtc, diagnostics }
+      return { ok: true, provider: STREAM_PROVIDERS.nativeWeb, diagnostics }
     },
     async startPublishing({ url = '', token = '', tracks = [], publishOptions = {}, existingRoom = null } = {}) {
       const connection = existingRoom
@@ -61,7 +59,7 @@ export function createLiveKitProvider() {
         if (track) await room.localParticipant.publishTrack(track, options)
       }
       diagnostics = buildProviderDiagnostics({
-        provider: STREAM_PROVIDERS.webrtc,
+        provider: STREAM_PROVIDERS.nativeWeb,
         roomName: room.name || '',
         connectionState: room.state || 'connected',
         audioTrackId: tracks.find((item) => (item.track || item)?.kind === 'audio')?.trackSid || '',
@@ -80,7 +78,7 @@ export function createLiveKitProvider() {
     },
     getPlaybackInfo(streamDoc = {}) {
       return {
-        provider: STREAM_PROVIDERS.webrtc,
+        provider: STREAM_PROVIDERS.nativeWeb,
         playbackMode: 'webrtc',
         roomName: streamDoc.livekitRoomName || streamDoc.roomName || '',
         playable: Boolean(streamDoc.hostConnected
@@ -88,7 +86,7 @@ export function createLiveKitProvider() {
       }
     },
     subscribeViewer() {
-      return { ok: true, provider: STREAM_PROVIDERS.webrtc, mode: 'existing-listener-flow' }
+      return { ok: true, provider: STREAM_PROVIDERS.nativeWeb, mode: 'existing-listener-flow' }
     },
     disconnectViewer() {
       return { ok: true }
@@ -96,7 +94,7 @@ export function createLiveKitProvider() {
     async stopPublishing() {
       room?.disconnect?.()
       room = null
-      diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.webrtc, connectionState: 'stopped', lastMediaEvent: 'stopped' })
+      diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.nativeWeb, connectionState: 'stopped', lastMediaEvent: 'stopped' })
       return { ok: true, diagnostics }
     },
     stopStream() {
