@@ -1,10 +1,10 @@
 import { antMediaPlaybackUrls } from './antMediaProvider'
 import { buildHlsPlaybackUrl, isAllowedHlsPlaybackUrl } from './hlsEdgePlayer'
-import { normalizeProviderId, PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
+import { PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
 
-export function selectPublicPlaybackPlayer(stream = {}) {
+export function hasHlsPlaybackRoute(stream = {}) {
   const declaredProvider = String(stream.provider || '')
-  const hasHlsRoute = declaredProvider === STREAM_PROVIDERS.hlsEdge
+  return declaredProvider === STREAM_PROVIDERS.hlsEdge
     || declaredProvider === STREAM_PROVIDERS.bufferedBroadcast
     || stream.transportProvider === 'hls-edge'
     || stream.playbackMode === PLAYBACK_MODES.hls
@@ -12,12 +12,22 @@ export function selectPublicPlaybackPlayer(stream = {}) {
     || Boolean(String(stream.streamKey || '').trim())
     || ['obsRtmp', 'browserWebrtc'].includes(stream.ingestMethod)
     || ['rtmp-obs', 'browser-webrtc'].includes(stream.ingestMode)
-  if (hasHlsRoute) return 'hls'
+    || ['rtmp', 'webrtc'].includes(stream.ingestProtocol)
+}
 
-  const explicitlyFirebaseSegments = [STREAM_PROVIDERS.firebaseSegments, STREAM_PROVIDERS.nativeStreaming].includes(declaredProvider)
+export function isExplicitFirebaseSegmentsPlayback(stream = {}) {
+  const declaredProvider = String(stream.provider || '')
+  return declaredProvider === STREAM_PROVIDERS.firebaseSegments
+    || declaredProvider === 'firebase-segments'
     || stream.playbackMode === PLAYBACK_MODES.firebaseSegments
-  if (explicitlyFirebaseSegments) return 'firebaseSegments'
-  if (normalizeProviderId(declaredProvider) === STREAM_PROVIDERS.antMedia) return 'antMedia'
+    || stream.transportProvider === 'firebase-segments'
+}
+
+export function selectPublicPlaybackPlayer(stream = {}) {
+  const declaredProvider = String(stream.provider || '')
+  if (hasHlsPlaybackRoute(stream)) return 'hls'
+  if (isExplicitFirebaseSegmentsPlayback(stream)) return 'firebaseSegments'
+  if (declaredProvider === STREAM_PROVIDERS.antMedia) return 'antMedia'
   return 'webrtc'
 }
 

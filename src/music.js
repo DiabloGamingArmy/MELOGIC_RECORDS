@@ -50,7 +50,7 @@ import {
   upsertMusicLiveSequenceItem,
   updateMusicLiveStreamInfo
 } from './data/musicLiveService'
-import { getPublicPlaybackInfo, isPublicStreamPlayable } from './data/streaming/publicPlaybackService'
+import { getPublicPlaybackInfo, isExplicitFirebaseSegmentsPlayback, isPublicStreamPlayable } from './data/streaming/publicPlaybackService'
 import {
   attachHlsStream,
   canPlayNativeHls,
@@ -4384,11 +4384,12 @@ async function joinLiveListener(options = {}) {
   }
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
-  console.log('[Live Receiver] playback route', {
+  console.log('[Live Receiver] selected playback route', {
     provider: state.liveStream.provider || '',
     transportProvider: state.liveStream.transportProvider || '',
     playbackMode: state.liveStream.playbackMode || '',
     ingestMethod: state.liveStream.ingestMethod || '',
+    ingestProtocol: state.liveStream.ingestProtocol || '',
     streamKey: state.liveStream.streamKey || '',
     hlsPlaybackUrl: state.liveStream.hlsPlaybackUrl || '',
     selectedPlayer: playbackInfo.selectedPlayer || playbackInfo.provider || ''
@@ -4397,7 +4398,7 @@ async function joinLiveListener(options = {}) {
     await startHlsListenerPlayback(playbackInfo)
     return
   }
-  if (playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments) {
+  if (playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments && isExplicitFirebaseSegmentsPlayback(state.liveStream)) {
     if (!firebaseSegmentStreamingEnabled()) {
       state.liveStatus = 'idle'
       state.liveError = 'This legacy website-native stream uses Firebase Segments, which is not available in this build.'

@@ -3,7 +3,8 @@ import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
-import { normalizeProviderId, STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
+import { STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
+import { selectPublicPlaybackPlayer } from './streaming/publicPlaybackService'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
@@ -30,21 +31,14 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
   const raw = typeof dataOrSnap.data === 'function' ? dataOrSnap.data() || {} : dataOrSnap || {}
   const id = explicitId || dataOrSnap.id || raw.streamId || ''
   const category = LIVE_CATEGORIES.includes(raw.category) ? raw.category : 'music'
-  const hasHlsRoute = raw.provider === STREAM_PROVIDERS.hlsEdge
-    || raw.provider === STREAM_PROVIDERS.bufferedBroadcast
-    || raw.transportProvider === 'hls-edge'
-    || raw.playbackMode === 'hls'
-    || Boolean(String(raw.hlsPlaybackUrl || '').trim())
-    || Boolean(String(raw.streamKey || '').trim())
-    || ['obsRtmp', 'browserWebrtc'].includes(raw.ingestMethod)
-    || ['rtmp-obs', 'browser-webrtc'].includes(raw.ingestMode)
-  const explicitlyFirebaseSegments = [STREAM_PROVIDERS.firebaseSegments, STREAM_PROVIDERS.nativeStreaming].includes(raw.provider)
-    || raw.playbackMode === 'firebaseSegments'
-  const provider = hasHlsRoute
+  const selectedPlayer = selectPublicPlaybackPlayer(raw)
+  const provider = selectedPlayer === 'hls'
     ? STREAM_PROVIDERS.hlsEdge
-    : explicitlyFirebaseSegments
+    : selectedPlayer === 'firebaseSegments'
       ? STREAM_PROVIDERS.firebaseSegments
-      : normalizeProviderId(raw.provider)
+      : selectedPlayer === 'antMedia'
+        ? STREAM_PROVIDERS.antMedia
+        : STREAM_PROVIDERS.nativeWeb
   const hlsIngestMethod = raw.ingestMethod
     || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : raw.ingestMode === 'rtmp-obs' ? 'obsRtmp' : '')
     || (raw.provider === STREAM_PROVIDERS.bufferedBroadcast ? 'obsRtmp' : 'browserWebrtc')
