@@ -80,6 +80,7 @@ import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfi
 const app = document.querySelector('#app')
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
+const SILENT_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA=='
 
 const sidebarViews = {
   home: 'Home',
@@ -1117,7 +1118,9 @@ function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
   if (!hostFresh) return 'The host is not currently broadcasting. Stay on this page or check back in a moment.'
   if (state.nativeListenerDiagnostics.lastSegmentError) return `Stream segment lookup failed: ${state.nativeListenerDiagnostics.lastSegmentError}`
   if (native.lastUploadError) return `The host is live, but segment upload is failing: ${native.lastUploadError}`
+  if (Number(state.nativeListenerDiagnostics.readySegmentCount || 0) > 0 && !isNativeRealSegmentAudioPlaying()) return 'Ready to play — press Resume Audio.'
   if (elapsedMs >= 45000) return 'Host is live, but no audio chunks have been received yet.'
+  if (state.nativeListenerDiagnostics.userGestureUnlockSucceeded === true && state.nativeListenerDiagnostics.readySegmentCount === 0) return 'Playback unlocked. Waiting for audio chunks...'
   if (state.nativeListenerDiagnostics.demandWriteSucceeded === true && state.nativeListenerDiagnostics.readySegmentCount === 0) return 'Connected to host. Waiting for audio chunks...'
   if (elapsedMs >= 10000) return 'Waiting for stream data from the host. Demand is connected, but no playable segments are available yet.'
   return 'Starting stream buffer...'
@@ -1236,6 +1239,160 @@ function startListenerPresenceHeartbeat(streamId, presenceId) {
   state.listenerPresenceTimer = window.setInterval(() => {
     updateMusicLiveListenerPresence(streamId, presenceId).catch(() => {})
   }, 20000)
+}
+
+function updateNativeAudioDiagnostics(eventName = '') {
+  const audio = state.listenerAudioElement
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    ...(eventName ? { lastAudioEvent: eventName } : {}),
+    audioPaused: audio ? audio.paused === true : null,
+    audioMuted: audio ? audio.muted === true : null,
+    audioVolume: audio ? Number(audio.volume || 0) : null,
+    audioReadyState: audio ? Number(audio.readyState || 0) : null,
+    audioCurrentSrc: audio?.currentSrc || audio?.src || ''
+  }
+}
+
+function isNativeRealSegmentAudioPlaying() {
+  const audio = state.listenerAudioElement
+  if (!audio || audio.paused) return false
+  const currentSrc = audio.currentSrc || audio.src || ''
+  return Boolean(currentSrc && currentSrc !== SILENT_AUDIO_UNLOCK_SRC && state.nativeListenerDiagnostics.lastAudioEvent === 'playing')
+}
+
+function ensureNativeListenerAudioElement() {
+  let audio = state.listenerAudioElement
+  if (!audio) {
+    audio = new Audio()
+    audio.dataset.nativeListenerAudio = 'true'
+    ;['play', 'playing', 'waiting', 'stalled', 'pause', 'error'].forEach((eventName) => {
+      audio.addEventListener(eventName, () => {
+        updateNativeAudioDiagnostics(eventName)
+        if (eventName === 'playing') {
+          state.nativeListenerDiagnostics.lastPlayResolvedAt = new Date().toISOString()
+          state.nativeListenerDiagnostics.userGestureUnlockSucceeded = true
+          const playingRealSegment = isNativeRealSegmentAudioPlaying()
+          state.liveStatus = playingRealSegment ? 'playing' : 'buffering'
+          state.liveError = playingRealSegment ? '' : 'Playback unlocked. Waiting for audio chunks...'
+          rerender()
+        } else if (eventName === 'waiting' && state.liveStatus !== 'playing') {
+          state.liveStatus = 'buffering'
+        } else if (eventName === 'error') {
+          state.nativeListenerDiagnostics.lastPlayErrorName = audio.error?.name || 'MediaError'
+          state.nativeListenerDiagnostics.lastPlayErrorMessage = audio.error?.message || 'Audio element error.'
+        }
+        updateLiveListenerControls()
+      })
+    })
+    state.listenerAudioElement = audio
+  }
+  audio.controls = true
+  audio.muted = false
+  audio.volume = 1
+  audio.playsInline = true
+  audio.autoplay = false
+  audio.style.display = 'block'
+  audio.style.width = 'min(100%, 520px)'
+  audio.style.margin = '12px 0'
+  if (!audio.src && !audio.currentSrc) audio.src = SILENT_AUDIO_UNLOCK_SRC
+  const mount = app.querySelector('[data-native-audio-mount]')
+  const parent = mount || document.body
+  if (audio.parentElement !== parent) parent.appendChild(audio)
+  updateNativeAudioDiagnostics()
+  return audio
+}
+
+function unlockNativeAudioFromGesture() {
+  const audio = ensureNativeListenerAudioElement()
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    userGestureUnlockAttempted: true,
+    userGestureUnlockSucceeded: false,
+    lastPlayAttemptAt: new Date().toISOString(),
+    lastPlayErrorName: '',
+    lastPlayErrorMessage: ''
+  }
+  state.liveStatus = 'buffering'
+  state.liveError = 'Playback unlocked. Waiting for audio chunks...'
+  try { audio.load() } catch {}
+  const playPromise = audio.play()
+  if (playPromise?.then) {
+    playPromise.then(() => {
+      state.nativeListenerDiagnostics = {
+        ...(state.nativeListenerDiagnostics || {}),
+        userGestureUnlockSucceeded: true,
+        lastPlayResolvedAt: new Date().toISOString(),
+        lastPlayErrorName: '',
+        lastPlayErrorMessage: ''
+      }
+      updateNativeAudioDiagnostics()
+      state.liveError = 'Playback unlocked. Waiting for audio chunks...'
+      updateLiveListenerControls()
+    }).catch((error) => {
+      state.nativeListenerDiagnostics = {
+        ...(state.nativeListenerDiagnostics || {}),
+        userGestureUnlockSucceeded: false,
+        lastPlayRejectedAt: new Date().toISOString(),
+        lastPlayErrorName: error?.name || '',
+        lastPlayErrorMessage: error?.message || ''
+      }
+      updateNativeAudioDiagnostics()
+      state.liveError = error?.name === 'NotAllowedError'
+        ? 'Playback was blocked. Press Play again.'
+        : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim()
+      updateLiveListenerControls()
+      rerender()
+    })
+  }
+  return audio
+}
+
+function resumeNativeAudioFromGesture() {
+  const audio = ensureNativeListenerAudioElement()
+  const nextSegment = state.nativePlaybackQueue
+    .filter((segment) => segment.downloadURL)
+    .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))
+    .find((segment) => Number(segment.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0)) ||
+    state.nativePlaybackQueue.find((segment) => segment.downloadURL)
+  if (nextSegment?.downloadURL && (audio.currentSrc || audio.src || '') !== nextSegment.downloadURL) {
+    const currentIndex = Number(nextSegment.index ?? 0)
+    state.nativeListenerDiagnostics.currentSegmentIndex = currentIndex
+    state.nativePlaybackNextIndex = currentIndex + 1
+    audio.src = nextSegment.downloadURL
+    try { audio.load() } catch {}
+  }
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    lastPlayAttemptAt: new Date().toISOString(),
+    lastPlayErrorName: '',
+    lastPlayErrorMessage: ''
+  }
+  audio.play().then(() => {
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      lastPlayResolvedAt: new Date().toISOString(),
+      userGestureUnlockSucceeded: true,
+      lastPlayErrorName: '',
+      lastPlayErrorMessage: ''
+    }
+    updateNativeAudioDiagnostics()
+    state.liveError = isNativeRealSegmentAudioPlaying() ? '' : 'Playback unlocked. Waiting for audio chunks...'
+    updateLiveListenerControls()
+  }).catch((error) => {
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      lastPlayRejectedAt: new Date().toISOString(),
+      lastPlayErrorName: error?.name || '',
+      lastPlayErrorMessage: error?.message || ''
+    }
+    updateNativeAudioDiagnostics()
+    state.liveError = error?.name === 'NotAllowedError'
+      ? 'Playback was blocked. Press Play again.'
+      : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim()
+    updateLiveListenerControls()
+    rerender()
+  })
 }
 
 function nowPlayingDisplay(stream = {}) {
@@ -2423,6 +2580,7 @@ function renderLiveDetailPage() {
           <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${isLiveListeningStatus() ? 'Pause / Leave' : 'Listen'}</button>
           <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
         </div>
+        ${isNativeStream ? renderNativeReceiverAudioDebug() : ''}
         ${renderLiveActions(stream)}
         ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : 'This stream has ended or is no longer public.')}</p>`}
       </div>
@@ -2430,6 +2588,43 @@ function renderLiveDetailPage() {
     ${renderLiveGuestInvitePrompt(stream)}
     ${renderLiveChatPanel(stream.id)}
   `)
+  if (state.listenerAudioElement) ensureNativeListenerAudioElement()
+}
+
+function renderNativeReceiverAudioDebug() {
+  const diagnostics = state.nativeListenerDiagnostics || {}
+  const audio = state.listenerAudioElement
+  const shouldShowResume = Boolean(
+    diagnostics.lastPlayErrorName === 'NotAllowedError' ||
+    (audio && audio.paused === true && isLiveListeningStatus()) ||
+    (Number(diagnostics.readySegmentCount || 0) > 0 && !isNativeRealSegmentAudioPlaying())
+  )
+  const rows = [
+    ['unlock attempted', diagnostics.userGestureUnlockAttempted === true ? 'yes' : 'no'],
+    ['unlock succeeded', diagnostics.userGestureUnlockSucceeded === true ? 'yes' : 'no'],
+    ['last play attempt', diagnostics.lastPlayAttemptAt || 'none'],
+    ['last play resolved', diagnostics.lastPlayResolvedAt || 'none'],
+    ['last play rejected', diagnostics.lastPlayRejectedAt || 'none'],
+    ['last play error', diagnostics.lastPlayErrorName ? `${diagnostics.lastPlayErrorName}: ${diagnostics.lastPlayErrorMessage || ''}` : 'none'],
+    ['audio paused', String(diagnostics.audioPaused ?? audio?.paused ?? 'unknown')],
+    ['audio muted', String(diagnostics.audioMuted ?? audio?.muted ?? 'unknown')],
+    ['audio volume', String(diagnostics.audioVolume ?? audio?.volume ?? 'unknown')],
+    ['audio readyState', String(diagnostics.audioReadyState ?? audio?.readyState ?? 'unknown')],
+    ['audio currentSrc', diagnostics.audioCurrentSrc || audio?.currentSrc || 'none'],
+    ['last audio event', diagnostics.lastAudioEvent || 'none'],
+    ['readySegmentCount', String(diagnostics.readySegmentCount ?? 0)],
+    ['currentSegmentIndex', String(diagnostics.currentSegmentIndex ?? 'none')]
+  ]
+  return `
+    <div class="music-live-native-audio-debug">
+      <div data-native-audio-mount></div>
+      ${shouldShowResume ? '<button type="button" class="button button-muted" data-native-audio-resume>Resume Audio</button>' : ''}
+      <details>
+        <summary>Receiver audio diagnostics</summary>
+        <ul>${rows.map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`).join('')}</ul>
+      </details>
+    </div>
+  `
 }
 
 function renderLiveGuestInvitePrompt(stream = {}) {
@@ -3253,18 +3448,21 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   const streamId = state.liveStream?.id || credentials.streamId || ''
   if (!streamId) return
   const startedAt = Date.now()
+  const existingAudioDiagnostics = state.nativeListenerDiagnostics || {}
   state.nativeViewerSessionId = nativeViewerSessionId(streamId)
   state.nativeListenerDiagnostics = {
+    ...existingAudioDiagnostics,
     streamId,
     provider: STREAM_PROVIDERS.nativeStreaming,
     listenerState: 'requestingPlayback',
     demandSessionId: state.nativeViewerSessionId,
     demandWriteSucceeded: false,
     hostHeartbeatFresh: false,
-    readySegmentCount: 0,
-    newestAvailableSegmentIndex: null,
+    readySegmentCount: existingAudioDiagnostics.readySegmentCount ?? 0,
+    newestAvailableSegmentIndex: existingAudioDiagnostics.newestAvailableSegmentIndex ?? null,
+    currentSegmentIndex: existingAudioDiagnostics.currentSegmentIndex ?? null,
     minBufferSegments: null,
-    lastSegmentError: ''
+    lastSegmentError: existingAudioDiagnostics.lastSegmentError || ''
   }
   state.liveStatus = 'requestingPlayback'
   state.liveError = ''
@@ -3314,18 +3512,12 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   }
   const playSegment = async (segment) => {
     if (!segment?.downloadURL) return false
-    let audio = state.listenerAudioElement
-    if (!audio) {
-      audio = new Audio()
-      audio.controls = false
-      audio.autoplay = !monitorMode
-      audio.muted = monitorMode ? state.liveMonitor.muted : false
-      audio.volume = state.player.volume
-      audio.style.display = 'none'
-      document.body.appendChild(audio)
-      state.listenerAudioElement = audio
-    }
+    const audio = ensureNativeListenerAudioElement()
+    audio.controls = true
+    audio.muted = monitorMode ? state.liveMonitor.muted : false
+    audio.volume = monitorMode ? state.player.volume : 1
     const currentIndex = Number(segment.index ?? 0)
+    state.nativeListenerDiagnostics.currentSegmentIndex = currentIndex
     state.nativePlaybackNextIndex = currentIndex + 1
     audio.onended = () => {
       const next = state.nativePlaybackQueue
@@ -3341,14 +3533,41 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
     audio.onerror = () => {
       updateNativeListenerStatus(state.liveStream?.status === 'live' ? 'buffering' : 'ended', state.liveStream?.status === 'live' ? 'Segment playback failed; waiting for the next segment.' : 'Stream ended.')
     }
-    if (audio.src !== segment.downloadURL) audio.src = segment.downloadURL
-    let started = true
-    await audio.play().catch(() => { started = false })
-    if (!started) {
-      updateNativeListenerStatus('waiting', 'Browser playback is waiting for a user gesture. Click Listen again to start audio.')
+    if (audio.src !== segment.downloadURL && audio.currentSrc !== segment.downloadURL) {
+      audio.src = segment.downloadURL
+      try { audio.load() } catch {}
+    }
+    state.nativeListenerDiagnostics.lastPlayAttemptAt = new Date().toISOString()
+    try {
+      await audio.play()
+      updateNativeAudioDiagnostics()
+    } catch (error) {
+      state.nativeListenerDiagnostics.lastPlayRejectedAt = new Date().toISOString()
+      state.nativeListenerDiagnostics.lastPlayErrorName = error?.name || ''
+      state.nativeListenerDiagnostics.lastPlayErrorMessage = error?.message || ''
+      updateNativeAudioDiagnostics()
+      updateNativeListenerStatus('waiting', error?.name === 'NotAllowedError'
+        ? 'Playback was blocked. Press Play again.'
+        : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim())
       return false
     }
-    return true
+    if (audio.paused) {
+      updateNativeListenerStatus('waiting', 'Playback was blocked. Press Play again.')
+      return false
+    }
+    return new Promise((resolve) => {
+      const realSegmentPlaying = state.nativeListenerDiagnostics.lastAudioEvent === 'playing' &&
+        (audio.currentSrc || audio.src || '') !== SILENT_AUDIO_UNLOCK_SRC
+      if (realSegmentPlaying) {
+        resolve(true)
+        return
+      }
+      const timeout = window.setTimeout(() => resolve(false), 2000)
+      audio.addEventListener('playing', () => {
+        window.clearTimeout(timeout)
+        resolve(true)
+      }, { once: true })
+    })
   }
   const poll = async () => {
     const native = credentials.nativeStreaming || state.liveStream?.nativeStreaming || {}
@@ -3383,17 +3602,30 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       updateNativeListenerStatus('waitingForHost', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
       return
     }
-    if (playable.length < minSegments && !state.listenerAudioElement) {
+    if (playable.length < minSegments) {
       updateNativeListenerStatus(playable.length ? 'buffering' : 'waitingForSegments', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
       return
     }
-    if (!state.listenerAudioElement) {
-      const first = playable[0]
-      const started = await playSegment(first)
-      if (!started) return
+    if (!isNativeRealSegmentAudioPlaying()) {
+      const next = playable.find((segment) => Number(segment.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0)) || playable[0]
+      const started = await playSegment(next)
+      if (!started) {
+        updateNativeListenerStatus('waiting', 'Ready to play — press Resume Audio.')
+        return
+      }
     } else if (state.liveStatus === 'buffering') {
       const next = playable.find((segment) => Number(segment.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0))
-      if (next) await playSegment(next)
+      if (next) {
+        const started = await playSegment(next)
+        if (!started) {
+          updateNativeListenerStatus('waiting', 'Ready to play — press Resume Audio.')
+          return
+        }
+      }
+    }
+    if (!isNativeRealSegmentAudioPlaying()) {
+      updateLiveListenerControls()
+      return
     }
     state.liveStatus = 'playing'
     state.nativeListenerDiagnostics.listenerState = 'playing'
@@ -3425,6 +3657,7 @@ async function joinLiveListener(options = {}) {
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
   if (playbackInfo.provider === STREAM_PROVIDERS.nativeStreaming) {
+    if (!monitorMode) unlockNativeAudioFromGesture()
     if (state.liveStream.accessMode === 'password' || state.liveStream.passwordProtected) {
       state.liveStatus = 'idle'
       state.liveError = 'Password-protected Native Streaming playback needs authorized segment delivery before audio can start.'
@@ -3556,6 +3789,7 @@ async function joinLiveListener(options = {}) {
 function updateLiveListenerControls() {
   const button = app.querySelector('[data-live-listen]')
   const status = app.querySelector('[data-live-status]')
+  if (state.listenerAudioElement && app.querySelector('[data-native-audio-mount]')) ensureNativeListenerAudioElement()
   if (button) button.textContent = isLiveListeningStatus()
     ? 'Pause / Leave'
     : state.liveStatus === 'connecting' || state.liveStatus === 'reconnecting'
@@ -3785,6 +4019,9 @@ function bindMusicEvents() {
     const passwordForm = app.querySelector('[data-live-password-form]')
     if (passwordForm) state.livePassword = String(new FormData(passwordForm).get('password') || '')
     joinLiveListener().catch(() => {})
+  })
+  app.querySelector('[data-native-audio-resume]')?.addEventListener('click', () => {
+    resumeNativeAudioFromGesture()
   })
   app.querySelector('[data-live-video-hero]')?.addEventListener('click', () => {
     if (!isLiveListeningStatus()) {
