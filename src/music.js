@@ -1088,7 +1088,7 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'playing') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'requestingPlayback') return 'Requesting playback...'
   if (state.liveStatus === 'waitingForHost') return 'Host is not currently broadcasting.'
-  if (state.liveStatus === 'waitingForSegments') return 'Waiting for stream data...'
+  if (state.liveStatus === 'waitingForSegments') return 'Connected to host. Waiting for audio chunks...'
   if (state.liveStatus === 'interrupted') return 'Stream interrupted.'
   if (state.liveStatus === 'waiting') return streamHasVideoFoundation(stream) ? 'Connected - waiting for media.' : 'Connected - waiting for host audio.'
   if (state.liveStatus === 'reconnecting') return 'Reconnecting...'
@@ -1117,7 +1117,8 @@ function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
   if (!hostFresh) return 'The host is not currently broadcasting. Stay on this page or check back in a moment.'
   if (state.nativeListenerDiagnostics.lastSegmentError) return `Stream segment lookup failed: ${state.nativeListenerDiagnostics.lastSegmentError}`
   if (native.lastUploadError) return `The host is live, but segment upload is failing: ${native.lastUploadError}`
-  if (elapsedMs >= 45000) return 'Still waiting for the host to produce audio. You can retry Listen or stop listening.'
+  if (elapsedMs >= 45000) return 'Host is live, but no audio chunks have been received yet.'
+  if (state.nativeListenerDiagnostics.demandWriteSucceeded === true && state.nativeListenerDiagnostics.readySegmentCount === 0) return 'Connected to host. Waiting for audio chunks...'
   if (elapsedMs >= 10000) return 'Waiting for stream data from the host. Demand is connected, but no playable segments are available yet.'
   return 'Starting stream buffer...'
 }

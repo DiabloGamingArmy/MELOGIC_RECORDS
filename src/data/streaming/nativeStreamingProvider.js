@@ -23,6 +23,10 @@ let diagnostics = buildProviderDiagnostics({
   lastMediaEvent: 'native-streaming-ready'
 })
 
+function emitDiagnostics(callback = null) {
+  if (typeof callback === 'function') callback(diagnostics)
+}
+
 function cleanId(value = '') {
   return String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 120)
 }
@@ -86,27 +90,35 @@ export function observePlaybackDemand(streamId = '', onNext = () => {}) {
 
 export function startSegmentRecorder(programMediaStream, options = {}) {
   const streamId = cleanId(options.streamId)
+  const mediaStreamTrackCount = programMediaStream?.getTracks?.().length || 0
   const trackCount = programMediaStream?.getTracks?.().filter((track) => track.readyState === 'live').length || 0
+  const audioTracks = programMediaStream?.getAudioTracks?.() || []
+  const audioTrackReadyState = audioTracks[0]?.readyState || ''
+  const onDiagnostics = options.onDiagnostics
   if (recorderState?.recorder?.state === 'recording') {
-    diagnostics = buildProviderDiagnostics({ ...diagnostics, recorderState: 'recording', trackCount, lastMediaEvent: 'recorder-already-running' })
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, recorderState: 'recording', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastMediaEvent: 'recorder-already-running' })
+    emitDiagnostics(onDiagnostics)
     return { ok: true, alreadyRunning: true, diagnostics }
   }
   if (typeof MediaRecorder === 'undefined') {
-    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: 'unsupported', trackCount, lastMediaEvent: 'MediaRecorder unsupported' })
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: 'unsupported', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastMediaEvent: 'MediaRecorder unsupported' })
+    emitDiagnostics(onDiagnostics)
     return { ok: false, error: 'MediaRecorder is not supported in this browser.', diagnostics }
   }
   if (!programMediaStream?.getTracks?.().some((track) => track.readyState === 'live')) {
-    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'idle', recorderState: 'idle', trackCount, lastMediaEvent: 'no usable Program Mixer tracks' })
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'idle', recorderState: 'idle', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastMediaEvent: 'no usable Program Mixer tracks' })
+    emitDiagnostics(onDiagnostics)
     return { ok: false, error: 'Program Mixer output has no usable tracks.', diagnostics }
   }
-  const audioTracks = programMediaStream.getAudioTracks?.() || []
   if (!audioTracks.length) {
-    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'idle', recorderState: 'idle', trackCount, lastMediaEvent: 'no audio track for audio-first MVP' })
-    return { ok: false, error: 'Native Streaming MVP requires a Program Mixer audio track.', diagnostics }
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'idle', recorderState: 'idle', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastMediaEvent: 'no audio track for audio-first MVP' })
+    emitDiagnostics(onDiagnostics)
+    return { ok: false, error: 'Native Streaming has no audio track to record. Enable a mic or sequence output.', diagnostics }
   }
   const mimeType = supportedAudioMimeType()
   if (!mimeType) {
-    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: 'unsupported', trackCount, lastMediaEvent: 'audio/webm unsupported' })
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: 'unsupported', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastMediaEvent: 'audio/webm unsupported' })
+    emitDiagnostics(onDiagnostics)
     return { ok: false, error: 'This browser cannot record audio/webm segments.', diagnostics }
   }
   const audioOnlyStream = new MediaStream(audioTracks)
@@ -118,20 +130,30 @@ export function startSegmentRecorder(programMediaStream, options = {}) {
     startedAt: Date.now(),
     mimeType,
     segmentDurationMs: Number(options.segmentDurationMs || DEFAULT_NATIVE_OPTIONS.segmentDurationMs),
+    readySegmentWriteCount: Number(diagnostics.readySegmentWriteCount || 0),
     uploading: false,
     shouldUploadSegment: typeof options.shouldUploadSegment === 'function' ? options.shouldUploadSegment : () => true,
-    isStreamActive: typeof options.isStreamActive === 'function' ? options.isStreamActive : () => true
+    isStreamActive: typeof options.isStreamActive === 'function' ? options.isStreamActive : () => true,
+    onDiagnostics
   }
   recorderState = state
   recorder.addEventListener('dataavailable', (event) => {
-    if (!event.data || event.data.size <= 0) return
+    const blobSize = Number(event.data?.size || 0)
+    const lastDataAvailableAt = new Date().toISOString()
+    if (!event.data || blobSize <= 0) {
+      diagnostics = buildProviderDiagnostics({ ...diagnostics, recorderState: recorder.state || 'recording', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastBlobSize: blobSize, lastDataAvailableAt, segmentDurationMs: state.segmentDurationMs, lastMediaEvent: 'segment-skipped-empty-blob' })
+      emitDiagnostics(onDiagnostics)
+      return
+    }
     if (!state.shouldUploadSegment() || !state.isStreamActive()) {
-      diagnostics = buildProviderDiagnostics({ ...diagnostics, recorderState: recorder.state || 'recording', trackCount, lastBlobSize: Number(event.data?.size || 0), segmentIndex: state.index, lastMediaEvent: 'segment-skipped-no-demand' })
+      diagnostics = buildProviderDiagnostics({ ...diagnostics, recorderState: recorder.state || 'recording', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastBlobSize: blobSize, lastDataAvailableAt, segmentDurationMs: state.segmentDurationMs, segmentIndex: state.index, lastMediaEvent: 'segment-skipped-no-demand' })
+      emitDiagnostics(onDiagnostics)
       return
     }
     const index = state.index
     state.index += 1
-    diagnostics = buildProviderDiagnostics({ ...diagnostics, recorderState: recorder.state || 'recording', trackCount, lastBlobSize: Number(event.data.size || 0), segmentIndex: index, selectedMimeType: mimeType, lastMediaEvent: 'segment-blob-ready' })
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'recording', recorderState: recorder.state || 'recording', trackCount, mediaStreamTrackCount, audioTrackReadyState, lastBlobSize: blobSize, lastDataAvailableAt, segmentDurationMs: state.segmentDurationMs, segmentIndex: index, selectedMimeType: mimeType, lastMediaEvent: 'segment-blob-ready' })
+    emitDiagnostics(onDiagnostics)
     uploadSegment(event.data, {
       streamId,
       type: 'audio',
@@ -141,16 +163,31 @@ export function startSegmentRecorder(programMediaStream, options = {}) {
       programTimeMs: Date.now() - state.startedAt,
       rollingRetentionMs: Number(options.rollingRetentionMs || DEFAULT_NATIVE_OPTIONS.rollingRetentionMs),
       isStreamActive: state.isStreamActive
+    }).then((uploadResult = {}) => {
+      if (!uploadResult?.ok) return
+      state.readySegmentWriteCount += 1
+      diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'recording', recorderState: recorder.state || 'recording', trackCount, mediaStreamTrackCount, audioTrackReadyState, segmentDurationMs: state.segmentDurationMs, readySegmentWriteCount: state.readySegmentWriteCount, newestAvailableSegmentIndex: Number(uploadResult.index ?? index), hasPlayableSegments: true, lastMediaEvent: 'segment-ready' })
+      emitDiagnostics(onDiagnostics)
     }).catch((error) => {
-      diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: recorder.state || 'recording', trackCount, lastUploadError: error?.message || 'segment upload failed', lastMediaEvent: error?.message || 'segment upload failed' })
+      diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: recorder.state || 'recording', trackCount, mediaStreamTrackCount, audioTrackReadyState, segmentDurationMs: state.segmentDurationMs, lastUploadError: error?.message || 'segment upload failed', lastMediaEvent: error?.message || 'segment upload failed' })
+      emitDiagnostics(onDiagnostics)
     })
   })
   recorder.addEventListener('error', (event) => {
-    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: 'error', trackCount, lastUploadError: event.error?.message || 'recorder error', lastMediaEvent: event.error?.message || 'recorder error' })
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: 'error', trackCount, mediaStreamTrackCount, audioTrackReadyState, segmentDurationMs: state.segmentDurationMs, lastUploadError: event.error?.message || 'recorder error', lastMediaEvent: event.error?.message || 'recorder error' })
+    emitDiagnostics(onDiagnostics)
   })
   audioTracks.forEach((track) => track.addEventListener?.('ended', () => stopSegmentRecorder(), { once: true }))
-  recorder.start(state.segmentDurationMs)
-  diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'recording', recorderState: 'recording', trackCount, selectedMimeType: mimeType, segmentIndex: state.index, lastMediaEvent: 'segment-recorder-started' })
+  try {
+    recorder.start(state.segmentDurationMs)
+  } catch (error) {
+    recorderState = null
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'error', recorderState: 'error', trackCount, mediaStreamTrackCount, audioTrackReadyState, segmentDurationMs: state.segmentDurationMs, lastUploadError: error?.message || 'MediaRecorder start failed', lastMediaEvent: error?.message || 'MediaRecorder start failed' })
+    emitDiagnostics(onDiagnostics)
+    return { ok: false, error: error?.message || 'MediaRecorder start failed.', diagnostics }
+  }
+  diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'recording', recorderState: 'recording', trackCount, mediaStreamTrackCount, audioTrackReadyState, segmentDurationMs: state.segmentDurationMs, selectedMimeType: mimeType, segmentIndex: state.index, lastMediaEvent: 'segment-recorder-started' })
+  emitDiagnostics(onDiagnostics)
   return { ok: true, diagnostics }
 }
 
@@ -207,7 +244,7 @@ export async function writeSegmentMetadata(segmentDoc = {}) {
   const { streamId: _streamId, ...payload } = segmentDoc
   const docRef = await addDoc(segmentCollection(streamId), payload)
   await updateDoc(doc(db, 'musicLiveStreams', streamId), {
-    broadcastState: 'broadcasting',
+    broadcastState: 'liveBroadcasting',
     'nativeStreaming.status': 'broadcasting',
     'nativeStreaming.hasPlayableSegments': true,
     'nativeStreaming.newestAvailableSegmentIndex': Number(payload.index || 0),

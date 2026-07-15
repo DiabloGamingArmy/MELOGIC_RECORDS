@@ -319,6 +319,7 @@ const state = {
     monitorVolume: 0.85,
     monitorConnected: false,
     micProgramSource: null,
+    sequenceMonitorGain: null,
     micLevel: 0,
     micMeterTimer: 0,
     micMeterContext: null,
@@ -1277,6 +1278,16 @@ function renderStreamDetailsPanel() {
   const form = live.streamForm
   const link = publicLiveLink()
   const isNativeRecovery = Boolean(live.nativeInterruptedStreamId && !live.streamId)
+  const isLiveActive = Boolean(
+    live.streamId ||
+    live.stream?.status === 'live' ||
+    ['liveIdleNoListeners', 'liveWarmingBuffer', 'liveBroadcasting'].includes(live.stream?.broadcastState || '')
+  )
+  const nativeLiveStatusCopy = live.providerId === 'nativeStreaming' && isLiveActive
+    ? (live.nativePlaybackDemandCount > 0
+        ? live.nativeRecorderRunning ? 'Live - broadcasting audio chunks.' : 'Live - warming buffer.'
+        : 'Live - waiting for listeners.')
+    : ''
   return `
     <section class="studio-live-panel studio-live-stream-panel">
       <header class="studio-live-subheader">
@@ -1315,13 +1326,14 @@ function renderStreamDetailsPanel() {
           <label class="studio-live-check"><input name="rightsAccepted" type="checkbox" ${form.rightsAccepted ? 'checked' : ''} /> I have the rights and permissions required to broadcast this stream.</label>
           ${renderAdvancedStreamingSettings()}
           ${isNativeRecovery ? '<p class="studio-live-error">This Native Streaming session was interrupted because the browser host session ended. Resume to create a new host session, or end it for listeners.</p>' : ''}
+          ${nativeLiveStatusCopy ? `<p class="studio-live-upload-status">${esc(nativeLiveStatusCopy)}</p>` : ''}
           <div class="studio-live-action-bar">
             <button type="submit" data-live-save-info ${live.savingInfo ? 'disabled' : ''}>${live.streamId ? 'Save / Update Stream Info' : 'Save Draft Details'}</button>
             ${isNativeRecovery
               ? `<button type="button" data-live-resume-native ${live.starting ? 'disabled' : ''}>${live.starting ? 'Resuming...' : 'Resume Stream'}</button><button type="button" data-live-end-interrupted ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Interrupted Stream'}</button>`
-              : `<button type="button" data-live-start-stream ${state.user && !live.starting && !live.streamId ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Live'}</button>`}
-            ${live.streamId ? `<button type="button" data-live-end-stream ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Stream'}</button>` : ''}
-            ${link ? `<button type="button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
+              : isLiveActive ? '' : `<button type="button" data-live-start-stream ${state.user && !live.starting ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Stream'}</button>`}
+            ${isLiveActive ? `<button type="button" data-live-end-stream ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Stream'}</button>` : ''}
+            ${link ? `<button type="button" class="studio-live-button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a class="studio-live-button" href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
           </div>
         </form>
         ${renderListenerPreviewPanel()}
@@ -1383,18 +1395,25 @@ function renderAdvancedStreamingSettings() {
             <li>Demand count: ${Number(live.nativePlaybackDemandCount || 0)}</li>
             <li>Demand path: ${live.streamId ? `livePresence/${esc(live.streamId)}/playbackDemand` : 'none'}</li>
             <li>Last demand: ${esc(live.nativeLastDemandChangeAt || 'none')}</li>
+            <li>Demand observe/write: ${live.streamId ? 'observing playbackDemand' : 'inactive'}</li>
+            <li>Native status: ${esc(live.nativeStreamingStatus || live.stream?.nativeStreaming?.status || 'idleNoListeners')}</li>
             <li>Host session: ${esc(live.nativeHostSessionId || 'none')}</li>
             <li>Host heartbeat: ${esc(live.streamId ? 'active' : live.nativeInterruptedStreamId ? 'interrupted' : 'inactive')}</li>
             <li>Recorder: ${esc(diagnostics.recorderState || (live.nativeRecorderRunning ? 'recording' : 'idle'))}</li>
             <li>Recorder start: ${esc(live.nativeRecorderStartReason || 'none')}</li>
             <li>Recorder stop: ${esc(live.nativeRecorderStopReason || 'none')}</li>
             <li>MIME: ${esc(diagnostics.selectedMimeType || 'none')}</li>
-            <li>Track count: ${diagnostics.trackCount ?? 'unknown'}</li>
+            <li>Media stream tracks: ${diagnostics.mediaStreamTrackCount ?? diagnostics.trackCount ?? 'unknown'}</li>
+            <li>Live track count: ${diagnostics.trackCount ?? 'unknown'}</li>
+            <li>Audio track state: ${esc(diagnostics.audioTrackReadyState || 'unknown')}</li>
+            <li>Segment duration: ${diagnostics.segmentDurationMs ?? 4000} ms</li>
+            <li>Last dataavailable: ${esc(diagnostics.lastDataAvailableAt || 'none')}</li>
             <li>Segment index: ${diagnostics.segmentIndex ?? 'none'}</li>
             <li>Last blob: ${diagnostics.lastBlobSize ?? 0} bytes</li>
             <li>Last upload: ${esc(diagnostics.lastUploadPath || 'none')}</li>
             <li>Upload error: ${esc(diagnostics.lastUploadError || 'none')}</li>
             <li>Newest available: ${diagnostics.newestAvailableSegmentIndex ?? live.stream?.nativeStreaming?.newestAvailableSegmentIndex ?? 'none'}</li>
+            <li>Ready segment writes: ${diagnostics.readySegmentWriteCount ?? 0}</li>
             <li>Playable segments: ${diagnostics.hasPlayableSegments || live.stream?.nativeStreaming?.hasPlayableSegments ? 'yes' : 'no'}</li>
           </ul>
         </article>
@@ -1532,7 +1551,7 @@ function renderSequenceEditorPanel() {
       <footer class="studio-live-footer">
         <div>
           <strong>${esc(live.outputStatus)}</strong>
-          <span>${live.inputSource === 'sequence' ? 'Sequence output feeds Start Live.' : 'Set Input Source to Sequence Editor before broadcasting this playout.'} Local monitor is ${live.monitorEnabled ? 'on' : 'off'}.</span>
+          <span>Program source is ${live.inputSource === 'sequence' ? 'Sequence Output' : 'Browser Input'}. Local monitor is ${live.monitorEnabled ? 'on' : 'off'} and stays independent from program output.</span>
         </div>
         <label class="studio-live-monitor-toggle"><input type="checkbox" data-live-toggle-monitor ${live.monitorEnabled ? 'checked' : ''} /> Monitor</label>
         <label class="studio-live-monitor-volume"><span>Vol</span><input type="range" min="0" max="1" step="0.01" value="${Number(live.monitorVolume || 0.85)}" data-live-monitor-volume /></label>
@@ -1769,6 +1788,8 @@ async function refreshStreamingProviderStatus() {
 function liveProgramOutputState() {
   const live = liveState()
   const mixer = live.programMixer || {}
+  const streamNative = live.stream?.nativeStreaming || {}
+  const diagnostics = live.providerDiagnostics || {}
   const providerId = live.providerId === 'livekit' ? 'livekit' : 'nativeStreaming'
   const provider = getStreamingProvider(providerId)
   const programScene = (mixer.scenes || []).find((scene) => scene.sceneId === mixer.programSceneId)
@@ -1803,11 +1824,11 @@ function liveProgramOutputState() {
       maxPlaybackBufferMs: 60000,
       rollingRetentionMs: 300000,
       status: live.nativeStreamingStatus || 'idleNoListeners',
-      hasPlayableSegments: false,
-      oldestAvailableSegmentIndex: null,
-      newestAvailableSegmentIndex: null,
-      currentSegmentIndex: null,
-      lastSegmentAt: null
+      hasPlayableSegments: Boolean(diagnostics.hasPlayableSegments || streamNative.hasPlayableSegments),
+      oldestAvailableSegmentIndex: streamNative.oldestAvailableSegmentIndex ?? null,
+      newestAvailableSegmentIndex: diagnostics.newestAvailableSegmentIndex ?? streamNative.newestAvailableSegmentIndex ?? null,
+      currentSegmentIndex: diagnostics.newestAvailableSegmentIndex ?? streamNative.currentSegmentIndex ?? null,
+      lastSegmentAt: streamNative.lastSegmentAt || null
     },
     hostActive: Boolean(live.streamId && !live.nativeInterruptedStreamId),
     hostSessionId: live.nativeHostSessionId || '',
@@ -2762,20 +2783,24 @@ function ensureLiveAudioGraph() {
   const masterGain = context.createGain()
   const micGain = context.createGain()
   const sequenceGain = context.createGain()
+  const sequenceMonitorGain = context.createGain()
   const monitorGain = context.createGain()
   const destination = context.createMediaStreamDestination()
   masterGain.gain.value = live.audioEnabled ? Number(live.mixer.masterGain ?? 1) : 0
   micGain.gain.value = live.browserInputEnabled && !live.mixer.browserMuted ? Number(live.mixer.browserGain ?? 1) : 0
-  sequenceGain.gain.value = (live.sequenceInputEnabled || live.inputSource === 'sequence') && !live.mixer.sequenceMuted ? Number(live.mixer.sequenceGain ?? 1) : 0
+  sequenceGain.gain.value = 0
+  sequenceMonitorGain.gain.value = 0
   monitorGain.gain.value = Number(live.monitorVolume || 0.85)
   micGain.connect(masterGain)
   sequenceGain.connect(masterGain)
+  sequenceMonitorGain.connect(monitorGain)
   masterGain.connect(monitorGain)
   masterGain.connect(destination)
   live.audioContext = context
   live.masterGain = masterGain
   live.micGain = micGain
   live.sequenceGain = sequenceGain
+  live.sequenceMonitorGain = sequenceMonitorGain
   live.monitorGain = monitorGain
   live.destination = destination
   live.outputTrack = destination.stream.getAudioTracks()[0] || null
@@ -2786,9 +2811,12 @@ function ensureLiveAudioGraph() {
 function syncLiveMonitorRoute() {
   const live = liveState()
   if (!live.audioContext || !live.monitorGain) return
+  const sequenceProgramRouted = Boolean((live.sequenceInputEnabled || live.inputSource === 'sequence') && !live.mixer.sequenceMuted)
+  const sequenceGainValue = Number(live.mixer.sequenceGain ?? 1)
   if (live.masterGain) live.masterGain.gain.value = live.audioEnabled ? Number(live.mixer.masterGain ?? 1) : 0
   if (live.micGain) live.micGain.gain.value = live.browserInputEnabled && !live.mixer.browserMuted ? Number(live.mixer.browserGain ?? 1) : 0
-  if (live.sequenceGain) live.sequenceGain.gain.value = (live.sequenceInputEnabled || live.inputSource === 'sequence') && !live.mixer.sequenceMuted ? Number(live.mixer.sequenceGain ?? 1) : 0
+  if (live.sequenceGain) live.sequenceGain.gain.value = sequenceProgramRouted ? sequenceGainValue : 0
+  if (live.sequenceMonitorGain) live.sequenceMonitorGain.gain.value = !sequenceProgramRouted && !live.mixer.sequenceMuted ? sequenceGainValue : 0
   live.monitorGain.gain.value = Number(live.monitorVolume || 0)
   if (live.monitorEnabled && !live.monitorConnected) {
     try {
@@ -2946,11 +2974,20 @@ async function getLivePublishTrack() {
   const live = liveState()
   const graph = ensureLiveAudioGraph()
   if (graph.audioContext?.state === 'suspended') await graph.audioContext.resume()
-  if (live.browserInputEnabled && !live.sourceTrack) await prepareLiveMicSource()
+  const sequenceProgramActive = Boolean((live.sequenceInputEnabled || live.inputSource === 'sequence') && live.activePlayers.length)
+  if (live.browserInputEnabled && !live.sourceTrack && !sequenceProgramActive) await prepareLiveMicSource()
   if (live.browserInputEnabled) syncLiveMicProgramRoute()
   syncLiveMonitorRoute()
   if (!graph.outputTrack) throw new Error('Live Studio program output track is not available.')
   return graph.outputTrack
+}
+
+function nativeHasRecordableAudioSource() {
+  const live = liveState()
+  const rawTrack = live.sourceTrack?.mediaStreamTrack || live.sourceTrack
+  const browserReady = Boolean(live.browserInputEnabled && rawTrack && rawTrack.readyState !== 'ended')
+  const sequenceReady = Boolean((live.sequenceInputEnabled || live.inputSource === 'sequence') && live.activePlayers.length && !live.mixer.sequenceMuted)
+  return browserReady || sequenceReady
 }
 
 async function nativeProgramMediaStream() {
@@ -2968,15 +3005,50 @@ async function nativeProgramMediaStream() {
   return stream
 }
 
+function updateNativeProviderDiagnostics(next = {}) {
+  const live = liveState()
+  live.providerDiagnostics = {
+    ...(live.providerDiagnostics || {}),
+    ...(next || {})
+  }
+  if (currentStudioSection() === 'live') renderShell()
+}
+
+function nativeBroadcastStateForStatus(status = liveState().nativeStreamingStatus || 'idleNoListeners') {
+  if (status === 'broadcasting') return 'liveBroadcasting'
+  if (status === 'warmingBuffer') return 'liveWarmingBuffer'
+  return 'liveIdleNoListeners'
+}
+
 async function startNativeSegmentRecorderIfNeeded() {
   const live = liveState()
   if (live.nativeRecorderRunning || !live.streamId || live.providerId !== 'nativeStreaming') return
   const provider = getStreamingProvider('nativeStreaming')
   const programStream = await nativeProgramMediaStream()
+  const audioTracks = programStream.getAudioTracks?.() || []
+  const liveAudioTrack = audioTracks.find((track) => track.readyState === 'live') || null
+  if (!liveAudioTrack || !nativeHasRecordableAudioSource()) {
+    const message = 'Native Streaming has no audio track to record. Enable a mic or sequence output.'
+    live.nativeStreamingStatus = 'error'
+    live.nativeRecorderRunning = false
+    live.outputStatus = message
+    updateNativeProviderDiagnostics({
+      recorderState: 'idle',
+      mediaStreamTrackCount: programStream.getTracks?.().length || 0,
+      trackCount: programStream.getTracks?.().filter((track) => track.readyState === 'live').length || 0,
+      audioTrackReadyState: '',
+      lastUploadError: message,
+      lastMediaEvent: 'no-native-audio-track'
+    })
+    return
+  }
   live.nativeRecorderStartReason = live.nativePlaybackDemandCount > 0 ? 'playback-demand' : 'manual-start'
   live.providerDiagnostics = {
     ...(live.providerDiagnostics || {}),
     trackCount: programStream.getTracks?.().filter((track) => track.readyState === 'live').length || 0,
+    mediaStreamTrackCount: programStream.getTracks?.().length || 0,
+    audioTrackReadyState: liveAudioTrack.readyState || '',
+    segmentDurationMs: 4000,
     recorderStartReason: live.nativeRecorderStartReason
   }
   const result = provider.startSegmentRecorder?.(programStream, {
@@ -2984,19 +3056,23 @@ async function startNativeSegmentRecorderIfNeeded() {
     segmentDurationMs: 4000,
     rollingRetentionMs: 300000,
     shouldUploadSegment: () => liveState().nativePlaybackDemandCount > 0,
-    isStreamActive: () => Boolean(liveState().streamId === live.streamId && !liveState().ending)
+    isStreamActive: () => Boolean(liveState().streamId === live.streamId && !liveState().ending),
+    onDiagnostics: updateNativeProviderDiagnostics
   }) || { ok: false }
   live.providerDiagnostics = {
     ...(live.providerDiagnostics || {}),
     ...(result.diagnostics || provider.getDiagnostics?.() || {}),
     trackCount: programStream.getTracks?.().filter((track) => track.readyState === 'live').length || 0,
+    mediaStreamTrackCount: programStream.getTracks?.().length || 0,
+    audioTrackReadyState: liveAudioTrack.readyState || '',
+    segmentDurationMs: 4000,
     recorderStartReason: live.nativeRecorderStartReason
   }
   if (result.ok) {
     live.nativeRecorderRunning = true
     live.nativeStreamingStatus = 'warmingBuffer'
     live.outputStatus = 'Native Streaming buffer is warming for active listeners.'
-    heartbeatLiveProgramState({ broadcastState: 'warmingBuffer', connectionStatus: 'live' }).catch(() => {})
+    heartbeatLiveProgramState({ broadcastState: 'liveWarmingBuffer', connectionStatus: 'live' }).catch(() => {})
   } else {
     live.nativeStreamingStatus = 'error'
     live.nativeRecorderRunning = false
@@ -3015,7 +3091,7 @@ function stopNativeSegmentRecorder({ status = 'pausedNoListeners' } = {}) {
   live.outputStatus = status === 'idleNoListeners'
     ? 'Native Streaming is idle until a listener clicks Listen.'
     : 'Native Streaming paused because no listeners are requesting playback.'
-  heartbeatLiveProgramState({ broadcastState: status, connectionStatus: 'live' }).catch(() => {})
+  heartbeatLiveProgramState({ broadcastState: nativeBroadcastStateForStatus(status), connectionStatus: 'live' }).catch(() => {})
 }
 
 function observeNativePlaybackDemand(streamId = '') {
@@ -3107,7 +3183,7 @@ async function activateNativeLiveSession(streamId = '') {
     if (!live.streamId) return
     heartbeatMusicLiveStream(live.streamId, {
       ...liveProgramOutputState(),
-      broadcastState: live.nativeRecorderRunning ? 'broadcasting' : live.nativePlaybackDemandCount > 0 ? 'warmingBuffer' : 'liveIdleNoListeners',
+      broadcastState: live.nativeRecorderRunning ? 'liveBroadcasting' : live.nativePlaybackDemandCount > 0 ? 'liveWarmingBuffer' : 'liveIdleNoListeners',
       connectionStatus: 'live'
     }).catch(() => {})
     writeNativeHostPresence({ streamId: live.streamId, uid: state.user.uid, state: 'online', broadcasting: live.nativeRecorderRunning, hostSessionId: live.nativeHostSessionId }).catch((error) => {
@@ -3261,6 +3337,7 @@ async function playLiveStudioItem(itemId = '') {
   gain.gain.value = Number.isFinite(linearGain) ? linearGain : 1
   source.connect(gain)
   gain.connect(graph.sequenceGain || graph.masterGain)
+  if (graph.sequenceMonitorGain) gain.connect(graph.sequenceMonitorGain)
   const playerId = `${item.itemId}-${Date.now()}`
   const player = { playerId, itemId: item.itemId, audio, source, gain, paused: false }
   live.activePlayers.push(player)

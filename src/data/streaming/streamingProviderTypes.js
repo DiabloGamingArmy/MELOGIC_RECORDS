@@ -84,6 +84,7 @@ export function buildProviderDiagnostics(base = {}) {
     lastBlobSize: Number.isFinite(Number(base.lastBlobSize)) ? Number(base.lastBlobSize) : null,
     lastUploadPath: String(base.lastUploadPath || ''),
     lastUploadError: String(base.lastUploadError || ''),
+    lastDataAvailableAt: String(base.lastDataAvailableAt || ''),
     newestAvailableSegmentIndex: Number.isFinite(Number(base.newestAvailableSegmentIndex)) ? Number(base.newestAvailableSegmentIndex) : null,
     hasPlayableSegments: base.hasPlayableSegments === true,
     demandCount: Number.isFinite(Number(base.demandCount)) ? Number(base.demandCount) : 0,
@@ -93,6 +94,10 @@ export function buildProviderDiagnostics(base = {}) {
     hostSessionId: String(base.hostSessionId || ''),
     hostHeartbeatFresh: base.hostHeartbeatFresh === true,
     trackCount: Number.isFinite(Number(base.trackCount)) ? Number(base.trackCount) : null,
+    mediaStreamTrackCount: Number.isFinite(Number(base.mediaStreamTrackCount)) ? Number(base.mediaStreamTrackCount) : null,
+    audioTrackReadyState: String(base.audioTrackReadyState || ''),
+    segmentDurationMs: Number.isFinite(Number(base.segmentDurationMs)) ? Number(base.segmentDurationMs) : null,
+    readySegmentWriteCount: Number.isFinite(Number(base.readySegmentWriteCount)) ? Number(base.readySegmentWriteCount) : 0,
     recorderStartReason: String(base.recorderStartReason || ''),
     recorderStopReason: String(base.recorderStopReason || '')
   }
