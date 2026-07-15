@@ -3094,7 +3094,14 @@ async function activateNativeLiveSession(streamId = '') {
   subscribeLiveStudioStream(streamId)
   subscribeLiveStudioChat(streamId)
   observeNativePlaybackDemand(streamId)
-  await writeNativeHostPresence({ streamId, uid: state.user.uid, state: 'online', broadcasting: false, hostSessionId }).catch(() => {})
+  await writeNativeHostPresence({ streamId, uid: state.user.uid, state: 'online', broadcasting: false, hostSessionId }).catch((error) => {
+    console.warn('[studio-live] Native host presence write failed after stream was marked live.', {
+      streamId,
+      hostSessionId,
+      message: error?.message || String(error)
+    })
+    live.nativeStopWarning = 'Live stream started, but realtime host presence could not be written.'
+  })
   if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
   const beat = () => {
     if (!live.streamId) return
@@ -3103,7 +3110,13 @@ async function activateNativeLiveSession(streamId = '') {
       broadcastState: live.nativeRecorderRunning ? 'broadcasting' : live.nativePlaybackDemandCount > 0 ? 'warmingBuffer' : 'liveIdleNoListeners',
       connectionStatus: 'live'
     }).catch(() => {})
-    writeNativeHostPresence({ streamId: live.streamId, uid: state.user.uid, state: 'online', broadcasting: live.nativeRecorderRunning, hostSessionId: live.nativeHostSessionId }).catch(() => {})
+    writeNativeHostPresence({ streamId: live.streamId, uid: state.user.uid, state: 'online', broadcasting: live.nativeRecorderRunning, hostSessionId: live.nativeHostSessionId }).catch((error) => {
+      console.warn('[studio-live] Native host heartbeat presence write failed.', {
+        streamId: live.streamId,
+        hostSessionId: live.nativeHostSessionId,
+        message: error?.message || String(error)
+      })
+    })
   }
   beat()
   live.heartbeatTimer = window.setInterval(beat, 15000)

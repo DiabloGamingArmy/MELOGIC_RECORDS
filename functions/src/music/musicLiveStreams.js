@@ -876,8 +876,20 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     ? nativeCanStartIdle
     : allowedLiveKitStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
   if (!canMarkLive) {
-    liveWarn('mark live validation failed', diagnostics)
-    throw new HttpsError('failed-precondition', 'This stream cannot be marked live.', diagnostics)
+    const rejectionDiagnostics = {
+      ...diagnostics,
+      uid,
+      streamHostUid: cleanString(stream.hostUid || '', 120),
+      streamStatus: cleanString(stream.status || '', 80),
+      requestedProvider,
+      requestHostSessionId: cleanString(request.data?.hostSessionId || '', 120),
+      requestBroadcastState: cleanString(request.data?.broadcastState || '', 80),
+      requestNativeStreamingStatus: cleanString(request.data?.nativeStreaming?.status || '', 80),
+      nativeCanStartIdle,
+      canMarkLive
+    }
+    liveWarn('mark live validation failed', rejectionDiagnostics)
+    throw new HttpsError('failed-precondition', 'This stream cannot be marked live.', rejectionDiagnostics)
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp()
