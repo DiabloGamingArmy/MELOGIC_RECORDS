@@ -433,12 +433,17 @@ function livekitConfig(stage = 'livekit config check') {
     livekitApiKeyPresent: Boolean(apiKey),
     livekitApiSecretPresent: Boolean(apiSecret)
   })
-  if (!url || !apiKey || !apiSecret) {
-    throw new HttpsError('failed-precondition', 'Live streaming is not configured yet.', {
+  const urlValid = /^wss?:\/\//i.test(url)
+  if (!urlValid || !apiKey || !apiSecret) {
+    throw new HttpsError('failed-precondition', !urlValid
+      ? 'WebRTC Live is not configured. Missing LiveKit server URL.'
+      : 'WebRTC Live is not configured. Missing LiveKit credentials.', {
       stage,
       livekitUrlPresent: Boolean(url),
+      livekitUrlValid: urlValid,
       livekitApiKeyPresent: Boolean(apiKey),
-      livekitApiSecretPresent: Boolean(apiSecret)
+      livekitApiSecretPresent: Boolean(apiSecret),
+      suggestion: 'Use Buffered Broadcast for OBS/HLS streaming.'
     })
   }
   return { url, apiKey, apiSecret }

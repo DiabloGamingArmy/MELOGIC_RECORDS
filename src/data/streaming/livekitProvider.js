@@ -1,6 +1,33 @@
 import { Room } from 'livekit-client'
 import { buildProviderDiagnostics, providerCapabilities, STREAM_PROVIDERS } from './streamingProviderTypes'
 
+const WEBRTC_FALLBACK_SUGGESTION = 'Use Buffered Broadcast for OBS/HLS streaming.'
+
+export function validateLiveKitConnectionConfig({ url = '', token = '' } = {}) {
+  const cleanUrl = String(url || '').trim()
+  const cleanToken = String(token || '').trim()
+  const urlValid = /^wss?:\/\//i.test(cleanUrl)
+  const errorMessage = !urlValid
+    ? `WebRTC Live is not configured. Missing LiveKit server URL. ${WEBRTC_FALLBACK_SUGGESTION}`
+    : !cleanToken
+      ? `WebRTC Live is not configured. Missing LiveKit access token. ${WEBRTC_FALLBACK_SUGGESTION}`
+      : ''
+  return {
+    url: cleanUrl,
+    token: cleanToken,
+    urlPresent: Boolean(cleanUrl),
+    urlValid,
+    tokenPresent: Boolean(cleanToken),
+    errorMessage
+  }
+}
+
+export function assertLiveKitConnectionConfig(config = {}) {
+  const result = validateLiveKitConnectionConfig(config)
+  if (result.errorMessage) throw new Error(result.errorMessage)
+  return result
+}
+
 export function createLiveKitProvider() {
   let room = null
   let diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.webrtc })
@@ -23,8 +50,11 @@ export function createLiveKitProvider() {
       return { ok: true, provider: STREAM_PROVIDERS.webrtc, diagnostics }
     },
     async startPublishing({ url = '', token = '', tracks = [], publishOptions = {}, existingRoom = null } = {}) {
+      const connection = existingRoom
+        ? validateLiveKitConnectionConfig({ url, token })
+        : assertLiveKitConnectionConfig({ url, token })
       room = existingRoom || new Room({ adaptiveStream: true, dynacast: true })
-      if (!existingRoom) await room.connect(url, token)
+      if (!existingRoom) await room.connect(connection.url, connection.token)
       for (const item of tracks.filter(Boolean)) {
         const track = item.track || item
         const options = item.options || publishOptions || {}

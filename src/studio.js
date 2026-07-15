@@ -40,7 +40,8 @@ import {
   STREAM_PROVIDERS
 } from './data/streaming/streamingProviderTypes'
 import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './data/streaming/hlsEdgePlayer'
-import { fallbackStreamingProviderStatus } from './data/streaming/providerStatusService'
+import { validateLiveKitConnectionConfig } from './data/streaming/livekitProvider'
+import { fallbackStreamingProviderStatus, getStreamingProviderStatus } from './data/streaming/providerStatusService'
 import {
   getNativeHostPresence,
   nativeHostSessionId,
@@ -1380,13 +1381,18 @@ function renderAdvancedStreamingSettings() {
   const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
   const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
   const ingestServer = String(import.meta.env?.VITE_BUFFERED_BROADCAST_INGEST_SERVER || '').trim()
+  const isBuffered = isBufferedBroadcastProvider(live.providerId)
+  const isWebrtc = isWebrtcProvider(live.providerId)
   return `
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
       <summary>Advanced Streaming Settings</summary>
       <div class="studio-live-advanced-grid">
         <label>Streaming Method
           <select name="provider" data-streaming-method ${live.streamId ? 'disabled' : ''}>
-            ${options.map((option) => `<option value="${esc(option.id)}" ${option.id === live.providerId ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}
+            ${options.map((option) => {
+              const unavailableWebrtc = option.id === STREAM_PROVIDERS.webrtc && livekitStatus.configured !== true
+              return `<option value="${esc(option.id)}" ${option.id === live.providerId ? 'selected' : ''} ${unavailableWebrtc ? 'disabled' : ''}>${esc(option.label)}${unavailableWebrtc ? ' (not configured)' : ''}</option>`
+            }).join('')}
           </select>
         </label>
         <div class="studio-live-provider-status">
@@ -1426,15 +1432,29 @@ function renderAdvancedStreamingSettings() {
             <li>Latency: low-latency realtime</li>
           </ul>
         </article>
-        <article>
-          <h2>LiveKit Diagnostics</h2>
+        ${isBuffered ? `<article>
+          <h2>Buffered Broadcast Diagnostics</h2>
+          <ul>
+            <li>Provider: bufferedBroadcast</li>
+            <li>Transport provider: hls-edge</li>
+            <li>Playback mode: hls</li>
+            <li>Ingest mode: rtmp-obs</li>
+            <li>Stream key: ${esc(diagnostics.streamKey || streamKey)}</li>
+            <li>Playback URL: ${esc(diagnostics.hlsPlaybackUrl || hlsPlaybackUrl)}</li>
+            <li>Stream document status: ${esc(diagnostics.streamDocStatus || live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
+            <li>No LiveKit attempted: ${diagnostics.noLiveKitAttempted === false ? 'no' : 'yes'}</li>
+          </ul>
+        </article>` : isWebrtc ? `<article>
+          <h2>WebRTC Diagnostics</h2>
           <ul>
             <li>Provider: ${esc(live.providerId || STREAM_PROVIDERS.bufferedBroadcast)}</li>
             <li>Room state: ${esc(live.room?.state || live.room?.connectionState || 'disconnected')}</li>
             <li>LiveKit URL present: ${diagnostics.livekitUrlPresent ? 'yes' : 'unknown'}</li>
+            <li>LiveKit URL valid: ${diagnostics.livekitUrlValid ? 'yes' : 'no'}</li>
             <li>Stream ID: ${esc(live.streamId || live.draftStreamId || live.stream?.id || 'none')}</li>
             <li>Room name: ${esc(diagnostics.roomName || live.stream?.livekitRoomName || live.stream?.roomName || 'none')}</li>
             <li>Publish token received: ${diagnostics.publishTokenReceived ? 'yes' : 'unknown'}</li>
+            <li>Configuration error: ${esc(diagnostics.livekitConfigError || 'none')}</li>
             <li>Broadcast track state: ${esc(diagnostics.broadcastTrackReadyState || live.programAudioTrack?.readyState || 'unknown')}</li>
             <li>Broadcast track enabled: ${diagnostics.broadcastTrackEnabled ? 'yes' : 'no'}</li>
             <li>Publication SID: ${esc(diagnostics.livekitPublishedTrackSid || 'none')}</li>
@@ -1446,7 +1466,7 @@ function renderAdvancedStreamingSettings() {
             <li>Monitor enabled: ${live.monitorEnabled ? 'yes' : 'no'}</li>
             <li>RTDB demand count: ${Number(live.nativePlaybackDemandCount || 0)}</li>
           </ul>
-        </article>
+        </article>` : ''}
       </div>
       <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Buffered Broadcast uses the Melogic HLS edge for public playback; WebRTC Live remains available for realtime rooms.</p>
       ${showNativeDebug ? `<div class="studio-live-provider-copy">
@@ -1843,7 +1863,7 @@ async function refreshStreamingProviderStatus() {
   if (live.providerStatusLoading) return
   live.providerStatusLoading = true
   try {
-    live.providerStatus = fallbackStreamingProviderStatus()
+    live.providerStatus = await getStreamingProviderStatus()
   } catch (error) {
     live.providerStatus = fallbackStreamingProviderStatus(error)
   } finally {
@@ -1929,7 +1949,10 @@ function liveProgramOutputState() {
       fps: Number(mixer.fps || 30),
       mode: mixer.mode || 'program'
     },
-    providerDiagnostics: provider.getDiagnostics?.() || live.providerDiagnostics || {}
+    providerDiagnostics: {
+      ...(provider.getDiagnostics?.() || {}),
+      ...(live.providerDiagnostics || {})
+    }
   }
 }
 
@@ -2691,7 +2714,10 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.nativeHostSessionId = sameRuntimeNativeSession ? localHostSessionId : stream.hostSessionId || live.nativeHostSessionId || ''
   live.draftStreamId = streamId || live.draftStreamId || ''
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
-  live.providerId = normalizeProviderId(stream.provider)
+  const restoredProviderId = normalizeProviderId(stream.provider)
+  live.providerId = !isActive && isWebrtcProvider(restoredProviderId)
+    ? STREAM_PROVIDERS.bufferedBroadcast
+    : restoredProviderId
   live.nativeStreamingStatus = stream.nativeStreaming?.status || live.nativeStreamingStatus || 'idleNoListeners'
   live.audioEnabled = stream.audioEnabled !== false
   live.videoEnabled = stream.videoEnabled === true
@@ -4338,6 +4364,9 @@ async function startLiveStudioStream() {
   let pendingStreamId = ''
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
+    if (isWebrtcProvider(live.providerId) && live.providerStatus?.providers?.webrtc?.configured === false) {
+      throw new Error('WebRTC Live is not configured. Missing LiveKit server URL. Use Buffered Broadcast for OBS/HLS streaming.')
+    }
     const programTrack = isWebrtcProvider(live.providerId) && live.audioEnabled ? await getLivePublishTrack() : null
     if (isWebrtcProvider(live.providerId) && (!programTrack || programTrack.readyState !== 'live')) {
       throw new Error('Live program audio track is not available.')
@@ -4366,6 +4395,18 @@ async function startLiveStudioStream() {
     if (!pendingStreamId) throw new Error('The live stream service did not return a stream id.')
     live.nativeHostSessionId = live.nativeHostSessionId || nativeHostSessionId(pendingStreamId)
     if (isBufferedBroadcastProvider(live.providerId)) {
+      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
+      const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+      live.providerDiagnostics = {
+        providerId: STREAM_PROVIDERS.bufferedBroadcast,
+        transportProvider: 'hls-edge',
+        playbackMode: 'hls',
+        ingestMode: 'rtmp-obs',
+        streamKey,
+        hlsPlaybackUrl,
+        streamDocStatus: 'starting',
+        noLiveKitAttempted: true
+      }
       live.streamId = pendingStreamId
       await markMusicLiveStreamOnAir(pendingStreamId, {
         ...liveStreamPayload(),
@@ -4403,9 +4444,26 @@ async function startLiveStudioStream() {
           message: error?.message || String(error)
         })
       })
+      live.providerDiagnostics = {
+        ...(live.providerDiagnostics || {}),
+        streamDocStatus: 'live',
+        noLiveKitAttempted: true
+      }
       live.outputStatus = 'On air. Waiting for the OBS feed at the Melogic HLS edge.'
       return
     }
+    const livekitConnection = validateLiveKitConnectionConfig({
+      url: response.url,
+      token: response.hostToken
+    })
+    updateLiveProgramAudioDiagnostics({
+      livekitUrlPresent: livekitConnection.urlPresent,
+      livekitUrlValid: livekitConnection.urlValid,
+      publishTokenReceived: livekitConnection.tokenPresent,
+      livekitConfigError: livekitConnection.errorMessage,
+      noLiveKitAttempted: Boolean(livekitConnection.errorMessage)
+    })
+    if (livekitConnection.errorMessage) throw new Error(livekitConnection.errorMessage)
     const room = new Room({ adaptiveStream: false, dynacast: false })
     live.room = room
     live.streamId = pendingStreamId
@@ -4432,7 +4490,7 @@ async function startLiveStudioStream() {
       live.heartbeatTimer = 0
       renderShell()
     })
-    await room.connect(response.url, response.hostToken)
+    await room.connect(livekitConnection.url, livekitConnection.token)
     live.localTrack = programTrack
     live.programAudioTrack = programTrack
     live.audioPublishedToProvider = false
@@ -4446,7 +4504,10 @@ async function startLiveStudioStream() {
       live.audioPublishedToProvider = true
       updateLiveProgramAudioDiagnostics({
         livekitUrlPresent: Boolean(response.url),
+        livekitUrlValid: livekitConnection.urlValid,
         publishTokenReceived: Boolean(response.hostToken),
+        livekitConfigError: '',
+        noLiveKitAttempted: false,
         roomName: response.roomName || response.livekitRoomName || '',
         livekitPublishedTrackSid: publication?.trackSid || publication?.sid || '',
         livekitPublishedTrackName: publication?.trackName || publication?.track?.name || 'melogic-program-audio'
@@ -4952,7 +5013,15 @@ function bindLiveStudioControls() {
       renderShell()
       return
     }
-    live.providerId = normalizeProviderId(e.currentTarget.value)
+    const requestedProvider = normalizeProviderId(e.currentTarget.value)
+    if (isWebrtcProvider(requestedProvider) && live.providerStatus?.providers?.webrtc?.configured !== true) {
+      live.providerId = STREAM_PROVIDERS.bufferedBroadcast
+      live.error = 'WebRTC Live is not configured. Missing LiveKit server URL. Use Buffered Broadcast for OBS/HLS streaming.'
+      live.outputStatus = 'Buffered Broadcast remains selected.'
+      renderShell()
+      return
+    }
+    live.providerId = requestedProvider
     const provider = getStreamingProvider(live.providerId)
     live.providerDiagnostics = provider.getDiagnostics?.() || {}
     live.outputStatus = isBufferedBroadcastProvider(live.providerId)

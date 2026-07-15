@@ -1,6 +1,11 @@
 const admin = require('firebase-admin')
 const crypto = require('crypto')
 const { onCall, onRequest, HttpsError } = require('firebase-functions/v2/https')
+const { defineSecret } = require('firebase-functions/params')
+
+const LIVEKIT_URL = defineSecret('LIVEKIT_URL')
+const LIVEKIT_API_KEY = defineSecret('LIVEKIT_API_KEY')
+const LIVEKIT_API_SECRET = defineSecret('LIVEKIT_API_SECRET')
 
 function db() {
   return admin.firestore()
@@ -126,9 +131,15 @@ const getAntMediaPlaybackAuthorization = onCall({ region: 'us-central1' }, async
 
 const getAntMediaPlaybackToken = getAntMediaPlaybackAuthorization
 
-const getStreamingProviderStatus = onCall({ region: 'us-central1' }, async () => {
+const getStreamingProviderStatus = onCall({
+  region: 'us-central1',
+  secrets: [LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET]
+}, async () => {
   const config = antMediaConfig()
-  const liveKitConfigured = Boolean(process.env.LIVEKIT_URL || process.env.LIVEKIT_API_KEY || process.env.LIVEKIT_API_SECRET)
+  const liveKitUrl = cleanString(LIVEKIT_URL.value(), 1000)
+  const liveKitConfigured = /^wss?:\/\//i.test(liveKitUrl)
+    && Boolean(cleanString(LIVEKIT_API_KEY.value(), 240))
+    && Boolean(cleanString(LIVEKIT_API_SECRET.value(), 240))
   return {
     ok: true,
     providers: {

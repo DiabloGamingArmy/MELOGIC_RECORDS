@@ -56,6 +56,7 @@ import {
   canPlayNativeHls,
   isAllowedHlsPlaybackUrl
 } from './data/streaming/hlsEdgePlayer'
+import { assertLiveKitConnectionConfig } from './data/streaming/livekitProvider'
 import { getNativePlaybackQueue, getNativePlaybackQueueDiagnostics } from './data/streaming/nativeStreamingProvider'
 import {
   clearPlaybackDemand,
@@ -4075,7 +4076,8 @@ async function startHostBroadcast(form) {
       }
       rerender()
     })
-    await room.connect(response.url, response.hostToken)
+    const livekitConnection = assertLiveKitConnectionConfig({ url: response.url, token: response.hostToken })
+    await room.connect(livekitConnection.url, livekitConnection.token)
     state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Publishing Sequence Software output...' : 'Publishing selected audio input...'
     rerender()
     let localTrack
@@ -4520,7 +4522,11 @@ async function joinLiveListener(options = {}) {
       stopListenerPresenceHeartbeat()
       updateLiveListenerControls()
     })
-    await room.connect(credentials.url, credentials.listenerToken || credentials.token)
+    const livekitConnection = assertLiveKitConnectionConfig({
+      url: credentials.url,
+      token: credentials.listenerToken || credentials.token
+    })
+    await room.connect(livekitConnection.url, livekitConnection.token)
     state.nativeListenerDiagnostics.roomConnectionState = room.state || room.connectionState || 'connected'
     if (!state.listenerAudioElement && state.listenerVideoElement) {
       state.liveStatus = state.liveStream?.programHasAudio === true ? 'waitingForRemoteAudio' : 'playing'

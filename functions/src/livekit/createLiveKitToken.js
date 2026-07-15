@@ -40,6 +40,18 @@ const createLiveKitToken = onCall(
       throw new HttpsError('unauthenticated', 'You must be signed in to join a call.')
     }
 
+    const livekitUrl = String(LIVEKIT_URL.value() || '').trim()
+    if (!/^wss?:\/\//i.test(livekitUrl)) {
+      throw new HttpsError('failed-precondition', 'WebRTC Live is not configured. Missing LiveKit server URL.', {
+        suggestion: 'Use Buffered Broadcast for OBS/HLS streaming.'
+      })
+    }
+    if (!String(LIVEKIT_API_KEY.value() || '').trim() || !String(LIVEKIT_API_SECRET.value() || '').trim()) {
+      throw new HttpsError('failed-precondition', 'WebRTC Live is not configured. Missing LiveKit credentials.', {
+        suggestion: 'Use Buffered Broadcast for OBS/HLS streaming.'
+      })
+    }
+
     const uid = request.auth.uid
     const email = request.auth.token.email || ''
     const fallbackName = email || uid
@@ -77,7 +89,7 @@ const createLiveKitToken = onCall(
     })
 
     return {
-      url: LIVEKIT_URL.value(),
+      url: livekitUrl,
       token: await token.toJwt(),
       roomName,
       identity: uid,

@@ -14,7 +14,7 @@ const providerFactories = {
 let providerCache = null
 
 export function preferredStreamingProviderId() {
-  return normalizeProviderId(import.meta.env?.VITE_STREAM_PROVIDER || STREAM_PROVIDERS.bufferedBroadcast)
+  return STREAM_PROVIDERS.bufferedBroadcast
 }
 
 export function getStreamingProviders() {
