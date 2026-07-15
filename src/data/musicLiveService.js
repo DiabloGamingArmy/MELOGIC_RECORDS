@@ -14,7 +14,7 @@ const DEFAULT_RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
 export function normalizeLiveStreamTransport(payload = {}) {
   const method = payload.streamingMethod || payload.ingestMethod || 'browserWebrtc'
   const ingestMethod = method === 'obsRtmp' || method === 'obs' ? 'obsRtmp' : 'browserWebrtc'
-  const streamKey = sanitizeHlsStreamKey(payload.streamKey || payload.streamId || 'mystream') || 'mystream'
+  const streamKey = sanitizeHlsStreamKey(payload.streamKey || 'mystream') || 'mystream'
   return {
     ...payload,
     provider: STREAM_PROVIDERS.hlsEdge,
@@ -32,6 +32,27 @@ export function normalizeLiveStreamTransport(payload = {}) {
       ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).trim()
       : String(payload.rtmpIngestServer || '').trim()
   }
+}
+
+function liveWriterPayload(payload = {}) {
+  const normalized = normalizeLiveStreamTransport(payload)
+  if (normalized.provider === STREAM_PROVIDERS.hlsEdge) {
+    normalized.transportProvider = 'hls-edge'
+    normalized.playbackMode = 'hls'
+    if (!normalized.streamKey) throw new Error('Missing HLS stream key before save.')
+    normalized.hlsPlaybackUrl = normalized.hlsPlaybackUrl || buildHlsPlaybackUrl(normalized.streamKey)
+  }
+  console.log('[Live Writer] saving stream transport', {
+    provider: normalized.provider,
+    transportProvider: normalized.transportProvider,
+    playbackMode: normalized.playbackMode,
+    ingestMethod: normalized.ingestMethod,
+    ingestProtocol: normalized.ingestProtocol,
+    streamKey: normalized.streamKey,
+    hlsPlaybackUrl: normalized.hlsPlaybackUrl,
+    streamId: normalized.streamId || ''
+  })
+  return normalized
 }
 
 function toIsoDate(value) {
@@ -65,6 +86,7 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
         ? STREAM_PROVIDERS.antMedia
         : STREAM_PROVIDERS.nativeWeb
   const rawProvider = String(raw.provider || '')
+  const rawTransportProvider = String(raw.transportProvider || '')
   const rawPlaybackMode = String(raw.playbackMode || '')
   const rawStreamKey = String(raw.streamKey || '')
   const rawHlsPlaybackUrl = String(raw.hlsPlaybackUrl || '')
@@ -120,6 +142,7 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     audioOnly: raw.audioOnly !== false,
     provider,
     rawProvider,
+    rawTransportProvider,
     rawPlaybackMode,
     rawStreamKey,
     rawHlsPlaybackUrl,
@@ -245,7 +268,15 @@ export function subscribeMusicLiveStream(streamId = '', onNext = () => {}, onErr
   if (!db || !id || id.includes('/')) return () => {}
   return onSnapshot(
     doc(db, FIRESTORE_COLLECTIONS.musicLiveStreams, id),
-    (snapshot) => onNext(snapshot.exists() ? normalizeMusicLiveStream(snapshot) : null),
+    (snapshot) => {
+      if (!snapshot.exists()) {
+        onNext(null)
+        return
+      }
+      const rawStream = { streamId: snapshot.id, ...(snapshot.data() || {}) }
+      console.log('[Live Receiver] raw stream document', rawStream)
+      onNext(normalizeMusicLiveStream(snapshot))
+    },
     (error) => {
       console.warn('[musicLiveService] Live stream subscription failed.', error?.message || error)
       onError(error)
@@ -328,7 +359,10 @@ export async function getMusicLiveStream(streamId = '') {
   if (!db || !id || id.includes('/')) return null
   try {
     const snapshot = await getDoc(doc(db, FIRESTORE_COLLECTIONS.musicLiveStreams, id))
-    return snapshot.exists() ? normalizeMusicLiveStream(snapshot) : null
+    if (!snapshot.exists()) return null
+    const rawStream = { streamId: snapshot.id, ...(snapshot.data() || {}) }
+    console.log('[Live Receiver] raw stream document', rawStream)
+    return normalizeMusicLiveStream(snapshot)
   } catch (error) {
     console.warn('[musicLiveService] Live stream could not be loaded.', error?.message || error)
     return null
@@ -355,31 +389,31 @@ export async function listHostMusicLiveStreams(uid = '', { limitCount = 20 } = {
 
 export async function startMusicLiveStream(payload = {}) {
   const callable = httpsCallable(functions, 'startMusicLiveStream')
-  const result = await callable(normalizeLiveStreamTransport(payload))
+  const result = await callable(liveWriterPayload(payload))
   return result?.data || { ok: false }
 }
 
 export async function prepareMusicLiveStreamDraft(payload = {}) {
   const callable = httpsCallable(functions, 'prepareMusicLiveStreamDraft')
-  const result = await callable(normalizeLiveStreamTransport(payload))
+  const result = await callable(liveWriterPayload(payload))
   return result?.data || { ok: false }
 }
 
 export async function markMusicLiveStreamOnAir(streamId = '', options = {}) {
   const callable = httpsCallable(functions, 'markMusicLiveStreamOnAir')
-  const result = await callable(normalizeLiveStreamTransport({ streamId, ...options }))
+  const result = await callable(liveWriterPayload({ streamId, ...options }))
   return result?.data || { ok: false }
 }
 
 export async function heartbeatMusicLiveStream(streamId = '', options = {}) {
   const callable = httpsCallable(functions, 'heartbeatMusicLiveStream')
-  const result = await callable(normalizeLiveStreamTransport({ streamId, ...options }))
+  const result = await callable(liveWriterPayload({ streamId, ...options }))
   return result?.data || { ok: false }
 }
 
 export async function updateMusicLiveStreamInfo(payload = {}) {
   const callable = httpsCallable(functions, 'updateMusicLiveStreamInfo')
-  const result = await callable(normalizeLiveStreamTransport(payload))
+  const result = await callable(liveWriterPayload(payload))
   return result?.data || { ok: false }
 }
 

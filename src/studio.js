@@ -37,7 +37,6 @@ import {
   isFirebaseSegmentProvider,
   ingestProtocolForMethod,
   normalizeIngestMethod,
-  normalizeProviderId,
   STREAM_INGEST_METHODS,
   STREAM_PROVIDERS
 } from './data/streaming/streamingProviderTypes'
@@ -1793,12 +1792,10 @@ function liveProgramOutputState() {
   const mixer = live.programMixer || {}
   const streamNative = live.stream?.nativeStreaming || {}
   const diagnostics = live.providerDiagnostics || {}
-  const providerId = normalizeProviderId(live.providerId)
-  live.providerId = providerId
-  const ingestMethod = normalizeIngestMethod(live.ingestMethod, providerId)
+  live.providerId = STREAM_PROVIDERS.hlsEdge
+  const ingestMethod = normalizeIngestMethod(live.ingestMethod, STREAM_PROVIDERS.hlsEdge)
   live.ingestMethod = ingestMethod
-  const isFirebaseSegments = isFirebaseSegmentProvider(providerId)
-  const isBrowserIngest = !isFirebaseSegments && ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+  const isBrowserIngest = ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
   const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
   const programScene = (mixer.scenes || []).find((scene) => scene.sceneId === mixer.programSceneId)
   const programSourceIds = new Set(Array.isArray(programScene?.sources) ? programScene.sources : [])
@@ -1817,21 +1814,21 @@ function liveProgramOutputState() {
   )))
   const programHasVideo = Boolean(live.videoEnabled && hasEnabledVideoSource && programScene)
   return {
-    provider: isFirebaseSegments ? STREAM_PROVIDERS.firebaseSegments : STREAM_PROVIDERS.hlsEdge,
-    providerLabel: isFirebaseSegments ? 'Firebase Segments' : 'Melogic Edge',
-    transportProvider: isFirebaseSegments ? 'firebase' : 'hls-edge',
-    ingestMethod: isFirebaseSegments ? '' : ingestMethod,
-    ingestProtocol: isFirebaseSegments ? '' : ingestProtocolForMethod(ingestMethod),
-    ingestMode: isFirebaseSegments ? 'browser-media-recorder' : ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
-    playbackMode: isFirebaseSegments ? 'firebaseSegments' : 'hls',
-    latencyProfile: isFirebaseSegments ? 'realtime' : 'buffered',
-    streamKey: isFirebaseSegments ? '' : streamKey,
-    hlsPlaybackUrl: isFirebaseSegments ? '' : buildHlsPlaybackUrl(streamKey),
-    rtmpIngestServer: !isFirebaseSegments && ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+    provider: STREAM_PROVIDERS.hlsEdge,
+    providerLabel: 'Melogic Edge',
+    transportProvider: 'hls-edge',
+    ingestMethod,
+    ingestProtocol: ingestProtocolForMethod(ingestMethod),
+    ingestMode: ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
+    playbackMode: 'hls',
+    latencyProfile: 'buffered',
+    streamKey,
+    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
+    rtmpIngestServer: ingestMethod === STREAM_INGEST_METHODS.obsRtmp
       ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
       : '',
     nativeStreaming: {
-      enabled: isFirebaseSegments,
+      enabled: false,
       targetLatencyMs: 30000,
       segmentDurationMs: 4000,
       audioFirst: true,
@@ -1871,7 +1868,6 @@ function liveProgramOutputState() {
       mode: mixer.mode || 'program'
     },
     providerDiagnostics: {
-      ...(isFirebaseSegments ? getStreamingProvider(STREAM_PROVIDERS.firebaseSegments).getDiagnostics?.() || {} : {}),
       ...(live.providerDiagnostics || {})
     }
   }
@@ -2635,9 +2631,8 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.nativeHostSessionId = sameRuntimeNativeSession ? localHostSessionId : stream.hostSessionId || live.nativeHostSessionId || ''
   live.draftStreamId = streamId || live.draftStreamId || ''
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
-  const restoredProviderId = normalizeProviderId(stream.provider)
-  live.providerId = restoredProviderId
-  live.ingestMethod = normalizeIngestMethod(stream.ingestMethod || stream.ingestMode, stream.provider)
+  live.providerId = STREAM_PROVIDERS.hlsEdge
+  live.ingestMethod = normalizeIngestMethod(stream.ingestMethod || stream.ingestMode, STREAM_PROVIDERS.hlsEdge)
   live.nativeStreamingStatus = stream.nativeStreaming?.status || live.nativeStreamingStatus || 'idleNoListeners'
   live.audioEnabled = stream.audioEnabled !== false
   live.videoEnabled = stream.videoEnabled === true
@@ -2678,12 +2673,45 @@ function hydrateLiveStudioFromStream(stream = null) {
     : 'Restored Live Studio draft details.'
 }
 
+function hasReusableHlsDraftTransport(stream = null) {
+  if (!stream) return false
+  const rawProvider = String(stream.rawProvider || stream.provider || '')
+  const rawTransportProvider = String(stream.rawTransportProvider || stream.transportProvider || '')
+  const rawPlaybackMode = String(stream.rawPlaybackMode || stream.playbackMode || '')
+  const streamKey = sanitizeHlsStreamKey(stream.rawStreamKey || stream.streamKey || '')
+  const hlsPlaybackUrl = String(stream.rawHlsPlaybackUrl || stream.hlsPlaybackUrl || '')
+  return ['hlsEdge', 'bufferedBroadcast'].includes(rawProvider)
+    && rawTransportProvider === 'hls-edge'
+    && rawPlaybackMode === 'hls'
+    && Boolean(streamKey)
+    && Boolean(hlsPlaybackUrl)
+}
+
 async function restoreLiveStudioRuntimeState() {
   const live = liveState()
   if (!state.user?.uid || live.streamId || live.draftStreamId) return
   const streams = await listHostMusicLiveStreams(state.user.uid, { limitCount: 20 })
   const active = streams.find((stream) => ['live', 'starting'].includes(stream.status) && stream.hostUid === state.user.uid)
-  const draft = streams.find((stream) => ['draft', 'setup', 'error'].includes(stream.status) && stream.hostUid === state.user.uid)
+  const draft = streams.find((stream) => (
+    ['draft', 'setup', 'error'].includes(stream.status)
+    && stream.hostUid === state.user.uid
+    && hasReusableHlsDraftTransport(stream)
+  ))
+  const skippedLegacyDraft = streams.find((stream) => (
+    ['draft', 'setup', 'error'].includes(stream.status)
+    && stream.hostUid === state.user.uid
+    && !hasReusableHlsDraftTransport(stream)
+  ))
+  if (skippedLegacyDraft) {
+    console.warn('[studio-live] ignoring legacy or incomplete draft transport', {
+      streamId: skippedLegacyDraft.streamId || skippedLegacyDraft.id || '',
+      provider: skippedLegacyDraft.rawProvider || skippedLegacyDraft.provider || '',
+      transportProvider: skippedLegacyDraft.rawTransportProvider || skippedLegacyDraft.transportProvider || '',
+      playbackMode: skippedLegacyDraft.rawPlaybackMode || skippedLegacyDraft.playbackMode || '',
+      streamKey: skippedLegacyDraft.rawStreamKey || skippedLegacyDraft.streamKey || '',
+      hlsPlaybackUrl: skippedLegacyDraft.rawHlsPlaybackUrl || skippedLegacyDraft.hlsPlaybackUrl || ''
+    })
+  }
   const stream = active || draft || null
   if (!stream) return
   hydrateLiveStudioFromStream(stream)
@@ -4158,13 +4186,11 @@ function ensureLiveStreamKey() {
 function liveStreamPayload() {
   const live = liveState()
   const form = live.streamForm
-  const providerId = normalizeProviderId(live.providerId)
-  live.providerId = providerId
-  const isFirebaseSegments = isFirebaseSegmentProvider(providerId)
-  const ingestMethod = normalizeIngestMethod(live.ingestMethod, providerId)
+  live.providerId = STREAM_PROVIDERS.hlsEdge
+  const ingestMethod = normalizeIngestMethod(live.ingestMethod, STREAM_PROVIDERS.hlsEdge)
   live.ingestMethod = ingestMethod
   const streamKey = sanitizeHlsStreamKey(form.streamKey || 'mystream')
-  const rtmpIngestServer = !isFirebaseSegments && ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+  const rtmpIngestServer = ingestMethod === STREAM_INGEST_METHODS.obsRtmp
     ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
     : ''
   return {
@@ -4180,20 +4206,20 @@ function liveStreamPayload() {
     coverArtSource: form.coverArtSource || (form.coverArtURL ? 'url' : 'fallback'),
     tags: form.tags,
     audioMode: form.audioMode,
-    provider: isFirebaseSegments ? STREAM_PROVIDERS.firebaseSegments : STREAM_PROVIDERS.hlsEdge,
-    providerLabel: isFirebaseSegments ? 'Firebase Segments' : 'Melogic Edge',
-    transportProvider: isFirebaseSegments ? 'firebase' : 'hls-edge',
-    ingestMethod: isFirebaseSegments ? '' : ingestMethod,
-    ingestProtocol: isFirebaseSegments ? '' : ingestProtocolForMethod(ingestMethod),
-    ingestMode: isFirebaseSegments ? 'browser-media-recorder' : ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
-    playbackMode: isFirebaseSegments ? 'firebaseSegments' : 'hls',
-    latencyProfile: isFirebaseSegments ? 'realtime' : 'buffered',
-    streamKey: isFirebaseSegments ? '' : streamKey,
-    hlsPlaybackUrl: isFirebaseSegments ? '' : buildHlsPlaybackUrl(streamKey),
+    provider: STREAM_PROVIDERS.hlsEdge,
+    providerLabel: 'Melogic Edge',
+    transportProvider: 'hls-edge',
+    ingestMethod,
+    ingestProtocol: ingestProtocolForMethod(ingestMethod),
+    ingestMode: ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
+    playbackMode: 'hls',
+    latencyProfile: 'buffered',
+    streamKey,
+    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
     rtmpIngestServer,
     isLive: live.stream?.status === 'live' || Boolean(live.streamId),
     nativeStreaming: {
-      enabled: isFirebaseSegments,
+      enabled: false,
       targetLatencyMs: 30000,
       segmentDurationMs: 4000,
       audioFirst: true,
@@ -4214,31 +4240,6 @@ function liveStreamPayload() {
     sequenceId: live.activeSequence?.sequenceId || '',
     selectedSequenceId: live.activeSequence?.sequenceId || '',
     ...liveProgramOutputState()
-  }
-}
-
-function nativeStartLivePayload(streamId = '', hostSessionId = '') {
-  const basePayload = liveStreamPayload()
-  const programState = liveProgramOutputState()
-  return {
-    ...basePayload,
-    ...programState,
-    streamId,
-    hostSessionId,
-    hostActive: true,
-    provider: STREAM_PROVIDERS.firebaseSegments,
-    providerLabel: 'Firebase Segments',
-    ingestMode: 'browser-media-recorder',
-    playbackMode: 'firebaseSegments',
-    broadcastState: 'liveIdleNoListeners',
-    nativeStreaming: {
-      ...(basePayload.nativeStreaming || {}),
-      ...(programState.nativeStreaming || {}),
-      status: 'idleNoListeners',
-      hasPlayableSegments: false,
-      newestAvailableSegmentIndex: null,
-      currentSegmentIndex: null
-    }
   }
 }
 
@@ -4326,15 +4327,6 @@ async function startLiveStudioStream() {
     const draftResponse = await prepareMusicLiveStreamDraft(liveStreamPayload())
     live.draftStreamId = draftResponse.streamId || live.draftStreamId
     if (!live.draftStreamId) throw new Error('Could not save live stream draft.')
-    if (isFirebaseSegmentProvider(live.providerId) && firebaseSegmentStreamingEnabled()) {
-      pendingStreamId = live.draftStreamId
-      const hostSessionId = nativeHostSessionId(pendingStreamId)
-      live.nativeHostSessionId = hostSessionId
-      await markMusicLiveStreamOnAir(pendingStreamId, nativeStartLivePayload(pendingStreamId, hostSessionId))
-      await activateNativeLiveSession(pendingStreamId)
-      live.outputStatus = 'Live - waiting for listeners. Media chunks start after a listener clicks Listen.'
-      return
-    }
     const response = await startMusicLiveStream({
       ...liveStreamPayload(),
       streamId: live.draftStreamId,
@@ -4579,24 +4571,9 @@ async function resumeInterruptedNativeStream() {
   const live = liveState()
   const streamId = live.nativeInterruptedStreamId || live.draftStreamId || live.stream?.streamId || live.stream?.id || ''
   if (!state.user?.uid || !streamId || live.starting || live.streamId) return
-  live.starting = true
-  live.error = ''
-  live.outputStatus = 'Resuming Native Streaming host session...'
+  live.error = 'Legacy Firebase Segments sessions cannot be resumed from the public Live Studio. End this session, then start a new HLS Edge stream.'
+  live.outputStatus = 'End the legacy session before starting the updated stream.'
   renderShell()
-  try {
-    const hostSessionId = nativeHostSessionId(streamId)
-    live.nativeHostSessionId = hostSessionId
-    await markMusicLiveStreamOnAir(streamId, nativeStartLivePayload(streamId, hostSessionId))
-    await activateNativeLiveSession(streamId)
-    live.outputStatus = 'Live - waiting for listeners. Media chunks start after a listener clicks Listen.'
-  } catch (error) {
-    console.error('[studio-live] resume native stream failed', error)
-    live.error = error?.message || 'Could not resume Native Streaming.'
-    live.outputStatus = 'Native Streaming resume failed.'
-  } finally {
-    live.starting = false
-    renderShell()
-  }
 }
 
 function withTimeout(promise, ms = 10000, message = 'Operation timed out.') {

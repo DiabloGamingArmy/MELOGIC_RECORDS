@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDocs, limit, orderBy, query, serverTimestamp, Timestamp, updateDoc, where } from 'firebase/firestore'
+import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, Timestamp, updateDoc, where } from 'firebase/firestore'
 import { getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { db } from '../../firebase/firestore'
 import { storage } from '../../firebase/storage'
@@ -251,9 +251,18 @@ export async function writeSegmentMetadata(segmentDoc = {}) {
   if (!firebaseSegmentsEnabled()) throw new Error('Firebase segment streaming is disabled.')
   const streamId = cleanId(segmentDoc.streamId)
   if (!db || !streamId) throw new Error('Cannot write segment metadata without Firestore and stream id.')
+  const streamRef = doc(db, 'musicLiveStreams', streamId)
+  const streamSnap = await getDoc(streamRef)
+  const stream = streamSnap.exists() ? streamSnap.data() || {} : {}
+  const explicitlyFirebaseSegments = ['firebaseSegments', 'nativeStreaming'].includes(stream.provider)
+    || stream.playbackMode === 'firebaseSegments'
+    || ['firebase', 'firebase-segments'].includes(stream.transportProvider)
+  if (!explicitlyFirebaseSegments) {
+    throw new Error('Firebase segment metadata cannot update an HLS Edge stream.')
+  }
   const { streamId: _streamId, ...payload } = segmentDoc
   const docRef = await addDoc(segmentCollection(streamId), payload)
-  await updateDoc(doc(db, 'musicLiveStreams', streamId), {
+  await updateDoc(streamRef, {
     broadcastState: 'liveBroadcasting',
     'nativeStreaming.status': 'broadcasting',
     'nativeStreaming.hasPlayableSegments': true,

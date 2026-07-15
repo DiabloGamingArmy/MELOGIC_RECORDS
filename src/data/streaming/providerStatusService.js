@@ -6,38 +6,15 @@ export function fallbackStreamingProviderStatus(error = null) {
     ok: false,
     error: error?.message || 'Provider status function unavailable.',
     providers: {
-      bufferedBroadcast: {
-        provider: 'bufferedBroadcast',
-        label: 'Buffered Broadcast',
+      hlsEdge: {
+        provider: 'hlsEdge',
+        label: 'Melogic Edge',
         configured: true,
         transportProvider: 'hls-edge',
-        ingestMode: 'rtmp-obs',
         playbackMode: 'hls',
         latencyProfile: 'buffered',
+        ingestMethods: ['browserWebrtc', 'obsRtmp'],
         localFallback: true
-      },
-      firebaseSegments: {
-        provider: 'firebaseSegments',
-        label: 'Firebase Segments',
-        configured: true,
-        ingestMode: 'browser-media-recorder',
-        playbackMode: 'firebaseSegments',
-        targetLatencyMs: 30000,
-        segmentDurationMs: 4000,
-        minPlaybackBufferMs: 20000,
-        maxPlaybackBufferMs: 60000,
-        idleWhenNoListeners: true,
-        audioFirst: true,
-        videoEnabled: false,
-        localFallback: true
-      },
-      nativeWeb: {
-        provider: 'nativeWeb',
-        label: 'Website Live',
-        configured: false,
-        ingestMode: 'browser-webrtc',
-        playbackMode: 'webrtc',
-        missingConfigKeys: ['Provider status function unavailable']
       }
     }
   }
