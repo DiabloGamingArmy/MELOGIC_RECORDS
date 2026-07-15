@@ -31,12 +31,16 @@ import {
   getMusicLiveStream,
   getMusicLiveViewerState,
   heartbeatMusicLiveStream,
+  HLS_EDGE_PROVIDER,
+  HLS_EDGE_TRANSPORT,
+  HLS_PLAYBACK_MODE,
+  DEFAULT_HLS_EDGE_BASE_URL,
+  DEFAULT_RTMP_INGEST_SERVER,
   isLiveStreamFresh,
   joinMusicLiveStream,
   leaveMusicLiveStream,
   listPublicLiveStreams,
   markMusicLiveStreamOnAir,
-  normalizeLiveStreamTransport,
   prepareMusicLiveStreamDraft,
   sendMusicLiveChatMessage,
   sendMusicLiveUnloadBeacon,
@@ -96,6 +100,46 @@ let musicMonitorControlsTimer = 0
 const SILENT_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA=='
 const HLS_PLAYBACK_MODE_STORAGE_KEY = 'melogic_live_playback_mode'
 const HLS_PLAYBACK_MODES = new Set(['videoAudio', 'videoOnly', 'audioOnly'])
+
+function sanitizeHlsStreamKey(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    || `melogic-${Date.now()}`
+}
+
+function getHlsEdgeBaseUrl() {
+  return String(import.meta.env?.VITE_STREAM_EDGE_BASE_URL || DEFAULT_HLS_EDGE_BASE_URL).replace(/\/+$/, '')
+}
+
+function getRtmpIngestServer() {
+  return String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).replace(/\/+$/, '')
+}
+
+function normalizeHlsLivePayload(payload = {}) {
+  console.log('[Live Writer] payload before save', payload)
+  const rawMethod = String(payload.streamingMethod || payload.ingestMethod || payload.ingestMode || 'obsRtmp')
+  const ingestMethod = /obs|rtmp|encoder/i.test(rawMethod) ? 'obsRtmp' : 'browserWebrtc'
+  const streamKey = sanitizeHlsStreamKey(payload.streamKey || payload.hlsStreamKey || state.goLive.form.streamKey || 'obsfix1')
+  const hlsPlaybackUrl = `${getHlsEdgeBaseUrl()}/${streamKey}.m3u8`
+  const normalizedPayload = {
+    ...payload,
+    provider: HLS_EDGE_PROVIDER,
+    transportProvider: HLS_EDGE_TRANSPORT,
+    playbackMode: HLS_PLAYBACK_MODE,
+    ingestMode: ingestMethod === 'obsRtmp' ? 'obs-rtmp' : 'browser-webrtc',
+    ingestMethod,
+    ingestProtocol: ingestMethod === 'obsRtmp' ? 'rtmp' : 'webrtc',
+    streamKey,
+    hlsPlaybackUrl,
+    hlsUrl: hlsPlaybackUrl,
+    rtmpIngestServer: ingestMethod === 'obsRtmp' ? getRtmpIngestServer() : payload.rtmpIngestServer || ''
+  }
+  console.log('[Live Writer] HLS normalized payload', normalizedPayload)
+  return normalizedPayload
+}
 
 function storedHlsPlaybackMode() {
   try {
@@ -232,8 +276,8 @@ const state = {
       coverArtSource: 'fallback',
       tags: '',
       visibility: 'public',
-      streamingMethod: 'browserWebrtc',
-      streamKey: 'mystream',
+      streamingMethod: 'obsRtmp',
+      streamKey: 'obsfix1',
       rightsAccepted: false,
       archiveRequested: false
     },
@@ -1228,7 +1272,13 @@ function publishOptionsForAudioMode() {
 }
 
 function isHostBroadcastActive() {
-  return Boolean(state.goLive.streamId && (state.goLive.starting || state.goLive.room || state.goLive.localTrack))
+  return Boolean(state.goLive.streamId && (
+    state.goLive.starting
+    || state.goLive.form.streamingMethod === 'obsRtmp'
+    || state.goLive.browserIngestActive
+    || state.goLive.room
+    || state.goLive.localTrack
+  ))
 }
 
 function formatChatTime(value = '') {
@@ -2878,38 +2928,53 @@ function renderStreamDetailsControls(form, categories) {
 }
 
 function renderAudioControls(form) {
+  const isObs = form.streamingMethod !== 'browserWebrtc'
+  const streamKey = sanitizeHlsStreamKey(form.streamKey || 'obsfix1')
+  const hlsPlaybackUrl = `${getHlsEdgeBaseUrl()}/${streamKey}.m3u8`
   return `
     <section class="music-host-control-section">
       <div>
         <p class="music-eyebrow">Audio input</p>
         <h2>Broadcast Source</h2>
       </div>
-      <label><span>Input Source</span><select name="inputSource" data-live-input-source><option value="browser" ${form.inputSource !== 'sequence' ? 'selected' : ''}>Browser Input Source</option><option value="sequence" ${form.inputSource === 'sequence' ? 'selected' : ''}>Sequence Software</option></select></label>
-      ${form.inputSource === 'sequence' ? `
-        <label><span>Sequence</span><select name="sequenceId" data-live-sequence-source>
-          ${state.sequenceWorkspace.sequences.map((sequence) => `<option value="${escapeHtml(sequence.sequenceId)}" ${form.sequenceId === sequence.sequenceId ? 'selected' : ''}>${escapeHtml(sequence.title)}</option>`).join('')}
-        </select></label>
-        <div class="music-quality-note">Sequence Software creates a Web Audio output track and publishes that one host-side feed to listeners. Audio quality mode is inherited from the selected live stream profile. Listeners do not fetch your sequence asset files.</div>
-        <div class="music-live-actions">
-          <button type="button" class="button button-muted" data-sequence-play>Play Sequence</button>
-          <button type="button" class="button button-muted" data-sequence-stop>Stop Sequence</button>
-          <a class="button button-muted" href="${ROUTES.musicSequence}">Open Full Sequence Workspace</a>
+      <label><span>Streaming Method</span><select name="streamingMethod" data-live-streaming-method ${state.goLive.streamId ? 'disabled' : ''}><option value="obsRtmp" ${isObs ? 'selected' : ''}>OBS / RTMP Encoder</option><option value="browserWebrtc" ${isObs ? '' : 'selected'}>Browser WebRTC Input</option></select></label>
+      ${isObs ? `
+        <label><span>Stream Key</span><input name="streamKey" maxlength="160" required value="${escapeHtml(streamKey)}" pattern="[a-z0-9_-]+" autocomplete="off" /></label>
+        <div class="music-host-room">
+          <h3>OBS / Encoder Settings</h3>
+          <p><strong>RTMP server:</strong> <code>${escapeHtml(getRtmpIngestServer())}</code></p>
+          <p><strong>Stream key:</strong> <code>${escapeHtml(streamKey)}</code></p>
+          <p><strong>Public HLS:</strong> <code>${escapeHtml(hlsPlaybackUrl)}</code></p>
+          <p class="music-muted">Start this Melogic stream, then start streaming from OBS. No browser microphone or LiveKit room is used in this mode.</p>
         </div>
-      ` : ''}
-      <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
-      <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
-      ${form.inputSource === 'sequence' ? '' : `
-        <select data-live-device-select>
-          <option value="">Browser default</option>
-          ${state.goLive.devices.map((device) => `<option value="${escapeHtml(device.deviceId)}" ${state.goLive.selectedDeviceId === device.deviceId ? 'selected' : ''}>${escapeHtml(device.label || `Audio input ${state.goLive.devices.indexOf(device) + 1}`)}</option>`).join('')}
-        </select>
-        <div class="music-meter" aria-label="Audio input level"><span style="width:${Math.round(state.goLive.level * 100)}%"></span></div>
-        <div class="music-live-actions">
-          <button type="button" class="button button-muted" data-refresh-audio-devices>Enable / Refresh Mic</button>
-          <button type="button" class="button button-muted" data-toggle-preview-mute>${state.goLive.muted ? 'Unmute Preview' : 'Mute Preview'}</button>
-        </div>
+      ` : `
+        <label><span>Input Source</span><select name="inputSource" data-live-input-source><option value="browser" ${form.inputSource !== 'sequence' ? 'selected' : ''}>Browser Input Source</option><option value="sequence" ${form.inputSource === 'sequence' ? 'selected' : ''}>Sequence Software</option></select></label>
+        ${form.inputSource === 'sequence' ? `
+          <label><span>Sequence</span><select name="sequenceId" data-live-sequence-source>
+            ${state.sequenceWorkspace.sequences.map((sequence) => `<option value="${escapeHtml(sequence.sequenceId)}" ${form.sequenceId === sequence.sequenceId ? 'selected' : ''}>${escapeHtml(sequence.title)}</option>`).join('')}
+          </select></label>
+          <div class="music-quality-note">Sequence Software creates a Web Audio output track and publishes that one host-side feed to listeners. Audio quality mode is inherited from the selected live stream profile. Listeners do not fetch your sequence asset files.</div>
+          <div class="music-live-actions">
+            <button type="button" class="button button-muted" data-sequence-play>Play Sequence</button>
+            <button type="button" class="button button-muted" data-sequence-stop>Stop Sequence</button>
+            <a class="button button-muted" href="${ROUTES.musicSequence}">Open Full Sequence Workspace</a>
+          </div>
+        ` : ''}
+        <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
+        <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
+        ${form.inputSource === 'sequence' ? '' : `
+          <select data-live-device-select>
+            <option value="">Browser default</option>
+            ${state.goLive.devices.map((device) => `<option value="${escapeHtml(device.deviceId)}" ${state.goLive.selectedDeviceId === device.deviceId ? 'selected' : ''}>${escapeHtml(device.label || `Audio input ${state.goLive.devices.indexOf(device) + 1}`)}</option>`).join('')}
+          </select>
+          <div class="music-meter" aria-label="Audio input level"><span style="width:${Math.round(state.goLive.level * 100)}%"></span></div>
+          <div class="music-live-actions">
+            <button type="button" class="button button-muted" data-refresh-audio-devices>Enable / Refresh Mic</button>
+            <button type="button" class="button button-muted" data-toggle-preview-mute>${state.goLive.muted ? 'Unmute Preview' : 'Mute Preview'}</button>
+          </div>
+        `}
       `}
-      <p class="music-muted">${escapeHtml(state.goLive.connectionStatus || 'Choose an audio input before starting. Guests are coming later.')}</p>
+      <p class="music-muted">${escapeHtml(state.goLive.connectionStatus || (isObs ? 'Start the stream here, then send RTMP from OBS.' : 'Choose an audio input before starting.'))}</p>
       ${state.goLive.streamId ? `
         <div class="music-host-room">
           <span class="music-live-badge">LIVE</span>
@@ -3684,8 +3749,8 @@ function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) 
     coverArtSource: nextCoverURL ? (previousCoverSource === 'upload' && nextCoverURL === previousCoverURL ? 'upload' : 'url') : 'fallback',
     tags: String(read('tags', state.goLive.form.tags) || '').slice(0, 500),
     visibility: String(read('visibility', state.goLive.form.visibility) || 'public'),
-    streamingMethod: String(read('streamingMethod', state.goLive.form.streamingMethod) || 'browserWebrtc'),
-    streamKey: String(read('streamKey', state.goLive.form.streamKey) || 'mystream'),
+    streamingMethod: String(read('streamingMethod', state.goLive.form.streamingMethod) || 'obsRtmp'),
+    streamKey: String(read('streamKey', state.goLive.form.streamKey) || 'obsfix1'),
     rightsAccepted: hasControl('rightsAccepted') ? read('rightsAccepted') === 'on' : state.goLive.form.rightsAccepted,
     archiveRequested: hasControl('archiveRequested') ? read('archiveRequested') === 'on' : state.goLive.form.archiveRequested
   }
@@ -3743,13 +3808,16 @@ function startHostHeartbeat(streamId) {
   stopHostHeartbeat()
   if (!streamId) return
   const beat = () => {
-    heartbeatMusicLiveStream(streamId, {
-      audioPublished: Boolean(state.goLive.localTrack),
-      programHasAudio: Boolean(state.goLive.localTrack),
-      streamingMethod: state.goLive.form.streamingMethod || 'browserWebrtc',
-      streamKey: state.goLive.form.streamKey || 'mystream',
-      connectionStatus: state.goLive.connectionStatus === 'Reconnecting...' ? 'reconnecting' : 'live'
-    }).catch((error) => {
+    const isObs = state.goLive.form.streamingMethod !== 'browserWebrtc'
+    const payload = normalizeHlsLivePayload({
+      streamId,
+      audioPublished: isObs ? false : Boolean(state.goLive.localTrack),
+      programHasAudio: isObs ? false : Boolean(state.goLive.localTrack),
+      streamingMethod: state.goLive.form.streamingMethod || 'obsRtmp',
+      streamKey: state.goLive.form.streamKey || 'obsfix1',
+      connectionStatus: isObs ? 'waitingForIngest' : state.goLive.connectionStatus === 'Reconnecting...' ? 'reconnecting' : 'live'
+    })
+    heartbeatMusicLiveStream(streamId, payload).catch((error) => {
       console.warn('[music] heartbeatMusicLiveStream failed', error?.message || error)
     })
     refreshHostUnloadToken().catch(() => {})
@@ -3886,7 +3954,7 @@ async function ensureHostDraftStream() {
   updateGoLiveFormState()
   state.goLive.connectionStatus = 'Preparing draft controls...'
   rerender()
-  const response = await prepareMusicLiveStreamDraft(normalizeLiveStreamTransport({
+  const response = await prepareMusicLiveStreamDraft(normalizeHlsLivePayload({
     streamId: state.goLive.draftStreamId,
     ...state.goLive.form
   }))
@@ -3917,7 +3985,7 @@ async function loadViewerState(streamId) {
 async function saveHostLiveMetadata(form) {
   if (!state.goLive.streamId) return
   const data = new FormData(form)
-  const payload = normalizeLiveStreamTransport({
+  const payload = normalizeHlsLivePayload({
     ...state.goLive.form,
     streamId: state.goLive.streamId,
     title: String(data.get('title') || '').slice(0, 90),
@@ -3952,7 +4020,7 @@ async function saveHostLiveMetadata(form) {
 
 async function saveHostDetails() {
   updateGoLiveFormState()
-  const payload = normalizeLiveStreamTransport({
+  const payload = normalizeHlsLivePayload({
     streamId: activeHostStreamId(),
     ...state.goLive.form
   })
@@ -4081,7 +4149,7 @@ async function startHostBroadcast(form) {
   rerender()
   try {
     const formState = state.goLive.form
-    const payload = normalizeLiveStreamTransport({
+    const payload = normalizeHlsLivePayload({
       streamId: state.goLive.draftStreamId || '',
       title: formState.title,
       description: formState.description,
@@ -4097,8 +4165,8 @@ async function startHostBroadcast(form) {
       rightsAccepted: formState.rightsAccepted,
       archiveRequested: false,
       audioOnly: true,
-      streamingMethod: formState.streamingMethod || 'browserWebrtc',
-      streamKey: formState.streamKey || 'mystream'
+      streamingMethod: formState.streamingMethod || 'obsRtmp',
+      streamKey: formState.streamKey || 'obsfix1'
     })
     await refreshHostUnloadToken()
     const response = await startMusicLiveStream(payload)
@@ -4106,47 +4174,56 @@ async function startHostBroadcast(form) {
     if (!pendingStreamId) throw new Error('The live stream service did not return a stream id.')
     state.goLive.streamId = pendingStreamId
     state.goLive.draftStreamId = pendingStreamId
-    state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Preparing Sequence Software output...' : 'Preparing selected audio input...'
-    rerender()
-    let localTrack
-    if (formState.inputSource === 'sequence') {
-      if (formState.sequenceId && formState.sequenceId !== state.sequenceWorkspace.activeSequence?.sequenceId) {
-        await loadSequenceWorkspace(formState.sequenceId)
-      }
-      localTrack = await getSequenceOutputTrack()
+    const isObs = payload.ingestMethod === 'obsRtmp'
+    let ingestResult = { audioPublished: false, videoPublished: false }
+    if (isObs) {
+      state.goLive.localTrack = null
+      state.goLive.browserIngestActive = false
+      state.goLive.connectionStatus = `Stream is live. Send OBS to ${payload.rtmpIngestServer} with key ${payload.streamKey}.`
+      rerender()
     } else {
-      try {
-        localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId }))
-      } catch (error) {
-        console.warn('[music] ideal publish audio constraints failed; retrying basic mic constraints.', error?.message || error)
-        localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId, relaxed: true }))
+      state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Preparing Sequence Software output...' : 'Preparing selected audio input...'
+      rerender()
+      let localTrack
+      if (formState.inputSource === 'sequence') {
+        if (formState.sequenceId && formState.sequenceId !== state.sequenceWorkspace.activeSequence?.sequenceId) {
+          await loadSequenceWorkspace(formState.sequenceId)
+        }
+        localTrack = await getSequenceOutputTrack()
+      } else {
+        try {
+          localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId }))
+        } catch (error) {
+          console.warn('[music] ideal publish audio constraints failed; retrying basic mic constraints.', error?.message || error)
+          localTrack = await createLocalAudioTrack(audioConstraintsForMode({ deviceId: state.goLive.selectedDeviceId, relaxed: true }))
+        }
       }
+      state.goLive.localTrack = localTrack
+      const mediaStreamTrack = localTrack?.mediaStreamTrack || localTrack
+      if (!mediaStreamTrack || mediaStreamTrack.readyState === 'ended') throw new Error('The browser audio track is not available for streaming.')
+      const mediaStream = new MediaStream([mediaStreamTrack])
+      state.goLive.connectionStatus = 'Connecting browser stream to Melogic Edge...'
+      rerender()
+      ingestResult = await startBrowserWebrtcIngest({
+        streamKey: response.streamKey || payload.streamKey,
+        mediaStream,
+        onStatus: (status = {}) => {
+          if (status.connectionState === 'connected') state.goLive.connectionStatus = 'Browser stream connected to Melogic Edge.'
+        },
+        onError: (ingestError) => {
+          state.goLive.connectionStatus = ingestError?.message || 'Browser stream connection failed.'
+          rerender()
+        }
+      })
+      state.goLive.browserIngestActive = true
     }
-    state.goLive.localTrack = localTrack
-    const mediaStreamTrack = localTrack?.mediaStreamTrack || localTrack
-    if (!mediaStreamTrack || mediaStreamTrack.readyState === 'ended') throw new Error('The browser audio track is not available for streaming.')
-    const mediaStream = new MediaStream([mediaStreamTrack])
-    state.goLive.connectionStatus = 'Connecting browser stream to Melogic Edge...'
-    rerender()
-    const ingestResult = await startBrowserWebrtcIngest({
-      streamKey: response.streamKey || payload.streamKey,
-      mediaStream,
-      onStatus: (status = {}) => {
-        if (status.connectionState === 'connected') state.goLive.connectionStatus = 'Browser stream connected to Melogic Edge.'
-      },
-      onError: (ingestError) => {
-        state.goLive.connectionStatus = ingestError?.message || 'Browser stream connection failed.'
-        rerender()
-      }
-    })
-    state.goLive.browserIngestActive = true
-    await markMusicLiveStreamOnAir(pendingStreamId, normalizeLiveStreamTransport({
+    await markMusicLiveStreamOnAir(pendingStreamId, normalizeHlsLivePayload({
       ...payload,
       streamId: pendingStreamId,
       streamKey: response.streamKey || payload.streamKey,
       hostActive: true,
       hostConnected: true,
-      connectionStatus: 'live',
+      connectionStatus: isObs ? 'waitingForIngest' : 'live',
       broadcastState: 'liveBroadcasting',
       audioPublished: ingestResult.audioPublished === true,
       videoPublished: ingestResult.videoPublished === true,
@@ -4156,7 +4233,9 @@ async function startHostBroadcast(form) {
     startLiveChatSubscription(pendingStreamId)
     startHostStreamSubscription(pendingStreamId)
     startLiveSequenceSubscription(pendingStreamId)
-    state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Sequence Software output live.' : 'Audio published. You are live.'
+    state.goLive.connectionStatus = isObs
+      ? `Waiting for OBS ingest at ${payload.rtmpIngestServer} using key ${payload.streamKey}.`
+      : formState.inputSource === 'sequence' ? 'Sequence Software output live.' : 'Audio published. You are live.'
   } catch (error) {
     console.warn('[music] startMusicLiveStream failed', {
       functionName: 'startMusicLiveStream',
@@ -4439,7 +4518,7 @@ async function joinLiveListener(options = {}) {
   if (playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments && isExplicitFirebaseSegmentsPlayback(state.liveStream)) {
     if (!firebaseSegmentStreamingEnabled()) {
       state.liveStatus = 'idle'
-      state.liveError = 'This legacy website-native stream uses Firebase Segments, which is not available in this build.'
+      state.liveError = 'Firebase Segments playback is disabled in this build.'
       rerender()
       return
     }
@@ -4805,6 +4884,7 @@ function bindMusicEvents() {
       state.goLive.form.coverArtPath = ''
     }
     syncHostPreviewFromForm()
+    if (event.target?.name === 'streamingMethod') rerender()
   })
   app.querySelector('[data-live-cover-upload]')?.addEventListener('change', (event) => {
     const file = event.target.files?.[0]

@@ -10,9 +10,6 @@ export function hasHlsPlaybackRoute(stream = {}) {
     || stream.playbackMode === PLAYBACK_MODES.hls
     || Boolean(String(stream.hlsPlaybackUrl || '').trim())
     || Boolean(String(stream.streamKey || '').trim())
-    || ['obsRtmp', 'browserWebrtc'].includes(stream.ingestMethod)
-    || ['rtmp-obs', 'browser-webrtc'].includes(stream.ingestMode)
-    || ['rtmp', 'webrtc'].includes(stream.ingestProtocol)
 }
 
 export function isExplicitFirebaseSegmentsPlayback(stream = {}) {
@@ -28,7 +25,7 @@ export function selectPublicPlaybackPlayer(stream = {}) {
   if (hasHlsPlaybackRoute(stream)) return 'hls'
   if (isExplicitFirebaseSegmentsPlayback(stream)) return 'firebaseSegments'
   if (declaredProvider === STREAM_PROVIDERS.antMedia) return 'antMedia'
-  return 'webrtc'
+  return 'hls'
 }
 
 export function getPublicPlaybackInfo(stream = {}) {

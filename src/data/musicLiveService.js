@@ -9,21 +9,25 @@ import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './streaming/hlsEdgePl
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
-const DEFAULT_RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
+export const HLS_EDGE_PROVIDER = 'hlsEdge'
+export const HLS_EDGE_TRANSPORT = 'hls-edge'
+export const HLS_PLAYBACK_MODE = 'hls'
+export const DEFAULT_HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
+export const DEFAULT_RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
 
 export function normalizeLiveStreamTransport(payload = {}) {
-  const method = payload.streamingMethod || payload.ingestMethod || 'browserWebrtc'
-  const ingestMethod = method === 'obsRtmp' || method === 'obs' ? 'obsRtmp' : 'browserWebrtc'
+  const rawMethod = String(payload.streamingMethod || payload.ingestMethod || payload.ingestMode || 'obsRtmp')
+  const ingestMethod = /obs|rtmp|encoder/i.test(rawMethod) ? 'obsRtmp' : 'browserWebrtc'
   const streamKey = sanitizeHlsStreamKey(payload.streamKey || 'mystream') || 'mystream'
   return {
     ...payload,
-    provider: STREAM_PROVIDERS.hlsEdge,
+    provider: HLS_EDGE_PROVIDER,
     providerLabel: 'Melogic Edge',
-    transportProvider: 'hls-edge',
-    playbackMode: 'hls',
+    transportProvider: HLS_EDGE_TRANSPORT,
+    playbackMode: HLS_PLAYBACK_MODE,
     ingestMethod,
     ingestProtocol: ingestMethod === 'obsRtmp' ? 'rtmp' : 'webrtc',
-    ingestMode: ingestMethod === 'obsRtmp' ? 'rtmp-obs' : 'browser-webrtc',
+    ingestMode: ingestMethod === 'obsRtmp' ? 'obs-rtmp' : 'browser-webrtc',
     streamingMethod: ingestMethod,
     latencyProfile: 'buffered',
     streamKey,
@@ -35,23 +39,15 @@ export function normalizeLiveStreamTransport(payload = {}) {
 }
 
 function liveWriterPayload(payload = {}) {
+  console.log('[Live Writer] payload before save', payload)
   const normalized = normalizeLiveStreamTransport(payload)
-  if (normalized.provider === STREAM_PROVIDERS.hlsEdge) {
-    normalized.transportProvider = 'hls-edge'
-    normalized.playbackMode = 'hls'
+  if (normalized.provider === HLS_EDGE_PROVIDER) {
+    normalized.transportProvider = HLS_EDGE_TRANSPORT
+    normalized.playbackMode = HLS_PLAYBACK_MODE
     if (!normalized.streamKey) throw new Error('Missing HLS stream key before save.')
     normalized.hlsPlaybackUrl = normalized.hlsPlaybackUrl || buildHlsPlaybackUrl(normalized.streamKey)
   }
-  console.log('[Live Writer] saving stream transport', {
-    provider: normalized.provider,
-    transportProvider: normalized.transportProvider,
-    playbackMode: normalized.playbackMode,
-    ingestMethod: normalized.ingestMethod,
-    ingestProtocol: normalized.ingestProtocol,
-    streamKey: normalized.streamKey,
-    hlsPlaybackUrl: normalized.hlsPlaybackUrl,
-    streamId: normalized.streamId || ''
-  })
+  console.log('[Live Writer] HLS normalized payload', normalized)
   return normalized
 }
 
@@ -79,40 +75,39 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
   const category = LIVE_CATEGORIES.includes(raw.category) ? raw.category : 'music'
   const selectedPlayer = selectPublicPlaybackPlayer(raw)
   const provider = selectedPlayer === 'hls'
-    ? STREAM_PROVIDERS.hlsEdge
+    ? HLS_EDGE_PROVIDER
     : selectedPlayer === 'firebaseSegments'
       ? STREAM_PROVIDERS.firebaseSegments
       : selectedPlayer === 'antMedia'
         ? STREAM_PROVIDERS.antMedia
-        : STREAM_PROVIDERS.nativeWeb
+        : HLS_EDGE_PROVIDER
   const rawProvider = String(raw.provider || '')
   const rawTransportProvider = String(raw.transportProvider || '')
   const rawPlaybackMode = String(raw.playbackMode || '')
   const rawStreamKey = String(raw.streamKey || '')
   const rawHlsPlaybackUrl = String(raw.hlsPlaybackUrl || '')
+  const explicitFirebasePlaybackMode = selectedPlayer === 'firebaseSegments' ? selectedPlayer : ''
   const hlsIngestMethod = raw.ingestMethod
-    || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : raw.ingestMode === 'rtmp-obs' ? 'obsRtmp' : '')
+    || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : ['rtmp-obs', 'obs-rtmp'].includes(raw.ingestMode) ? 'obsRtmp' : '')
     || (raw.ingestProtocol === 'rtmp' ? 'obsRtmp' : raw.ingestProtocol === 'webrtc' ? 'browserWebrtc' : '')
-    || (raw.provider === STREAM_PROVIDERS.bufferedBroadcast ? 'obsRtmp' : 'browserWebrtc')
-  const normalizedStreamKey = provider === STREAM_PROVIDERS.hlsEdge ? sanitizeHlsStreamKey(rawStreamKey) : rawStreamKey
-  const normalizedHlsPlaybackUrl = provider === STREAM_PROVIDERS.hlsEdge
+    || 'obsRtmp'
+  const normalizedStreamKey = provider === HLS_EDGE_PROVIDER ? sanitizeHlsStreamKey(rawStreamKey) : rawStreamKey
+  const normalizedHlsPlaybackUrl = provider === HLS_EDGE_PROVIDER
     ? rawHlsPlaybackUrl || buildHlsPlaybackUrl(normalizedStreamKey)
     : rawHlsPlaybackUrl
-  const normalizationApplied = provider === STREAM_PROVIDERS.hlsEdge && (
-    rawProvider !== STREAM_PROVIDERS.hlsEdge
-    || raw.transportProvider !== 'hls-edge'
-    || rawPlaybackMode !== 'hls'
+  const normalizationApplied = provider === HLS_EDGE_PROVIDER && (
+    rawProvider !== HLS_EDGE_PROVIDER
+    || raw.transportProvider !== HLS_EDGE_TRANSPORT
+    || rawPlaybackMode !== HLS_PLAYBACK_MODE
     || raw.ingestMethod !== hlsIngestMethod
     || rawStreamKey !== normalizedStreamKey
     || rawHlsPlaybackUrl !== normalizedHlsPlaybackUrl
   )
-  const providerDefaults = provider === STREAM_PROVIDERS.hlsEdge
-    ? { label: 'Melogic Edge', ingestMode: hlsIngestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
-    : provider === STREAM_PROVIDERS.nativeWeb
-      ? { label: 'Website Live', ingestMode: 'browser-webrtc', playbackMode: 'webrtc', transportProvider: 'livekit' }
-      : provider === STREAM_PROVIDERS.firebaseSegments
-        ? { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: 'firebaseSegments', transportProvider: 'firebase' }
-        : { label: 'Ant Media', ingestMode: String(raw.ingestMode || ''), playbackMode: String(raw.playbackMode || 'webrtc'), transportProvider: String(raw.transportProvider || 'antmedia') }
+  const providerDefaults = provider === HLS_EDGE_PROVIDER
+    ? { label: 'Melogic Edge', ingestMode: hlsIngestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'obs-rtmp', playbackMode: HLS_PLAYBACK_MODE, transportProvider: HLS_EDGE_TRANSPORT }
+    : provider === STREAM_PROVIDERS.firebaseSegments
+      ? { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: explicitFirebasePlaybackMode, transportProvider: 'firebase' }
+      : { label: 'Ant Media', ingestMode: String(raw.ingestMode || ''), playbackMode: String(raw.playbackMode || 'webrtc'), transportProvider: String(raw.transportProvider || 'antmedia') }
   return {
     id,
     streamId: id,
@@ -148,17 +143,17 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     rawHlsPlaybackUrl,
     normalizationApplied,
     providerLabel: String(raw.providerLabel || providerDefaults.label),
-    transportProvider: String(provider === STREAM_PROVIDERS.hlsEdge ? 'hls-edge' : raw.transportProvider || providerDefaults.transportProvider),
-    ingestMode: String(provider === STREAM_PROVIDERS.hlsEdge ? (hlsIngestMethod === 'obsRtmp' ? 'rtmp-obs' : 'browser-webrtc') : raw.ingestMode || providerDefaults.ingestMode),
-    playbackMode: String(provider === STREAM_PROVIDERS.hlsEdge ? 'hls' : raw.playbackMode || providerDefaults.playbackMode),
-    latencyProfile: String(raw.latencyProfile || (provider === STREAM_PROVIDERS.hlsEdge ? 'buffered' : 'realtime')),
-    ingestMethod: String(provider === STREAM_PROVIDERS.hlsEdge ? hlsIngestMethod : raw.ingestMethod || ''),
-    ingestProtocol: String(provider === STREAM_PROVIDERS.hlsEdge
+    transportProvider: String(provider === HLS_EDGE_PROVIDER ? HLS_EDGE_TRANSPORT : raw.transportProvider || providerDefaults.transportProvider),
+    ingestMode: String(provider === HLS_EDGE_PROVIDER ? (hlsIngestMethod === 'obsRtmp' ? 'obs-rtmp' : 'browser-webrtc') : raw.ingestMode || providerDefaults.ingestMode),
+    playbackMode: String(provider === HLS_EDGE_PROVIDER ? HLS_PLAYBACK_MODE : raw.playbackMode || providerDefaults.playbackMode),
+    latencyProfile: String(raw.latencyProfile || (provider === HLS_EDGE_PROVIDER ? 'buffered' : 'realtime')),
+    ingestMethod: String(provider === HLS_EDGE_PROVIDER ? hlsIngestMethod : raw.ingestMethod || ''),
+    ingestProtocol: String(provider === HLS_EDGE_PROVIDER
       ? hlsIngestMethod === 'obsRtmp' ? 'rtmp' : 'webrtc'
       : raw.ingestProtocol || ''),
     streamKey: normalizedStreamKey,
     hlsPlaybackUrl: normalizedHlsPlaybackUrl,
-    rtmpIngestServer: String(provider === STREAM_PROVIDERS.hlsEdge && hlsIngestMethod === 'obsRtmp'
+    rtmpIngestServer: String(provider === HLS_EDGE_PROVIDER && hlsIngestMethod === 'obsRtmp'
       ? raw.rtmpIngestServer || import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER
       : raw.rtmpIngestServer || ''),
     audioOnlyHlsUrl: String(raw.audioOnlyHlsUrl || ''),
@@ -275,7 +270,19 @@ export function subscribeMusicLiveStream(streamId = '', onNext = () => {}, onErr
       }
       const rawStream = { streamId: snapshot.id, ...(snapshot.data() || {}) }
       console.log('[Live Receiver] raw stream document', rawStream)
-      onNext(normalizeMusicLiveStream(snapshot))
+      const normalizedStream = normalizeMusicLiveStream(snapshot)
+      const route = {
+        provider: normalizedStream.provider,
+        transportProvider: normalizedStream.transportProvider,
+        playbackMode: normalizedStream.playbackMode,
+        ingestMethod: normalizedStream.ingestMethod,
+        ingestProtocol: normalizedStream.ingestProtocol,
+        streamKey: normalizedStream.streamKey,
+        hlsPlaybackUrl: normalizedStream.hlsPlaybackUrl,
+        selectedPlayer: selectPublicPlaybackPlayer(rawStream)
+      }
+      console.log('[Live Receiver] selected playback route', route)
+      onNext(normalizedStream)
     },
     (error) => {
       console.warn('[musicLiveService] Live stream subscription failed.', error?.message || error)
@@ -362,7 +369,19 @@ export async function getMusicLiveStream(streamId = '') {
     if (!snapshot.exists()) return null
     const rawStream = { streamId: snapshot.id, ...(snapshot.data() || {}) }
     console.log('[Live Receiver] raw stream document', rawStream)
-    return normalizeMusicLiveStream(snapshot)
+    const normalizedStream = normalizeMusicLiveStream(snapshot)
+    const route = {
+      provider: normalizedStream.provider,
+      transportProvider: normalizedStream.transportProvider,
+      playbackMode: normalizedStream.playbackMode,
+      ingestMethod: normalizedStream.ingestMethod,
+      ingestProtocol: normalizedStream.ingestProtocol,
+      streamKey: normalizedStream.streamKey,
+      hlsPlaybackUrl: normalizedStream.hlsPlaybackUrl,
+      selectedPlayer: selectPublicPlaybackPlayer(rawStream)
+    }
+    console.log('[Live Receiver] selected playback route', route)
+    return normalizedStream
   } catch (error) {
     console.warn('[musicLiveService] Live stream could not be loaded.', error?.message || error)
     return null
