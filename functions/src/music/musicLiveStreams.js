@@ -79,6 +79,12 @@ function normalizeIngestModeForProvider(value, provider = 'nativeStreaming') {
   return provider === 'livekit' ? 'livekit-webrtc' : 'browser-media-recorder'
 }
 
+function nullableNumber(value) {
+  if (value === null || typeof value === 'undefined') return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 function nativeStreamingDefaults(existing = {}) {
   return {
     enabled: true,
@@ -92,9 +98,9 @@ function nativeStreamingDefaults(existing = {}) {
     rollingRetentionMs: Number(existing.rollingRetentionMs || 300000),
     status: cleanString(existing.status || 'idleNoListeners', 40),
     hasPlayableSegments: existing.hasPlayableSegments === true,
-    oldestAvailableSegmentIndex: Number.isFinite(Number(existing.oldestAvailableSegmentIndex)) ? Number(existing.oldestAvailableSegmentIndex) : null,
-    newestAvailableSegmentIndex: Number.isFinite(Number(existing.newestAvailableSegmentIndex)) ? Number(existing.newestAvailableSegmentIndex) : null,
-    currentSegmentIndex: Number.isFinite(Number(existing.currentSegmentIndex)) ? Number(existing.currentSegmentIndex) : null,
+    oldestAvailableSegmentIndex: nullableNumber(existing.oldestAvailableSegmentIndex),
+    newestAvailableSegmentIndex: nullableNumber(existing.newestAvailableSegmentIndex),
+    currentSegmentIndex: nullableNumber(existing.currentSegmentIndex),
     lastSegmentAt: existing.lastSegmentAt || null
   }
 }
@@ -863,17 +869,24 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can mark this stream live.')
   const requestedProvider = normalizeProvider(request.data?.provider || stream.provider)
   const diagnostics = markLiveValidationDetails({ streamId, provider: requestedProvider, stream, requestData: request.data || {} })
-  const allowedNativeStatuses = new Set(['draft', 'setup', 'error', 'starting', 'live', 'ended'])
+  const allowedNativeStatuses = new Set(['draft', 'setup', 'starting', 'error'])
   const allowedLiveKitStatuses = new Set(['starting', 'live'])
-  const nativeCanStartIdle = requestedProvider === 'nativeStreaming'
-    && allowedNativeStatuses.has(stream.status || 'draft')
-    && diagnostics.targetStatus === 'live'
-    && (diagnostics.broadcastState || 'liveIdleNoListeners') === 'liveIdleNoListeners'
-    && (diagnostics.nativeStreamingStatus || 'idleNoListeners') === 'idleNoListeners'
-    && diagnostics.missingRequiredFields.length === 0
-    && diagnostics.failedConditions.length === 0
+  const nativeStreamStatus = cleanString(stream.status || '', 80)
+  const nativeHostSessionId = cleanString(request.data?.hostSessionId || '', 120)
+  const nativeStartAllowed = requestedProvider === 'nativeStreaming'
+    && allowedNativeStatuses.has(nativeStreamStatus)
+    && Boolean(nativeHostSessionId)
+  console.warn('[native-start-v3]', {
+    uid,
+    streamId,
+    streamHostUid: stream.hostUid,
+    streamStatus: nativeStreamStatus,
+    requestedProvider,
+    hostSessionId: nativeHostSessionId,
+    nativeStartAllowed
+  })
   const canMarkLive = requestedProvider === 'nativeStreaming'
-    ? nativeCanStartIdle
+    ? nativeStartAllowed
     : allowedLiveKitStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
   if (!canMarkLive) {
     const rejectionDiagnostics = {
@@ -885,7 +898,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
       requestHostSessionId: cleanString(request.data?.hostSessionId || '', 120),
       requestBroadcastState: cleanString(request.data?.broadcastState || '', 80),
       requestNativeStreamingStatus: cleanString(request.data?.nativeStreaming?.status || '', 80),
-      nativeCanStartIdle,
+      nativeStartAllowed,
       canMarkLive
     }
     liveWarn('mark live validation failed', rejectionDiagnostics)
@@ -911,21 +924,26 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     visibility: safeLiveVisibility,
     accessMode: safeLiveAccessMode,
     passwordProtected: safeLiveAccessMode === 'password',
-    connectionStatus: 'live',
-    broadcastState: programOutputState.provider === 'nativeStreaming'
-      ? cleanString(request.data?.broadcastState || 'liveIdleNoListeners', 80)
-      : 'broadcasting',
-    hostConnected: true,
     ...programOutputState,
+    connectionStatus: 'live',
+    broadcastState: requestedProvider === 'nativeStreaming' ? 'liveIdleNoListeners' : 'broadcasting',
+    hostConnected: true,
+    provider: requestedProvider,
+    ingestMode: requestedProvider === 'nativeStreaming' ? 'browser-media-recorder' : programOutputState.ingestMode,
+    playbackMode: requestedProvider === 'nativeStreaming' ? 'firebaseSegments' : programOutputState.playbackMode,
     hostActive: true,
     hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || '', 120),
     nativeStreaming: nativeStreamingDefaults({
       ...(stream.nativeStreaming || {}),
       ...(request.data?.nativeStreaming || {}),
-      status: programOutputState.provider === 'nativeStreaming'
-        ? cleanString(request.data?.nativeStreaming?.status || 'idleNoListeners', 40)
-        : stream.nativeStreaming?.status
+      status: requestedProvider === 'nativeStreaming'
+        ? 'idleNoListeners'
+        : stream.nativeStreaming?.status,
+      hasPlayableSegments: requestedProvider === 'nativeStreaming' ? false : stream.nativeStreaming?.hasPlayableSegments,
+      newestAvailableSegmentIndex: requestedProvider === 'nativeStreaming' ? null : stream.nativeStreaming?.newestAvailableSegmentIndex,
+      currentSegmentIndex: requestedProvider === 'nativeStreaming' ? null : stream.nativeStreaming?.currentSegmentIndex
     }),
+    listenerCount: Number.isFinite(Number(stream.listenerCount)) ? Number(stream.listenerCount) : 0,
     startedAt: now,
     endedAt: null,
     endReason: '',
