@@ -3,7 +3,7 @@ import { httpsCallable } from 'firebase/functions'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
-import { STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
+import { normalizeProviderId, STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
@@ -30,6 +30,12 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
   const raw = typeof dataOrSnap.data === 'function' ? dataOrSnap.data() || {} : dataOrSnap || {}
   const id = explicitId || dataOrSnap.id || raw.streamId || ''
   const category = LIVE_CATEGORIES.includes(raw.category) ? raw.category : 'music'
+  const provider = normalizeProviderId(raw.provider)
+  const providerDefaults = provider === STREAM_PROVIDERS.bufferedBroadcast
+    ? { label: 'Buffered Broadcast', ingestMode: 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
+    : provider === STREAM_PROVIDERS.webrtc
+      ? { label: 'WebRTC Live', ingestMode: 'browser-webrtc', playbackMode: 'webrtc', transportProvider: 'livekit' }
+      : { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: 'firebaseSegments', transportProvider: 'firebase' }
   return {
     id,
     streamId: id,
@@ -56,10 +62,15 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     selectedSequenceId: String(raw.selectedSequenceId || ''),
     audioProfile: String(raw.audioProfile || ''),
     audioOnly: raw.audioOnly !== false,
-    provider: String(raw.provider || STREAM_PROVIDERS.livekit),
-    providerLabel: String(raw.providerLabel || (raw.provider === STREAM_PROVIDERS.livekit ? 'LiveKit' : 'Native Streaming')),
-    ingestMode: String(raw.ingestMode || (raw.provider === STREAM_PROVIDERS.livekit ? 'browser-webrtc' : 'browser-media-recorder')),
-    playbackMode: String(raw.playbackMode || (raw.provider === STREAM_PROVIDERS.livekit ? 'webrtc' : 'firebaseSegments')),
+    provider,
+    providerLabel: String(raw.providerLabel || providerDefaults.label),
+    transportProvider: String(raw.transportProvider || providerDefaults.transportProvider),
+    ingestMode: String(raw.ingestMode || providerDefaults.ingestMode),
+    playbackMode: String(raw.playbackMode || providerDefaults.playbackMode),
+    latencyProfile: String(raw.latencyProfile || (provider === STREAM_PROVIDERS.bufferedBroadcast ? 'buffered' : 'realtime')),
+    streamKey: String(raw.streamKey || ''),
+    hlsPlaybackUrl: String(raw.hlsPlaybackUrl || ''),
+    audioOnlyHlsUrl: String(raw.audioOnlyHlsUrl || ''),
     nativeStreaming: raw.nativeStreaming && typeof raw.nativeStreaming === 'object' ? raw.nativeStreaming : {},
     antMediaStreamId: String(raw.antMediaStreamId || ''),
     antMediaAppName: String(raw.antMediaAppName || ''),

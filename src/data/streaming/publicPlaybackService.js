@@ -1,15 +1,31 @@
 import { antMediaPlaybackUrls } from './antMediaProvider'
-import { firebaseSegmentStreamingEnabled, PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
+import { buildHlsPlaybackUrl, isAllowedHlsPlaybackUrl } from './hlsEdgePlayer'
+import { normalizeProviderId, PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
 
 export function getPublicPlaybackInfo(stream = {}) {
-  const provider = stream.provider === STREAM_PROVIDERS.livekit
-    ? STREAM_PROVIDERS.livekit
-    : stream.provider === STREAM_PROVIDERS.antMedia
-      ? STREAM_PROVIDERS.antMedia
-      : stream.provider === STREAM_PROVIDERS.nativeStreaming && firebaseSegmentStreamingEnabled()
-        ? STREAM_PROVIDERS.nativeStreaming
-        : STREAM_PROVIDERS.livekit
-  if (provider === STREAM_PROVIDERS.nativeStreaming) {
+  const provider = normalizeProviderId(stream.provider)
+  if (provider === STREAM_PROVIDERS.bufferedBroadcast || stream.playbackMode === PLAYBACK_MODES.hls) {
+    const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
+    const invalidConfiguredUrl = Boolean(configuredUrl && !isAllowedHlsPlaybackUrl(configuredUrl))
+    const url = invalidConfiguredUrl ? '' : configuredUrl || buildHlsPlaybackUrl(stream.streamKey)
+    const message = invalidConfiguredUrl
+      ? 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
+      : !stream.streamKey && !configuredUrl
+        ? 'This stream is missing an HLS stream key.'
+        : !url
+          ? 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
+          : ''
+    return {
+      provider: STREAM_PROVIDERS.bufferedBroadcast,
+      transportProvider: 'hls-edge',
+      playbackMode: PLAYBACK_MODES.hls,
+      latencyProfile: 'buffered',
+      playable: Boolean(stream.status === 'live' && url),
+      url,
+      message
+    }
+  }
+  if (provider === STREAM_PROVIDERS.firebaseSegments) {
     const native = stream.nativeStreaming || {}
     const status = native.status || stream.broadcastState || (native.hasPlayableSegments ? 'broadcasting' : 'idleNoListeners')
     return {
@@ -46,7 +62,7 @@ export function getPublicPlaybackInfo(stream = {}) {
     }
   }
   return {
-    provider: STREAM_PROVIDERS.livekit,
+    provider: STREAM_PROVIDERS.webrtc,
     playbackMode: PLAYBACK_MODES.webrtc,
     playable: Boolean(stream.status === 'live'
       && stream.hostConnected
@@ -63,7 +79,8 @@ export function isPublicStreamPlayable(stream = {}) {
     && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
     && info.playable
     && (
-      info.provider === STREAM_PROVIDERS.nativeStreaming
+      info.provider === STREAM_PROVIDERS.firebaseSegments
+      || info.provider === STREAM_PROVIDERS.bufferedBroadcast
       || stream.programHasAudio === true
       || stream.programHasVideo === true
       || stream.audioPublished === true

@@ -51,6 +51,11 @@ import {
   updateMusicLiveStreamInfo
 } from './data/musicLiveService'
 import { getPublicPlaybackInfo, isPublicStreamPlayable } from './data/streaming/publicPlaybackService'
+import {
+  attachHlsStream,
+  canPlayNativeHls,
+  isAllowedHlsPlaybackUrl
+} from './data/streaming/hlsEdgePlayer'
 import { getNativePlaybackQueue, getNativePlaybackQueueDiagnostics } from './data/streaming/nativeStreamingProvider'
 import {
   clearPlaybackDemand,
@@ -59,7 +64,12 @@ import {
   updatePlaybackDemandState,
   writePlaybackDemand
 } from './data/streaming/nativeStreamingPresence'
-import { firebaseSegmentStreamingEnabled, STREAM_PROVIDERS } from './data/streaming/streamingProviderTypes'
+import {
+  firebaseSegmentStreamingEnabled,
+  isBufferedBroadcastProvider,
+  isFirebaseSegmentProvider,
+  STREAM_PROVIDERS
+} from './data/streaming/streamingProviderTypes'
 import {
   subscribeMyLiveStudioGuestInvite,
   updateLiveStudioGuestInviteStatus
@@ -81,6 +91,17 @@ const app = document.querySelector('#app')
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
 const SILENT_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA=='
+const HLS_PLAYBACK_MODE_STORAGE_KEY = 'melogic_live_playback_mode'
+const HLS_PLAYBACK_MODES = new Set(['videoAudio', 'videoOnly', 'audioOnly'])
+
+function storedHlsPlaybackMode() {
+  try {
+    const value = localStorage.getItem(HLS_PLAYBACK_MODE_STORAGE_KEY)
+    return HLS_PLAYBACK_MODES.has(value) ? value : 'videoAudio'
+  } catch {
+    return 'videoAudio'
+  }
+}
 
 const sidebarViews = {
   home: 'Home',
@@ -139,6 +160,11 @@ const state = {
   listenerAudioElement: null,
   listenerVideoElement: null,
   listenerPresenceId: '',
+  hlsMediaElement: null,
+  hlsCleanup: null,
+  hlsAttachedUrl: '',
+  hlsPlaybackMode: storedHlsPlaybackMode(),
+  hlsDiagnostics: {},
   nativeViewerSessionId: '',
   nativeHostUnsubscribe: null,
   nativePlaybackTimer: 0,
@@ -673,7 +699,7 @@ function liveStreamCard(stream) {
       <a href="${musicLiveStreamRoute(stream)}" class="music-live-card-link">
         ${renderLiveArtwork(stream)}
         <div class="music-live-card-body">
-          <span class="music-live-badge ${stream.provider === STREAM_PROVIDERS.nativeStreaming ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>
+          <span class="music-live-badge ${isFirebaseSegmentProvider(stream.provider) ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>
           ${stream.passwordProtected ? '<span class="music-live-lock">Locked</span>' : ''}
           <h3>${escapeHtml(stream.title)}</h3>
           <p>${escapeHtml(stream.hostDisplayName)}</p>
@@ -1098,10 +1124,13 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'playing') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'requestingPlayback') return 'Requesting playback...'
   if (state.liveStatus === 'connectingTransport') return 'Connecting to live audio...'
+  if (state.liveStatus === 'loadingManifest') return 'Loading live stream playlist...'
+  if (state.liveStatus === 'ready') return 'Ready. Press Play to start the live stream.'
   if (state.liveStatus === 'waitingForRemoteAudio') return 'Waiting for host audio track...'
   if (state.liveStatus === 'readyToPlay') return 'Ready to play - press Resume Audio.'
   if (state.liveStatus === 'playbackBlocked') return 'Press Resume Audio.'
-  if (state.liveStatus === 'error') return 'Live audio error.'
+  if (state.liveStatus === 'stalled') return 'Live stream stalled. Reconnecting...'
+  if (state.liveStatus === 'error') return isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls' ? 'Live stream error.' : 'Live audio error.'
   if (state.liveStatus === 'waitingForHost') return 'Host is not currently broadcasting.'
   if (state.liveStatus === 'waitingForSegments') return 'Connected to host. Waiting for audio chunks...'
   if (state.liveStatus === 'interrupted') return 'Stream interrupted.'
@@ -1110,7 +1139,7 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'connecting') return 'Connecting to stream...'
   if (state.liveStatus === 'buffering') return 'Starting stream buffer...'
   if (state.liveStatus === 'ended' || stream.status !== 'live') return 'Stream ended.'
-  if (stream.provider === STREAM_PROVIDERS.nativeStreaming) {
+  if (isFirebaseSegmentProvider(stream.provider)) {
     const status = stream.nativeStreaming?.status || ''
     if (status === 'idleNoListeners' || status === 'idle_no_listeners') return 'Waiting for listeners.'
     if (status === 'warmingBuffer') return 'Buffering.'
@@ -1118,11 +1147,12 @@ function liveStatusLabel(stream = {}) {
     if (status === 'error') return 'Stream error.'
     return 'Live.'
   }
+  if (isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls') return 'Click Play to begin. Sound never autoplays.'
   return 'Click Listen to join. Audio never autoplays.'
 }
 
 function isLiveListeningStatus(status = state.liveStatus) {
-  return ['live', 'playing', 'waiting', 'buffering', 'requestingPlayback', 'connectingTransport', 'waitingForRemoteAudio', 'readyToPlay', 'playbackBlocked', 'waitingForHost', 'waitingForSegments', 'connecting', 'reconnecting'].includes(status)
+  return ['live', 'playing', 'waiting', 'buffering', 'requestingPlayback', 'connectingTransport', 'loadingManifest', 'ready', 'stalled', 'waitingForRemoteAudio', 'readyToPlay', 'playbackBlocked', 'waitingForHost', 'waitingForSegments', 'connecting', 'reconnecting'].includes(status)
 }
 
 function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
@@ -1141,7 +1171,7 @@ function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
 }
 
 function nativeLiveStatusLabel(stream = {}) {
-  if (stream.provider !== STREAM_PROVIDERS.nativeStreaming) return 'LIVE'
+  if (!isFirebaseSegmentProvider(stream.provider)) return 'LIVE'
   const status = stream.nativeStreaming?.status || ''
   if (status === 'idleNoListeners' || status === 'idle_no_listeners') return 'Waiting for listeners'
   if (status === 'warmingBuffer') return 'Buffering'
@@ -1614,7 +1644,7 @@ function updateLiveKitListenerDiagnostics(eventName = '') {
   const audio = state.listenerAudioElement
   state.nativeListenerDiagnostics = {
     ...(state.nativeListenerDiagnostics || {}),
-    provider: STREAM_PROVIDERS.livekit,
+    provider: STREAM_PROVIDERS.webrtc,
     ...(eventName ? { lastAudioEvent: eventName } : {}),
     audioElementExists: Boolean(audio),
     audioPaused: audio ? audio.paused === true : null,
@@ -1664,7 +1694,7 @@ async function playLiveKitListenerAudio({ userGesture = false } = {}) {
   if (!audio) return false
   state.nativeListenerDiagnostics = {
     ...(state.nativeListenerDiagnostics || {}),
-    provider: STREAM_PROVIDERS.livekit,
+    provider: STREAM_PROVIDERS.webrtc,
     ...(userGesture ? { userGestureUnlockAttempted: true } : {}),
     lastPlayAttemptAt: new Date().toISOString(),
     lastPlayErrorName: '',
@@ -1714,7 +1744,7 @@ function resumeLiveKitAudioFromGesture() {
 
 function ensureLiveKitListenerAudioMounted() {
   const audio = state.listenerAudioElement
-  if (!audio || state.liveStream?.provider === STREAM_PROVIDERS.nativeStreaming) return
+  if (!audio || isFirebaseSegmentProvider(state.liveStream?.provider) || isBufferedHlsStream()) return
   audio.controls = true
   audio.muted = false
   audio.volume = 1
@@ -1725,6 +1755,258 @@ function ensureLiveKitListenerAudioMounted() {
   const mount = app.querySelector('[data-livekit-audio-mount]')
   if (mount && audio.parentElement !== mount) mount.appendChild(audio)
   updateLiveKitListenerDiagnostics()
+}
+
+function isBufferedHlsStream(stream = state.liveStream) {
+  return Boolean(stream && (isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls'))
+}
+
+function currentHlsPlaybackMode() {
+  return HLS_PLAYBACK_MODES.has(state.hlsPlaybackMode) ? state.hlsPlaybackMode : 'videoAudio'
+}
+
+function hlsMediaDiagnostics(eventName = '') {
+  const media = state.hlsMediaElement
+  const diagnostics = state.hlsDiagnostics || {}
+  state.hlsDiagnostics = {
+    ...diagnostics,
+    provider: STREAM_PROVIDERS.bufferedBroadcast,
+    playbackMode: state.liveStream?.playbackMode || 'hls',
+    streamKey: state.liveStream?.streamKey || '',
+    hlsUrl: state.hlsAttachedUrl || diagnostics.hlsUrl || '',
+    playbackModeSelected: currentHlsPlaybackMode(),
+    nativeHlsSupported: media ? canPlayNativeHls(media) : null,
+    ...(eventName ? { lastMediaEvent: eventName } : {}),
+    mediaCurrentSrc: media?.currentSrc || media?.src || '',
+    mediaPaused: media ? media.paused === true : null,
+    mediaMuted: media ? media.muted === true : null,
+    mediaVolume: media ? Number(media.volume || 0) : null,
+    mediaReadyState: media ? Number(media.readyState || 0) : null,
+    mediaNetworkState: media ? Number(media.networkState || 0) : null,
+    mediaCurrentTime: media && Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null,
+    mediaDuration: media && Number.isFinite(media.duration) ? Number(media.duration.toFixed(2)) : null
+  }
+  updateHlsDiagnosticsDom()
+  return state.hlsDiagnostics
+}
+
+function updateHlsDiagnosticsDom() {
+  const diagnostics = state.hlsDiagnostics || {}
+  app.querySelectorAll('[data-hls-diagnostic]').forEach((element) => {
+    const key = element.dataset.hlsDiagnostic || ''
+    const value = diagnostics[key]
+    element.textContent = value === true ? 'yes' : value === false ? 'no' : value == null || value === '' ? 'none' : String(value)
+  })
+}
+
+function ensureHlsMediaMounted() {
+  const media = state.hlsMediaElement
+  if (!media) return
+  const mount = app.querySelector('[data-hls-player-mount]')
+  if (mount && media.parentElement !== mount) mount.appendChild(media)
+  hlsMediaDiagnostics()
+}
+
+function cleanupHlsPlayback({ removeElement = true } = {}) {
+  const cleanup = state.hlsCleanup
+  state.hlsCleanup = null
+  try { cleanup?.() } catch {}
+  if (!cleanup && state.hlsMediaElement) {
+    try { state.hlsMediaElement.pause() } catch {}
+    state.hlsMediaElement.removeAttribute('src')
+    try { state.hlsMediaElement.load() } catch {}
+  }
+  if (removeElement) state.hlsMediaElement?.remove?.()
+  state.hlsMediaElement = null
+  state.hlsAttachedUrl = ''
+}
+
+function createHlsMediaElement(mode = currentHlsPlaybackMode()) {
+  const media = document.createElement(mode === 'audioOnly' ? 'audio' : 'video')
+  media.controls = true
+  media.autoplay = false
+  media.playsInline = true
+  media.preload = 'auto'
+  media.muted = mode === 'videoOnly'
+  media.defaultMuted = mode === 'videoOnly'
+  media.volume = mode === 'videoOnly' ? 0 : Number.isFinite(Number(state.player.volume)) ? Number(state.player.volume) : 1
+  media.dataset.hlsPlayerElement = 'true'
+  if (mode === 'audioOnly') media.dataset.hlsAudioPlayer = 'true'
+  else media.dataset.hlsPlayer = 'true'
+  ;['play', 'pause', 'loadedmetadata', 'canplay', 'volumechange', 'timeupdate', 'durationchange'].forEach((eventName) => {
+    media.addEventListener(eventName, () => {
+      if (mode === 'videoOnly' && !media.muted) media.muted = true
+      if (eventName === 'volumechange' && mode !== 'videoOnly') state.player.volume = media.volume
+      hlsMediaDiagnostics(eventName)
+    })
+  })
+  state.hlsMediaElement = media
+  ensureHlsMediaMounted()
+  return media
+}
+
+function handleHlsStatus(payload = {}) {
+  const status = String(payload.status || '')
+  state.hlsDiagnostics = {
+    ...(state.hlsDiagnostics || {}),
+    hlsManifestLoaded: status === 'manifestParsed' ? true : state.hlsDiagnostics?.hlsManifestLoaded === true,
+    hlsLevelCount: payload.levelCount ?? state.hlsDiagnostics?.hlsLevelCount ?? null,
+    hlsJsSupported: payload.native === true ? false : payload.native === false ? true : state.hlsDiagnostics?.hlsJsSupported ?? null,
+    lastHlsErrorType: status === 'error' ? String(payload.type || '') : state.hlsDiagnostics?.lastHlsErrorType || '',
+    lastHlsErrorDetails: status === 'error' ? String(payload.details || '') : state.hlsDiagnostics?.lastHlsErrorDetails || '',
+    lastHlsErrorFatal: status === 'error' ? payload.fatal === true : state.hlsDiagnostics?.lastHlsErrorFatal ?? null
+  }
+  if (status === 'loading') state.liveStatus = 'loadingManifest'
+  if (status === 'manifestParsed' && state.liveStatus !== 'playing') state.liveStatus = 'ready'
+  if (status === 'playing') {
+    state.liveStatus = 'playing'
+    state.liveError = ''
+    if (state.liveStream?.id && state.nativeViewerSessionId) {
+      updatePlaybackDemandState({
+        streamId: state.liveStream.id,
+        viewerSessionId: state.nativeViewerSessionId,
+        uid: state.currentUser?.uid || null,
+        state: 'listening',
+        tabId: state.nativeViewerSessionId
+      }).catch(() => {})
+    }
+    updateLiveMediaSession(state.liveStream)
+  }
+  if (status === 'waiting' && state.liveStatus !== 'loadingManifest') state.liveStatus = 'waiting'
+  if (status === 'stalled') state.liveStatus = 'stalled'
+  if (status === 'ended') state.liveStatus = 'ended'
+  if (status === 'error') state.liveStatus = 'error'
+  hlsMediaDiagnostics(status)
+  updateLiveListenerControls()
+}
+
+function handleHlsError(error = {}) {
+  const details = String(error.details || '')
+  const type = String(error.type || '')
+  state.hlsDiagnostics = {
+    ...(state.hlsDiagnostics || {}),
+    lastHlsErrorType: type,
+    lastHlsErrorDetails: details,
+    lastHlsErrorFatal: error.fatal === true
+  }
+  state.liveStatus = 'error'
+  state.liveError = /manifest/i.test(details) || Number(state.hlsMediaElement?.readyState || 0) === 0
+    ? 'Could not load the live stream playlist.'
+    : `HLS playback error${type || details ? `: ${[type, details].filter(Boolean).join(' / ')}` : '.'}`
+  hlsMediaDiagnostics('error')
+  updateLiveListenerControls()
+}
+
+async function playHlsMediaFromGesture() {
+  const media = state.hlsMediaElement
+  if (!media) return false
+  if (currentHlsPlaybackMode() === 'videoOnly') {
+    media.muted = true
+    media.defaultMuted = true
+  }
+  try {
+    await media.play()
+    state.hlsDiagnostics = { ...(state.hlsDiagnostics || {}), lastPlayResult: 'resolved', lastPlayErrorName: '', lastPlayErrorMessage: '' }
+    hlsMediaDiagnostics('playResolved')
+    return true
+  } catch (error) {
+    state.liveStatus = error?.name === 'NotAllowedError' ? 'playbackBlocked' : 'error'
+    state.liveError = error?.name === 'NotAllowedError'
+      ? 'Playback was blocked. Press Play.'
+      : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim()
+    state.hlsDiagnostics = {
+      ...(state.hlsDiagnostics || {}),
+      lastPlayResult: 'rejected',
+      lastPlayErrorName: error?.name || '',
+      lastPlayErrorMessage: error?.message || ''
+    }
+    hlsMediaDiagnostics('playRejected')
+    updateLiveListenerControls()
+    return false
+  }
+}
+
+async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(state.liveStream || {})) {
+  if (!playbackInfo.url) {
+    state.liveStatus = 'error'
+    state.liveError = playbackInfo.message || 'This stream is missing an HLS stream key.'
+    updateLiveListenerControls()
+    return
+  }
+  if (!isAllowedHlsPlaybackUrl(playbackInfo.url)) {
+    state.liveStatus = 'error'
+    state.liveError = 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
+    updateLiveListenerControls()
+    return
+  }
+
+  const mode = currentHlsPlaybackMode()
+  let media = state.hlsMediaElement
+  const expectedTag = mode === 'audioOnly' ? 'AUDIO' : 'VIDEO'
+  if (media && media.tagName !== expectedTag) cleanupHlsPlayback()
+  media = state.hlsMediaElement || createHlsMediaElement(mode)
+  ensureHlsMediaMounted()
+  state.liveStatus = 'loadingManifest'
+  state.liveError = ''
+  state.nativeViewerSessionId = state.nativeViewerSessionId || nativeViewerSessionId(state.liveStream.id)
+  state.hlsDiagnostics = {
+    provider: STREAM_PROVIDERS.bufferedBroadcast,
+    playbackMode: 'hls',
+    streamKey: state.liveStream.streamKey || '',
+    hlsUrl: playbackInfo.url,
+    playbackModeSelected: mode,
+    nativeHlsSupported: canPlayNativeHls(media),
+    hlsJsSupported: null,
+    hlsManifestLoaded: false,
+    demandWriteSucceeded: false
+  }
+  updateLiveListenerControls()
+
+  writePlaybackDemand({
+    streamId: state.liveStream.id,
+    viewerSessionId: state.nativeViewerSessionId,
+    uid: state.currentUser?.uid || null,
+    state: 'connectingTransport',
+    tabId: state.nativeViewerSessionId
+  }).then((result) => {
+    state.hlsDiagnostics = { ...(state.hlsDiagnostics || {}), demandWriteSucceeded: result?.ok === true }
+    updateHlsDiagnosticsDom()
+  }).catch((error) => {
+    state.hlsDiagnostics = { ...(state.hlsDiagnostics || {}), demandWriteSucceeded: false, demandWriteError: error?.message || String(error) }
+    updateHlsDiagnosticsDom()
+  })
+
+  if (state.hlsAttachedUrl !== playbackInfo.url || !state.hlsCleanup) {
+    try {
+      const cleanup = await attachHlsStream({
+        mediaEl: media,
+        src: playbackInfo.url,
+        mode,
+        onStatus: handleHlsStatus,
+        onError: handleHlsError
+      })
+      if (state.hlsMediaElement !== media) {
+        cleanup()
+        return
+      }
+      state.hlsCleanup = cleanup
+      state.hlsAttachedUrl = playbackInfo.url
+      hlsMediaDiagnostics()
+    } catch (error) {
+      state.liveStatus = 'error'
+      state.liveError = error?.message || 'This browser cannot play this HLS stream.'
+      state.hlsDiagnostics = {
+        ...(state.hlsDiagnostics || {}),
+        hlsJsSupported: false,
+        lastHlsErrorType: error?.name || 'Error',
+        lastHlsErrorDetails: error?.message || String(error),
+        lastHlsErrorFatal: true
+      }
+      updateLiveListenerControls()
+      return
+    }
+  }
+  await playHlsMediaFromGesture()
 }
 
 function nowPlayingDisplay(stream = {}) {
@@ -1745,6 +2027,7 @@ function nowPlayingDisplay(stream = {}) {
 }
 
 function streamHasVideoFoundation(stream = state.liveStream) {
+  if (isBufferedHlsStream(stream)) return currentHlsPlaybackMode() !== 'audioOnly'
   if (!stream) return Boolean(state.listenerVideoElement)
   if (stream.videoEnabled !== true && !state.listenerVideoElement) return false
   return Boolean(
@@ -1776,7 +2059,8 @@ function updateLiveMediaSession(stream = state.liveStream) {
     ? 'none'
     : isLiveListeningStatus() ? 'playing' : 'paused'
   navigator.mediaSession.setActionHandler('play', () => {
-    if (!isLiveListeningStatus()) joinLiveListener().catch(() => {})
+    if (isBufferedHlsStream() && state.hlsMediaElement) playHlsMediaFromGesture().catch(() => {})
+    else if (!isLiveListeningStatus()) joinLiveListener().catch(() => {})
     else state.listenerAudioElement?.play?.().catch(() => {})
   })
   navigator.mediaSession.setActionHandler('pause', () => {
@@ -2877,12 +3161,16 @@ function renderLiveDetailPage() {
     renderAppShell(emptyState('Live stream unavailable', 'This stream may have ended, been removed, or never existed.', `<a class="button button-accent" href="${ROUTES.musicLive}">Back to Live Streams</a>`))
     return
   }
-  const isNativeStream = stream.provider === STREAM_PROVIDERS.nativeStreaming
+  const isNativeStream = isFirebaseSegmentProvider(stream.provider)
+  const isBufferedStream = isBufferedHlsStream(stream)
+  const playbackInfo = getPublicPlaybackInfo(stream)
   const canListen = isNativeStream
     ? stream.status === 'live' && !['removed', 'blocked'].includes(stream.moderationStatus) && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
     : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
-  const hasVideo = streamHasVideoFoundation(stream)
-  const visual = hasVideo
+  const hasVideo = isBufferedStream ? currentHlsPlaybackMode() !== 'audioOnly' : streamHasVideoFoundation(stream)
+  const visual = isBufferedStream && hasVideo
+    ? '<div class="music-live-visual music-live-hls-video"><div data-hls-player-mount></div></div>'
+    : hasVideo
     ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${isLiveListeningStatus() ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
     : renderLiveArtwork(stream, 'music-live-detail-art')
   const liveBadge = canListen ? nativeLiveStatusLabel(stream) : 'ENDED'
@@ -2890,11 +3178,11 @@ function renderLiveDetailPage() {
     <section class="music-live-detail ${hasVideo ? 'has-video-foundation' : ''} ${state.liveVideoExpanded ? 'is-video-expanded' : ''}">
       <div class="music-live-visual-shell">
         ${visual}
-        ${hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
+        ${!isBufferedStream && hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
       </div>
       <div class="music-live-detail-copy">
-        ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge ${stream.provider === STREAM_PROVIDERS.nativeStreaming ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
-        ${hasVideo ? '' : `<span class="music-live-badge ${stream.provider === STREAM_PROVIDERS.nativeStreaming ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>`}
+        ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge ${isFirebaseSegmentProvider(stream.provider) ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
+        ${hasVideo ? '' : `<span class="music-live-badge ${isFirebaseSegmentProvider(stream.provider) ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>`}
         <h1>${escapeHtml(stream.title)}</h1>
         <p>${escapeHtml(stream.description || 'Live stream on Melogic Music.')}</p>
         <div class="music-live-host">
@@ -2903,25 +3191,86 @@ function renderLiveDetailPage() {
         </div>
         ${renderNowPlaying(stream)}
         <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : `<span>${hasVideo ? 'Live stream' : 'Live audio'}</span>`}</div>
+        ${isBufferedStream ? renderHlsPlaybackModeControl() : ''}
         ${stream.passwordProtected && !isLiveListeningStatus() ? `
           <form class="music-password-form" data-live-password-form>
             <label><span>Stream password</span><input name="password" type="password" value="${escapeHtml(state.livePassword)}" placeholder="Enter password to listen" /></label>
           </form>
         ` : ''}
         <div class="music-live-listener">
-          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${isLiveListeningStatus() ? 'Pause / Leave' : 'Listen'}</button>
-          <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
+          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${isLiveListeningStatus() ? 'Pause / Leave' : isBufferedStream ? 'Play' : 'Listen'}</button>
+          ${isBufferedStream && currentHlsPlaybackMode() === 'videoOnly' ? '' : `<label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>`}
         </div>
-        ${isNativeStream ? renderNativeReceiverAudioDebug() : renderLiveKitReceiverAudioDebug()}
+        ${isBufferedStream ? renderHlsDiagnostics() : isNativeStream ? renderNativeReceiverAudioDebug() : renderLiveKitReceiverAudioDebug()}
         ${renderLiveActions(stream)}
-        ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : 'This stream has ended or is no longer public.')}</p>`}
+        ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : isBufferedStream && playbackInfo.message ? playbackInfo.message : 'This stream has ended or is no longer public.')}</p>`}
       </div>
     </section>
     ${renderLiveGuestInvitePrompt(stream)}
     ${renderLiveChatPanel(stream.id)}
   `)
-  if (isNativeStream && state.listenerAudioElement) ensureNativeListenerAudioElement()
-  if (!isNativeStream && state.listenerAudioElement) ensureLiveKitListenerAudioMounted()
+  if (isBufferedStream && state.hlsMediaElement) ensureHlsMediaMounted()
+  if (!isBufferedStream && isNativeStream && state.listenerAudioElement) ensureNativeListenerAudioElement()
+  if (!isBufferedStream && !isNativeStream && state.listenerAudioElement) ensureLiveKitListenerAudioMounted()
+}
+
+function renderHlsPlaybackModeControl() {
+  const mode = currentHlsPlaybackMode()
+  const labels = {
+    videoAudio: 'Video & Audio',
+    videoOnly: 'Video Only',
+    audioOnly: 'Audio Only'
+  }
+  const note = mode === 'videoOnly'
+    ? 'Video Only - audio muted.'
+    : mode === 'audioOnly'
+      ? 'Audio Only uses the live stream audio track. A dedicated audio-only stream can be added later for lower bandwidth.'
+      : ''
+  return `
+    <section class="music-live-hls-controls" aria-label="Playback mode">
+      <div class="music-live-hls-mode" role="radiogroup" aria-label="Playback mode">
+        ${Object.entries(labels).map(([value, label]) => `<button type="button" role="radio" aria-checked="${mode === value}" class="${mode === value ? 'is-active' : ''}" data-hls-playback-mode="${value}">${label}</button>`).join('')}
+      </div>
+      ${mode === 'audioOnly' ? '<div class="music-live-hls-audio" data-hls-player-mount></div>' : ''}
+      ${note ? `<p class="music-muted">${escapeHtml(note)}</p>` : ''}
+    </section>
+  `
+}
+
+function renderHlsDiagnostics() {
+  const diagnostics = hlsMediaDiagnostics()
+  const media = state.hlsMediaElement
+  const shouldShowResume = Boolean(media && media.paused && isLiveListeningStatus())
+  const rows = [
+    ['provider', diagnostics.provider || STREAM_PROVIDERS.bufferedBroadcast],
+    ['playbackMode', diagnostics.playbackMode || 'hls'],
+    ['streamKey', diagnostics.streamKey || state.liveStream?.streamKey || 'none'],
+    ['hlsUrl', diagnostics.hlsUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
+    ['playbackModeSelected', diagnostics.playbackModeSelected || currentHlsPlaybackMode()],
+    ['nativeHlsSupported', diagnostics.nativeHlsSupported],
+    ['hlsJsSupported', diagnostics.hlsJsSupported],
+    ['hlsManifestLoaded', diagnostics.hlsManifestLoaded],
+    ['hlsLevelCount', diagnostics.hlsLevelCount],
+    ['mediaCurrentSrc', diagnostics.mediaCurrentSrc],
+    ['mediaPaused', diagnostics.mediaPaused],
+    ['mediaMuted', diagnostics.mediaMuted],
+    ['mediaVolume', diagnostics.mediaVolume],
+    ['mediaReadyState', diagnostics.mediaReadyState],
+    ['mediaNetworkState', diagnostics.mediaNetworkState],
+    ['mediaCurrentTime', diagnostics.mediaCurrentTime],
+    ['mediaDuration', diagnostics.mediaDuration],
+    ['lastMediaEvent', diagnostics.lastMediaEvent],
+    ['lastHlsErrorType', diagnostics.lastHlsErrorType],
+    ['lastHlsErrorDetails', diagnostics.lastHlsErrorDetails],
+    ['lastHlsErrorFatal', diagnostics.lastHlsErrorFatal]
+  ]
+  return `
+    <details class="music-live-native-debug">
+      <summary>HLS diagnostics</summary>
+      <dl>${rows.map(([key, value]) => `<div><dt>${escapeHtml(key)}</dt><dd data-hls-diagnostic="${escapeHtml(key)}">${escapeHtml(value === true ? 'yes' : value === false ? 'no' : value == null || value === '' ? 'none' : String(value))}</dd></div>`).join('')}</dl>
+      ${shouldShowResume ? '<button type="button" class="button button-muted" data-hls-resume>Play / Resume</button>' : ''}
+    </details>
+  `
 }
 
 function renderLiveKitReceiverAudioDebug() {
@@ -2934,7 +3283,7 @@ function renderLiveKitReceiverAudioDebug() {
     (audio && audio.paused === true && isLiveListeningStatus())
   )
   const rows = [
-    ['provider', diagnostics.provider || STREAM_PROVIDERS.livekit],
+    ['provider', diagnostics.provider || STREAM_PROVIDERS.webrtc],
     ['room connection state', diagnostics.roomConnectionState || state.listenerRoom?.state || state.listenerRoom?.connectionState || 'disconnected'],
     ['token received', diagnostics.tokenReceived === true ? 'yes' : diagnostics.tokenReceived === false ? 'no' : 'unknown'],
     ['playbackDemand write succeeded', diagnostics.demandWriteSucceeded === true ? 'yes' : diagnostics.demandWriteSucceeded === false ? 'no' : 'unknown'],
@@ -3396,13 +3745,18 @@ function startLiveStreamSubscription(streamId) {
         state.listenerVideoElement = null
         state.liveVideoExpanded = false
       }
-      const isNativeStream = stream?.provider === STREAM_PROVIDERS.nativeStreaming
+      const isNativeStream = isFirebaseSegmentProvider(stream?.provider)
+      const isBufferedStream = isBufferedHlsStream(stream)
       const playable = Boolean(stream && stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream))
       if (!playable) {
         state.liveStream = stream
         if (isNativeStream && stream?.status === 'live') {
           state.liveStatus = ['live', 'buffering', 'waiting'].includes(state.liveStatus) ? state.liveStatus : 'idle'
           state.liveError = nativePlaybackWaitMessage(stream)
+        } else if (isBufferedStream && stream?.status === 'live') {
+          disconnectLiveListener()
+          state.liveStatus = 'error'
+          state.liveError = getPublicPlaybackInfo(stream).message || 'Could not load the live stream playlist.'
         } else {
           disconnectLiveListener()
           state.liveStatus = 'ended'
@@ -3413,7 +3767,7 @@ function startLiveStreamSubscription(streamId) {
         return
       }
       state.liveStream = stream
-      state.liveError = ''
+      if (state.liveStatus !== 'error' && state.liveStatus !== 'playbackBlocked') state.liveError = ''
       updateLiveMediaSession(stream)
       rerender()
     },
@@ -3473,6 +3827,10 @@ async function ensureHostDraftStream() {
   rerender()
   const response = await prepareMusicLiveStreamDraft({
     streamId: state.goLive.draftStreamId,
+    provider: STREAM_PROVIDERS.webrtc,
+    transportProvider: 'livekit',
+    ingestMode: 'browser-webrtc',
+    playbackMode: 'webrtc',
     ...state.goLive.form
   })
   const streamId = response.streamId || ''
@@ -3538,6 +3896,10 @@ async function saveHostDetails() {
   updateGoLiveFormState()
   const payload = {
     streamId: activeHostStreamId(),
+    provider: STREAM_PROVIDERS.webrtc,
+    transportProvider: 'livekit',
+    ingestMode: 'browser-webrtc',
+    playbackMode: 'webrtc',
     ...state.goLive.form
   }
   state.goLive.editSaving = true
@@ -3680,7 +4042,11 @@ async function startHostBroadcast(form) {
       audioMode: formState.audioMode,
       rightsAccepted: formState.rightsAccepted,
       archiveRequested: false,
-      audioOnly: true
+      audioOnly: true,
+      provider: STREAM_PROVIDERS.webrtc,
+      transportProvider: 'livekit',
+      ingestMode: 'browser-webrtc',
+      playbackMode: 'webrtc'
     }
     await refreshHostUnloadToken()
     const response = await startMusicLiveStream(payload)
@@ -3811,6 +4177,8 @@ function disconnectLiveListener() {
   state.nativePlaybackQueue = []
   state.nativePlaybackNextIndex = null
   cleanupNativeMediaSourcePipeline()
+  cleanupHlsPlayback()
+  state.hlsDiagnostics = {}
   if (state.liveStream?.id && state.listenerPresenceId) {
     leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
   }
@@ -3840,7 +4208,7 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   state.nativeListenerDiagnostics = {
     ...existingAudioDiagnostics,
     streamId,
-    provider: STREAM_PROVIDERS.nativeStreaming,
+    provider: STREAM_PROVIDERS.firebaseSegments,
     listenerState: 'requestingPlayback',
     demandSessionId: state.nativeViewerSessionId,
     demandWriteSucceeded: false,
@@ -3993,7 +4361,11 @@ async function joinLiveListener(options = {}) {
   }
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
-  if (playbackInfo.provider === STREAM_PROVIDERS.nativeStreaming) {
+  if (playbackInfo.provider === STREAM_PROVIDERS.bufferedBroadcast || playbackInfo.playbackMode === 'hls') {
+    await startHlsListenerPlayback(playbackInfo)
+    return
+  }
+  if (playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments) {
     if (!firebaseSegmentStreamingEnabled()) {
       state.liveStatus = 'idle'
       state.liveError = 'Firebase segment streaming is disabled. LiveKit/WebRTC is the production live audio transport.'
@@ -4038,7 +4410,7 @@ async function joinLiveListener(options = {}) {
   state.liveError = ''
   state.nativeViewerSessionId = nativeViewerSessionId(state.liveStream.id)
   state.nativeListenerDiagnostics = {
-    provider: STREAM_PROVIDERS.livekit,
+    provider: STREAM_PROVIDERS.webrtc,
     listenerState: 'requestingPlayback',
     demandSessionId: state.nativeViewerSessionId,
     demandWriteSucceeded: false,
@@ -4101,7 +4473,7 @@ async function joinLiveListener(options = {}) {
       state.listenerAudioElement = element
       state.nativeListenerDiagnostics = {
         ...(state.nativeListenerDiagnostics || {}),
-        provider: STREAM_PROVIDERS.livekit,
+        provider: STREAM_PROVIDERS.webrtc,
         subscribedAudioTrack: true,
         remoteParticipantIdentity: participant?.identity || '',
         remoteTrackSid: publication?.trackSid || publication?.sid || '',
@@ -4169,12 +4541,14 @@ function updateLiveListenerControls() {
   const status = app.querySelector('[data-live-status]')
   if (state.listenerAudioElement && app.querySelector('[data-native-audio-mount]')) ensureNativeListenerAudioElement()
   if (state.listenerAudioElement && app.querySelector('[data-livekit-audio-mount]')) ensureLiveKitListenerAudioMounted()
+  if (state.hlsMediaElement && app.querySelector('[data-hls-player-mount]')) ensureHlsMediaMounted()
   if (button) button.textContent = isLiveListeningStatus()
     ? 'Pause / Leave'
     : state.liveStatus === 'connecting' || state.liveStatus === 'connectingTransport' || state.liveStatus === 'reconnecting'
       ? 'Connecting...'
-      : 'Listen'
+      : isBufferedHlsStream() ? 'Play' : 'Listen'
   if (status) status.textContent = liveStatusLabel(state.liveStream || {})
+  updateHlsDiagnosticsDom()
 }
 
 async function runSearch(queryText) {
@@ -4405,6 +4779,17 @@ function bindMusicEvents() {
   app.querySelector('[data-livekit-audio-resume]')?.addEventListener('click', () => {
     resumeLiveKitAudioFromGesture()
   })
+  app.querySelector('[data-hls-resume]')?.addEventListener('click', () => {
+    playHlsMediaFromGesture().catch(() => {})
+  })
+  app.querySelectorAll('[data-hls-playback-mode]').forEach((button) => button.addEventListener('click', () => {
+    const mode = button.dataset.hlsPlaybackMode || ''
+    if (!HLS_PLAYBACK_MODES.has(mode) || mode === currentHlsPlaybackMode()) return
+    disconnectLiveListener()
+    state.hlsPlaybackMode = mode
+    try { localStorage.setItem(HLS_PLAYBACK_MODE_STORAGE_KEY, mode) } catch {}
+    rerender()
+  }))
   app.querySelector('[data-live-video-hero]')?.addEventListener('click', () => {
     if (!isLiveListeningStatus()) {
       const passwordForm = app.querySelector('[data-live-password-form]')
@@ -4461,6 +4846,7 @@ function bindMusicEvents() {
   app.querySelector('[data-live-volume]')?.addEventListener('input', (event) => {
     state.player.volume = Number(event.target.value)
     if (state.listenerAudioElement) state.listenerAudioElement.volume = state.player.volume
+    if (state.hlsMediaElement && currentHlsPlaybackMode() !== 'videoOnly') state.hlsMediaElement.volume = state.player.volume
   })
   app.querySelector('[data-live-chat-form]')?.addEventListener('input', (event) => {
     state.liveChat.text = String(new FormData(event.currentTarget).get('text') || '').slice(0, 500)
@@ -4914,7 +5300,7 @@ async function loadMusicPage() {
     }
     state.loading = false
     rerender()
-    if (state.route.mode === 'liveMonitor' && state.liveStream?.id) {
+    if (state.route.mode === 'liveMonitor' && state.liveStream?.id && !isBufferedHlsStream(state.liveStream)) {
       joinLiveListener({ monitor: true, forceJoin: true }).catch(() => {})
     }
     return
@@ -4980,6 +5366,10 @@ window.addEventListener('beforeunload', (event) => {
 
 window.addEventListener('pagehide', () => {
   if (isHostBroadcastActive()) sendHostUnloadSignal('host_pagehide')
+  if (state.liveStream?.id && state.nativeViewerSessionId) {
+    clearPlaybackDemand(state.liveStream.id, state.nativeViewerSessionId).catch(() => {})
+  }
+  cleanupHlsPlayback()
   if (state.liveStream?.id && state.listenerPresenceId) {
     leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
   }

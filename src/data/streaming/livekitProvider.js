@@ -3,20 +3,24 @@ import { buildProviderDiagnostics, providerCapabilities, STREAM_PROVIDERS } from
 
 export function createLiveKitProvider() {
   let room = null
-  let diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.livekit })
+  let diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.webrtc })
 
   return {
-    id: STREAM_PROVIDERS.livekit,
-    label: 'LiveKit',
+    id: STREAM_PROVIDERS.webrtc,
+    label: 'WebRTC Live',
+    description: 'Low-latency realtime rooms and backstage.',
+    transportProvider: 'livekit',
+    ingestMode: 'browser-webrtc',
+    playbackMode: 'webrtc',
     configured: true,
-    capabilities: providerCapabilities(STREAM_PROVIDERS.livekit),
+    capabilities: providerCapabilities(STREAM_PROVIDERS.webrtc),
     createStreamSession(options = {}) {
       diagnostics = buildProviderDiagnostics({
-        provider: STREAM_PROVIDERS.livekit,
+        provider: STREAM_PROVIDERS.webrtc,
         roomName: options.roomName || options.livekitRoomName || '',
         connectionState: 'session-ready'
       })
-      return { ok: true, provider: STREAM_PROVIDERS.livekit, diagnostics }
+      return { ok: true, provider: STREAM_PROVIDERS.webrtc, diagnostics }
     },
     async startPublishing({ url = '', token = '', tracks = [], publishOptions = {}, existingRoom = null } = {}) {
       room = existingRoom || new Room({ adaptiveStream: true, dynacast: true })
@@ -27,7 +31,7 @@ export function createLiveKitProvider() {
         if (track) await room.localParticipant.publishTrack(track, options)
       }
       diagnostics = buildProviderDiagnostics({
-        provider: STREAM_PROVIDERS.livekit,
+        provider: STREAM_PROVIDERS.webrtc,
         roomName: room.name || '',
         connectionState: room.state || 'connected',
         audioTrackId: tracks.find((item) => (item.track || item)?.kind === 'audio')?.trackSid || '',
@@ -46,7 +50,7 @@ export function createLiveKitProvider() {
     },
     getPlaybackInfo(streamDoc = {}) {
       return {
-        provider: STREAM_PROVIDERS.livekit,
+        provider: STREAM_PROVIDERS.webrtc,
         playbackMode: 'webrtc',
         roomName: streamDoc.livekitRoomName || streamDoc.roomName || '',
         playable: Boolean(streamDoc.hostConnected
@@ -54,7 +58,7 @@ export function createLiveKitProvider() {
       }
     },
     subscribeViewer() {
-      return { ok: true, provider: STREAM_PROVIDERS.livekit, mode: 'existing-listener-flow' }
+      return { ok: true, provider: STREAM_PROVIDERS.webrtc, mode: 'existing-listener-flow' }
     },
     disconnectViewer() {
       return { ok: true }
@@ -62,7 +66,7 @@ export function createLiveKitProvider() {
     async stopPublishing() {
       room?.disconnect?.()
       room = null
-      diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.livekit, connectionState: 'stopped', lastMediaEvent: 'stopped' })
+      diagnostics = buildProviderDiagnostics({ provider: STREAM_PROVIDERS.webrtc, connectionState: 'stopped', lastMediaEvent: 'stopped' })
       return { ok: true, diagnostics }
     },
     stopStream() {

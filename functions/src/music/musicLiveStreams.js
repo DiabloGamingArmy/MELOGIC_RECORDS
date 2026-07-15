@@ -14,8 +14,8 @@ const ALLOWED_CATEGORIES = new Set(['music', 'podcast', 'radio', 'interview', 'l
 const ALLOWED_VISIBILITIES = new Set(['public', 'unlisted', 'private'])
 const ALLOWED_ACCESS_MODES = new Set(['public', 'unlisted', 'private', 'password'])
 const ALLOWED_AUDIO_MODES = new Set(['music', 'voice'])
-const ALLOWED_PROVIDERS = new Set(['nativeStreaming', 'livekit'])
-const ALLOWED_INGEST_MODES = new Set(['browser-media-recorder', 'livekit-webrtc', 'browser-webrtc', 'rtmp', 'srt', 'none'])
+const ALLOWED_PROVIDERS = new Set(['bufferedBroadcast', 'webrtc', 'firebaseSegments', 'nativeStreaming', 'livekit'])
+const ALLOWED_INGEST_MODES = new Set(['browser-media-recorder', 'livekit-webrtc', 'browser-webrtc', 'rtmp-obs', 'rtmp', 'srt', 'none'])
 const ALLOWED_PLAYBACK_MODES = new Set(['firebaseSegments', 'webrtc', 'hls', 'llhls', 'none'])
 const ALLOWED_REACTIONS = new Set(['like', 'dislike', 'none'])
 const ELIGIBLE_ROLES = new Set(['creator', 'artist', 'founder', 'staff', 'admin', 'owner'])
@@ -26,6 +26,7 @@ const CHAT_TEXT_MAX_LENGTH = 500
 const MAX_ACTIVE_LIVE_STREAMS_PER_HOST = 3
 const STAFF_ACTIVE_LIVE_STREAMS_PER_HOST = 10
 const MAX_CONFIGURED_LIVE_STREAMS_PER_HOST = 25
+const HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
 
 function db() {
   return admin.firestore()
@@ -43,6 +44,31 @@ function cleanId(value, max = 160) {
   return cleanString(value, max).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, max)
 }
 
+function sanitizeStreamKey(value = '') {
+  return cleanString(value, 160).replace(/[^A-Za-z0-9_-]/g, '')
+}
+
+function buildHlsPlaybackUrl(streamKey = '') {
+  const cleanKey = sanitizeStreamKey(streamKey)
+  return cleanKey ? `${HLS_EDGE_BASE_URL}/${cleanKey}.m3u8` : ''
+}
+
+function sanitizeHlsPlaybackUrl(value = '') {
+  const candidate = cleanString(value, 1000)
+  if (!candidate) return ''
+  try {
+    const parsed = new URL(candidate)
+    const valid = parsed.protocol === 'https:'
+      && parsed.hostname === 'stream.melogicrecords.studio'
+      && parsed.port === ''
+      && parsed.pathname.startsWith('/live/')
+      && parsed.pathname.endsWith('.m3u8')
+    return valid ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
 function toTags(value) {
   if (Array.isArray(value)) return value.map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
   return String(value || '').split(',').map((item) => cleanString(item, 40)).filter(Boolean).slice(0, 12)
@@ -57,26 +83,34 @@ function normalizeInputSource(value) {
 }
 
 function normalizeProvider(value) {
-  return value === 'nativeStreaming' ? 'nativeStreaming' : 'livekit'
+  if (value === 'bufferedBroadcast') return 'bufferedBroadcast'
+  if (value === 'webrtc' || value === 'livekit') return 'webrtc'
+  if (value === 'firebaseSegments' || value === 'nativeStreaming') return 'firebaseSegments'
+  return 'bufferedBroadcast'
 }
 
 function normalizeIngestMode(value) {
   return ALLOWED_INGEST_MODES.has(value) ? value : 'browser-webrtc'
 }
 
-function normalizePlaybackMode(value, provider = 'livekit') {
-  if (provider === 'nativeStreaming') return 'firebaseSegments'
-  if (provider === 'livekit') return 'webrtc'
+function normalizePlaybackMode(value, provider = 'bufferedBroadcast') {
+  if (provider === 'firebaseSegments') return 'firebaseSegments'
+  if (provider === 'webrtc') return 'webrtc'
+  if (provider === 'bufferedBroadcast') return 'hls'
   if (ALLOWED_PLAYBACK_MODES.has(value)) return value
-  return provider === 'livekit' ? 'webrtc' : 'firebaseSegments'
+  return 'hls'
 }
 
-function providerLabel(provider = 'livekit') {
-  return provider === 'livekit' ? 'LiveKit' : 'Native Streaming'
+function providerLabel(provider = 'bufferedBroadcast') {
+  if (provider === 'webrtc') return 'WebRTC Live'
+  if (provider === 'firebaseSegments') return 'Firebase Segments'
+  return 'Buffered Broadcast'
 }
 
-function normalizeIngestModeForProvider(value, provider = 'livekit') {
-  return provider === 'livekit' ? 'browser-webrtc' : 'browser-media-recorder'
+function normalizeIngestModeForProvider(value, provider = 'bufferedBroadcast') {
+  if (provider === 'webrtc') return 'browser-webrtc'
+  if (provider === 'firebaseSegments') return 'browser-media-recorder'
+  return 'rtmp-obs'
 }
 
 function nullableNumber(value) {
@@ -106,15 +140,24 @@ function nativeStreamingDefaults(existing = {}) {
 }
 
 function isStreamPublishing(stream = {}) {
-  return stream.audioPublished === true || stream.videoPublished === true || stream.programHasAudio === true || stream.programHasVideo === true
+  return normalizeProvider(stream.provider) === 'bufferedBroadcast'
+    || stream.audioPublished === true
+    || stream.videoPublished === true
+    || stream.programHasAudio === true
+    || stream.programHasVideo === true
 }
 
 function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource = 'browser', defaultAudioPublished = false } = {}) {
   const provider = normalizeProvider(data.provider || existing.provider)
+  const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || (provider === 'bufferedBroadcast' ? 'mystream' : ''))
+  const requestedHlsUrl = cleanString(data.hlsPlaybackUrl || existing.hlsPlaybackUrl || '', 1000)
+  const hlsPlaybackUrl = provider === 'bufferedBroadcast'
+    ? sanitizeHlsPlaybackUrl(requestedHlsUrl) || buildHlsPlaybackUrl(streamKey)
+    : ''
   const audioEnabled = data.audioEnabled === false ? false : data.audioEnabled === true ? true : existing.audioEnabled !== false
   const videoEnabled = data.videoEnabled === true ? true : data.videoEnabled === false ? false : existing.videoEnabled === true
-  const audioPublished = Boolean(audioEnabled && (data.audioPublished === true || (defaultAudioPublished && data.audioPublished !== false)))
-  const videoPublished = Boolean(videoEnabled && data.videoPublished === true)
+  const audioPublished = Boolean(provider !== 'bufferedBroadcast' && audioEnabled && (data.audioPublished === true || (defaultAudioPublished && data.audioPublished !== false)))
+  const videoPublished = Boolean(provider !== 'bufferedBroadcast' && videoEnabled && data.videoPublished === true)
   const programHasAudio = Boolean(audioEnabled && (data.programHasAudio === true || (data.programHasAudio !== false && audioPublished)))
   const programHasVideo = Boolean(videoEnabled && (data.programHasVideo === true || videoPublished))
   const activeAudioSources = data.activeAudioSources && typeof data.activeAudioSources === 'object'
@@ -163,16 +206,20 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
   return {
     provider,
     providerLabel: providerLabel(provider),
+    transportProvider: provider === 'bufferedBroadcast' ? 'hls-edge' : provider === 'webrtc' ? 'livekit' : 'firebase',
     ingestMode: normalizeIngestModeForProvider(data.ingestMode || existing.ingestMode, provider),
     playbackMode: normalizePlaybackMode(data.playbackMode || existing.playbackMode, provider),
+    latencyProfile: provider === 'bufferedBroadcast' ? 'buffered' : 'realtime',
+    streamKey,
+    hlsPlaybackUrl,
     nativeStreaming: nativeStreamingDefaults({
       ...(existing.nativeStreaming || {}),
       ...(data.nativeStreaming || {}),
-      enabled: provider === 'nativeStreaming',
+      enabled: provider === 'firebaseSegments',
       videoEnabled
     }),
     livekit: {
-      enabled: provider === 'livekit',
+      enabled: provider === 'webrtc',
       roomName: cleanRoomName(data.livekit?.roomName || existing.livekit?.roomName || existing.livekitRoomName || existing.roomName || ''),
       playbackMode: 'webrtc'
     },
@@ -222,10 +269,10 @@ function isAdminAuth(auth = null) {
   return auth?.token?.admin === true || ['owner', 'admin'].includes(cleanString(auth?.token?.adminRole, 40))
 }
 
-function markLiveValidationDetails({ streamId = '', provider = 'nativeStreaming', stream = {}, requestData = {}, targetStatus = 'live' } = {}) {
-  const validationBranch = provider === 'nativeStreaming' ? 'nativeStreaming' : 'livekit'
-  const broadcastState = cleanString(requestData.broadcastState || (validationBranch === 'nativeStreaming' ? 'liveIdleNoListeners' : stream.broadcastState) || '', 80)
-  const nativeStatus = cleanString(requestData.nativeStreaming?.status || (validationBranch === 'nativeStreaming' ? 'idleNoListeners' : stream.nativeStreaming?.status) || '', 80)
+function markLiveValidationDetails({ streamId = '', provider = 'bufferedBroadcast', stream = {}, requestData = {}, targetStatus = 'live' } = {}) {
+  const validationBranch = provider
+  const broadcastState = cleanString(requestData.broadcastState || (validationBranch === 'firebaseSegments' ? 'liveIdleNoListeners' : stream.broadcastState) || '', 80)
+  const nativeStatus = cleanString(requestData.nativeStreaming?.status || (validationBranch === 'firebaseSegments' ? 'idleNoListeners' : stream.nativeStreaming?.status) || '', 80)
   const currentStatus = cleanString(stream.status || '', 80)
   const safeTitle = cleanString(requestData.title || stream.title || 'Untitled live stream', 90)
   const safeVisibility = cleanString(requestData.visibility || stream.visibility || 'public', 40)
@@ -234,14 +281,20 @@ function markLiveValidationDetails({ streamId = '', provider = 'nativeStreaming'
   const failedConditions = []
   if (!streamId) missingRequiredFields.push('streamId')
   if (!stream.hostUid) missingRequiredFields.push('hostUid')
-  if (provider !== 'nativeStreaming' && provider !== 'livekit') failedConditions.push(`unsupported provider: ${provider}`)
+  if (!['bufferedBroadcast', 'webrtc', 'firebaseSegments'].includes(provider)) failedConditions.push(`unsupported provider: ${provider}`)
   if (targetStatus !== 'live') failedConditions.push(`targetStatus must be live, got ${targetStatus}`)
-  if (validationBranch === 'nativeStreaming') {
+  if (validationBranch === 'firebaseSegments') {
     if (!hostSessionId) missingRequiredFields.push('hostSessionId')
     if (broadcastState && broadcastState !== 'liveIdleNoListeners') failedConditions.push(`native broadcastState must be liveIdleNoListeners, got ${broadcastState}`)
     if (nativeStatus && nativeStatus !== 'idleNoListeners') failedConditions.push(`nativeStreaming.status must be idleNoListeners, got ${nativeStatus}`)
   }
-  if (validationBranch === 'livekit' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
+  if (validationBranch === 'webrtc' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
+  if (validationBranch === 'bufferedBroadcast') {
+    const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || '')
+    const hlsPlaybackUrl = sanitizeHlsPlaybackUrl(requestData.hlsPlaybackUrl || stream.hlsPlaybackUrl || '') || buildHlsPlaybackUrl(streamKey)
+    if (!streamKey) missingRequiredFields.push('streamKey')
+    if (!hlsPlaybackUrl) missingRequiredFields.push('hlsPlaybackUrl')
+  }
   return {
     functionName: 'markMusicLiveStreamOnAir',
     functionFile: 'functions/src/music/musicLiveStreams.js',
@@ -336,7 +389,7 @@ function isPubliclyJoinable(stream = {}) {
     && ['public', 'unlisted', 'password'].includes(accessMode)
     && stream.visibility !== 'private'
     && stream.hostConnected === true
-    && (stream.provider === 'nativeStreaming' || isStreamPublishing(stream))
+    && (normalizeProvider(stream.provider) === 'firebaseSegments' || isStreamPublishing(stream))
     && isHeartbeatFresh(stream)
 }
 
@@ -611,11 +664,11 @@ const startMusicLiveStream = onCall(
 
       const selectedProvider = programOutputState.provider
       let config = null
-      if (selectedProvider === 'livekit') {
+      if (selectedProvider === 'webrtc') {
         stage = 'LiveKit config validated'
         config = livekitConfig(stage)
       } else {
-        stage = 'Native Streaming config prepared'
+        stage = `${providerLabel(selectedProvider)} config prepared`
         liveLog(stage, { uid, provider: selectedProvider, playbackMode: programOutputState.playbackMode })
       }
 
@@ -633,7 +686,7 @@ const startMusicLiveStream = onCall(
         }
       }
       const streamId = streamRef.id
-      const roomName = selectedProvider === 'livekit' ? cleanRoomName(`music-live-${streamId}`) : ''
+      const roomName = selectedProvider === 'webrtc' ? cleanRoomName(`music-live-${streamId}`) : ''
       liveLog(stage, { uid, streamId, roomName })
 
       const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
@@ -641,7 +694,7 @@ const startMusicLiveStream = onCall(
       const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
 
       let hostToken = ''
-      if (selectedProvider === 'livekit') {
+      if (selectedProvider === 'webrtc') {
         stage = 'host token creation started'
         hostToken = await createLiveKitJwt({
           identity: `host-${uid}`,
@@ -676,7 +729,7 @@ const startMusicLiveStream = onCall(
         coverArtSource,
         status: 'starting',
         connectionStatus: 'starting',
-        broadcastState: selectedProvider === 'nativeStreaming' ? 'idleNoListeners' : 'connecting',
+        broadcastState: selectedProvider === 'firebaseSegments' ? 'idleNoListeners' : 'connecting',
         visibility,
         accessMode,
         passwordProtected: accessMode === 'password',
@@ -706,9 +759,11 @@ const startMusicLiveStream = onCall(
         streamMethodLockedAtStart: true,
         selectedProviderUpdatedAt: now,
         selectedProviderUpdatedBy: uid,
-        archiveNote: selectedProvider === 'nativeStreaming'
-          ? 'Native Streaming records short browser MediaRecorder chunks to Firebase Storage and publishes lightweight Firestore segment metadata.'
-          : 'Live audio uses WebRTC Opus compression. Future high-quality replays should use LiveKit Egress, a server recording pipeline, or a separate mastered upload.',
+        archiveNote: selectedProvider === 'firebaseSegments'
+          ? 'Firebase Segments records short browser MediaRecorder chunks for experimental playback.'
+          : selectedProvider === 'bufferedBroadcast'
+            ? 'Buffered Broadcast uses OBS RTMP ingest and public playback through the Melogic HLS edge network.'
+            : 'Live audio uses WebRTC Opus compression. Future high-quality replays should use LiveKit Egress, a server recording pipeline, or a separate mastered upload.',
         archiveTrackPath: '',
         archiveTrackURL: '',
         moderationStatus: 'clear',
@@ -788,7 +843,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
   const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
   const title = cleanString(request.data?.title, 90) || 'Untitled live stream'
-  const roomName = cleanRoomName(`music-live-${streamId}`)
+  const roomName = programOutputState.provider === 'webrtc' ? cleanRoomName(`music-live-${streamId}`) : ''
 
   await streamRef.set({
     streamId,
@@ -808,7 +863,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     coverArtSource: metadata.coverArtSource,
     status: 'draft',
     connectionStatus: 'draft',
-    broadcastState: programOutputState.provider === 'nativeStreaming' ? 'idleNoListeners' : 'draft',
+    broadcastState: programOutputState.provider === 'firebaseSegments' ? 'idleNoListeners' : 'draft',
     visibility: metadata.visibility,
     accessMode: metadata.accessMode,
     passwordProtected: metadata.accessMode === 'password',
@@ -871,10 +926,11 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   const requestedProvider = normalizeProvider(request.data?.provider || stream.provider)
   const diagnostics = markLiveValidationDetails({ streamId, provider: requestedProvider, stream, requestData: request.data || {} })
   const allowedNativeStatuses = new Set(['draft', 'setup', 'starting', 'error'])
-  const allowedLiveKitStatuses = new Set(['starting', 'live'])
+  const allowedWebRtcStatuses = new Set(['starting', 'live'])
+  const allowedBufferedStatuses = new Set(['draft', 'setup', 'starting', 'error', 'live'])
   const nativeStreamStatus = cleanString(stream.status || '', 80)
   const nativeHostSessionId = cleanString(request.data?.hostSessionId || '', 120)
-  const nativeStartAllowed = requestedProvider === 'nativeStreaming'
+  const nativeStartAllowed = requestedProvider === 'firebaseSegments'
     && allowedNativeStatuses.has(nativeStreamStatus)
     && Boolean(nativeHostSessionId)
   console.warn('[native-start-v3]', {
@@ -886,9 +942,11 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     hostSessionId: nativeHostSessionId,
     nativeStartAllowed
   })
-  const canMarkLive = requestedProvider === 'nativeStreaming'
+  const canMarkLive = requestedProvider === 'firebaseSegments'
     ? nativeStartAllowed
-    : allowedLiveKitStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
+    : requestedProvider === 'bufferedBroadcast'
+      ? allowedBufferedStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
+      : allowedWebRtcStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
   if (!canMarkLive) {
     const rejectionDiagnostics = {
       ...diagnostics,
@@ -927,23 +985,23 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     passwordProtected: safeLiveAccessMode === 'password',
     ...programOutputState,
     connectionStatus: 'live',
-    broadcastState: requestedProvider === 'nativeStreaming' ? 'liveIdleNoListeners' : 'liveBroadcasting',
+    broadcastState: requestedProvider === 'firebaseSegments' ? 'liveIdleNoListeners' : 'liveBroadcasting',
     hostConnected: true,
     provider: requestedProvider,
-    ingestMode: requestedProvider === 'nativeStreaming' ? 'browser-media-recorder' : programOutputState.ingestMode,
-    playbackMode: requestedProvider === 'nativeStreaming' ? 'firebaseSegments' : programOutputState.playbackMode,
+    ingestMode: programOutputState.ingestMode,
+    playbackMode: programOutputState.playbackMode,
     hostActive: true,
     hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || '', 120),
     nativeStreaming: nativeStreamingDefaults({
       ...(stream.nativeStreaming || {}),
       ...(request.data?.nativeStreaming || {}),
-      enabled: requestedProvider === 'nativeStreaming',
-      status: requestedProvider === 'nativeStreaming'
+      enabled: requestedProvider === 'firebaseSegments',
+      status: requestedProvider === 'firebaseSegments'
         ? 'idleNoListeners'
         : stream.nativeStreaming?.status,
-      hasPlayableSegments: requestedProvider === 'nativeStreaming' ? false : stream.nativeStreaming?.hasPlayableSegments,
-      newestAvailableSegmentIndex: requestedProvider === 'nativeStreaming' ? null : stream.nativeStreaming?.newestAvailableSegmentIndex,
-      currentSegmentIndex: requestedProvider === 'nativeStreaming' ? null : stream.nativeStreaming?.currentSegmentIndex
+      hasPlayableSegments: requestedProvider === 'firebaseSegments' ? false : stream.nativeStreaming?.hasPlayableSegments,
+      newestAvailableSegmentIndex: requestedProvider === 'firebaseSegments' ? null : stream.nativeStreaming?.newestAvailableSegmentIndex,
+      currentSegmentIndex: requestedProvider === 'firebaseSegments' ? null : stream.nativeStreaming?.currentSegmentIndex
     }),
     listenerCount: Number.isFinite(Number(stream.listenerCount)) ? Number(stream.listenerCount) : 0,
     startedAt: now,
@@ -978,7 +1036,7 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
   })
   await streamRef.set({
     connectionStatus: request.data?.connectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
-    broadcastState: programOutputState.provider === 'nativeStreaming'
+    broadcastState: programOutputState.provider === 'firebaseSegments'
       ? cleanString(request.data?.broadcastState || stream.broadcastState || 'idleNoListeners', 80)
       : 'liveBroadcasting',
     hostActive: true,
@@ -1095,8 +1153,10 @@ const joinMusicLiveStream = onCall(
     if (stream.status !== 'live') throw new HttpsError('failed-precondition', 'This stream is not live.')
     const accessMode = stream.accessMode || stream.visibility || 'private'
     if (accessMode === 'private' || stream.visibility === 'private') throw new HttpsError('permission-denied', 'This stream is private.')
-    const isNativeStreaming = normalizeProvider(stream.provider) === 'nativeStreaming'
-    if (stream.hostConnected !== true || (!isNativeStreaming && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)) {
+    const provider = normalizeProvider(stream.provider)
+    const isFirebaseSegments = provider === 'firebaseSegments'
+    const isBufferedBroadcast = provider === 'bufferedBroadcast'
+    if (stream.hostConnected !== true || (!isFirebaseSegments && !isBufferedBroadcast && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)) {
       await streamRef.set({
         status: 'ended',
         connectionStatus: 'stale',
@@ -1119,15 +1179,15 @@ const joinMusicLiveStream = onCall(
         throw new HttpsError('permission-denied', 'Incorrect stream password.')
       }
     }
-    if (!isNativeStreaming && !stream.livekitRoomName && !stream.roomName) throw new HttpsError('failed-precondition', 'This stream is missing its live room.')
+    if (provider === 'webrtc' && !stream.livekitRoomName && !stream.roomName) throw new HttpsError('failed-precondition', 'This stream is missing its live room.')
 
     const uid = request.auth?.uid || ''
     const anonId = cleanId(request.data?.anonId, 80) || cleanId(request.data?.presenceId, 80) || `${Date.now()}${Math.random().toString(36).slice(2, 8)}`
     const presenceId = cleanId(request.data?.presenceId, 120) || (uid ? `uid-${uid}` : `anon-${anonId}`)
     const identity = uid ? `listener-${uid}` : `listener-anon-${anonId}`
     const name = cleanString(request.auth?.token?.name || request.auth?.token?.email || 'Melogic Listener', 80)
-    const roomName = isNativeStreaming ? '' : cleanRoomName(stream.livekitRoomName || stream.roomName)
-    const listenerToken = isNativeStreaming ? '' : await createLiveKitJwt({
+    const roomName = provider === 'webrtc' ? cleanRoomName(stream.livekitRoomName || stream.roomName) : ''
+    const listenerToken = provider !== 'webrtc' ? '' : await createLiveKitJwt({
       identity,
       name,
       roomName,
@@ -1153,8 +1213,10 @@ const joinMusicLiveStream = onCall(
       ok: true,
       streamId,
       roomName,
-      provider: normalizeProvider(stream.provider),
-      playbackMode: isNativeStreaming ? 'firebaseSegments' : 'webrtc',
+      provider,
+      playbackMode: provider === 'firebaseSegments' ? 'firebaseSegments' : provider === 'bufferedBroadcast' ? 'hls' : 'webrtc',
+      streamKey: sanitizeStreamKey(stream.streamKey || ''),
+      hlsPlaybackUrl: sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || '') || buildHlsPlaybackUrl(stream.streamKey || ''),
       nativeStreaming: stream.nativeStreaming || nativeStreamingDefaults(),
       audioPublished: stream.audioPublished === true,
       videoPublished: stream.videoPublished === true,
@@ -1162,7 +1224,7 @@ const joinMusicLiveStream = onCall(
       programHasVideo: stream.programHasVideo === true,
       listenerToken,
       token: listenerToken,
-      url: isNativeStreaming ? '' : LIVEKIT_URL.value(),
+      url: provider === 'webrtc' ? LIVEKIT_URL.value() : '',
       identity,
       presenceId,
       listenerCount
@@ -1443,8 +1505,8 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   if (stream.status !== 'live' || !['public', 'unlisted'].includes(stream.visibility)) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
-  const isNativeStreaming = normalizeProvider(stream.provider) === 'nativeStreaming'
-  if (stream.hostConnected !== true || (!isNativeStreaming && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)) {
+  const isFirebaseSegments = normalizeProvider(stream.provider) === 'firebaseSegments'
+  if (stream.hostConnected !== true || (!isFirebaseSegments && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
 
@@ -1470,8 +1532,8 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
 async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
   const stream = docSnap.data() || {}
   if (stream.status === 'live') {
-    const isNativeStreaming = normalizeProvider(stream.provider) === 'nativeStreaming'
-    const stale = stream.hostConnected !== true || (!isNativeStreaming && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)
+    const isFirebaseSegments = normalizeProvider(stream.provider) === 'firebaseSegments'
+    const stale = stream.hostConnected !== true || (!isFirebaseSegments && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)
     if (!stale) return false
     await docSnap.ref.set({
       status: 'ended',

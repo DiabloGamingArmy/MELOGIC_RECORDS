@@ -18,7 +18,7 @@ const DEFAULT_NATIVE_OPTIONS = {
 
 let recorderState = null
 let diagnostics = buildProviderDiagnostics({
-  provider: STREAM_PROVIDERS.nativeStreaming,
+  provider: STREAM_PROVIDERS.firebaseSegments,
   connectionState: 'idle',
   lastMediaEvent: 'native-streaming-ready'
 })
@@ -50,14 +50,14 @@ function segmentCollection(streamId = '') {
 
 export function createNativeStreamSession(options = {}) {
   diagnostics = buildProviderDiagnostics({
-    provider: STREAM_PROVIDERS.nativeStreaming,
+    provider: STREAM_PROVIDERS.firebaseSegments,
     connectionState: 'session-ready',
     roomName: cleanId(options.streamId || options.roomName || ''),
     lastMediaEvent: 'native-session-created'
   })
   return {
     ok: true,
-    provider: STREAM_PROVIDERS.nativeStreaming,
+    provider: STREAM_PROVIDERS.firebaseSegments,
     ingestMode: INGEST_MODES.browserMediaRecorder,
     playbackMode: PLAYBACK_MODES.firebaseSegments,
     nativeStreaming: { ...DEFAULT_NATIVE_OPTIONS, ...(options.nativeStreaming || {}), enabled: true },
@@ -77,7 +77,7 @@ export async function startNativeBroadcast(options = {}) {
 export async function stopNativeBroadcast() {
   stopSegmentRecorder()
   diagnostics = buildProviderDiagnostics({
-    provider: STREAM_PROVIDERS.nativeStreaming,
+    provider: STREAM_PROVIDERS.firebaseSegments,
     connectionState: 'stopped',
     lastMediaEvent: 'native-broadcast-stopped'
   })
@@ -219,7 +219,7 @@ export async function uploadSegment(segmentBlob, metadata = {}) {
   const uploadStartedAt = serverTimestamp()
   const upload = await uploadBytes(storageRef(storage, path), segmentBlob, {
     contentType: metadata.mimeType || segmentBlob.type || 'audio/webm',
-    customMetadata: { streamId, provider: STREAM_PROVIDERS.nativeStreaming, segmentIndex: String(index), type }
+    customMetadata: { streamId, provider: STREAM_PROVIDERS.firebaseSegments, segmentIndex: String(index), type }
   })
   if (typeof metadata.isStreamActive === 'function' && !metadata.isStreamActive()) {
     diagnostics = buildProviderDiagnostics({ ...diagnostics, lastUploadPath: path, lastMediaEvent: 'segment-uploaded-metadata-skipped-inactive' })
@@ -229,7 +229,7 @@ export async function uploadSegment(segmentBlob, metadata = {}) {
   diagnostics = buildProviderDiagnostics({ ...diagnostics, lastUploadPath: path, lastUploadError: '', newestAvailableSegmentIndex: index, hasPlayableSegments: true, lastMediaEvent: 'segment-uploaded' })
   const expiresAt = Timestamp.fromMillis(Date.now() + Number(metadata.rollingRetentionMs || DEFAULT_NATIVE_OPTIONS.rollingRetentionMs))
   return writeSegmentMetadata({
-    provider: STREAM_PROVIDERS.nativeStreaming,
+    provider: STREAM_PROVIDERS.firebaseSegments,
     type,
     index,
     storagePath: path,
@@ -375,10 +375,15 @@ export function getDiagnostics() {
 
 export function createNativeStreamingProvider() {
   return {
-    id: STREAM_PROVIDERS.nativeStreaming,
-    label: 'Native Streaming',
+    id: STREAM_PROVIDERS.firebaseSegments,
+    label: 'Firebase Segments',
+    description: 'Experimental Firebase MediaRecorder segment playback.',
+    transportProvider: 'firebase',
+    ingestMode: 'browser-media-recorder',
+    playbackMode: 'firebaseSegments',
+    experimental: true,
     configured: true,
-    capabilities: providerCapabilities(STREAM_PROVIDERS.nativeStreaming),
+    capabilities: providerCapabilities(STREAM_PROVIDERS.firebaseSegments),
     createStreamSession: createNativeStreamSession,
     startNativeBroadcast,
     stopNativeBroadcast,

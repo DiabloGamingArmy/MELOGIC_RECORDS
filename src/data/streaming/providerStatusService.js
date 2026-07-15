@@ -6,9 +6,19 @@ export function fallbackStreamingProviderStatus(error = null) {
     ok: false,
     error: error?.message || 'Provider status function unavailable.',
     providers: {
-      nativeStreaming: {
-        provider: 'nativeStreaming',
-        label: 'Native Streaming',
+      bufferedBroadcast: {
+        provider: 'bufferedBroadcast',
+        label: 'Buffered Broadcast',
+        configured: true,
+        transportProvider: 'hls-edge',
+        ingestMode: 'rtmp-obs',
+        playbackMode: 'hls',
+        latencyProfile: 'buffered',
+        localFallback: true
+      },
+      firebaseSegments: {
+        provider: 'firebaseSegments',
+        label: 'Firebase Segments',
         configured: true,
         ingestMode: 'browser-media-recorder',
         playbackMode: 'firebaseSegments',
@@ -21,9 +31,9 @@ export function fallbackStreamingProviderStatus(error = null) {
         videoEnabled: false,
         localFallback: true
       },
-      livekit: {
-        provider: 'livekit',
-        label: 'LiveKit',
+      webrtc: {
+        provider: 'webrtc',
+        label: 'WebRTC Live',
         configured: false,
         ingestMode: 'browser-webrtc',
         playbackMode: 'webrtc',
@@ -39,7 +49,7 @@ export async function getStreamingProviderStatus() {
     const result = await callable({})
     return result.data || {}
   } catch (error) {
-    console.warn('[streaming] getStreamingProviderStatus unavailable; using local Native Streaming fallback.', error?.message || error)
+    console.warn('[streaming] getStreamingProviderStatus unavailable; using local Buffered Broadcast fallback.', error?.message || error)
     return fallbackStreamingProviderStatus(error)
   }
 }

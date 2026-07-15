@@ -132,9 +132,19 @@ const getStreamingProviderStatus = onCall({ region: 'us-central1' }, async () =>
   return {
     ok: true,
     providers: {
-      nativeStreaming: {
-        provider: 'nativeStreaming',
-        label: 'Native Streaming',
+      bufferedBroadcast: {
+        provider: 'bufferedBroadcast',
+        label: 'Buffered Broadcast',
+        configured: true,
+        transportProvider: 'hls-edge',
+        ingestMode: 'rtmp-obs',
+        playbackMode: 'hls',
+        latencyProfile: 'buffered',
+        missingConfigKeys: []
+      },
+      firebaseSegments: {
+        provider: 'firebaseSegments',
+        label: 'Firebase Segments',
         configured: true,
         ingestMode: 'browser-media-recorder',
         playbackMode: 'firebaseSegments',
@@ -147,9 +157,9 @@ const getStreamingProviderStatus = onCall({ region: 'us-central1' }, async () =>
         videoEnabled: false,
         missingConfigKeys: []
       },
-      livekit: {
-        provider: 'livekit',
-        label: 'LiveKit',
+      webrtc: {
+        provider: 'webrtc',
+        label: 'WebRTC Live',
         configured: liveKitConfigured,
         ingestMode: 'browser-webrtc',
         playbackMode: 'webrtc',
