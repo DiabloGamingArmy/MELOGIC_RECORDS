@@ -34,6 +34,10 @@ export function selectPublicPlaybackPlayer(stream = {}) {
 export function getPublicPlaybackInfo(stream = {}) {
   const selectedPlayer = selectPublicPlaybackPlayer(stream)
   if (selectedPlayer === 'hls') {
+    const rawProvider = String(stream.rawProvider ?? stream.provider ?? '')
+    const rawPlaybackMode = String(stream.rawPlaybackMode ?? stream.playbackMode ?? '')
+    const rawStreamKey = String(stream.rawStreamKey ?? stream.streamKey ?? '')
+    const rawHlsPlaybackUrl = String(stream.rawHlsPlaybackUrl ?? stream.hlsPlaybackUrl ?? '')
     const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
     const configuredUrlAllowed = isAllowedHlsPlaybackUrl(configuredUrl)
     const keyUrl = buildHlsPlaybackUrl(stream.streamKey)
@@ -42,10 +46,18 @@ export function getPublicPlaybackInfo(stream = {}) {
       ? ''
       : configuredUrl
         ? 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
-        : 'This stream is missing an HLS stream key.'
+        : String(stream.provider || '') === STREAM_PROVIDERS.hlsEdge
+          ? 'This HLS stream is missing its stream key. Start a new stream from the updated Studio controls.'
+          : 'This stream is missing an HLS stream key.'
     return {
       provider: STREAM_PROVIDERS.hlsEdge,
       selectedPlayer,
+      computedHlsUrl: url,
+      normalizationApplied: stream.normalizationApplied === true,
+      rawProvider,
+      rawPlaybackMode,
+      rawStreamKey,
+      rawHlsPlaybackUrl,
       transportProvider: 'hls-edge',
       playbackMode: PLAYBACK_MODES.hls,
       latencyProfile: 'buffered',

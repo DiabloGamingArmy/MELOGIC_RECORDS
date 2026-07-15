@@ -36,6 +36,7 @@ import {
   leaveMusicLiveStream,
   listPublicLiveStreams,
   markMusicLiveStreamOnAir,
+  normalizeLiveStreamTransport,
   prepareMusicLiveStreamDraft,
   sendMusicLiveChatMessage,
   sendMusicLiveUnloadBeacon,
@@ -57,6 +58,7 @@ import {
   isAllowedHlsPlaybackUrl
 } from './data/streaming/hlsEdgePlayer'
 import { assertLiveKitConnectionConfig } from './data/streaming/livekitProvider'
+import { startBrowserWebrtcIngest, stopBrowserWebrtcIngest } from './data/streaming/browserWebrtcIngest'
 import { getNativePlaybackQueue, getNativePlaybackQueueDiagnostics } from './data/streaming/nativeStreamingProvider'
 import {
   clearPlaybackDemand,
@@ -230,6 +232,8 @@ const state = {
       coverArtSource: 'fallback',
       tags: '',
       visibility: 'public',
+      streamingMethod: 'browserWebrtc',
+      streamKey: 'mystream',
       rightsAccepted: false,
       archiveRequested: false
     },
@@ -248,6 +252,7 @@ const state = {
     connectionStatus: '',
     streamId: '',
     room: null,
+    browserIngestActive: false,
     localTrack: null,
     heartbeatTimer: 0,
     unloadToken: '',
@@ -1770,6 +1775,7 @@ function currentHlsPlaybackMode() {
 function hlsMediaDiagnostics(eventName = '') {
   const media = state.hlsMediaElement
   const diagnostics = state.hlsDiagnostics || {}
+  const playbackInfo = getPublicPlaybackInfo(state.liveStream || {})
   state.hlsDiagnostics = {
     ...diagnostics,
     provider: STREAM_PROVIDERS.hlsEdge,
@@ -1778,6 +1784,13 @@ function hlsMediaDiagnostics(eventName = '') {
     streamKey: state.liveStream?.streamKey || '',
     hlsPlaybackUrl: state.liveStream?.hlsPlaybackUrl || diagnostics.hlsPlaybackUrl || '',
     hlsUrl: state.hlsAttachedUrl || diagnostics.hlsUrl || '',
+    selectedPlayer: playbackInfo.selectedPlayer || 'hls',
+    computedHlsUrl: playbackInfo.computedHlsUrl || playbackInfo.url || '',
+    normalizationApplied: playbackInfo.normalizationApplied === true,
+    rawPlaybackMode: playbackInfo.rawPlaybackMode || state.liveStream?.rawPlaybackMode || '',
+    rawProvider: playbackInfo.rawProvider || state.liveStream?.rawProvider || '',
+    rawStreamKey: playbackInfo.rawStreamKey || state.liveStream?.rawStreamKey || '',
+    rawHlsPlaybackUrl: playbackInfo.rawHlsPlaybackUrl || state.liveStream?.rawHlsPlaybackUrl || '',
     playbackModeSelected: currentHlsPlaybackMode(),
     nativeHlsSupported: media ? canPlayNativeHls(media) : null,
     ...(eventName ? { lastMediaEvent: eventName } : {}),
@@ -1971,6 +1984,13 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
     streamKey: state.liveStream.streamKey || '',
     hlsPlaybackUrl: state.liveStream.hlsPlaybackUrl || playbackInfo.url,
     hlsUrl: playbackInfo.url,
+    selectedPlayer: playbackInfo.selectedPlayer || 'hls',
+    computedHlsUrl: playbackInfo.computedHlsUrl || playbackInfo.url,
+    normalizationApplied: playbackInfo.normalizationApplied === true,
+    rawPlaybackMode: playbackInfo.rawPlaybackMode || '',
+    rawProvider: playbackInfo.rawProvider || '',
+    rawStreamKey: playbackInfo.rawStreamKey || '',
+    rawHlsPlaybackUrl: playbackInfo.rawHlsPlaybackUrl || '',
     playbackModeSelected: mode,
     nativeHlsSupported: canPlayNativeHls(media),
     hlsJsSupported: null,
@@ -3181,9 +3201,13 @@ function renderLiveDetailPage() {
   const playbackInfo = getPublicPlaybackInfo(stream)
   const isNativeStream = playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments
   const isBufferedStream = playbackInfo.provider === STREAM_PROVIDERS.hlsEdge
-  const canListen = isNativeStream
-    ? stream.status === 'live' && !['removed', 'blocked'].includes(stream.moderationStatus) && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
-    : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
+  const listenerAccessAllowed = !['removed', 'blocked'].includes(stream.moderationStatus)
+    && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
+  const canListen = isBufferedStream
+    ? listenerAccessAllowed && (stream.status === 'live' || Boolean(playbackInfo.url))
+    : isNativeStream
+      ? stream.status === 'live' && listenerAccessAllowed
+      : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
   const hasVideo = isBufferedStream ? currentHlsPlaybackMode() !== 'audioOnly' : streamHasVideoFoundation(stream)
   const visual = isBufferedStream && hasVideo
     ? '<div class="music-live-visual music-live-hls-video"><div data-hls-player-mount></div></div>'
@@ -3265,6 +3289,13 @@ function renderHlsDiagnostics() {
     ['streamKey', diagnostics.streamKey || state.liveStream?.streamKey || 'none'],
     ['hlsPlaybackUrl', diagnostics.hlsPlaybackUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
     ['hlsUrl', diagnostics.hlsUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
+    ['selectedPlayer', diagnostics.selectedPlayer || 'hls'],
+    ['computedHlsUrl', diagnostics.computedHlsUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
+    ['normalizationApplied', diagnostics.normalizationApplied],
+    ['rawPlaybackMode', diagnostics.rawPlaybackMode || 'none'],
+    ['rawProvider', diagnostics.rawProvider || 'none'],
+    ['rawStreamKey', diagnostics.rawStreamKey || 'none'],
+    ['rawHlsPlaybackUrl', diagnostics.rawHlsPlaybackUrl || 'none'],
     ['playbackModeSelected', diagnostics.playbackModeSelected || currentHlsPlaybackMode()],
     ['nativeHlsSupported', diagnostics.nativeHlsSupported],
     ['hlsJsSupported', diagnostics.hlsJsSupported],
@@ -3653,6 +3684,8 @@ function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) 
     coverArtSource: nextCoverURL ? (previousCoverSource === 'upload' && nextCoverURL === previousCoverURL ? 'upload' : 'url') : 'fallback',
     tags: String(read('tags', state.goLive.form.tags) || '').slice(0, 500),
     visibility: String(read('visibility', state.goLive.form.visibility) || 'public'),
+    streamingMethod: String(read('streamingMethod', state.goLive.form.streamingMethod) || 'browserWebrtc'),
+    streamKey: String(read('streamKey', state.goLive.form.streamKey) || 'mystream'),
     rightsAccepted: hasControl('rightsAccepted') ? read('rightsAccepted') === 'on' : state.goLive.form.rightsAccepted,
     archiveRequested: hasControl('archiveRequested') ? read('archiveRequested') === 'on' : state.goLive.form.archiveRequested
   }
@@ -3712,6 +3745,9 @@ function startHostHeartbeat(streamId) {
   const beat = () => {
     heartbeatMusicLiveStream(streamId, {
       audioPublished: Boolean(state.goLive.localTrack),
+      programHasAudio: Boolean(state.goLive.localTrack),
+      streamingMethod: state.goLive.form.streamingMethod || 'browserWebrtc',
+      streamKey: state.goLive.form.streamKey || 'mystream',
       connectionStatus: state.goLive.connectionStatus === 'Reconnecting...' ? 'reconnecting' : 'live'
     }).catch((error) => {
       console.warn('[music] heartbeatMusicLiveStream failed', error?.message || error)
@@ -3767,9 +3803,12 @@ function startLiveStreamSubscription(streamId) {
         state.listenerVideoElement = null
         state.liveVideoExpanded = false
       }
-      const isNativeStream = isFirebaseSegmentProvider(stream?.provider)
-      const isBufferedStream = isBufferedHlsStream(stream)
-      const playable = Boolean(stream && stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream))
+      const playbackInfo = getPublicPlaybackInfo(stream || {})
+      const isNativeStream = playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments
+      const isBufferedStream = playbackInfo.provider === STREAM_PROVIDERS.hlsEdge
+      const playable = Boolean(stream && (isBufferedStream
+        ? stream.status === 'live' || playbackInfo.url
+        : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)))
       if (!playable) {
         state.liveStream = stream
         if (isNativeStream && stream?.status === 'live') {
@@ -3847,14 +3886,10 @@ async function ensureHostDraftStream() {
   updateGoLiveFormState()
   state.goLive.connectionStatus = 'Preparing draft controls...'
   rerender()
-  const response = await prepareMusicLiveStreamDraft({
+  const response = await prepareMusicLiveStreamDraft(normalizeLiveStreamTransport({
     streamId: state.goLive.draftStreamId,
-    provider: STREAM_PROVIDERS.nativeWeb,
-    transportProvider: 'livekit',
-    ingestMode: 'browser-webrtc',
-    playbackMode: 'webrtc',
     ...state.goLive.form
-  })
+  }))
   const streamId = response.streamId || ''
   if (!streamId) throw new Error('Could not prepare a live draft.')
   state.goLive.draftStreamId = streamId
@@ -3882,7 +3917,8 @@ async function loadViewerState(streamId) {
 async function saveHostLiveMetadata(form) {
   if (!state.goLive.streamId) return
   const data = new FormData(form)
-  const payload = {
+  const payload = normalizeLiveStreamTransport({
+    ...state.goLive.form,
     streamId: state.goLive.streamId,
     title: String(data.get('title') || '').slice(0, 90),
     description: String(data.get('description') || '').slice(0, 1200),
@@ -3894,7 +3930,7 @@ async function saveHostLiveMetadata(form) {
     visibility: String(data.get('visibility') || 'public'),
     accessMode: String(data.get('accessMode') || state.goLive.form.accessMode || 'public'),
     password: String(data.get('password') || '').slice(0, 200)
-  }
+  })
   state.goLive.editSaving = true
   state.goLive.editError = ''
   rerender()
@@ -3916,14 +3952,10 @@ async function saveHostLiveMetadata(form) {
 
 async function saveHostDetails() {
   updateGoLiveFormState()
-  const payload = {
+  const payload = normalizeLiveStreamTransport({
     streamId: activeHostStreamId(),
-    provider: STREAM_PROVIDERS.nativeWeb,
-    transportProvider: 'livekit',
-    ingestMode: 'browser-webrtc',
-    playbackMode: 'webrtc',
     ...state.goLive.form
-  }
+  })
   state.goLive.editSaving = true
   state.goLive.editError = ''
   state.goLive.formError = ''
@@ -4049,7 +4081,7 @@ async function startHostBroadcast(form) {
   rerender()
   try {
     const formState = state.goLive.form
-    const payload = {
+    const payload = normalizeLiveStreamTransport({
       streamId: state.goLive.draftStreamId || '',
       title: formState.title,
       description: formState.description,
@@ -4065,41 +4097,16 @@ async function startHostBroadcast(form) {
       rightsAccepted: formState.rightsAccepted,
       archiveRequested: false,
       audioOnly: true,
-      provider: STREAM_PROVIDERS.nativeWeb,
-      transportProvider: 'livekit',
-      ingestMode: 'browser-webrtc',
-      playbackMode: 'webrtc'
-    }
+      streamingMethod: formState.streamingMethod || 'browserWebrtc',
+      streamKey: formState.streamKey || 'mystream'
+    })
     await refreshHostUnloadToken()
     const response = await startMusicLiveStream(payload)
     pendingStreamId = response.streamId || ''
-    const room = new Room({ adaptiveStream: true, dynacast: true })
-    state.goLive.room = room
+    if (!pendingStreamId) throw new Error('The live stream service did not return a stream id.')
     state.goLive.streamId = pendingStreamId
     state.goLive.draftStreamId = pendingStreamId
-    state.goLive.connectionStatus = 'Connecting host room...'
-    room.on(RoomEvent.Connected, () => {
-      state.goLive.connectionStatus = 'Host room connected. Publishing audio...'
-      rerender()
-    })
-    room.on(RoomEvent.Reconnecting, () => {
-      state.goLive.connectionStatus = 'Reconnecting...'
-      rerender()
-    })
-    room.on(RoomEvent.Disconnected, () => {
-      state.goLive.connectionStatus = 'Disconnected.'
-      if (state.goLive.streamId && !state.goLive.ending) {
-        stopHostHeartbeat()
-        heartbeatMusicLiveStream(state.goLive.streamId, {
-          audioPublished: false,
-          connectionStatus: 'reconnecting'
-        }).catch(() => {})
-      }
-      rerender()
-    })
-    const livekitConnection = assertLiveKitConnectionConfig({ url: response.url, token: response.hostToken })
-    await room.connect(livekitConnection.url, livekitConnection.token)
-    state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Publishing Sequence Software output...' : 'Publishing selected audio input...'
+    state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Preparing Sequence Software output...' : 'Preparing selected audio input...'
     rerender()
     let localTrack
     if (formState.inputSource === 'sequence') {
@@ -4116,8 +4123,35 @@ async function startHostBroadcast(form) {
       }
     }
     state.goLive.localTrack = localTrack
-    await room.localParticipant.publishTrack(localTrack, publishOptionsForAudioMode())
-    await markMusicLiveStreamOnAir(pendingStreamId)
+    const mediaStreamTrack = localTrack?.mediaStreamTrack || localTrack
+    if (!mediaStreamTrack || mediaStreamTrack.readyState === 'ended') throw new Error('The browser audio track is not available for streaming.')
+    const mediaStream = new MediaStream([mediaStreamTrack])
+    state.goLive.connectionStatus = 'Connecting browser stream to Melogic Edge...'
+    rerender()
+    const ingestResult = await startBrowserWebrtcIngest({
+      streamKey: response.streamKey || payload.streamKey,
+      mediaStream,
+      onStatus: (status = {}) => {
+        if (status.connectionState === 'connected') state.goLive.connectionStatus = 'Browser stream connected to Melogic Edge.'
+      },
+      onError: (ingestError) => {
+        state.goLive.connectionStatus = ingestError?.message || 'Browser stream connection failed.'
+        rerender()
+      }
+    })
+    state.goLive.browserIngestActive = true
+    await markMusicLiveStreamOnAir(pendingStreamId, normalizeLiveStreamTransport({
+      ...payload,
+      streamId: pendingStreamId,
+      streamKey: response.streamKey || payload.streamKey,
+      hostActive: true,
+      hostConnected: true,
+      connectionStatus: 'live',
+      broadcastState: 'liveBroadcasting',
+      audioPublished: ingestResult.audioPublished === true,
+      videoPublished: ingestResult.videoPublished === true,
+      programHasAudio: ingestResult.audioPublished === true
+    }))
     startHostHeartbeat(pendingStreamId)
     startLiveChatSubscription(pendingStreamId)
     startHostStreamSubscription(pendingStreamId)
@@ -4134,6 +4168,8 @@ async function startHostBroadcast(form) {
       await endMusicLiveStream(pendingStreamId).catch(() => {})
       state.goLive.streamId = ''
     }
+    if (state.goLive.browserIngestActive) await stopBrowserWebrtcIngest().catch(() => {})
+    state.goLive.browserIngestActive = false
     stopHostHeartbeat()
     stopLiveChatSubscription()
     if (state.goLive.localTrack && state.goLive.form.inputSource !== 'sequence') {
@@ -4162,6 +4198,8 @@ async function endHostBroadcast() {
   rerender()
   try {
     stopHostHeartbeat()
+    if (state.goLive.browserIngestActive) await stopBrowserWebrtcIngest().catch(() => {})
+    state.goLive.browserIngestActive = false
     if (state.goLive.localTrack && state.goLive.form.inputSource !== 'sequence') {
       state.goLive.localTrack.stop()
     }

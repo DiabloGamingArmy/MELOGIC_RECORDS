@@ -5,9 +5,34 @@ import { functions } from '../firebase/functions'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
 import { selectPublicPlaybackPlayer } from './streaming/publicPlaybackService'
+import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './streaming/hlsEdgePlayer'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
+const DEFAULT_RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
+
+export function normalizeLiveStreamTransport(payload = {}) {
+  const method = payload.streamingMethod || payload.ingestMethod || 'browserWebrtc'
+  const ingestMethod = method === 'obsRtmp' || method === 'obs' ? 'obsRtmp' : 'browserWebrtc'
+  const streamKey = sanitizeHlsStreamKey(payload.streamKey || payload.streamId || 'mystream') || 'mystream'
+  return {
+    ...payload,
+    provider: STREAM_PROVIDERS.hlsEdge,
+    providerLabel: 'Melogic Edge',
+    transportProvider: 'hls-edge',
+    playbackMode: 'hls',
+    ingestMethod,
+    ingestProtocol: ingestMethod === 'obsRtmp' ? 'rtmp' : 'webrtc',
+    ingestMode: ingestMethod === 'obsRtmp' ? 'rtmp-obs' : 'browser-webrtc',
+    streamingMethod: ingestMethod,
+    latencyProfile: 'buffered',
+    streamKey,
+    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
+    rtmpIngestServer: ingestMethod === 'obsRtmp'
+      ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).trim()
+      : String(payload.rtmpIngestServer || '').trim()
+  }
+}
 
 function toIsoDate(value) {
   if (!value) return ''
@@ -39,9 +64,26 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
       : selectedPlayer === 'antMedia'
         ? STREAM_PROVIDERS.antMedia
         : STREAM_PROVIDERS.nativeWeb
+  const rawProvider = String(raw.provider || '')
+  const rawPlaybackMode = String(raw.playbackMode || '')
+  const rawStreamKey = String(raw.streamKey || '')
+  const rawHlsPlaybackUrl = String(raw.hlsPlaybackUrl || '')
   const hlsIngestMethod = raw.ingestMethod
     || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : raw.ingestMode === 'rtmp-obs' ? 'obsRtmp' : '')
+    || (raw.ingestProtocol === 'rtmp' ? 'obsRtmp' : raw.ingestProtocol === 'webrtc' ? 'browserWebrtc' : '')
     || (raw.provider === STREAM_PROVIDERS.bufferedBroadcast ? 'obsRtmp' : 'browserWebrtc')
+  const normalizedStreamKey = provider === STREAM_PROVIDERS.hlsEdge ? sanitizeHlsStreamKey(rawStreamKey) : rawStreamKey
+  const normalizedHlsPlaybackUrl = provider === STREAM_PROVIDERS.hlsEdge
+    ? rawHlsPlaybackUrl || buildHlsPlaybackUrl(normalizedStreamKey)
+    : rawHlsPlaybackUrl
+  const normalizationApplied = provider === STREAM_PROVIDERS.hlsEdge && (
+    rawProvider !== STREAM_PROVIDERS.hlsEdge
+    || raw.transportProvider !== 'hls-edge'
+    || rawPlaybackMode !== 'hls'
+    || raw.ingestMethod !== hlsIngestMethod
+    || rawStreamKey !== normalizedStreamKey
+    || rawHlsPlaybackUrl !== normalizedHlsPlaybackUrl
+  )
   const providerDefaults = provider === STREAM_PROVIDERS.hlsEdge
     ? { label: 'Melogic Edge', ingestMode: hlsIngestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
     : provider === STREAM_PROVIDERS.nativeWeb
@@ -77,16 +119,25 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     audioProfile: String(raw.audioProfile || ''),
     audioOnly: raw.audioOnly !== false,
     provider,
+    rawProvider,
+    rawPlaybackMode,
+    rawStreamKey,
+    rawHlsPlaybackUrl,
+    normalizationApplied,
     providerLabel: String(raw.providerLabel || providerDefaults.label),
-    transportProvider: String(raw.transportProvider || providerDefaults.transportProvider),
-    ingestMode: String(raw.ingestMode || providerDefaults.ingestMode),
-    playbackMode: String(raw.playbackMode || providerDefaults.playbackMode),
+    transportProvider: String(provider === STREAM_PROVIDERS.hlsEdge ? 'hls-edge' : raw.transportProvider || providerDefaults.transportProvider),
+    ingestMode: String(provider === STREAM_PROVIDERS.hlsEdge ? (hlsIngestMethod === 'obsRtmp' ? 'rtmp-obs' : 'browser-webrtc') : raw.ingestMode || providerDefaults.ingestMode),
+    playbackMode: String(provider === STREAM_PROVIDERS.hlsEdge ? 'hls' : raw.playbackMode || providerDefaults.playbackMode),
     latencyProfile: String(raw.latencyProfile || (provider === STREAM_PROVIDERS.hlsEdge ? 'buffered' : 'realtime')),
     ingestMethod: String(provider === STREAM_PROVIDERS.hlsEdge ? hlsIngestMethod : raw.ingestMethod || ''),
-    ingestProtocol: String(raw.ingestProtocol || (hlsIngestMethod === 'browserWebrtc' ? 'webrtc' : hlsIngestMethod === 'obsRtmp' ? 'rtmp' : '')),
-    streamKey: String(raw.streamKey || ''),
-    hlsPlaybackUrl: String(raw.hlsPlaybackUrl || ''),
-    rtmpIngestServer: String(raw.rtmpIngestServer || ''),
+    ingestProtocol: String(provider === STREAM_PROVIDERS.hlsEdge
+      ? hlsIngestMethod === 'obsRtmp' ? 'rtmp' : 'webrtc'
+      : raw.ingestProtocol || ''),
+    streamKey: normalizedStreamKey,
+    hlsPlaybackUrl: normalizedHlsPlaybackUrl,
+    rtmpIngestServer: String(provider === STREAM_PROVIDERS.hlsEdge && hlsIngestMethod === 'obsRtmp'
+      ? raw.rtmpIngestServer || import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER
+      : raw.rtmpIngestServer || ''),
     audioOnlyHlsUrl: String(raw.audioOnlyHlsUrl || ''),
     nativeStreaming: raw.nativeStreaming && typeof raw.nativeStreaming === 'object' ? raw.nativeStreaming : {},
     antMediaStreamId: String(raw.antMediaStreamId || ''),
@@ -304,31 +355,31 @@ export async function listHostMusicLiveStreams(uid = '', { limitCount = 20 } = {
 
 export async function startMusicLiveStream(payload = {}) {
   const callable = httpsCallable(functions, 'startMusicLiveStream')
-  const result = await callable(payload)
+  const result = await callable(normalizeLiveStreamTransport(payload))
   return result?.data || { ok: false }
 }
 
 export async function prepareMusicLiveStreamDraft(payload = {}) {
   const callable = httpsCallable(functions, 'prepareMusicLiveStreamDraft')
-  const result = await callable(payload)
+  const result = await callable(normalizeLiveStreamTransport(payload))
   return result?.data || { ok: false }
 }
 
 export async function markMusicLiveStreamOnAir(streamId = '', options = {}) {
   const callable = httpsCallable(functions, 'markMusicLiveStreamOnAir')
-  const result = await callable({ streamId, ...options })
+  const result = await callable(normalizeLiveStreamTransport({ streamId, ...options }))
   return result?.data || { ok: false }
 }
 
 export async function heartbeatMusicLiveStream(streamId = '', options = {}) {
   const callable = httpsCallable(functions, 'heartbeatMusicLiveStream')
-  const result = await callable({ streamId, ...options })
+  const result = await callable(normalizeLiveStreamTransport({ streamId, ...options }))
   return result?.data || { ok: false }
 }
 
 export async function updateMusicLiveStreamInfo(payload = {}) {
   const callable = httpsCallable(functions, 'updateMusicLiveStreamInfo')
-  const result = await callable(payload)
+  const result = await callable(normalizeLiveStreamTransport(payload))
   return result?.data || { ok: false }
 }
 
